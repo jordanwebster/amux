@@ -44,6 +44,7 @@ final class AccountsTests: JourneyCase {
     private enum Who {
         static let personal = (id: "personal", email: "ada@example.com", name: "Ada")
         static let work = (id: "work", email: "team@acme.example", name: "Acme")
+        static let side = (id: "side", email: "side@example.com", name: "Side")
     }
 
     private var runner: Runner!
@@ -94,6 +95,7 @@ final class AccountsTests: JourneyCase {
                 shortcut: { try self.selectAccount(Who.work) }),
             Act("delete", givingAnAccountUpForGood,
                 shortcut: { try self.selectAccount(Who.personal) }),
+            Act("remove-from-phone", takingAccountsOffThePhone),
             Act("help-and-appearance", theThingsThatBelongToThePhone),
         ]
     }
@@ -221,6 +223,7 @@ final class AccountsTests: JourneyCase {
         XCTAssertFalse(element(app, "home.newAgent").exists,
                        "the home offered New Agent with no machine to start one on")
         record["accountsAfterSigningIn"] = try accountsKnown()
+        record["callsAfterSigningIn"] = try cloudCalls()
     }
 
     /// Buying the subscription: what it costs, the three ways it does not go
@@ -495,7 +498,32 @@ final class AccountsTests: JourneyCase {
         // ended, which the row says rather than pretending it never existed.
         press(app, "account.\(Who.work.email)")
         waitFor(app, "sign-in", "the signed-out account did not lead to the sign-in page")
+        let beforeSigningBackIn = try cloudCalls()
+
+        // Somebody else comes back — the browser was signed in as another
+        // account. The phone says who, and adds nobody until told to.
+        try scriptCloud([
+            "signIn": "succeeds", "account": "stranger", "email": "stranger@example.com",
+            "displayName": "Stranger", "entitlement": "none",
+        ])
+        press(app, "sign-in.continue")
+        waitFor(app, "sign-in.mismatch", "signing back in as somebody else said nothing")
+        record["mismatchSaid"] = try says("sign-in.mismatch")
+        record["mismatchOffers"] = try called("sign-in.continue")
+        photograph(app, "sign-in-mismatch")
+        let beforeCancelling = try cloudCalls()
+        press(app, "sign-in.discard")
+        _ = try waitForValue(runner, "sign-in", "ready")
+        XCTAssertTrue(
+            waitUntil { ((try? self.cloudCalls()) ?? []).contains("forgetSession stranger") },
+            "cancelling kept the session of the account nobody asked for")
+        record["accountsAfterTheMismatch"] = try accountsKnown()
+        record["callsCancellingTheMismatch"] = Array(
+            (try cloudCalls()).dropFirst(beforeCancelling.count))
+
         try signIn(as: Who.work, entitlement: "lapsed", source: "web")
+        record["callsSigningBackIn"] = Array((try cloudCalls()).dropFirst(beforeSigningBackIn.count))
+            .filter { $0.hasPrefix("signIn") }
         record["accountsAfterSigningBackIn"] = try accountsKnown()
         try selectAccount(Who.work)
         record["lapsedSubscriptionRow"] = try says("you.subscription")
@@ -539,6 +567,59 @@ final class AccountsTests: JourneyCase {
         waitForNo(app, "delete", "the account was deleted and the question stayed on screen")
         record["accountsAfterDeleting"] = try accountsKnown()
         record["selectedAfterDeleting"] = try selectedAccount()
+    }
+
+    /// Accounts taken off the phone, with nothing asked of amux.sh but to let
+    /// go of this phone's sessions.
+    private func takingAccountsOffThePhone() throws {
+        // A third account, signed out of and not on screen: the one only its
+        // row can remove, because the account section is the selected one's.
+        try signIn(as: Who.side, entitlement: "none")
+        try selectAccount(Who.side)
+        press(app, "you.signOut")
+        try selectAccount(Who.personal)
+        record["accountsBeforeRemoving"] = try accountsKnown()
+        let before = try cloudCalls()
+
+        let row = element(app, "account.\(Who.side.email)")
+        XCTAssertTrue(row.waitForExistence(timeout: waiting), "the signed-out account has no row")
+        row.press(forDuration: 1.2)
+        // The menu's own item. The account section on the page has a row of
+        // the same name, and that one removes the account on screen instead.
+        let remove = app.collectionViews.buttons["Remove from This Phone"].firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: waiting),
+                      "the signed-out account's row offered no way to remove it")
+        remove.tap()
+        waitFor(app, "remove", "Remove from This Phone asked nothing")
+        record["removeAsks"] = try says("remove")
+        record["removeSaysAccountStays"] = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "amux.sh account and subscription stay")
+        ).firstMatch.exists
+        photograph(app, "remove")
+        press(app, "remove.confirm")
+        waitForNo(app, "remove", "the account was removed and the question stayed on screen")
+        record["accountsAfterRemovingSignedOut"] = try accountsKnown()
+        record["selectedAfterRemovingSignedOut"] = try selectedAccount()
+
+        // The account on screen, from its own section.
+        press(app, "you.remove")
+        waitFor(app, "remove", "Remove from This Phone asked nothing")
+        press(app, "remove.confirm")
+        waitForNo(app, "remove", "the account was removed and the question stayed on screen")
+        record["accountsAfterRemovingTheLast"] = try accountsKnown()
+        record["selectedAfterRemovingTheLast"] = try selectedAccount()
+        pressTab(app, "Agents")
+        record["gateAfterRemovingTheLast"] = try waitForValue(runner, "home", "signed-out")
+
+        let forgotten = ["forgetSession \(Who.side.id)", "forgetSession \(Who.personal.id)"]
+        XCTAssertTrue(
+            waitUntil { forgotten.allSatisfy { ((try? self.cloudCalls()) ?? []).contains($0) } },
+            "removing accounts did not let go of their sessions")
+        record["callsRemoving"] = Array((try cloudCalls()).dropFirst(before.count))
+        XCTAssertTrue(
+            waitUntil(within: 60) { ((try? self.deletedProfiles()) ?? []).count >= 2 },
+            "no runtime started without the removed accounts")
+        record["forgottenByTheRuntime"] = try deletedProfiles()
     }
 
     /// The things that belong to the phone rather than to any account.
@@ -717,6 +798,13 @@ final class AccountsTests: JourneyCase {
             let signedIn = (account["signedIn"] as? Bool ?? false) ? "signed in" : "signed out"
             return "\(email): \(signedIn), \(account["entitlement"] as? String ?? "?")"
         }
+    }
+
+    /// The removed accounts a runtime has started without, which is when
+    /// their profiles were deleted.
+    private func deletedProfiles() throws -> [String] {
+        let answer = try door(runner, .init(kind: "accounts"))
+        return (answer["known"] as? [String: Any])?["deletedProfiles"] as? [String] ?? []
     }
 
     private func selectedAccount() throws -> String? {

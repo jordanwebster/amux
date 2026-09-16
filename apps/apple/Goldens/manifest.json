@@ -709,6 +709,19 @@
       ]
     },
     {
+      "id": "sign-in-mismatch",
+      "stage": 10,
+      "screen": "sign-in",
+      "fixture": "sign-in-mismatch",
+      "origin": "added_state",
+      "reason": "signing back into one account and the browser answering as another, which adds nobody until the person chooses",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "you",
       "stage": 10,
       "screen": "you",
@@ -728,6 +741,19 @@
       "fixture": "you-granted",
       "origin": "added_state",
       "reason": "an account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "remove-account",
+      "stage": 10,
+      "screen": "you",
+      "fixture": "remove-account",
+      "origin": "added_state",
+      "reason": "taking an account off the phone, which says the amux.sh account stays before what the phone lets go of",
       "simulator": "golden",
       "appearances": [
         "light",

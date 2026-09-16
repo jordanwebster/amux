@@ -24,6 +24,9 @@ public final class RuntimeCoordinator {
     public private(set) var lastBatch: [AccountId: [Event]] = [:]
     /// Diagnostic detail for the driving door and reports, never screen copy.
     public private(set) var failure: String?
+    /// Every removed account a runtime this launch has started with, and so
+    /// deleted the profile of. Diagnostic, for the driving door.
+    public private(set) var deletedProfiles: [String] = []
     public let deviceName: String
     /// The browser whose findings this hands on, where the app gave it one.
     /// It runs only while somebody is looking at the phone, so it is started
@@ -104,7 +107,11 @@ public final class RuntimeCoordinator {
         starting?.cancel()
         let replaced = wired !== registry.stores
         unwire()
-        if let configured, configured.accounts.map(\.id) != listed.map(\.value) {
+        // A different set of accounts is a different runtime, and so is an
+        // account removed: only a starting runtime can delete its profile.
+        if let configured,
+           configured.accounts.map(\.id) != listed.map(\.value)
+            || configured.forget != registry.forgotten.map(\.value) {
             stopRuntime()
         }
         if replaced, let stores = registry.stores {
@@ -177,7 +184,8 @@ public final class RuntimeCoordinator {
                   (registry.selectedAccount?.signedIn == true) == (account != nil) else { return false }
             let configuration = try configuration(relay: relay, account: account)
             if let current = configured, let runtime,
-               current.relay == configuration.relay, current.accounts == configuration.accounts {
+               current.relay == configuration.relay, current.accounts == configuration.accounts,
+               current.forget == configuration.forget {
                 if let account, current.active != account.value {
                     runtime.dispatch(.selectAccount(account.value))
                     configured?.active = account.value
@@ -278,6 +286,7 @@ public final class RuntimeCoordinator {
             // and the machines it paired with stay where they were rather than
             // the app emptying itself the moment somebody signs out.
             active: (account ?? registry.selected)?.value,
+            forget: registry.forgotten.map(\.value),
             logPath: runtimeLogPath)
     }
 
@@ -351,6 +360,15 @@ public final class RuntimeCoordinator {
                    configured?.relay != nil {
                     failed = true
                 } else {
+                    if !initialized, let removed = configured?.forget, !removed.isEmpty {
+                        // A runtime that says anything has opened, and opening
+                        // is what deleted these profiles. Cleared here first so
+                        // the registry's change is not read as a reason to
+                        // start another runtime.
+                        configured?.forget = []
+                        deletedProfiles += removed
+                        registry.forgottenDeleted(removed.map(AccountId.init))
+                    }
                     initialized = true
                 }
             default: break

@@ -1537,6 +1537,18 @@
         }
       }
     },
+    "Continue as %@": {
+      "comment": "Button keeping the account a sign-in came back as when another was asked for; %@ is its address. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue as %@"
+          }
+        }
+      }
+    },
     "Continue on %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -3253,6 +3265,18 @@
         }
       }
     },
+    "Remove": {
+      "comment": "Destructive button confirming an account's removal from this phone. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        }
+      }
+    },
     "Remove Box %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
       "extractionState": "manual",
@@ -3261,6 +3285,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remove Box %@"
+          }
+        }
+      }
+    },
+    "Remove from This Phone": {
+      "comment": "Account action taking an account off this phone while leaving it on amux.sh. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from This Phone"
+          }
+        }
+      }
+    },
+    "Remove from this phone?": {
+      "comment": "Headline of the card confirming an account's removal from this phone. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from this phone?"
           }
         }
       }
@@ -3745,6 +3793,18 @@
         }
       }
     },
+    "Sign back in as %@.": {
+      "comment": "Sign-in page explanation when signing back into an account this phone lists; %@ is its address. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign back in as %@."
+          }
+        }
+      }
+    },
     "Sign in": {
       "comment": "Heading on the sign-in screen.",
       "extractionState": "manual",
@@ -3837,6 +3897,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Signed in as %@"
+          }
+        }
+      }
+    },
+    "Signed in as another account": {
+      "comment": "Headline when signing back into one account returned a different one. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signed in as another account"
           }
         }
       }
@@ -4501,6 +4573,18 @@
         }
       }
     },
+    "This phone signs out and forgets the hosts it paired for this account.": {
+      "comment": "What removing an account from this phone takes away. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone signs out and forgets the hosts it paired for this account."
+          }
+        }
+      }
+    },
     "This screen uses the same design tokens as the app.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeScreen.swift.",
       "extractionState": "manual",
@@ -5089,6 +5173,18 @@
         }
       }
     },
+    "You signed in as %@, not %@.": {
+      "comment": "Explains which account came back and which was asked for; addresses substituted. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You signed in as %@, not %@."
+          }
+        }
+      }
+    },
     "Your agents and files stay on your hosts.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift.",
       "extractionState": "manual",
@@ -5097,6 +5193,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Your agents and files stay on your hosts."
+          }
+        }
+      }
+    },
+    "Your amux.sh account and subscription stay as they are.": {
+      "comment": "What removing an account from this phone leaves untouched. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your amux.sh account and subscription stay as they are."
           }
         }
       }

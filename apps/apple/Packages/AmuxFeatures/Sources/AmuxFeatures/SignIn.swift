@@ -10,6 +10,12 @@ public enum SignInAction: Equatable, Sendable {
     case start
     /// Signed in, and finished reading about it.
     case done
+    /// Somebody other than the account asked for came back, and the person
+    /// wants that account on the phone anyway.
+    case keep
+    /// Somebody other than the account asked for came back, and the person
+    /// does not want it.
+    case discard
 }
 
 /// Signing in, which happens somewhere else.
@@ -64,6 +70,7 @@ public struct SignIn: View {
         case .handingOff: "handing off"
         case .failed: "failed"
         case .signedIn(let account): account.email
+        case .mismatched: "mismatched"
         }
     }
 
@@ -96,8 +103,14 @@ public struct SignIn: View {
     /// It says nothing about the local network, because there is no local
     /// discovery: pairing itself goes over the relay, which is what the
     /// account buys. If discovery ever arrives, this is the line that changes.
+    ///
+    /// Signing back into an account this phone already lists says which, so
+    /// the page is about that account rather than about accounts in general.
     private var explanation: String {
-        "An account pairs your hosts and reaches them from anywhere."
+        if case .returning(let account) = model.intent {
+            return "Sign back in as \(account.email)."
+        }
+        return "An account pairs your hosts and reaches them from anywhere."
     }
 
     /// The two things worth knowing before pressing the button: where the
@@ -142,7 +155,7 @@ public struct SignIn: View {
             BottomAction {
                 VStack(spacing: 10) {
                     trouble
-                    Button { actions(model.finished ? .done : .start) } label: {
+                    Button { actions(pressed) } label: {
                         ActionLabel(title, kind: .primary, fill: true)
                     }
                     .buttonStyle(.amuxControl)
@@ -151,6 +164,13 @@ public struct SignIn: View {
                     .identified(
                         "sign-in.continue", label: title, value: state,
                         enabled: !model.working)
+                    if case .mismatched = model.phase {
+                        Button { actions(.discard) } label: {
+                            ActionLabel("Cancel", kind: .quiet, fill: true)
+                        }
+                        .buttonStyle(.amuxControl)
+                        .identified("sign-in.discard", label: "Cancel")
+                    }
                     caption
                 }
             }
@@ -163,6 +183,16 @@ public struct SignIn: View {
         case .handingOff: "Opening \(model.host)…"
         case .failed: "Try Again"
         case .signedIn: "Done"
+        case .mismatched(_, let got): "Continue as \(got.email)"
+        }
+    }
+
+    /// What the one primary press does in the phase on screen.
+    private var pressed: SignInAction {
+        switch model.phase {
+        case .signedIn: .done
+        case .mismatched: .keep
+        case .ready, .handingOff, .failed: .start
         }
     }
 
@@ -182,6 +212,19 @@ public struct SignIn: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .identified("sign-in.failed", value: reason)
+        }
+        // Said before either button: which account came back, and which one
+        // this page was for, so neither press is a guess.
+        if case .mismatched(let wanted, let got) = model.phase {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Signed in as another account")
+                    .designFont(.bodyEmphasis, design)
+                    .foregroundStyle(design.ink.color)
+                Explain("You signed in as \(got.email), not \(wanted.email).")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .identified("sign-in.mismatch", value: got.email)
         }
     }
 

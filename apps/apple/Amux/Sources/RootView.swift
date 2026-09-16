@@ -58,6 +58,7 @@ struct RootView: View {
             signIn: composition.signIn,
             paywall: composition.paywall,
             deletion: composition.deletion,
+            removal: composition.removal,
             appearance: composition.appearance,
             report: { composition.beginReport() },
             recording: composition.conversations,

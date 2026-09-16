@@ -47,19 +47,21 @@ enum DoorScreens {
         // You. The accounts this phone knows, what the one on screen has, and
         // what belongs to the phone rather than to any account.
         case .you:
-            YouScreen(
-                // Nothing, meaning whatever the phone is set to. The
-                // appearance the door is holding is the instrument taking the
-                // photograph, not a choice anybody made on this screen, and
-                // marking it as chosen would say the person picked the one the
-                // capture happens to be in.
-                accounts: host.accounts, appearance: nil,
-                // This phone's own key, read off the machine store the way
-                // the devices page reads it, so the row names the same
-                // identity the machines were paired with.
-                identity: host.stores.hosts.roster.map {
-                    Fingerprint.short($0.identity.fingerprint)
-                }) { _ in }
+            RemoveAccountOverlay(accounts: host.accounts, model: host.removal, actions: { _ in }) {
+                YouScreen(
+                    // Nothing, meaning whatever the phone is set to. The
+                    // appearance the door is holding is the instrument taking the
+                    // photograph, not a choice anybody made on this screen, and
+                    // marking it as chosen would say the person picked the one the
+                    // capture happens to be in.
+                    accounts: host.accounts, appearance: nil,
+                    // This phone's own key, read off the machine store the way
+                    // the devices page reads it, so the row names the same
+                    // identity the machines were paired with.
+                    identity: host.stores.hosts.roster.map {
+                        Fingerprint.short($0.identity.fingerprint)
+                    }) { _ in }
+            }
         // Giving up an account, over the page it was asked from. The You page
         // behind it is the real one, filled from the same accounts, because
         // how the page dims and how much of it the card covers are facts about
@@ -241,7 +243,7 @@ struct DrivenRoot<Content: View>: View {
                 Shell(
                     router: replayed.router, accounts: replayed.accounts,
                     stores: replayed.stores, signIn: host.signIn,
-                    paywall: host.paywall, deletion: host.deletion,
+                    paywall: host.paywall, deletion: host.deletion, removal: host.removal,
                     appearance: host.appearance,
                     recording: replayed.recording,
                     actions: { _ in })

@@ -137,11 +137,13 @@ public actor AmuxCloudService: CloudService {
 
     // MARK: - Signing in
 
-    public func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
+    public func signIn(
+        _ intent: SignInIntent, presenting: any WebAuthPresenter
+    ) async throws(CloudError) -> SignedInAccount {
         let verifier = Self.randomToken()
         let state = Self.randomToken()
         let returned = try await presenting.present(
-            authorizeURL(verifier: verifier, state: state),
+            authorizeURL(verifier: verifier, state: state, intent: intent),
             callbackScheme: endpoint.callback.scheme ?? "amux")
         let code = try Self.code(from: returned, expecting: state)
         let issued = try await exchange([
@@ -166,7 +168,14 @@ public actor AmuxCloudService: CloudService {
     /// the state is a second secret that is only ever compared with what comes
     /// back. Together they are what stops another app on this phone claiming
     /// the callback and redeeming somebody else's code.
-    private func authorizeURL(verifier: String, state: String) -> URL {
+    ///
+    /// The intent picks what amux.sh shows. Both ask for its account chooser,
+    /// which lists the accounts this browser has used and offers another:
+    /// without it amux.sh carries on as whoever the browser is signed in as,
+    /// whichever account was meant. Signing back into one account also names
+    /// it by its address, so the form amux.sh shows for it has the address
+    /// filled in. A server that knows neither parameter ignores both.
+    func authorizeURL(verifier: String, state: String, intent: SignInIntent) -> URL {
         var components = URLComponents(url: endpoint.authorize, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: endpoint.clientID),
@@ -177,6 +186,15 @@ public actor AmuxCloudService: CloudService {
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
         ]
+        components.queryItems?.append(URLQueryItem(name: "prompt", value: "select_account"))
+        if case .returning(let account) = intent {
+            components.queryItems?.append(URLQueryItem(name: "login_hint", value: account.email))
+        }
+        // A plus is legal in an address and left alone by URLComponents, but a
+        // server reading the query as a form turns it into a space, which
+        // would ask for somebody else's address.
+        components.percentEncodedQuery = components.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
         return components.url!
     }
 

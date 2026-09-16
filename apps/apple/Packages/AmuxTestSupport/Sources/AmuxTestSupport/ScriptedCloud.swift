@@ -101,7 +101,9 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
 
 /// One call a screen made, in the order it made it.
 public enum CloudCall: Sendable, Equatable {
-    case signIn
+    /// A sign-in, with the account it asked amux.sh for.
+    case signIn(SignInIntent)
+    case forgetSession(AccountId)
     case account(AccountId)
     case entitlement(AccountId)
     case connectToken(AccountId)
@@ -166,8 +168,10 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         try? await Task.sleep(for: state.latency)
     }
 
-    public func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
-        let state = record(.signIn)
+    public func signIn(
+        _ intent: SignInIntent, presenting: any WebAuthPresenter
+    ) async throws(CloudError) -> SignedInAccount {
+        let state = record(.signIn(intent))
         await wait(state)
         switch state.signIn {
         case .succeeds(let account):
@@ -180,6 +184,10 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         case .refused(let reason): throw CloudError.refused(reason)
         case .offline: throw CloudError.network("offline")
         }
+    }
+
+    public func forgetSession(_ id: AccountId) async throws {
+        _ = record(.forgetSession(id))
     }
 
     public func account(_ id: AccountId) async throws(CloudError) -> AccountFacts {

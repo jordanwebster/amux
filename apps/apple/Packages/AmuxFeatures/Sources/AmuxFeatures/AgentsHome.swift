@@ -11,6 +11,8 @@ public enum HomeAction: Equatable, Sendable {
     case switchAccount(AccountId)
     case addAccount
     case signIn
+    /// Sign back into one account this phone lists, from its row.
+    case signInAgain(AccountId)
     case subscribe
     /// Pair with a machine this phone has found. There is no pairing without
     /// one: a code is typed for a particular machine, and a machine that has
@@ -200,15 +202,16 @@ public struct AgentsHome: View {
         case .add:
             switcherOpen = false
             actions(.addAccount)
-        case .signIn:
+        case .signIn(let id):
             switcherOpen = false
-            actions(.signIn)
+            actions(.signInAgain(id))
         case .dismiss:
             switcherOpen = false
         // Nothing else the panel can say reaches this screen: the rest of an
         // account's actions live under You, where there is room to state what
         // they do.
-        case .signOut, .delete, .subscription, .appearance, .identity, .support, .report:
+        case .signOut, .remove, .delete, .subscription, .appearance, .identity, .support,
+             .report:
             break
         }
     }

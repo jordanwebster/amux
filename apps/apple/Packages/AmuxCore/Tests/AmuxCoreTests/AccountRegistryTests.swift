@@ -101,6 +101,47 @@ final class AccountRegistryTests: XCTestCase {
         XCTAssertTrue(registry.stores?.fleet.rows.isEmpty == true)
     }
 
+    /// Removing the account on screen moves to one still signed in rather
+    /// than to the first listed, and what was removed is remembered for the
+    /// runtime until the account comes back.
+    func testRemovingAnAccountPrefersOneStillSignedInAndIsRememberedUntilItReturns() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("accounts.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let side = SignedInAccount(id: AccountId("side"), email: "side@example.com")
+        let work = SignedInAccount(id: AccountId("work"), email: "work@example.com")
+        let personal = SignedInAccount(id: AccountId("personal"), email: "me@example.com")
+        let registry = AccountRegistry(file: file)
+        registry.add(side)
+        registry.add(work)
+        registry.add(personal)
+        registry.signOut(side.id)
+        registry.select(work.id)
+
+        registry.forget(work.id)
+        XCTAssertEqual(registry.accounts.map(\.id), [side.id, personal.id])
+        XCTAssertEqual(registry.selected, personal.id, "a signed-out account was put on screen")
+        XCTAssertNotNil(registry.stores)
+        XCTAssertEqual(registry.forgotten, [work.id])
+        XCTAssertEqual(AccountRegistry(file: file).forgotten, [work.id])
+
+        registry.forget(personal.id)
+        registry.forget(side.id)
+        XCTAssertNil(registry.selected)
+        XCTAssertNil(registry.stores)
+        XCTAssertEqual(registry.gate, .signedOut)
+        XCTAssertEqual(registry.forgotten, [work.id, personal.id, side.id])
+
+        // Forgetting something this phone never knew names nothing.
+        registry.forget(AccountId("nobody"))
+        XCTAssertEqual(registry.forgotten.count, 3)
+
+        registry.add(work)
+        XCTAssertEqual(registry.forgotten, [personal.id, side.id])
+        registry.forgottenDeleted([personal.id])
+        XCTAssertEqual(AccountRegistry(file: file).forgotten, [side.id])
+    }
+
     func testASignedOutAccountStaysListedAndItsStoresGoAway() {
         let registry = AccountRegistry()
         registry.add(ada, entitlement: .active(grant: .purchased(.appStore), renews: nil))

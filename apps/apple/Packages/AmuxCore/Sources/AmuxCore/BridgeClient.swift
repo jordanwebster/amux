@@ -21,6 +21,10 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     /// as. Signing out leaves that account's machines on screen rather than
     /// emptying the app, so the name outlives the credential.
     public var active: String?
+    /// Accounts somebody removed from this phone. The bridge deletes each
+    /// one's profile and caches before opening anything; naming one that is
+    /// already gone does nothing.
+    public var forget: [String]
     public var log_path: String
     /// One callback batch per display frame by default.
     public var frame_interval_ns: UInt64
@@ -99,7 +103,7 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
 
     public init(
         dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay?,
-        accounts: [Account], active: String?,
+        accounts: [Account], active: String?, forget: [String] = [],
         logPath: URL, frameIntervalNanoseconds: UInt64 = 16_666_667
     ) {
         self.data_dir = dataDirectory.path
@@ -108,6 +112,7 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
         self.relay = relay
         self.accounts = accounts
         self.active = active
+        self.forget = forget
         self.log_path = logPath.path
         self.frame_interval_ns = frameIntervalNanoseconds
     }

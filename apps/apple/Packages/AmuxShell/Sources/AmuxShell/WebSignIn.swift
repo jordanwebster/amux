@@ -86,9 +86,12 @@ private final class Browser: NSObject, ASWebAuthenticationPresentationContextPro
                 : .network(error?.localizedDescription ?? "the browser could not open")))
         }
         session.presentationContextProvider = self
-        // The browser keeps whatever session amux.sh already has, so somebody
-        // signed in on this phone's Safari signs in here without typing
-        // anything. An ephemeral session would make every sign-in a password.
+        // The browser keeps whatever amux.sh already knows, and that is what
+        // makes its account chooser work: every sign-in asks amux.sh to list
+        // the accounts this browser has used and offer another, and picking
+        // the one it is already signed in as needs no password. An ephemeral
+        // session would remember nothing, so the chooser would be empty and
+        // every sign-in a password.
         session.prefersEphemeralWebBrowserSession = false
         self.session = session
         guard session.start() else {

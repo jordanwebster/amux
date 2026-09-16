@@ -145,7 +145,7 @@ final class AmuxCloudTests: XCTestCase {
         let saved = MemorySessions()
         let answers = signedIn
         let first = AmuxCloudService(endpoint: endpoint, transport: answers, savedSessions: saved)
-        let account = try await first.signIn(presenting: Handed.returning(code: "first"))
+        let account = try await first.signIn(.adding, presenting: Handed.returning(code: "first"))
         XCTAssertEqual(saved.read(account.id), "rt-1")
         answers.plus("/connect/token", status: 200, body: """
             {"access_token":"at-2","refresh_token":"rt-2","expires_in":3600}
@@ -174,7 +174,7 @@ final class AmuxCloudTests: XCTestCase {
         let cloud = AmuxCloudService(
             endpoint: endpoint, transport: signedIn, savedSessions: RefusingSessions(failure: failure))
         await assert(failure) {
-            try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+            try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         }
         await assert(failure) {
             try await cloud.restore(AccountId("ada"), refresh: "secret-token")
@@ -189,7 +189,7 @@ final class AmuxCloudTests: XCTestCase {
     func testSignInHandsOffWithPkceAndRedeemsTheCodeItComesBackWith() async throws {
         let answers = signedIn
         let presenter = Handed.returning(code: "code-1")
-        let account = try await service(answers).signIn(presenting: presenter)
+        let account = try await service(answers).signIn(.adding, presenting: presenter)
 
         XCTAssertEqual(account.id, AccountId("ada"))
         XCTAssertEqual(account.email, "ada@example.com")
@@ -221,6 +221,32 @@ final class AmuxCloudTests: XCTestCase {
         XCTAssertEqual(answers.bearer("/connect/userinfo"), "Bearer at-1")
     }
 
+    /// Both ask amux.sh for its chooser, because without one it carries on as
+    /// whoever the browser is signed in as; signing back into one account also
+    /// names it, so its form has the address filled in.
+    func testTheAuthorizeURLAsksForTheAccountTheSignInIsFor() async throws {
+        let cloud = service(signedIn)
+        let ada = SignedInAccount(id: AccountId("ada"), email: "ada+work@example.com")
+        func items(_ intent: SignInIntent) async throws -> [String: String] {
+            let url = await cloud.authorizeURL(verifier: "v", state: "s", intent: intent)
+            let query = try XCTUnwrap(
+                URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            return Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value ?? "") })
+        }
+
+        let adding = try await items(.adding)
+        XCTAssertEqual(adding["prompt"], "select_account")
+        XCTAssertNil(adding["login_hint"])
+
+        let returning = try await items(.returning(ada))
+        XCTAssertEqual(returning["login_hint"], "ada+work@example.com")
+        XCTAssertEqual(returning["prompt"], "select_account")
+        // Encoded, so an address with a plus in it reaches amux.sh as written.
+        let url = await cloud.authorizeURL(verifier: "v", state: "s", intent: .returning(ada))
+        XCTAssertTrue(url.absoluteString.contains("login_hint=ada%2Bwork%40example.com")
+                      || url.absoluteString.contains("login_hint=ada%2Bwork@example.com"))
+    }
+
     func testACallbackThatAnswersADifferentRequestIsNeverRedeemed() async {
         let answers = signedIn
         // Another app claiming the callback cannot know the state this phone
@@ -230,7 +256,7 @@ final class AmuxCloudTests: XCTestCase {
             .success(URL(string: "amux://callback?code=stolen&state=someone-else")!)
         }
         await assert(.refused("that sign-in answered a different request")) {
-            try await self.service(answers).signIn(presenting: presenter)
+            try await self.service(answers).signIn(.adding, presenting: presenter)
         }
         XCTAssertNil(answers.request("/connect/token"))
     }
@@ -241,14 +267,14 @@ final class AmuxCloudTests: XCTestCase {
                 "amux://callback?error=access_denied&error_description=that%20address%20is%20not%20recognised")!)
         }
         await assert(.refused("that address is not recognised")) {
-            try await self.service(self.signedIn).signIn(presenting: presenter)
+            try await self.service(self.signedIn).signIn(.adding, presenting: presenter)
         }
     }
 
     func testClosingTheBrowserIsCancelledRatherThanFailed() async {
         let presenter = Handed { _ in .failure(.cancelled) }
         await assert(.cancelled) {
-            try await self.service(self.signedIn).signIn(presenting: presenter)
+            try await self.service(self.signedIn).signIn(.adding, presenting: presenter)
         }
     }
 
@@ -259,7 +285,7 @@ final class AmuxCloudTests: XCTestCase {
              "expires_at":"2023-11-14T23:13:20Z"}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let token = try await cloud.connectToken(account.id)
 
         XCTAssertEqual(token.bearer, "relay-jwt")
@@ -279,7 +305,7 @@ final class AmuxCloudTests: XCTestCase {
              "expires_at":"2023-11-14T23:13:20Z"}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let token = try await cloud.connectToken(account.id)
 
         XCTAssertEqual(token.host, "relay.amux.test")
@@ -291,7 +317,7 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         answers.plus("/api/connect", status: 403, body: #"{"error":"payment_required"}"#)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         await assert(.refused("this account has no subscription")) {
             try await cloud.connectToken(account.id)
         }
@@ -309,7 +335,7 @@ final class AmuxCloudTests: XCTestCase {
             let answers = signedIn
             answers.plus("/api/purchases", status: status, body: status == 200 ? "{}" : "")
             let cloud = service(answers)
-            let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+            let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
             try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
 
             let posted = answers.request("/api/purchases")
@@ -327,7 +353,7 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         answers.plus("/api/purchases", status: 401, body: "")
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         await assert(.unauthenticated) {
             try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
         }
@@ -339,7 +365,7 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         answers.plus("/api/purchases", status: 403, body: #"{"error":"payment_required"}"#)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         await assert(.refused("this account has no subscription")) {
             try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
         }
@@ -351,7 +377,7 @@ final class AmuxCloudTests: XCTestCase {
             "/api/purchases", status: 422,
             body: #"{"error":"invalid_transaction","error_description":"that transaction belongs to another account"}"#)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         await assert(.refused("that transaction belongs to another account")) {
             try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
         }
@@ -363,7 +389,7 @@ final class AmuxCloudTests: XCTestCase {
     func testAPurchaseThatNeverLeftThePhoneIsANetworkFailureRatherThanARefusal() async throws {
         let answers = signedIn
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         answers.cannotReach("/api/purchases")
         do {
             try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
@@ -386,7 +412,7 @@ final class AmuxCloudTests: XCTestCase {
                  "willRenew":true,"entitledUntil":"2023-11-26T13:20:00Z"}}}}}
                 """)
             let cloud = service(answers)
-            let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+            let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
             let entitlement = try await cloud.entitlement(account.id)
             XCTAssertEqual(entitlement, Entitlement.active(grant: .purchased(source), renews: ends))
         }
@@ -400,7 +426,7 @@ final class AmuxCloudTests: XCTestCase {
              "willRenew":false,"entitledUntil":"2023-11-26T13:20:00Z"}}}}}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(entitlement, Entitlement.active(grant: .purchased(.web), renews: nil))
     }
@@ -416,7 +442,7 @@ final class AmuxCloudTests: XCTestCase {
              "grant":{"__typename":"Granted"}}}}}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(entitlement, Entitlement.active(grant: .granted, renews: nil))
         // One question is asked, and it is not about billing.
@@ -435,7 +461,7 @@ final class AmuxCloudTests: XCTestCase {
             {"data":{"me":{"access":{"pro":true,"until":null,"grant":null}}}}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(entitlement, Entitlement.active(grant: .granted, renews: nil))
     }
@@ -453,7 +479,7 @@ final class AmuxCloudTests: XCTestCase {
              "willRenew":true,"entitledUntil":"2023-11-13T13:20:00Z"}}}}}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(
             entitlement,
@@ -468,7 +494,7 @@ final class AmuxCloudTests: XCTestCase {
             {"data":{"me":{"access":{"pro":false,"until":null,"grant":null}}}}
             """)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(entitlement, Entitlement.none)
     }
@@ -476,7 +502,7 @@ final class AmuxCloudTests: XCTestCase {
     func testDeletionIsRefusedBeforeItLeavesWhenTheTypedAddressIsNotThisAccounts() async throws {
         let answers = signedIn
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         await assert(.refused("that is not this account’s address")) {
             try await cloud.requestDeletion(account.id, confirmedEmail: "bo@example.com")
         }
@@ -487,7 +513,7 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         answers.plus("/api/account", status: 200, body: "")
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let outcome = try await cloud.requestDeletion(
             account.id, confirmedEmail: "  ADA@example.com ")
 
@@ -501,7 +527,7 @@ final class AmuxCloudTests: XCTestCase {
             "/api/account", status: 409,
             body: #"{"error":"active_subscription","provider":"revenuecat"}"#)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let outcome = try await cloud.requestDeletion(
             account.id, confirmedEmail: "ada@example.com")
 
@@ -520,7 +546,7 @@ final class AmuxCloudTests: XCTestCase {
             "/api/billing/stripe/portal", status: 200,
             body: #"{"url":"https://billing.test/session/1"}"#)
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         let outcome = try await cloud.requestDeletion(
             account.id, confirmedEmail: "ada@example.com")
 
@@ -541,7 +567,7 @@ final class AmuxCloudTests: XCTestCase {
                 """),
         ])
         let cloud = service(answers)
-        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
         _ = try await cloud.connectToken(account.id)
 
         let exchanges = answers.asked.filter { $0.url?.path() == "/connect/token" }

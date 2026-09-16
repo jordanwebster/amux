@@ -32,6 +32,27 @@ The first sign-in adopts the unbound profile, including its key, pairings and
 cache. A different account gets a different profile; signing out preserves the
 profile and its local relationships.
 
+Remove from This Phone (an account's own section on You, or the menu on any
+account row, including a signed-out one) takes an account off the phone and
+leaves it on amux.sh. The app lets go of the account's session, takes it off the
+list, and names it to the next runtime start, which deletes its profile before
+opening anything: its key, its trust store and the hosts it paired, with its
+fleet and artifacts caches and its `profiles.json` entry. The hosts keep their
+record of the old key until it is revoked there, and adding the account back
+means pairing again. Deleting an account takes the same path. The account on
+screen, when removed, is replaced by one still signed in, or by the signed-out
+phone.
+
+Every sign-in opens amux.sh with `prompt=select_account`, which lists the
+accounts that browser has used and offers another; without it amux.sh carries on
+as whoever the browser is signed in as. Signing back into a listed account also
+sends `login_hint` with that account's address, which fills it in when a
+password is needed. The browser session is not ephemeral, because the chooser
+is made of what it remembers. When signing back in returns a different account, the
+sign-in page names both and adds nothing until the person continues as the
+returned account or cancels; cancelling lets go of that session unless the
+account is already signed in on the phone.
+
 `LocalDiscovery` in `AmuxCore/Discovery.swift` is the app's only network
 browser. While the scene is active it browses `_amux._udp` with `NWBrowser`,
 resolves the advertised endpoints, and hands the complete found-host set to the

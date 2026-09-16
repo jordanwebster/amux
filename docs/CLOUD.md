@@ -25,7 +25,7 @@ sign-in happen once rather than hourly.
 
 | Path | Method | What it is for |
 | --- | --- | --- |
-| `/connect/authorize` | browser | Sign-in, opened in the system browser with a PKCE challenge and a state. |
+| `/connect/authorize` | browser | Sign-in, opened in the system browser with a PKCE challenge and a state. Every sign-in also sends `prompt=select_account` (the account chooser); signing back into a listed account adds `login_hint=<its email>`. |
 | `/connect/token` | POST | Redeeming the code, and later refreshing. Refresh tokens rotate: the one that comes back replaces the one just spent. |
 | `/connect/userinfo` | GET | Who signed in — `sub`, `email`, `name`. `sub` is the account identifier everything else is asked for by. |
 | `/api/graphql` | POST | The entitlement read. See below. |

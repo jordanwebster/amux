@@ -1,3 +1,33 @@
+2026-09-16 — **Remove from This Phone.** An account could only be signed out
+(and stay listed) or deleted from amux.sh. Remove from This Phone, beside Sign
+Out and in the menu on every account row so a signed-out account can be removed
+too, takes an account off the phone and leaves it on amux.sh; its confirmation
+says so first. The app lets go of the account's session, takes it off the list
+(moving the screen to an account still signed in, or to the signed-out phone)
+and remembers it as removed. The runtime is started with the removed accounts
+in a new `forget` setting and deletes each one's profile before opening
+anything: its key, trust store and paired hosts, plus its fleet cache,
+artifacts cache and `profiles.json` entry. Deleting the whole profile is
+deliberate: every profile on the device runs, so a kept one would go on
+reaching that account's machines on the local network after the person removed
+it. The hosts keep a record of the old key until revoked there, and adding the
+account back means pairing again. Deleting an account now clears the same local
+data. Once a runtime has started with them, removed accounts are no longer
+named.
+
+2026-09-16 — **Signing in asks amux.sh for the right account.** Adding an
+account and signing back into a known one were one route that forgot which
+account was meant, so a sign-in for one account that came back as another was
+quietly added as a new account. They are now distinct from the row that was
+pressed to the authorize URL. Both ask for amux.sh's account chooser
+(`prompt=select_account`), since without it amux.sh carries on as whoever the
+browser is signed in as; signing back in also sends `login_hint` with that
+account's address, which fills in the password form. When signing back in returns someone else, the sign-in page says who,
+and adds nobody until the person continues as that account or cancels;
+cancelling lets go of the session unless that account is already signed in
+here. The browser session stays non-ephemeral, which is what the chooser needs.
+Both parameters are ignored by a server that does not know them.
+
 2026-09-16 — **Reporting a problem is in every build of the app.** Reports
 were compiled out of Release: the report store, the bundle and the report
 screen sat in the test-support package, the screenshot listener was attached

@@ -72,6 +72,8 @@ final class DoorHost {
     /// it is asked over, and a blocked deletion sends somebody out of the app
     /// and back again.
     private(set) var deletion = DeletionStore()
+    /// The account a driven screen is asking about taking off the phone.
+    private(set) var removal = RemovalStore()
     /// The report a driven screen is in the middle of writing. Its own store
     /// for the same reason the app's is: what was frozen outlives the screen
     /// that froze it.
@@ -382,7 +384,7 @@ final class DoorHost {
         // which accounts are signed out and what each has reached, and adding
         // them one at a time would sign every one of them in.
         accounts.restore(fixture.accounts)
-        signIn = SignInStore(phase: fixture.signIn)
+        signIn = SignInStore(phase: fixture.signIn, intent: fixture.signInIntent)
         store.scripted = fixture.store
         store.reset()
         paywall = PaywallStore(
@@ -391,6 +393,7 @@ final class DoorHost {
         deletion = DeletionStore(
             asking: fixture.deletion?.account, typed: fixture.deletion?.typed ?? "",
             phase: fixture.deletion?.phase ?? .asking)
+        removal = RemovalStore(asking: fixture.removing)
         reports = Self.reporting(fixture.report)
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
@@ -570,13 +573,16 @@ final class DoorHost {
                     entitlement: $0.entitlement.summary, hosts: $0.hosts,
                     attention: $0.attention)
             },
-            dropped: registry.dropped)
+            dropped: registry.dropped,
+            deletedProfiles: coordinator?.deletedProfiles ?? [])
     }
 
     /// One call a screen made of the scripted cloud, as a line.
     static func said(_ call: CloudCall) -> String {
         switch call {
-        case .signIn: "signIn"
+        case .signIn(.adding): "signIn select"
+        case .signIn(.returning(let account)): "signIn hint \(account.email)"
+        case .forgetSession(let id): "forgetSession \(id)"
         case .account(let id): "account \(id)"
         case .entitlement(let id): "entitlement \(id)"
         case .connectToken(let id): "connectToken \(id)"

@@ -305,6 +305,8 @@ subscription row `Relay` and says how the subscription was bought, where the
 approved drawing read `Subscription` and `Active · amux.sh`. The sheet itself
 — its question, its three consequences, the typed confirmation and the two
 buttons — is the approved one.
+Re-approved 2026-09-17: the page behind the sheet has a `Remove from This
+Phone` row above Delete Account; the sheet is unchanged.
 
 ## delete-blocked
 
@@ -356,6 +358,14 @@ Reference-backed capture of `sign-in` using the `sign-in` fixture. No visual dep
 
 Added state using the `sign-in-failed` fixture. A sign-in the cloud refuses. It follows the same visual system as its parent screen.
 
+## sign-in-mismatch
+
+Added state using the `sign-in-mismatch` fixture. Signing back into an account
+this phone lists, with amux.sh answering as a different one: the page names both
+addresses, offers `Continue as` the returned account and a quiet Cancel, and
+adds nobody until one is pressed. It follows the same visual system as its
+parent screen.
+
 ## you
 
 Reference-backed capture of `you` using the `you` fixture.
@@ -364,6 +374,10 @@ how the subscription was bought, where the approved drawing headed it
 `Subscription` and said only that it was active. Naming the thing being paid
 for is what makes the row the one place a subscription is bought and read.
 The rest of the page is the approved drawing.
+Re-approved 2026-09-17: `Remove from This Phone` sits between Sign Out and
+Delete Account, taking an account off this phone while leaving it on amux.sh,
+and `Report a Problem` is offered under Help in every build. The same account
+section appears behind the `you-granted`, `delete` and `delete-blocked` states.
 
 ## you-granted
 
@@ -372,6 +386,13 @@ rather than bought reads differently on this page, and the design catalogue only
 pictured a bought subscription. Its `Relay` row reads `Included with this
 account`. It follows the same visual system as its parent screen.
 
+
+## remove-account
+
+Added state using the `remove-account` fixture. Taking a signed-out account off
+the phone, asked over the You page the way deleting one is: what stays on
+amux.sh and on the hosts is said before what the phone lets go of, and nothing
+is typed to confirm it. It follows the same visual system as Delete Account.
 ## dump
 
 Reference-backed capture of `dump` using the `dump` fixture. No visual departure is accepted.

@@ -112,9 +112,11 @@ public enum Fixtures {
         Built(.firstRunPaid, "first-run-paid"),
         Built(.signIn, "sign-in"),
         Built(.signIn, "sign-in-failed"),
+        Built(.signIn, "sign-in-mismatch"),
         Built(.profiles, "profiles"),
         Built(.you, "you"),
         Built(.you, "you-granted"),
+        Built(.you, "remove-account"),
         Built(.delete, "delete"),
         Built(.delete, "delete-blocked"),
         Built(.paywall, "paywall"),
@@ -421,6 +423,14 @@ public enum Fixtures {
             States.open(bundle)
             States.trusted(bundle)
         },
+        // Taking an account off the phone, asked over the page: the one
+        // signed out of, which is removed from its own row. What stays on
+        // amux.sh is said before what this phone lets go of.
+        Fixture(id: "remove-account", screen: .you, accounts: Fixture.several,
+                removing: Fixture.several[2].id) { bundle in
+            States.open(bundle)
+            States.trusted(bundle)
+        },
         // Giving up an account, asked over the page it was asked from. The
         // address is already typed, because what the button does once it is
         // typed is the whole point of the screen; the subscription renews, so
@@ -493,6 +503,11 @@ public enum Fixtures {
     /// has to send somebody out of the app.
     static let appStoreSubscriptions = URL(
         string: "https://apps.apple.com/account/subscriptions")!
+
+    /// An account amux.sh signed somebody in as that this phone has never
+    /// listed.
+    static let stranger = SignedInAccount(
+        id: AccountId("stranger"), email: "jw@example.com", displayName: "JW")
 
     /// The accounts of the two deletion states: the same phone the You page
     /// shows, with the account being given up paying a subscription that is
@@ -742,6 +757,12 @@ public enum Fixtures {
                 cloud: ScriptedCloudState(signIn: .refused(Fixtures.refusedSignIn),
                                           entitlement: .none, token: nil),
                 signIn: .failed(Fixtures.refusedSignIn)),
+        // Signing back into the account this phone lists as signed out, and
+        // the browser answering as somebody else. Nothing is added until the
+        // person says which account they meant.
+        Fixture(id: "sign-in-mismatch", screen: .signIn, accounts: Fixture.several,
+                signIn: .mismatched(wanted: Fixture.several[2].account, got: Fixtures.stranger),
+                signInIntent: .returning(Fixture.several[2].account)),
         // A machine on the account running a newer amux than the phone: one of
         // its agents arrives under a provider name this build has never heard
         // of. It is listed under that name, said to be unreadable, and the

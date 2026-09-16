@@ -12,7 +12,7 @@ final class ScriptedCloudTests: XCTestCase {
             deletion: .deleted,
             upload: .accepted(id: "report-7")))
 
-        let account = try await cloud.signIn(presenting: ScriptedWebAuth())
+        let account = try await cloud.signIn(.adding, presenting: ScriptedWebAuth())
         XCTAssertEqual(account.email, "ada@example.com")
         let entitlement = try await cloud.entitlement(ada)
         XCTAssertEqual(entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
@@ -30,7 +30,7 @@ final class ScriptedCloudTests: XCTestCase {
         XCTAssertEqual(receipt.id, "report-7")
 
         XCTAssertEqual(cloud.calls, [
-            .signIn,
+            .signIn(.adding),
             .entitlement(ada),
             .connectToken(ada),
             .account(ada),
@@ -41,15 +41,15 @@ final class ScriptedCloudTests: XCTestCase {
 
     func testEveryFailureIsDeclaredRatherThanImprovised() async {
         let cancelled = ScriptedCloudService(state: ScriptedCloudState(signIn: .cancelled))
-        await assert(CloudError.cancelled) { try await cancelled.signIn(presenting: ScriptedWebAuth()) }
+        await assert(CloudError.cancelled) { try await cancelled.signIn(.adding, presenting: ScriptedWebAuth()) }
 
         let refused = ScriptedCloudService(state: ScriptedCloudState(signIn: .refused("no such account")))
         await assert(CloudError.refused("no such account")) {
-            try await refused.signIn(presenting: ScriptedWebAuth())
+            try await refused.signIn(.adding, presenting: ScriptedWebAuth())
         }
 
         let offline = ScriptedCloudService(state: ScriptedCloudState(signIn: .offline, token: nil))
-        await assert(CloudError.network("offline")) { try await offline.signIn(presenting: ScriptedWebAuth()) }
+        await assert(CloudError.network("offline")) { try await offline.signIn(.adding, presenting: ScriptedWebAuth()) }
         await assert(CloudError.unauthenticated) { try await offline.connectToken(ada) }
 
         let unreachable = ScriptedCloudService(state: ScriptedCloudState(upload: .offline))
@@ -72,9 +72,9 @@ final class ScriptedCloudTests: XCTestCase {
         // The app hands off to the browser and is told what came back; it has
         // no credential field of its own to fall back on.
         let cloud = ScriptedCloudService()
-        let account = try await cloud.signIn(presenting: ScriptedWebAuth(outcome: .cancelled))
+        let account = try await cloud.signIn(.adding, presenting: ScriptedWebAuth(outcome: .cancelled))
         XCTAssertEqual(account.id, ScriptedCloudState.ada.id)
-        XCTAssertEqual(cloud.calls, [.signIn])
+        XCTAssertEqual(cloud.calls, [.signIn(.adding)])
     }
 
     func testTheStateCanBeRewrittenBetweenCalls() async throws {

@@ -6,7 +6,15 @@ import Foundation
 /// the production adapter and the scripted double are the same shape, and a
 /// screen cannot tell which one it is holding.
 public protocol CloudService: Sendable {
-    func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount
+    /// Signs somebody in on the web, asking amux.sh for the account the
+    /// intent names. What comes back is whoever actually signed in, which is
+    /// not always who was asked for.
+    func signIn(
+        _ intent: SignInIntent, presenting: any WebAuthPresenter
+    ) async throws(CloudError) -> SignedInAccount
+    /// Lets go of the session this phone holds for an account, here and in
+    /// whatever keeps it between launches. The account on amux.sh is untouched.
+    func forgetSession(_ id: AccountId) async throws
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement
     func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken
@@ -20,6 +28,19 @@ public protocol CloudService: Sendable {
     func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError)
     func requestDeletion(_ id: AccountId, confirmedEmail: String) async throws(CloudError) -> DeletionOutcome
     func uploadReport(_ id: AccountId, bundle: ReportBundle) async throws(CloudError) -> ReportReceipt
+}
+
+/// Which account a sign-in is for.
+///
+/// It decides what amux.sh shows before anybody types: a person adding an
+/// account is offered every account that browser has used and another one,
+/// and a person signing back into an account this phone lists is sent straight
+/// to that account.
+public enum SignInIntent: Sendable, Equatable {
+    /// Another account for this phone, or the first one.
+    case adding
+    /// An account this phone already lists and is signed out of.
+    case returning(SignedInAccount)
 }
 
 /// Sign-in happens on the web, in a browser the app does not own and cannot

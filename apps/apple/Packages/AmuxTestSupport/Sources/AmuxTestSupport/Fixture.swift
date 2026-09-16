@@ -26,10 +26,14 @@ public struct Fixture: Identifiable, Sendable {
     /// means nobody has been asked about, which is every state but the two the
     /// question itself is the subject of.
     public let deletion: Deleting?
+    /// The account this state is asking about taking off the phone, if any.
+    public let removing: AccountId?
     /// Where a sign-in stands in this state. It is declared here rather than
     /// applied to a bundle because it is not an account's fact: signing in is
     /// what makes an account, so there is none to hang it on yet.
     public let signIn: SignInStore.Phase
+    /// Which account that sign-in is for.
+    public let signInIntent: SignInIntent
     /// The type size to render at, in the door's own words. Absent means the
     /// device's own setting.
     public let typeSize: String?
@@ -59,9 +63,11 @@ public struct Fixture: Identifiable, Sendable {
         cloud: ScriptedCloudState = ScriptedCloudState(),
         accounts: [AccountEntry] = [Fixture.subscribed],
         signIn: SignInStore.Phase = .ready,
+        signInIntent: SignInIntent = .adding,
         store: ScriptedStoreState = ScriptedStoreState(),
         paywall: PaywallStore.Phase = .ready,
         deletion: Deleting? = nil,
+        removing: AccountId? = nil,
         typeSize: String? = nil,
         reduceMotion: Bool = false,
         reduceTransparency: Bool = false,
@@ -74,9 +80,11 @@ public struct Fixture: Identifiable, Sendable {
         self.cloud = cloud
         self.accounts = accounts
         self.signIn = signIn
+        self.signInIntent = signInIntent
         self.store = store
         self.paywall = paywall
         self.deletion = deletion
+        self.removing = removing
         self.typeSize = typeSize
         self.reduceMotion = reduceMotion
         self.reduceTransparency = reduceTransparency

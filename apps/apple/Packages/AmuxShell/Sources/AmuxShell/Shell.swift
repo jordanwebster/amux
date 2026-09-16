@@ -28,6 +28,15 @@ public enum ShellAction: Equatable, Sendable {
     /// Somebody asked to sign in. Where that leads is a page; what it does
     /// when it gets there is the cloud's, which is why both leave the shell.
     case signIn
+    /// Sign back into one account this phone already lists. Kept apart from
+    /// adding one, because amux.sh is asked for that account by name and
+    /// whoever comes back is checked against it.
+    case signInAgain(AccountId)
+    /// A sign-in came back as another account than the one asked for, and
+    /// the person wants it on the phone anyway.
+    case keepSignIn
+    /// The same, and the person does not.
+    case discardSignIn
     /// The press on the sign-in screen itself: hand off to the account
     /// service. The shell does not do this because it reaches nothing.
     case handOffSignIn
@@ -40,6 +49,12 @@ public enum ShellAction: Equatable, Sendable {
     case retryPurchase
     /// Leave an account. It stays listed with Sign In beside it.
     case signOutAccount(AccountId)
+    /// Somebody asked to take an account off this phone. What that does is
+    /// said first, over the page it was asked from.
+    case removeAccount(AccountId)
+    /// The answer to that question.
+    case confirmRemoval
+    case cancelRemoval
     /// Somebody asked to give up an account for good. What that costs is a
     /// question the app asks before anything leaves this phone.
     case deleteAccount(AccountId)
@@ -88,6 +103,8 @@ public struct Shell: View {
     /// to cancel a renewal and coming back finds the same question, with the
     /// address still typed.
     private let deletion: DeletionStore
+    /// The account this phone is asking about taking off it, if any.
+    private let removal: RemovalStore
     /// What the app is wearing, or nothing for whatever the phone is set to.
     private let appearance: Appearance?
     /// Freezes the screen and opens a report on it, from Help. The app owns
@@ -106,6 +123,7 @@ public struct Shell: View {
         signIn: SignInStore,
         paywall: PaywallStore,
         deletion: DeletionStore,
+        removal: RemovalStore = RemovalStore(),
         appearance: Appearance? = nil,
         report: @escaping @MainActor () -> Void = {},
         recording: ConversationRecording? = nil,
@@ -113,6 +131,7 @@ public struct Shell: View {
     ) {
         self.appearance = appearance
         self.deletion = deletion
+        self.removal = removal
         self.router = router
         self.accounts = accounts
         self.stores = stores
@@ -144,7 +163,7 @@ public struct Shell: View {
                 NavigationStack(path: $router.youPath) {
                     YouTabRoot(
                         router: self.router, accounts: accounts, stores: stores,
-                        deletion: deletion, appearance: appearance,
+                        deletion: deletion, removal: removal, appearance: appearance,
                         report: report, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
@@ -558,6 +577,7 @@ private struct AgentsTab: View {
             case .switchAccount(let id): actions(.selectAccount(id))
             case .addAccount: actions(.addAccount)
             case .signIn: actions(.signIn)
+            case .signInAgain(let id): actions(.signInAgain(id))
             case .subscribe: actions(.subscribe)
             // Pairing lives under Hosts wherever it is started from: the page
             // it opens is that tab's, and going back from it belongs there
@@ -591,6 +611,8 @@ private struct SignInPage: View {
             switch action {
             case .cancel, .done: router.pop()
             case .start: actions(.handOffSignIn)
+            case .keep: actions(.keepSignIn)
+            case .discard: actions(.discardSignIn)
             }
         }
         // The screen draws its own header, so the bar would be a second one.
@@ -877,6 +899,7 @@ private struct YouTabRoot: View {
     let accounts: AccountRegistry
     let stores: StoreBundle
     let deletion: DeletionStore
+    let removal: RemovalStore
     let appearance: Appearance?
     /// Freezes the screen behind this page and opens the report on it.
     let report: @MainActor () -> Void
@@ -896,7 +919,17 @@ private struct YouTabRoot: View {
                 }
             }
         ) {
-            you
+            RemoveAccountOverlay(
+                accounts: accounts, model: removal,
+                actions: { asked in
+                    switch asked {
+                    case .cancel: actions(.cancelRemoval)
+                    case .confirm: actions(.confirmRemoval)
+                    }
+                }
+            ) {
+                you
+            }
         }
         // The screen draws its own header, so the bar would be a second one.
         .toolbar(.hidden, for: .navigationBar)
@@ -913,8 +946,9 @@ private struct YouTabRoot: View {
             switch action {
             case .select(let id): actions(.selectAccount(id))
             case .add: actions(.addAccount)
-            case .signIn: actions(.signIn)
+            case .signIn(let id): actions(.signInAgain(id))
             case .signOut(let id): actions(.signOutAccount(id))
+            case .remove(let id): actions(.removeAccount(id))
             case .subscription: actions(.subscribe)
             case .appearance(let wanted): actions(.wear(wanted))
             case .delete(let id): actions(.deleteAccount(id))

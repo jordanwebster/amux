@@ -75,6 +75,11 @@ public final class AccountRegistry {
     public private(set) var stores: StoreBundle?
     /// Late results refused because they answered for a deselected account.
     public private(set) var dropped = 0
+    /// Accounts removed from this phone whose local data the runtime is still
+    /// to delete. Remembered between launches, because the deleting happens
+    /// when a runtime starts and the app may not live to start one. An account
+    /// added back is taken off it.
+    public private(set) var forgotten: [AccountId] = []
     /// What to tell whoever holds the runtime when the account on screen
     /// changes.
     ///
@@ -94,6 +99,7 @@ public final class AccountRegistry {
     private struct Remembered: Codable {
         var accounts: [AccountEntry]
         var selected: AccountId?
+        var forgotten: [AccountId]?
     }
 
     public init(file: URL? = nil) {
@@ -101,6 +107,7 @@ public final class AccountRegistry {
         guard let file, let data = try? Data(contentsOf: file),
               let saved = try? AmuxJSON.decoder.decode(Remembered.self, from: data) else { return }
         accounts = saved.accounts
+        forgotten = saved.forgotten ?? []
         selected = saved.selected.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
         if let selected, accounts.contains(where: { $0.id == selected && $0.signedIn }) {
             stores = StoreBundle(account: selected)
@@ -112,7 +119,8 @@ public final class AccountRegistry {
         do {
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try AmuxJSON.encoder.encode(Remembered(accounts: accounts, selected: selected))
+            try AmuxJSON.encoder.encode(
+                Remembered(accounts: accounts, selected: selected, forgotten: forgotten))
                 .write(to: file, options: .atomic)
             persistenceFailed = false
         } catch {
@@ -158,6 +166,7 @@ public final class AccountRegistry {
     public private(set) var cloud: CloudState = .signedOut
 
     public func add(_ account: SignedInAccount, entitlement: Entitlement = .none) {
+        forgotten.removeAll { $0 == account.id }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index].account = account
             accounts[index].signedIn = true
@@ -185,14 +194,31 @@ public final class AccountRegistry {
         changed?()
     }
 
+    /// Takes an account off this phone: off the list, and onto the accounts
+    /// whose profile and caches the runtime deletes when it next starts.
+    ///
+    /// The account on screen is replaced by one still signed in where there is
+    /// one, because that is the phone still working; otherwise by whatever is
+    /// left, which with nothing signed in is a signed-out phone.
     public func forget(_ id: AccountId) {
+        let known = accounts.contains { $0.id == id }
         accounts.removeAll { $0.id == id }
+        if known, !forgotten.contains(id) { forgotten.append(id) }
         if selected == id {
-            selected = accounts.first?.id
+            selected = accounts.first(where: \.signedIn)?.id ?? accounts.first?.id
             stores = selectedAccount?.signedIn == true ? selected.map { StoreBundle(account: $0) } : nil
         }
         persist()
         changed?()
+    }
+
+    /// The runtime has started with these accounts forgotten, which is when
+    /// their profiles were deleted, so they need not be named again. Nothing
+    /// about which accounts are on this phone changed, so nobody is told.
+    public func forgottenDeleted(_ ids: [AccountId]) {
+        let before = forgotten
+        forgotten.removeAll { ids.contains($0) }
+        if forgotten != before { persist() }
     }
 
     /// Puts a whole set of accounts back, as a launch that remembered them or

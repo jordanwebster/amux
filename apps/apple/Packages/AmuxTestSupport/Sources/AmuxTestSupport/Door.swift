@@ -399,11 +399,17 @@ public struct AccountsState: Codable, Sendable, Equatable {
     /// Answers refused because they were about an account that is no longer on
     /// screen.
     public let dropped: Int
+    /// Accounts removed from this phone that a runtime has since started
+    /// without, deleting their profiles and caches. Nothing on screen says it.
+    public let deletedProfiles: [String]
 
-    public init(selected: String?, accounts: [Known], dropped: Int) {
+    public init(
+        selected: String?, accounts: [Known], dropped: Int, deletedProfiles: [String] = []
+    ) {
         self.selected = selected
         self.accounts = accounts
         self.dropped = dropped
+        self.deletedProfiles = deletedProfiles
     }
 
     /// One account, as its row is drawn from.

@@ -9,6 +9,8 @@ public enum AccountsAction: Equatable, Sendable {
     /// Sign back into an account this phone still remembers.
     case signIn(AccountId)
     case signOut(AccountId)
+    /// Take an account off this phone, leaving it on amux.sh.
+    case remove(AccountId)
     case delete(AccountId)
     /// Open what this account has bought.
     case subscription
@@ -284,6 +286,18 @@ public struct YouScreen: View {
                     AccountRow(
                         entry: entry, selected: entry.id == accounts.selected, actions: actions)
                         .padding(.horizontal, 14)
+                        // On the row itself, because the account's own section
+                        // below is only ever the selected account's, and an
+                        // account signed out of is the one most likely to be
+                        // taken off a phone.
+                        .contextMenu {
+                            Button(role: .destructive) { actions(.remove(entry.id)) } label: {
+                                Label("Remove from This Phone", systemImage: "minus.circle")
+                            }
+                        }
+                        .accessibilityAction(named: "Remove from This Phone") {
+                            actions(.remove(entry.id))
+                        }
                     rule(inset: 14)
                 }
                 Button { actions(.add) } label: {
@@ -323,6 +337,8 @@ public struct YouScreen: View {
                 }
                 rule()
                 action("Sign Out", id: "signOut") { actions(.signOut(entry.id)) }
+                rule()
+                action("Remove from This Phone", id: "remove") { actions(.remove(entry.id)) }
                 rule()
                 // The one destructive thing on the page, in the colour this
                 // app keeps for exactly that.

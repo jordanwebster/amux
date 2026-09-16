@@ -2862,7 +2862,8 @@ def production_startup(journey: Journey, udid: str, ready: dict) -> None:
                    and "fix-login" in connected["agents"],
                    f"the app's own startup did not reach its host and agent: {connected}")
     calls = seen["calls"]["cloud"]
-    journey.expect("signIn" in calls and "connectToken personal" in calls,
+    journey.expect(any(call.startswith("signIn ") for call in calls)
+                   and "connectToken personal" in calls,
                    f"the app did not ask its account service for a connection: {calls}")
     journey.expect(sum(call.startswith("connectToken ") for call in calls) <= 4,
                    "redrawing the app restarted its coordinator or repeatedly asked for a token")
@@ -2918,6 +2919,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
 
     pictures = {"unsigned-launch": ("first-run",), "subscribe": ("paywall",),
                 "switching": ("profiles",), "delete": ("delete",),
+                "signed-out-account": ("sign-in-mismatch",), "remove-from-phone": ("remove",),
                 "help-and-appearance": ("appearance-dark", "appearance-light")}
     driving = journey.acts
     port = free_port()
@@ -2995,6 +2997,12 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("accountsAfterSigningIn")
                        == ["ada@example.com: signed in, Not subscribed · hosts on this network still work"],
                        f"this phone knows {seen.get('accountsAfterSigningIn')}")
+        # With no account on the phone, signing in is adding one, and amux.sh
+        # is asked for its account chooser rather than for any one account.
+        journey.expect("signIn select" in (seen.get("callsAfterSigningIn") or [])
+                       and not any(call.startswith("signIn hint")
+                                   for call in seen.get("callsAfterSigningIn") or []),
+                       f"the first sign-in asked amux.sh {seen.get('callsAfterSigningIn')}")
         journey.say(f"the hand-off names where it is sending you and never asks for a password: "
                     f"refused it says the account service's own words "
                     f"({seen.get('refusalSaid')!r}), cancelled it leaves nothing to dismiss, and "
@@ -3193,11 +3201,32 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                        == "Not subscribed · hosts on this network still work",
                        f"a subscription that has run out reads "
                        f"{seen.get('lapsedSubscriptionRow')!r}")
+        # Signing back in names the account it is for, so amux.sh can skip the
+        # chooser or fill the address in.
+        hinted = seen.get("callsSigningBackIn") or []
+        journey.expect(hinted and all(call == "signIn hint team@acme.example" for call in hinted),
+                       f"signing back in asked amux.sh {hinted}")
+        # Somebody else came back. Nothing is added until the person says so,
+        # and cancelling lets go of the session that sign-in left.
+        journey.expect(seen.get("mismatchSaid") == "stranger@example.com"
+                       and seen.get("mismatchOffers") == "Continue as stranger@example.com",
+                       f"a sign-in that came back as somebody else said "
+                       f"{seen.get('mismatchSaid')!r} offering {seen.get('mismatchOffers')!r}")
+        journey.expect(seen.get("accountsAfterTheMismatch") == seen.get("accountsAfterSigningOut"),
+                       f"cancelling a sign-in that came back as somebody else changed the "
+                       f"accounts from {seen.get('accountsAfterSigningOut')} to "
+                       f"{seen.get('accountsAfterTheMismatch')}")
+        journey.expect("forgetSession stranger" in (seen.get("callsCancellingTheMismatch") or []),
+                       f"cancelling kept the session of the account nobody asked for: "
+                       f"{seen.get('callsCancellingTheMismatch')}")
         journey.say("signing out of one account leaves it listed with Sign In beside it — the "
                     "address is the one thing anybody recognises, and forgetting it would make "
-                    "signing back in look like adding a stranger. Signing back in finds a "
-                    "subscription that has since ended, and the row reads as not subscribed, "
-                    "saying in the same breath that hosts on this network still work")
+                    "signing back in look like adding a stranger. Signing back in asks amux.sh "
+                    "for that account by its address; when somebody else comes back instead the "
+                    "phone says who, adds nobody, and cancelling lets go of that session. "
+                    "Signed back in, it finds a subscription that has since ended, and the row "
+                    "reads as not subscribed, saying in the same breath that hosts on this "
+                    "network still work")
 
     def delete() -> None:
         """An account given up for good."""
@@ -3233,6 +3262,42 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                     "coming back finds the same question with the address still typed. Deleted, "
                     "the account leaves the phone and the other one is what is left")
 
+    def remove_from_phone() -> None:
+        """Accounts taken off the phone, with amux.sh left alone."""
+        journey.expect(seen.get("removeAsks") == "side@example.com"
+                       and seen.get("removeSaysAccountStays") is True,
+                       f"removing an account asked {seen.get('removeAsks')!r} without saying the "
+                       f"amux.sh account stays: {seen.get('removeSaysAccountStays')}")
+        journey.expect(seen.get("accountsBeforeRemoving") == [
+            "ada@example.com: signed in, Subscribed through the App Store",
+            "side@example.com: signed out, Not subscribed · hosts on this network still work"],
+            f"before removing, this phone knows {seen.get('accountsBeforeRemoving')}")
+        journey.expect(seen.get("accountsAfterRemovingSignedOut")
+                       == ["ada@example.com: signed in, Subscribed through the App Store"]
+                       and seen.get("selectedAfterRemovingSignedOut") == "personal",
+                       f"removing the signed-out account left {seen.get('accountsAfterRemovingSignedOut')} "
+                       f"with {seen.get('selectedAfterRemovingSignedOut')!r} on screen")
+        journey.expect(seen.get("accountsAfterRemovingTheLast") == []
+                       and seen.get("selectedAfterRemovingTheLast") is None
+                       and seen.get("gateAfterRemovingTheLast") == "signed-out",
+                       f"removing the last account left {seen.get('accountsAfterRemovingTheLast')} "
+                       f"with {seen.get('selectedAfterRemovingTheLast')!r} on screen and the home "
+                       f"at {seen.get('gateAfterRemovingTheLast')!r}")
+        removed = seen.get("callsRemoving") or []
+        journey.expect("forgetSession side" in removed and "forgetSession personal" in removed
+                       and not any(call.startswith("requestDeletion") for call in removed),
+                       f"removing two accounts asked the account service {removed}")
+        # The account deleted in the act before is one too: an account that no
+        # longer exists leaves nothing of itself on the phone either.
+        journey.expect(sorted(seen.get("forgottenByTheRuntime") or []) == ["personal", "side", "work"],
+                       f"the runtime was told to forget {seen.get('forgottenByTheRuntime')}")
+        journey.say("Remove from This Phone says the amux.sh account stays and asks nothing to be "
+                    "typed. A signed-out account is removed from its row's own menu, and the "
+                    "account on screen from its own section: each is signed out of this phone, "
+                    "dropped from the list, and handed to the runtime to delete its profile and "
+                    "caches, as the account deleted before them was, and amux.sh is never asked "
+                    "to delete anything. With the last one gone the phone is signed out")
+
     def help_and_appearance() -> None:
         """What belongs to the phone rather than to an account."""
         journey.expect(seen.get("appearances") == ["dark", "light", "system"],
@@ -3255,6 +3320,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         "switching": switching,
         "signed-out-account": signed_out_account,
         "delete": delete,
+        "remove-from-phone": remove_from_phone,
         "help-and-appearance": help_and_appearance,
     }
     journey.expect(journey.filtered or list(checks) == driving,

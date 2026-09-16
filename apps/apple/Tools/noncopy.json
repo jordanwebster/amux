@@ -15,6 +15,9 @@
       {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\"forgetSession \\(id)\"", "context": "case .forgetSession(let id): \"forgetSession \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"signIn hint \\(account.email)\"", "context": "case .signIn(.returning(let account)): \"signIn hint \\(account.email)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"signIn select\"", "context": "case .signIn(.adding): \"signIn select\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\" error=\\($0)\"", "context": "let error = host.lastDialError.map { \" error=\\($0)\" } ?? \"\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
       {"literal": "\"\\(host.name) via=\\(host.via.rawValue) online=\\(host.online)\"", "context": "return \"\\(host.name) via=\\(host.via.rawValue) online=\\(host.online)\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
       {"literal": "\"unknown\"", "context": "+ \" signed_in=\\(host.signedIn.map(String.init(describing:)) ?? \"unknown\")\\(error)\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
@@ -43,7 +46,6 @@
       {"literal": "\"the runtime did not start\"", "context": "return .error(\"the runtime did not start\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"this app has no accounts of its own\"", "context": "guard let composed else { return .error(\"this app has no accounts of its own\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"nothing has ever answered for \\(account)\"", "context": "return .error(\"nothing has ever answered for \\(account)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"signIn\"", "context": "case .signIn: \"signIn\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"account \\(id)\"", "context": "case .account(let id): \"account \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"entitlement \\(id)\"", "context": "case .entitlement(let id): \"entitlement \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"connectToken \\(id)\"", "context": "case .connectToken(let id): \"connectToken \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -211,6 +213,11 @@
       {"literal": "\"delete_agent\"", "context": "\"command\": .string(\"delete_agent\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift": [
+      {"literal": "\"%2B\"", "context": ".replacingOccurrences(of: \"+\", with: \"%2B\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"+\"", "context": ".replacingOccurrences(of: \"+\", with: \"%2B\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"login_hint\"", "context": "components.queryItems?.append(URLQueryItem(name: \"login_hint\", value: account.email))", "reason": "OpenID Connect authorize parameter name or value; not interface copy.", "count": 1},
+      {"literal": "\"select_account\"", "context": "components.queryItems?.append(URLQueryItem(name: \"prompt\", value: \"select_account\"))", "reason": "OpenID Connect authorize parameter name or value; not interface copy.", "count": 1},
+      {"literal": "\"prompt\"", "context": "components.queryItems?.append(URLQueryItem(name: \"prompt\", value: \"select_account\"))", "reason": "OpenID Connect authorize parameter name or value; not interface copy.", "count": 1},
       {"literal": "\"https://amux.sh\"", "context": "base: URL(string: \"https://amux.sh\")!,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"mobile\"", "context": "clientID: \"mobile\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux://callback\"", "context": "callback: URL(string: \"amux://callback\")!,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1221,6 +1228,8 @@
       {"literal": "\"Fonts/\\(file)\"", "context": "Bundle.module.url(forResource: \"Fonts/\\(file)\", withExtension: nil)", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift": [
+      {"literal": "\"remove\"", "context": "action(\"Remove from This Phone\", id: \"remove\") { actions(.remove(entry.id)) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"minus.circle\"", "context": "Label(\"Remove from This Phone\", systemImage: \"minus.circle\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"account.\\(entry.account.email)\"", "context": "\"account.\\(entry.account.email)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"checkmark\"", "context": "Image(systemName: \"checkmark\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"\\(waiting)\"", "context": "Text(\"\\(waiting)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -1435,6 +1444,14 @@
       {"literal": "\"drawer.you\"", "context": "footLink(\"person.crop.circle\", \"You\", \"drawer.you\") { actions(.you) }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"drawer.online\"", "context": ".identified(\"drawer.online\", value: online)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift": [
+      {"literal": "\"remove.confirm\"", "context": ".identified(\"remove.confirm\", label: \"Remove\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"remove.cancel\"", "context": ".identified(\"remove.cancel\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"remove\"", "context": ".identified(\"remove\", value: entry.account.email)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false,", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true, \"Your agents and files stay on your hosts.\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true,", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift": [
       {"literal": "\"host-away\"", "context": "case .hostAway: \"host-away\"", "reason": "Door and capture vocabulary a journey names a state by; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
@@ -1664,6 +1681,9 @@
       {"literal": "\"permissions.\\(choice.id)\"", "context": "\"permissions.\\(choice.id)\", label: choice.name,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift": [
+      {"literal": "\"sign-in.mismatch\"", "context": ".identified(\"sign-in.mismatch\", value: got.email)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"sign-in.discard\"", "context": ".identified(\"sign-in.discard\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"mismatched\"", "context": "case .mismatched: \"mismatched\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sign-in\"", "context": ".identified(\"sign-in\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sign-in.title\"", "context": ".identified(\"sign-in.title\", value: \"Sign in\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1957,6 +1977,13 @@
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"remove-account\"", "context": "Fixture(id: \"remove-account\", screen: .you, accounts: Fixture.several,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"remove-account\"", "context": "Built(.you, \"remove-account\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"sign-in-mismatch\"", "context": "Fixture(id: \"sign-in-mismatch\", screen: .signIn, accounts: Fixture.several,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"JW\"", "context": "id: AccountId(\"stranger\"), email: \"jw@example.com\", displayName: \"JW\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"jw@example.com\"", "context": "id: AccountId(\"stranger\"), email: \"jw@example.com\", displayName: \"JW\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"stranger\"", "context": "id: AccountId(\"stranger\"), email: \"jw@example.com\", displayName: \"JW\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"sign-in-mismatch\"", "context": "Built(.signIn, \"sign-in-mismatch\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"host-not-signed-in\"", "context": "Built(.hosts, \"host-not-signed-in\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
       {"literal": "\"host-away\"", "context": "Built(.home, \"host-away\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
       {"literal": "\"home-signed-out-offline\"", "context": "Built(.home, \"home-signed-out-offline\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},

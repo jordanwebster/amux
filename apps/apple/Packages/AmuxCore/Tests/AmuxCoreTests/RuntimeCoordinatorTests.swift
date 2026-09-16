@@ -13,7 +13,8 @@ private actor RelayCloud: CloudService {
         guard permitted else { throw .refused("A subscription is needed") }
         return ConnectToken(bearer: "token-\(id)", host: host, port: 443)
     }
-    func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
+    func forgetSession(_ id: AccountId) async throws {}
+    func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated
     }
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts { throw .unauthenticated }
@@ -346,6 +347,49 @@ final class RuntimeCoordinatorTests: XCTestCase {
         // And what the system says about the network reaches the same screen.
         coordinator.localNetwork(.denied)
         XCTAssertEqual(signedOut.hosts.localNetwork, .denied)
+    }
+
+    /// A removed account is named to the next runtime, which is the only
+    /// thing that can delete its profile — even when removing it changed
+    /// nothing about which accounts are signed in — and once a runtime has
+    /// opened with it, it is not named again.
+    func testARemovedAccountIsHandedToTheNextRuntimeToDelete() async throws {
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        registry.add(ada)
+        registry.add(bo)
+        registry.signOut(bo.id)
+        var clients: [ScriptedRuntime] = []
+        var configurations: [BridgeConfiguration] = []
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone", factory: { config, _ in
+                configurations.append(config)
+                let client = ScriptedRuntime()
+                clients.append(client)
+                return client
+            })
+        defer { coordinator.stop() }
+        _ = await coordinator.reconnect()
+        XCTAssertEqual(configurations.last?.forget, [])
+
+        // Signed out and not on screen: the signed-in accounts are the same
+        // before and after, and a runtime starts anyway.
+        registry.forget(bo.id)
+        for _ in 0..<1000 where clients.count < 2 { await Task.yield() }
+        XCTAssertEqual(clients.count, 2, "removing an account did not restart the runtime")
+        XCTAssertEqual(configurations.last?.forget, ["bo"])
+        XCTAssertEqual(configurations.last?.accounts.map(\.id), ["ada"])
+        XCTAssertTrue(clients[0].stopped)
+
+        clients.last?.replies.yield([.connection(.init(state: .connected))])
+        for _ in 0..<1000 where !registry.forgotten.isEmpty { await Task.yield() }
+        XCTAssertEqual(registry.forgotten, [])
+        XCTAssertEqual(coordinator.deletedProfiles, ["bo"])
+        // Having deleted it, nothing restarts over it.
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(clients.count, 2)
     }
 
     func testSigningOutWithASecondAccountSignedInStillLeavesAPhoneThatBrowsesAndDials() async throws {
