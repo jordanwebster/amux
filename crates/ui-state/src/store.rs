@@ -72,6 +72,14 @@ impl HeadDto {
         }
     }
 
+    pub fn summary(&self) -> &model::Summary {
+        match self {
+            Self::Claude(head) => &head.summary,
+            Self::ClaudeSdk(head) => &head.summary,
+            Self::Codex(head) => &head.summary,
+        }
+    }
+
     fn segment(&self) -> SegmentId {
         match self {
             Self::Claude(head) => head.segment,

@@ -168,6 +168,18 @@ impl ClaudeSdkEntry {
         self.finality.value().map(String::as_str)
     }
 
+    pub fn tool_name(&self) -> Option<&str> {
+        self.tool_name.value().map(String::as_str)
+    }
+
+    pub fn tool_input(&self) -> Option<&JsonBytes> {
+        self.tool_input.value()
+    }
+
+    pub fn tool_outcome(&self) -> Option<&JsonBytes> {
+        self.tool_outcome.value()
+    }
+
     pub fn task_description(&self) -> Option<&str> {
         self.task_description.value().map(String::as_str)
     }
@@ -178,6 +190,22 @@ impl ClaudeSdkEntry {
 
     pub fn task_state(&self) -> Option<&TaskState> {
         self.task_state.value()
+    }
+
+    pub fn task_subagent(&self) -> Option<&str> {
+        self.task_subagent.value().map(String::as_str)
+    }
+
+    pub fn task_last_tool(&self) -> Option<&str> {
+        self.task_last_tool.value().map(String::as_str)
+    }
+
+    pub fn task_summary(&self) -> Option<&str> {
+        self.task_summary.value().map(String::as_str)
+    }
+
+    pub fn task_usage(&self) -> Option<&JsonBytes> {
+        self.task_usage.value()
     }
 
     pub fn is_incomplete(&self) -> bool {

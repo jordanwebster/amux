@@ -336,7 +336,7 @@ impl ChatView {
         };
         let mut cache = self.paint_cache.borrow_mut();
         let mut parts = frame_parts(model, self, &mut cache, &ctx);
-        install_store_feed(model, self.agent, &mut parts, &ctx);
+        install_store_feed(model, self, &mut parts, &ctx);
         drop(cache);
         let following_geometry = parts.geometry(viewport, false);
         let paused_geometry = parts.geometry(viewport, true);
@@ -668,7 +668,7 @@ pub(crate) fn build_chat_lines(
     let mut cache = chat.paint_cache.borrow_mut();
     cache.reset_stats();
     let mut parts = frame_parts(model, chat, &mut cache, ctx);
-    install_store_feed(model, chat.agent, &mut parts, ctx);
+    install_store_feed(model, chat, &mut parts, ctx);
     drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
@@ -717,10 +717,11 @@ fn boundary_label(boundary: Boundary) -> &'static str {
 
 fn install_store_feed(
     model: &Model,
-    agent: AgentId,
+    view: &ChatView,
     parts: &mut ChatFrameParts,
     ctx: &FrameContext,
 ) {
+    let agent = view.agent;
     let Some(chat) = model.chat(agent) else {
         return;
     };
@@ -755,13 +756,39 @@ fn install_store_feed(
                 ctx.viewport.0 as usize,
             ));
         }
-        durable.push(blocks::paint_stored_entry(
-            stable_block_key(0xd000_0000_0000_0000, key.as_ref()),
-            entry.kind(),
-            entry.text().unwrap_or_default(),
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        ));
+        let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
+        let (reports_open, leader) = match &view.inner {
+            AgentChatView::Claude(provider) => (provider.reports_open, provider.leader),
+            AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader),
+            AgentChatView::Codex(provider) => (provider.reports_open, provider.leader),
+        };
+        let message_view = MessageView::new(model, agent, reports_open, leader);
+        let painted = match entry {
+            ui_state::StoredDto::Claude(stored) => Some(claude::stored_entry_block(
+                block_key,
+                &stored.entry,
+                message_view,
+                ctx.theme,
+                ctx.viewport.0 as usize,
+            )),
+            ui_state::StoredDto::ClaudeSdk(stored) => claude_sdk::stored_entry_block(
+                block_key,
+                &stored.entry,
+                message_view,
+                ctx.theme,
+                ctx.viewport.0 as usize,
+            ),
+            ui_state::StoredDto::Codex(stored) => Some(codex::render::stored_entry_block(
+                block_key,
+                &stored.entry,
+                message_view,
+                ctx.theme,
+                ctx.viewport.0 as usize,
+            )),
+        };
+        if let Some(painted) = painted {
+            durable.push(painted);
+        }
     }
     for boundary in boundaries {
         let identity = format!(
@@ -776,7 +803,9 @@ fn install_store_feed(
         ));
     }
     parts.feed.blocks = durable;
-    parts.feed.history_truncated = false;
+    if !chat.live_only {
+        parts.feed.history_truncated = false;
+    }
     parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
 }
 

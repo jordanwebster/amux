@@ -137,6 +137,18 @@ impl ClaudeEntry {
         self.tool_outcome.value()
     }
 
+    pub fn tool_name(&self) -> Option<&str> {
+        self.tool_name.value().map(String::as_str)
+    }
+
+    pub fn tool_input(&self) -> Option<&JsonBytes> {
+        self.tool_input.value()
+    }
+
+    pub fn message_final(&self) -> bool {
+        self.message_final.value().copied().unwrap_or(false)
+    }
+
     pub fn is_clipped(&self) -> bool {
         self.clipped.value().copied().unwrap_or(false) || self.components.is_clipped()
     }

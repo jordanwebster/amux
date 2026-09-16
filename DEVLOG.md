@@ -1,3 +1,10 @@
+2026-09-16 — **Stored conversations use their native chat presentation.**
+Every durable Claude PTY, Claude SDK and Codex entry now passes through the
+same provider renderer as a live stream, preserving prompts, replies, thought,
+tool details and results, approvals, agent messages and other provider-specific
+blocks. Reopened SDK chats also retain todo progress from their durable summary,
+while historical permissions remain visible without becoming answerable.
+
 2026-09-16 — **Remembered fleets stay useful without opening hidden chats.**
 The remembered-chat view now restores only the fleet cursor; a chat load and
 daemon subscription begin only after the user opens that conversation. Host

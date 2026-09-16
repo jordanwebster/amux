@@ -53,6 +53,24 @@ impl FeedEntry {
     pub fn parent_tool_use_id(&self) -> Option<&str> {
         self.parent_tool_use_id.as_deref()
     }
+
+    /// Rebuild a renderer-facing entry from its durable semantic body.
+    pub fn restored(
+        id: u64,
+        kind: FeedEntryKind,
+        parent_tool_use_id: Option<String>,
+        content_truncated: bool,
+    ) -> Self {
+        Self {
+            id,
+            seq: 0,
+            kind,
+            block: None,
+            parent_tool_use_id,
+            content_truncated,
+            final_row_id: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

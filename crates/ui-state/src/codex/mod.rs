@@ -31,6 +31,7 @@ pub type FeedEntry = ::fold::codex::FeedEntry<Vec<Segment>>;
 pub type FeedEntryKind = ::fold::codex::FeedEntryKind<Vec<Segment>>;
 pub type PromptEntry = ::fold::codex::PromptEntry<Vec<Segment>>;
 pub type MessageEntry = ::fold::codex::MessageEntry<Vec<Segment>>;
+pub type Observation = ::fold::codex::Observation<Vec<Segment>>;
 
 pub const PROTOCOL: &str = ::fold::codex::PROTOCOL;
 pub use ::fold::codex::{ASKS_RETAINED, FEED_RETAINED, OUTPUT_HEAD_MAX};

@@ -798,54 +798,6 @@ pub(crate) fn paint_compaction_rule(
     block(key, BlockKind::Divider, vec![rule_row(label, theme, width)])
 }
 
-/// Provider-neutral durable entry paint used before a live provider layer is
-/// available. The store deliberately persists semantic entries rather than
-/// renderer state; these stable kinds preserve the important authorship and
-/// event distinctions without inventing provider-specific facts.
-pub(crate) fn paint_stored_entry(
-    key: BlockKey,
-    kind: &str,
-    text: &str,
-    theme: Theme,
-    width: usize,
-) -> PaintedBlock {
-    match kind {
-        "prompt" => paint_user_prompt(key, text, false, theme, width),
-        "error" | "api_error" => paint_error(key, text, false, theme, width),
-        "turn" | "boundary" | "compaction" => {
-            paint_turn_rule(key, if text.is_empty() { kind } else { text }, theme, width)
-        }
-        "thinking" | "reasoning" => {
-            let label = if text.is_empty() { kind } else { text };
-            block(
-                key,
-                BlockKind::Activity,
-                glyph_rows(
-                    ("~", theme.muted()),
-                    markdown::plain_rows(label, text_width(width), theme.muted()),
-                    theme,
-                ),
-            )
-        }
-        _ => {
-            let body = if text.is_empty() { kind } else { text };
-            block(
-                key,
-                if matches!(kind, "message" | "agent_message") {
-                    BlockKind::Speech
-                } else {
-                    BlockKind::Activity
-                },
-                glyph_rows(
-                    ("·", theme.muted()),
-                    markdown::plain_rows(body, text_width(width), theme.text()),
-                    theme,
-                ),
-            )
-        }
-    }
-}
-
 pub(crate) fn paint_history_boundary(
     key: BlockKey,
     label: &str,

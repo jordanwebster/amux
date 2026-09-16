@@ -18,7 +18,7 @@ pub(crate) mod keys;
 mod render;
 
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::claude_frame_parts;
+pub(crate) use render::{claude_frame_parts, stored_entry_block};
 use serde::{Deserialize, Serialize};
 use ui_state::claude::answer::{AskAnswer, PermissionAnswer, PlanAnswer};
 use ui_state::claude::{Ask, AskKind, AskState, ChatPhase, ToolInvocation};

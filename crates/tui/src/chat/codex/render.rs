@@ -1090,6 +1090,241 @@ fn entry_block(
     }
 }
 
+pub(crate) fn stored_entry_block(
+    key: BlockKey,
+    entry: &ui_state::StoredCodexEntry,
+    message_view: MessageView<'_>,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    use ui_state::DurableEntry as _;
+    use ui_state::{StoredCodexBody as CodexBody, StoredCodexEntryKind as CodexEntryKind};
+
+    let body = entry.body().cloned().unwrap_or_default();
+    let text = entry.text().unwrap_or_default().to_string();
+    let finality = if entry.finality() == Some("open") {
+        ItemFinality::Open
+    } else {
+        ItemFinality::Complete
+    };
+    let kind = match entry.entry_kind().unwrap_or_default() {
+        CodexEntryKind::Prompt => {
+            let (item_id, source) = match body {
+                CodexBody::Item { item_id, .. } => (item_id, PromptSource::Protocol),
+                CodexBody::Steer { input_id } => (input_id, PromptSource::SteerEcho),
+                _ => (String::new(), PromptSource::Protocol),
+            };
+            FeedEntryKind::Prompt(PromptEntry {
+                item_id,
+                source,
+                parts: vec![PromptPart::Text { text: text.clone() }],
+                content: vec![ui_state::attachments::Segment::Prose(text)],
+                finality,
+            })
+        }
+        CodexEntryKind::Message => {
+            let item_id = match body {
+                CodexBody::Item { item_id, .. } => item_id,
+                _ => String::new(),
+            };
+            FeedEntryKind::Message(ui_state::codex::MessageEntry {
+                item_id,
+                text: text.clone(),
+                content: vec![ui_state::attachments::Segment::Prose(text)],
+                phase: MessagePhase::FinalAnswer,
+                finality,
+            })
+        }
+        CodexEntryKind::Reasoning => {
+            let item_id = match body {
+                CodexBody::Item { item_id, .. } => item_id,
+                _ => String::new(),
+            };
+            FeedEntryKind::Reasoning(ui_state::codex::ReasoningEntry {
+                item_id,
+                text,
+                summary: Vec::new(),
+                finality,
+            })
+        }
+        CodexEntryKind::Work => {
+            if let Some(restored) = restored_codex_work(entry) {
+                restored.kind
+            } else {
+                let item_id = match body {
+                    CodexBody::Item { item_id, .. } => item_id,
+                    _ => String::new(),
+                };
+                FeedEntryKind::Work(WorkEntry {
+                    item_id,
+                    kind: WorkKind::Other {
+                        item_type: "work".into(),
+                        raw: serde_json::Value::Null,
+                    },
+                    state: WorkState::Done {
+                        outcome: WorkOutcome::Unknown,
+                    },
+                    stdout_head: text,
+                    stderr_head: String::new(),
+                    output_truncated: entry.is_clipped(),
+                })
+            }
+        }
+        CodexEntryKind::McpStartup => {
+            let mut servers = std::collections::BTreeMap::new();
+            if !text.is_empty() {
+                servers.insert(
+                    text,
+                    ui_state::codex::McpServerStartup {
+                        status: McpStartupStatus::Ready,
+                        error: None,
+                        failure_reason: None,
+                    },
+                );
+            }
+            FeedEntryKind::McpStartup(McpStartupEntry { servers })
+        }
+        CodexEntryKind::AgentMessage => {
+            let (id, context, from, message_kind, delivery) = match body {
+                CodexBody::AgentMessage {
+                    id,
+                    context,
+                    from,
+                    kind,
+                    delivery,
+                } => (id, context, from, kind, delivery),
+                _ => (
+                    None,
+                    None,
+                    "unknown".into(),
+                    ui_state::AgentMessageKind::Unstated,
+                    None,
+                ),
+            };
+            FeedEntryKind::AgentMessage(ui_state::codex::AgentMessageEntry {
+                id,
+                context,
+                from,
+                kind: message_kind,
+                text,
+                delivery,
+            })
+        }
+        CodexEntryKind::Turn => {
+            let (turn_id, status) = match body {
+                CodexBody::Turn { turn_id, status } => (turn_id, status),
+                _ => (String::new(), "completed".into()),
+            };
+            let status = match status.as_str() {
+                "interrupted" => TurnStatus::Interrupted,
+                "failed" => TurnStatus::Failed { message: text },
+                _ => TurnStatus::Completed,
+            };
+            FeedEntryKind::Turn(ui_state::codex::TurnEntry {
+                turn_id,
+                status,
+                token_usage: None,
+            })
+        }
+        CodexEntryKind::Boundary => {
+            let boundary = match body {
+                CodexBody::Boundary { kind } if kind == "resumed" => BoundaryEntry::Resumed,
+                CodexBody::Boundary { kind } if kind == "ready" => BoundaryEntry::Ready,
+                CodexBody::Boundary { kind } if kind == "compacted" => {
+                    BoundaryEntry::Compacted { turn_id: None }
+                }
+                CodexBody::Boundary { .. } => BoundaryEntry::Gap { reason: text },
+                _ => BoundaryEntry::Gap { reason: text },
+            };
+            FeedEntryKind::Boundary(boundary)
+        }
+        CodexEntryKind::Error => {
+            let (severity, will_retry) = match body {
+                CodexBody::Error {
+                    severity,
+                    will_retry,
+                } => (
+                    match severity.as_str() {
+                        "warning" => ErrorSeverity::Warning,
+                        "notice" => ErrorSeverity::Notice,
+                        _ => ErrorSeverity::Error,
+                    },
+                    will_retry,
+                ),
+                _ => (ErrorSeverity::Error, false),
+            };
+            FeedEntryKind::Error(ui_state::codex::ErrorEntry {
+                severity,
+                message: text,
+                will_retry,
+            })
+        }
+        CodexEntryKind::Unrecognized => {
+            let method = match body {
+                CodexBody::Unrecognized { method } => method,
+                _ => "unrecognized".into(),
+            };
+            FeedEntryKind::Unrecognized(ui_state::codex::UnrecognizedEntry {
+                method,
+                detail: (!text.is_empty()).then_some(text),
+            })
+        }
+    };
+    let presentation = FeedEntry {
+        id: key.0,
+        seq: 0,
+        kind,
+    };
+    entry_block(
+        &presentation,
+        &ui_state::attachments::AttachmentIndex::default(),
+        theme,
+        width,
+        message_view,
+    )
+}
+
+fn restored_codex_work(entry: &ui_state::StoredCodexEntry) -> Option<FeedEntry> {
+    let details = entry.details()?;
+    let value: serde_json::Value = serde_json::from_slice(&details.0).ok()?;
+    let event = if value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| {
+            matches!(
+                kind,
+                "commandExecution"
+                    | "fileChange"
+                    | "mcpToolCall"
+                    | "dynamicToolCall"
+                    | "webSearch"
+                    | "plan"
+            )
+        }) {
+        serde_json::json!({"type":"item/completed", "item":value})
+    } else {
+        value
+    };
+    let mut observation = ui_state::codex::Observation::default();
+    observation.observe(1, &event, |text| {
+        vec![ui_state::attachments::Segment::Prose(text.to_string())]
+    });
+    let mut restored = observation.entries().last().cloned()?;
+    if let FeedEntryKind::Work(work) = &mut restored.kind {
+        work.state = match entry.state() {
+            Some("awaiting_approval") => WorkState::AwaitingApproval {
+                request_id: serde_json::Value::Null,
+            },
+            Some("running" | "open") => WorkState::Running,
+            Some("denied") => WorkState::Denied,
+            Some("blocked_unsupported") => WorkState::BlockedUnsupported,
+            Some("proposed") => WorkState::Proposed,
+            _ => work.state.clone(),
+        };
+    }
+    Some(restored)
+}
+
 fn mcp_startup_rows(startup: &McpStartupEntry, theme: Theme, width: usize) -> Vec<Line<'static>> {
     let count = |status| {
         startup

@@ -129,6 +129,12 @@ impl CodexEntry {
     pub fn details(&self) -> Option<&JsonBytes> {
         self.details.value()
     }
+    pub fn finality(&self) -> Option<&str> {
+        self.finality.value().map(String::as_str)
+    }
+    pub fn is_clipped(&self) -> bool {
+        self.clipped.value().copied().unwrap_or(false)
+    }
     fn rebuild(&mut self) {
         if self.components.values().is_empty() {
             self.rendered_text = self.text.value().cloned().unwrap_or_default();
@@ -431,7 +437,7 @@ impl CodexFold {
                     why: Why::Permission,
                 };
                 self.known_attention = true;
-                let mut patch = partial(
+                let patch = partial(
                     CodexEntryKind::Work,
                     CodexBody::Item {
                         item_id,
@@ -441,7 +447,6 @@ impl CodexFold {
                     revision,
                     Some("awaiting_approval".into()),
                 );
-                patch.details = Patch::set(JsonBytes(bounded_json(row)), revision);
                 out.push(upsert(key, seq, 0, revision, patch));
             }
             "amux.codex_approval_resolved" => {
@@ -760,7 +765,7 @@ impl CodexFold {
 impl ProviderFold for CodexFold {
     type Entry = CodexEntry;
     const PROTOCOL: StructuredProtocol = StructuredProtocol::Codex;
-    const ENTRY_VERSION: u32 = 1;
+    const ENTRY_VERSION: u32 = 2;
     const TIP_VERSION: u32 = 1;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {

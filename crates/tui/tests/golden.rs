@@ -669,6 +669,241 @@ fn healthy_stored_chat_model(replay_complete: bool) -> Model {
     })
 }
 
+fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
+    let mut model = fold(vec![
+        server(ServerMsg::Connected {
+            local_host_id: Some(host_id("nova")),
+        }),
+        server(ServerMsg::HostUpserted {
+            host: a_host("nova"),
+        }),
+        agent_up(&agent),
+        server(ServerMsg::HostsSynchronized),
+        server(ServerMsg::AgentsSynchronized),
+    ]);
+    let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: agent.id }));
+    let (attempt, load_op) = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
+            _ => None,
+        })
+        .expect("chat open loads the store");
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: load_op,
+            agent: Some(agent.id),
+            kind: StoreOpKind::Load,
+            error: StoreError::UnsupportedFormat,
+        }),
+    );
+    let stream = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .expect("live-only chat opens a stream");
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: rows.len() as u64,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at(NOW - 10),
+            },
+        },
+    );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at(NOW - 9),
+                entries: rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, payload)| {
+                        StreamEntry::observed(index as u64 + 1, at(NOW - 9), payload)
+                    })
+                    .collect(),
+            },
+        },
+    );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete { at: at(NOW - 8) },
+        },
+    );
+    patch_chat_for(model, agent.id, |chat| {
+        chat["live_only"] = serde_json::Value::Bool(false);
+        chat["persistence_error"] = serde_json::Value::Null;
+    })
+}
+
+fn patch_chat_for(
+    model: Model,
+    agent: AgentId,
+    patch: impl FnOnce(&mut serde_json::Value),
+) -> Model {
+    let mut value = serde_json::to_value(model).expect("model serializes");
+    let chat = value
+        .pointer_mut(&format!(
+            "/store/chats/{}",
+            agent.to_string().replace('~', "~0").replace('/', "~1")
+        ))
+        .expect("stored chat in serialized model");
+    patch(chat);
+    serde_json::from_value(value).expect("patched model deserializes")
+}
+
+fn provider_store_rows(protocol: ui_state::StructuredProtocol) -> Vec<serde_json::Value> {
+    match protocol {
+        ui_state::StructuredProtocol::ClaudePtyTranscript => vec![
+            ready_row(),
+            prompt_row(41),
+            serde_json::json!({"type":"assistant","uuid":"aaaaaaaa-0000-4000-8000-000000000041","timestamp":"2026-08-11T22:00:00.000Z","message":{"id":"m41","stop_reason":"tool_use","content":[{"type":"text","text":"I will inspect it."},{"type":"thinking","thinking":"checking"},{"type":"tool_use","id":"tool-41","name":"Bash","input":{"command":"echo stored"}}]}}),
+            serde_json::json!({"type":"user","uuid":"bbbbbbbb-0000-4000-8000-000000000041","timestamp":"2026-08-11T22:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool-41","content":"stored result"}]}}),
+            permission_row(),
+        ],
+        ui_state::StructuredProtocol::ClaudeSdk => vec![
+            session_ready_row(),
+            serde_json::json!({"type":"user","uuid":"sdk-user","message":{"content":"do the session thing"}}),
+            serde_json::json!({"type":"assistant","uuid":"sdk-assistant","message":{"id":"sdk-message","stop_reason":"tool_use","content":[{"type":"text","text":"I will inspect it."},{"type":"thinking","thinking":"checking"},{"type":"tool_use","id":"sdk-tool","name":"Bash","input":{"command":"echo stored"}}]}}),
+            serde_json::json!({"type":"user","uuid":"sdk-result","message":{"content":[{"type":"tool_result","tool_use_id":"sdk-tool","content":"stored result"}]}}),
+            session_permission_row(),
+        ],
+        ui_state::StructuredProtocol::Codex => vec![
+            codex_ready_row(),
+            codex_turn_started_row("stored-turn"),
+            serde_json::json!({"type":"item/completed","item":{"id":"stored-user","type":"userMessage","content":[{"type":"text","text":"do the Codex thing"}]}}),
+            serde_json::json!({"type":"item/completed","item":{"id":"stored-reply","type":"agentMessage","text":"I will inspect it.","phase":"final_answer"}}),
+            serde_json::json!({"type":"item/completed","item":{"id":"stored-command","type":"commandExecution","command":"echo stored","cwd":"/work","status":"completed","aggregatedOutput":"stored result","exitCode":0}}),
+            serde_json::json!({"type":"item/commandExecution/requestApproval","itemId":"pending-command","command":"cargo test","cwd":"/work","reason":"verify it"}),
+            serde_json::json!({"type":"amux.codex_approval_required","item_id":"pending-command","request_id":7,"availableDecisions":["accept","cancel"]}),
+        ],
+    }
+}
+
+#[test]
+fn stored_provider_entries_match_live_provider_rendering_in_both_themes() {
+    for (name, agent, protocol) in [
+        (
+            "claude",
+            an_agent("stored-claude", "claude", "nova"),
+            ui_state::StructuredProtocol::ClaudePtyTranscript,
+        ),
+        (
+            "sdk",
+            a_session_agent("stored-session", "nova"),
+            ui_state::StructuredProtocol::ClaudeSdk,
+        ),
+        (
+            "codex",
+            an_agent("stored-codex", "codex", "nova"),
+            ui_state::StructuredProtocol::Codex,
+        ),
+    ] {
+        let agent_id = agent.id;
+        let stored = provider_store_model(agent, provider_store_rows(protocol));
+        let live = patch_chat_for(stored.clone(), agent_id, |chat| {
+            chat["entries"] = serde_json::json!([]);
+            chat["boundaries"] = serde_json::json!([]);
+        });
+        for (theme_name, theme) in [
+            ("dark", Theme::default()),
+            ("light", Theme::light(ColorMode::TrueColor)),
+        ] {
+            let mut stored_view = view_default();
+            stored_view.open_chat(&stored, agent_id);
+            let stored_capture = store_state_golden(&stored, &stored_view, theme);
+            let mut live_view = view_default();
+            live_view.open_chat(&live, agent_id);
+            let live_capture = store_state_golden(&live, &live_view, theme);
+            assert_eq!(stored_capture, live_capture, "{name} {theme_name}");
+            assert_golden(
+                &format!("store_provider_{name}_{theme_name}"),
+                &stored_capture,
+            );
+        }
+    }
+}
+
+#[test]
+fn stored_sdk_history_keeps_the_todo_and_never_answers_an_old_permission() {
+    let agent = a_session_agent("stored-session-history", "nova");
+    let agent_id = agent.id;
+    let mut model = provider_store_model(
+        agent,
+        vec![
+            serde_json::json!({"type":"amux.claude_sdk.history_begin"}),
+            serde_json::json!({"type":"assistant","uuid":"todo-row","message":{"id":"todo-message","content":[{"type":"tool_use","id":"todo","name":"TodoWrite","input":{"todos":[{"content":"ship","activeForm":"shipping","status":"in_progress"}]}}]}}),
+            serde_json::json!({"type":"user","uuid":"todo-result","message":{"content":[{"type":"tool_result","tool_use_id":"todo","content":"ok"}]}}),
+            serde_json::json!({"type":"assistant","uuid":"old-permission","message":{"id":"old-message","content":[{"type":"tool_use","id":"old-write","name":"Write","input":{"file_path":"/tmp/old","content":"old"}}]}}),
+            serde_json::json!({"type":"amux.claude_sdk.history_complete"}),
+            serde_json::json!({"type":"amux.claude_sdk.ready","session_id":"stored","resumed":true}),
+        ],
+    );
+    let stream = model.chat(agent_id).expect("stored chat").stream_attempt;
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 6,
+                    selected_from: 0,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at(NOW - 7),
+            },
+        },
+    );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id,
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete { at: at(NOW - 6) },
+        },
+    );
+    assert!(
+        model
+            .claude_sdk(agent_id)
+            .is_some_and(|layer| layer.todos().is_none()),
+        "the reconnect must clear live-only todo state"
+    );
+    for (theme_name, theme) in [
+        ("dark", Theme::default()),
+        ("light", Theme::light(ColorMode::TrueColor)),
+    ] {
+        let mut view = view_default();
+        view.open_chat(&model, agent_id);
+        let capture = store_state_golden(&model, &view, theme);
+        assert!(capture.contains("Write /tmp/old"));
+        assert!(capture.contains("shipping"), "{capture}");
+        assert!(!capture.contains("Allow once"));
+        assert_golden(&format!("store_sdk_history_{theme_name}"), &capture);
+    }
+}
+
 fn behind_model() -> Model {
     patch_chat(healthy_stored_chat_model(true), |chat| {
         chat["progress"] = serde_json::json!({"through": 8, "at": at(NOW - 1), "revision": 9});
