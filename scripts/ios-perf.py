@@ -586,7 +586,11 @@ def split(marks: Path) -> str:
         return "nothing recorded where the time went; this build marks no entry"
     loading, starting, drawing, reading = [], [], [], []
     for line in marks.read_text().splitlines():
-        moments = {mark["signpost"]: mark["sinceProcessStart"] for mark in json.loads(line)}
+        # The first of each: a launch can read its store again after the
+        # first frame, and that read is not part of reaching it.
+        moments = {}
+        for mark in json.loads(line):
+            moments.setdefault(mark["signpost"], mark["sinceProcessStart"])
         loaded = moments.get("imagesLoaded")
         entered, drawn = moments.get("appEntered"), moments.get("firstCachedFrame")
         if loaded is None or entered is None or drawn is None:

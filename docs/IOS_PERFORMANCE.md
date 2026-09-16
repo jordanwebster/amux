@@ -246,12 +246,16 @@ launch before the five measured ones, so no measured launch pays for writing
 it.
 
 Measured on the pinned Mac and simulator with `just ios perf --only cold` on
-2026-09-17: reading the store took a median of 3.4 ms of a 164 ms first-frame
-draw, and the cold first frame read 473, 464, 460, 463 and 462 ms, a median of
-463 ms. That is 3 ms over the 460 ms simulator budget and about 18 ms over the
-recorded baseline, of which the store read is 3.4 ms and loading the app (297
-ms against 287) is the linker's share; the miss is a defect to explain, not a
-number to adopt.
+2026-09-17, while another worktree was driving a second simulator: the launch's
+store read took 18.9, 11.2, 4.3, 4.4 and 4.6 ms, a median of 4.6 ms, the first
+two launches paying for a cold file cache. The cold first frame read 494, 508,
+471, 476 and 484 ms, a median of 484 ms, over the 460 ms simulator budget; an
+earlier run the same evening read a median of 463 ms. Loading the app (about
+300 ms against 287) and drawing the first frame (about 175 ms against 151) both
+grew by more than the store read, so the store explains only part of the miss,
+and the miss is a defect to explain, not a number to adopt. A launch reads the
+store again after its first frame; the split reports only the first read,
+because only that one stands between a launch and its first frame.
 
 Carrying the pinned SQLite rather than the system's (see `docs/IOS.md`) has a
 size cost. In the size-optimised
