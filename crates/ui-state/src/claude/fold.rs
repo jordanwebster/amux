@@ -12,19 +12,21 @@
 //! which the survey verified are redundant with the DAG edges.
 
 use chrono::{DateTime, Utc};
+use fold::claude_pty::{
+    RowKind, api_error_entry, classify_row, compact_summary_entry, compaction_entry,
+    interruption_entry, measured_turn, prompt_source, task_notification_entry, thinking_entry,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::facts::{self, AskDocument, InboundMessage};
 use super::{
-    ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
-    ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
-    InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
-    MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
-    PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, SlotState, SuccessFacts,
-    SuggestionDestination, SuggestionFact, SuggestionKind, TaskNotificationEntry, ThinkingEntry,
-    ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry,
-    UnrecognizedEntry, runs,
+    ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, Ask, AskKind, AskState, ClaudeLayer,
+    FEED_RETAINED, FeedEntry, FeedEntryKind, InterruptionKind, MESSAGES_RETAINED, MessageEntry,
+    MessageFinality, MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED,
+    PromptEntry, PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, SlotState, SuccessFacts,
+    SuggestionDestination, SuggestionFact, SuggestionKind, ToolEntry, ToolInvocation, ToolOutcome,
+    TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry, runs,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -76,23 +78,22 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     layer.cursor = layer.cursor.max(seq);
 
     let kind = str_of(row, "type");
+    let row_kind = classify_row(row);
 
-    if kind == Some("amux.attachments") {
+    if row_kind == RowKind::Attachments {
         layer.attachments_mut().observe_row(row);
         return;
     }
 
     // amux-layer rows first: they carry no transcript identity.
-    match kind {
-        Some("amux.transcript_ready")
-        | Some("amux.claude.keymap")
-        | Some("amux.claude.input_result") => {
-            if kind == Some("amux.transcript_ready") {
+    match row_kind {
+        RowKind::TranscriptReady | RowKind::Keymap | RowKind::InputResult => {
+            if row_kind == RowKind::TranscriptReady {
                 layer.transcript_ready = true;
             }
             return;
         }
-        Some("hook.stop") | Some("hook.permission_request") => {
+        RowKind::HookStop | RowKind::HookPermissionRequest => {
             // Hook rows carry no uuid, historical streams carry duplicate
             // deliveries (§18b — two hook registrations each delivered
             // every event), and a shrink re-replay repeats them all: the
@@ -109,10 +110,8 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
             // live source: a mid-session Shift+Tab cycle emits NO
             // `permission-mode` row (§18d), so the row alone goes stale.
             // Latest-wins across both sources by arrival.
-            if let Some(mode) = str_of(row, "permission_mode") {
-                layer.session.permission_mode = Some(mode.to_string());
-            }
-            if kind == Some("hook.stop") {
+            layer.session.observe_hook(row);
+            if row_kind == RowKind::HookStop {
                 // Arrival-ordered turn-end pre-signal (B3);
                 // `stop_hook_active` means a stop hook forced continuation
                 // — not an end.
@@ -136,12 +135,12 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
         // tool-use and tool-result blocks. Their permission mode may be a
         // transient tool-local value, so the session-state row remains the
         // authority and these hooks fold to nothing.
-        Some("hook.pre_tool_use") | Some("hook.post_tool_use") => return,
+        RowKind::HookPreToolUse | RowKind::HookPostToolUse => return,
         // Notification wording is forbidden interpretation ground (E2): the
         // plan-approval notification says "needs your approval" with no
         // "permission" substring (fixture-verified). Every signal it could
         // carry arrives better-typed elsewhere, so it folds to nothing.
-        Some("hook.notification") => return,
+        RowKind::HookNotification => return,
         _ => {}
     }
 
@@ -181,32 +180,29 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
         return;
     }
 
-    match kind {
-        Some("user") => fold_user(layer, seq, arrived, row),
-        Some("assistant") => fold_assistant(layer, seq, row),
-        Some("system") => fold_system(layer, seq, arrived, row),
+    match row_kind {
+        RowKind::User => fold_user(layer, seq, arrived, row),
+        RowKind::Assistant => fold_assistant(layer, seq, row),
+        RowKind::System => fold_system(layer, seq, arrived, row),
         // Attachments are system-injected context riding a turn — never
         // feed entries (`docs/CHAT.md` §The feed).
-        Some("attachment") => touch_row_chain(layer, row),
+        RowKind::Attachment => touch_row_chain(layer, row),
         // Checkpointing bookkeeping (§11) and session-state facts (§10):
         // latest-wins state, never feed entries.
-        Some("file-history-snapshot") | Some("file-history-delta") => {}
-        Some("mode") => {}
-        Some("permission-mode") => {
-            layer.session.permission_mode = string_of(row, "permissionMode");
+        RowKind::FileHistorySnapshot | RowKind::FileHistoryDelta | RowKind::Mode => {}
+        RowKind::PermissionMode | RowKind::AiTitle | RowKind::AgentName => {
+            layer.session.observe_row(row_kind, row);
         }
-        Some("ai-title") => layer.session.ai_title = string_of(row, "aiTitle"),
-        Some("agent-name") => layer.session.agent_name = string_of(row, "agentName"),
         // Cloud-bridge registration (`bridge-session`), its `atis-latch`
         // companion, and the user-set `custom-title` sibling of `ai-title`:
         // session-state bookkeeping (§10) carrying identity a chat entry
         // could never show. Known, no reader in V1 — absorbed like `mode`,
         // never feed entries.
-        Some("atis-latch") | Some("bridge-session") | Some("custom-title") => {}
+        RowKind::AtisLatch | RowKind::BridgeSession | RowKind::CustomTitle => {}
         // Queue lifecycle and DAG-leaf bookkeeping: known, no feed target
         // in V1 (queueing is a reserved door).
-        Some("last-prompt") | Some("queue-operation") => {}
-        other => {
+        RowKind::LastPrompt | RowKind::QueueOperation => {}
+        RowKind::Unknown => {
             // Unknown shapes may carry no uuid at all (the vanished
             // `progress`/`summary` generations) — B10's re-replay
             // idempotency still applies to the entries they produce, so
@@ -218,7 +214,7 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
                 layer,
                 seq,
                 FeedEntryKind::Unrecognized(UnrecognizedEntry {
-                    row_type: other.map(str::to_string),
+                    row_type: kind.map(str::to_string),
                     detail: None,
                 }),
             );
@@ -227,6 +223,15 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
             // from an older row (the chain rule below).
             touch_row_chain(layer, row);
         }
+        RowKind::Attachments
+        | RowKind::TranscriptReady
+        | RowKind::Keymap
+        | RowKind::InputResult
+        | RowKind::HookStop
+        | RowKind::HookPermissionRequest
+        | RowKind::HookPreToolUse
+        | RowKind::HookPostToolUse
+        | RowKind::HookNotification => unreachable!("handled before transcript dispatch"),
     }
 }
 
@@ -512,9 +517,7 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         push(
             layer,
             seq,
-            FeedEntryKind::CompactSummary(CompactSummaryEntry {
-                text: text.to_string(),
-            }),
+            FeedEntryKind::CompactSummary(compact_summary_entry(text)),
         );
         touch_row_chain(layer, row);
         return;
@@ -530,17 +533,15 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
     }
 
     let origin_kind = row.pointer("/origin/kind").and_then(Value::as_str);
-    let prompt_source = str_of(row, "promptSource");
+    let prompt_source_label = str_of(row, "promptSource");
 
     // Background-subagent completion notice (B7): FACT that it finished,
     // content is prose — one line, no child-file tailing.
-    if origin_kind == Some("task-notification") || prompt_source == Some("system") {
+    if origin_kind == Some("task-notification") || prompt_source_label == Some("system") {
         push(
             layer,
             seq,
-            FeedEntryKind::TaskNotification(TaskNotificationEntry {
-                text: text.to_string(),
-            }),
+            FeedEntryKind::TaskNotification(task_notification_entry(text)),
         );
         touch_row_chain(layer, row);
         return;
@@ -562,19 +563,7 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         return;
     }
 
-    let source = match prompt_source {
-        Some("typed") => PromptSource::Typed,
-        Some("queued") => PromptSource::Queued,
-        Some("suggestion_accepted") => PromptSource::SuggestionAccepted,
-        Some(other) => PromptSource::Other {
-            label: other.to_string(),
-        },
-        None if origin_kind == Some("human") => PromptSource::Human,
-        // No discriminator at all: older rows, or a bare local-command
-        // record like `/compact` (Phase 1 fixture observation). Rendered,
-        // never a turn start.
-        None => PromptSource::Unstated,
-    };
+    let source = prompt_source(row);
 
     let at = timestamp_of(row);
     // Turn start (§14): `origin.kind:"human"` is the definitive
@@ -631,7 +620,8 @@ fn fold_interrupt(
     row: &Value,
     kind: InterruptionKind,
 ) {
-    let interrupted_message_id = string_of(row, "interruptedMessageId");
+    let interruption = interruption_entry(kind, row);
+    let interrupted_message_id = interruption.interrupted_message_id.clone();
 
     // Interrupt closes every ask (C5): the user chose to cut the turn
     // instead of answering — the panel dismisses and the facts render.
@@ -649,14 +639,7 @@ fn fold_interrupt(
         None => close_messages(layer, MessageFinality::Interrupted, slot_open),
     }
 
-    push(
-        layer,
-        seq,
-        FeedEntryKind::Interruption(InterruptionEntry {
-            kind,
-            interrupted_message_id,
-        }),
-    );
+    push(layer, seq, FeedEntryKind::Interruption(interruption));
 
     // Interrupt-ended turns have no `turn_duration`; the marker shows
     // elapsed-from-prompt, tagged inferred (B3) — reconciled in place if
@@ -943,19 +926,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     // message is left "streaming" behind an error.
     if bool_of(row, "isApiErrorMessage") {
         close_messages(layer, MessageFinality::Abandoned, slot_open);
-        let text = row
-            .pointer("/message/content")
-            .and_then(Value::as_array)
-            .and_then(|blocks| blocks.iter().find_map(|block| str_of(block, "text")))
-            .map(str::to_string);
-        push(
-            layer,
-            seq,
-            FeedEntryKind::ApiError(ApiErrorEntry {
-                error: string_of(row, "error"),
-                text,
-            }),
-        );
+        push(layer, seq, FeedEntryKind::ApiError(api_error_entry(row)));
         // Phase FACT (E1): errored until the next normal signal. The turn
         // stays open — retries run invisibly and may recover it.
         layer.turn.error_live = true;
@@ -982,19 +953,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     // the whole rule. A tailed transcript file is one session's own
     // messages — a subagent writes its own file — so no message here can
     // be another context's.
-    if let Some(message) = message {
-        if let Some(name) = str_of(message, "model") {
-            layer.session.model = Some(name.to_string());
-        }
-        if let Some(usage) = message.get("usage") {
-            let tokens = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
-            layer.session.context_used_tokens = Some(
-                tokens("input_tokens")
-                    .saturating_add(tokens("cache_read_input_tokens"))
-                    .saturating_add(tokens("cache_creation_input_tokens")),
-            );
-        }
-    }
+    layer.session.observe_assistant(row);
 
     // A new message id closes any OTHER still-open message as abandoned
     // (B2) — same-id rows are the normal multi-row upsert.
@@ -1033,17 +992,10 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                 let redacted = kind == Some("redacted_thinking");
                 // INFERRED from FACT timestamps; the chain is broken (None)
                 // across interrupts and compaction (B3/§15).
-                let duration_ms = match (previous_row_at, at) {
-                    (Some(previous), Some(at)) => Some((at - previous).num_milliseconds().max(0)),
-                    _ => None,
-                };
                 push(
                     layer,
                     seq,
-                    FeedEntryKind::Thinking(ThinkingEntry {
-                        duration_ms,
-                        redacted,
-                    }),
+                    FeedEntryKind::Thinking(thinking_entry(previous_row_at, at, redacted)),
                 );
             }
             Some("tool_use") => fold_tool_use(layer, seq, &message_id, &stop_reason, block),
@@ -1272,7 +1224,7 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
             // cannot claim a measured duration (and must not overwrite a
             // better inferred marker) — it degrades to an unrecognized
             // entry instead, uninterpreted.
-            let Some(duration_ms) = u64_of(row, "durationMs") else {
+            let Some(turn) = measured_turn(row) else {
                 push(
                     layer,
                     seq,
@@ -1283,11 +1235,6 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
                 );
                 touch_row_chain(layer, row);
                 return;
-            };
-            let turn = TurnEntry {
-                duration: TurnDuration::Measured { ms: duration_ms },
-                message_count: u64_of(row, "messageCount"),
-                pending_background_agents: u64_of(row, "pendingBackgroundAgentCount"),
             };
             // The authority reconciles an inferred marker in place when the
             // turn already closed by interrupt (observed: tool-use denials
@@ -1321,16 +1268,7 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
         // `turn_duration` (§8): known, no separate feed entry.
         Some("stop_hook_summary") => touch_row_chain(layer, row),
         Some("compact_boundary") => {
-            let metadata = row.get("compactMetadata").unwrap_or(&Value::Null);
-            push(
-                layer,
-                seq,
-                FeedEntryKind::Compaction(CompactionEntry {
-                    trigger: string_of(metadata, "trigger"),
-                    pre_tokens: u64_of(metadata, "preTokens"),
-                    post_tokens: u64_of(metadata, "postTokens"),
-                }),
-            );
+            push(layer, seq, FeedEntryKind::Compaction(compaction_entry(row)));
             // Durations are never computed across a compaction (B3): the
             // thinking chain, the elapsed prompt base, and any pending
             // marker reconciliation all end at the boundary.

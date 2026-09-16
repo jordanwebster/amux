@@ -1,3 +1,10 @@
+2026-09-16 — **Claude PTY observations now cross a client-neutral facade.**
+The shared fold crate now owns Claude transcript row classification, provider
+fact parsing, todo progression, model and context observation, attention
+transitions, diff facts and the provider-native feed entry vocabulary. The UI
+keeps its existing Claude APIs as aliases and thin adapters while retaining
+asks, optimistic sends, stream gates and renderer-specific attachment content.
+
 2026-09-16 — **Codex correlation is verified at its provider boundaries.**
 Approval requests now have protocol coverage through event ingestion for both
 provider item and call identifiers, including ordinary resolution and transport

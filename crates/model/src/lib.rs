@@ -23,8 +23,8 @@ pub use agent::{
 pub use agent_kind::{AgentKind, ClaudeDriver, Protocol};
 pub use artifact::{ARTIFACT_SIZE_CAP, ArtifactId, ArtifactKind, InvalidArtifactId, id_of};
 pub use observation::{
-    AgentPhase, Attention, HostRevision, Progress, Seq, StructuredProtocol, Summary,
-    SummaryEnvelope, SummaryField, TodoProgress, Why,
+    AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, HostRevision, Progress, Seq,
+    StructuredProtocol, Summary, SummaryEnvelope, SummaryField, TodoProgress, Why,
 };
 pub use profile::ProfileId;
 pub use provider::{

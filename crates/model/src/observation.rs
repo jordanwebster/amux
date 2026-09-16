@@ -109,6 +109,49 @@ pub struct Progress {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HostRevision(pub u64);
 
+/// Why an agent message was sent, as its carrier stated it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "message_kind", rename_all = "snake_case")]
+pub enum AgentMessageKind {
+    Message,
+    Completed,
+    Exited,
+    Other { label: String },
+    Unstated,
+}
+
+impl AgentMessageKind {
+    pub fn read(label: Option<&str>) -> Self {
+        match label {
+            Some("message") => Self::Message,
+            Some("completed") => Self::Completed,
+            Some("exited") => Self::Exited,
+            Some(other) => Self::Other {
+                label: other.to_owned(),
+            },
+            None => Self::Unstated,
+        }
+    }
+
+    pub fn presentation(&self) -> AgentMessagePresentation {
+        match self {
+            Self::Completed => AgentMessagePresentation::Finished,
+            Self::Exited => AgentMessagePresentation::Notice,
+            Self::Message | Self::Other { .. } | Self::Unstated => {
+                AgentMessagePresentation::Inbound
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "presentation", rename_all = "snake_case")]
+pub enum AgentMessagePresentation {
+    Inbound,
+    Finished,
+    Notice,
+}
+
 // Human-readable serializers keep the established API JSON. Persisted binary
 // formats use external tags so non-self-describing codecs such as postcard can
 // decode the same domain types without `deserialize_any`.

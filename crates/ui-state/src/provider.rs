@@ -1,4 +1,5 @@
 //! Session-owned choices shared by native clients. Unknown choices stay absent.
+pub use fold::claude_pty::{TaskList, TodoState};
 pub use model::{ApprovalPolicy, SandboxPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,21 +34,6 @@ pub struct ProviderFacts {
     pub todos: Option<TaskList>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskList {
-    pub done: usize,
-    pub total: usize,
-    pub current: Option<String>,
-    pub items: Vec<(String, TodoState)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TodoState {
-    Pending,
-    InProgress,
-    Completed,
-}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: ModelId,

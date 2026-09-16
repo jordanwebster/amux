@@ -7,6 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod claude_pty;
+pub mod diff;
+
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;

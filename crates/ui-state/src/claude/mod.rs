@@ -26,6 +26,20 @@ pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
 
+pub use ::fold::claude_pty::{
+    AgentMessageEntry, ApiErrorEntry, CompactSummaryEntry, CompactionEntry, InterruptionEntry,
+    InterruptionKind, MessageFinality, PromptSource, QuestionAnswer, SessionFacts, SuccessFacts,
+    TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolOutcome, TurnDuration, TurnEntry,
+    UnrecognizedEntry,
+};
+pub type FeedEntry = ::fold::claude_pty::FeedEntry<Segment>;
+pub type FeedEntryKind = ::fold::claude_pty::FeedEntryKind<Segment>;
+pub type PromptEntry = ::fold::claude_pty::PromptEntry<Segment>;
+pub type MessageEntry = ::fold::claude_pty::MessageEntry<Segment>;
+use ::fold::claude_pty::{
+    AttentionInput, AttentionObservation, StreamState as ObservationStreamState, TurnClosure,
+    observe_attention,
+};
 use chrono::{DateTime, TimeDelta, Utc};
 pub use facts::{
     AcceptedPlan, AskDocument, DiffDocument, DiffMagnitude, QuestionFact, QuestionOption,
@@ -37,8 +51,8 @@ use uuid::Uuid;
 use crate::attachments::{AttachmentIndex, Segment};
 use crate::claude::answer::AskAnswer;
 use crate::model::{
-    AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase,
-    Violation, Why, message_digest,
+    AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase, Violation, Why,
+    message_digest,
 };
 use crate::msg::OpId;
 
@@ -116,8 +130,6 @@ pub(crate) const WORKING_STALENESS_CAP_SECS: i64 = 600;
 /// How long the idle-from-authority phase stays tagged FACT (E1: "FACT at
 /// the signal, decays to INFERRED" — an external session may already be
 /// typing).
-pub(crate) const IDLE_FACT_DECAY_SECS: i64 = 60;
-
 /// Bounded head of tool output retained for the compact one-liner (B4).
 /// The full text stays on disk behind the Effect seam.
 const OUTPUT_HEAD_MAX: usize = 400;
@@ -126,194 +138,6 @@ const OUTPUT_HEAD_MAX: usize = 400;
 /// roughly a hundred ordinary terminal rows, enough for useful transcript
 /// inspection beyond the eight-row feed preview without letting 1,000
 /// retained entries turn wide patches into an unbounded per-agent cost.
-pub(crate) const STRUCTURED_PATCH_HUNKS_RETAINED: usize = 16;
-pub(crate) const STRUCTURED_PATCH_LINES_RETAINED: usize = 64;
-pub(crate) const STRUCTURED_PATCH_BYTES_RETAINED: usize = 8 * 1024;
-
-/// One feed entry: a single rendered unit (`docs/CHAT.md` §Vocabulary).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FeedEntry {
-    /// Monotonic within a transcript epoch; the canonical feed order.
-    pub id: u64,
-    /// Stream seq of the row that created the entry (provenance).
-    pub seq: u64,
-    pub kind: FeedEntryKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "entry", rename_all = "snake_case")]
-pub enum FeedEntryKind {
-    /// A user prompt (B1).
-    Prompt(PromptEntry),
-    /// An assistant message's text, upserted by `message.id` (B2).
-    Message(MessageEntry),
-    /// Retroactive `~ thought for Ns` marker (B3, INFERRED from FACT
-    /// timestamps).
-    Thinking(ThinkingEntry),
-    /// Turn closure rule (B3).
-    Turn(TurnEntry),
-    /// Compaction boundary (B3, FACT).
-    Compaction(CompactionEntry),
-    /// The post-compaction summary row, flagged transcript-only in the
-    /// source (semantics §16).
-    CompactSummary(CompactSummaryEntry),
-    /// One tool use, paired by `tool_use.id` (B4).
-    Tool(ToolEntry),
-    /// A background-subagent completion notice (B7, FACT it finished;
-    /// content is prose).
-    TaskNotification(TaskNotificationEntry),
-    /// A message another amux agent sent to this one, read out of the
-    /// recipient's own row (no synthetic provenance exists anywhere).
-    AgentMessage(AgentMessageEntry),
-    /// Interruption marker (B8, FACT rows).
-    Interruption(InterruptionEntry),
-    /// `isApiErrorMessage:true` row (B8, FACT).
-    ApiError(ApiErrorEntry),
-    /// A row shape this build does not know. Retained and rendered
-    /// explicitly, never silently dropped (G1).
-    Unrecognized(UnrecognizedEntry),
-}
-
-/// A message delivered by amux, as the recipient's transcript recorded it.
-/// Every field but the text is what the carrier stated: absent fields stay
-/// absent rather than being guessed at.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentMessageEntry {
-    /// The envelope id, verbatim. Kept as the carrier wrote it rather than
-    /// re-typed: the only thing the client does with it is match it
-    /// against another envelope's `context`, and a carrier that wrote
-    /// something unparseable is better shown than dropped.
-    pub id: Option<String>,
-    /// The envelope this one answers or continues.
-    pub context: Option<String>,
-    /// Who sent it: `name/host`, or `human`.
-    pub from: String,
-    pub kind: AgentMessageKind,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PromptEntry {
-    pub text: String,
-    /// Parsed message content, with attachment mentions left as typed segments.
-    pub content: Vec<Segment>,
-    pub source: PromptSource,
-    /// Groups the turn's rows; Phase 3's optimistic-echo reconciliation key.
-    pub prompt_id: Option<String>,
-}
-
-/// How the prompt reached the session, from the row's own discriminators
-/// (`origin.kind` / `promptSource`, ≥2.1.22x — FACT; absent on older rows
-/// and on bare local-command records).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "source", rename_all = "snake_case")]
-pub enum PromptSource {
-    Typed,
-    Queued,
-    SuggestionAccepted,
-    /// `origin.kind:"human"` without a known `promptSource`.
-    Human,
-    /// A `promptSource` value this build does not know.
-    Other {
-        label: String,
-    },
-    /// No discriminator on the row (older versions; bare local-command
-    /// records like `/compact`). Rendered as a prompt, but never treated as
-    /// a turn start.
-    Unstated,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MessageEntry {
-    /// The API message id (`msg_*`) — the upsert key (B2).
-    pub message_id: String,
-    /// Markdown source segments, one per `text` block, in file order.
-    pub segments: Vec<String>,
-    /// The joined message text split into prose and attachment mentions.
-    pub content: Vec<Segment>,
-    pub finality: MessageFinality,
-}
-
-/// "Streaming" is not a state (B2): a message is Open only until a closing
-/// fact or closing inference arrives, and is never rendered as streaming.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "finality", rename_all = "snake_case")]
-pub enum MessageFinality {
-    /// Newest row still carries a null `stop_reason`.
-    Open,
-    /// Some row carried a non-null `stop_reason` (FACT).
-    Final { stop_reason: String },
-    /// Closed by an interrupt row (§17 — FACT-paired via
-    /// `interruptedMessageId` where present).
-    Interrupted,
-    /// Closed because a new message, prompt, or user row arrived while the
-    /// `stop_reason` was still null (INFERRED; upgraded to `Final` if the
-    /// fact lands later).
-    Abandoned,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ThinkingEntry {
-    /// `thinking_row.ts − previous_row.ts`, clamped at zero (INFERRED from
-    /// FACT timestamps; includes API latency). `None` when the chain is
-    /// broken — never computed across an interrupt or compaction (B3).
-    pub duration_ms: Option<i64>,
-    /// `redacted_thinking` renders the same marker flagged redacted.
-    pub redacted: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TurnEntry {
-    pub duration: TurnDuration,
-    /// Cumulative conversation messages (`turn_duration.messageCount`).
-    pub message_count: Option<u64>,
-    /// FACT count of still-running background subagents at turn end (B7).
-    pub pending_background_agents: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "duration", rename_all = "snake_case")]
-pub enum TurnDuration {
-    /// `system/turn_duration.durationMs` — the authority (FACT,
-    /// wall-time-verified).
-    Measured { ms: u64 },
-    /// Interrupt-ended turns have no `turn_duration`; elapsed from the
-    /// prompt row's timestamp (INFERRED). Reconciled in place to `Measured`
-    /// if the authority lands after all (observed on tool-use denials).
-    SincePrompt { ms: i64 },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionEntry {
-    /// `"manual"` or `"auto"` (FACT).
-    pub trigger: Option<String>,
-    pub pre_tokens: Option<u64>,
-    pub post_tokens: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactSummaryEntry {
-    pub text: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ToolEntry {
-    pub tool_use_id: String,
-    /// `None` only for an orphan `tool_result` whose `tool_use` fell
-    /// outside the window (truncated history).
-    pub name: Option<String>,
-    pub invocation: ToolInvocation,
-    pub outcome: ToolOutcome,
-    /// The carrying message reached a non-null `stop_reason`: an unpaired
-    /// tool in a final message renders as running (INFERRED-pending, B4).
-    pub message_final: bool,
-    /// Grouping fact (B4): this and the immediately preceding entry are
-    /// both read/search one-liners. Computed here, never by renderer
-    /// layout introspection.
-    pub group_with_previous: bool,
-    pub message_id: Option<String>,
-}
-
 /// This feed's exploration runs, projected over its native entries.
 pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
 /// The lazy walk that yields them.
@@ -334,117 +158,6 @@ impl runs::RunEntry for FeedEntry {
     fn groups_with_previous(&self) -> bool {
         matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum ToolOutcome {
-    /// No paired `tool_result` yet. With `message_final`, renders as
-    /// running (INFERRED-pending; FACT once the result lands).
-    Pending,
-    /// Non-error `tool_result` (FACT the tool ran; B5's allow source).
-    Success { facts: SuccessFacts },
-    /// `is_error:true` with a `toolDenialKind` — a typed denial fact, never
-    /// an error-string sniff (B5).
-    Denied { kind: Option<String> },
-    /// `is_error:true` without a denial kind.
-    Failed { message: Option<String> },
-}
-
-/// Typed result facts per family, from the `toolUseResult` sidecar where
-/// the semantics spec names its shape (§12), generic output head otherwise.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "facts", rename_all = "snake_case")]
-pub enum SuccessFacts {
-    /// File change magnitude from `filePath` + `structuredPatch` (FACT) —
-    /// Edit and Write sidecars both carry it.
-    Edit {
-        file_path: String,
-        added: u64,
-        removed: u64,
-        document: crate::diff::Document,
-    },
-    /// AskUserQuestion answers, keyed by the question TEXT (Phase 0
-    /// capture correction), multi-select joined into one string.
-    Answers { answers: Vec<QuestionAnswer> },
-    /// Synchronous subagent completion (B7, FACT).
-    TaskCompleted {
-        agent_id: Option<String>,
-        duration_ms: Option<u64>,
-        tool_count: Option<u64>,
-    },
-    /// Background subagent launch acknowledged (B7, FACT it launched).
-    TaskLaunched { agent_id: Option<String> },
-    /// ExitPlanMode approval (B6): non-error result with the plan sidecar.
-    PlanApproved { plan_file_path: Option<String> },
-    /// Generic bounded head of the result content; the full text stays on
-    /// disk behind the Effect seam (B4).
-    Output { head: String, truncated: bool },
-    /// A result with no retainable content.
-    None,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuestionAnswer {
-    pub question: String,
-    pub answer: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskNotificationEntry {
-    pub text: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InterruptionEntry {
-    pub kind: InterruptionKind,
-    /// `interruptedMessageId` — FACT pairing to the message it cut off.
-    pub interrupted_message_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InterruptionKind {
-    /// `[Request interrupted by user]` — cut a generating message.
-    Turn,
-    /// `[Request interrupted by user for tool use]` — a tool approval was
-    /// rejected by interrupt.
-    ToolUse,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ApiErrorEntry {
-    /// The row's typed `error` string (e.g. `"server_error"`).
-    pub error: Option<String>,
-    /// The synthetic message's text content.
-    pub text: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnrecognizedEntry {
-    /// The row's `type`, when it had one.
-    pub row_type: Option<String>,
-    /// The unknown discriminant below the type (subtype, block type, …).
-    pub detail: Option<String>,
-}
-
-/// Latest-wins session-state facts folded from the no-uuid rows
-/// (`docs/CHAT.md`: not feed entries; they feed phase, composer, and header
-/// state).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionFacts {
-    /// D4's source of truth (FACT at emission).
-    pub permission_mode: Option<String>,
-    /// The model the last main-session assistant message ran on
-    /// (`message.model`), which is what the next turn will run on until a
-    /// row says otherwise.
-    pub model: Option<String>,
-    /// What the last assistant message reported its context costing:
-    /// fresh input plus both cache halves. No transcript row states the
-    /// context window, so there is no denominator to pair it with.
-    pub context_used_tokens: Option<u64>,
-    pub ai_title: Option<String>,
-    pub agent_name: Option<String>,
 }
 
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
@@ -1408,69 +1121,71 @@ fn classify(
         send_in_flight: !layer.echoes.is_empty(),
         observer_readonly,
     };
-    match stream_phase {
-        Some(StreamPhase::Opening | StreamPhase::Replaying) => {
-            return condition.with_state(ChatConditionState::Replaying);
-        }
+    let stream = match stream_phase {
+        Some(StreamPhase::Opening | StreamPhase::Replaying) => ObservationStreamState::Replaying,
         Some(StreamPhase::Live)
         | Some(StreamPhase::Closed {
             reason:
                 crate::msg::StreamCloseReason::AgentExited { .. }
                 | crate::msg::StreamCloseReason::AgentDeleted,
-        }) => {}
-        _ => return condition,
-    }
-
-    let state = if layer.exited {
-        ChatConditionState::Exited
-    } else if layer.stale {
-        ChatConditionState::Unknown
-    } else if !layer.live() && (layer.transcript_rows_seen || layer.truncated_start) {
-        // A replayed prefix may contain an ask whose resolution is still in
-        // the unseen suffix, so replay honesty outranks that apparent ask.
-        ChatConditionState::Replaying
-    } else if let Some(ask) = layer.asks.front() {
-        // In a truly fresh-empty pre-live window, a held ask came from the
-        // arrival-ordered hook and outranks only the positive resting claim.
-        ChatConditionState::AskPending {
-            id: ask.id,
-            why: ask.why(),
-        }
-    } else if !layer.live() {
-        ChatConditionState::Resting {
-            tag: PhaseTag::Inferred,
-        }
-    } else if layer.turn.error_live {
-        ChatConditionState::Errored
-    } else if layer.turn.open {
-        if layer.turn.stop_presignal {
-            ChatConditionState::TurnFinished {
-                tag: PhaseTag::Inferred,
-            }
-        } else if layer.working_is_stale(now) {
-            ChatConditionState::Unknown
-        } else {
-            ChatConditionState::TurnWorking
-        }
-    } else if let Some(closed_by) = layer.turn.closed_by {
-        let fresh = match (now, layer.turn.closed_at) {
-            (Some(now), Some(at)) => now - at <= TimeDelta::seconds(IDLE_FACT_DECAY_SECS),
-            _ => true,
-        };
-        let tag = if fresh {
+        }) => ObservationStreamState::Live,
+        _ => ObservationStreamState::Unavailable,
+    };
+    let ask = layer.asks.front();
+    let ask_why = ask.map(|ask| match ask.why() {
+        AskWhy::Permission => Why::Permission,
+        AskWhy::Question => Why::Question,
+    });
+    let turn_closed = layer.turn.closed_by.map(|closed| match closed {
+        TurnCloseSource::Authority => TurnClosure::Authority {
+            at: layer.turn.closed_at,
+        },
+        TurnCloseSource::Interrupt => TurnClosure::Interrupt {
+            at: layer.turn.closed_at,
+        },
+    });
+    let observed = observe_attention(
+        AttentionInput {
+            process_exited: layer.exited,
+            observer_stale: layer.stale,
+            stream,
+            live: layer.live(),
+            transcript_rows_seen: layer.transcript_rows_seen,
+            truncated_start: layer.truncated_start,
+            ask: ask_why,
+            error_live: layer.turn.error_live,
+            turn_open: layer.turn.open,
+            stop_presignal: layer.turn.stop_presignal,
+            working_stale: layer.working_is_stale(now),
+            turn_closed,
+        },
+        now,
+    );
+    let tag = |fresh| {
+        if fresh {
             PhaseTag::Fact
         } else {
             PhaseTag::Inferred
-        };
-        match closed_by {
-            TurnCloseSource::Authority => ChatConditionState::TurnFinished { tag },
-            TurnCloseSource::Interrupt => ChatConditionState::TurnInterrupted { tag },
         }
-    } else if layer.truncated_start {
-        ChatConditionState::Unknown
-    } else {
-        ChatConditionState::Resting {
+    };
+    let state = match observed {
+        AttentionObservation::Exited => ChatConditionState::Exited,
+        AttentionObservation::Unknown => ChatConditionState::Unknown,
+        AttentionObservation::Replaying => ChatConditionState::Replaying,
+        AttentionObservation::AskPending { .. } => ChatConditionState::AskPending {
+            id: ask.expect("the observer received this ask").id,
+            why: ask.expect("the observer received this ask").why(),
+        },
+        AttentionObservation::Resting => ChatConditionState::Resting {
             tag: PhaseTag::Inferred,
+        },
+        AttentionObservation::Errored => ChatConditionState::Errored,
+        AttentionObservation::TurnWorking => ChatConditionState::TurnWorking,
+        AttentionObservation::TurnFinished { fresh } => {
+            ChatConditionState::TurnFinished { tag: tag(fresh) }
+        }
+        AttentionObservation::TurnInterrupted { fresh } => {
+            ChatConditionState::TurnInterrupted { tag: tag(fresh) }
         }
     };
     condition.with_state(state)
