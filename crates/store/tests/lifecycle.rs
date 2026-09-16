@@ -5,7 +5,6 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
-use rustix::fs::{FlockOperation, flock};
 use store::{Budget, Store, StoreError};
 use tempfile::TempDir;
 
@@ -161,7 +160,7 @@ fn lifecycle_exclusive_lease_times_out_as_busy_after_five_seconds() {
         .write(true)
         .open(lock_path)
         .expect("lock file");
-    flock(&lock, FlockOperation::LockExclusive).expect("exclusive lease");
+    lock.try_lock().expect("exclusive lease");
     let started = Instant::now();
     assert_open_error(&database(&temp), StoreError::Busy);
     assert!(started.elapsed() >= Duration::from_millis(4_900));

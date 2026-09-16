@@ -37,9 +37,14 @@ use fold::{
 };
 pub use maintain::{Budget, MaintenanceReport};
 use model::AgentId;
-use rustix::fs::{FlockOperation, flock};
 
 const LEASE_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy)]
+enum LockMode {
+    Shared,
+    Exclusive,
+}
 
 pub struct Store {
     sender: Option<Sender<Command>>,
@@ -428,16 +433,16 @@ fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), St
     acquire_lock(
         &lock_file,
         if pending_before_lock {
-            FlockOperation::NonBlockingLockExclusive
+            LockMode::Exclusive
         } else {
-            FlockOperation::NonBlockingLockShared
+            LockMode::Shared
         },
     )?;
 
     let mut exclusive = pending_before_lock;
     if !exclusive && quarantine::has_pending(path)? {
-        flock(&lock_file, FlockOperation::Unlock).map_err(|_| StoreError::Io)?;
-        acquire_lock(&lock_file, FlockOperation::NonBlockingLockExclusive)?;
+        lock_file.unlock().map_err(map_io)?;
+        acquire_lock(&lock_file, LockMode::Exclusive)?;
         exclusive = true;
     }
 
@@ -449,7 +454,8 @@ fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), St
     let opened = db::open_database(path, &pending)?;
     if exclusive {
         quarantine::finish_pending(&pending)?;
-        flock(&lock_file, FlockOperation::LockShared).map_err(|_| StoreError::Io)?;
+        lock_file.unlock().map_err(map_io)?;
+        acquire_lock(&lock_file, LockMode::Shared)?;
     }
     let ready = Ready {
         generations: opened.generations,
@@ -458,19 +464,22 @@ fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), St
     Ok((opened.connection, lock_file, ready))
 }
 
-fn acquire_lock(file: &File, operation: FlockOperation) -> Result<(), StoreError> {
+fn acquire_lock(file: &File, mode: LockMode) -> Result<(), StoreError> {
     let started = Instant::now();
     loop {
-        match flock(file, operation) {
+        let result = match mode {
+            LockMode::Shared => file.try_lock_shared(),
+            LockMode::Exclusive => file.try_lock(),
+        };
+        match result {
             Ok(()) => return Ok(()),
-            Err(error) if error == rustix::io::Errno::AGAIN => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 if started.elapsed() >= LEASE_TIMEOUT {
                     return Err(StoreError::Busy);
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(error) if error == rustix::io::Errno::ACCESS => return Err(StoreError::Permission),
-            Err(_) => return Err(StoreError::Io),
+            Err(std::fs::TryLockError::Error(error)) => return Err(map_io(error)),
         }
     }
 }

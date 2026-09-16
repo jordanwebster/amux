@@ -1,3 +1,11 @@
+2026-09-16 — **Store leases and linkage checks cover Windows.**
+The shared store now uses the standard library's cross-platform file locks for
+its shared lifetime lease and exclusive quarantine pass, preserving the bounded
+busy wait without a Unix-only dependency. Release linkage inspection reads a
+Windows executable's PE import table directly, accepting bundled SQLite while
+rejecting any `sqlite3.dll` dependency; Mach-O and ELF checks retain their
+symbol and dynamic-library proof.
+
 2026-09-16 — **Every client carries one qualified SQLite build.**
 SQLite is now bundled by default through the store, app runtime and iPhone
 bridge, so desktop and mobile clients use the same pinned library with the
