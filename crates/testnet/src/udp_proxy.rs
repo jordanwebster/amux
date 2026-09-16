@@ -473,8 +473,29 @@ mod tests {
         UdpSocket::from_std(binding.socket.try_clone().unwrap()).unwrap()
     }
 
+    #[test]
+    fn configured_loss_drops_exactly_the_share_it_was_given() {
+        // The rule is deterministic — every hundredth datagram counted, the
+        // first `loss` of each hundred dropped — so this is an exact count and
+        // not a sample. Asking the proxy what it decided also keeps the answer
+        // independent of the machine: a loaded runner's kernel drops datagrams
+        // of its own, which no socket-level count can tell apart from these.
+        let proxy = UdpProxy::new();
+        let a = Some(HostId::from_u128(1));
+        let b = Some(HostId::from_u128(2));
+        proxy.loss(25);
+
+        let controls = &proxy.inner.controls;
+        let dropped = (0..10_000).filter(|_| controls.should_drop(a, b)).count();
+
+        assert_eq!(dropped, 2_500, "25% of 10,000 datagrams");
+    }
+
     #[tokio::test]
-    async fn configured_loss_drops_within_tolerance_over_ten_thousand_datagrams() {
+    async fn configured_loss_reaches_the_socket_that_carries_it() {
+        // That the rule is wired into the forwarding path at all. Deliberately
+        // loose about how many arrive: the kernel is free to drop more under
+        // load, and this asserts only that some were lost and some got through.
         let proxy = UdpProxy::new();
         let a = proxy.register(HostId::from_u128(1));
         let b = proxy.register(HostId::from_u128(2));
@@ -493,7 +514,7 @@ mod tests {
             }
             received
         });
-        for sequence in 0_u64..10_000 {
+        for sequence in 0_u64..400 {
             a_socket
                 .send_to(&sequence.to_be_bytes(), b.public_addr)
                 .await
@@ -503,10 +524,8 @@ mod tests {
             }
         }
         let received = receive.await.unwrap();
-        assert!(
-            (7_000..=8_000).contains(&received),
-            "25% configured loss delivered {received} of 10,000 datagrams"
-        );
+        assert!(received > 0, "everything was lost");
+        assert!(received < 400, "nothing was lost with 25% loss configured");
     }
 
     #[tokio::test]

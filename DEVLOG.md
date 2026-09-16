@@ -1,3 +1,13 @@
+2026-09-16 — **Asked the UDP proxy what it dropped instead of counting what
+arrived.** The loss test blasted ten thousand datagrams through a real socket
+pair and required seven to eight thousand to arrive. A loaded CI runner's
+kernel drops datagrams of its own, and no socket-level count can tell those
+from the proxy's, so the run that failed delivered 6,573 and said nothing about
+whether the proxy was working. The rule is deterministic — the first quarter of
+every hundred, counted by packet number — so the proxy's own decision is an
+exact 2,500 and is now asserted as one, with a second, deliberately loose test
+proving the rule is wired into the forwarding path at all.
+
 2026-09-16 — **Recorded what this Mac measures today.** The baseline the drift
 checks compare against was taken before the phone gained local discovery, the
 rewritten home and Hosts screens, and everything the connections work put into
