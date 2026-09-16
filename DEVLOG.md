@@ -1,3 +1,11 @@
+2026-09-16 — **Remembered chats now look remembered while they catch up.**
+The terminal paints canonical stored entries before a live provider stream is
+ready and keeps positioned missing-history, version-change and eviction
+markers in the scrollable feed. Remembered fleet rows retain their last
+standing and age while clearly closing sends, and chat chrome now distinguishes
+delayed catch-up, host progress ahead of the local head and live-only
+persistence failure. Dark and light captures lock every store-backed state.
+
 2026-09-16 — **Store recovery tests now cross the failure boundaries they protect.**
 Migration coverage fails after schema work but before its ledger write and
 proves the whole open transaction rolls back. Maintenance interrupts a real

@@ -27,8 +27,8 @@ use frame::{
 use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 use ui_state::{
-    AgentId, AgentMessagePresentation, AgentMessageSender, Command, FamilyNeed, Model, OpId,
-    StructuredProtocol, Why, message_digest,
+    AgentId, AgentMessagePresentation, AgentMessageSender, Boundary, ChatState, Command,
+    FamilyNeed, Model, OpId, StructuredProtocol, Why, behind, message_digest,
 };
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
@@ -295,6 +295,12 @@ impl ChatView {
     }
 
     pub fn needs_tick(&self, model: &Model) -> bool {
+        if model
+            .chat(self.agent)
+            .is_some_and(|chat| chat.state == ChatState::CatchingUp)
+        {
+            return true;
+        }
         match &self.inner {
             AgentChatView::Claude(view) => view.needs_tick(model),
             AgentChatView::ClaudeSdk(view) => view.needs_tick(model),
@@ -329,7 +335,8 @@ impl ChatView {
             now,
         };
         let mut cache = self.paint_cache.borrow_mut();
-        let parts = frame_parts(model, self, &mut cache, &ctx);
+        let mut parts = frame_parts(model, self, &mut cache, &ctx);
+        install_store_feed(model, self.agent, &mut parts, &ctx);
         drop(cache);
         let following_geometry = parts.geometry(viewport, false);
         let paused_geometry = parts.geometry(viewport, true);
@@ -660,7 +667,8 @@ pub(crate) fn build_chat_lines(
     }
     let mut cache = chat.paint_cache.borrow_mut();
     cache.reset_stats();
-    let parts = frame_parts(model, chat, &mut cache, ctx);
+    let mut parts = frame_parts(model, chat, &mut cache, ctx);
+    install_store_feed(model, chat.agent, &mut parts, ctx);
     drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
@@ -680,10 +688,137 @@ pub(crate) fn build_chat_lines(
     // The sticky diagnostic takes the header gap rather than reducing the
     // feed, and stays off overlays whose rows are all content.
     let row = 1 + usize::from(banner);
-    if !overlaid && model.has_invariant_warning() && lines.len() > row {
-        lines[row] = blocks::invariant_warning_row(width, ctx.theme);
+    if !overlaid && lines.len() > row {
+        if model.has_invariant_warning() {
+            lines[row] = blocks::invariant_warning_row(width, ctx.theme);
+        } else if let Some(status) = store_status(model, chat.agent, ctx) {
+            lines[row] = status;
+        }
     }
     lines
+}
+
+fn stable_block_key(prefix: u64, value: &str) -> frame::BlockKey {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    frame::BlockKey(prefix | (hash & 0x0fff_ffff_ffff_ffff))
+}
+
+fn boundary_label(boundary: Boundary) -> &'static str {
+    match boundary {
+        Boundary::Truncated | Boundary::Gap => "missing history",
+        Boundary::VersionGap => "history version changed",
+        Boundary::Evicted => "earlier history evicted",
+    }
+}
+
+fn install_store_feed(
+    model: &Model,
+    agent: AgentId,
+    parts: &mut ChatFrameParts,
+    ctx: &FrameContext,
+) {
+    let Some(chat) = model.chat(agent) else {
+        return;
+    };
+    if chat.entries.is_empty() && chat.boundaries.is_empty() {
+        parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
+        return;
+    }
+
+    let mut boundaries = chat.boundaries.iter().peekable();
+    let mut durable = Vec::with_capacity(chat.entries.len() + chat.boundaries.len());
+    for entry in &chat.entries {
+        let (segment, order, key) = entry.position();
+        while boundaries.peek().is_some_and(|boundary| {
+            boundary.segment < segment
+                || (boundary.segment == segment
+                    && boundary
+                        .before
+                        .as_ref()
+                        .is_none_or(|(before_order, before_key)| {
+                            (before_order, before_key) <= (&order, key)
+                        }))
+        }) {
+            let boundary = boundaries.next().expect("peeked boundary");
+            let identity = format!(
+                "{}:{:?}:{:?}",
+                boundary.segment, boundary.before, boundary.boundary
+            );
+            durable.push(blocks::paint_history_boundary(
+                stable_block_key(0xe000_0000_0000_0000, &identity),
+                boundary_label(boundary.boundary),
+                ctx.theme,
+                ctx.viewport.0 as usize,
+            ));
+        }
+        durable.push(blocks::paint_stored_entry(
+            stable_block_key(0xd000_0000_0000_0000, key.as_ref()),
+            entry.kind(),
+            entry.text().unwrap_or_default(),
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        ));
+    }
+    for boundary in boundaries {
+        let identity = format!(
+            "{}:{:?}:{:?}",
+            boundary.segment, boundary.before, boundary.boundary
+        );
+        durable.push(blocks::paint_history_boundary(
+            stable_block_key(0xe000_0000_0000_0000, &identity),
+            boundary_label(boundary.boundary),
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        ));
+    }
+    parts.feed.blocks = durable;
+    parts.feed.history_truncated = false;
+    parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
+}
+
+fn store_status(model: &Model, agent: AgentId, ctx: &FrameContext) -> Option<Line<'static>> {
+    let chat = model.chat(agent)?;
+    let width = ctx.viewport.0 as usize;
+    if chat.live_only {
+        return Some(blocks::store_status_row(
+            "✗",
+            "persistence unavailable · live only",
+            ctx.theme.error(),
+            width,
+            ctx.theme,
+        ));
+    }
+    const CATCH_UP_DELAY_MS: i64 = 500;
+    if chat.state == ChatState::CatchingUp
+        && chat.catching_up_since.is_some_and(|since| {
+            ctx.now.signed_duration_since(since).num_milliseconds() >= CATCH_UP_DELAY_MS
+        })
+    {
+        return Some(blocks::store_status_row(
+            "⟳",
+            "catching up from saved history…",
+            ctx.theme.muted(),
+            width,
+            ctx.theme,
+        ));
+    }
+    let progress = model
+        .agent(agent)
+        .and_then(|card| card.agent.progress.as_ref())
+        .or(chat.progress.as_ref());
+    behind(progress, chat.head_through()).then(|| {
+        blocks::store_status_row(
+            "↓",
+            "new activity available",
+            ctx.theme.warn(),
+            width,
+            ctx.theme,
+        )
+    })
 }
 
 /// Everything an agent-message row needs besides the message itself: who

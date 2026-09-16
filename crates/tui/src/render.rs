@@ -563,18 +563,27 @@ fn fleet_row_line(
                 detail,
             );
             if show_status {
-                push_span(
-                    &mut line,
-                    STATUS_COL,
-                    clip(&model.status_label_for(card), STATUS_WIDTH),
-                    detail,
-                );
+                let status = if card.remembered {
+                    "remembered".to_string()
+                } else {
+                    model.status_label_for(card)
+                };
+                push_span(&mut line, STATUS_COL, clip(&status, STATUS_WIDTH), detail);
             }
-            if show_working
-                && let Some(text) =
-                    working_text(card, ctx.now, width.saturating_sub(2 + WORKING_COL))
-            {
-                push_span(&mut line, WORKING_COL, text, detail);
+            if show_working {
+                let budget = width.saturating_sub(2 + WORKING_COL);
+                let text = if card.remembered {
+                    let standing = model.status_label_for(card);
+                    Some(match working_text(card, ctx.now, budget) {
+                        Some(working) => format!("last {standing} · {working}"),
+                        None => format!("last {standing}"),
+                    })
+                } else {
+                    working_text(card, ctx.now, budget)
+                };
+                if let Some(text) = text {
+                    push_span(&mut line, WORKING_COL, clip(&text, budget), detail);
+                }
             }
         }
         VisibleRow::PendingCreate {

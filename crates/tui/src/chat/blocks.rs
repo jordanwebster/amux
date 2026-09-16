@@ -302,6 +302,30 @@ pub(crate) fn invariant_warning_row(width: usize, theme: Theme) -> Line<'static>
     line
 }
 
+pub(crate) fn store_status_row(
+    glyph: &str,
+    text: &str,
+    style: Style,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(
+        &mut line,
+        GLYPH_COL,
+        glyph.to_string(),
+        style.patch(theme.background()),
+    );
+    push_span(
+        &mut line,
+        TEXT_COL,
+        clip_to_width(text, width.saturating_sub(TEXT_COL)).to_string(),
+        theme.muted().patch(theme.background()),
+    );
+    fill(&mut line, width, theme.background());
+    line
+}
+
 /// A filled block: the caller's rows, wearing the accent bar, with
 /// [`SURFACE_PAD`] blank tinted rows above and below.
 fn padded_surface(
@@ -772,6 +796,63 @@ pub(crate) fn paint_compaction_rule(
     width: usize,
 ) -> PaintedBlock {
     block(key, BlockKind::Divider, vec![rule_row(label, theme, width)])
+}
+
+/// Provider-neutral durable entry paint used before a live provider layer is
+/// available. The store deliberately persists semantic entries rather than
+/// renderer state; these stable kinds preserve the important authorship and
+/// event distinctions without inventing provider-specific facts.
+pub(crate) fn paint_stored_entry(
+    key: BlockKey,
+    kind: &str,
+    text: &str,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    match kind {
+        "prompt" => paint_user_prompt(key, text, false, theme, width),
+        "error" | "api_error" => paint_error(key, text, false, theme, width),
+        "turn" | "boundary" | "compaction" => {
+            paint_turn_rule(key, if text.is_empty() { kind } else { text }, theme, width)
+        }
+        "thinking" | "reasoning" => {
+            let label = if text.is_empty() { kind } else { text };
+            block(
+                key,
+                BlockKind::Activity,
+                glyph_rows(
+                    ("~", theme.muted()),
+                    markdown::plain_rows(label, text_width(width), theme.muted()),
+                    theme,
+                ),
+            )
+        }
+        _ => {
+            let body = if text.is_empty() { kind } else { text };
+            block(
+                key,
+                if matches!(kind, "message" | "agent_message") {
+                    BlockKind::Speech
+                } else {
+                    BlockKind::Activity
+                },
+                glyph_rows(
+                    ("·", theme.muted()),
+                    markdown::plain_rows(body, text_width(width), theme.text()),
+                    theme,
+                ),
+            )
+        }
+    }
+}
+
+pub(crate) fn paint_history_boundary(
+    key: BlockKey,
+    label: &str,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    paint_turn_rule(key, label, theme, width)
 }
 
 /// Something went wrong. The accent is on the glyph alone: a red wall of

@@ -13,10 +13,10 @@ use fold::claude_pty::{ClaudeEntry, ClaudeFold};
 use fold::claude_sdk::{ClaudeSdkEntry, ClaudeSdkFold};
 use fold::codex::{CodexEntry, CodexFold};
 use fold::{
-    Baseline, BaselineReason, BoundaryAt, ChatRevision, EntryKey, ExpectedHead, Fleet, FleetDelta,
-    Generations, Head, HeadState, Input, JsonBytes, Loaded, Mutation, MutationOracle, OpId, Page,
-    PageToken, Placement, ProviderFold, RedirectState, Revision, SegmentId, SegmentTransition,
-    StoreError, Stored, StreamAttempt, WindowBudget, WindowInterest,
+    Baseline, BaselineReason, BoundaryAt, ChatRevision, Entry, EntryKey, ExpectedHead, Fleet,
+    FleetDelta, Generations, Head, HeadState, Input, JsonBytes, Loaded, Mutation, MutationOracle,
+    OpId, Page, PageToken, Placement, ProviderFold, RedirectState, Revision, SegmentId,
+    SegmentTransition, StoreError, Stored, StreamAttempt, WindowBudget, WindowInterest,
 };
 use model::{AgentId, ReplayFacts, ReplayOutcome, Seq, StructuredProtocol};
 use serde::{Deserialize, Serialize};
@@ -122,11 +122,30 @@ impl StoredDto {
         }
     }
 
-    fn position(&self) -> (SegmentId, fold::Order, &EntryKey) {
+    pub fn position(&self) -> (SegmentId, fold::Order, &EntryKey) {
         match self {
             Self::Claude(value) => (value.segment, value.order, &value.key),
             Self::ClaudeSdk(value) => (value.segment, value.order, &value.key),
             Self::Codex(value) => (value.segment, value.order, &value.key),
+        }
+    }
+
+    /// Provider-neutral facts needed to paint a durable window before a live
+    /// provider stream exists. Rich live views may know more, but durable
+    /// entries always retain these two presentation facts.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Claude(value) => value.entry.kind(),
+            Self::ClaudeSdk(value) => value.entry.kind(),
+            Self::Codex(value) => value.entry.kind(),
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Claude(value) => value.entry.text(),
+            Self::ClaudeSdk(value) => value.entry.text(),
+            Self::Codex(value) => value.entry.text(),
         }
     }
 }
@@ -496,6 +515,10 @@ pub struct ChatWindow {
     pub view_epoch: u64,
     pub live_only: bool,
     pub persistence_error: Option<StoreError>,
+    /// The stream's opening time while a replay is still being consumed.
+    /// Renderers use it to suppress a distracting catch-up flash.
+    #[serde(default)]
+    pub catching_up_since: Option<DateTime<Utc>>,
     pub paused: bool,
     pub abandoned_flush: bool,
     canonical_entries: Vec<StoredDto>,
@@ -534,6 +557,7 @@ impl ChatWindow {
             view_epoch: 0,
             live_only: false,
             persistence_error: None,
+            catching_up_since: None,
             paused: false,
             abandoned_flush: false,
             canonical_entries: Vec::new(),
@@ -562,6 +586,10 @@ impl ChatWindow {
             self.state,
             ChatState::Painted | ChatState::CatchingUp | ChatState::Live | ChatState::Flushing
         )
+    }
+
+    pub fn head_through(&self) -> Option<Seq> {
+        self.head.as_ref().map(HeadDto::through)
     }
 }
 
@@ -935,6 +963,7 @@ fn install_loaded(chat: &mut ChatWindow, loaded: LoadedDto) -> LoadedBranch {
             chat.paused = false;
             chat.live_only = false;
             chat.persistence_error = None;
+            chat.catching_up_since = None;
             chat.view_epoch = chat.view_epoch.saturating_add(1);
             match $loaded.head {
                 HeadState::Usable(_, head) => {
@@ -1425,6 +1454,7 @@ fn opened(
         chat.head = Some(new_head(chat.protocol, successor, baseline, at));
     }
     chat.state = ChatState::CatchingUp;
+    chat.catching_up_since = Some(at);
     Vec::new()
 }
 
@@ -1619,6 +1649,7 @@ fn replay_complete(state: &mut StoreState, agent: AgentId, at: DateTime<Utc>) ->
         return Vec::new();
     }
     chat.state = ChatState::Live;
+    chat.catching_up_since = None;
     let through = chat
         .replay_through
         .max(chat.head.as_ref().map_or(0, HeadDto::through));
@@ -1653,6 +1684,7 @@ fn closed(
                     .as_mut()
                     .map(|head| head.apply(Input::ObserverLost { at }, at));
                 chat.state = ChatState::Painted;
+                chat.catching_up_since = None;
                 mutations
             }
         }

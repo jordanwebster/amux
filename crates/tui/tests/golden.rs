@@ -6,15 +6,21 @@
 //! Regenerate with `UPDATE_GOLDENS=1 just test-crate tui -- --features fixtures --test golden`
 //! and review the diff like code.
 
+use std::time::Duration;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use tui::chat::FeedScroll;
 use tui::replay::capture_frame;
 use tui::view::{Mode, UiAction, ViewState};
 use tui::{ColorMode, FrameContext, Theme, render};
+use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::{
-    Agent, AgentId, AgentParent, Command, DisconnectReason, HostEntry, HostId, Model, Msg, OpId,
-    ServerMsg, StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
+    Agent, AgentId, AgentParent, Boundary, BoundaryAt, ChatCommand, ChatStreamMsg, Command,
+    DisconnectReason, Effect, FleetDelta, HostEntry, HostId, Model, Msg, OpId, ProfileGeneration,
+    ReplayFactsDto, ReplayOutcomeDto, ServerMsg, StoreError, StoreMsg, StoreOp, StoreOpKind,
+    StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
 };
 use uuid::Uuid;
 
@@ -505,6 +511,582 @@ fn fleet_rows_draw_daemon_summary_freshness_and_incompatible_age() {
     assert!(text.contains("foreign-agent"));
     assert!(text.contains("2m"));
     assert!(text.contains("unknown"));
+}
+
+fn stored_chat_model(replay_complete: bool) -> Model {
+    let agent = an_agent("stored-chat", "claude", "nova");
+    let mut model = fold(vec![
+        server(ServerMsg::Connected {
+            local_host_id: Some(host_id("nova")),
+        }),
+        server(ServerMsg::HostUpserted {
+            host: a_host("nova"),
+        }),
+        agent_up(&agent),
+        server(ServerMsg::HostsSynchronized),
+        server(ServerMsg::AgentsSynchronized),
+    ]);
+    let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: agent.id }));
+    let (attempt, load_op) = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
+            _ => None,
+        })
+        .expect("chat open loads the store");
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: load_op,
+            agent: Some(agent.id),
+            kind: StoreOpKind::Load,
+            error: StoreError::UnsupportedFormat,
+        }),
+    );
+    let stream = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .expect("live-only chat opens a stream");
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 2,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at(NOW - 10),
+            },
+        },
+    );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at(NOW - 9),
+                entries: vec![
+                    StreamEntry::observed(1, at(NOW - 9), ready_row()),
+                    StreamEntry::observed(2, at(NOW - 9), prompt_row(8)),
+                ],
+            },
+        },
+    );
+    if replay_complete {
+        update(
+            &mut model,
+            Msg::ChatStream {
+                agent: agent.id,
+                attempt: stream,
+                event: ChatStreamMsg::ReplayComplete { at: at(NOW - 8) },
+            },
+        );
+    }
+    model
+}
+
+fn patch_chat(mut model: Model, patch: impl FnOnce(&mut serde_json::Value)) -> Model {
+    let mut value = serde_json::to_value(&model).expect("model serializes");
+    let chat = value
+        .pointer_mut(&format!(
+            "/store/chats/{}",
+            agent_id("stored-chat")
+                .to_string()
+                .replace('~', "~0")
+                .replace('/', "~1")
+        ))
+        .expect("stored chat in serialized model");
+    patch(chat);
+    model = serde_json::from_value(value).expect("patched model deserializes");
+    model
+}
+
+fn chat_view(model: &Model) -> ViewState {
+    let mut view = view_default();
+    view.open_chat(model, agent_id("stored-chat"));
+    view
+}
+
+fn boundary_chat_view(model: &Model) -> ViewState {
+    let mut view = chat_view(model);
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .set_scroll(FeedScroll::Paused {
+            top_line: 0,
+            entry_watermark: 0,
+        });
+    view
+}
+
+fn durable_boundaries_model() -> Model {
+    let model = stored_chat_model(true);
+    let entry = model
+        .chat(agent_id("stored-chat"))
+        .and_then(|chat| chat.entries.first())
+        .expect("stored prompt");
+    let (segment, order, key) = entry.position();
+    let boundaries = vec![
+        BoundaryAt {
+            segment,
+            before: None,
+            boundary: Boundary::Gap,
+        },
+        BoundaryAt {
+            segment,
+            before: Some((order, key.clone())),
+            boundary: Boundary::VersionGap,
+        },
+        BoundaryAt {
+            segment: segment + 1,
+            before: None,
+            boundary: Boundary::Evicted,
+        },
+    ];
+    patch_chat(model, |chat| {
+        chat["live_only"] = serde_json::Value::Bool(false);
+        chat["persistence_error"] = serde_json::Value::Null;
+        chat["boundaries"] = serde_json::to_value(boundaries).expect("boundaries serialize");
+    })
+}
+
+fn healthy_stored_chat_model(replay_complete: bool) -> Model {
+    patch_chat(stored_chat_model(replay_complete), |chat| {
+        chat["live_only"] = serde_json::Value::Bool(false);
+        chat["persistence_error"] = serde_json::Value::Null;
+    })
+}
+
+fn behind_model() -> Model {
+    patch_chat(healthy_stored_chat_model(true), |chat| {
+        chat["progress"] = serde_json::json!({"through": 8, "at": at(NOW - 1), "revision": 9});
+    })
+}
+
+fn remembered_and_stale_model() -> Model {
+    let mut remembered = an_agent("remembered-card", "claude", "nova");
+    remembered.summary = Some(ui_state::SummaryEnvelope {
+        through: 6,
+        producer_version: 1,
+        observed_at: at(NOW - 60),
+        stale: false,
+        revision: 3,
+        summary: ui_state::Summary {
+            attention: ui_state::Attention::NeedsYou {
+                why: ui_state::Why::Permission,
+            },
+            phase: ui_state::AgentPhase::Running,
+            last_activity: Some(at(NOW - 60)),
+            todo: None,
+            context: None,
+            model: None,
+            unknown: Vec::new(),
+        },
+    });
+    let mut stale = an_agent("stale-summary", "claude", "nova");
+    stale.summary = Some(ui_state::SummaryEnvelope {
+        through: 7,
+        producer_version: 1,
+        observed_at: at(NOW - 20),
+        stale: true,
+        revision: 4,
+        summary: ui_state::Summary {
+            attention: ui_state::Attention::Working,
+            phase: ui_state::AgentPhase::Running,
+            last_activity: Some(at(NOW - 30)),
+            todo: None,
+            context: None,
+            model: None,
+            unknown: vec![ui_state::SummaryField::Todo],
+        },
+    });
+    let model = fold(vec![
+        server(ServerMsg::Connected {
+            local_host_id: Some(host_id("nova")),
+        }),
+        server(ServerMsg::HostUpserted {
+            host: a_host("nova"),
+        }),
+        agent_up(&remembered),
+        agent_up(&stale),
+    ]);
+    let mut value = serde_json::to_value(model).expect("model serializes");
+    let remembered = value
+        .pointer_mut(&format!(
+            "/agents/{}/remembered",
+            agent_id("remembered-card")
+        ))
+        .expect("remembered card field");
+    *remembered = serde_json::Value::Bool(true);
+    serde_json::from_value(value).expect("remembered model deserializes")
+}
+
+fn store_state_golden(model: &Model, view: &ViewState, theme: Theme) -> String {
+    let buffer = render_buffer_at(model, view, 120, 40, theme);
+    let capture = capture_frame(&buffer, theme);
+    format!(
+        "--- text ---\n{}--- styles ---\n{}",
+        capture.text, capture.styles
+    )
+}
+
+fn assert_store_state_goldens(theme: Theme, theme_name: &str) {
+    let catching = healthy_stored_chat_model(false);
+    let boundaries = durable_boundaries_model();
+    let behind = behind_model();
+    let failed = stored_chat_model(true);
+    let states = [
+        (
+            "remembered_stale",
+            remembered_and_stale_model(),
+            view_default(),
+        ),
+        ("catching_up", catching.clone(), chat_view(&catching)),
+        (
+            "boundaries",
+            boundaries.clone(),
+            boundary_chat_view(&boundaries),
+        ),
+        ("behind", behind.clone(), chat_view(&behind)),
+        ("live_only", failed.clone(), chat_view(&failed)),
+    ];
+    for (label, model, view) in states {
+        assert_golden(
+            &format!("store_{label}_{theme_name}"),
+            &store_state_golden(&model, &view, theme),
+        );
+    }
+}
+
+#[test]
+fn store_states_dark() {
+    let theme = Theme::default();
+    assert_store_state_goldens(theme, "dark");
+}
+
+#[test]
+fn store_states_light() {
+    let theme = Theme::light(ColorMode::TrueColor);
+    assert_store_state_goldens(theme, "light");
+}
+
+#[test]
+fn catching_up_waits_before_showing_a_non_error_indicator() {
+    let model = patch_chat(healthy_stored_chat_model(false), |chat| {
+        chat["catching_up_since"] = serde_json::to_value(at(NOW)).expect("time serializes");
+    });
+    let view = chat_view(&model);
+    assert!(
+        view.chat.as_ref().expect("chat open").needs_tick(&model),
+        "the delayed indicator must schedule the tick that reveals it"
+    );
+    let theme = Theme::default();
+    let immediate = capture_frame(&render_buffer_at(&model, &view, 100, 20, theme), theme);
+    assert!(!immediate.text.contains("catching up"));
+
+    let delayed = healthy_stored_chat_model(false);
+    let delayed = capture_frame(
+        &render_buffer_at(&delayed, &chat_view(&delayed), 100, 20, theme),
+        theme,
+    );
+    assert!(delayed.text.contains("catching up from saved history"));
+    assert_eq!(
+        delayed
+            .styles
+            .lines()
+            .nth(1)
+            .and_then(|line| line.chars().nth(2)),
+        Some('m'),
+        "catch-up is muted status, never an error"
+    );
+}
+
+#[test]
+fn offline_warm_start_and_gap_reconnect_keep_remembered_history_scrollable() {
+    let remembered = remembered_and_stale_model();
+    let fleet = render_frame_at(&remembered, &view_default(), 100, 20);
+    assert!(fleet.contains("remembered"));
+    assert!(fleet.contains("last permission"));
+    assert_eq!(
+        ui_state::claude::send_gate(&remembered, agent_id("remembered-card")),
+        ui_state::claude::SendGate::Unavailable,
+        "a remembered-only card cannot send before this connection confirms it"
+    );
+
+    let model = durable_boundaries_model();
+    let frame = capture_frame(
+        &render_buffer_at(
+            &model,
+            &boundary_chat_view(&model),
+            100,
+            20,
+            Theme::default(),
+        ),
+        Theme::default(),
+    )
+    .text;
+    assert!(
+        frame.contains("do the thing"),
+        "the old segment remains visible"
+    );
+    assert!(frame.contains("missing history"));
+    assert!(frame.contains("history version changed"));
+    assert!(frame.contains("earlier history evicted"));
+    assert!(frame.contains("scrolled back"));
+}
+
+async fn runtime_message(runtime: &mut Runtime, message: Msg) {
+    runtime
+        .shell_edge()
+        .report(message)
+        .await
+        .expect("runtime edge remains open");
+    tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+        .await
+        .expect("runtime message timed out");
+}
+
+async fn next_runtime_message(runtime: &mut Runtime) {
+    tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+        .await
+        .expect("runtime message timed out");
+}
+
+#[tokio::test]
+async fn seeded_sqlite_warm_start_and_gap_reconnect_paint_at_the_tui_boundary() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("store.sqlite");
+    let agent = an_agent("stored-chat", "claude", "nova");
+    let host = a_host("nova");
+    let options = || RuntimeOptions {
+        store_path: Some(path.clone()),
+        ..RuntimeOptions::default()
+    };
+
+    let mut first = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+    for _ in 0..3 {
+        next_runtime_message(&mut first).await;
+    }
+    for message in [
+        server(ServerMsg::Connected {
+            local_host_id: Some(host.id),
+        }),
+        server(ServerMsg::HostUpserted { host: host.clone() }),
+        agent_up(&agent),
+        server(ServerMsg::HostsSynchronized),
+        server(ServerMsg::AgentsSynchronized),
+    ] {
+        runtime_message(&mut first, message).await;
+    }
+    for delta in [
+        FleetDelta::Host {
+            host: host.clone(),
+            revision: 1,
+        },
+        FleetDelta::AgentUp {
+            agent: agent.clone(),
+            revision: 2,
+        },
+    ] {
+        runtime_message(&mut first, Msg::FleetDelta(delta)).await;
+        next_runtime_message(&mut first).await;
+    }
+
+    first.open_chat(agent.id);
+    while first
+        .model()
+        .chat(agent.id)
+        .is_none_or(|chat| !chat.is_painted())
+    {
+        next_runtime_message(&mut first).await;
+    }
+    let stream = first
+        .model()
+        .chat(agent.id)
+        .expect("chat loaded")
+        .stream_attempt;
+    runtime_message(
+        &mut first,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 2,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at(NOW - 10),
+            },
+        },
+    )
+    .await;
+    runtime_message(
+        &mut first,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at(NOW - 9),
+                entries: vec![
+                    StreamEntry::observed(1, at(NOW - 9), ready_row()),
+                    StreamEntry::observed(2, at(NOW - 9), prompt_row(8)),
+                ],
+            },
+        },
+    )
+    .await;
+    while first
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.pending_bytes() > 0)
+    {
+        next_runtime_message(&mut first).await;
+    }
+    runtime_message(
+        &mut first,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete { at: at(NOW - 8) },
+        },
+    )
+    .await;
+    while first
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.pending_bytes() > 0)
+    {
+        next_runtime_message(&mut first).await;
+    }
+    drop(first);
+
+    let mut reopened = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+    for _ in 0..8 {
+        if reopened
+            .model()
+            .chat(agent.id)
+            .is_some_and(|chat| !chat.entries.is_empty())
+        {
+            break;
+        }
+        next_runtime_message(&mut reopened).await;
+    }
+    let warm = reopened.model();
+    assert!(warm.agent(agent.id).is_some_and(|card| card.remembered));
+    assert!(
+        !warm
+            .chat(agent.id)
+            .expect("remembered chat")
+            .entries
+            .is_empty()
+    );
+    let warm_frame = render_frame_at(warm, &chat_view(warm), 120, 40);
+    assert!(warm_frame.contains("do the thing"));
+
+    let stream = warm.chat(agent.id).expect("remembered chat").stream_attempt;
+    reopened
+        .shell_edge()
+        .report(Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 3,
+                    through: 3,
+                    selected_from: 3,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Truncated { missing_after: 2 },
+                },
+                at: at(NOW - 2),
+            },
+        })
+        .await
+        .expect("gap open reaches runtime");
+    while reopened.model().chat(agent.id).expect("gap chat").state
+        != ui_state::ChatState::CatchingUp
+    {
+        next_runtime_message(&mut reopened).await;
+    }
+    let mut after_gap = prompt_row(9);
+    after_gap["message"]["content"] = serde_json::Value::String("new after gap".to_owned());
+    reopened
+        .shell_edge()
+        .report(Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at(NOW - 1),
+                entries: vec![StreamEntry::observed(3, at(NOW - 1), after_gap)],
+            },
+        })
+        .await
+        .expect("gap batch reaches runtime");
+    while !reopened
+        .model()
+        .chat(agent.id)
+        .expect("gap chat")
+        .entries
+        .iter()
+        .any(|entry| entry.text() == Some("new after gap"))
+    {
+        next_runtime_message(&mut reopened).await;
+    }
+    while reopened
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.pending_bytes() > 0)
+    {
+        next_runtime_message(&mut reopened).await;
+    }
+    let chat = reopened.model().chat(agent.id).expect("gap chat");
+    assert!(
+        chat.boundaries
+            .iter()
+            .any(|item| item.boundary == Boundary::Gap),
+        "gap commit did not install its boundary: state={:?} live_only={} error={:?} boundaries={:?} pending={}",
+        chat.state,
+        chat.live_only,
+        chat.persistence_error,
+        chat.boundaries,
+        chat.pending_bytes()
+    );
+    assert!(
+        chat.entries
+            .iter()
+            .any(|entry| entry.text() == Some("do the thing"))
+    );
+    assert!(
+        chat.entries
+            .iter()
+            .any(|entry| entry.text() == Some("new after gap"))
+    );
+    let gap_frame = capture_frame(
+        &render_buffer_at(
+            reopened.model(),
+            &boundary_chat_view(reopened.model()),
+            120,
+            40,
+            Theme::default(),
+        ),
+        Theme::default(),
+    )
+    .text;
+    assert!(gap_frame.contains("do the thing"));
+    assert!(gap_frame.contains("missing history"));
 }
 
 /// Cloud-auth expiry is a degraded banner over a working fleet — never a
