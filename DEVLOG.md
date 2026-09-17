@@ -1,3 +1,13 @@
+2026-09-17 — **Memory repair runs keep the real soak workload.** The original
+ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the
+diagnostic recorder retained serialized stream and store messages up to its
+10,000-message count ceiling—about 3.5 KiB per delivered row. The recorder's
+shipping 2 MiB byte ceiling now advances those messages into its exact replay
+checkpoint instead. `AMUX_PERF_SOAK_SECONDS=240` runs the same on-disk client,
+ten chats, row rate and two-minute warm-up for repair diagnosis, moves reset
+and reopen to minute three, and labels itself as shortened diagnostic evidence;
+an unset duration remains the ten-minute qualification.
+
 2026-09-17 — **Cold-start qualification now launches the shipped terminal client.**
 The 40- and 200-agent rows exec the release `amux` binary under a pseudo-terminal,
 point it at an offline fixture profile with more than 10 MiB stored, and stop at

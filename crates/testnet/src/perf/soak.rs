@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::{Child, Command};
@@ -16,10 +17,13 @@ use super::{Machine, Metric, MetricRun, Report, Sample, Statistic, Unit, Workloa
 use crate::script::{Provider, Script, ScriptAsk, Step};
 use crate::{TestNet, connect_user};
 
-const SOAK_DURATION: Duration = Duration::from_secs(10 * 60);
+const QUALIFICATION_DURATION: Duration = Duration::from_secs(10 * 60);
+const MIN_DIAGNOSTIC_DURATION: Duration = Duration::from_secs(4 * 60);
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 const PULSE_INTERVAL: Duration = Duration::from_millis(50);
 const WARM_UP: Duration = Duration::from_secs(2 * 60);
+const RESET_AFTER: Duration = Duration::from_secs(4 * 60);
+const RESET_REOPEN_MARGIN: Duration = Duration::from_secs(60);
 const MIB: f64 = 1024.0 * 1024.0;
 const SEED: u64 = 0xA6_2026_0917;
 
@@ -30,14 +34,63 @@ struct ClientSoakTiming {
     reset_iteration: u64,
 }
 
-const CLIENT_SOAK_TIMING: ClientSoakTiming = ClientSoakTiming {
-    stall_after: Duration::from_secs(10),
-    stall_for: Duration::from_secs(5),
-    reset_iteration: 4_800,
-};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SoakRunConfig {
+    duration: Duration,
+    diagnostic: bool,
+}
+
+impl SoakRunConfig {
+    fn from_override(value: Option<&OsStr>) -> Result<Self> {
+        let Some(value) = value else {
+            return Ok(Self {
+                duration: QUALIFICATION_DURATION,
+                diagnostic: false,
+            });
+        };
+        let value = value
+            .to_str()
+            .context("AMUX_PERF_SOAK_SECONDS must be Unicode")?;
+        let seconds = value
+            .parse::<u64>()
+            .context("AMUX_PERF_SOAK_SECONDS must be a whole number of seconds")?;
+        let duration = Duration::from_secs(seconds);
+        ensure!(
+            duration >= MIN_DIAGNOSTIC_DURATION && duration < QUALIFICATION_DURATION,
+            "AMUX_PERF_SOAK_SECONDS is for shortened repair runs from {} through {} seconds",
+            MIN_DIAGNOSTIC_DURATION.as_secs(),
+            QUALIFICATION_DURATION.as_secs() - 1
+        );
+        Ok(Self {
+            duration,
+            diagnostic: true,
+        })
+    }
+
+    fn from_env() -> Result<Self> {
+        Self::from_override(std::env::var_os("AMUX_PERF_SOAK_SECONDS").as_deref())
+    }
+
+    fn client_timing(self) -> ClientSoakTiming {
+        let reset_after = RESET_AFTER.min(self.duration - RESET_REOPEN_MARGIN);
+        ClientSoakTiming {
+            stall_after: Duration::from_secs(10),
+            stall_for: Duration::from_secs(5),
+            reset_iteration: u64::try_from(reset_after.as_millis() / PULSE_INTERVAL.as_millis())
+                .expect("soak reset iteration fits u64"),
+        }
+    }
+}
 
 const CLIENT_WORKLOAD: Workload = Workload {
     description: "10 open chats replaying fresh-identity corpora for 10 minutes",
+    seed: SEED,
+    identity_growth: "fresh ids; oversized row, 100 asks, 5 s persistence stall, reset",
+    warm_up: "exclude the first two minutes from slope",
+};
+
+const CLIENT_DIAGNOSTIC_WORKLOAD: Workload = Workload {
+    description: "10 open chats replaying fresh-identity corpora for the diagnostic duration named in the report header",
     seed: SEED,
     identity_growth: "fresh ids; oversized row, 100 asks, 5 s persistence stall, reset",
     warm_up: "exclude the first two minutes from slope",
@@ -50,7 +103,39 @@ const DAEMON_WORKLOAD: Workload = Workload {
     warm_up: "exclude the first two minutes from slope",
 };
 
+const DAEMON_DIAGNOSTIC_WORKLOAD: Workload = Workload {
+    description: "200 idle and 20 active daemon rings for the diagnostic duration named in the report header",
+    seed: SEED,
+    identity_growth: "fresh ids; oversized row, 100 asks and semantic reset",
+    warm_up: "exclude the first two minutes from slope",
+};
+
 pub fn run_soak(machine: Machine) -> Result<()> {
+    let config = SoakRunConfig::from_env()?;
+    if config.diagnostic {
+        println!(
+            "run: diagnostic memory soak shortened to {} s (qualification remains {} s; warm-up remains {} s)",
+            config.duration.as_secs(),
+            QUALIFICATION_DURATION.as_secs(),
+            WARM_UP.as_secs()
+        );
+    } else {
+        println!(
+            "run: qualification memory soak {} s (warm-up {} s)",
+            config.duration.as_secs(),
+            WARM_UP.as_secs()
+        );
+    }
+    let client_workload = if config.diagnostic {
+        CLIENT_DIAGNOSTIC_WORKLOAD
+    } else {
+        CLIENT_WORKLOAD
+    };
+    let daemon_workload = if config.diagnostic {
+        DAEMON_DIAGNOSTIC_WORKLOAD
+    } else {
+        DAEMON_WORKLOAD
+    };
     let root = tempfile::tempdir().context("memory soak control directory")?;
     let executable = std::env::current_exe().context("resolve performance executable")?;
 
@@ -92,9 +177,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
 
     let started_at = Utc::now();
     let started = Instant::now();
-    let mut client_samples = Vec::with_capacity(121);
-    let mut daemon_samples = Vec::with_capacity(121);
-    for index in 0..=SOAK_DURATION.as_secs() / SAMPLE_INTERVAL.as_secs() {
+    let sample_count = config.duration.as_secs() / SAMPLE_INTERVAL.as_secs() + 1;
+    let mut client_samples = Vec::with_capacity(sample_count as usize);
+    let mut daemon_samples = Vec::with_capacity(sample_count as usize);
+    for index in 0..sample_count {
         ensure_running(&mut client, "client")?;
         ensure_running(&mut client_daemon, "client daemon")?;
         ensure_running(&mut daemon, "daemon")?;
@@ -107,7 +193,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             seconds: at,
             bytes: super::sample_memory(daemon.id())?.bytes,
         });
-        if index * SAMPLE_INTERVAL.as_secs() < SOAK_DURATION.as_secs() {
+        if index * SAMPLE_INTERVAL.as_secs() < config.duration.as_secs() {
             let deadline = started + SAMPLE_INTERVAL * (index as u32 + 1);
             std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
         }
@@ -129,7 +215,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             slope_mib_per_minute(&client_samples),
             1.0,
             Unit::MegabytesPerMinute,
-            CLIENT_WORKLOAD,
+            client_workload,
             Statistic::Worst,
             observation_count,
             started_at,
@@ -140,7 +226,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             peak_mib(&client_samples),
             300.0,
             Unit::Megabytes,
-            CLIENT_WORKLOAD,
+            client_workload,
             Statistic::Peak,
             observation_count,
             started_at,
@@ -151,7 +237,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             slope_mib_per_minute(&daemon_samples),
             1.0,
             Unit::MegabytesPerMinute,
-            DAEMON_WORKLOAD,
+            daemon_workload,
             Statistic::Worst,
             observation_count,
             started_at,
@@ -162,7 +248,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             daemon_idle.bytes.saturating_sub(daemon_baseline.bytes) as f64 / MIB / 200.0,
             2.0,
             Unit::Megabytes,
-            DAEMON_WORKLOAD,
+            daemon_workload,
             Statistic::Worst,
             observation_count,
             started_at,
@@ -180,7 +266,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
                 / 20.0,
             40.0,
             Unit::Megabytes,
-            DAEMON_WORKLOAD,
+            daemon_workload,
             Statistic::Peak,
             observation_count,
             started_at,
@@ -196,21 +282,26 @@ pub fn run_soak(machine: Machine) -> Result<()> {
 }
 
 pub fn soak_child(kind: &str, directory: &Path) -> Result<()> {
+    let config = SoakRunConfig::from_env()?;
     match kind {
-        "client" => client_child(directory),
-        "client-daemon" => client_daemon_child(directory),
-        "daemon" => daemon_child(directory),
+        "client" => client_child(directory, config),
+        "client-daemon" => client_daemon_child(directory, config),
+        "daemon" => daemon_child(directory, config),
         _ => bail!("unknown memory soak child {kind:?}"),
     }
 }
 
-fn client_child(directory: &Path) -> Result<()> {
+fn client_child(directory: &Path, config: SoakRunConfig) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .context("build client soak runtime")?;
-    runtime.block_on(client_runtime(directory, CLIENT_SOAK_TIMING))
+    runtime.block_on(client_runtime(
+        directory,
+        config.client_timing(),
+        config.duration,
+    ))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -222,7 +313,11 @@ struct ClientDaemonConnection {
     agents: Vec<Uuid>,
 }
 
-async fn client_runtime(directory: &Path, timing: ClientSoakTiming) -> Result<()> {
+async fn client_runtime(
+    directory: &Path,
+    timing: ClientSoakTiming,
+    soak_duration: Duration,
+) -> Result<()> {
     let connection: ClientDaemonConnection = serde_json::from_slice(
         &std::fs::read(directory.join("connection.json")).context("read client soak connection")?,
     )
@@ -348,7 +443,7 @@ async fn client_runtime(directory: &Path, timing: ClientSoakTiming) -> Result<()
             std::fs::write(directory.join("reset-reopened"), b"live\n")?;
             reopened = true;
         }
-        if started.elapsed() > SOAK_DURATION + Duration::from_secs(120) {
+        if started.elapsed() > soak_duration + Duration::from_secs(120) {
             bail!("client soak parent did not stop the child");
         }
     }
@@ -412,16 +507,24 @@ fn stall_store_worker(path: &Path, after: Duration, for_duration: Duration) -> R
     Ok(())
 }
 
-fn client_daemon_child(directory: &Path) -> Result<()> {
+fn client_daemon_child(directory: &Path, config: SoakRunConfig) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
         .build()
         .context("build client-daemon soak runtime")?;
-    runtime.block_on(client_daemon_runtime(directory, CLIENT_SOAK_TIMING))
+    runtime.block_on(client_daemon_runtime(
+        directory,
+        config.client_timing(),
+        config.duration,
+    ))
 }
 
-async fn client_daemon_runtime(directory: &Path, timing: ClientSoakTiming) -> Result<()> {
+async fn client_daemon_runtime(
+    directory: &Path,
+    timing: ClientSoakTiming,
+    soak_duration: Duration,
+) -> Result<()> {
     const USER: &str = "soak-user";
     const DAEMON: &str = "soak-daemon";
     let net = TestNet::builder()
@@ -484,7 +587,7 @@ async fn client_daemon_runtime(directory: &Path, timing: ClientSoakTiming) -> Re
         }
         iteration += 1;
         tokio::time::sleep(PULSE_INTERVAL.saturating_sub(pulse.elapsed())).await;
-        if started.elapsed() > SOAK_DURATION + Duration::from_secs(30) {
+        if started.elapsed() > soak_duration + Duration::from_secs(30) {
             bail!("client-daemon soak parent did not stop the child");
         }
     }
@@ -516,7 +619,7 @@ async fn seed_client_workload(providers: &[Provider]) -> Result<()> {
     Ok(())
 }
 
-fn daemon_child(directory: &Path) -> Result<()> {
+fn daemon_child(directory: &Path, config: SoakRunConfig) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -539,7 +642,7 @@ fn daemon_child(directory: &Path) -> Result<()> {
             harness.pulse(iteration).await;
             iteration += 1;
             tokio::time::sleep(PULSE_INTERVAL.saturating_sub(pulse.elapsed())).await;
-            if started.elapsed() > SOAK_DURATION + Duration::from_secs(30) {
+            if started.elapsed() > config.duration + Duration::from_secs(30) {
                 bail!("daemon soak parent did not stop the child");
             }
         }
@@ -736,7 +839,11 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = runtime.block_on(client_daemon_runtime(&daemon_path, timing));
+            let result = runtime.block_on(client_daemon_runtime(
+                &daemon_path,
+                timing,
+                Duration::from_secs(30),
+            ));
             if let Err(error) = &result {
                 eprintln!("client soak daemon failed: {error:#}");
             }
@@ -757,7 +864,11 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = runtime.block_on(client_runtime(&client_path, timing));
+            let result = runtime.block_on(client_runtime(
+                &client_path,
+                timing,
+                Duration::from_secs(30),
+            ));
             if let Err(error) = &result {
                 eprintln!("client soak runtime failed: {error:#}");
             }
@@ -798,6 +909,33 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!((slope_mib_per_minute(&samples) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn unset_duration_keeps_the_ten_minute_qualification_schedule() {
+        let config = SoakRunConfig::from_override(None).unwrap();
+        assert_eq!(config.duration, Duration::from_secs(10 * 60));
+        assert!(!config.diagnostic);
+        assert_eq!(config.client_timing().reset_iteration, 4_800);
+    }
+
+    #[test]
+    fn four_minute_diagnostic_moves_reset_before_the_slope_window_closes() {
+        let config = SoakRunConfig::from_override(Some(OsStr::new("240"))).unwrap();
+        assert_eq!(config.duration, Duration::from_secs(4 * 60));
+        assert!(config.diagnostic);
+        assert_eq!(config.client_timing().reset_iteration, 3_600);
+        let reset_at = PULSE_INTERVAL * config.client_timing().reset_iteration as u32;
+        assert_eq!(reset_at, Duration::from_secs(3 * 60));
+        assert!(reset_at >= WARM_UP);
+        assert!(reset_at + RESET_REOPEN_MARGIN <= config.duration);
+    }
+
+    #[test]
+    fn diagnostic_duration_refuses_a_weaker_or_full_qualification_window() {
+        assert!(SoakRunConfig::from_override(Some(OsStr::new("239"))).is_err());
+        assert!(SoakRunConfig::from_override(Some(OsStr::new("600"))).is_err());
+        assert!(SoakRunConfig::from_override(Some(OsStr::new("four"))).is_err());
     }
 
     #[test]
