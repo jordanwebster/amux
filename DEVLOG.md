@@ -6,7 +6,9 @@ last provider row, so the frame and keypress budgets cannot pass while timing
 an unchanged transcript. Reconnect and live-attach qualification now seed the
 client's 5,000-row cursor in SQLite instead of requiring the daemon's 1 MiB
 replay ring to retain that entire history; measured reconnects still request
-and account for only the rows published after the stored cursor.
+and account for only the rows published after the stored cursor. The setup
+allows provider lifecycle rows to put the daemon watermark ahead of that
+cursor; only the measured after-cursor batches require exact row counts.
 
 2026-09-17 — **Report replay preserves modern raw stream semantics.** New
 report headers identify store-backed chat recordings, and reports from the

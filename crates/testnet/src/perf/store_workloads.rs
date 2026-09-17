@@ -290,8 +290,7 @@ async fn reconnect_delta() -> Result<Vec<MetricRun>> {
     store.close().await;
     publish_sdk_rows(&daemon, agent.id, 1, 5_000, 160).await?;
     let client = daemon.admin_client().await;
-    let facts = wait_for_daemon_through(&client, agent.id, 5_000).await?;
-    ensure!(facts.through == 5_000);
+    wait_for_daemon_through(&client, agent.id, 5_000).await?;
 
     let mut runtime = Runtime::start_with_client(
         client.clone(),
@@ -480,8 +479,7 @@ async fn attach_during_flood() -> Result<Vec<MetricRun>> {
 
     publish_sdk_rows(&daemon, agent.id, 1, 5_000, 80).await?;
     let client = daemon.admin_client().await;
-    let retained = wait_for_daemon_through(&client, agent.id, 5_000).await?;
-    ensure!(retained.through == 5_000);
+    wait_for_daemon_through(&client, agent.id, 5_000).await?;
 
     let mut runtime = Runtime::start_with_client(
         client,
