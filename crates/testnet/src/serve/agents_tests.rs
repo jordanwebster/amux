@@ -97,7 +97,14 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
     let outsider = crate::connect_user(&ready.cloud_url, ready.relay, ready.users[1].token.clone())
         .await
         .unwrap();
-    let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
+    let store = tempfile::tempdir().unwrap();
+    let mut runtime = Runtime::start_with_client(
+        client.clone(),
+        RuntimeOptions {
+            store_path: Some(store.path().join("store.sqlite")),
+            ..Default::default()
+        },
+    );
     let server = serve_net(net, listener, ["host".into()].into(), agents);
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
@@ -118,7 +125,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             model.agent(agent).is_some()
         })
         .await;
-        runtime.note_attached(agent);
+        runtime.open_chat(agent);
         // The transcript marker alone does not open the composer: the kernel
         // stream can still be replaying, and a prompt sent then is refused.
         // Wait for the gate a person would see before typing.
@@ -370,7 +377,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             child.working_dir,
             runtime.model().agent(agent).unwrap().agent.working_dir
         );
-        runtime.note_attached(child.id);
+        runtime.open_chat(child.id);
         control.ack(json!({"AgentRaiseAsk":{"agent":"child","ask":{"Plan":{"markdown":"Review this child plan."}}}})).await;
         wait_for(&mut runtime, "child ask on its own session", |model| {
             model.claude(child.id).is_some_and(|l| l.ask_count() == 1)

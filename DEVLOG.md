@@ -1,3 +1,11 @@
+2026-09-18 — **Served journeys exercise the store-backed client path.** The
+agent, SDK and Codex relay journeys now open their conversations through a
+temporary SQLite store, so their transcript assertions observe the same
+canonical windows as the shipping clients after the provider presentation
+feeds were removed. Report conversion's eviction refusal is likewise pinned
+to a current stored boundary; a transition-era truncated feed without stored
+history is correctly classified as a partial session.
+
 2026-09-17 — **A busy store open retries the complete SQLite operation.** Two
 clients creating the same store can contend while setting the new-file pragmas,
 before the schema transaction begins. The one permitted `Busy` retry now

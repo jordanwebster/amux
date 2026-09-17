@@ -162,7 +162,9 @@ pub fn script_from_report(snapshot: &RecorderSnapshot) -> Result<Script, Convers
 mod tests {
     use std::time::Duration;
 
+    use fold::{Boundary, BoundaryAt, Generations, HeadState, Loaded};
     use serde_json::json;
+    use ui_state::{ChatCommand, Effect, LoadedDto, StoreMsg, StoreOp};
 
     use super::*;
     use crate::script;
@@ -175,6 +177,64 @@ mod tests {
                 .join("msgs.jsonl"),
         )
         .unwrap()
+    }
+
+    fn checkpoint_with_evicted_history() -> RecorderSnapshot {
+        let mut snapshot = fixture("complete");
+        for line in snapshot.msgs.drain(..3) {
+            let msg: Msg = serde_json::from_str(&line).unwrap();
+            let _ = ui_state::update(&mut snapshot.checkpoint, msg);
+        }
+        let agent = snapshot.checkpoint.agents().next().unwrap().agent.id;
+        let effects = ui_state::update(
+            &mut snapshot.checkpoint,
+            Msg::Chat(ChatCommand::Open { agent }),
+        );
+        let (profile, attempt, op) = effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                Effect::Store(StoreOp::Load {
+                    profile,
+                    attempt,
+                    op,
+                    ..
+                }) => Some((profile, attempt, op)),
+                _ => None,
+            })
+            .expect("opening the stored chat loads its canonical window");
+        let loaded = Loaded::<fold::claude_pty::ClaudeFold> {
+            generations: Generations {
+                fleet: 1,
+                chat: 1,
+                provider: 1,
+            },
+            fence: 0,
+            content_revision: 1,
+            segment_high_water: 1,
+            head: HeadState::None,
+            window: Vec::new(),
+            boundaries: vec![BoundaryAt {
+                segment: 1,
+                before: None,
+                boundary: Boundary::Evicted,
+            }],
+            first_page: None,
+            aliases: Vec::new(),
+            host: None,
+            progress: None,
+        };
+        let _ = ui_state::update(
+            &mut snapshot.checkpoint,
+            Msg::Store(StoreMsg::Loaded {
+                profile,
+                attempt,
+                op,
+                agent,
+                loaded: Box::new(LoadedDto::Claude(loaded)),
+            }),
+        );
+        snapshot.msgs.clear();
+        snapshot
     }
 
     #[tokio::test]
@@ -219,14 +279,20 @@ mod tests {
     #[test]
     fn script_from_report_refuses_evicted_history_and_partial_session() {
         assert!(matches!(
-            script_from_report(&fixture("truncated")),
+            script_from_report(&checkpoint_with_evicted_history()),
             Err(ConversionRefusal::EvictedHistory { rows: 1 })
         ));
+        assert_eq!(
+            script_from_report(&fixture("truncated")),
+            Err(ConversionRefusal::PartialSession)
+        );
         assert_eq!(
             script_from_report(&fixture("mid_session")),
             Err(ConversionRefusal::PartialSession)
         );
-        println!("truncated: EvictedHistory; mid_session: PartialSession");
+        println!(
+            "stored boundary: EvictedHistory; legacy truncated and mid-session streams: PartialSession"
+        );
     }
 
     #[test]

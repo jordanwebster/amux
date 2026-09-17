@@ -10,6 +10,7 @@ const PROMPT: &str =
     "Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.";
 
 async fn journey(wrong_prompt: bool, wrong_answer: bool) {
+    let store = tempfile::tempdir().unwrap();
     let topology = Topology::load(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../e2e-tests/topologies/codex-recording.json"),
@@ -27,7 +28,13 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
     let client = crate::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
         .await
         .unwrap();
-    let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
+    let mut runtime = Runtime::start_with_client(
+        client.clone(),
+        RuntimeOptions {
+            store_path: Some(store.path().join("store.sqlite")),
+            ..Default::default()
+        },
+    );
     let server = serve_net(net, listener, ["host".into()].into(), agents);
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
@@ -66,7 +73,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
             runtime.model().agent(agent).unwrap().agent.kind,
             node::AgentKind::Codex
         );
-        runtime.note_attached(agent);
+        runtime.open_chat(agent);
         wait_for(&mut runtime, "Codex ready", |model| {
             ui_state::codex::allows_prompt(model, agent)
         })
@@ -224,6 +231,7 @@ async fn testnet_codex_recording_unrecorded_answer_fails_without_hanging() {
 /// under a slash.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client() {
+    let store = tempfile::tempdir().unwrap();
     let topology = Topology::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/codex-offers.json"),
     )
@@ -236,7 +244,13 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
     let client = crate::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
         .await
         .unwrap();
-    let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
+    let mut runtime = Runtime::start_with_client(
+        client.clone(),
+        RuntimeOptions {
+            store_path: Some(store.path().join("store.sqlite")),
+            ..Default::default()
+        },
+    );
     let server = serve_net(net, listener, ["studio".into()].into(), agents);
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
@@ -269,7 +283,7 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             model.agent(agent).is_some()
         })
         .await;
-        runtime.note_attached(agent);
+        runtime.open_chat(agent);
         wait_for(&mut runtime, "reported catalogue", |model| {
             !ui_state::provider::facts(model, agent).models.is_empty()
         })

@@ -43,6 +43,7 @@ async fn testnet_sdk_creation_and_inputs_use_the_real_backend_over_the_relay() {
 }
 
 async fn exercise() {
+    let store = tempfile::tempdir().unwrap();
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../e2e-tests/topologies/claude-sessions.json");
     let topology = Topology::load(&path).unwrap();
@@ -56,6 +57,7 @@ async fn exercise() {
     let mut runtime = Runtime::start_with_client(
         client.clone(),
         RuntimeOptions {
+            store_path: Some(store.path().join("store.sqlite")),
             host_inventory: Some(std::sync::Arc::new(super::agents_tests::OwnerInventory(
                 client.admin(),
             ))),
@@ -136,7 +138,7 @@ async fn exercise() {
                 model.agent(agent).is_some()
             })
             .await;
-            runtime.note_attached(agent);
+            runtime.open_chat(agent);
             wait_for(&mut runtime, "SDK ready", |model| {
                 claude_sdk::send_gate(model, agent) == claude_sdk::SendGate::Ready
             })
@@ -203,7 +205,7 @@ async fn exercise() {
                 );
             }
         }
-        runtime.note_attached(pty);
+        runtime.open_chat(pty);
         wait_for(&mut runtime, "PTY ready", |model| {
             // Replay can finish on the empty log before the live tailer has
             // published its readiness marker. Wait for both sources of
