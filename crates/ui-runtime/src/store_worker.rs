@@ -167,6 +167,9 @@ impl StoreWorker {
                             );
                             let _ = sink.blocking_send(Msg::Store(message));
                             if corrupt {
+                                let _ = failure.send(StoreWorkerFailure {
+                                    error: store::StoreError::Corrupt,
+                                });
                                 break;
                             }
                         }

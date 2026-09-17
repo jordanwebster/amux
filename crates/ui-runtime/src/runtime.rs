@@ -4806,6 +4806,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn corrupt_result_for_an_inactive_store_op_still_ends_after_quarantine() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        let seed = store::Store::open(&path).await.expect("initialize store");
+        let generations = seed
+            .generations()
+            .for_provider("claude_pty")
+            .expect("Claude PTY store generations");
+        seed.close().await;
+
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(path.clone()),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+
+        let connection = rusqlite::Connection::open(&path).expect("open live store");
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema=ON;
+                 UPDATE sqlite_schema SET rootpage=2147483647 WHERE name='host';
+                 PRAGMA schema_version=999;",
+            )
+            .expect("damage fleet table");
+        drop(connection);
+
+        runtime
+            .store_worker
+            .as_ref()
+            .expect("store worker")
+            .execute(ui_state::StoreOp::FleetLoad {
+                profile: ProfileGeneration(0),
+                op: store::OpId(u64::MAX),
+                generations,
+            });
+
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(10), runtime.next_message())
+                .await
+                .expect("corrupt inactive result timed out"),
+            "the reducer must not keep running after its worker stops"
+        );
+        let message = runtime.take_store_failure().expect("fatal store message");
+        assert!(
+            message.contains("is corrupt and has been quarantined"),
+            "{message}"
+        );
+        assert!(
+            !runtime.next_message().await,
+            "a fatal store must end the frame stream"
+        );
+    }
+
+    #[tokio::test]
     async fn store_result_from_a_retired_profile_is_discarded() {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut runtime = a_runtime(directory.path().to_path_buf());

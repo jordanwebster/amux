@@ -1,3 +1,10 @@
+2026-09-17 — **A stopped store worker always ends its client session.** Every
+executed store operation that discovers corruption now reports the worker
+failure independently of its reducer result. A stale operation or superseded
+chat attempt can still discard its ordinary result, but it can no longer leave
+the runtime alive behind a closed worker channel; shutdown completes the
+quarantine and emits the same terminal diagnosis as an active operation.
+
 2026-09-17 — **Phone cache launch completes corruption quarantine.** The
 launch-time cached-fleet read now retries a corrupt open once so an uncontended
 store is quarantined immediately and the next launch starts from an empty
