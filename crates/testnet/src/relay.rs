@@ -73,6 +73,10 @@ pub struct CloudRelay {
 /// belong to [`CloudRelay`], which supplies this relay's address to devices.
 pub(crate) struct Relay {
     pub(crate) addr: SocketAddr,
+    /// Held for as long as the relay exists, so its QUIC port cannot be taken
+    /// by anything else while the relay is offline. Each endpoint it serves on
+    /// is built from a duplicate of this socket.
+    quic_socket: std::net::UdpSocket,
     pub(crate) host_id: HostId,
     tokens: TokenRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
@@ -128,12 +132,14 @@ impl CloudRelay {
     }
 
     pub(crate) async fn start_with_url(url: String) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .expect("bind testnet cloud relay listener");
+        let (listener, quic_socket) = bind_relay_sockets();
         let addr = listener
             .local_addr()
             .expect("testnet cloud relay listener address");
+        listener
+            .set_nonblocking(true)
+            .expect("testnet cloud relay listener is nonblocking");
+        let listener = TcpListener::from_std(listener).expect("adopt testnet cloud relay listener");
         let (quic_server_config, quic_client_config) = testnet_quic_configs();
         let token = format!("spec-token-{}", Uuid::new_v4().simple());
         let user_id = Uuid::new_v4();
@@ -157,6 +163,7 @@ impl CloudRelay {
         let failures = Arc::default();
         let relay = Relay {
             addr,
+            quic_socket,
             host_id: Uuid::new_v4(),
             tokens: tokens.clone(),
             failures: Arc::clone(&failures),
@@ -318,8 +325,15 @@ impl Relay {
             connections.clone(),
             self.latency_millis.clone(),
         ));
-        let quic_endpoint =
-            bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await;
+        let quic_endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(self.quic_server_config.clone()),
+            self.quic_socket
+                .try_clone()
+                .expect("duplicate the relay's QUIC socket"),
+            Arc::new(quinn::TokioRuntime),
+        )
+        .expect("serve QUIC on the relay's socket");
         let quic_task =
             service.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
         *self.server.lock().await = Some(RunningCloud {
@@ -483,22 +497,32 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
     }
 }
 
-async fn bind_quic_addr_with_retries(
-    config: quinn::ServerConfig,
-    addr: SocketAddr,
-) -> quinn::Endpoint {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match quinn::Endpoint::server(config.clone(), addr) {
-            Ok(endpoint) => return endpoint,
-            Err(error) => {
-                if tokio::time::Instant::now() >= deadline {
-                    panic!("failed to rebind QUIC {addr}: {error}");
-                }
-                tokio::time::sleep(POLL_INTERVAL).await;
-            }
+/// Takes the relay's one loopback address on both carriers: TCP for its link
+/// listener and UDP for its QUIC endpoint, on the same port number.
+///
+/// A free TCP port says nothing about that number on UDP. Another test's
+/// ephemeral socket may hold it, and Windows reserves whole UDP ranges that no
+/// process may bind at all, so a port that the kernel handed out for TCP can be
+/// unusable for QUIC. Both are taken together here and a number that fails on
+/// either is abandoned for another.
+fn bind_relay_sockets() -> (std::net::TcpListener, std::net::UdpSocket) {
+    const ATTEMPTS: usize = 50;
+    let mut abandoned = Vec::new();
+    for _ in 0..ATTEMPTS {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("bind testnet cloud relay listener");
+        let port = listener
+            .local_addr()
+            .expect("testnet cloud relay listener address")
+            .port();
+        match std::net::UdpSocket::bind(("127.0.0.1", port)) {
+            Ok(socket) => return (listener, socket),
+            // Holding the rejected listener until every attempt is done stops
+            // the kernel from offering the same unusable number again.
+            Err(_) => abandoned.push(listener),
         }
     }
+    panic!("no loopback port was free for both the relay's TCP and QUIC listeners");
 }
 
 /// Minimal relay state for an in-process test network.

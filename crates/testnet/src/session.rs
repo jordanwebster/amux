@@ -1133,11 +1133,13 @@ impl Daemon {
                 .try_parts()
                 .await
                 .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-            let channel = parts
-                .connections
-                .channel_to(other.host_id())
-                .await
-                .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
+            let channel = match parts.connections.channel_to(other.host_id()).await {
+                Ok(channel) => channel,
+                Err(error) => {
+                    let dump = self.failure_dump().await;
+                    panic!("failed to route {description}: {error}\n{dump}")
+                }
+            };
             Client::from_channel(channel)
         };
         let stream = client

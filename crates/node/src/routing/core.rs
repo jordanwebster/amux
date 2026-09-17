@@ -295,7 +295,12 @@ impl RoutingCore {
         if entry.links.contains(&link) {
             return RouteUpdateOutcome::AlreadyKnown;
         }
-        entry.links.push(link);
+        // Newest first, because a second link to a peer we already hold one to
+        // means a crossed dial: the link arriving now is the one both sides
+        // keep, and the one it displaced has already stopped carrying streams.
+        // Routing hears about that displacement a moment later, so preferring
+        // the older link would send calls down a link nothing can open on.
+        entry.links.insert(0, link);
         state.routing_events.emit(RoutingEvent::NeighborUp {
             host: host.clone(),
             link,
@@ -953,6 +958,25 @@ mod tests {
             host_rx.try_recv().is_err(),
             "the host is still here, so presence has nothing to say"
         );
+    }
+
+    #[tokio::test]
+    async fn a_second_link_to_the_same_peer_becomes_the_route_to_it() {
+        // Two links to one peer means both sides dialled at once. The one that
+        // arrives second is the one they keep; the first stopped carrying
+        // streams the instant it was displaced, and routing is told to drop it
+        // only afterwards. Calls made in between must take the live one.
+        let core = RoutingCore::new();
+        let peer = HostId::from_u128(5);
+        let crossed = link(5, 1);
+        let kept = link(5, 2);
+        core.apply_direct_up(host(5, "peer"), crossed).await;
+
+        core.apply_direct_up(host(5, "peer"), kept).await;
+
+        assert_eq!(core.route_to(peer).await, Some(Route::Direct(kept)));
+        core.apply_direct_down(crossed).await;
+        assert_eq!(core.route_to(peer).await, Some(Route::Direct(kept)));
     }
 
     #[tokio::test]

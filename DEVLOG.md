@@ -1,3 +1,30 @@
+2026-09-17 — **A call no longer lands on the link that was just replaced.**
+When two machines dial each other at the same moment they end up holding two
+direct links, keep the one both sides agree on, and drop the other. The dropped
+link stops carrying streams the instant it is displaced, but routing was told
+about that only afterwards — and until it was told, routing offered that dead
+link first, ahead of the link which had just replaced it. Every call made in
+that window failed outright with "no live link to host": a remote session that
+would not open, an agent that would not spawn on another machine, for a reason
+no person could act on. Routing now prefers the newest link to a peer, and a
+link joins routing before the hosts it claims to reach rather than after, so
+the moment when a peer has a route leading nowhere is closed from both ends.
+
+Those were the spec suite's two standing Windows failures — a remote spawn and
+a remote attach, both failing on their first cross-host call. Running the whole
+suite at forty-eight threads on a twelve-core machine reproduced them in about
+one run in five, which is what made them findable at all; twenty-five runs
+after the change produced none. The test network's cross-host attach now prints
+the failure dump when it cannot route, which is what made the cause visible.
+
+The same runs turned up a second Windows failure with a different cause. The
+test cloud relay took a loopback port for TCP and then bound its QUIC endpoint
+on that same number, assuming a free TCP port means a free UDP one. It does
+not: another test's ephemeral socket can already hold it, and Windows reserves
+whole UDP ranges that no process may bind, which is what "socket rebind os
+error 10013" was. The relay now takes both carriers together and abandons a
+number that fails on either, and it keeps its UDP socket for as long as it
+lives, so going offline and back online cannot lose the port to anyone else.
 2026-09-17 — **A reconnect is no longer reported as an authentication
 failure.** Every phone reconnect wrote `auth.mtls_handshake_failure` to the
 daemon's audit log, the entry meant for a peer that could not prove who it is.

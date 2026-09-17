@@ -560,11 +560,10 @@ async fn run_established(
         return Ok(());
     };
 
-    for neighbor in peer_neighbors {
-        if neighbor.id != ctx.local_host.id() && neighbor.id != peer_host.id {
-            ctx.routing.apply_claim_up(peer_host.id, neighbor).await;
-        }
-    }
+    // The peer joins routing before the hosts it claims to reach, and before
+    // anything else this link has to do. From the moment it displaced an
+    // earlier link, that earlier link carries nothing; every instant until
+    // this one lands is an instant when a call to this peer has nowhere to go.
     if ctx.acceptor_session.is_none() {
         match ctx.routing.apply_direct_up(peer_host.clone(), link).await {
             RouteUpdateOutcome::Inserted | RouteUpdateOutcome::AlreadyKnown => {}
@@ -584,10 +583,14 @@ async fn run_established(
     }
     // The links this one superseded leave routing now, after this link has
     // joined it, so the peer never looks absent. Their tasks remove them again
-    // when they finish closing, which by then is a no-op; until then a route
-    // chosen from routing would be a link the registry no longer holds.
+    // when they finish closing, which by then is a no-op.
     for superseded in displaced {
         ctx.routing.apply_direct_down(superseded).await;
+    }
+    for neighbor in peer_neighbors {
+        if neighbor.id != ctx.local_host.id() && neighbor.id != peer_host.id {
+            ctx.routing.apply_claim_up(peer_host.id, neighbor).await;
+        }
     }
     signal_establishment(ctx.take_established_tx(), Ok(peer_host.clone()));
 
