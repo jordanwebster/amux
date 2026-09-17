@@ -1,3 +1,14 @@
+2026-09-17 — **Scroll-back qualification walks the client window.** The
+50,000-entry workload now opens through the offline UI runtime, executes every
+older-page request on the store worker, reconciles and paints after each
+result, enforces the desktop window budgets throughout, and follows the same
+client back to the newest stored row before measuring returned memory. That
+walk exposed the diagnostic recorder retaining every serialized page result;
+its replay ring is now bounded by bytes as well as message count, folding
+evictions into the exact replay checkpoint. The same Mac14,6 runtime walk fell
+from 1.794× retained footprint to 1.057× after following the tip, within the
+1.10× budget.
+
 2026-09-17 — **Flood qualification measures a key through the flushed frame.**
 The release-loop workload now spreads 2,000 rows across every second in the
 runtime's production batch sizes, drains and reconciles them in interactive

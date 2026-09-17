@@ -16,11 +16,19 @@ use ui_state::{Model, Msg, update};
 
 /// Default ring capacity (Msgs retained verbatim behind the checkpoint).
 pub const DEFAULT_RECORDER_CAPACITY: usize = 10_000;
+/// Maximum serialized bytes retained behind the checkpoint.
+///
+/// A count limit alone is not a memory limit: one store page or stream batch
+/// can carry hundreds of entries. Two MiB preserves a useful recent event
+/// window while high-volume messages advance into the replayable checkpoint.
+pub const DEFAULT_RECORDER_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Bumped whenever the recorder snapshot framing changes.
 pub const MSGS_SCHEMA_VERSION: u32 = 1;
 
 pub struct Recorder {
     capacity: usize,
+    max_bytes: usize,
+    retained_bytes: usize,
     checkpoint: Model,
     entries: VecDeque<String>,
 }
@@ -40,8 +48,15 @@ pub(crate) struct RecorderSnapshotHeader<'a> {
 
 impl Recorder {
     pub fn new(capacity: usize, initial: &Model) -> Self {
+        Self::with_limits(capacity, DEFAULT_RECORDER_MAX_BYTES, initial)
+    }
+
+    /// Build a recorder with explicit count and serialized-byte ceilings.
+    pub fn with_limits(capacity: usize, max_bytes: usize, initial: &Model) -> Self {
         Self {
             capacity: capacity.max(1),
+            max_bytes: max_bytes.max(1),
+            retained_bytes: 0,
             checkpoint: initial.clone(),
             entries: VecDeque::new(),
         }
@@ -58,9 +73,11 @@ impl Recorder {
                 return;
             }
         };
+        self.retained_bytes = self.retained_bytes.saturating_add(line.capacity());
         self.entries.push_back(line);
-        while self.entries.len() > self.capacity {
+        while self.entries.len() > self.capacity || self.retained_bytes > self.max_bytes {
             let evicted = self.entries.pop_front().expect("non-empty ring");
+            self.retained_bytes = self.retained_bytes.saturating_sub(evicted.capacity());
             match serde_json::from_str::<Msg>(&evicted) {
                 Ok(msg) => {
                     // Replay never executes effects; neither does checkpoint
@@ -144,4 +161,34 @@ pub fn replay_msgs(path: &Path) -> Result<Model, ReplayError> {
         let _ = update(&mut model, msg);
     }
     Ok(model)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::*;
+
+    #[test]
+    fn byte_limit_advances_the_checkpoint_without_losing_replay() {
+        let mut live = Model::default();
+        let mut recorder = Recorder::with_limits(10_000, 256, &live);
+        for second in 0..100 {
+            let msg = Msg::Tick {
+                now: Utc.timestamp_opt(1_700_000_000 + second, 0).unwrap(),
+            };
+            recorder.record(&msg);
+            let _ = update(&mut live, msg);
+        }
+
+        assert!(recorder.retained_bytes <= 256);
+        assert!(recorder.len() < 100, "the byte ceiling should evict ticks");
+        let snapshot = recorder.snapshot();
+        let mut replayed = snapshot.checkpoint;
+        for line in snapshot.msgs {
+            let msg = serde_json::from_str(&line).unwrap();
+            let _ = update(&mut replayed, msg);
+        }
+        assert_eq!(replayed, live);
+    }
 }

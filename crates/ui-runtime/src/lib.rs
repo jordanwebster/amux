@@ -6,8 +6,8 @@ mod runtime;
 mod store_worker;
 
 pub use recorder::{
-    DEFAULT_RECORDER_CAPACITY, MSGS_SCHEMA_VERSION, Recorder, RecorderSnapshot, ReplayError,
-    replay_msgs,
+    DEFAULT_RECORDER_CAPACITY, DEFAULT_RECORDER_MAX_BYTES, MSGS_SCHEMA_VERSION, Recorder,
+    RecorderSnapshot, ReplayError, replay_msgs,
 };
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,

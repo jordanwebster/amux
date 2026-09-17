@@ -8,7 +8,7 @@ use chrono::{TimeZone, Utc};
 use fold::claude_sdk::ClaudeSdkFold;
 use fold::{
     Baseline, CommitOutcome, ExpectedHead, Head, Input, ProviderFold, SegmentTransition,
-    WindowBudget, WindowInterest,
+    WindowInterest,
 };
 use model::{
     Agent, AgentIdentifier, AgentKind, ClaudeDriver, HostEntry, HostTrustStatus, ReplayOutcome,
@@ -20,7 +20,9 @@ use store::Store;
 use tempfile::TempDir;
 use tui::{ChatView, FrameContext, Theme, ViewState, render};
 use ui_runtime::{Runtime, RuntimeOptions};
-use ui_state::store::{ChatState, ProfileGeneration, StoreMsg, StoreOp};
+use ui_state::store::{
+    ChatState, ProfileGeneration, StoreMsg, StoreOp, WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES,
+};
 use ui_state::{Effect, Model, Msg, update};
 use uuid::Uuid;
 
@@ -599,30 +601,87 @@ async fn scroll_and_sweep() -> Result<Vec<MetricRun>> {
     seed_fleet(&store, 1).await?;
     seed_chat(&store, agent_id(0), 50_000, 48).await?;
 
-    let loaded = store
-        .load::<ClaudeSdkFold>(agent_id(0), WindowBudget::desktop(0))
-        .await?;
+    let mut runtime = Runtime::start(
+        Box::new(|| Box::pin(std::future::pending())),
+        RuntimeOptions {
+            local_host_id: Some(host_id()),
+            store_path: Some(path.clone()),
+            ..RuntimeOptions::default()
+        },
+    );
+    wait_for_runtime(&mut runtime, "stored scroll fleet", |runtime| {
+        !runtime.remembered_fleet_pending() && runtime.model().agent(agent_id(0)).is_some()
+    })
+    .await?;
+    runtime.open_chat(agent_id(0));
+    wait_for_runtime(&mut runtime, "stored scroll chat", |runtime| {
+        runtime
+            .model()
+            .chat(agent_id(0))
+            .is_some_and(|chat| chat.is_painted() && !chat.entries.is_empty())
+    })
+    .await?;
+    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1))?;
+    paint_runtime_chat(runtime.model(), agent_id(0), &mut terminal)?;
+    ensure_runtime_window(runtime.model(), agent_id(0))?;
+
     let before = super::sample_memory(std::process::id())?.bytes as f64;
     let started_at = Utc::now();
-    let mut seen = loaded.window.len();
-    let mut next = loaded.first_page;
-    let mut window = loaded.window;
-    while let Some(token) = next {
-        let page = store.page::<ClaudeSdkFold>(agent_id(0), token, 400).await?;
-        seen += page.entries.len();
-        next = page.next;
-        window = page.entries;
-    }
-    if seen != 50_000 {
-        bail!("scroll workload visited {seen} entries, expected 50,000");
-    }
-    drop(window);
-    let tip = store
-        .load::<ClaudeSdkFold>(agent_id(0), WindowBudget::desktop(1))
+    let mut pages = 0_usize;
+    loop {
+        let chat = runtime
+            .model()
+            .chat(agent_id(0))
+            .context("scroll chat disappeared")?;
+        let page_epoch = chat.view_epoch;
+        if chat.first_page.is_none() {
+            break;
+        }
+        runtime.page_chat_older(agent_id(0));
+        wait_for_runtime(&mut runtime, "older stored page", |runtime| {
+            runtime
+                .model()
+                .chat(agent_id(0))
+                .is_some_and(|chat| chat.view_epoch > page_epoch)
+        })
         .await?;
-    drop(tip);
+        ensure_runtime_window(runtime.model(), agent_id(0))?;
+        paint_runtime_chat(runtime.model(), agent_id(0), &mut terminal)?;
+        pages += 1;
+    }
+    let oldest = runtime
+        .model()
+        .chat(agent_id(0))
+        .and_then(|chat| chat.entries.first())
+        .map(|entry| entry.position().1.seq())
+        .context("oldest scroll window is empty")?;
+    ensure!(
+        oldest == 1,
+        "scroll stopped at row {oldest}, expected row 1"
+    );
+    ensure!(pages > 0, "scroll workload issued no page operations");
+
+    let oldest_epoch = runtime
+        .model()
+        .chat(agent_id(0))
+        .context("scroll chat disappeared before following tip")?
+        .view_epoch;
+    runtime.follow_chat_tip(agent_id(0));
+    wait_for_runtime(&mut runtime, "newest stored page", |runtime| {
+        runtime.model().chat(agent_id(0)).is_some_and(|chat| {
+            chat.view_epoch > oldest_epoch
+                && chat
+                    .entries
+                    .last()
+                    .is_some_and(|entry| entry.position().1.seq() == 50_000)
+        })
+    })
+    .await?;
+    ensure_runtime_window(runtime.model(), agent_id(0))?;
+    paint_runtime_chat(runtime.model(), agent_id(0), &mut terminal)?;
     let after = super::sample_memory(std::process::id())?.bytes as f64;
     let memory_ratio = after / before;
+    drop(runtime);
 
     let filled_bytes = store_disk_bytes(&path);
     let soft_budget = filled_bytes.saturating_mul(3) / 4;
@@ -686,6 +745,21 @@ async fn scroll_and_sweep() -> Result<Vec<MetricRun>> {
             &[longest_slice.as_secs_f64() * 1_000.0],
         ),
     ])
+}
+
+fn ensure_runtime_window(model: &Model, agent: model::AgentId) -> Result<()> {
+    let chat = model.chat(agent).context("runtime has no scroll chat")?;
+    ensure!(
+        chat.entries.len() <= WINDOW_MAX_ENTRIES,
+        "client window retained {} entries, budget is {WINDOW_MAX_ENTRIES}",
+        chat.entries.len()
+    );
+    let bytes = chat.encoded_window_bytes();
+    ensure!(
+        bytes <= WINDOW_MAX_BYTES,
+        "client window retained {bytes} encoded bytes, budget is {WINDOW_MAX_BYTES}"
+    );
+    Ok(())
 }
 
 fn store_disk_bytes(path: &Path) -> u64 {
