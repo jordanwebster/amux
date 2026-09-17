@@ -326,6 +326,7 @@ fn write_recorder_snapshot(path: &Path, snapshot: &RecorderSnapshot) -> io::Resu
     let header = RecorderSnapshotHeader {
         format_version: MSGS_SCHEMA_VERSION,
         checkpoint: &snapshot.checkpoint,
+        mode: snapshot.mode,
     };
     serde_json::to_writer(&mut file, &header).map_err(io::Error::other)?;
     file.write_all(b"\n")?;
@@ -613,6 +614,7 @@ mod tests {
                 })
                 .unwrap(),
             ],
+            mode: crate::RecorderSnapshotMode::Fold,
         }
     }
 

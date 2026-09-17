@@ -209,7 +209,7 @@ pub async fn run(
                             Err(_) => (None, Some("daemon dump timed out".to_owned())),
                         };
                         let result = json!({
-                            "msgs": {"format_version": MSGS_SCHEMA_VERSION, "checkpoint": snapshot.checkpoint, "msgs": snapshot.msgs},
+                            "msgs": {"format_version": MSGS_SCHEMA_VERSION, "checkpoint": snapshot.checkpoint, "mode": snapshot.mode, "msgs": snapshot.msgs},
                             "daemon": daemon, "daemon_absent_reason": reason,
                         });
                         let _ = reply.send(serde_json::to_string(&result).ok());

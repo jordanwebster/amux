@@ -74,8 +74,8 @@ fn sequence() -> Vec<Msg> {
     ]
 }
 
-/// The recorder capacity is deliberately tiny so eviction folds Msgs into the
-/// checkpoint on the way; the replay must still land on the live Model.
+/// The recorder capacity is deliberately tiny so the report must capture the
+/// live Model after eviction; replay must still land on that exact Model.
 #[test]
 fn replaying_a_recorded_log_twice_yields_identical_models() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -100,7 +100,7 @@ fn replaying_a_recorded_log_twice_yields_identical_models() {
                 frame: None,
                 trace: None,
                 trace_kind: TraceKind::TerminalChrome,
-                msgs: Some(recorder.snapshot()),
+                msgs: Some(recorder.snapshot_with_model(&live)),
                 daemon: None,
                 log: None,
                 absent_reason: "test".to_string(),

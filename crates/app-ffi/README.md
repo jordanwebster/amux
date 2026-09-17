@@ -156,10 +156,10 @@ stored conversation before any connection and returns the projected
 `amux_app_free`.
 
 Also in `debug-tools` builds, `amux_app_report_snapshot` returns
-`{"msgs":{"format_version":1,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
+`{"msgs":{"format_version":2,"mode":MODE,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
 "daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
 The recorder freezes before the embedded daemon dump request. To form
-`msgs.jsonl`, write a header with `format_version` and `checkpoint`, then each
+`msgs.jsonl`, write a header with `format_version`, `mode` and `checkpoint`, then each
 message string on its own line. The daemon string is the contents of
 `daemon.json`; it describes the embedded phone service and its remote routes.
 If the dump fails or takes more than three seconds, the recorder still returns

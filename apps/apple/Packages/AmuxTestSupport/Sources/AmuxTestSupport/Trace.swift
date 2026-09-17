@@ -224,7 +224,7 @@ extension TraceEvent: Codable {
 /// truncated bundle loses its last event rather than all of them and a person
 /// can read either file with the same eyes.
 public enum Trace {
-    /// The shared runtime's recording: a checkpoint header, then its messages.
+    /// The shared runtime's recording: a Model/mode header, then recent messages.
     public static let messagesFile = "msgs.jsonl"
     /// The view-state recording written beside it.
     public static let traceFile = "trace.jsonl"

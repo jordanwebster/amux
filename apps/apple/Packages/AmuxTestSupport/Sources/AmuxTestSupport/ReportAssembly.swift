@@ -162,12 +162,12 @@ public enum ReportAssembly {
 /// The shared runtime's frozen recording, taken apart into the two files a
 /// bundle carries.
 ///
-/// The runtime answers one JSON object holding a checkpoint, the message lines
-/// it folded after it, and the embedded daemon's own dump. On disk those are
-/// two files: `msgs.jsonl` is the checkpoint as a header line with the
-/// messages under it, and `daemon.json` is the dump. Splitting it here rather
-/// than at the writer means the phone's report and the phone's debug recording
-/// are assembled from one reading of the same shape.
+/// The runtime answers one JSON object holding a Model, the bounded recent
+/// message lines, their replay mode, and the embedded daemon's own dump. On
+/// disk those are two files: `msgs.jsonl` is the Model and mode as a header
+/// line with the messages under it, and `daemon.json` is the dump. Splitting
+/// it here rather than at the writer means the phone's report and the phone's
+/// debug recording are assembled from one reading of the same shape.
 public enum RuntimeRecording {
     public struct Split: Sendable, Equatable {
         /// `msgs.jsonl`, header line and all, or nothing.
@@ -197,9 +197,12 @@ public enum RuntimeRecording {
         if let recording = report["msgs"] as? [String: Any],
            let version = recording["format_version"],
            let checkpoint = recording["checkpoint"],
+           let mode = recording["mode"],
            let messages = recording["msgs"] as? [String],
            let header = try? JSONSerialization.data(
-               withJSONObject: ["format_version": version, "checkpoint": checkpoint]) {
+               withJSONObject: [
+                   "format_version": version, "checkpoint": checkpoint, "mode": mode,
+               ]) {
             let lines = [String(decoding: header, as: UTF8.self)] + messages
             split.messages = lines.joined(separator: "\n") + "\n"
         } else {

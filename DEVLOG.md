@@ -1,17 +1,21 @@
-2026-09-17 — **Client retention is attributed inside the runtime.** Three real
+2026-09-17 — **The recorder no longer retains a second live model.** Three real
 shipping-client soaks retained about 4.3 KiB per delivered row: 4.010 MiB/min
 over ten minutes, then 5.309 and 5.162 MiB/min before reset in the four-minute
-diagnostics, with ten chats receiving 20 rows/s in aggregate. A runtime-owned
-report now separates the visible and canonical store-backed entry vectors,
-pending commit mutations, store work and caches, SQLite allocations, reducer
-effects and subscriptions, provider state and asks, and the recorder's recent
-messages from its full-model checkpoint. The focused on-disk loopback prints
-per delivered row figures before and across the window cap; its authorized
-driver run supplies the component numbers. Visible and canonical vectors each
-cap at 800 entries or 16 MiB per chat (about 400 s at 2 rows/s), the legacy
-provider feed caps at 1,000 entries (500 s), its row-dedupe set at 4,096
-(2,048 s), asks at 32 per chat, recent recorder messages at 2 MiB, and the
-store worker owns no page or write cache above SQLite.
+diagnostics, with ten chats receiving 20 rows/s in aggregate. The in-process
+attribution found the recorder's folded checkpoint was the dominant duplicate:
+it grew by 2,127.6 serialized B per delivered row across the window cap, beside
+135.7 B in each of the visible and canonical store-backed vectors and 272.7 B
+in provider state. Pending commits, the store queue, SQLite, reducer effects,
+subscriptions and asks were flat; the bounded recent-message ring added 52.4 B
+per row while reaching its 2 MiB ceiling. The recorder now keeps that bounded
+ring alone in steady state and captures the authoritative Model only when a
+report is requested. Short recordings remain checkpoint-plus-message replays;
+long reports carry an exact captured Model with recent inputs marked as context,
+and panic-only captures with evicted history refuse replay instead of claiming
+completeness. The driver-owned four-minute diagnostic supplies the after slope
+and peak. Visible and canonical vectors still cap at 800 entries or 16 MiB per
+chat (about 400 s at 2 rows/s), and the legacy provider feed caps at 1,000
+entries (500 s); no window, warm-up, rate or workload bound changed.
 
 2026-09-17 — **Memory repair runs keep the real soak workload.** The original
 ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the

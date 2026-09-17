@@ -279,10 +279,12 @@ view or qualify an authenticated Claude service.
 
 `target/debug/testnet script-from-report PATH/msgs.jsonl` prints a
 Script JSON value. The input uses the normal recorder header and retained Msg
-lines. Conversion requires one uninterrupted Claude PTY stream beginning at
-sequence 1 and a checkpoint without folded feed history. Lost checkpoint rows
-return `EvictedHistory`; a partial, gapped, reopened or mixed-session stream
-returns `PartialSession`. Other protocols return `UnsupportedLayer`.
+lines in `fold` mode. Conversion requires one uninterrupted Claude PTY stream
+beginning at sequence 1 and a checkpoint without folded feed history. A long
+report whose bounded ring carries messages as context beside a captured Model
+returns `ContextOnly`. Lost checkpoint rows return `EvictedHistory`; a partial,
+gapped, reopened or mixed-session stream returns `PartialSession`. Other
+protocols return `UnsupportedLayer`.
 
 The generated script has one `Any` reaction containing raw `Rows`. Its steps
 can be passed directly to `Provider::play`, or its trigger can be replaced in

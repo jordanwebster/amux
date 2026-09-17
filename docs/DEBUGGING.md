@@ -110,7 +110,7 @@ A full user capture contains these files:
 | `frame.txt` | One row of frozen terminal cell text per line |
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
-| `msgs.jsonl` | Recorder checkpoint and retained daemon messages |
+| `msgs.jsonl` | A foldable checkpoint for short sessions, or a captured Model plus the bounded recent-message context |
 | `daemon.json` | Selected profile's hosts, routes, links, tunnels and session diagnostics |
 | `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 

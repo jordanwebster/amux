@@ -38,14 +38,15 @@ everything else here follows:
 
 High-rate streams are coalesced into batched Msgs **before recording** —
 the recorded Msg is the batch, so replay is independent of arrival
-timing. The determinism guarantee is scoped and enforced: the same
-reducer build, folding the same checkpoint and ordered Msgs, produces
-identical Models, Deltas, and Effects; replay folds but never executes
-Effects; and the spec suite proves it differentially — fold-from-recording
-must equal live state after every Msg. Determinism is the goal; bug
-reproduction (ring-buffer the Msgs, dump, replay, commit the redacted
-recording as a regression fixture) is the dividend. Dumps can contain
-prompts, code, and paths: local-only, shared only deliberately.
+timing. The recorder keeps a two-MiB recent-input ring rather than a second
+continuously folded Model. Before the ring evicts, its initial checkpoint and
+ordered Msgs remain a foldable recording. Afterwards, an ordinary report
+captures the live Model once and keeps the retained Msgs as diagnostic context;
+a panic capture that cannot safely borrow the live Model says its Msg history is
+incomplete instead of claiming a replay. Reducer determinism is still enforced
+by the spec suite: the same build, checkpoint and ordered Msgs produce identical
+Models, Deltas, and Effects, and replay never executes Effects. Dumps can
+contain prompts, code, and paths: local-only, shared only deliberately.
 
 Pragmatics, not dogma: the shell's edges may be actor-shaped tokio tasks
 so long as everything funnels into one ordered Msg stream. Shell-private

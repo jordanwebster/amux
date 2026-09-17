@@ -8,8 +8,8 @@ import Foundation
 /// A bug on a phone is reported as the picture of the screen it was found on
 /// and the recordings behind it, in one directory, with `report.json`
 /// declaring every part and the reason for each one that is missing.
-/// `msgs.jsonl` is the shared runtime's own recording: the reducer model it
-/// had checkpointed and every message it folded after that. `trace.jsonl` is
+/// `msgs.jsonl` is the shared runtime's own recording: either a foldable
+/// checkpoint or a captured Model, plus its bounded recent messages. `trace.jsonl` is
 /// what the person was looking at while those messages arrived. Rebuilding
 /// means folding the first back into a model, projecting that model into the
 /// same events a live connection would have delivered, and then applying the
@@ -71,10 +71,10 @@ enum DoorRecording {
         return written
     }
 
-    /// Folds a bundle's runtime recording into fresh stores.
+    /// Reconstructs a bundle's runtime recording into fresh stores.
     ///
     /// Nothing is started and nothing is sent: the shared reducer folds the
-    /// recorded messages and its projection is read, which is the same read
+    /// recorded state and its projection is read, which is the same read
     /// surface a live connection delivers. The effects the recording once
     /// asked for are not carried out — they were carried out on the phone
     /// that wrote it.

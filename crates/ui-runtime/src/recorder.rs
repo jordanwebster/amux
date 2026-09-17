@@ -1,10 +1,12 @@
-//! Msg recorder: a ring buffer of the last N serialized Msgs plus a
-//! checkpoint Model, snapshotable as a self-contained JSONL replay bundle.
+//! Msg recorder: a bounded ring buffer of recent serialized Msgs,
+//! snapshotable as a self-contained JSONL report part.
 //!
-//! When the ring evicts a Msg it is folded into the checkpoint with the same
-//! pure `update`, so `checkpoint + retained msgs` always reproduces the live
-//! Model exactly. Snapshots can contain prompts, code, and paths: they are
-//! written 0600 under the amux data dir, retained bounded, and never
+//! Before the ring evicts anything, its initial checkpoint plus retained Msgs
+//! remains a foldable recording. After eviction, a normal runtime report
+//! captures the live Model once and keeps the ring as recent diagnostic
+//! context. This avoids retaining a second, continuously growing Model merely
+//! to make a report possible. Snapshots can contain prompts, code, and paths:
+//! they are written 0600 under the amux data dir, retained bounded, and never
 //! uploaded — local-only, shared deliberately.
 
 use std::collections::VecDeque;
@@ -14,16 +16,16 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use ui_state::{Model, Msg, update};
 
-/// Default ring capacity (Msgs retained verbatim behind the checkpoint).
+/// Default ring capacity (Msgs retained verbatim as recent context).
 pub const DEFAULT_RECORDER_CAPACITY: usize = 10_000;
 /// Maximum serialized bytes retained behind the checkpoint.
 ///
 /// A count limit alone is not a memory limit: one store page or stream batch
 /// can carry hundreds of entries. Two MiB preserves a useful recent event
-/// window while high-volume messages advance into the replayable checkpoint.
+/// window without retaining another copy of the live Model.
 pub const DEFAULT_RECORDER_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Bumped whenever the recorder snapshot framing changes.
-pub const MSGS_SCHEMA_VERSION: u32 = 1;
+pub const MSGS_SCHEMA_VERSION: u32 = 2;
 
 pub struct Recorder {
     capacity: usize,
@@ -31,6 +33,7 @@ pub struct Recorder {
     retained_bytes: usize,
     checkpoint: Model,
     entries: VecDeque<String>,
+    evicted: bool,
 }
 
 /// A frozen recorder window ready to be embedded in a report bundle.
@@ -38,6 +41,19 @@ pub struct Recorder {
 pub struct RecorderSnapshot {
     pub checkpoint: Model,
     pub msgs: Vec<String>,
+    pub mode: RecorderSnapshotMode,
+}
+
+/// How a recorder snapshot reaches the Model it represents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecorderSnapshotMode {
+    /// Fold every following Msg into the checkpoint.
+    Fold,
+    /// The checkpoint is already the captured final Model; Msgs are context.
+    Captured,
+    /// The ring evicted history and no live Model was available to capture.
+    RecentOnly,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,6 +67,7 @@ pub(crate) struct RecorderRetention {
 pub(crate) struct RecorderSnapshotHeader<'a> {
     pub format_version: u32,
     pub checkpoint: &'a Model,
+    pub mode: RecorderSnapshotMode,
 }
 
 impl Recorder {
@@ -66,6 +83,7 @@ impl Recorder {
             retained_bytes: 0,
             checkpoint: initial.clone(),
             entries: VecDeque::new(),
+            evicted: false,
         }
     }
 
@@ -85,16 +103,7 @@ impl Recorder {
         while self.entries.len() > self.capacity || self.retained_bytes > self.max_bytes {
             let evicted = self.entries.pop_front().expect("non-empty ring");
             self.retained_bytes = self.retained_bytes.saturating_sub(evicted.capacity());
-            match serde_json::from_str::<Msg>(&evicted) {
-                Ok(msg) => {
-                    // Replay never executes effects; neither does checkpoint
-                    // advancement.
-                    let _ = update(&mut self.checkpoint, msg);
-                }
-                Err(error) => {
-                    tracing::error!(%error, "recorder evicted an unparseable Msg");
-                }
-            }
+            self.evicted = true;
         }
     }
 
@@ -118,6 +127,24 @@ impl Recorder {
         RecorderSnapshot {
             checkpoint: self.checkpoint.clone(),
             msgs: self.entries.iter().cloned().collect(),
+            mode: if self.evicted {
+                RecorderSnapshotMode::RecentOnly
+            } else {
+                RecorderSnapshotMode::Fold
+            },
+        }
+    }
+
+    /// Freeze an exact report snapshot using the runtime's authoritative
+    /// Model when the bounded ring no longer contains the full session.
+    pub fn snapshot_with_model(&self, live: &Model) -> RecorderSnapshot {
+        if !self.evicted {
+            return self.snapshot();
+        }
+        RecorderSnapshot {
+            checkpoint: live.clone(),
+            msgs: self.entries.iter().cloned().collect(),
+            mode: RecorderSnapshotMode::Captured,
         }
     }
 
@@ -145,12 +172,15 @@ pub enum ReplayError {
     },
     #[error("unsupported recorder snapshot format version {0}")]
     FormatVersion(u32),
+    #[error("recorder snapshot contains recent context but no complete Model")]
+    Incomplete,
 }
 
 #[derive(Deserialize)]
 struct StoredRecorderSnapshotHeader {
     format_version: u32,
     checkpoint: Model,
+    mode: RecorderSnapshotMode,
 }
 
 /// Fold a report's `msgs.jsonl` into the Model it recorded. Effects are never
@@ -164,7 +194,13 @@ pub fn replay_msgs(path: &Path) -> Result<Model, ReplayError> {
     if header.format_version != MSGS_SCHEMA_VERSION {
         return Err(ReplayError::FormatVersion(header.format_version));
     }
+    if header.mode == RecorderSnapshotMode::RecentOnly {
+        return Err(ReplayError::Incomplete);
+    }
     let mut model = header.checkpoint;
+    if header.mode == RecorderSnapshotMode::Captured {
+        return Ok(model);
+    }
     for (index, line) in lines.enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -185,7 +221,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn byte_limit_advances_the_checkpoint_without_losing_replay() {
+    fn byte_limit_captures_live_model_without_retaining_a_second_model() {
         let mut live = Model::default();
         let mut recorder = Recorder::with_limits(10_000, 256, &live);
         for second in 0..100 {
@@ -198,12 +234,18 @@ mod tests {
 
         assert!(recorder.retained_bytes <= 256);
         assert!(recorder.len() < 100, "the byte ceiling should evict ticks");
-        let snapshot = recorder.snapshot();
-        let mut replayed = snapshot.checkpoint;
-        for line in snapshot.msgs {
-            let msg = serde_json::from_str(&line).unwrap();
-            let _ = update(&mut replayed, msg);
-        }
-        assert_eq!(replayed, live);
+        assert_eq!(recorder.snapshot().mode, RecorderSnapshotMode::RecentOnly);
+
+        let snapshot = recorder.snapshot_with_model(&live);
+        assert_eq!(snapshot.mode, RecorderSnapshotMode::Captured);
+        assert_eq!(snapshot.checkpoint, live);
+        assert!(
+            !snapshot.msgs.is_empty(),
+            "recent inputs remain inspectable"
+        );
+        assert!(
+            recorder.retention().checkpoint_bytes < serde_json::to_vec(&live).unwrap().len(),
+            "the live model is copied only when a report is requested"
+        );
     }
 }

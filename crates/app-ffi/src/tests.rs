@@ -983,6 +983,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
         report["msgs"]["format_version"],
         ui_runtime::MSGS_SCHEMA_VERSION
     );
+    assert_eq!(report["msgs"]["mode"], "fold");
     assert!(
         report["msgs"]["msgs"]
             .as_array()
@@ -992,7 +993,14 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     let dump: Value = serde_json::from_str(report["daemon"].as_str().unwrap()).unwrap();
     assert!(dump.is_object());
     let replay_path = root.path().join("msgs.jsonl");
-    let mut lines = vec![json!({"format_version": report["msgs"]["format_version"], "checkpoint": report["msgs"]["checkpoint"]}).to_string()];
+    let mut lines = vec![
+        json!({
+            "format_version": report["msgs"]["format_version"],
+            "checkpoint": report["msgs"]["checkpoint"],
+            "mode": report["msgs"]["mode"],
+        })
+        .to_string(),
+    ];
     lines.extend(
         report["msgs"]["msgs"]
             .as_array()

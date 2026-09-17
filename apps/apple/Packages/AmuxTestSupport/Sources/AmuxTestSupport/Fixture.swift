@@ -194,11 +194,11 @@ public enum FrozenFixture {
             route: "run")
     }
 
-    /// What the runtime would have answered: a checkpoint, one folded message
-    /// and the embedded daemon's dump. Small on purpose — what a bundle test
+    /// What the runtime would have answered: a checkpoint, its replay mode,
+    /// one folded message and the embedded daemon's dump. Small on purpose — what a bundle test
     /// checks is that each part is declared and carried, not what is in it.
     private static let snapshot = """
-        {"msgs":{"format_version":1,"checkpoint":{"agents":[]},\
+        {"msgs":{"format_version":2,"mode":"fold","checkpoint":{"agents":[]},\
         "msgs":["{\\"kind\\":\\"fleet\\"}"]},"daemon":"{\\"hosts\\":[]}"}
         """
 }

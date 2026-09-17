@@ -1104,7 +1104,7 @@ impl Runtime {
     }
 
     pub fn recorder_snapshot(&self) -> crate::RecorderSnapshot {
-        lock_recorder(&self.recorder).snapshot()
+        lock_recorder(&self.recorder).snapshot_with_model(&self.model)
     }
 
     /// Register this Runtime's recorder with the process-global panic-report
