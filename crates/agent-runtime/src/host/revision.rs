@@ -50,6 +50,10 @@ impl InventoryRevisions {
         self.through
     }
 
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Return a value already covered by the durable reservation bound.
     pub(super) fn reserve(&mut self) -> io::Result<u64> {
         let next = self

@@ -1,3 +1,10 @@
+2026-09-18 — **Inventory revision I/O failures no longer stop lifecycle
+processing.** Clearing an agent's task, withdrawing it, and committing server
+suspend now apply the local lifecycle change even when the durable revision
+block cannot be extended. The daemon logs the revision file and error, withholds
+the corresponding authoritative fleet event, and retries the same reservation
+on the next lifecycle event; it never publishes an unreserved revision.
+
 2026-09-18 — **Claude SDK prompts retain one identity through resume.** The SDK
 stream now sends the same UUID that amux publishes for an accepted prompt, and
 resume bootstrap excludes prompt publication until the gap, transcript

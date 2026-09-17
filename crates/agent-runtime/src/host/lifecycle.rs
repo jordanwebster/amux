@@ -398,10 +398,15 @@ pub(crate) fn clear_working_on(state: &mut AgentServiceState, host_id: Uuid, age
     if context.working_on.take().is_none() {
         return;
     }
-    let event = state
-        .updated_agent_event(host_id, agent_id)
-        .expect("inventory revision must be durable before AgentUpdated");
-    state.local_agent_events.emit(event);
+    match state.updated_agent_event(host_id, agent_id) {
+        Ok(event) => state.local_agent_events.emit(event),
+        Err(error) => tracing::error!(
+            %agent_id,
+            path = %state.inventory_revision_path().display(),
+            %error,
+            "withholding AgentUpdated because its inventory revision was not durable"
+        ),
+    }
 }
 
 /// Remove an agent from local state and broadcast withdrawal.
@@ -413,14 +418,25 @@ pub(crate) fn withdraw_agent(
     if !state.local_agents.contains_key(&agent_id) {
         return None;
     }
-    let event = state
-        .down_agent_event(host_id, agent_id)
-        .expect("inventory revision must be durable before AgentDown");
+    let event = match state.down_agent_event(host_id, agent_id) {
+        Ok(event) => Some(event),
+        Err(error) => {
+            tracing::error!(
+                %agent_id,
+                path = %state.inventory_revision_path().display(),
+                %error,
+                "withholding AgentDown because its inventory revision was not durable"
+            );
+            None
+        }
+    };
     let context = state
         .local_agents
         .remove(&agent_id)
         .expect("agent existence checked before reserving revision");
-    state.local_agent_events.emit(event);
+    if let Some(event) = event {
+        state.local_agent_events.emit(event);
+    }
     tracing::info!(
         %agent_id,
         name = ?context.session.name(),
@@ -491,10 +507,17 @@ pub(crate) async fn commit_server_suspend(agent_state: &SharedAgentServiceState,
         ids.sort_unstable();
         let events = ids
             .into_iter()
-            .map(|id| {
-                state
-                    .down_agent_event(host_id, id)
-                    .expect("inventory revision must be durable before AgentDown")
+            .filter_map(|id| match state.down_agent_event(host_id, id) {
+                Ok(event) => Some(event),
+                Err(error) => {
+                    tracing::error!(
+                        agent_id = %id,
+                        path = %state.inventory_revision_path().display(),
+                        %error,
+                        "withholding suspended AgentDown because its inventory revision was not durable"
+                    );
+                    None
+                }
             })
             .collect::<Vec<_>>();
         let contexts = std::mem::take(&mut state.local_agents);
@@ -987,6 +1010,79 @@ mod tests {
         assert_eq!(restarted.through_inventory_revision(), 1_025);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].inventory_revision, 1_025);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn daemon_protocol_revision_failure_withholds_lifecycle_events_and_retries() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.yaml");
+        let host_id = Uuid::new_v4();
+        let deps = AgentDeps::new(
+            directory.path().join("data"),
+            directory.path().to_path_buf(),
+            directory.path().join("codex.sock"),
+            crate::agents::mcp_launch_route_for_tests(host_id),
+            directory.path().join("keymaps"),
+        )
+        .unwrap();
+        let mut state = AgentServiceState::new_with_revision_path(deps, &state_path, host_id)
+            .expect("revision store opens while writable");
+        let withdrawn = Uuid::new_v4();
+        let suspended = Uuid::new_v4();
+        for (id, name) in [(withdrawn, "withdrawn"), (suspended, "suspended")] {
+            state
+                .insert_registered_local_agent(
+                    host_id,
+                    id,
+                    Box::new(TestAgentSession::echo_for_tests(id, Some(name.into()))),
+                )
+                .unwrap();
+        }
+        while state.through_inventory_revision() < 1_024 {
+            state.reserve_authoritative_revision().unwrap();
+        }
+        let mut events = state.local_agent_events.subscribe();
+        let original_permissions = std::fs::metadata(directory.path()).unwrap().permissions();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let withdrawn_session = withdraw_agent(&mut state, host_id, withdrawn);
+        assert!(
+            withdrawn_session.is_some(),
+            "AgentDown still applies locally"
+        );
+        assert!(!state.contains_agent_id(&withdrawn));
+        let shared = Arc::new(RwLock::new(state));
+        commit_server_suspend(&shared, host_id).await;
+        assert!(shared.read().await.local_agents.is_empty());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), events.recv())
+                .await
+                .is_err(),
+            "an undurable lifecycle revision must not be published"
+        );
+
+        std::fs::set_permissions(directory.path(), original_permissions).unwrap();
+        let replacement = Uuid::new_v4();
+        let mut state = shared.write().await;
+        let event = state
+            .insert_registered_local_agent(
+                host_id,
+                replacement,
+                Box::new(TestAgentSession::echo_for_tests(
+                    replacement,
+                    Some("replacement".into()),
+                )),
+            )
+            .expect("the next lifecycle event retries reservation");
+        let AgentEvent::AgentUp { agent } = event else {
+            panic!("replacement registration publishes AgentUp")
+        };
+        assert_eq!(agent.inventory_revision, 1_025);
+        assert_eq!(state.through_inventory_revision(), 1_025);
+        assert_eq!(state.local_agents.len(), 1);
     }
 
     #[tokio::test]

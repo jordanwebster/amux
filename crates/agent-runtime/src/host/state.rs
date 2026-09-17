@@ -195,6 +195,10 @@ impl AgentServiceState {
         self.inventory_revisions.reserve()
     }
 
+    pub(crate) fn inventory_revision_path(&self) -> &Path {
+        self.inventory_revisions.path()
+    }
+
     pub(crate) fn updated_agent_event(
         &mut self,
         host_id: Uuid,
