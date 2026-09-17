@@ -1,3 +1,8 @@
+2026-09-17 — **Embedded integration tests wait for command readiness.**
+The attached-daemon and multi-account tests now wait for both inventory
+snapshots, matching the reducer's write gate. A transport connection alone can
+arrive before the daemon has confirmed the hosts and agents a command targets.
+
 2026-09-17 — **The Mac14,6 release performance baseline is recorded.**
 The enrolled reference Mac now has a committed baseline for the complete
 desktop qualification under the `release` profile with `bundled,perf`

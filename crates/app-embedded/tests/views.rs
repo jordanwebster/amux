@@ -72,7 +72,7 @@ async fn pair(session: &app_runtime::Session, machine: &Daemon) {
 /// before that is refused as not connected.
 async fn ready(view: &mut Runtime) {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        while !view.model().is_connected() {
+        while !view.model().is_synchronized() {
             assert!(view.next_message().await, "a view's runtime ended");
         }
     })

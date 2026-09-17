@@ -56,7 +56,7 @@ async fn closing_every_view_leaves_an_attached_daemon_serving_others() {
     };
     let mut sessions = Sessions::open(vec![session], "owner", places).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        while !sessions.ui.model().is_connected() {
+        while !sessions.ui.model().is_synchronized() {
             assert!(sessions.ui.next_message().await, "the view's runtime ended");
         }
     })
