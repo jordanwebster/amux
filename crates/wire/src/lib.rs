@@ -5,7 +5,7 @@ mod error;
 mod provider;
 
 /// Protocol version for the native-stream link handshake.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub use domain::{
     agent_from_wire, agent_parent_from_wire, artifact_kind_from_wire, artifact_kind_to_wire,
@@ -305,6 +305,7 @@ mod tests {
                 ("host", 2),
                 ("neighbors", 3),
                 ("auth_token", 4),
+                ("incarnation", 5),
             ]))
         );
         assert_eq!(

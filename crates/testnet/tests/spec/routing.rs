@@ -217,8 +217,9 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 /// A machine killed without closing its links comes straight back. The peer
 /// it dialled cannot tell the old link is dead until it idles out, so the
 /// relaunched machine's dial arrives while that link is still registered, in
-/// the same direction; it has to replace the dead link rather than be refused
-/// until the timeout. This is a phone swiped away and reopened.
+/// the same direction. The new process's link replaces the dead one rather
+/// than being refused until the timeout. This is a phone swiped away and
+/// reopened.
 #[tokio::test]
 async fn a_relaunched_machine_reconnects_while_its_peer_still_holds_the_dead_link() {
     let net = TestNet::builder()
@@ -239,6 +240,37 @@ async fn a_relaunched_machine_reconnects_while_its_peer_still_holds_the_dead_lin
     phone.can_call(&laptop).await;
     laptop.can_call(&phone).await;
     assert_eq!(laptop.links_to(&phone).await, 1);
+}
+
+/// Two machines that find each other keep the link the lower host id dialled.
+/// When the other one crashes and comes back, it dials in the opposite
+/// direction, and its link is the one a crossed dial would refuse — while the
+/// survivor still holds the dead preferred link. The new link comes from a
+/// different incarnation, which proves the held one dead, so it replaces it.
+#[tokio::test]
+async fn a_machine_that_crashed_reconnects_against_the_direction_of_the_dead_link() {
+    let net = TestNet::builder()
+        .direct_idle_timeout(Duration::from_secs(60))
+        .daemon("studio")
+        .daemon("laptop")
+        .trusted("studio", "laptop")
+        .start()
+        .await;
+    let [studio, laptop] = net.daemons(["studio", "laptop"]);
+    let (dialler, crashes) = if studio.host_id() < laptop.host_id() {
+        (studio, laptop)
+    } else {
+        (laptop, studio)
+    };
+    dialler.can_call(&crashes).await;
+    crashes.can_call(&dialler).await;
+
+    crashes.kill_and_relaunch().await;
+
+    crashes.connects_to(&dialler).via_direct().await;
+    crashes.can_call(&dialler).await;
+    dialler.can_call(&crashes).await;
+    assert_eq!(dialler.links_to(&crashes).await, 1);
 }
 
 /// Revocation: the moment one side unpairs, the revoked peer's fresh calls

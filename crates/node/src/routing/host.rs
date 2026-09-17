@@ -9,6 +9,32 @@ pub(crate) const FEATURE_CLOUD_RELAY: &str = "amux.cloud_relay";
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 256;
 
+/// One life of a host's runtime, drawn at random when the runtime starts.
+///
+/// A host id outlives any process that holds it, so a peer cannot tell from
+/// the id alone whether a new link comes from the process it already has a
+/// link to. A killed or crashed process closes nothing, and its links look
+/// healthy until they idle out. Every link handshake carries the sender's
+/// incarnation, and a different one proves the older links are dead.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct Incarnation(Uuid);
+
+impl Incarnation {
+    pub(crate) fn random() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub(crate) fn to_wire(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+
+    pub(crate) fn from_wire(bytes: &[u8]) -> Result<Self, String> {
+        Uuid::from_slice(bytes)
+            .map(Self)
+            .map_err(|_| format!("incarnation must be 16 bytes, got {}", bytes.len()))
+    }
+}
+
 /// The stable local identity plus the profile binding fact read by each new
 /// link handshake. Credential changes do not restart routing services, so the
 /// binding bit must remain live while the rest of the host description stays
@@ -17,6 +43,7 @@ pub(crate) const MAX_HOST_NAME_BYTES: usize = 256;
 pub(crate) struct LiveLocalHost {
     host: Host,
     signed_in: Arc<AtomicBool>,
+    incarnation: Incarnation,
 }
 
 impl LiveLocalHost {
@@ -24,11 +51,26 @@ impl LiveLocalHost {
         Self {
             signed_in: Arc::new(AtomicBool::new(host.signed_in.unwrap_or(false))),
             host,
+            incarnation: Incarnation::random(),
+        }
+    }
+
+    /// The same runtime, describing itself with a binding fact of its own
+    /// that later credential changes do not move.
+    pub(crate) fn with_signed_in(&self, signed_in: bool) -> Self {
+        Self {
+            host: self.host.clone(),
+            signed_in: Arc::new(AtomicBool::new(signed_in)),
+            incarnation: self.incarnation,
         }
     }
 
     pub(crate) fn id(&self) -> Uuid {
         self.host.id
+    }
+
+    pub(crate) fn incarnation(&self) -> Incarnation {
+        self.incarnation
     }
 
     pub(crate) fn snapshot(&self) -> Host {

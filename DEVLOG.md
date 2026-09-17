@@ -1,3 +1,23 @@
+2026-09-17 — **Links carry the incarnation that opened them.** The fix for a
+reopened phone replaced a held direct link with any new link in the same
+direction. It did not cover a crash in the other direction: two Macs keep the
+link the lower host id dialled, and when the other Mac crashed and came back
+its new link ran the opposite way, so the survivor refused it while holding the
+dead one until QUIC's idle timeout. A host id cannot tell a dead process from a
+live one. `Hello` and `HelloAccepted` now carry an incarnation, 16 random bytes
+drawn when a runtime starts. A link from a new incarnation replaces every direct
+link from the old one, in either direction. Links from the same incarnation
+follow the crossed-dial rule again, and a second same-direction link is refused,
+so the same-direction special case is gone. `PROTOCOL_VERSION` is now 3, so
+builds from before this change cannot link to builds after it. A dialler whose
+link closes within a second of coming up now waits out that second before
+asking the network for the peer again. That rediscovery is what redialled in a
+loop until the handshake rate limit. The pause holds back only rediscovery: an
+explicit dial straight after a deliberate close still goes out at once.
+Two specs kill a daemon without a close and relaunch it: one redials in the
+same direction, one against the dead link's direction. Both fail when
+incarnations are ignored.
+
 2026-09-17 — **A machine that comes back redials past its own dead link.**
 A phone swiped away and reopened reconnected to the laptop only about one launch
 in three. Killing the app sends no close, so the laptop keeps the old link

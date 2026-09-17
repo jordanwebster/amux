@@ -190,6 +190,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission,
                     carrier: LinkCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
                     direct_order: None,
                 },
                 &[],

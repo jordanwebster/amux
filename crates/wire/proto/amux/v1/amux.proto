@@ -226,6 +226,11 @@ message Hello {
   Host host = 2;
   repeated Host neighbors = 3;
   optional string auth_token = 4;
+  // 16 random bytes drawn when the sender's runtime starts and kept for its
+  // life. A link that arrives carrying a different incarnation than an
+  // earlier link from the same host proves that earlier link belongs to a
+  // process that no longer exists, however healthy it still looks.
+  bytes incarnation = 5;
 }
 
 message HelloAck {
@@ -239,6 +244,8 @@ message HelloAccepted {
   uint32 protocol_version = 1;
   Host host = 2;
   repeated Host neighbors = 3;
+  // The acceptor's incarnation; see `Hello.incarnation`.
+  bytes incarnation = 4;
 }
 
 // "I have a direct link to this host." Strictly adjacency: a node never

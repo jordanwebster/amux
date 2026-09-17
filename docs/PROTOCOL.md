@@ -166,15 +166,32 @@ message is protobuf encoded after a big-endian `u32` byte length and is bounded
 by `MESSAGE_SIZE_LIMIT`. The complete control vocabulary is:
 
 - `Hello`: supported protocol versions, this host, the current neighbor
-  snapshot, and an authentication token only for a cloud link.
-- `HelloAck`: either the accepted version plus the acceptor's host and neighbor
-  snapshot, or an error.
+  snapshot, the sender's incarnation, and an authentication token only for a
+  cloud link.
+- `HelloAck`: either the accepted version plus the acceptor's host, neighbor
+  snapshot and incarnation, or an error.
 - `NeighborUp` and `NeighborDown`: adjacency deltas after the handshake.
 - `Reauth`: a fire-and-forget replacement token for a cloud link.
 - `LinkClose`: an immediate close with a reason and optional error.
 
+An incarnation is 16 random bytes a host's runtime draws when it starts and
+keeps until it stops. A process that is killed or crashes closes nothing, so
+its peers keep its direct links until QUIC's idle timeout. When two direct
+links to the same host are live, the incarnations decide which stays:
+
+- A link from a different incarnation than the one already held means the host
+  restarted. The held link is dead, and the new one replaces it whichever
+  direction either was dialled in.
+- Two links from the same incarnation are a crossed dial. Both peers keep the
+  link dialled by the lower host id and refuse the other. A second link in the
+  same direction is refused too.
+
+A dialler whose direct link closes within a second of coming up waits out that
+second before asking the local network for the peer again, so a refused link is
+not rediscovered and redialled in a loop.
+
 Versioning is equality, not feature negotiation: both peers must select
-`PROTOCOL_VERSION = 2`. A failed or expired cloud token closes the link with
+`PROTOCOL_VERSION = 3`. A failed or expired cloud token closes the link with
 `AUTH_EXPIRED`. Reauthentication is not acknowledged; success is silence and
 failure is a close.
 

@@ -869,6 +869,7 @@ mod tests {
                 host: None,
                 neighbors: Vec::new(),
                 auth_token: Some("token".into()),
+                incarnation: vec![7; 16],
             })),
         };
         let close = pb::Message {

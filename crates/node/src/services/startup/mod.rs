@@ -917,10 +917,12 @@ impl StartedRoutingServices {
     }
 
     pub fn link_connector_ctx_with_signed_in(&self, signed_in: bool) -> LinkConnectorCtx {
-        let mut host = self.local_host.snapshot();
-        host.signed_in = Some(signed_in);
-        LinkConnectorCtx::new(host, self.routing.clone(), self.channels.link_registry())
-            .with_incoming_streams(self.incoming_streams_tx.clone())
+        LinkConnectorCtx::new_live(
+            self.local_host.with_signed_in(signed_in),
+            self.routing.clone(),
+            self.channels.link_registry(),
+        )
+        .with_incoming_streams(self.incoming_streams_tx.clone())
     }
 
     pub fn link_ctx(&self) -> LinkCtx {

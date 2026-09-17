@@ -18,7 +18,9 @@ pub use core::{RoutingCore, RoutingDebug};
 
 pub use events::RoutingEvent;
 pub(crate) use events::{EventSource, HostReachabilityEvent};
-pub(crate) use host::{FEATURE_CLOUD_RELAY, LiveLocalHost, local_host, validate_remote_host};
+pub(crate) use host::{
+    FEATURE_CLOUD_RELAY, Incarnation, LiveLocalHost, local_host, validate_remote_host,
+};
 pub use link::ConnectRole;
 pub(crate) use link::{
     ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,

@@ -26,6 +26,12 @@ const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 // Two seconds lets one lost handshake packet retransmit while still moving
 // through several black-holed candidate addresses in a few seconds.
 const DIRECT_QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a direct link must have lived for the next dial to follow its
+/// close at once, and how long the next dial waits otherwise. A link that
+/// closes this soon after coming up was most likely refused by the peer, and
+/// a redial straight away is refused the same way — often enough, in a loop,
+/// to trip the peer's handshake rate limit.
+const SHORT_LINK_REDIAL_PAUSE: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub struct ReachabilityLinkConnector {
@@ -386,6 +392,7 @@ impl ReachabilityLinkConnector {
         let context = inner.context.clone();
         let dialing = inner.dialing.clone();
         let shutdown_rx = inner.direct_shutdown.lock().unwrap().subscribe();
+        let pause_shutdown_rx = shutdown_rx.clone();
         let span = tracing::info_span!(
             "reachability_link",
             peer = %attempt.peer,
@@ -399,10 +406,14 @@ impl ReachabilityLinkConnector {
                     establish_reachability_link(context.clone(), attempt, shutdown_rx).await;
                 if direct {
                     dialing.lock().unwrap().remove(&peer);
-                    if established_direct
-                        && let Some(runtime) = context.runtime.lock().unwrap().clone()
-                    {
-                        runtime.discovery.requery();
+                    if let Some(established) = established_direct {
+                        // Asking the network again is what finds the peer
+                        // and dials it; after a link that was refused as it
+                        // came up, that would be refused the same way.
+                        pause_after_short_link(established, pause_shutdown_rx).await;
+                        if let Some(runtime) = context.runtime.lock().unwrap().clone() {
+                            runtime.discovery.requery();
+                        }
                     }
                 }
             }
@@ -518,9 +529,9 @@ async fn establish_reachability_link(
     context: ReachabilityLinkContext,
     attempt: ReachabilityLinkAttempt,
     shutdown_rx: watch::Receiver<bool>,
-) -> bool {
+) -> Option<tokio::time::Instant> {
     match attempt.reachability.clone() {
-        Reachability::Cloud => false,
+        Reachability::Cloud => None,
         Reachability::Direct { addrs } => {
             let mut last_error = None;
             for addr in addrs {
@@ -548,8 +559,9 @@ async fn establish_reachability_link(
                                 .clear_reachability_error(attempt.peer)
                                 .await;
                             tracing::info!(peer_name = %host.name, %addr, "direct Link established");
+                            let established = tokio::time::Instant::now();
                             await_connector(connector_task, abort_on_drop).await;
-                            return true;
+                            return Some(established);
                         }
                         Err(error) => last_error = Some(error),
                     },
@@ -562,7 +574,7 @@ async fn establish_reachability_link(
                 .record_reachability_error(attempt.peer, error.clone())
                 .await;
             tracing::warn!(error = %error, "direct Link establishment failed");
-            false
+            None
         }
         Reachability::Ssh { target, profile } => {
             let carrier = match spawn_ssh_relay(&target, profile).map_err(|error| error.to_string())
@@ -575,7 +587,7 @@ async fn establish_reachability_link(
                         .record_reachability_error(attempt.peer, &error)
                         .await;
                     tracing::warn!(error = %error, "failed to prepare SSH Link transport");
-                    return false;
+                    return None;
                 }
             };
             match establish_carrier(
@@ -603,7 +615,7 @@ async fn establish_reachability_link(
                     tracing::warn!(error = %error, "SSH Link establishment failed");
                 }
             }
-            false
+            None
         }
     }
 }
@@ -695,10 +707,67 @@ async fn await_connector(
     }
 }
 
+/// Holds the next dial back after a link that closed almost as soon as it came
+/// up, unless the connector is shutting down.
+async fn pause_after_short_link(
+    established: tokio::time::Instant,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    let resume = established + SHORT_LINK_REDIAL_PAUSE;
+    if tokio::time::Instant::now() >= resume {
+        return;
+    }
+    tokio::select! {
+        () = tokio::time::sleep_until(resume) => {}
+        _ = shutdown_rx.wait_for(|shutting_down| *shutting_down) => {}
+    }
+}
+
 struct AbortTaskOnDrop(tokio::task::AbortHandle);
 
 impl Drop for AbortTaskOnDrop {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_link_refused_as_it_came_up_holds_the_next_dial_back() {
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        let established = tokio::time::Instant::now();
+        tokio::time::advance(Duration::from_millis(5)).await;
+
+        pause_after_short_link(established, shutdown_rx).await;
+
+        assert_eq!(established.elapsed(), SHORT_LINK_REDIAL_PAUSE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_link_that_lived_is_redialled_at_once() {
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        let established = tokio::time::Instant::now();
+        tokio::time::advance(SHORT_LINK_REDIAL_PAUSE * 30).await;
+        let closed = tokio::time::Instant::now();
+
+        pause_after_short_link(established, shutdown_rx).await;
+
+        assert_eq!(closed.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutting_down_ends_the_pause() {
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let established = tokio::time::Instant::now();
+        let pause = tokio::spawn(pause_after_short_link(established, shutdown_rx));
+        tokio::task::yield_now().await;
+
+        shutdown.send(true).unwrap();
+        pause.await.unwrap();
+
+        assert!(established.elapsed() < SHORT_LINK_REDIAL_PAUSE);
     }
 }
