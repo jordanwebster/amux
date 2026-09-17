@@ -5,7 +5,6 @@ use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fold::{AgentFold, Baseline, Input, TIP_MAX_BYTES};
 use model::StructuredProtocol;
-use prost::Message;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
@@ -47,20 +46,12 @@ const SUMMARIZER_WORKLOAD: Workload = Workload {
     warm_up: "one row per active fold",
 };
 
-const DELTA_WORKLOAD: Workload = Workload {
-    description: "protobuf session output after an exact cursor, no gap",
-    seed: SEED,
-    identity_growth: "fresh row payload per sequence",
-    warm_up: "none",
-};
-
 pub fn run_fast() -> Result<Vec<MetricRun>> {
     let mut runs = Vec::new();
     runs.push(steady_state_frame()?);
     runs.push(frame_under_flood()?);
     runs.push(tip_bound());
     runs.extend(summarizer_cost());
-    runs.extend([10, 100, 1_000].map(reconnect_delta));
     runs.extend(super::store_workloads::run_store()?);
     Ok(runs)
 }
@@ -302,47 +293,6 @@ fn summarizer_cost() -> [MetricRun; 2] {
             vec![sample("summarizer idle core", idle_percent, Unit::Percent)],
         ),
     ]
-}
-
-fn reconnect_delta(rows: usize) -> MetricRun {
-    let started_at = Utc::now();
-    let mut wire_bytes = 0_usize;
-    let mut payload_bytes = 0_usize;
-    for sequence in 1..=rows {
-        let payload = format!(
-            r#"{{"type":"user","uuid":"00000000-0000-4000-8000-{sequence:012}","message":{{"content":"Reconnect row {sequence}: {}"}}}}"#,
-            "x".repeat(160)
-        )
-        .into_bytes();
-        payload_bytes += payload.len();
-        let output = wire::SessionOutput {
-            output: Some(wire::session_output::Output::ClaudeSdkV1(
-                wire::StructuredRow {
-                    seq: sequence as u64,
-                    published_at_unix_ms: 1_700_000_000_000 + sequence as i64,
-                    activity_at_unix_ms: None,
-                    historical: false,
-                    payload,
-                },
-            )),
-        };
-        wire_bytes += output.encoded_len() + 5;
-    }
-    let name = match rows {
-        10 => "reconnect delta (10 rows)",
-        100 => "reconnect delta (100 rows)",
-        1_000 => "reconnect delta (1,000 rows)",
-        _ => unreachable!("contract pins reconnect row counts"),
-    };
-    run(
-        name,
-        Statistic::Median,
-        payload_bytes as f64 * 1.2 + 4_096.0,
-        Unit::Bytes,
-        DELTA_WORKLOAD,
-        started_at,
-        vec![sample(name, wire_bytes as f64, Unit::Bytes)],
-    )
 }
 
 fn protocols() -> [StructuredProtocol; 3] {

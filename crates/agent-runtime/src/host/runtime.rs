@@ -864,17 +864,24 @@ impl LocalAgentHost for AgentRuntime {
         &self,
         request: SessionRequest,
     ) -> Result<HostSessionStream, ProtocolError> {
-        let replay_attachments = self
-            .artifact_owners
-            .owner(request.agent_id)
-            .ok()
-            .map(|owner| {
-                owner
-                    .pinned()
-                    .into_iter()
-                    .map(artifacts::ArtifactMeta::into_reference)
-                    .collect()
-            });
+        // An exact-cursor client already persisted the attachment index at
+        // that cursor. Replaying the synthetic seq-0 attachment row would
+        // violate the exclusive `after` contract and make every reconnect
+        // appear to contain old data. Cold/tail opens still need the snapshot.
+        let replay_attachments = (!is_exact_cursor(&request.args))
+            .then(|| {
+                self.artifact_owners
+                    .owner(request.agent_id)
+                    .ok()
+                    .map(|owner| {
+                        owner
+                            .pinned()
+                            .into_iter()
+                            .map(artifacts::ArtifactMeta::into_reference)
+                            .collect()
+                    })
+            })
+            .flatten();
         session::subscribe_session_stream(self, request, replay_attachments).await
     }
 
@@ -1344,6 +1351,17 @@ impl LocalAgentHost for AgentRuntime {
     }
 }
 
+fn is_exact_cursor(args: &model::SessionArgs) -> bool {
+    use model::{ReplayQuery, SessionArgs};
+    let query = match args {
+        SessionArgs::ClaudePtyTranscriptV1(args) => args.replay_query.as_ref(),
+        SessionArgs::ClaudeSdkV1(args) => args.replay_query.as_ref(),
+        SessionArgs::CodexSdkV1(args) => args.replay_query.as_ref(),
+        SessionArgs::TerminalV1(_) | SessionArgs::TestEchoV1 => None,
+    };
+    matches!(query, Some(ReplayQuery::After { .. }))
+}
+
 async fn deliver_message(
     delivery_target: Box<dyn crate::agents::AgentDeliveryTarget>,
     envelope: &Envelope,
@@ -1420,6 +1438,34 @@ fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
         err @ RenameAgentError::Update(_) => ProtocolError::ServerError {
             message: err.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod replay_query_tests {
+    use super::*;
+
+    #[test]
+    fn only_structured_after_queries_are_exact_cursors() {
+        let after = model::ReplayQuery::After {
+            after: 42,
+            tail_bound: Some(1_000),
+        };
+        let tail = model::ReplayQuery::TailCount {
+            count: 1_000,
+            tail_bound: Some(1_000),
+        };
+        assert!(is_exact_cursor(&model::SessionArgs::ClaudeSdkV1(
+            model::ClaudeSdkV1Args {
+                replay_query: Some(after),
+            },
+        )));
+        assert!(!is_exact_cursor(&model::SessionArgs::ClaudeSdkV1(
+            model::ClaudeSdkV1Args {
+                replay_query: Some(tail),
+            },
+        )));
+        assert!(!is_exact_cursor(&model::SessionArgs::TestEchoV1));
     }
 }
 

@@ -7,6 +7,7 @@ use claude::sdk::{QueryOptions, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, duplex};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 /// The provider's initialization reply and the text it answers each prompt with.
@@ -22,6 +23,12 @@ pub struct Script {
 pub struct Provider {
     script: Script,
     inputs: Arc<Mutex<HashMap<Uuid, Vec<Value>>>>,
+    outputs: Arc<Mutex<HashMap<Uuid, mpsc::UnboundedSender<Injected>>>>,
+}
+
+struct Injected {
+    rows: Vec<Value>,
+    written: oneshot::Sender<anyhow::Result<()>>,
 }
 
 impl Provider {
@@ -29,6 +36,7 @@ impl Provider {
         Self {
             script,
             inputs: Arc::default(),
+            outputs: Arc::default(),
         }
     }
 
@@ -42,6 +50,25 @@ impl Provider {
             .cloned()
     }
 
+    /// Write provider output into an already-open scripted SDK session and
+    /// return only after every row has crossed that session's transport.
+    pub async fn emit(&self, agent: Uuid, rows: Vec<Value>) -> anyhow::Result<()> {
+        let output = self
+            .outputs
+            .lock()
+            .expect("SDK output channels poisoned")
+            .get(&agent)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("scripted SDK session {agent} is not open"))?;
+        let (written, reply) = oneshot::channel();
+        output
+            .send(Injected { rows, written })
+            .map_err(|_| anyhow::anyhow!("scripted SDK session {agent} closed"))?;
+        reply
+            .await
+            .map_err(|_| anyhow::anyhow!("scripted SDK session {agent} closed before write"))?
+    }
+
     pub(crate) async fn open(
         &self,
         agent: Uuid,
@@ -49,10 +76,15 @@ impl Provider {
     ) -> Result<Session, claude::sdk::Error> {
         let (sdk_stdin, provider_stdin) = duplex(65536);
         let (provider_stdout, sdk_stdout) = duplex(65536);
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
         self.inputs
             .lock()
             .expect("SDK observations poisoned")
             .insert(agent, Vec::new());
+        self.outputs
+            .lock()
+            .expect("SDK output channels poisoned")
+            .insert(agent, output_tx);
         let provider = self.clone();
         let model = options
             .model
@@ -60,7 +92,7 @@ impl Provider {
             .unwrap_or_else(|| "provider-default".into());
         tokio::spawn(async move {
             if let Err(error) = provider
-                .serve(agent, model, provider_stdin, provider_stdout)
+                .serve(agent, model, provider_stdin, provider_stdout, output_rx)
                 .await
             {
                 tracing::debug!(%agent, %error, "scripted SDK transport closed");
@@ -75,9 +107,30 @@ impl Provider {
         mut model: String,
         stdin: DuplexStream,
         mut stdout: DuplexStream,
+        mut injected: mpsc::UnboundedReceiver<Injected>,
     ) -> anyhow::Result<()> {
         let mut lines = BufReader::new(stdin).lines();
-        while let Some(line) = lines.next_line().await? {
+        loop {
+            let line = tokio::select! {
+                line = lines.next_line() => match line? {
+                    Some(line) => line,
+                    None => break,
+                },
+                Some(batch) = injected.recv() => {
+                    let result = async {
+                        for row in batch.rows {
+                            write(&mut stdout, row).await?;
+                        }
+                        Ok(())
+                    }.await;
+                    let failed = result.is_err();
+                    let _ = batch.written.send(result);
+                    if failed {
+                        break;
+                    }
+                    continue;
+                }
+            };
             let input: Value = serde_json::from_str(&line)?;
             self.inputs
                 .lock()

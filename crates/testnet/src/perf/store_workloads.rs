@@ -1,28 +1,31 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::{TimeZone, Utc};
 use fold::claude_sdk::ClaudeSdkFold;
 use fold::{
     Baseline, CommitOutcome, ExpectedHead, Head, Input, ProviderFold, SegmentTransition,
     WindowBudget, WindowInterest,
 };
-use model::{Agent, AgentKind, ClaudeDriver, HostEntry, HostTrustStatus};
+use model::{
+    Agent, AgentIdentifier, AgentKind, ClaudeDriver, HostEntry, HostTrustStatus, ReplayOutcome,
+    ReplayQuery, SessionArgs, SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use store::Store;
 use tempfile::TempDir;
 use tui::{ChatView, FrameContext, Theme, ViewState, render};
-use ui_state::store::{
-    ChatCommand, ChatStreamMsg, LoadedDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
-    StoreMsg, StoreOp,
-};
+use ui_runtime::{Runtime, RuntimeOptions};
+use ui_state::store::{ChatState, ProfileGeneration, StoreMsg, StoreOp};
 use ui_state::{Effect, Model, Msg, update};
+use uuid::Uuid;
 
 use super::{Metric, MetricRun, Sample, Statistic, Unit, Workload};
+use crate::TestNet;
 
 const SEED: u64 = 0xA6_2026_0917;
 const PROFILE: ProfileGeneration = ProfileGeneration(0);
@@ -36,10 +39,17 @@ const COLD_WORKLOAD: Workload = Workload {
 };
 
 const ATTACH_WORKLOAD: Workload = Workload {
-    description: "open 5,000-entry stored chat, then fold 2,000 rows/s",
+    description: "client runtime opens 5,000 stored entries during a live 2,000 rows/s stream",
     seed: SEED,
-    identity_growth: "5,000 stored and 4,000 fresh SDK prompt ids",
-    warm_up: "one load and painted frame",
+    identity_growth: "5,000 stored and fresh SDK prompt ids throughout the open",
+    warm_up: "daemon ring and store seeded before the measured open command",
+};
+
+const DELTA_WORKLOAD: Workload = Workload {
+    description: "real client subscription to a testnet daemon after an exact stored cursor",
+    seed: SEED,
+    identity_growth: "5,000 retained rows followed by fresh row payloads per reconnect",
+    warm_up: "client runtime persists the initial daemon cursor",
 };
 
 const COMMIT_WORKLOAD: Workload = Workload {
@@ -69,7 +79,8 @@ pub(super) fn run_store() -> Result<Vec<MetricRun>> {
         .build()
         .context("build store performance runtime")?;
     runtime.block_on(async {
-        let mut runs = cold_start().await?;
+        let mut runs = reconnect_delta().await?;
+        runs.extend(cold_start().await?);
         runs.extend(attach_during_flood().await?);
         runs.push(commit_latency().await?);
         runs.extend(scroll_and_sweep().await?);
@@ -145,6 +156,203 @@ fn run_cold_child(executable: &Path, path: &Path, agents: usize) -> Result<()> {
     Ok(())
 }
 
+async fn reconnect_delta() -> Result<Vec<MetricRun>> {
+    let temp = TempDir::new().context("reconnect delta store directory")?;
+    let net = TestNet::builder().daemon("perf-delta").start().await;
+    let daemon = net.daemon("perf-delta");
+    daemon.script_sdk_sessions(sdk_script()).await;
+    let agent = daemon
+        .spawn_scripted_sdk_agent("perf-delta", temp.path())
+        .await?;
+    publish_sdk_rows(&daemon, agent.id, 1, 5_000, 160).await?;
+    let client = daemon.admin_client().await;
+    let facts = wait_for_daemon_through(&client, agent.id, 5_000).await?;
+    ensure_retains_5k(&facts)?;
+
+    let store_path = temp.path().join("store.sqlite");
+    let mut runtime = Runtime::start_with_client(
+        client.clone(),
+        RuntimeOptions {
+            local_host_id: Some(daemon.host_id()),
+            store_path: Some(store_path.clone()),
+            ..RuntimeOptions::default()
+        },
+    );
+    wait_for_runtime(&mut runtime, "reconnect agent inventory", |runtime| {
+        runtime.model().is_synchronized() && runtime.model().agent(agent.id).is_some()
+    })
+    .await?;
+    runtime.open_chat(agent.id);
+    wait_for_runtime(&mut runtime, "initial stored cursor", |runtime| {
+        runtime
+            .model()
+            .chat(agent.id)
+            .is_some_and(|chat| chat.state == ChatState::Live && chat.pending_bytes() == 0)
+    })
+    .await?;
+    ensure!(
+        store_path.is_file(),
+        "runtime did not create its reconnect store"
+    );
+
+    let started_at = Utc::now();
+    let mut runs = Vec::new();
+    let mut identity = 5_001_u64;
+    for rows in [10_usize, 100, 1_000] {
+        let cursor = runtime
+            .model()
+            .chat(agent.id)
+            .and_then(|chat| chat.head_through())
+            .context("runtime has no stored reconnect cursor")?;
+        publish_sdk_rows(&daemon, agent.id, identity, rows, 160).await?;
+        identity += rows as u64;
+        let expected_through = cursor + rows as u64;
+        let published = wait_for_daemon_through(&client, agent.id, expected_through).await?;
+        ensure!(published.through == expected_through);
+
+        let (received_bytes, payload_bytes) =
+            measure_reconnect(&client, agent.id, cursor, rows, expected_through).await?;
+        let name = match rows {
+            10 => "reconnect delta (10 rows)",
+            100 => "reconnect delta (100 rows)",
+            1_000 => "reconnect delta (1,000 rows)",
+            _ => unreachable!("contract pins reconnect row counts"),
+        };
+        runs.push(metric_run(
+            name,
+            Statistic::Median,
+            payload_bytes as f64 * 1.2 + 4_096.0,
+            Unit::Bytes,
+            DELTA_WORKLOAD,
+            started_at,
+            &[received_bytes as f64],
+        ));
+
+        wait_for_runtime(&mut runtime, "persisted reconnect delta", |runtime| {
+            runtime.model().chat(agent.id).is_some_and(|chat| {
+                chat.state == ChatState::Live
+                    && chat.pending_bytes() == 0
+                    && chat.head_through() == Some(expected_through)
+            })
+        })
+        .await?;
+    }
+    drop(runtime);
+    net.shutdown().await;
+    Ok(runs)
+}
+
+async fn measure_reconnect(
+    client: &client::Client,
+    agent: model::AgentId,
+    cursor: u64,
+    expected_rows: usize,
+    expected_through: u64,
+) -> Result<(u64, usize)> {
+    let mut stream = client
+        .subscribe_session(SubscribeSessionRequest {
+            agent: AgentIdentifier::Id(agent),
+            args: SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args {
+                replay_query: Some(ReplayQuery::After {
+                    after: cursor,
+                    tail_bound: Some(ui_state::REPLAY_TAIL),
+                }),
+            }),
+        })
+        .await?;
+    let mut rows = 0_usize;
+    let mut payload_bytes = 0_usize;
+    let mut opened = false;
+    loop {
+        match stream.recv().await? {
+            SubscribeSessionEvent::Opened {
+                replay: Some(facts),
+            } => {
+                ensure!(!opened, "reconnect subscription opened twice");
+                ensure!(
+                    matches!(facts.outcome, ReplayOutcome::Continuous),
+                    "reconnect subscription reported a gap: {:?}",
+                    facts.outcome
+                );
+                ensure!(facts.selected_from == cursor + 1);
+                ensure!(facts.through == expected_through);
+                opened = true;
+            }
+            SubscribeSessionEvent::Opened { replay: None } => {
+                bail!("structured reconnect omitted opening facts")
+            }
+            SubscribeSessionEvent::Output(SessionOutput::ClaudeSdkV1(row)) => {
+                ensure!(opened, "reconnect delivered a row before opening facts");
+                ensure!(
+                    row.seq > cursor,
+                    "reconnect redelivered row {} at or before stored cursor {cursor}",
+                    row.seq
+                );
+                rows += 1;
+                payload_bytes += row.payload.len();
+            }
+            SubscribeSessionEvent::Output(_) => bail!("reconnect delivered the wrong protocol"),
+            SubscribeSessionEvent::ReplayComplete => break,
+            SubscribeSessionEvent::Closed { reason } => {
+                bail!("reconnect subscription closed during replay: {reason}")
+            }
+        }
+    }
+    ensure!(opened, "reconnect completed without opening facts");
+    ensure!(
+        rows == expected_rows,
+        "reconnect delivered {rows} rows, expected {expected_rows}"
+    );
+    Ok((stream.received_encoded_bytes(), payload_bytes))
+}
+
+async fn wait_for_daemon_through(
+    client: &client::Client,
+    agent: model::AgentId,
+    minimum: u64,
+) -> Result<model::ReplayFacts> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let mut stream = client
+                .subscribe_session(SubscribeSessionRequest {
+                    agent: AgentIdentifier::Id(agent),
+                    args: SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args {
+                        replay_query: Some(ReplayQuery::TailCount {
+                            count: 1,
+                            tail_bound: Some(1),
+                        }),
+                    }),
+                })
+                .await?;
+            let facts = match stream.recv().await? {
+                SubscribeSessionEvent::Opened {
+                    replay: Some(facts),
+                } => facts,
+                other => bail!("daemon probe opened with {other:?}"),
+            };
+            if facts.through >= minimum {
+                return Ok::<_, anyhow::Error>(facts);
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("daemon did not publish through row {minimum}"))?
+}
+
+fn ensure_retains_5k(facts: &model::ReplayFacts) -> Result<()> {
+    let retained = if facts.retained_from == 0 {
+        0
+    } else {
+        facts.through - facts.retained_from + 1
+    };
+    ensure!(
+        retained >= 5_000,
+        "daemon ring retains {retained} rows, expected at least 5,000"
+    );
+    Ok(())
+}
+
 pub fn cold_child(path: &Path, expected_agents: usize) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -200,70 +408,97 @@ async fn attach_during_flood() -> Result<Vec<MetricRun>> {
     let temp = TempDir::new().context("attach store directory")?;
     let path = temp.path().join("store.sqlite");
     let store = Store::open(&path).await?;
-    seed_fleet(&store, 1).await?;
-    seed_chat(&store, agent_id(0), 5_000, 80).await?;
-    // Warm every rendering and allocation path once outside the samples.
-    let loaded = store
-        .load::<ClaudeSdkFold>(agent_id(0), WindowBudget::desktop(0))
+    let net = TestNet::builder().daemon("perf-attach").start().await;
+    let daemon = net.daemon("perf-attach");
+    daemon.script_sdk_sessions(sdk_script()).await;
+    let agent = daemon
+        .spawn_scripted_sdk_agent("perf-attach", temp.path())
         .await?;
-    paint_loaded(loaded.clone())?;
+    seed_live_fleet(&store, &agent).await?;
+    seed_chat(&store, agent.id, 5_000, 80).await?;
     let started_at = Utc::now();
-    let mut paint_samples = Vec::with_capacity(7);
-    for _ in 0..7 {
-        let began = Instant::now();
-        let sample_loaded = store
-            .load::<ClaudeSdkFold>(agent_id(0), WindowBudget::desktop(0))
-            .await?;
-        paint_loaded(sample_loaded)?;
-        paint_samples.push(began.elapsed().as_secs_f64() * 1_000.0);
-    }
-
-    let (mut model, attempt) = loaded_model(loaded)?;
-    let now = Utc::now();
-    update(
-        &mut model,
-        Msg::ChatStream {
-            agent: agent_id(0),
-            attempt,
-            event: ChatStreamMsg::Opened {
-                facts: ReplayFactsDto {
-                    retained_from: 1,
-                    through: 9_000,
-                    selected_from: 5_001,
-                    reset_at: 0,
-                    outcome: ReplayOutcomeDto::Continuous,
-                },
-                at: now,
-            },
-        },
-    );
-    let caught_up = Instant::now();
-    for batch in 0..2_u64 {
-        let entries = (0..2_000_u64)
-            .map(|offset| {
-                let seq = 5_001 + batch * 2_000 + offset;
-                ui_state::StreamEntry::observed(seq, now, sdk_prompt(seq, 80))
-            })
-            .collect();
-        update(
-            &mut model,
-            Msg::ChatStream {
-                agent: agent_id(0),
-                attempt,
-                event: ChatStreamMsg::Batch { at: now, entries },
-            },
-        );
-    }
-    update(
-        &mut model,
-        Msg::ChatStream {
-            agent: agent_id(0),
-            attempt,
-            event: ChatStreamMsg::ReplayComplete { at: now },
-        },
-    );
-    let caught_up_ms = caught_up.elapsed().as_secs_f64() * 1_000.0;
     store.close().await;
+
+    publish_sdk_rows(&daemon, agent.id, 1, 5_000, 80).await?;
+    let client = daemon.admin_client().await;
+    let retained = wait_for_daemon_through(&client, agent.id, 5_000).await?;
+    ensure_retains_5k(&retained)?;
+
+    let mut runtime = Runtime::start_with_client(
+        client,
+        RuntimeOptions {
+            local_host_id: Some(daemon.host_id()),
+            store_path: Some(path),
+            ..RuntimeOptions::default()
+        },
+    );
+    wait_for_runtime(&mut runtime, "synchronized live agent", |runtime| {
+        runtime.model().is_synchronized() && runtime.model().agent(agent.id).is_some()
+    })
+    .await?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let published = Arc::new(AtomicU64::new(0));
+    let publisher = {
+        let daemon = daemon.clone();
+        let stop = Arc::clone(&stop);
+        let published = Arc::clone(&published);
+        tokio::spawn(async move {
+            let mut first = 5_001_u64;
+            while !stop.load(Ordering::Acquire) {
+                let pulse = Instant::now();
+                publish_sdk_rows(&daemon, agent.id, first, 100, 80).await?;
+                first += 100;
+                published.fetch_add(100, Ordering::Release);
+                tokio::time::sleep(Duration::from_millis(50).saturating_sub(pulse.elapsed())).await;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while published.load(Ordering::Acquire) < 100 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .context("scripted attach flood did not begin")?;
+
+    let opened = Instant::now();
+    runtime.open_chat(agent.id);
+    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1))?;
+    let mut first_paint = None;
+    let caught_up = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            ensure!(runtime.next().await, "client runtime closed during attach");
+            if runtime
+                .model()
+                .chat(agent.id)
+                .is_some_and(|chat| chat.is_painted() && !chat.entries.is_empty())
+            {
+                paint_runtime_chat(runtime.model(), agent.id, &mut terminal)?;
+                first_paint.get_or_insert_with(|| opened.elapsed());
+            }
+            if runtime.model().chat(agent.id).is_some_and(|chat| {
+                chat.state == ChatState::Live
+                    && chat.pending_bytes() == 0
+                    && chat.head_through().is_some_and(|through| through > 5_000)
+                    && published.load(Ordering::Acquire) >= 2_000
+            }) {
+                return Ok::<Duration, anyhow::Error>(opened.elapsed());
+            }
+        }
+    })
+    .await
+    .context("attach did not catch up through the runtime")??;
+    stop.store(true, Ordering::Release);
+    publisher.await.context("join attach flood publisher")??;
+    ensure!(
+        published.load(Ordering::Acquire) >= 2_000,
+        "attach flood stopped before one second at 2,000 rows/s"
+    );
+    let first_paint = first_paint.context("stored chat never painted")?;
+    drop(runtime);
+    net.shutdown().await;
     Ok(vec![
         metric_run(
             "attach first painted window",
@@ -272,7 +507,7 @@ async fn attach_during_flood() -> Result<Vec<MetricRun>> {
             Unit::Milliseconds,
             ATTACH_WORKLOAD,
             started_at,
-            &paint_samples,
+            &[first_paint.as_secs_f64() * 1_000.0],
         ),
         metric_run(
             "attach caught up",
@@ -281,14 +516,17 @@ async fn attach_during_flood() -> Result<Vec<MetricRun>> {
             Unit::Milliseconds,
             ATTACH_WORKLOAD,
             started_at,
-            &[caught_up_ms],
+            &[caught_up.as_secs_f64() * 1_000.0],
         ),
     ])
 }
 
-fn paint_loaded(loaded: fold::Loaded<ClaudeSdkFold>) -> Result<()> {
-    let (model, _) = loaded_model(loaded)?;
-    let mut chat = ChatView::open(&model, agent_id(0), 'a', false).context("open stored chat")?;
+fn paint_runtime_chat(
+    model: &Model,
+    agent: model::AgentId,
+    terminal: &mut Terminal<TestBackend>,
+) -> Result<()> {
+    let mut chat = ChatView::open(model, agent, 'a', false).context("open stored chat view")?;
     chat.reconcile(&model);
     let view = ViewState {
         chat: Some(chat),
@@ -299,42 +537,8 @@ fn paint_loaded(loaded: fold::Loaded<ClaudeSdkFold>) -> Result<()> {
         theme: Theme::default(),
         now: Utc::now(),
     };
-    let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1))?;
     terminal.draw(|frame| render(&model, &view, &context, frame))?;
     Ok(())
-}
-
-fn loaded_model(loaded: fold::Loaded<ClaudeSdkFold>) -> Result<(Model, fold::StreamAttempt)> {
-    let mut model = inventory_model(1);
-    let effects = update(
-        &mut model,
-        Msg::Chat(ChatCommand::Open { agent: agent_id(0) }),
-    );
-    let (attempt, op) = effects
-        .iter()
-        .find_map(|effect| match effect {
-            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
-            _ => None,
-        })
-        .context("chat open emitted no store load")?;
-    let effects = update(
-        &mut model,
-        Msg::Store(StoreMsg::Loaded {
-            profile: PROFILE,
-            attempt,
-            op,
-            agent: agent_id(0),
-            loaded: Box::new(LoadedDto::ClaudeSdk(loaded)),
-        }),
-    );
-    let stream_attempt = effects
-        .iter()
-        .find_map(|effect| match effect {
-            Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
-            _ => None,
-        })
-        .context("loaded chat emitted no stream open")?;
-    Ok((model, stream_attempt))
 }
 
 async fn commit_latency() -> Result<MetricRun> {
@@ -525,6 +729,97 @@ async fn seed_fleet(store: &Store, count: usize) -> Result<()> {
     Ok(())
 }
 
+async fn seed_live_fleet(store: &Store, agent: &Agent) -> Result<()> {
+    let generations = generations(store);
+    store
+        .apply_fleet(
+            generations,
+            fold::FleetDelta::Host {
+                host: HostEntry {
+                    id: agent.host_id,
+                    name: "perf-daemon".to_owned(),
+                    online: true,
+                    version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                    capabilities: Some(Default::default()),
+                    trust_status: HostTrustStatus::Trusted,
+                    last_dial_error: None,
+                    platform: None,
+                },
+                revision: 1,
+            },
+        )
+        .await?;
+    store
+        .apply_fleet(
+            generations,
+            fold::FleetDelta::AgentUp {
+                agent: agent.clone(),
+                revision: 2,
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+async fn publish_sdk_rows(
+    daemon: &crate::Daemon,
+    agent: model::AgentId,
+    first_identity: u64,
+    count: usize,
+    text: usize,
+) -> Result<()> {
+    for offset in (0..count).step_by(100) {
+        let batch = (offset..(offset + 100).min(count))
+            .map(|offset| sdk_live_prompt(agent, first_identity + offset as u64, text))
+            .collect();
+        daemon.emit_scripted_sdk_rows(agent, batch).await?;
+    }
+    Ok(())
+}
+
+fn sdk_live_prompt(agent: model::AgentId, identity: u64, text: usize) -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "uuid": Uuid::from_u128(0xA600_0000_0000_0000_0000_0000_0000_0000 + identity as u128),
+        "session_id": agent,
+        "parent_tool_use_id": null,
+        "message": {
+            "role": "user",
+            "content": format!("live row {identity}: {}", "x".repeat(text)),
+        },
+    })
+}
+
+fn sdk_script() -> crate::sdk::Script {
+    serde_json::from_value(serde_json::json!({
+        "initialization": {
+            "commands": [],
+            "agents": [],
+            "models": [],
+            "account": {},
+            "output_style": "default",
+            "available_output_styles": []
+        },
+        "reply": "unused performance reply"
+    }))
+    .expect("static SDK performance script")
+}
+
+async fn wait_for_runtime(
+    runtime: &mut Runtime,
+    what: &str,
+    ready: impl Fn(&Runtime) -> bool,
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !ready(runtime) {
+            ensure!(runtime.next().await, "runtime closed waiting for {what}");
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .with_context(|| format!("timed out waiting for {what}"))?
+}
+
 async fn seed_chat(
     store: &Store,
     agent: model::AgentId,
@@ -619,48 +914,6 @@ async fn commit_batch(
         CommitOutcome::Refused(error) => return Err(error.into()),
     };
     Ok(began.elapsed())
-}
-
-fn inventory_model(count: usize) -> Model {
-    let mut model = Model::default();
-    update(
-        &mut model,
-        Msg::Server(ui_state::ServerMsg::Connected {
-            local_host_id: Some(host_id()),
-        }),
-    );
-    update(
-        &mut model,
-        Msg::Server(ui_state::ServerMsg::HostUpserted {
-            host: HostEntry {
-                id: host_id(),
-                name: "perf-mac".to_owned(),
-                online: true,
-                version: None,
-                capabilities: Some(Default::default()),
-                trust_status: HostTrustStatus::Trusted,
-                last_dial_error: None,
-                platform: None,
-            },
-        }),
-    );
-    for index in 0..count {
-        update(
-            &mut model,
-            Msg::Server(ui_state::ServerMsg::AgentUpserted {
-                agent: agent(index),
-            }),
-        );
-    }
-    update(
-        &mut model,
-        Msg::Server(ui_state::ServerMsg::HostsSynchronized),
-    );
-    update(
-        &mut model,
-        Msg::Server(ui_state::ServerMsg::AgentsSynchronized),
-    );
-    model
 }
 
 fn agent(index: usize) -> Agent {

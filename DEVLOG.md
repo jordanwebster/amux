@@ -1,3 +1,14 @@
+2026-09-17 — **Attach and reconnect qualification now cross the live client boundary.**
+Reconnect measurements open real exact-cursor subscriptions to an 8,192-row
+daemon ring and count the protobuf messages received by the client, including
+opening facts. The 10, 100 and 1,000-row deltas measured 3,796, 37,726 and
+377,026 encoded bytes. Exact-cursor opens no longer replay the cold-open
+attachment snapshot at sequence zero. Attach timing now opens 5,000 stored
+entries through the UI runtime while a scripted SDK agent publishes 2,000
+rows/s, paints in 3.1 ms, and reaches live with persisted commits drained in
+1,013.7 ms after a full second of paced flood traffic on the Mac14,6
+reference machine.
+
 2026-09-17 — **The client memory soak runs the shipping client stack.**
 Ten chats now open through the UI runtime over a real testnet daemon and an
 on-disk store in the sampled process. Scripted providers publish the corpus,

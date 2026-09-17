@@ -36,6 +36,43 @@ impl Daemon {
         self.inner.sources.sdk()?.observed(agent)
     }
 
+    /// Spawn a Claude SDK agent against the daemon's installed scripted SDK
+    /// transport, through the same create service used by production clients.
+    pub async fn spawn_scripted_sdk_agent(
+        &self,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+    ) -> Result<Agent, ClientError> {
+        self.admin_client()
+            .await
+            .create_agent(CreateAgentRequest {
+                agent_id: Uuid::new_v4(),
+                host_id: None,
+                name: Some(name.to_owned()),
+                agent_type: AgentType::Claude {
+                    driver: model::ClaudeDriver::Sdk,
+                },
+                working_dir: working_dir.as_ref().to_owned(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
+            })
+            .await
+    }
+
+    /// Publish raw rows from the installed scripted SDK transport.
+    pub async fn emit_scripted_sdk_rows(
+        &self,
+        agent: Uuid,
+        rows: Vec<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let provider = self.inner.sources.sdk().ok_or_else(|| {
+            anyhow::anyhow!("daemon '{}' has no scripted SDK transport", self.name())
+        })?;
+        provider.emit(agent, rows).await
+    }
+
     /// Register a recorded Codex thread through the normal backend ingest and
     /// input paths. The caller keeps the recording transport alive.
     #[cfg(unix)]

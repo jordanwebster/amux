@@ -96,6 +96,7 @@ pub struct DeleteAgentSummary {
 pub struct SubscribeSessionClient {
     inner: ClientServiceResponseStream<wire::SubscribeSessionResponse>,
     done: bool,
+    received_encoded_bytes: u64,
 }
 
 pub type SessionStream = SubscribeSessionClient;
@@ -207,13 +208,25 @@ struct ClientServiceResponseStream<T> {
 }
 
 impl SubscribeSessionClient {
+    /// Encoded protobuf bytes received on this subscription, including each
+    /// gRPC message's five-byte compression flag and length prefix.
+    pub fn received_encoded_bytes(&self) -> u64 {
+        self.received_encoded_bytes
+    }
+
     pub async fn recv(&mut self) -> Result<SubscribeSessionEvent, ClientError> {
         if self.done {
             return Err(stream_already_done_error(
                 method::CLIENT_SUBSCRIBE_SESSION_NAME,
             ));
         }
-        let event = recv_subscribe_session_event(&mut self.inner).await;
+        let response = recv_client_service_subscribe_session_response(&mut self.inner).await;
+        let event = response.and_then(|response| {
+            self.received_encoded_bytes = self
+                .received_encoded_bytes
+                .saturating_add(grpc_message_bytes(&response));
+            client_service_session_response_to_event(response)
+        });
         if session_event_stream_item_is_terminal(&event) {
             self.done = true;
         }
@@ -226,14 +239,32 @@ impl Stream for SubscribeSessionClient {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        poll_response_stream(
-            &mut this.inner,
-            &mut this.done,
-            method::CLIENT_SUBSCRIBE_SESSION_NAME,
-            client_service_session_response_to_event,
-            cx,
-            session_event_stream_item_is_terminal,
-        )
+        if this.done {
+            return Poll::Ready(None);
+        }
+        match Pin::new(&mut this.inner.stream).poll_next(cx) {
+            Poll::Ready(Some(Ok(response))) => {
+                this.received_encoded_bytes = this
+                    .received_encoded_bytes
+                    .saturating_add(grpc_message_bytes(&response));
+                let result = client_service_session_response_to_event(response);
+                if session_event_stream_item_is_terminal(&result) {
+                    this.done = true;
+                }
+                Poll::Ready(Some(result))
+            }
+            Poll::Ready(Some(Err(status))) => {
+                this.done = true;
+                Poll::Ready(Some(Err(status_to_client_error(status))))
+            }
+            Poll::Ready(None) => {
+                this.done = true;
+                Poll::Ready(Some(Err(stream_ended_error(
+                    method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                ))))
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -367,10 +398,18 @@ fn session_event_stream_item_is_terminal(
     }
 }
 
-async fn recv_subscribe_session_event(
+async fn recv_client_service_subscribe_session_response(
     inner: &mut ClientServiceResponseStream<wire::SubscribeSessionResponse>,
-) -> Result<SubscribeSessionEvent, ClientError> {
-    recv_client_service_subscribe_session_event(inner).await
+) -> Result<wire::SubscribeSessionResponse, ClientError> {
+    let response = inner
+        .stream
+        .message()
+        .await
+        .map_err(status_to_client_error)?;
+    response.ok_or_else(|| ClientError::Unexpected {
+        method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+        message: "session event stream ended before SessionClosed".to_string(),
+    })
 }
 
 async fn recv_host_event(
@@ -385,21 +424,10 @@ async fn recv_agent_event(
     recv_client_service_agent_event(inner).await
 }
 
-async fn recv_client_service_subscribe_session_event(
-    stream: &mut ClientServiceResponseStream<wire::SubscribeSessionResponse>,
-) -> Result<SubscribeSessionEvent, ClientError> {
-    let response = stream
-        .stream
-        .message()
-        .await
-        .map_err(status_to_client_error)?;
-    let Some(response) = response else {
-        return Err(ClientError::Unexpected {
-            method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-            message: "session event stream ended before SessionClosed".to_string(),
-        });
-    };
-    client_service_session_response_to_event(response)
+fn grpc_message_bytes(message: &impl prost::Message) -> u64 {
+    u64::try_from(message.encoded_len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(5)
 }
 
 async fn recv_client_service_host_event(
@@ -593,6 +621,7 @@ impl Client {
         let session = SubscribeSessionClient {
             inner: ClientServiceResponseStream { stream: response },
             done: false,
+            received_encoded_bytes: 0,
         };
         Ok(session)
     }
