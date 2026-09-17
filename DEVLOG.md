@@ -1,3 +1,10 @@
+2026-09-17 — **Flood performance rows repaint the stored transcript.** The
+frame-under-flood workload now sends every generated Codex batch through the
+open chat's store stream and applies the canonical commit acknowledgement
+before drawing. Every measured pulse must advance the stored tip and paint its
+last provider row, so the frame and keypress budgets cannot pass while timing
+an unchanged transcript.
+
 2026-09-17 — **Report replay preserves modern raw stream semantics.** New
 report headers identify store-backed chat recordings, and reports from the
 transition infer the same format from retained store traffic. Their raw attach

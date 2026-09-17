@@ -1058,7 +1058,8 @@ fn install_commit_result(model: &mut Model, agent: AgentId, effects: Vec<Effect>
     update(model, message);
 }
 
-pub(crate) fn canonical_commit_msg(
+#[doc(hidden)]
+pub fn canonical_commit_msg(
     agent: AgentId,
     effects: Vec<Effect>,
     expected: ExpectedHead,

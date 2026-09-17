@@ -3,16 +3,16 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use fold::{AgentFold, Baseline, Input, TIP_MAX_BYTES};
+use fold::{AgentFold, Baseline, ExpectedHead, Input, TIP_MAX_BYTES};
 use model::StructuredProtocol;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
 use tui::chrome::{Chrome, ChromeConfig, InputEvent, KeyRecord, TraceEvent};
-use tui::fixtures::{long_feed, long_feed_batch};
+use tui::fixtures::{canonical_commit_msg, long_feed, long_feed_batch};
 use tui::{FrameContext, Theme, render};
 use ui_runtime::MAX_STREAM_BATCH;
-use ui_state::update;
+use ui_state::{AgentId, ChatStreamMsg, Msg, StreamMsg, update};
 
 use super::{Metric, MetricRun, Sample, Statistic, Unit, Workload};
 
@@ -135,7 +135,9 @@ fn frame_under_flood() -> Result<Vec<MetricRun>> {
 
             // Build the message before the input arrives: the runtime has
             // already decoded messages queued ahead of a terminal event.
-            let message = long_feed_batch(StructuredProtocol::Codex, next_row, rows);
+            let first_row = next_row;
+            let last_row = first_row + rows - 1;
+            let message = long_feed_batch(StructuredProtocol::Codex, first_row, rows);
             next_row += rows;
             let key_arrived = (pulse_index + 1 == batches.len()).then(Instant::now);
 
@@ -143,7 +145,7 @@ fn frame_under_flood() -> Result<Vec<MetricRun>> {
             // queued batch, chrome reconciles after the drain, then a ready
             // input is stepped before the dirty frame is rendered and
             // Terminal::draw applies changed cells and flushes the backend.
-            update(&mut model, message);
+            apply_store_backed_batch(&mut model, message)?;
             chrome.step(&model, &TraceEvent::Drained);
             if key_arrived.is_some() {
                 let key = char::from(b'a' + u8::try_from(second % 26)?);
@@ -174,6 +176,10 @@ fn frame_under_flood() -> Result<Vec<MetricRun>> {
 
             let frame_started = Instant::now();
             paint_chrome(&mut chrome, &model, &mut terminal)?;
+            anyhow::ensure!(
+                rendered_text(&terminal).contains(&codex_long_feed_marker(last_row)),
+                "flood pulse left the painted transcript behind row {last_row}"
+            );
             frame_samples.push(sample(
                 "frame under flood",
                 frame_started.elapsed().as_secs_f64() * 1_000.0,
@@ -216,6 +222,72 @@ fn frame_under_flood() -> Result<Vec<MetricRun>> {
             key_samples,
         ),
     ])
+}
+
+fn apply_store_backed_batch(model: &mut ui_state::Model, message: Msg) -> Result<()> {
+    let Msg::Stream {
+        agent,
+        event: StreamMsg::Batch { at, entries },
+    } = message
+    else {
+        anyhow::bail!("long-feed pulse was not a structured stream batch");
+    };
+    let (attempt, expected, content_revision, before_tip) = {
+        let chat = model
+            .chat(agent)
+            .context("flood fixture has no stored chat")?;
+        (
+            chat.stream_attempt,
+            next_store_head(chat.expected),
+            chat.content_revision.saturating_add(1),
+            stored_tip(model, agent)?,
+        )
+    };
+    let effects = update(
+        model,
+        Msg::ChatStream {
+            agent,
+            attempt,
+            event: ChatStreamMsg::Batch { at, entries },
+        },
+    );
+    let committed = canonical_commit_msg(agent, effects, expected, content_revision);
+    update(model, committed);
+    let after_tip = stored_tip(model, agent)?;
+    anyhow::ensure!(
+        after_tip > before_tip,
+        "flood pulse did not advance the stored transcript tip"
+    );
+    Ok(())
+}
+
+fn next_store_head(expected: ExpectedHead) -> ExpectedHead {
+    match expected {
+        ExpectedHead::Absent { fence } => ExpectedHead::Present {
+            fence: fence.saturating_add(1),
+            version: 1,
+        },
+        ExpectedHead::Present { fence, version } => ExpectedHead::Present {
+            fence: fence.saturating_add(1),
+            version: version.saturating_add(1),
+        },
+    }
+}
+
+fn stored_tip(model: &ui_state::Model, agent: AgentId) -> Result<u64> {
+    model
+        .chat(agent)
+        .and_then(|chat| chat.entries.last())
+        .map(|entry| entry.position().1.seq())
+        .context("flood fixture stored chat has no transcript tip")
+}
+
+fn codex_long_feed_marker(index: usize) -> String {
+    match index % 3 {
+        0 => format!("Investigate retry case {index}."),
+        1 => format!("Retry case {index} is covered by the focused test."),
+        _ => format!("cargo test retry_case_{index}"),
+    }
 }
 
 fn flood_batch_sizes() -> Vec<usize> {
@@ -450,5 +522,33 @@ mod tests {
         assert_eq!(batches, vec![256, 256, 256, 256, 256, 256, 256, 208]);
         assert_eq!(batches.iter().sum::<usize>(), FLOOD_ROWS_PER_SECOND);
         assert!(batches.iter().all(|rows| *rows <= MAX_STREAM_BATCH));
+    }
+
+    #[test]
+    fn flood_pulse_advances_and_paints_the_stored_chat() {
+        let fixture = long_feed(StructuredProtocol::Codex, 1);
+        let mut model = fixture.model;
+        let agent = AgentId::from_u128(8);
+        let before_tip = stored_tip(&model, agent).expect("initial stored tip");
+        apply_store_backed_batch(&mut model, long_feed_batch(StructuredProtocol::Codex, 1, 3))
+            .expect("apply flood pulse");
+        assert!(
+            stored_tip(&model, agent).expect("advanced stored tip") > before_tip,
+            "the pulse reaches the canonical chat window"
+        );
+
+        let mut chrome = Chrome::new(
+            fixture.view,
+            ChromeConfig {
+                theme: Theme::default(),
+            },
+        );
+        let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1)).unwrap();
+        chrome.step(&model, &TraceEvent::Drained);
+        paint_chrome(&mut chrome, &model, &mut terminal).expect("paint pulse");
+        assert!(
+            rendered_text(&terminal).contains(&codex_long_feed_marker(3)),
+            "the frame paints the pulse's newest transcript row"
+        );
     }
 }
