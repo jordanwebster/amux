@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
@@ -44,6 +46,35 @@ struct IngestContext {
     resumed: bool,
     history_config_root: Option<PathBuf>,
     working_dir: PathBuf,
+    #[cfg(test)]
+    history_read_pause: Option<HistoryReadPause>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct HistoryReadPause {
+    entered: Arc<Notify>,
+    released: Arc<(Mutex<bool>, Condvar)>,
+}
+
+#[cfg(test)]
+impl HistoryReadPause {
+    fn wait(&self) {
+        self.entered.notify_one();
+        let (released, ready) = &*self.released;
+        let mut released = released.lock().expect("history read pause poisoned");
+        while !*released {
+            released = ready
+                .wait(released)
+                .expect("history read pause poisoned while waiting");
+        }
+    }
+
+    fn release(&self) {
+        let (released, ready) = &*self.released;
+        *released.lock().expect("history read pause poisoned") = true;
+        ready.notify_all();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -159,6 +190,8 @@ pub(crate) struct ClaudeSdkBackend {
     injected: Option<Session>,
     sources: Option<Arc<dyn ProviderSources>>,
     resumed: bool,
+    #[cfg(test)]
+    history_read_pause: Option<HistoryReadPause>,
     started: bool,
     ingest_abort: Option<AbortHandle>,
 }
@@ -197,6 +230,8 @@ impl ClaudeSdkBackend {
             injected: None,
             sources: None,
             resumed: false,
+            #[cfg(test)]
+            history_read_pause: None,
             started: false,
             ingest_abort: None,
         }
@@ -262,6 +297,8 @@ impl ClaudeSdkBackend {
             injected: Some(session),
             sources: None,
             resumed: false,
+            #[cfg(test)]
+            history_read_pause: None,
             started: false,
             ingest_abort: None,
         }
@@ -406,6 +443,8 @@ impl ClaudeSdkBackend {
             resumed: self.resumed,
             history_config_root: self.history_config_root.clone(),
             working_dir: self.working_dir.clone(),
+            #[cfg(test)]
+            history_read_pause: self.history_read_pause.clone(),
         };
 
         let handle = if let Some(session) = self.injected.take() {
@@ -494,12 +533,20 @@ async fn ingest_session(
         resumed,
         history_config_root,
         working_dir,
+        #[cfg(test)]
+        history_read_pause,
     } = context;
     let Session {
         mut events,
         control,
     } = session;
     let session_id = control.session_id().to_string();
+    let prompt_publication = runtime
+        .lock()
+        .expect("Claude SDK runtime poisoned")
+        .prompt_publication
+        .clone();
+    let history_publication = prompt_publication.lock().await;
     {
         let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
         state.session_id = session_id.parse().ok();
@@ -527,6 +574,8 @@ async fn ingest_session(
             history_config_root,
             working_dir,
             session_id.clone(),
+            #[cfg(test)]
+            history_read_pause,
         )
         .await;
         if let Some(history) = history {
@@ -546,12 +595,8 @@ async fn ingest_session(
     .await;
     write_session_facts(&runtime, &log).await;
     runtime.lock().expect("Claude SDK runtime poisoned").ready = true;
+    drop(history_publication);
 
-    let prompt_publication = runtime
-        .lock()
-        .expect("Claude SDK runtime poisoned")
-        .prompt_publication
-        .clone();
     let mut events = futures_util::stream::iter(buffered).chain(events);
     while let Some(event) = events.next().await {
         let _publication = prompt_publication.lock().await;
@@ -685,6 +730,7 @@ async fn load_resume_history(
     config_root: Option<PathBuf>,
     working_dir: PathBuf,
     session_id: String,
+    #[cfg(test)] history_read_pause: Option<HistoryReadPause>,
 ) -> (
     Option<ResumeHistory>,
     VecDeque<std::result::Result<SdkEvent, claude::sdk::Error>>,
@@ -693,6 +739,10 @@ async fn load_resume_history(
         return (None, VecDeque::new());
     };
     let mut read = tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        if let Some(pause) = history_read_pause {
+            pause.wait();
+        }
         let file = claude::history::find_session_file(&config_root, &working_dir, &session_id)?;
         let tail = claude::history::read_tail(&file, HISTORY_MAX_ROWS, HISTORY_MAX_BYTES);
         Some((file, tail))
@@ -928,6 +978,9 @@ impl ClaudeSdkInputTarget {
                 text,
                 mut image_blocks,
             } => {
+                let identity = Uuid::from_slice(input_id)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|_| crate::agents::attachments::hex_bytes(input_id));
                 let message = if image_blocks.is_empty() {
                     UserMessage::text(text)
                 } else {
@@ -945,10 +998,8 @@ impl ClaudeSdkInputTarget {
                         },
                         None,
                     )
-                };
-                let identity = Uuid::from_slice(input_id)
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|_| crate::agents::attachments::hex_bytes(input_id));
+                }
+                .with_uuid(identity.clone());
                 let row = json!({
                     "type": "user",
                     "uuid": identity,
@@ -2778,6 +2829,119 @@ mod tests {
         })
         .await
         .expect("resumed backend did not close its session and fixture transport");
+    }
+
+    #[tokio::test]
+    async fn daemon_sdk_prompt_during_history_is_published_after_ready_as_live() {
+        let directory = tempfile::tempdir().unwrap();
+        let working_dir = directory.path().join("project");
+        std::fs::create_dir(&working_dir).unwrap();
+        let config_root = directory.path().join("claude");
+        let session_id = Uuid::new_v4();
+        let project_slug = std::fs::canonicalize(&working_dir)
+            .unwrap()
+            .to_string_lossy()
+            .replace(|character: char| !character.is_ascii_alphanumeric(), "-");
+        let transcript = config_root
+            .join("projects")
+            .join(project_slug)
+            .join(format!("{session_id}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "type":"assistant","uuid":Uuid::new_v4(),"sessionId":session_id,
+                    "message":{"id":"historical-message","content":[{"type":"text","text":"from disk"}]}
+                })
+            ),
+        )
+        .unwrap();
+
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("history-race".into()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir,
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let mut backend = ClaudeSdkBackend::from_suspended(
+            &req,
+            LocalAgentNameSource::Amux,
+            session_id,
+            Utc::now(),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+            0,
+        );
+        backend.history_config_root = Some(config_root);
+        let pause = HistoryReadPause {
+            entered: Arc::new(Notify::new()),
+            released: Arc::new((Mutex::new(false), Condvar::new())),
+        };
+        backend.history_read_pause = Some(pause.clone());
+        let (session, server) = initialized_session(backend.query_options().unwrap()).await;
+        backend.injected = Some(session);
+        let Plane::Structured { log, input } = backend.plane(Protocol::ClaudeSdkV1).unwrap() else {
+            panic!("SDK backend exposes a structured plane")
+        };
+        let mut rows = log.subscribe().await.unwrap();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
+
+        tokio::time::timeout(START_DEADLINE, pause.entered.notified())
+            .await
+            .expect("history read did not start");
+        let prompt_id = Uuid::new_v4();
+        let prompt_send = tokio::spawn(async move {
+            input
+                .send(StructuredInputEvent::ClaudeSdk {
+                    input_id: prompt_id.as_bytes().to_vec(),
+                    input: ClaudeSdkV1Input::Prompt {
+                        text: "during history".into(),
+                        image_blocks: Vec::new(),
+                    },
+                })
+                .await
+        });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(log.current_seq().await, 1, "only the resume gap is public");
+        pause.release();
+
+        let mut ready_seq = None;
+        let prompt = tokio::time::timeout(START_DEADLINE, async {
+            loop {
+                let row = rows.read().await.unwrap();
+                if row.payload["type"] == "amux.claude_sdk.ready" {
+                    ready_seq = Some(row.seq);
+                }
+                if row.payload["type"] == "user" {
+                    break row;
+                }
+            }
+        })
+        .await
+        .expect("prompt was not published after resume history");
+        assert!(prompt.seq > ready_seq.expect("ready precedes the prompt"));
+        assert!(!prompt.historical);
+        assert_eq!(prompt.payload["uuid"], prompt_id.to_string());
+        prompt_send.await.unwrap().unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            backend.stop(StopPolicy::Interrupt).await;
+            ingest.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("resumed backend did not close after the history race");
     }
 
     #[tokio::test]

@@ -88,6 +88,7 @@ async fn prompt_publication(fail: bool) {
         .await;
         if !fail {
             let prompt = read_json_line(&mut stdin).await;
+            assert_eq!(prompt["uuid"], Uuid::from_u128(1).to_string());
             assert_eq!(prompt["message"]["content"][0]["text"], "Look at the image");
             assert_eq!(prompt["message"]["content"][1]["type"], "image");
             let reply: Value =
@@ -99,6 +100,7 @@ async fn prompt_publication(fail: bool) {
             write_json_line(&mut stdout, reply).await;
             replied_tx.send(()).unwrap();
             let second = read_json_line(&mut stdin).await;
+            assert_eq!(second["uuid"], Uuid::from_u128(2).to_string());
             assert_eq!(second["message"]["content"], "Look at the image");
         }
         let _ = finish_rx.await;

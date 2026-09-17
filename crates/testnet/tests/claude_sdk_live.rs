@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     const TURN_TIMEOUT: Duration = Duration::from_secs(240);
     const SCENARIO_TIMEOUT: Duration = Duration::from_secs(720);
     const SCENARIOS: &[&str] = &["sdk_driver"];
-    const REQUIRED_VERSION: &str = "2.1.272";
+    const REQUIRED_VERSION: &str = "2.1.274";
     const ROWS_ARTIFACT: &str = "sdk-driver-live.rows.jsonl";
     const IDENTITY_ARTIFACT: &str = "sdk-resume-identity.json";
     const TRANSCRIPT_ARTIFACT: &str = "sdk-driver-live.txt";
@@ -412,6 +412,18 @@ fn main() -> anyhow::Result<()> {
         Value::Array(input_id.iter().copied().map(Value::from).collect())
     }
 
+    fn prompt_identity(input_id: &[u8]) -> String {
+        Uuid::from_slice(input_id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|_| {
+                input_id
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+    }
+
     fn input_ok(row: &Row, input_id: &[u8]) -> bool {
         row.row_type() == Some("amux.claude_sdk.input_result")
             && row.json.get("input_id") == Some(&input_id_value(input_id))
@@ -488,10 +500,30 @@ fn main() -> anyhow::Result<()> {
 
     fn identity_fixture(
         version: &str,
+        live_prompt: &Row,
+        transcript_prompt: &Value,
+        resumed_prompt: &Row,
         live: &Row,
         transcript: &Value,
         resumed: &Row,
     ) -> Result<Value> {
+        let prompt_uuid = live_prompt
+            .json
+            .get("uuid")
+            .and_then(Value::as_str)
+            .context("controlled live prompt has no uuid")?;
+        if live_prompt.historical {
+            bail!("controlled live prompt was marked historical");
+        }
+        if !resumed_prompt.historical {
+            bail!("resumed prompt was not marked historical");
+        }
+        if transcript_prompt.get("uuid").and_then(Value::as_str) != Some(prompt_uuid)
+            || resumed_prompt.json.get("uuid").and_then(Value::as_str) != Some(prompt_uuid)
+        {
+            bail!("live, transcript, and resumed prompt UUIDs differ");
+        }
+
         let uuid = live
             .json
             .get("uuid")
@@ -528,6 +560,9 @@ fn main() -> anyhow::Result<()> {
                 "claude_version": version,
                 "scenario": "sdk_driver"
             },
+            "live_prompt": live_prompt.json,
+            "transcript_prompt": transcript_prompt,
+            "resumed_prompt": resumed_prompt.json,
             "live_final": live.json,
             "transcript_row": transcript,
             "resumed_historical": resumed.json,
@@ -580,6 +615,17 @@ fn main() -> anyhow::Result<()> {
             .and_then(Value::as_str)
             .context("controlled live assistant final has no uuid")?
             .to_string();
+        let prompt_uuid = prompt_identity(b"prompt");
+        let live_prompt = capture
+            .rows
+            .iter()
+            .find(|row| {
+                !row.historical
+                    && row.row_type() == Some("user")
+                    && row.json.get("uuid").and_then(Value::as_str) == Some(prompt_uuid.as_str())
+            })
+            .cloned()
+            .context("controlled prompt was not published under its input identity")?;
 
         let tool_path = harness.scratch.project.join("sdk-tool-ran.txt");
         let permission_prompt = format!(
@@ -760,6 +806,7 @@ fn main() -> anyhow::Result<()> {
 
         capture.drain_idle().await?;
         let transcript_identity = transcript_row(harness, &session_id, &identity_uuid).await?;
+        let transcript_prompt = transcript_row(harness, &session_id, &prompt_uuid).await?;
         let mut all_rows = capture.into_rows();
         let suspended_count = crate::live_installation::suspend(&harness.scratch.root).await?;
         if suspended_count != 1 {
@@ -803,8 +850,21 @@ fn main() -> anyhow::Result<()> {
             })
             .cloned()
             .context("resume did not publish the controlled transcript final as history")?;
+        let resumed_prompt = resumed
+            .rows
+            .iter()
+            .find(|row| {
+                row.historical
+                    && row.row_type() == Some("user")
+                    && row.json.get("uuid").and_then(Value::as_str) == Some(prompt_uuid.as_str())
+            })
+            .cloned()
+            .context("resume did not publish the controlled prompt under its live identity")?;
         let identity = identity_fixture(
             version,
+            &live_prompt,
+            &transcript_prompt,
+            &resumed_prompt,
             &live_identity,
             &transcript_identity,
             &resumed_identity,

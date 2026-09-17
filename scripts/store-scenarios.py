@@ -864,6 +864,14 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         "may be denied; do not use another tool instead. After all three tool attempts, reply "
         "exactly SDK_LIVE_CAPTURE_OK."
     )
+    prompt_uuid = str(uuid.uuid4())
+    streamed_prompt = {
+        "type": "user",
+        "uuid": prompt_uuid,
+        "session_id": session,
+        "message": {"role": "user", "content": prompt},
+        "parent_tool_use_id": None,
+    }
     command = [
         claude,
         "-p",
@@ -883,9 +891,11 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         "none",
         "--max-budget-usd",
         "0.25",
+        "--input-format",
+        "stream-json",
         "--output-format",
-        "json",
-        prompt,
+        "stream-json",
+        "--verbose",
     ]
     env = os.environ.copy()
     env.pop("CLAUDE_CONFIG_DIR", None)
@@ -893,12 +903,14 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         command,
         cwd=ROOT,
         env=env,
+        input=json.dumps(streamed_prompt) + "\n",
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=240,
     )
-    journey.actions.append("real Claude Code capture: " + shlex.join(command[:-1]) + " <prompt>")
+    journey.actions.append("real Claude Code capture: " + shlex.join(command))
+    journey.actions.append(f"streamed prompt uuid: {prompt_uuid}")
     journey.actions.append("real Claude Code output: " + completed.stdout.strip())
     if completed.returncode != 0 or "Not logged in" in completed.stdout:
         raise RuntimeError(
@@ -914,6 +926,17 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         )
     source = candidates[0]
     rows = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+    prompt_rows = [
+        item
+        for item in rows
+        if item.get("type") == "user"
+        and item.get("message", {}).get("content") == prompt
+    ]
+    if len(prompt_rows) != 1 or prompt_rows[0].get("uuid") != prompt_uuid:
+        observed = [item.get("uuid") for item in prompt_rows]
+        raise RuntimeError(
+            f"Claude Code did not preserve streamed prompt uuid {prompt_uuid}; observed {observed}"
+        )
     tool_uses = [
         block
         for item in rows

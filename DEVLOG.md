@@ -1,3 +1,13 @@
+2026-09-18 — **Claude SDK prompts retain one identity through resume.** The SDK
+stream now sends the same UUID that amux publishes for an accepted prompt, and
+resume bootstrap excludes prompt publication until the gap, transcript
+history, ready row, and live session facts are complete. Claude Code 2.1.274
+preserved the supplied UUID in an MCP-free real-binary capture: the streamed
+UUID `f033f0fe-9d1d-42ed-8edc-35912343b923` appeared unchanged on the transcript
+user row and as the single `user:` store key before and after resume. The
+maintained live SDK capture separately confirmed the non-UUID input identity
+`70726f6d7074` across the live row, provider transcript, and resumed history.
+
 2026-09-18 — **Structured PTY ingestion starts after its summarizer attaches.**
 External read-only hook sessions, supplied provider sessions, and scripted PTY
 sessions are now constructed inert. The host subscribes the daemon summarizer

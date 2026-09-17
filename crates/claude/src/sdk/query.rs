@@ -27,6 +27,7 @@ use crate::sdk::types::{MessageContent, MessageParam, Role};
 /// different process.
 #[derive(Debug, Clone)]
 pub struct UserMessage {
+    pub uuid: Option<String>,
     pub message: MessageParam,
     pub parent_tool_use_id: Option<String>,
 }
@@ -34,6 +35,7 @@ pub struct UserMessage {
 impl UserMessage {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
+            uuid: None,
             message: MessageParam {
                 role: Role::User,
                 content: MessageContent::Text(text.into()),
@@ -45,9 +47,15 @@ impl UserMessage {
 
     pub fn new(message: MessageParam, parent_tool_use_id: Option<String>) -> Self {
         Self {
+            uuid: None,
             message,
             parent_tool_use_id,
         }
+    }
+
+    pub fn with_uuid(mut self, uuid: impl Into<String>) -> Self {
+        self.uuid = Some(uuid.into());
+        self
     }
 }
 
@@ -55,6 +63,8 @@ impl UserMessage {
 struct WireUserMessage<'a> {
     #[serde(rename = "type")]
     wire_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uuid: &'a Option<String>,
     session_id: &'a str,
     message: &'a MessageParam,
     parent_tool_use_id: &'a Option<String>,
@@ -409,6 +419,7 @@ pub(crate) async fn send_user_message(
 ) -> Result<(), Error> {
     let wire = WireUserMessage {
         wire_type: "user",
+        uuid: &message.uuid,
         session_id: &inner.session_id,
         message: &message.message,
         parent_tool_use_id: &message.parent_tool_use_id,
