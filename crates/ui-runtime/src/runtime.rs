@@ -57,9 +57,12 @@ const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
 const SUBSCRIPTION_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Structured entries coalesced into one `Msg::Stream(Batch)` — the recorded
-/// Msg is the batch, so replay is independent of arrival timing.
-const MAX_STREAM_BATCH: usize = 256;
+/// Maximum structured entries coalesced into one `Msg::Stream(Batch)`.
+///
+/// The recorded `Msg` is the batch, so replay is independent of arrival
+/// timing. Performance workloads use the same ceiling when reproducing the
+/// delivery cadence seen by the interactive runtime.
+pub const MAX_STREAM_BATCH: usize = 256;
 
 /// Why a connection attempt failed.
 #[derive(Clone, Debug)]

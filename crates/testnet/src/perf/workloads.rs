@@ -11,12 +11,15 @@ use ratatui::widgets::Paragraph;
 use tui::chrome::{Chrome, ChromeConfig, InputEvent, KeyRecord, TraceEvent};
 use tui::fixtures::{long_feed, long_feed_batch};
 use tui::{FrameContext, Theme, render};
+use ui_runtime::MAX_STREAM_BATCH;
 use ui_state::update;
 
 use super::{Metric, MetricRun, Sample, Statistic, Unit, Workload};
 
 const VIEWPORT: (u16, u16) = (120, 40);
 const SEED: u64 = 0xA6_2026_0917;
+const FLOOD_ROWS_PER_SECOND: usize = 2_000;
+const FLOOD_SECONDS: usize = 30;
 
 const FRAME_WORKLOAD: Workload = Workload {
     description: "three provider chats with 1,000 retained entries",
@@ -26,10 +29,10 @@ const FRAME_WORKLOAD: Workload = Workload {
 };
 
 const FLOOD_WORKLOAD: Workload = Workload {
-    description: "production reducer and chrome, 2,000 new rows/s for 30 seconds",
+    description: "release-loop reducer, chrome and terminal flush; 2,000 rows/s in production-sized batches for 30 seconds",
     seed: SEED,
     identity_growth: "60,000 fresh Codex item ids",
-    warm_up: "one input and flushed test-backend frame",
+    warm_up: "one flushed test-backend frame",
 };
 
 const TIP_WORKLOAD: Workload = Workload {
@@ -49,7 +52,7 @@ const SUMMARIZER_WORKLOAD: Workload = Workload {
 pub fn run_fast() -> Result<Vec<MetricRun>> {
     let mut runs = Vec::new();
     runs.push(steady_state_frame()?);
-    runs.push(frame_under_flood()?);
+    runs.extend(frame_under_flood()?);
     runs.push(tip_bound());
     runs.extend(summarizer_cost());
     runs.extend(super::store_workloads::run_store()?);
@@ -105,7 +108,7 @@ fn draw_fixture(
     Ok(())
 }
 
-fn frame_under_flood() -> Result<MetricRun> {
+fn frame_under_flood() -> Result<Vec<MetricRun>> {
     let started_at = Utc::now();
     let fixture = long_feed(StructuredProtocol::Codex, 1);
     let mut model = fixture.model;
@@ -117,44 +120,123 @@ fn frame_under_flood() -> Result<MetricRun> {
     );
     let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1))?;
     paint_chrome(&mut chrome, &model, &mut terminal)?;
-    let mut samples = Vec::with_capacity(30);
-    for second in 0..30 {
+    let batches = flood_batch_sizes();
+    let pulse = Duration::from_secs(1) / u32::try_from(batches.len())?;
+    let mut frame_samples = Vec::with_capacity(FLOOD_SECONDS * batches.len());
+    let mut key_samples = Vec::with_capacity(FLOOD_SECONDS);
+    let mut next_row = 1_usize;
+    let mut typed = String::new();
+
+    for second in 0..FLOOD_SECONDS {
         let interval = Instant::now();
-        let message = long_feed_batch(StructuredProtocol::Codex, second * 2_000 + 1, 2_000);
-        update(&mut model, message.clone());
-        chrome.step(&model, &TraceEvent::Msg(message));
-        chrome.step(&model, &TraceEvent::Drained);
-        let now = Utc::now();
-        chrome.step(&model, &TraceEvent::InputArrival { at: now });
-        chrome.step(
-            &model,
-            &TraceEvent::Input {
-                event: InputEvent::Key(KeyRecord::from_event(KeyEvent::new(
-                    KeyCode::Down,
-                    KeyModifiers::NONE,
-                ))),
-                viewport: VIEWPORT,
-                now,
-            },
-        );
-        let began = Instant::now();
-        paint_chrome(&mut chrome, &model, &mut terminal)?;
-        samples.push(sample(
-            "frame under flood",
-            began.elapsed().as_secs_f64() * 1_000.0,
-            Unit::Milliseconds,
-        ));
-        std::thread::sleep(Duration::from_secs(1).saturating_sub(interval.elapsed()));
+        for (pulse_index, &rows) in batches.iter().enumerate() {
+            let due = interval + pulse * u32::try_from(pulse_index)?;
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+
+            // Build the message before the input arrives: the runtime has
+            // already decoded messages queued ahead of a terminal event.
+            let message = long_feed_batch(StructuredProtocol::Codex, next_row, rows);
+            next_row += rows;
+            let key_arrived = (pulse_index + 1 == batches.len()).then(Instant::now);
+
+            // This is the release loop's turn order: the runtime folds its
+            // queued batch, chrome reconciles after the drain, then a ready
+            // input is stepped before the dirty frame is rendered and
+            // Terminal::draw applies changed cells and flushes the backend.
+            update(&mut model, message);
+            chrome.step(&model, &TraceEvent::Drained);
+            if key_arrived.is_some() {
+                let key = char::from(b'a' + u8::try_from(second % 26)?);
+                typed.push(key);
+                let now = Utc::now();
+                chrome.step(&model, &TraceEvent::InputArrival { at: now });
+                let effects = chrome.step(
+                    &model,
+                    &TraceEvent::Input {
+                        event: InputEvent::Key(KeyRecord::from_event(KeyEvent::new(
+                            KeyCode::Char(key),
+                            KeyModifiers::NONE,
+                        ))),
+                        viewport: VIEWPORT,
+                        now,
+                    },
+                );
+                anyhow::ensure!(effects.is_empty(), "composer key emitted shell effects");
+                let composer = chrome
+                    .view
+                    .chat
+                    .as_mut()
+                    .context("flood fixture has no open chat")?
+                    .composer_mut()
+                    .text();
+                anyhow::ensure!(composer == typed, "keypress did not update the composer");
+            }
+
+            let frame_started = Instant::now();
+            paint_chrome(&mut chrome, &model, &mut terminal)?;
+            frame_samples.push(sample(
+                "frame under flood",
+                frame_started.elapsed().as_secs_f64() * 1_000.0,
+                Unit::Milliseconds,
+            ));
+            if let Some(arrived) = key_arrived {
+                anyhow::ensure!(
+                    rendered_text(&terminal).contains(&typed),
+                    "flushed frame did not reflect the keypress"
+                );
+                key_samples.push(sample(
+                    "keypress to draw",
+                    arrived.elapsed().as_secs_f64() * 1_000.0,
+                    Unit::Milliseconds,
+                ));
+            }
+        }
     }
-    Ok(run(
-        "frame under flood",
-        Statistic::P99,
-        16.667,
-        Unit::Milliseconds,
-        FLOOD_WORKLOAD,
-        started_at,
-        samples,
-    ))
+    anyhow::ensure!(
+        next_row == FLOOD_ROWS_PER_SECOND * FLOOD_SECONDS + 1,
+        "flood emitted the wrong row count"
+    );
+    Ok(vec![
+        run(
+            "frame under flood",
+            Statistic::P99,
+            16.667,
+            Unit::Milliseconds,
+            FLOOD_WORKLOAD,
+            started_at,
+            frame_samples,
+        ),
+        run(
+            "keypress to draw",
+            Statistic::P99,
+            50.0,
+            Unit::Milliseconds,
+            FLOOD_WORKLOAD,
+            started_at,
+            key_samples,
+        ),
+    ])
+}
+
+fn flood_batch_sizes() -> Vec<usize> {
+    let mut remaining = FLOOD_ROWS_PER_SECOND;
+    let mut batches = Vec::new();
+    while remaining > 0 {
+        let rows = remaining.min(MAX_STREAM_BATCH);
+        batches.push(rows);
+        remaining -= rows;
+    }
+    batches
+}
+
+fn rendered_text(terminal: &Terminal<TestBackend>) -> String {
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
 }
 
 fn paint_chrome(
@@ -355,5 +437,18 @@ fn run(
         observation_count,
         started_at,
         ended_at: Utc::now(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flood_second_uses_runtime_sized_batches() {
+        let batches = flood_batch_sizes();
+        assert_eq!(batches, vec![256, 256, 256, 256, 256, 256, 256, 208]);
+        assert_eq!(batches.iter().sum::<usize>(), FLOOD_ROWS_PER_SECOND);
+        assert!(batches.iter().all(|rows| *rows <= MAX_STREAM_BATCH));
     }
 }

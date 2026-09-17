@@ -226,7 +226,7 @@ impl Report {
                 "performance metric names must be unique".to_owned(),
             ));
         }
-        if let Some(baselines) = baselines {
+        if let Some(baselines) = baselines.filter(|_| !recording) {
             let baseline_names = baselines
                 .medians
                 .keys()
@@ -593,5 +593,25 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, PerfError::Baseline(_)));
+    }
+
+    #[test]
+    fn baseline_recording_accepts_a_changed_metric_set() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            medians: BTreeMap::new(),
+        };
+        let report = Report::evaluate(
+            machine(),
+            vec![run(Unit::Milliseconds, Statistic::Median, &[1.0])],
+            Some(&baseline),
+            true,
+        )
+        .unwrap();
+        assert!(report.passed());
+        assert_eq!(report.verdicts[0].baseline, None);
     }
 }

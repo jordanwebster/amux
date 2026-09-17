@@ -1,3 +1,14 @@
+2026-09-17 — **Flood qualification measures a key through the flushed frame.**
+The release-loop workload now spreads 2,000 rows across every second in the
+runtime's production batch sizes, drains and reconciles them in interactive
+loop order, and draws after each pulse. It reports render-through-terminal
+flush p99 for every flood frame and key-arrival-through-first-reflecting-flush
+p99 for thirty visible composer keypresses. Baseline recording admits an
+intentional metric-set change while ordinary qualification still rejects a
+missing or extra row. On the Mac14,6 reference machine, 240 flood frames
+measured 8.978 ms p99 against 16.667 ms and thirty keys measured 16.808 ms p99
+against 50 ms.
+
 2026-09-17 — **Attach and reconnect qualification now cross the live client boundary.**
 Reconnect measurements open real exact-cursor subscriptions to an 8,192-row
 daemon ring and count the protobuf messages received by the client, including
