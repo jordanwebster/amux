@@ -212,9 +212,11 @@ public final class AccountRegistry {
         changed?()
     }
 
-    /// The runtime has started with these accounts forgotten, which is when
-    /// their profiles were deleted, so they need not be named again. Nothing
-    /// about which accounts are on this phone changed, so nobody is told.
+    /// A runtime has reported these accounts gone from the device — profile
+    /// and caches deleted — so they need not be named again. Only what a
+    /// runtime says is gone belongs here: an account it could not finish with
+    /// stays listed, and the next start is asked for it again. Nothing about
+    /// which accounts are on this phone changed, so nobody is told.
     public func forgottenDeleted(_ ids: [AccountId]) {
         let before = forgotten
         forgotten.removeAll { ids.contains($0) }

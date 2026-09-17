@@ -291,7 +291,7 @@ public final class NewAgentStore {
             }
             for agent in startedUnlisted.values { remember(agent) }
         case .feed, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
-             .attention, .cloudState, .unreadable:
+             .attention, .cloudState, .forgotten, .unreadable:
             break
         }
     }

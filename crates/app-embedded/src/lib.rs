@@ -605,6 +605,14 @@ fn write_tracing_to(_log_path: &std::path::Path) {}
 
 pub struct Embedded {
     pub sessions: Sessions,
+    /// The removed accounts this open really did get rid of: the profile gone
+    /// and everything cached for it gone too.
+    ///
+    /// Only these may be dropped from the application's own list of accounts
+    /// awaiting removal. One whose profile or caches would not delete is
+    /// absent, so the next start is asked to try again rather than the phone
+    /// showing an account as gone while its key is still on the device.
+    pub forgotten: Vec<String>,
     installation: Option<Arc<Installation>>,
     /// Turns each profile's own account of its cloud link into the states a
     /// screen words. Stopped with this crate's installation.
@@ -688,8 +696,13 @@ impl Embedded {
         let installation = Arc::new(installation);
         // Before any profile is chosen: a removed account's profile must not
         // be adopted, reopened or left running beside the ones that are.
+        let mut forgotten = Vec::new();
+        let mut unfinished = Vec::new();
         for account in &config.forget {
-            forget_profile(&installation, account, &config.cache_dir).await;
+            match forget_profile(&installation, account, &config.cache_dir).await {
+                None => forgotten.push(account.clone()),
+                Some(left) => unfinished.push((account.clone(), left)),
+            }
         }
 
         let opened = match config.accounts.is_empty() {
@@ -781,9 +794,14 @@ impl Embedded {
             .filter_map(|session| Some((session.account.clone()?, session.profile)))
             .collect();
         directory.insert(String::new(), sessions.active_profile());
+        // A removed account whose profile or caches would not delete keeps its
+        // entry, because a profile that is already gone can be found again
+        // only by the identifier this directory holds.
+        directory.extend(unfinished);
         let _ = app_runtime::cache::remember_profiles(&config.cache_dir, &directory);
         Ok(Self {
             sessions,
+            forgotten,
             installation: Some(installation),
             statuses: Some(statuses),
         })
@@ -928,30 +946,46 @@ async fn signed_in_profile(
 }
 
 /// Delete the profile one removed account ran on, and everything this device
-/// cached for it.
+/// cached for it, and say whether the device is genuinely rid of it: `None`
+/// when nothing of the account is left, or the profile still holding something
+/// when part of it would not delete.
 ///
-/// A failure is written to the log and nothing more. Removing an account is
-/// already done as far as the person is concerned — the app has let go of it —
-/// and a device that refused to start over a directory it could not delete
-/// would take every other account down with it. The next start tries again.
-async fn forget_profile(installation: &Installation, account: &str, cache_dir: &std::path::Path) {
+/// A failure is written to the log and the start carries on. Removing an
+/// account is already done as far as the person is concerned — the app has let
+/// go of it — and a device that refused to start over a directory it could not
+/// delete would take every other account down with it. What the failure costs
+/// is the report: the account is not named as forgotten, so the app keeps it
+/// pending and the next start tries again.
+async fn forget_profile(
+    installation: &Installation,
+    account: &str,
+    cache_dir: &std::path::Path,
+) -> Option<ProfileId> {
     let labelled = installation
         .profiles()
         .into_iter()
         .find(|profile| profile.record.label.override_name.as_deref() == Some(account));
-    let Some(profile) = labelled else {
-        return;
+    // An earlier start that deleted the profile and could not delete its
+    // caches left no label to find them by, so the directory this device
+    // writes is asked instead.
+    let id = match &labelled {
+        Some(profile) => profile.record.id,
+        None => app_runtime::cache::remembered_profile(cache_dir, Some(account))?,
     };
-    let id = profile.record.id;
-    if let Err(error) = installation
-        .delete(OperationId::new(), id, profile.record.revision)
-        .await
+    let mut left = None;
+    if let Some(profile) = labelled
+        && let Err(error) = installation
+            .delete(OperationId::new(), id, profile.record.revision)
+            .await
     {
         tracing::warn!(%id, %error, "could not delete a removed account's profile");
+        left = Some(id);
     }
     if let Err(error) = app_runtime::cache::forget_profile(cache_dir, id) {
         tracing::warn!(%id, %error, "could not delete a removed account's caches");
+        left = Some(id);
     }
+    left
 }
 
 fn available(profile: &node::ProfileStatus) -> Result<(), String> {

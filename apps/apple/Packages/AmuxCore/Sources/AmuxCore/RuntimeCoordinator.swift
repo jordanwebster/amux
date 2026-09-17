@@ -24,8 +24,9 @@ public final class RuntimeCoordinator {
     public private(set) var lastBatch: [AccountId: [Event]] = [:]
     /// Diagnostic detail for the driving door and reports, never screen copy.
     public private(set) var failure: String?
-    /// Every removed account a runtime this launch has started with, and so
-    /// deleted the profile of. Diagnostic, for the driving door.
+    /// Every removed account a runtime this launch has reported gone from the
+    /// device: its profile and everything cached for it deleted. Diagnostic,
+    /// for the driving door.
     public private(set) var deletedProfiles: [String] = []
     public let deviceName: String
     /// The browser whose findings this hands on, where the app gave it one.
@@ -360,16 +361,20 @@ public final class RuntimeCoordinator {
                    configured?.relay != nil {
                     failed = true
                 } else {
-                    if !initialized, let removed = configured?.forget, !removed.isEmpty {
-                        // A runtime that says anything has opened, and opening
-                        // is what deleted these profiles. Cleared here first so
-                        // the registry's change is not read as a reason to
-                        // start another runtime.
-                        configured?.forget = []
-                        deletedProfiles += removed
-                        registry.forgottenDeleted(removed.map(AccountId.init))
-                    }
                     initialized = true
+                }
+            case .forgotten(let accounts):
+                // Only the runtime that deleted a removed account's profile
+                // and caches can say this phone is rid of it, and it names
+                // just the ones it finished. Anything it could not finish
+                // stays pending here and in the registry, so nothing reads
+                // the change as a reason to start another runtime and the
+                // next start is asked for it again.
+                let deleted = (configured?.forget ?? []).filter(accounts.contains)
+                if !deleted.isEmpty {
+                    configured?.forget.removeAll(where: deleted.contains)
+                    deletedProfiles += deleted
+                    registry.forgottenDeleted(deleted.map(AccountId.init))
                 }
             default: break
             }

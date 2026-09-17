@@ -111,6 +111,11 @@ async fn a_removed_account_leaves_nothing_of_its_profile_behind() {
     );
     let (requests, _receive) = mpsc::channel(1);
     let mut embedded = Embedded::open(&without, requests).await.unwrap();
+    assert_eq!(
+        embedded.forgotten,
+        ["work"],
+        "the start did not report the account it got rid of"
+    );
     assert_eq!(profile_of(&embedded, "personal"), kept);
     assert!(
         !data.join(removed.to_string()).exists(),
@@ -124,9 +129,26 @@ async fn a_removed_account_leaves_nothing_of_its_profile_behind() {
     assert!(cache.join(format!("artifacts/{kept}/blob")).exists());
     embedded.shutdown().await;
 
-    // Said again on a later start, it is not an error: there is nothing left.
+    // Said again on a later start, it is not an error and the answer is the
+    // same: there is nothing of that account here. The phone has to hear that
+    // however often it asks, or a removal whose report was lost would be
+    // pending forever.
     let (requests, _receive) = mpsc::channel(1);
     let mut embedded = Embedded::open(&without, requests).await.unwrap();
+    assert_eq!(embedded.forgotten, ["work"]);
+    embedded.shutdown().await;
+
+    // Nothing asked for, nothing reported.
+    let nothing = config(
+        root.path(),
+        relay.clone(),
+        &[("personal", &personal)],
+        "personal",
+        &[],
+    );
+    let (requests, _receive) = mpsc::channel(1);
+    let mut embedded = Embedded::open(&nothing, requests).await.unwrap();
+    assert!(embedded.forgotten.is_empty());
     embedded.shutdown().await;
 
     // Signing the same account in again is a new device to its machines.
@@ -141,6 +163,42 @@ async fn a_removed_account_leaves_nothing_of_its_profile_behind() {
     let mut embedded = Embedded::open(&again, requests).await.unwrap();
     assert_ne!(profile_of(&embedded, "work"), removed);
     assert_eq!(profile_of(&embedded, "personal"), kept);
+    embedded.shutdown().await;
+}
+
+/// Caches the last start could not delete outlive the profile it did delete:
+/// nothing carries that account's label any more, so only the directory this
+/// device writes can say which profile the leftovers belong to. A start that
+/// finds them through it finishes the job and reports the account gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn caches_that_outlived_their_profile_are_still_deleted() {
+    let root = test_root();
+    let cache = root.path().join("cache");
+    let orphan = ProfileId(uuid::Uuid::from_u128(7));
+    std::fs::create_dir_all(cache.join("fleet")).unwrap();
+    std::fs::write(
+        cache.join("fleet/profiles.json"),
+        serde_json::to_vec(&BTreeMap::from([("work".to_owned(), orphan)])).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(cache.join(format!("fleet/{orphan}.json")), b"{}").unwrap();
+    std::fs::create_dir_all(cache.join(format!("artifacts/{orphan}"))).unwrap();
+    std::fs::write(cache.join(format!("artifacts/{orphan}/blob")), b"bytes").unwrap();
+
+    // Nobody is signed in — the account was removed, after all — and the
+    // removal is still pending.
+    let pending: StartConfig = serde_json::from_value(json!({
+        "data_dir": root.path().join("data"), "cache_dir": cache,
+        "log_path": root.path().join("app.log"), "device_name": "phone",
+        "forget": ["work"],
+    }))
+    .unwrap();
+    let (requests, _receive) = mpsc::channel(1);
+    let mut embedded = Embedded::open(&pending, requests).await.unwrap();
+    assert_eq!(embedded.forgotten, ["work"]);
+    assert!(!cache.join(format!("fleet/{orphan}.json")).exists());
+    assert!(!cache.join(format!("artifacts/{orphan}")).exists());
+    assert!(!remembered(root.path()).contains_key("work"));
     embedded.shutdown().await;
 }
 

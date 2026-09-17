@@ -130,7 +130,7 @@ public final class FleetStore {
         case .cloudState(let state):
             cloud = state
         case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
-             .attention, .unreadable:
+             .attention, .forgotten, .unreadable:
             break
         }
     }

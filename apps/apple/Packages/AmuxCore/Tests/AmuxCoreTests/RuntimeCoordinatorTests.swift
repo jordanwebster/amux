@@ -351,9 +351,11 @@ final class RuntimeCoordinatorTests: XCTestCase {
 
     /// A removed account is named to the next runtime, which is the only
     /// thing that can delete its profile — even when removing it changed
-    /// nothing about which accounts are signed in — and once a runtime has
-    /// opened with it, it is not named again.
-    func testARemovedAccountIsHandedToTheNextRuntimeToDelete() async throws {
+    /// nothing about which accounts are signed in — and it keeps being named
+    /// until a runtime says that account is really gone from the device. A
+    /// runtime that merely started is not that word: a profile whose key or
+    /// caches would not delete is still here.
+    func testARemovedAccountIsNamedUntilARuntimeSaysItIsGone() async throws {
         let directory = root
         defer { try? FileManager.default.removeItem(at: directory) }
         let registry = AccountRegistry()
@@ -383,7 +385,22 @@ final class RuntimeCoordinatorTests: XCTestCase {
         XCTAssertEqual(configurations.last?.accounts.map(\.id), ["ada"])
         XCTAssertTrue(clients[0].stopped)
 
+        // A runtime that has opened and connected has said nothing about what
+        // it managed to delete, so the removal is still pending.
         clients.last?.replies.yield([.connection(.init(state: .connected))])
+        for _ in 0..<200 { await Task.yield() }
+        XCTAssertEqual(
+            registry.forgotten, [bo.id],
+            "a runtime that only connected was read as having deleted the profile")
+        XCTAssertEqual(coordinator.deletedProfiles, [])
+
+        // Nor does a report about some other account.
+        clients.last?.replies.yield([.forgotten(accounts: ["ada"])])
+        for _ in 0..<200 { await Task.yield() }
+        XCTAssertEqual(registry.forgotten, [bo.id])
+        XCTAssertEqual(coordinator.deletedProfiles, [])
+
+        clients.last?.replies.yield([.forgotten(accounts: ["bo"])])
         for _ in 0..<1000 where !registry.forgotten.isEmpty { await Task.yield() }
         XCTAssertEqual(registry.forgotten, [])
         XCTAssertEqual(coordinator.deletedProfiles, ["bo"])

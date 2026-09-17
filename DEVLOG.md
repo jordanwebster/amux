@@ -22,6 +22,26 @@ there is none. The extra connection in the daemon's log was the dead link from
 the previous run ending. Direct dials now carry the profile that made them and a
 line when they go out, and an accepted link names the peer and incarnation
 behind it, which is what made that readable.
+2026-09-17 — **A removed account stays pending until the runtime says it is
+gone.** Remove from This Phone took the account off the list and asked the next
+runtime start to delete its profile, its device key, the hosts it had paired
+with and its caches. The app then crossed the removal off as soon as that
+runtime reported anything at all, so a per-profile failure — a directory that
+would not delete — left the key, the host trust and the caches on the phone
+forever, with the account shown as gone and nothing ever retrying. Opening the
+profiles now reports which accounts the device is genuinely rid of, in a new
+`Forgotten` event the phone sends once after the open, and the phone drops a
+pending removal only for the accounts that event names. Anything it could not
+finish stays pending in both the registry and the start configuration, which
+means no spurious restart and another attempt next launch. Caches that outlived
+the profile they belonged to are now reachable too: nothing carries the
+account's label any more, so the profile is looked up in the directory this
+device writes, and an account still pending keeps that entry for the next start
+to find. A start asked about an account this device holds nothing for reports it
+gone, because a phone whose report was lost must be able to ask again.
+
+This is the first of three fixes for the same mistake: the phone recording
+something as true before the party that owns the fact has said so.
 
 2026-09-17 — **The phone keeps looking for a machine whose address lookup
 stalled.** A simulator paired with this tree's daemon stopped finding it once

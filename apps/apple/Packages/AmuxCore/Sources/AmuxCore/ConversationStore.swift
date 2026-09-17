@@ -248,7 +248,7 @@ public final class ConversationStore {
         case .unreadable(let unread) where unread.agent == agent:
             unreadable.append(unread)
         case .feed, .session, .diff, .fleet, .discovered, .connection, .tokenRequest, .devices,
-             .attention, .cloudState, .unreadable:
+             .attention, .cloudState, .forgotten, .unreadable:
             break
         }
     }

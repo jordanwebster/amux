@@ -61,9 +61,14 @@ connection events. The generated header documents pointer lifetimes.
 The start configuration's `forget` lists accounts removed from the device.
 Before any profile is opened, each one's profile is deleted (its key, trust
 store and pairings) together with its fleet cache, artifacts cache and
-`profiles.json` entry. A failure is logged and the start continues; naming an
-account with no profile does nothing. An account in `forget` may not also be in
-`accounts` or be `active`.
+`profiles.json` entry. A failure is logged and the start continues. Once the
+profiles are open, a `Forgotten` event names the accounts the device is
+genuinely rid of — profile deleted or already absent, and its caches deleted —
+which is the only word the application may drop a pending removal on. An
+account something failed for is not named, keeps its `profiles.json` entry so
+caches that outlived their profile can still be found, and must be named again
+on the next start. Naming an account this device holds nothing for reports it
+as gone. An account in `forget` may not also be in `accounts` or be `active`.
 
 Run `just test-crate app-ffi` for the C-boundary relay, reconnection, token
 and teardown tests; `just test-crate app-runtime` covers the projection and

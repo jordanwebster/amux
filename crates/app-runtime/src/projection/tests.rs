@@ -229,6 +229,11 @@ fn mobile_projection_schema_snapshot() {
         tier: model::Tier::Pro,
         carrier: model::RelayCarrier::Quic,
     }));
+    // What a start reports of the removed accounts it really did get rid of,
+    // which is the only word the phone may drop a pending removal on.
+    events.push(Event::Forgotten {
+        accounts: vec!["work".into()],
+    });
     let actual = format!("{}\n", serde_json::to_string_pretty(&events).unwrap());
     if std::env::var_os("UPDATE_MOBILE_PROJECTION").is_some() {
         std::fs::write(

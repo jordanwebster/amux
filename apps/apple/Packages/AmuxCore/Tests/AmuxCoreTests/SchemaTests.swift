@@ -15,7 +15,14 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 22)
+        XCTAssertEqual(events.count, 23)
+    }
+
+    /// Which removed accounts a start is really rid of. The app may drop a
+    /// pending removal on this event and on nothing else, so a build that
+    /// could not read it would show accounts as gone that are still here.
+    func testAStartNamesTheRemovedAccountsItIsReallyRidOf() throws {
+        XCTAssertEqual(try pinnedEvents().last, .forgotten(accounts: ["work"]))
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a

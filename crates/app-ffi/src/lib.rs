@@ -181,6 +181,16 @@ async fn serve(
     // can be routed by that identifier alone.
     let (requests, token_requests) = mpsc::channel(1);
     let mut embedded = Embedded::open(&config, requests).await?;
+    // Opening is what deletes a removed account's profile and caches, so this
+    // is where the application learns which removals it may stop asking for.
+    // One that would not delete is not named, and the next start is asked for
+    // it again.
+    let forgotten = std::mem::take(&mut embedded.forgotten);
+    if !forgotten.is_empty() {
+        callback.send(&[Event::Forgotten {
+            accounts: forgotten,
+        }]);
+    }
     let served = app_runtime::run(
         &mut embedded.sessions,
         config.cache_dir.clone(),

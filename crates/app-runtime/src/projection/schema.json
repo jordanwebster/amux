@@ -1041,5 +1041,12 @@
       "tier": "pro",
       "carrier": "quic"
     }
+  },
+  {
+    "Forgotten": {
+      "accounts": [
+        "work"
+      ]
+    }
   }
 ]

@@ -469,6 +469,19 @@ pub enum Event {
         identity: DeviceIdentityDto,
         devices: Vec<PairedDeviceDto>,
     },
+    /// The removed accounts this start really did get rid of: each one's
+    /// profile gone — deleted here or already absent — and everything this
+    /// device cached for it gone too.
+    ///
+    /// Sent once, after the profiles were opened, because opening is what
+    /// deletes them. It is the only word on which the application may drop a
+    /// pending removal: an account whose profile or caches would not delete is
+    /// not named here, so it stays pending and the next start tries again
+    /// rather than the phone showing an account as gone while its device key
+    /// is still on it.
+    Forgotten {
+        accounts: Vec<String>,
+    },
 }
 
 /// What this phone is, as the machines it pairs with see it.

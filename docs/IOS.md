@@ -37,7 +37,10 @@ account row, including a signed-out one) takes an account off the phone and
 leaves it on amux.sh. The app lets go of the account's session, takes it off the
 list, and names it to the next runtime start, which deletes its profile before
 opening anything: its key, its trust store and the hosts it paired, with its
-fleet and artifacts caches and its `profiles.json` entry. The hosts keep their
+fleet and artifacts caches and its `profiles.json` entry. The account stays
+pending until a start reports it really gone, so a deletion that failed is
+attempted again next launch rather than leaving a key on a phone that shows the
+account as removed. The hosts keep their
 record of the old key until it is revoked there, and adding the account back
 means pairing again. Deleting an account takes the same path. The account on
 screen, when removed, is replaced by one still signed in, or by the signed-out

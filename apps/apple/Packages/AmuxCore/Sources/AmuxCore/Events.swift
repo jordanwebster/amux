@@ -37,6 +37,12 @@ public enum Event: Sendable, Equatable, Codable {
     /// nothing has to ask the account service a second time to know what to
     /// offer.
     case cloudState(CloudState)
+    /// The accounts a start really did remove from this phone: profile gone,
+    /// and everything cached for them gone too. Opening the profiles is what
+    /// deletes them, so this arrives once, before the stream proper. It is the
+    /// only word a pending removal may be dropped on: one the runtime could
+    /// not finish is not named here and is asked for again next start.
+    case forgotten(accounts: [String])
     /// An event this build could not read, standing in its place in the batch.
     ///
     /// Never sent by the bridge: it is what reading a batch leaves where one
@@ -57,6 +63,7 @@ public enum Event: Sendable, Equatable, Codable {
         case invariant = "Invariant"
         case devices = "Devices"
         case cloudState = "CloudState"
+        case forgotten = "Forgotten"
         case unreadable = "Unreadable"
     }
 
@@ -76,6 +83,10 @@ public enum Event: Sendable, Equatable, Codable {
 
     private struct Detail: Codable, Sendable, Equatable {
         var detail: String
+    }
+
+    private struct Accounts: Codable, Sendable, Equatable {
+        var accounts: [String]
     }
 
     public init(from decoder: any Decoder) throws {
@@ -104,6 +115,8 @@ public enum Event: Sendable, Equatable, Codable {
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
         case .cloudState: self = .cloudState(try container.decode(CloudState.self, forKey: key))
+        case .forgotten:
+            self = .forgotten(accounts: try container.decode(Accounts.self, forKey: key).accounts)
         case .unreadable:
             self = .unreadable(try container.decode(UnreadableEvent.self, forKey: key))
         }
@@ -161,6 +174,8 @@ public enum Event: Sendable, Equatable, Codable {
             try container.encode(Detail(detail: detail), forKey: .invariant)
         case .devices(let roster): try container.encode(roster, forKey: .devices)
         case .cloudState(let state): try container.encode(state, forKey: .cloudState)
+        case .forgotten(let accounts):
+            try container.encode(Accounts(accounts: accounts), forKey: .forgotten)
         case .unreadable(let event): try container.encode(event, forKey: .unreadable)
         }
     }

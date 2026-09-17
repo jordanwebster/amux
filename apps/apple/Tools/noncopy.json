@@ -698,6 +698,7 @@
       {"literal": "\"branch:\\(base)\"", "context": "case .branch(let base): \"branch:\\(base)\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"timed_out\"", "context": "case timedOut = \"timed_out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"CloudState\"", "context": "case cloudState = \"CloudState\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"Forgotten\"", "context": "case forgotten = \"Forgotten\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"signed_out\"", "context": "case \"signed_out\": self = .signedOut", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"connecting\"", "context": "case \"connecting\": self = .connecting", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"connected\"", "context": "case \"connected\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
