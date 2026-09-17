@@ -15,4 +15,4 @@ pub use mux::{MuxCarrier, MuxRole};
 pub(crate) use piper::Piper;
 pub use quic::QuicCarrier;
 pub(crate) use quic::accepted_quic_bidi_stream;
-pub use run::{LinkCtx, run_link};
+pub use run::{LinkCtx, LinkError, run_link};

@@ -1,3 +1,28 @@
+2026-09-17 — **A reconnect is no longer reported as an authentication
+failure.** Every phone reconnect wrote `auth.mtls_handshake_failure` to the
+daemon's audit log, the entry meant for a peer that could not prove who it is.
+What actually happened: the link the phone's previous run left behind is
+superseded by the new one, and a stream still handshaking on the old link dies
+with it. The daemon audited every failed TLS accept alike, so routine reconnects
+filled the log the real failures live in, and the superseded link itself was
+logged as `dispatcher rejected QUIC connection`, which reads like a connection
+this host turned down.
+
+A peer that goes away mid-handshake — an unexpected end of file from TLS, or a
+stream QUIC says the peer stopped or a connection it dropped — is now logged at
+debug and not audited; a peer whose identity is refused, or one that times out,
+is audited as before. A link that ends with an unavailable status is reported as
+a link that ended rather than as a connection refused. Tests cover a peer that
+hangs up mid-handshake, a peer that speaks no TLS at all, the error kinds QUIC
+produces, and a superseded link against a refused one. Four cold launches
+against a daemon holding the previous run's link now log no warnings at all.
+
+The same investigation answered what looked like a second dial from the phone:
+there is none. The extra connection in the daemon's log was the dead link from
+the previous run ending. Direct dials now carry the profile that made them and a
+line when they go out, and an accepted link names the peer and incarnation
+behind it, which is what made that readable.
+
 2026-09-17 — **The phone keeps looking for a machine whose address lookup
 stalled.** A simulator paired with this tree's daemon stopped finding it once
 the daemon restarted on a new port: the app dialled only the saved address,

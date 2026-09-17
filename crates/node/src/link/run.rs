@@ -434,6 +434,11 @@ pub async fn run_link(
                     return Ok(());
                 }
             };
+            tracing::debug!(
+                peer = %peer.0.id,
+                incarnation = ?peer.2,
+                "accepted a link from a peer"
+            );
             write_message(&mut sink, &accepted_hello_ack(&ctx, &snapshot, peer.0.id)).await?;
             handshake
                 .acceptor_ack_sent()

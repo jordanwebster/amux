@@ -30,6 +30,12 @@ pub(crate) enum DispatchError {
     ChannelClosed,
     #[error("native link failed: {0}")]
     Link(String),
+    /// A link that ran and then ended, which is how every link finishes: the
+    /// peer closed it, this side superseded it, or the connection went away.
+    /// Held apart from a link that failed so that an ordinary ending is not
+    /// reported as a connection this host refused.
+    #[error("native link ended: {0}")]
+    LinkEnded(String),
     #[error(transparent)]
     Identity(#[from] IdentityError),
 }
@@ -44,6 +50,51 @@ pub(crate) fn mark_mtls_audit_emitted() {
 
 fn take_mtls_audit_emitted() -> bool {
     MTLS_AUDIT_EMITTED.with(|emitted| emitted.swap(false, Ordering::Relaxed))
+}
+
+/// Whether a handshake ended because the peer went away rather than because it
+/// failed to prove who it is.
+///
+/// Every way a peer can leave mid-handshake reaches this as one of these
+/// kinds: TLS reports an unfinished handshake as an unexpected end of file,
+/// and QUIC reports a stream the peer stopped or a connection it dropped as a
+/// reset or as not connected.
+fn peer_went_away(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::NotConnected
+    )
+}
+
+impl DispatchError {
+    /// Whether this is a peer that went away rather than one this host turned
+    /// down. A stream opening on a link that is superseded ends this way, and
+    /// so does every stream on a connection that drops.
+    pub(crate) fn is_peer_leaving(&self) -> bool {
+        match self {
+            DispatchError::Tls(error) => peer_went_away(error),
+            _ => false,
+        }
+    }
+}
+
+/// How a link that ran here finished.
+///
+/// A link is unavailable when it ends the ordinary way: the peer closed it,
+/// this side superseded it with a newer one, or the connection went away.
+/// Anything else is a link this host would not serve, which is worth a
+/// warning.
+fn link_outcome(error: crate::link::LinkError) -> DispatchError {
+    match &error {
+        crate::link::LinkError::Status(status) if status.code() == tonic::Code::Unavailable => {
+            DispatchError::LinkEnded(error.to_string())
+        }
+        _ => DispatchError::Link(error.to_string()),
+    }
 }
 
 #[derive(Clone)]
@@ -182,8 +233,14 @@ impl TunnelDispatcher {
                         }
                     };
                     drop(_permit);
-                    if let Err(error) = dispatcher.dispatch_quic(connection, connection_shutdown).await {
-                        tracing::warn!(peer = %addr, error = %error, "dispatcher rejected QUIC connection");
+                    match dispatcher.dispatch_quic(connection, connection_shutdown).await {
+                        Ok(()) => {}
+                        Err(DispatchError::LinkEnded(reason)) => {
+                            tracing::debug!(peer = %addr, %reason, "link from this peer ended");
+                        }
+                        Err(error) => {
+                            tracing::warn!(peer = %addr, error = %error, "dispatcher rejected QUIC connection");
+                        }
                     }
                 });
             }
@@ -232,7 +289,7 @@ impl TunnelDispatcher {
                     crate::routing::ConnectRole::Acceptor,
                 )
                 .await
-                .map_err(|error| DispatchError::Link(error.to_string()))
+                .map_err(link_outcome)
             }
             DispatchTarget::Pairing => {
                 let (send, recv) =
@@ -315,7 +372,15 @@ impl TunnelDispatcher {
         match tokio::time::timeout(self.handshake_timeout, self.acceptor.accept(stream)).await {
             Ok(Ok(stream)) => Ok(stream),
             Ok(Err(error)) => {
-                if !take_mtls_audit_emitted() {
+                if peer_went_away(&error) {
+                    // Not an authentication failure: the peer stopped talking
+                    // before it said who it was. A link superseded while a
+                    // stream on it was still handshaking ends exactly here,
+                    // and that happens on any ordinary reconnect. Auditing it
+                    // as a refused identity would bury the real ones.
+                    take_mtls_audit_emitted();
+                    tracing::debug!(error = %error, "peer left before its handshake finished");
+                } else if !take_mtls_audit_emitted() {
                     audit::auth_mtls_handshake_failure(&error);
                 }
                 Err(DispatchError::Tls(error))
@@ -656,6 +721,99 @@ mod tests {
                 reachability: PreTrustPairingReachability::NoReusableReachability,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_leaves_before_it_says_who_it_is_is_not_an_authentication_failure() {
+        // What an ordinary reconnect looks like from here: the phone's second
+        // link is refused, and a stream still handshaking on it is cut off.
+        let (_server_dir, server_identity) = temp_identity();
+        let (trusted_tx, _trusted_rx) = mpsc::channel(1);
+        let (pairing_tx, _pairing_rx) = mpsc::channel(1);
+        let dispatcher = TunnelDispatcher::new(
+            &server_identity,
+            Arc::new(std::sync::RwLock::new(TrustStore::default())),
+            Arc::new(PairMode::new()),
+            TrustedPeerConnections::default(),
+            trusted_tx,
+            pairing_tx,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let (server_io, client_io) = tokio::io::duplex(64);
+        drop(client_io);
+        let error = dispatcher.accept_tls(server_io).await.unwrap_err();
+        let DispatchError::Tls(error) = error else {
+            panic!("expected a TLS error, got {error:?}");
+        };
+        assert!(peer_went_away(&error), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_speaks_no_tls_is_an_authentication_failure() {
+        let (_server_dir, server_identity) = temp_identity();
+        let (trusted_tx, _trusted_rx) = mpsc::channel(1);
+        let (pairing_tx, _pairing_rx) = mpsc::channel(1);
+        let dispatcher = TunnelDispatcher::new(
+            &server_identity,
+            Arc::new(std::sync::RwLock::new(TrustStore::default())),
+            Arc::new(PairMode::new()),
+            TrustedPeerConnections::default(),
+            trusted_tx,
+            pairing_tx,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let (server_io, mut client_io) = tokio::io::duplex(64);
+        let speaking = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = client_io.write_all(&[0xff; 64]).await;
+            // Held open, so what the handshake reports is the nonsense it read
+            // rather than the peer hanging up.
+            std::future::pending::<()>().await;
+        });
+        let error = dispatcher.accept_tls(server_io).await.unwrap_err();
+        speaking.abort();
+        let DispatchError::Tls(error) = error else {
+            panic!("expected a TLS error, got {error:?}");
+        };
+        assert!(!peer_went_away(&error), "{error}");
+    }
+
+    #[test]
+    fn a_link_that_ended_is_not_a_connection_this_host_refused() {
+        // What every reconnect leaves behind: the link the previous process
+        // opened is superseded by the new one and finishes here.
+        let superseded = link_outcome(crate::link::LinkError::Status(tonic::Status::unavailable(
+            "direct link superseded",
+        )));
+        assert!(
+            matches!(superseded, DispatchError::LinkEnded(_)),
+            "{superseded}"
+        );
+
+        let refused = link_outcome(crate::link::LinkError::Status(
+            tonic::Status::permission_denied("peer trust was replaced"),
+        ));
+        assert!(matches!(refused, DispatchError::Link(_)), "{refused}");
+    }
+
+    #[test]
+    fn a_quic_stream_the_peer_stopped_counts_as_the_peer_leaving() {
+        // The kinds quinn gives these, which is what tells them apart from a
+        // refused identity without reading any error text.
+        let stopped = std::io::Error::from(quinn::WriteError::Stopped(quinn::VarInt::from_u32(0)));
+        let reset = std::io::Error::from(quinn::ReadError::Reset(quinn::VarInt::from_u32(0)));
+        let closed = std::io::Error::from(quinn::WriteError::ClosedStream);
+        for error in [stopped, reset, closed] {
+            assert!(peer_went_away(&error), "{error}");
+        }
+        assert!(!peer_went_away(&std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid peer certificate"
+        )));
     }
 
     #[tokio::test]

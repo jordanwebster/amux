@@ -395,6 +395,10 @@ impl ReachabilityLinkConnector {
         let pause_shutdown_rx = shutdown_rx.clone();
         let span = tracing::info_span!(
             "reachability_link",
+            // Which profile is dialling: a phone runs one runtime per account
+            // beside the one it draws with nobody signed in, and they share a
+            // log.
+            local = %inner.context.identity.host_id,
             peer = %attempt.peer,
             reachability = ?attempt.reachability,
             ordinal = attempt.ordinal,
@@ -402,6 +406,7 @@ impl ReachabilityLinkConnector {
         Some(tokio::spawn(
             async move {
                 let peer = attempt.peer;
+                tracing::debug!("dialling a reachability of this peer");
                 let established_direct =
                     establish_reachability_link(context.clone(), attempt, shutdown_rx).await;
                 if direct {

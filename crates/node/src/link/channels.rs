@@ -345,7 +345,14 @@ pub(crate) fn serve_inbound_streams(
             let dispatcher = dispatcher.clone();
             tokio::spawn(async move {
                 if let Err(error) = dispatcher.dispatch_link_stream(adjacent_peer, stream).await {
-                    tracing::warn!(%error, "dispatcher rejected native link stream");
+                    if error.is_peer_leaving() {
+                        // The peer opened this and left before it said who it
+                        // was, which is what a stream on a superseded link
+                        // does. Nothing here was refused.
+                        tracing::debug!(%error, "a peer left a native link stream unfinished");
+                    } else {
+                        tracing::warn!(%error, "dispatcher rejected native link stream");
+                    }
                 }
             });
         }
