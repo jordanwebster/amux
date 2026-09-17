@@ -1,3 +1,10 @@
+2026-09-17 — **The phone C-boundary test follows automatic quarantine.** A
+corrupt remembered-fleet store is now asserted to report that it was
+quarantined and that daemon-retained rows can be recovered, then a second
+cached-fleet read must return the replacement empty cache. The stale assertion
+still expected the pre-recovery instruction to close another process and
+relaunch, even though the app-runtime boundary had already completed recovery.
+
 2026-09-17 — **The dependency policy covers store-backed report replay.** The
 TUI report player reconstructs canonical stored windows with provider fold
 types, so the production dependency policy now permits the direct `tui` to

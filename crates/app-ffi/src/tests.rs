@@ -1131,9 +1131,17 @@ fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
     let corrupt = cached_fleet_result(root.path(), "personal");
     assert!(
         corrupt["error"].as_str().is_some_and(|message| {
-            message.contains("it is corrupt") && message.contains("close that process and relaunch")
+            message.contains("it is corrupt")
+                && message.contains("has been quarantined")
+                && message.contains("nothing the daemon still retains is lost")
         }),
         "{corrupt}"
+    );
+    let recovered: Event = serde_json::from_value(cached_fleet(root.path(), "personal")).unwrap();
+    assert!(
+        matches!(recovered, Event::Fleet { agents, hosts, reconciled: false, .. }
+            if agents.is_empty() && hosts.is_empty()),
+        "the C boundary reads the replacement empty cache after quarantine"
     );
 
     let file = root.path().join("not-a-directory");
