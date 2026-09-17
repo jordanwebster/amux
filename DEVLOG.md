@@ -22,6 +22,24 @@ there is none. The extra connection in the daemon's log was the dead link from
 the previous run ending. Direct dials now carry the profile that made them and a
 line when they go out, and an accepted link names the peer and incarnation
 behind it, which is what made that readable.
+2026-09-17 — **A deleted agent gives its name back.** New Agent holds the name
+of an agent it has just started until an inventory lists it, so a second agent
+started in the meantime is not offered a name the machine already has. An agent
+created and then deleted before any inventory arrived kept that hold for as long
+as the app ran: New Agent went on suggesting `api-2` while `api` was free.
+Dispatching the delete now tells New Agent the agent is gone, which drops that
+one entry and nothing else. Which names a machine has is still the inventory's
+to say — the next confirmed one rebuilds the list without the agent, and a
+delete the machine refuses brings it back in an inventory, where its name is
+taken again. The hold covers the gap between a machine answering and its
+inventory saying so, and a person deleting the agent closes that gap themselves,
+so the race the hold was added for stays fixed.
+
+Last of three fixes for one mistake: the phone recording something as true
+before the party that owns the fact has said so. Here it was the reverse
+reading of the same rule — a name held as taken on the machine's behalf, kept
+after the person had taken it back.
+
 2026-09-17 — **A sign-in writes its session down only when the account is
 kept.** Signing in wrote the refresh token to the Keychain the moment amux.sh
 answered, before the app knew which account had come back. Asked to sign back

@@ -302,6 +302,34 @@ final class NewAgentTests: XCTestCase {
         XCTAssertEqual(stores.newAgent.name, "amux-2")
     }
 
+    /// An agent deleted before any inventory listed it gives its name back.
+    /// The hold is for the gap between the machine answering and its inventory
+    /// saying so, and deleting the agent closes that gap.
+    func testADeletedAgentsNameIsOfferedAgain() throws {
+        let (stores, sent) = bundle()
+        let project = Project(path: "~/src/api", name: "api")
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [project], repositories: [], roots: ["~/src"]))
+        XCTAssertEqual(stores.newAgent.name, "api")
+        XCTAssertTrue(stores.startAgent())
+        let started = Agent(
+            id: AgentId(UUID()), hostId: studio, name: "api", command: "claude",
+            workingDir: "~/src/api", kind: .claude(driver: .sdk),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        deliver(stores, sent, .agentCreated(started))
+
+        XCTAssertTrue(stores.delete(started.id))
+        // The machine's inventory is what says which names it has, and the
+        // next confirmed one no longer lists this agent.
+        stores.apply([running([], on: studio)])
+
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [project], repositories: [], roots: ["~/src"]))
+        XCTAssertEqual(stores.newAgent.name, "api")
+    }
+
     /// Names are per machine: another machine's agents take nothing here.
     func testAnotherMachinesNamesAreNotTaken() {
         let (stores, sent) = bundle()

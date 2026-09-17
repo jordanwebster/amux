@@ -493,6 +493,11 @@ public final class StoreBundle {
     public func delete(_ agent: AgentId) -> Bool {
         guard let op = dispatch?(AgentWrite.delete(agent)) else { return false }
         conversation(agent).dispatched(op)
+        // New Agent holds the name of an agent it started until an inventory
+        // lists it. Deleting that agent before one ever did would otherwise
+        // keep its name reserved for as long as the app runs, so New Agent
+        // offered api-2 while api was free.
+        newAgent.deleted(agent)
         return true
     }
 

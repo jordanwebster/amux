@@ -319,6 +319,19 @@ public final class NewAgentStore {
         }
     }
 
+    /// Lets go of the name an agent this store started was holding, because
+    /// the person has deleted that agent.
+    ///
+    /// Only the hold goes. Which names a machine has is the inventory's to
+    /// say: the next confirmed one rebuilds that list without this agent, and
+    /// a delete the machine refuses brings the agent back in an inventory,
+    /// where its name is taken again. The hold exists for the gap between a
+    /// machine answering and its inventory saying so, and a person deleting
+    /// the agent closes that gap themselves.
+    public func deleted(_ agent: AgentId) {
+        startedUnlisted.removeValue(forKey: agent)
+    }
+
     /// Holds an agent's name as taken on its machine.
     private func remember(_ agent: Agent) {
         taken[agent.hostId, default: []].insert(agent.name ?? agent.command)
