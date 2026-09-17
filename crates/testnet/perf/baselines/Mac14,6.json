@@ -21,8 +21,8 @@
     "reconnect delta (100 rows)": 37726.0,
     "scroll-back memory return": 1.0670380511359023,
     "steady-state frame": 1.842167,
-    "summarizer CPU per row": 5.104,
-    "summarizer idle core": 0.128,
+    "summarizer CPU per row": 5.35,
+    "summarizer idle core": 0.282,
     "tip bound": 4000.0
   }
 }

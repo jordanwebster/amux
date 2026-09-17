@@ -1,3 +1,10 @@
+2026-09-17 — **Quiet-machine summarizer baselines are recorded.** On the
+Mac14,6 reference machine running macOS 26.5.2, the release `bundled,perf`
+`--only summarizer` workload records 5.350 microseconds of process CPU per row
+across five active repetitions and 0.282% of one core across three consecutive
+ten-second idle windows. No perf, soak, Cargo, or Simulator workload was active
+during the run.
+
 2026-09-17 — **Summarizer performance samples are repeatable.** The daemon
 memory harness now waits on each live summarizer's folded-through signal instead
 of charging a busy-yield loop to process CPU. Qualification takes the median of
