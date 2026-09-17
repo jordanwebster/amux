@@ -14,7 +14,11 @@ framework is left untouched, so a Swift-only edit costs no Rust work at all.
 
 from pathlib import Path
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Apple's command-line tools still ship Python 3.9.
+    from pip._vendor import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_bridge as bridge

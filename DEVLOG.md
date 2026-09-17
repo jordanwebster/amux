@@ -6,6 +6,8 @@ measures as interchangeable, and provider-erased folds expose their retained
 tip bytes. Simulator-driven app builds now compile the Rust bridge with the
 release profile, with that profile and its features included in the reuse
 fingerprint.
+The build script remains runnable with Apple's bundled Python 3.9 as well as
+newer Python installations.
 
 2026-09-17 — **The app bridge documentation follows the per-account store.**
 The bridge README no longer promises a JSON fleet cache or treats remembered
