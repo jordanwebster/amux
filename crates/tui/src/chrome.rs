@@ -414,10 +414,20 @@ pub enum TraceEvent {
         viewport: (u16, u16),
         now: DateTime<Utc>,
     },
+    /// The instant a terminal input reached the event loop. Kept separate
+    /// from the input mutation so performance reports can measure the wait
+    /// to the next painted frame without interpreting the input payload.
+    InputArrival { at: DateTime<Utc> },
     Draw {
         viewport: (u16, u16),
         now: DateTime<Utc>,
     },
+    /// Time spent deriving the frame's lines from model and view state.
+    RenderDuration { duration: std::time::Duration },
+    /// Time spent applying Ratatui's changed cells to the terminal backend.
+    TerminalDrawDuration { duration: std::time::Duration },
+    /// Time spent flushing the terminal backend's buffered output.
+    FlushDuration { duration: std::time::Duration },
     /// The shell dispatched a command and the runtime minted this op id.
     /// The id is the shell's to mint, so it enters as its own event
     /// rather than being guessed by a replay.
@@ -635,6 +645,10 @@ impl Chrome {
                 self.dirty = false;
                 Vec::new()
             }
+            TraceEvent::InputArrival { .. }
+            | TraceEvent::RenderDuration { .. }
+            | TraceEvent::TerminalDrawDuration { .. }
+            | TraceEvent::FlushDuration { .. } => Vec::new(),
             TraceEvent::Input {
                 event,
                 viewport,

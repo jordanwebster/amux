@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Build the one bridge slice a development build of the app links.
+"""Build the one bridge slice a driven simulator build of the app links.
 
 The simulator slice, with the driving tools compiled in, under the ordinary
-development profile: what `ios build`, `ios unit` and every recipe that drives
-a debug app need. Nothing here builds for a phone or optimises for size; that
-is `ios-package.py`, and only the shipping recipes pay for it.
+release profile: what `ios build`, `ios unit` and every recipe that drives an
+app need. Debug app configurations still carry symbols and testability on the
+Swift side; the Rust bridge is optimised because the Measured configuration
+times it as part of launch. Nothing here builds for a phone or optimises for
+size; that is `ios-package.py`, and only the shipping recipes pay for it.
 
 When no Rust input has changed since the last run, cargo is not invoked and the
 framework is left untouched, so a Swift-only edit costs no Rust work at all.
@@ -18,6 +20,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 import ios_bridge as bridge
 
 STAMP = bridge.OUTPUT / "rust-stamp.json"
+PROFILE = "release"
+FEATURES = (bridge.DEBUG_TOOLS_FEATURE,)
+
+
+def build_fingerprint() -> str:
+    """Everything that determines which driving archive may be reused."""
+    return f"{bridge.source_fingerprint()}:{PROFILE}:{','.join(FEATURES)}"
 
 
 def packaged(framework: Path) -> bool:
@@ -33,7 +42,7 @@ def main() -> None:
     driving = bridge.OUTPUT / bridge.DRIVING_FRAMEWORK
     shipping = bridge.OUTPUT / bridge.FRAMEWORK
     linked = driving / bridge.DRIVING_SLICE / bridge.LIBRARY
-    fingerprint = bridge.source_fingerprint()
+    fingerprint = build_fingerprint()
     # Both frameworks are asked for a library, not for a directory. A build
     # cache can restore an xcframework's shape without the archives inside it
     # -- they are the large part -- and a stamp alone would then call the
@@ -48,7 +57,7 @@ def main() -> None:
 
     staging = bridge.OUTPUT / "debug-tools"
     built = bridge.cargo_build(
-        bridge.SIMULATOR_TRIPLE, profile="dev", features=(bridge.DEBUG_TOOLS_FEATURE,),
+        bridge.SIMULATOR_TRIPLE, profile=PROFILE, features=FEATURES,
         log=staging / f"{bridge.SIMULATOR_TRIPLE}-build.jsonl")
     staged = bridge.stage(built, staging / bridge.SIMULATOR_TRIPLE)
     bridge.package_if_changed(driving, [staging / bridge.SIMULATOR_TRIPLE],
@@ -73,10 +82,10 @@ def main() -> None:
         print(f"{shipping.name} held no library; staged the development slice as a stand-in "
               "until `just ios package` builds the shipping library", flush=True)
 
-    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get("dev", {})
+    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get(PROFILE, {})
     text = bridge.write_size_report(
-        [bridge.size_line(bridge.SIMULATOR_TRIPLE, staged, " (dev, debug tools)")],
-        {"name": "dev", **profile})
+        [bridge.size_line(bridge.SIMULATOR_TRIPLE, staged, f" ({PROFILE}, debug tools)")],
+        {"name": PROFILE, **profile})
     print(text, end="", flush=True)
     STAMP.write_text(fingerprint + "\n")
 

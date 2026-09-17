@@ -585,6 +585,15 @@ impl AgentFold {
             Self::Codex(_) => codex::CodexFold::TIP_VERSION,
         }
     }
+
+    /// Retained heap bytes in the provider tip, erased across protocols.
+    pub fn tip_bytes(&self) -> usize {
+        match self {
+            Self::Claude(fold) => fold.tip_bytes(),
+            Self::ClaudeSdk(fold) => fold.tip_bytes(),
+            Self::Codex(fold) => fold.tip_bytes(),
+        }
+    }
 }
 
 /// Opaque provider JSON in a persisted value.
@@ -1627,6 +1636,18 @@ mod tests {
             }),
             model: Some("test-model".into()),
             unknown: vec![SummaryField::Outstanding],
+        }
+    }
+
+    #[test]
+    fn agent_fold_exposes_tip_bytes_for_every_protocol() {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::ClaudeSdk,
+            StructuredProtocol::Codex,
+        ] {
+            let fold = AgentFold::for_protocol(protocol);
+            assert!(fold.tip_bytes() <= TIP_MAX_BYTES, "{protocol:?}");
         }
     }
 

@@ -361,6 +361,51 @@ mod tests {
     }
 
     #[test]
+    fn instrumentation_trace_kinds_round_trip_with_names_and_values() {
+        let built = fixture(NamedState::Fleet);
+        let mut ring = TraceRing::new(SEGMENT_LEN);
+        let at = DateTime::parse_from_rfc3339("2026-09-17T08:09:10.123Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        ring.roll_if_due(&built.model, &built.view, Theme::default(), at);
+        ring.record(&TraceEvent::InputArrival { at });
+        ring.record(&TraceEvent::RenderDuration {
+            duration: std::time::Duration::from_micros(120),
+        });
+        ring.record(&TraceEvent::TerminalDrawDuration {
+            duration: std::time::Duration::from_micros(340),
+        });
+        ring.record(&TraceEvent::FlushDuration {
+            duration: std::time::Duration::from_micros(560),
+        });
+
+        let bytes = ring.window().unwrap().to_bytes().unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        for kind in [
+            "InputArrival",
+            "RenderDuration",
+            "TerminalDrawDuration",
+            "FlushDuration",
+        ] {
+            assert!(text.contains(kind), "trace names {kind}");
+        }
+
+        let back = TraceWindow::read_jsonl(&bytes).unwrap();
+        assert!(
+            matches!(back.event(0).unwrap(), TraceEvent::InputArrival { at: seen } if seen == at)
+        );
+        assert!(
+            matches!(back.event(1).unwrap(), TraceEvent::RenderDuration { duration } if duration == std::time::Duration::from_micros(120))
+        );
+        assert!(
+            matches!(back.event(2).unwrap(), TraceEvent::TerminalDrawDuration { duration } if duration == std::time::Duration::from_micros(340))
+        );
+        assert!(
+            matches!(back.event(3).unwrap(), TraceEvent::FlushDuration { duration } if duration == std::time::Duration::from_micros(560))
+        );
+    }
+
+    #[test]
     fn a_snapshot_round_trip_retains_an_edit_ask_document() {
         let built = fixture(NamedState::ClaudePermissionAsk);
         let agent = built.view.chat.as_ref().expect("Claude chat open").agent;

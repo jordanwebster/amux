@@ -87,6 +87,7 @@ pub use installation::{
     InstallationHandle, Profile, RetainedProfileWork, UpdatePreparationHold, WatchProbe,
 };
 mod pairing;
+pub mod perf;
 pub mod script;
 pub mod sdk;
 pub mod serve;

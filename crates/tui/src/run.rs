@@ -4,14 +4,16 @@
 //! in-process, and resumes on detach with a repaint from the Model.
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use crossterm::event::EventStream;
 use futures_util::StreamExt;
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend, ClearType, CrosstermBackend, WindowSize};
+use ratatui::buffer::Cell;
+use ratatui::layout::{Position, Size};
 use ratatui::widgets::Paragraph;
 use ui_runtime::{ProfileDirectory, ProfileEntry, Runtime, RuntimeOptions};
 use ui_state::{AgentId, Command};
@@ -25,6 +27,85 @@ use crate::terminal::{TerminalGuard, write_osc52};
 #[cfg(any(debug_assertions, test))]
 use crate::trace::{SharedTrace, record_shared};
 use crate::view::{Notice, ViewState, next_agent_name};
+
+/// A transparent terminal backend that retains the two presentation spans
+/// Ratatui otherwise combines inside `Terminal::draw`.
+struct MeasuredBackend<B> {
+    inner: B,
+    draw_duration: Option<Duration>,
+    flush_duration: Option<Duration>,
+}
+
+impl<B> MeasuredBackend<B> {
+    fn new(inner: B) -> Self {
+        Self {
+            inner,
+            draw_duration: None,
+            flush_duration: None,
+        }
+    }
+
+    fn take_durations(&mut self) -> Option<(Duration, Duration)> {
+        Some((self.draw_duration.take()?, self.flush_duration.take()?))
+    }
+}
+
+impl<B: Backend> Backend for MeasuredBackend<B> {
+    type Error = B::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        let started = Instant::now();
+        let result = self.inner.draw(content);
+        self.draw_duration = Some(started.elapsed());
+        result
+    }
+
+    fn append_lines(&mut self, n: u16) -> Result<(), Self::Error> {
+        self.inner.append_lines(n)
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.inner.hide_cursor()
+    }
+
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.inner.show_cursor()
+    }
+
+    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
+        self.inner.get_cursor_position()
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        self.inner.set_cursor_position(position)
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.inner.clear()
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
+        self.inner.clear_region(clear_type)
+    }
+
+    fn size(&self) -> Result<Size, Self::Error> {
+        self.inner.size()
+    }
+
+    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
+        self.inner.window_size()
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        let started = Instant::now();
+        let result = self.inner.flush();
+        self.flush_duration = Some(started.elapsed());
+        result
+    }
+}
 
 /// What the embedding CLI's attach handoff decided: resume the fleet
 /// (optionally with a status-line notice) or exit the TUI entirely. Only
@@ -186,7 +267,7 @@ async fn chrome_session(
     // hints and the `?` overlay derive from the effective tier (P10 —
     // hints advertise only what works).
     chrome.view.kitty = crate::terminal::kitty_active();
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut terminal = Terminal::new(MeasuredBackend::new(CrosstermBackend::new(io::stdout())))?;
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -226,13 +307,24 @@ async fn chrome_session(
                 }
                 record_shared(trace, &event);
             }
+            let render_started = Instant::now();
             chrome.step(runtime.model(), &event);
+            record(
+                config,
+                &TraceEvent::RenderDuration {
+                    duration: render_started.elapsed(),
+                },
+            );
             if let Some(lines) = chrome.take_frame() {
                 let completed = terminal.draw(|frame| {
                     frame.render_widget(Paragraph::new(lines), frame.area());
                 })?;
                 if cfg!(any(debug_assertions, test)) {
                     last_frame = Some(completed.buffer.clone());
+                }
+                if let Some((draw, flush)) = terminal.backend_mut().take_durations() {
+                    record(config, &TraceEvent::TerminalDrawDuration { duration: draw });
+                    record(config, &TraceEvent::FlushDuration { duration: flush });
                 }
             }
         }
@@ -266,6 +358,7 @@ async fn chrome_session(
             }
             maybe_event = events.next() => match maybe_event {
                 Some(Ok(event)) => {
+                    let arrived_at = Utc::now();
                     if let Some(frozen) = capture(&event, config, runtime, chrome, last_frame.as_ref()) {
                         // The flow owns the screen and the event stream
                         // until it is answered; nothing it does reaches
@@ -289,10 +382,11 @@ async fn chrome_session(
                     }
                     if let Some(input) = InputEvent::from_terminal(&event) {
                         let size = terminal.size()?;
+                        record(config, &TraceEvent::InputArrival { at: arrived_at });
                         let event = TraceEvent::Input {
                             event: input,
                             viewport: (size.width, size.height),
-                            now: Utc::now(),
+                            now: arrived_at,
                         };
                         record(config, &event);
                         let effects = chrome.step(runtime.model(), &event);
@@ -610,6 +704,23 @@ mod tests {
     use ui_runtime::report::{ReplayVerdict, read_header};
 
     use super::*;
+
+    #[test]
+    fn trace_backend_separates_terminal_draw_and_flush_durations() {
+        let backend = MeasuredBackend::new(TestBackend::new(20, 2));
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(Paragraph::new("measured"), frame.area()))
+            .unwrap();
+
+        let (draw, flush) = terminal
+            .backend_mut()
+            .take_durations()
+            .expect("both backend stages were observed");
+        assert!(draw <= Duration::from_secs(1));
+        assert!(flush <= Duration::from_secs(1));
+        assert!(terminal.backend_mut().take_durations().is_none());
+    }
 
     fn diagnostics(root: &Path, label: &'static str) -> DiagnosticsSource {
         DiagnosticsSource {

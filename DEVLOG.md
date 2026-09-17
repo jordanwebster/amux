@@ -1,3 +1,12 @@
+2026-09-17 — **Performance measurements use the product's real boundaries.**
+The terminal trace now records input arrival and the time spent rendering,
+drawing changed cells and flushing them. The test harness can sample a
+process's physical footprint on macOS and RSS on Linux without treating those
+measures as interchangeable, and provider-erased folds expose their retained
+tip bytes. Simulator-driven app builds now compile the Rust bridge with the
+release profile, with that profile and its features included in the reuse
+fingerprint.
+
 2026-09-17 — **The app bridge documentation follows the per-account store.**
 The bridge README no longer promises a JSON fleet cache or treats remembered
 cards as display-only data. It documents the per-account SQLite path, the

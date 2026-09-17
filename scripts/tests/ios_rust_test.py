@@ -85,7 +85,7 @@ class DevelopmentBuildTests(unittest.TestCase):
             shipping.mkdir(parents=True)
             (shipping / bridge.LIBRARY).write_bytes(b"a")
             stamp = output / "rust-stamp.json"
-            stamp.write_text("same\n")
+            stamp.write_text("same:release:debug-tools\n")
             with mock.patch.object(bridge, "OUTPUT", output), \
                     mock.patch.object(ios_rust, "STAMP", stamp), \
                     mock.patch.object(bridge, "source_fingerprint", return_value="same"), \
@@ -116,12 +116,14 @@ class DevelopmentBuildTests(unittest.TestCase):
                     mock.patch.object(bridge, "source_fingerprint", return_value="v1"), \
                     mock.patch.object(bridge, "cargo_build", return_value=built), \
                     mock.patch.object(bridge, "package", side_effect=package), \
-                    mock.patch.object(ios_rust.Path, "read_text", return_value="[profile.dev]\ndebug = 1\n"), \
+                    mock.patch.object(
+                        ios_rust.Path, "read_text",
+                        return_value="[profile.release]\npanic = 'abort'\n"), \
                     mock.patch("builtins.print"):
                 ios_rust.main()
             self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
-            self.assertEqual(stamp.read_text().strip(), "v1")
-            self.assertIn("dev, debug tools", (output / "size.txt").read_text())
+            self.assertEqual(stamp.read_text().strip(), "v1:release:debug-tools")
+            self.assertIn("release, debug tools", (output / "size.txt").read_text())
 
 
 if __name__ == "__main__":
