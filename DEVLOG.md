@@ -1,3 +1,11 @@
+2026-09-17 — **Report replay preserves modern raw stream semantics.** New
+report headers identify store-backed chat recordings, and reports from the
+transition infer the same format from retained store traffic. Their raw attach
+messages now pass through the ordinary reducer exactly as they did live,
+instead of being converted into chat-store commits. Reports recorded before
+store-backed chats still materialise their provider rows through the isolated
+legacy oracle and continue to reproduce.
+
 2026-09-17 — **Phone projection tests exercise the canonical store window.**
 Host-loss and reconnect coverage now starts with a stored conversation and
 proves replay does not duplicate it; authoritative agent removal drops the

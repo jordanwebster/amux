@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::RecorderSnapshot;
 use crate::recorder::{MSGS_SCHEMA_VERSION, RecorderSnapshotHeader};
 
-/// Bumped whenever the report header or directory layout changes.
+/// Bumped whenever the report header or directory layout changes
+/// incompatibly. Additive fields with defaults remain readable both ways.
 pub const REPORT_SCHEMA_VERSION: u32 = 2;
 /// Newest automatic reports retained for each automatic kind.
 pub const RETAINED_AUTOMATIC_REPORTS: usize = 20;
@@ -112,6 +113,11 @@ pub enum ReplayVerdict {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReportHeader {
     pub schema_version: u32,
+    /// New reports replay structured streams through the live reducer path.
+    /// The default keeps headers written before store-backed chats readable;
+    /// their trace window supplies the remaining compatibility signal.
+    #[serde(default)]
+    pub store_backed_chats: bool,
     pub build: String,
     pub git_sha: String,
     pub created_at: DateTime<Utc>,
@@ -276,6 +282,7 @@ impl ReportWriter {
 
         let header = ReportHeader {
             schema_version: REPORT_SCHEMA_VERSION,
+            store_backed_chats: true,
             build: self.build.to_string(),
             git_sha: self.git_sha.to_string(),
             created_at,
@@ -689,6 +696,7 @@ mod tests {
         );
         let header = read_header(&report).unwrap();
         assert_eq!(header.schema_version, REPORT_SCHEMA_VERSION);
+        assert!(header.store_backed_chats);
         assert_eq!(header.build, "0.4.0-test");
         assert_eq!(header.git_sha, "abc123");
         assert_eq!(header.kind, ReportKind::Bug);

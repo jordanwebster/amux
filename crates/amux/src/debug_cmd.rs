@@ -660,6 +660,7 @@ mod tests {
     fn header(stamp: &str, kind: ReportKind, status: ReportStatus) -> ReportHeader {
         ReportHeader {
             schema_version: REPORT_SCHEMA_VERSION,
+            store_backed_chats: true,
             build: "debug".to_string(),
             git_sha: "abc1234".to_string(),
             created_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),

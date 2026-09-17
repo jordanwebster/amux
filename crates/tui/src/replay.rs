@@ -88,6 +88,7 @@ pub struct Replay {
     theme: Theme,
     last_frame: Option<Buffer>,
     position: usize,
+    legacy_streams: bool,
     legacy_stores: BTreeMap<AgentId, LegacyStore>,
 }
 
@@ -109,10 +110,11 @@ impl Replay {
             return Err(ReplayError::NoTrace);
         }
         let window = TraceWindow::read_jsonl(&std::fs::read(path)?)?;
-        Ok(Self::from_window(header, window))
+        let legacy_streams = !header.store_backed_chats && !has_store_semantics(&window);
+        Ok(Self::from_window(header, window, legacy_streams))
     }
 
-    fn from_window(header: ReportHeader, window: TraceWindow) -> Self {
+    fn from_window(header: ReportHeader, window: TraceWindow, legacy_streams: bool) -> Self {
         let theme = window.snapshot.theme;
         let chrome = Chrome::new(window.snapshot.view.clone(), ChromeConfig { theme });
         let model = window.snapshot.model.clone();
@@ -124,6 +126,7 @@ impl Replay {
             theme,
             last_frame: None,
             position: 0,
+            legacy_streams,
             legacy_stores: BTreeMap::new(),
         }
     }
@@ -182,7 +185,11 @@ impl Replay {
     }
 
     fn reset(&mut self) {
-        let restored = Self::from_window(self.header.clone(), self.window.clone());
+        let restored = Self::from_window(
+            self.header.clone(),
+            self.window.clone(),
+            self.legacy_streams,
+        );
         self.chrome = restored.chrome;
         self.model = restored.model;
         self.last_frame = None;
@@ -195,7 +202,9 @@ impl Replay {
         // loop folds it before stepping. Effects are the shell's; a replay
         // has no shell.
         if let TraceEvent::Msg(msg) = event {
-            if let Msg::Stream { agent, event } = msg {
+            if self.legacy_streams
+                && let Msg::Stream { agent, event } = msg
+            {
                 self.apply_legacy_stream(*agent, event.clone())?;
             } else {
                 let _ = update(&mut self.model, msg.clone());
@@ -367,6 +376,28 @@ impl Replay {
         let buffer = self.last_frame.as_ref().ok_or(ReplayError::NoFrame)?;
         Ok(capture_frame(buffer, self.theme))
     }
+}
+
+/// Store messages or a raw stream beside a chat already in the snapshot make
+/// a pre-marker report unambiguously modern. Malformed events are left for
+/// `step_to` to diagnose at their exact line.
+fn has_store_semantics(window: &TraceWindow) -> bool {
+    window
+        .events
+        .iter()
+        .any(|line| match serde_json::from_str::<TraceEvent>(line) {
+            Ok(TraceEvent::Msg(
+                Msg::StoreStartup { .. }
+                | Msg::Store(_)
+                | Msg::FleetDelta(_)
+                | Msg::Chat(_)
+                | Msg::ChatStream { .. },
+            )) => true,
+            Ok(TraceEvent::Msg(Msg::Stream { agent, .. })) => {
+                window.snapshot.model.chat(agent).is_some()
+            }
+            _ => false,
+        })
 }
 
 fn empty_loaded<F: ProviderFold>() -> fold::Loaded<F> {
@@ -736,24 +767,84 @@ pub(crate) mod tests {
                 .stream_attempt,
             event: ChatStreamMsg::Batch {
                 at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
-                entries: vec![StreamEntry::observed(
-                    seq,
-                    "2026-08-12T09:13:00Z".parse().expect("timestamp"),
-                    serde_json::json!({
-                        "type": "assistant",
-                        "uuid": format!("eeeeeeee-0000-4000-8000-{seq:012}"),
-                        "sessionId": "22222222-2222-4222-8222-222222222222",
-                        "timestamp": "2026-08-12T09:13:00Z",
-                        "message": {
-                            "id": format!("msg-{seq}"),
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": text}],
-                            "stop_reason": "end_turn",
-                        },
-                    }),
-                )],
+                entries: assistant_entries(seq, text),
             },
         }
+    }
+
+    fn assistant_entries(seq: u64, text: &str) -> Vec<StreamEntry> {
+        vec![StreamEntry::observed(
+            seq,
+            "2026-08-12T09:13:00Z".parse().expect("timestamp"),
+            serde_json::json!({
+                "type": "assistant",
+                "uuid": format!("eeeeeeee-0000-4000-8000-{seq:012}"),
+                "sessionId": "22222222-2222-4222-8222-222222222222",
+                "timestamp": "2026-08-12T09:13:00Z",
+                "message": {
+                    "id": format!("msg-{seq}"),
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
+                    "stop_reason": "end_turn",
+                },
+            }),
+        )]
+    }
+
+    /// A raw attach still emits the original stream messages. In a modern
+    /// report they must update the provider layer beside the stored chat,
+    /// just as they did live, rather than being converted into chat commits.
+    #[test]
+    fn a_raw_attach_stream_beside_a_stored_chat_replays() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut session = Session::open(NamedState::ClaudeIdle);
+        session.draw();
+        session.fold(Msg::UserAttached {
+            agent: CLAUDE_AGENT,
+        });
+        session.fold(Msg::Stream {
+            agent: CLAUDE_AGENT,
+            event: StreamMsg::Opened { truncated: false },
+        });
+        session.fold(Msg::Stream {
+            agent: CLAUDE_AGENT,
+            event: StreamMsg::Batch {
+                at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
+                entries: assistant_entries(6, "raw attach provider state"),
+            },
+        });
+        session.fold(Msg::Stream {
+            agent: CLAUDE_AGENT,
+            event: StreamMsg::ReplayComplete,
+        });
+        session.drained();
+        session.draw();
+
+        let report = session.write_report(dir.path());
+        let mut header: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(report.join("report.json")).expect("read header"),
+        )
+        .expect("parse header");
+        header
+            .as_object_mut()
+            .expect("header object")
+            .remove("store_backed_chats");
+        std::fs::write(
+            report.join("report.json"),
+            serde_json::to_vec_pretty(&header).expect("serialize transition header"),
+        )
+        .expect("write transition header");
+        let mut replay = Replay::load(&report).expect("report loads");
+        assert!(
+            !replay.legacy_streams,
+            "a stored chat in the snapshot identifies live stream semantics"
+        );
+        replay.step_to_end().expect("replays to the end");
+        assert_eq!(replay.frame().expect("frame"), session.capture());
+        assert_eq!(
+            verify(&report).expect("verify runs"),
+            ReplayVerdict::Reproduces
+        );
     }
 
     /// A trace is not only inputs and draws: the feed content a chat draws
@@ -817,7 +908,24 @@ pub(crate) mod tests {
         );
 
         let report = session.write_report(dir.path());
+        let mut header: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(report.join("report.json")).expect("read header"),
+        )
+        .expect("parse header");
+        header
+            .as_object_mut()
+            .expect("header object")
+            .remove("store_backed_chats");
+        std::fs::write(
+            report.join("report.json"),
+            serde_json::to_vec_pretty(&header).expect("serialize old header"),
+        )
+        .expect("write old header");
         let mut replay = Replay::load(&report).expect("report loads");
+        assert!(
+            !replay.legacy_streams,
+            "store traffic identifies transition-era reports as modern"
+        );
         replay.step_to_end().expect("replays to the end");
         assert_eq!(
             replay.frame().expect("a frame was drawn"),
