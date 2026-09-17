@@ -280,147 +280,183 @@ fn mobile_projection_schema_snapshot() {
     println!("mobile projection schema:\n{actual}");
 }
 
-fn model_with_codex_row() -> Model {
-    let mut model = model(model::AgentKind::Codex);
-    row(&mut model, 1, json!({"type":"amux.codex_ready"}));
-    row(
-        &mut model,
-        2,
-        json!({"type":"item/started", "item":{"id":"m", "type":"agentMessage", "text":"Hello", "phase":"final_answer"}}),
-    );
-    model
-}
-
 #[test]
-fn mobile_projection_does_not_project_codex_rows_without_a_store_window() {
-    let mut model = model_with_codex_row();
+fn mobile_projection_replaces_a_stored_codex_message_as_its_deltas_arrive() {
+    let (mut model, stream) = stored_model(
+        model::AgentKind::Codex,
+        vec![
+            json!({"type":"amux.codex_ready"}),
+            json!({"type":"item/started", "item":{"id":"m", "type":"agentMessage", "text":"", "phase":"final_answer"}}),
+            json!({"type":"item/agentMessage/delta", "itemId":"m", "delta":"Hello"}),
+        ],
+    );
     let mut projection = subscribed();
     let mut phone = PhoneFeed::default();
-    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 0);
-    for seq in 3..20 {
-        row(
-            &mut model,
-            seq,
-            json!({"type":"item/agentMessage/delta", "itemId":"m", "delta":"!"}),
-        );
-    }
-    let events = collect(&mut projection, &model);
+    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 1);
+    assert_eq!(phone.rows.len(), 1);
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, Event::Feed { .. }))
+        phone
+            .rows
+            .values()
+            .next()
+            .unwrap()
+            .to_string()
+            .contains("Hello")
     );
-    phone.apply_events(&events);
-    assert!(phone.rows.is_empty());
+
+    chat_row(
+        &mut model,
+        stream,
+        4,
+        json!({"type":"item/agentMessage/delta", "itemId":"m", "delta":"!"}),
+    );
+    let events = collect(&mut projection, &model);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Feed {
+            append,
+            replace,
+            ..
+        } if append.is_empty() && replace.len() == 1
+    )));
+    assert_eq!(phone.apply_events(&events), 1);
+    assert_eq!(phone.rows.len(), 1);
+    assert!(
+        phone
+            .rows
+            .values()
+            .next()
+            .unwrap()
+            .to_string()
+            .contains("Hello!")
+    );
     assert!(collect(&mut projection, &model).is_empty());
 }
 
-#[test]
-fn mobile_projection_never_falls_back_to_a_provider_window() {
-    let mut model = claude_model();
-    let mut projection = subscribed();
-    let mut phone = PhoneFeed::default();
-    for id in 0..1050 {
-        row(&mut model, id as u64 + 1, message(id, "row"));
-        phone.apply_events(&collect(&mut projection, &model));
-    }
-    assert!(phone.rows.is_empty());
-    update(
-        &mut model,
-        Msg::Stream {
-            agent: AGENT,
-            event: StreamMsg::Opened { truncated: false },
-        },
-    );
-    row(&mut model, 1, message(0, "new window"));
-    phone.apply_events(&collect(&mut projection, &model));
-    assert!(phone.rows.is_empty());
-    projection.unsubscribe(AGENT);
-    row(&mut model, 2, message(1, "hidden"));
-    assert!(
-        !collect(&mut projection, &model)
-            .iter()
-            .any(|e| matches!(e, Event::Feed { .. } | Event::Session(_)))
-    );
-    projection.subscribe(AGENT);
-    let mut fresh = PhoneFeed::default();
-    assert_eq!(fresh.apply_events(&collect(&mut projection, &model)), 0);
-}
-
-/// A machine that stops answering takes its folded layer with it. What it
-/// last said is still the only account of that conversation there is, so the
-/// projected feed keeps it until the machine itself replaces it; an agent that
-/// is genuinely gone from a machine still answering loses its rows.
+/// A stored conversation stays readable while its machine is away and through
+/// that machine's replay. Authoritative agent removal drops the fleet member,
+/// but an already-open stored conversation remains readable until the reader
+/// closes it.
 #[test]
 fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
-    let mut model = claude_model();
+    let (mut model, stream) = stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Pty,
+        },
+        (0..3).map(|id| message(id, "before the outage")).collect(),
+    );
     let mut projection = subscribed();
     let mut phone = PhoneFeed::default();
-    for id in 0..3 {
-        row(&mut model, id as u64 + 1, message(id, "before the outage"));
-    }
-    phone.apply_events(&collect(&mut projection, &model));
-    assert!(phone.rows.is_empty());
+    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 3);
     let held = phone.rows.clone();
 
-    // The machine goes away. The relay drops what it knew of that machine's
-    // agents, so the layer these rows were folded from is gone.
+    // The machine goes away. The relay drops its live agent, while the store
+    // window remains this device's account of the conversation.
     update(&mut model, host(false));
     update(
         &mut model,
         Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
     );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::Closed {
+                at: DateTime::from_timestamp(1_700_000_001, 0).unwrap(),
+                reason: ui_state::StreamCloseReason::HostUnreachable,
+            },
+        },
+    );
     assert!(model.claude(AGENT).is_none());
     phone.apply_events(&collect(&mut projection, &model));
     assert_eq!(phone.rows, held, "the rows went when the machine did");
 
-    // It answers again. Between coming back and replaying what it holds it
-    // has an agent and an open stream but nothing folded, and a transcript
-    // that emptied itself for those seconds would be reporting the
-    // reconnection rather than the conversation.
+    // It answers again. Recreating the live agent does not replace the stored
+    // window, and the after-cursor replay appends only the new row.
+    let effects = update(
+        &mut model,
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(PHONE),
+        }),
+    );
+    let replay_stream = effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            ui_state::Effect::OpenStoreStream { attempt, .. } => Some(attempt),
+            _ => None,
+        })
+        .expect("reconnect reopens the stored chat stream");
+    assert_ne!(replay_stream, stream);
     update(&mut model, host(true));
-    for msg in [
+    update(
+        &mut model,
         upsert(model::AgentKind::Claude {
             driver: model::ClaudeDriver::Pty,
         }),
-        Msg::Stream {
-            agent: AGENT,
-            event: StreamMsg::Opened { truncated: false },
-        },
-    ] {
-        update(&mut model, msg);
-        phone.apply_events(&collect(&mut projection, &model));
-        assert_eq!(
-            phone.rows, held,
-            "the rows went while the machine came back"
-        );
-    }
-
-    // The replay is what replaces them: the same rows once, never both copies.
+    );
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(
+        phone.rows, held,
+        "the rows went while the machine came back"
+    );
     update(
         &mut model,
-        Msg::Stream {
+        Msg::ChatStream {
             agent: AGENT,
-            event: StreamMsg::ReplayComplete,
+            attempt: replay_stream,
+            event: ui_state::ChatStreamMsg::Opened {
+                facts: ui_state::ReplayFactsDto {
+                    retained_from: 1,
+                    through: 4,
+                    selected_from: 4,
+                    reset_at: 0,
+                    outcome: ui_state::ReplayOutcomeDto::Continuous,
+                },
+                at: DateTime::from_timestamp(1_700_000_002, 0).unwrap(),
+            },
         },
     );
-    for id in 0..3 {
-        row(&mut model, id as u64 + 1, message(id, "before the outage"));
-    }
+    chat_row(&mut model, replay_stream, 4, message(3, "after the outage"));
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: replay_stream,
+            event: ui_state::ChatStreamMsg::ReplayComplete {
+                at: DateTime::from_timestamp(1_700_000_003, 0).unwrap(),
+            },
+        },
+    );
     phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows.len(), held.len() + 1);
     assert!(
-        phone.rows.is_empty(),
-        "the replay created a fallback transcript"
+        held.iter().all(|(id, row)| phone.rows.get(id) == Some(row)),
+        "replay replaced or duplicated stored rows"
+    );
+    assert!(
+        phone
+            .rows
+            .values()
+            .last()
+            .unwrap()
+            .to_string()
+            .contains("after the outage")
     );
 
-    // An agent removed from a machine that is still answering is not stale,
-    // it is gone, and its rows go with it.
+    // Authoritative removal drops the live agent, not the already-open store
+    // window. The phone keeps showing the history it has until the reader
+    // closes that conversation.
     update(
         &mut model,
         Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
     );
     phone.apply_events(&collect(&mut projection, &model));
-    assert!(phone.rows.is_empty(), "a removed agent kept its rows");
+    assert_eq!(
+        phone.rows.len(),
+        held.len() + 1,
+        "agent removal discarded stored history"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -432,16 +468,23 @@ async fn mobile_projection_streaming_bench_1000_rows_at_50_per_second() {
         Duration::from_nanos(16_666_667),
         Duration::from_millis(100),
     ] {
-        let mut model = claude_model();
+        let (mut model, stream) = stored_model(
+            model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
+            },
+            vec![message(0, "row 0000")],
+        );
         let mut projection = subscribed();
         let mut cadence = Cadence::new(interval);
         let mut phone = PhoneFeed::default();
-        let mut bytes = 0;
-        let mut sent_rows = 0;
+        let initial = collect(&mut projection, &model);
+        let mut bytes = serde_json::to_vec(&initial).unwrap().len();
+        let mut sent_rows = phone.apply_events(&initial);
+        assert_eq!(sent_rows, 1);
         let mut times = Vec::new();
         let start = Instant::now();
         let mut dirty = false;
-        let mut id = 0;
+        let mut id = 1;
         while id < 1000 || dirty {
             let next_row = start + Duration::from_millis(id * 20);
             let next_frame = cadence.deadline();
@@ -450,38 +493,49 @@ async fn mobile_projection_streaming_bench_1000_rows_at_50_per_second() {
                 let events = collect(&mut projection, &model);
                 if !events.is_empty() {
                     let batch = serde_json::to_vec(&events).unwrap();
-                    assert!(batch.len() < 3000, "one frame included retained history");
+                    let values = serde_json::from_slice::<Vec<Value>>(&batch).unwrap();
+                    let frame_rows = phone.apply(&values);
+                    assert!(frame_rows > 0, "a dirty frame carried no chat delta");
+                    assert!(
+                        batch.len() < 1000 + frame_rows * 1500,
+                        "one frame included retained history: {} bytes for {frame_rows} rows",
+                        batch.len()
+                    );
                     bytes += batch.len();
-                    sent_rows +=
-                        phone.apply(&serde_json::from_slice::<Vec<Value>>(&batch).unwrap());
+                    sent_rows += frame_rows;
                     times.push(Instant::now());
                     cadence.emitted();
                 }
                 dirty = false;
             } else {
                 tokio::time::sleep_until(next_row).await;
-                let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap()
-                    + chrono::TimeDelta::milliseconds(id as i64 * 20);
-                update(
+                chat_row(
                     &mut model,
-                    Msg::Stream {
-                        agent: AGENT,
-                        event: StreamMsg::Batch {
-                            at,
-                            entries: vec![StreamEntry::observed(
-                                id + 1,
-                                at,
-                                message(id as usize, &format!("row {id:04}")),
-                            )],
-                        },
-                    },
+                    stream,
+                    id + 1,
+                    message(id as usize, &format!("row {id:04}")),
+                );
+                assert!(
+                    model
+                        .chat(AGENT)
+                        .expect("store-backed chat stays open")
+                        .entries
+                        .last()
+                        .is_some_and(|entry| serde_json::to_string(entry)
+                            .unwrap()
+                            .contains(&format!("row {id:04}"))),
+                    "row {id} did not commit into the store window"
                 );
                 dirty = true;
                 id += 1;
             }
         }
-        assert!(phone.rows.is_empty());
-        assert_eq!(sent_rows, 0, "provider rows escaped the store boundary");
+        assert_eq!(sent_rows, 1000, "a stored row was missed or sent twice");
+        assert_eq!(
+            phone.rows.len(),
+            ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
+            "the phone did not retain its configured visible-history window"
+        );
         assert!(times.windows(2).all(|pair| pair[1] - pair[0] >= interval));
         assert!(
             bytes < 1000 * 1500,
@@ -950,6 +1004,11 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
     use ui_state::{
         ChatCommand, Effect, LoadedDto, MutationBatchDto, ProfileGeneration, StoreMsg, StoreOp,
     };
+    const GENERATIONS: Generations = Generations {
+        fleet: 1,
+        chat: 1,
+        provider: 1,
+    };
     let protocol = match kind {
         model::AgentKind::Claude {
             driver: model::ClaudeDriver::Pty,
@@ -961,6 +1020,14 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
         model::AgentKind::TestAgent => panic!("test agent has no stored structured chat"),
     };
     let mut model = model(kind);
+    update(
+        &mut model,
+        Msg::StoreStartup {
+            profile: ProfileGeneration(0),
+            generations: GENERATIONS,
+            window_max_entries: ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
+        },
+    );
     let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: AGENT }));
     let (attempt, op) = effects
         .iter()
@@ -969,11 +1036,6 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
             _ => None,
         })
         .expect("opening a chat loads it from the store");
-    const GENERATIONS: Generations = Generations {
-        fleet: 1,
-        chat: 1,
-        provider: 1,
-    };
     macro_rules! empty_loaded {
         ($fold:ty, $variant:ident) => {
             LoadedDto::$variant(Loaded::<$fold> {

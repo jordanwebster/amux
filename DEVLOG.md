@@ -1,3 +1,12 @@
+2026-09-17 — **Phone projection tests exercise the canonical store window.**
+Host-loss and reconnect coverage now starts with a stored conversation and
+proves replay does not duplicate it; authoritative agent removal drops the
+fleet member but leaves an already-open stored conversation readable until it
+is closed. The streaming workload commits all 1,000 rows through the chat store
+path and bounds each frame by the rows in that delta, while Codex delta coverage
+proves an amended stored message replaces the phone row in place. Vacuous
+provider-window assertions were removed.
+
 2026-09-17 — **Golden fixtures now exercise the same stored rows as
 production.** Approval resolution preserves a Codex work item's command and
 moves an accepted item back to running, while Claude SDK exit envelopes accept
