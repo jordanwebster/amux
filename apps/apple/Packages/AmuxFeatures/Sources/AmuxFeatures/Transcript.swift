@@ -428,6 +428,9 @@ private struct TranscriptRowView: View, Equatable {
                 kind: "compaction", glyph: "arrow.down.right.and.arrow.up.left",
                 label: Self.compacted(before, after))
                 .padding(.bottom, 15)
+        case .historyBreak(let label):
+            FeedRule(kind: "history-break", glyph: "scissors", label: label)
+                .padding(.bottom, 15)
         default:
             Rail(
                 glyph: glyph, accented: accented,
@@ -497,7 +500,7 @@ private struct TranscriptRowView: View, Equatable {
             ActivityRow(
                 kind: "unreadable", verb: "Unreadable", subject: label, mono: true, meta: nil,
                 note: "This build cannot read this row.")
-        case .prompt, .prose, .turnEnd, .compaction:
+        case .prompt, .prose, .turnEnd, .compaction, .historyBreak:
             EmptyView()
         }
     }
@@ -520,7 +523,7 @@ private struct TranscriptRowView: View, Equatable {
             outbound ? "arrow.turn.up.right" : "arrow.turn.down.left"
         case .exit: "power"
         case .unreadable: "questionmark.square.dashed"
-        case .prompt, .prose, .turnEnd, .compaction: "circle"
+        case .prompt, .prose, .turnEnd, .compaction, .historyBreak: "circle"
         }
     }
 

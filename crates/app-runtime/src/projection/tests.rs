@@ -217,6 +217,17 @@ fn mobile_projection_schema_snapshot() {
         .unwrap();
     row(&mut sdk, 1, facts);
     events.extend(collect(&mut subscribed(), &sdk));
+    events.push(Event::Feed {
+        agent: AGENT,
+        base: 2,
+        append: vec![FeedEntryDto::History(HistoryRow {
+            id: 2,
+            seq: 0,
+            boundary: HistoryBoundary::Missing,
+        })],
+        replace: vec![],
+        evicted: 0,
+    });
     events.push(Event::connection(&RelayConnection::Disconnected {
         reason: model::DisconnectReason::Unreachable,
     }));
@@ -936,8 +947,19 @@ fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
 /// A conversation opened through the store, holding the rows the chat stream
 /// has folded so far.
 fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
+    let rows = (0..rows).map(|id| message(id, "stored")).collect();
+    stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Pty,
+        },
+        rows,
+    )
+}
+/// A conversation with any provider opened through the store, holding the
+/// entries its chat stream folded from `rows`.
+fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::StreamAttempt) {
     use ui_state::{ChatCommand, Effect, ProfileGeneration, StoreMsg, StoreOp, StoreOpKind};
-    let mut model = claude_model();
+    let mut model = model(kind);
     let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: AGENT }));
     let (attempt, op) = effects
         .iter()
@@ -972,7 +994,7 @@ fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
             event: ui_state::ChatStreamMsg::Opened {
                 facts: ui_state::ReplayFactsDto {
                     retained_from: 1,
-                    through: rows as u64,
+                    through: rows.len() as u64,
                     selected_from: 1,
                     reset_at: 0,
                     outcome: ui_state::ReplayOutcomeDto::Continuous,
@@ -981,8 +1003,8 @@ fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
             },
         },
     );
-    for id in 0..rows {
-        chat_row(&mut model, stream, id as u64 + 1, message(id, "stored"));
+    for (seq, row) in rows.into_iter().enumerate() {
+        chat_row(&mut model, stream, seq as u64 + 1, row);
     }
     (model, stream)
 }
@@ -1052,4 +1074,155 @@ fn mobile_projection_paints_a_stored_chat_window_and_appends_to_it() {
     phone.apply_events(&events);
     assert_eq!(texts(&phone).last(), Some(&json!("fresh")));
     assert!(collect(&mut projection, &model).is_empty());
+}
+
+/// Moves the stored entries from `from` onward into the next segment and marks
+/// that segment as starting after missing history: the window a store holds
+/// once a reconnect found the machine no longer had the rows in between.
+fn after_a_gap(model: &Model, from: usize) -> Model {
+    let mut value = serde_json::to_value(model).unwrap();
+    let chat = &mut value["store"]["chats"][AGENT.to_string()];
+    let entries = chat["entries"].as_array_mut().unwrap();
+    let segment = entries[0].as_object().unwrap().values().next().unwrap()["segment"]
+        .as_u64()
+        .unwrap();
+    for entry in &mut entries[from..] {
+        for stored in entry.as_object_mut().unwrap().values_mut() {
+            stored["segment"] = json!(segment + 1);
+        }
+    }
+    chat["boundaries"] = serde_json::to_value([ui_state::BoundaryAt {
+        segment: segment as u32 + 1,
+        before: None,
+        boundary: ui_state::Boundary::Gap,
+    }])
+    .unwrap();
+    serde_json::from_value(value).unwrap()
+}
+
+/// A stored conversation whose history is broken shows the break where it is,
+/// for every provider: the entries before it, a missing-history row, then the
+/// entries after it. New entries joining the window append after them without
+/// renumbering anything the phone already drew.
+#[test]
+fn mobile_projection_draws_a_stored_history_gap_between_the_entries_it_separates() {
+    let sdk_result = || json!({"type":"result", "subtype":"success", "is_error":false});
+    let codex_message = |id: &str, text: &str| {
+        json!({"type":"item/completed", "item":{"id":id, "type":"agentMessage", "text":text,
+            "phase":"final_answer"}})
+    };
+    let providers = [
+        (
+            "claude_pty",
+            model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
+            },
+            vec![
+                message(0, "before gap"),
+                message(1, "after gap"),
+                message(2, "fresh"),
+            ],
+        ),
+        (
+            "claude_sdk",
+            model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Sdk,
+            },
+            vec![
+                message(0, "before gap"),
+                sdk_result(),
+                message(1, "after gap"),
+                sdk_result(),
+                message(2, "fresh"),
+            ],
+        ),
+        (
+            "codex",
+            model::AgentKind::Codex,
+            vec![
+                codex_message("a", "before gap"),
+                codex_message("b", "after gap"),
+                codex_message("c", "fresh"),
+            ],
+        ),
+    ];
+    for (layer, kind, mut rows) in providers {
+        let fresh = rows.pop().unwrap();
+        let (mut live, stream) = stored_model(kind, rows.clone());
+        let entries = live.chat(AGENT).unwrap().entries.clone();
+        let split = entries
+            .iter()
+            .position(|entry| serde_json::to_string(entry).unwrap().contains("after gap"))
+            .unwrap_or_else(|| panic!("{layer}: no stored entry after the gap: {entries:?}"));
+        assert!(split > 0, "{layer}: {entries:?}");
+        let model = after_a_gap(&persisted(&live), split);
+
+        let mut projection = subscribed();
+        let mut phone = PhoneFeed::default();
+        phone.apply_events(&collect(&mut projection, &model));
+        let drawn: Vec<_> = phone.rows.values().cloned().collect();
+        let marker = drawn
+            .iter()
+            .position(|row| row["layer"] == "history")
+            .unwrap_or_else(|| panic!("{layer}: no history break reached the phone: {drawn:?}"));
+        assert_eq!(drawn[marker]["row"]["boundary"], "missing", "{layer}");
+        assert_eq!(
+            drawn.iter().filter(|row| row["layer"] == "history").count(),
+            1,
+            "{layer}: {drawn:?}"
+        );
+        assert!(
+            drawn[..marker]
+                .iter()
+                .all(|row| row["layer"] == layer && !row.to_string().contains("after gap"))
+                && drawn[..marker]
+                    .iter()
+                    .any(|row| row.to_string().contains("before gap")),
+            "{layer}: {drawn:?}"
+        );
+        assert!(
+            drawn[marker + 1..]
+                .iter()
+                .all(|row| row["layer"] == layer && !row.to_string().contains("before gap"))
+                && drawn[marker + 1..]
+                    .iter()
+                    .any(|row| row.to_string().contains("after gap")),
+            "{layer}: {drawn:?}"
+        );
+
+        let next = rows.len() as u64 + 1;
+        chat_row(&mut live, stream, next, fresh);
+        let model = after_a_gap(&persisted(&live), split);
+        let events = collect(&mut projection, &model);
+        let before = phone.rows.clone();
+        phone.apply_events(&events);
+        let (base, replaced) = events
+            .iter()
+            .find_map(|event| match event {
+                Event::Feed { base, replace, .. } => Some((*base, replace.len())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{layer}: the fresh entry never reached the phone"));
+        assert_eq!(
+            (base, replaced),
+            (drawn.len() as u64, 0),
+            "{layer}: the window was renumbered"
+        );
+        assert!(
+            before
+                .iter()
+                .all(|(id, row)| phone.rows.get(id) == Some(row)),
+            "{layer}: rows already drawn changed"
+        );
+        assert!(
+            phone
+                .rows
+                .values()
+                .last()
+                .unwrap()
+                .to_string()
+                .contains("fresh"),
+            "{layer}"
+        );
+    }
 }

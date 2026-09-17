@@ -69,7 +69,7 @@ pub use store::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, FLUSH_DEADLINE, HeadDto,
     LoadedDto, MutationBatchDto, PageDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
     StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, WINDOW_MAX_BYTES,
-    WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, behind,
+    WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, WindowItem, behind,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
 

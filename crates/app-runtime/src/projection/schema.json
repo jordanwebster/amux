@@ -978,6 +978,24 @@
     }
   },
   {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 2,
+      "append": [
+        {
+          "layer": "history",
+          "row": {
+            "id": 2,
+            "seq": 0,
+            "boundary": "missing"
+          }
+        }
+      ],
+      "replace": [],
+      "evicted": 0
+    }
+  },
+  {
     "Connection": {
       "state": "disconnected",
       "reason": "unreachable"

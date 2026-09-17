@@ -35,6 +35,11 @@ pub struct Remembered {
     /// device lost its connection, in the provider's own shape.
     #[serde(default)]
     pub chats: BTreeMap<AgentId, Vec<Value>>,
+    /// Transcript rows a later connection delivered for a conversation in
+    /// `chats` after its machine could no longer serve the rows in between,
+    /// so the store holds a break in that conversation's history.
+    #[serde(default)]
+    pub after_gap: BTreeMap<AgentId, Vec<Value>>,
 }
 
 /// How long any one step of writing or reading a store may take before the
@@ -101,63 +106,113 @@ pub async fn seed(cache_dir: &Path, account: &str, remembered: Remembered) -> Re
         .map_err(|error| format!("{error:?}"))?;
     store.close().await;
 
+    let mut after_gap = remembered.after_gap;
     for (agent, rows) in remembered.chats {
+        let through = rows.len() as u64;
+        let facts = ReplayFactsDto {
+            retained_from: 1,
+            through,
+            selected_from: 1,
+            reset_at: 0,
+            outcome: ReplayOutcomeDto::Continuous,
+        };
+        deliver(&path, agent, facts, 1, rows).await?;
+        let Some(rows) = after_gap.remove(&agent) else {
+            continue;
+        };
+        // One row past what the store holds is gone for good: the machine
+        // retains only what follows it.
+        let resumed = through + 2;
+        let facts = ReplayFactsDto {
+            retained_from: resumed,
+            through: resumed + rows.len() as u64 - 1,
+            selected_from: resumed,
+            reset_at: 0,
+            outcome: ReplayOutcomeDto::Truncated {
+                missing_after: through,
+            },
+        };
+        deliver(&path, agent, facts, resumed, rows).await?;
         let mut runtime = remembered_runtime(&path).await?;
         runtime.open_chat(agent);
         until(&mut runtime, |runtime| {
-            runtime
-                .model()
-                .chat(agent)
-                .is_some_and(|chat| chat.is_painted())
-        })
-        .await?;
-        let attempt = runtime
-            .model()
-            .chat(agent)
-            .ok_or("the conversation did not open")?
-            .stream_attempt;
-        let at = chrono::Utc::now();
-        let through = rows.len() as u64;
-        let events = [
-            ChatStreamMsg::Opened {
-                facts: ReplayFactsDto {
-                    retained_from: 1,
-                    through,
-                    selected_from: 1,
-                    reset_at: 0,
-                    outcome: ReplayOutcomeDto::Continuous,
-                },
-                at,
-            },
-            ChatStreamMsg::Batch {
-                at,
-                entries: rows
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, row)| StreamEntry::observed(index as u64 + 1, at, row))
-                    .collect(),
-            },
-            ChatStreamMsg::ReplayComplete { at },
-        ];
-        for event in events {
-            runtime
-                .shell_edge()
-                .report(Msg::ChatStream {
-                    agent,
-                    attempt,
-                    event,
-                })
-                .await
-                .map_err(|_| "the runtime stopped")?;
-        }
-        until(&mut runtime, |runtime| {
             runtime.model().chat(agent).is_some_and(|chat| {
-                chat.pending_bytes() == 0 && !chat.entries.is_empty() && !chat.live_only
+                chat.is_painted()
+                    && chat
+                        .boundaries
+                        .iter()
+                        .any(|at| at.boundary == ui_state::Boundary::Gap)
             })
         })
-        .await?;
+        .await
+        .map_err(|_| format!("the break in {agent}'s history was never stored"))?;
+    }
+    if let Some(agent) = after_gap.keys().next() {
+        return Err(format!("{agent} has rows after a gap but none before it"));
     }
     Ok(())
+}
+
+/// Opens `agent`'s conversation on a fresh runtime and has its stream deliver
+/// `rows`, numbered from `first`, as a replay described by `facts`, returning
+/// once the store has committed every one.
+async fn deliver(
+    path: &Path,
+    agent: AgentId,
+    facts: ReplayFactsDto,
+    first: u64,
+    rows: Vec<Value>,
+) -> Result<(), String> {
+    let mut runtime = remembered_runtime(path).await?;
+    runtime.open_chat(agent);
+    until(&mut runtime, |runtime| {
+        runtime
+            .model()
+            .chat(agent)
+            .is_some_and(|chat| chat.is_painted())
+    })
+    .await?;
+    let attempt = runtime
+        .model()
+        .chat(agent)
+        .ok_or("the conversation did not open")?
+        .stream_attempt;
+    let at = chrono::Utc::now();
+    let last = first + rows.len() as u64 - 1;
+    let events = [
+        ChatStreamMsg::Opened { facts, at },
+        ChatStreamMsg::Batch {
+            at,
+            entries: rows
+                .into_iter()
+                .enumerate()
+                .map(|(index, row)| StreamEntry::observed(first + index as u64, at, row))
+                .collect(),
+        },
+        ChatStreamMsg::ReplayComplete { at },
+    ];
+    for event in events {
+        runtime
+            .shell_edge()
+            .report(Msg::ChatStream {
+                agent,
+                attempt,
+                event,
+            })
+            .await
+            .map_err(|_| "the runtime stopped")?;
+    }
+    until(&mut runtime, |runtime| {
+        runtime.model().chat(agent).is_some_and(|chat| {
+            chat.pending_bytes() == 0
+                && !chat.live_only
+                && chat
+                    .head
+                    .as_ref()
+                    .is_some_and(|head| head.through() >= last)
+        })
+    })
+    .await
 }
 
 /// What a phone draws for one conversation it opens before anything has
@@ -286,5 +341,43 @@ mod tests {
             feed["append"].to_string().contains("remember this"),
             "{feed}"
         );
+    }
+
+    /// A conversation seeded with rows after a gap reads back with the break
+    /// drawn between the rows from before it and the rows from after it.
+    #[tokio::test]
+    async fn a_seeded_gap_reads_back_between_the_rows_it_separates() {
+        let root = tempfile::tempdir().unwrap();
+        let mut remembered = remembered();
+        let agent = "00000000-0000-0000-0000-000000000011".parse().unwrap();
+        remembered.after_gap.insert(
+            agent,
+            vec![
+                json!({"type": "user", "uuid": "dddddddd-0000-4000-8000-000000000002",
+                "sessionId": "22222222-2222-4222-8222-222222222222",
+                "timestamp": "2026-09-16T12:05:00.000Z",
+                "message": {"role": "user", "content": "after the gap"},
+                "origin": {"kind": "human"}, "promptSource": "typed"}),
+            ],
+        );
+        seed(root.path(), ACCOUNT, remembered).await.unwrap();
+
+        let events = cached_chat(root.path(), ACCOUNT, agent).await.unwrap();
+        let events = serde_json::to_value(&events).unwrap();
+        let rows: Vec<_> = events
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|event| event.get("Feed"))
+            .flat_map(|feed| feed["append"].as_array().unwrap().clone())
+            .map(|row| row.to_string())
+            .collect();
+        let at = |needle: &str| {
+            rows.iter()
+                .position(|row| row.contains(needle))
+                .unwrap_or_else(|| panic!("no {needle} row: {rows:?}"))
+        };
+        assert!(at("remember this") < at("\"history\""), "{rows:?}");
+        assert!(at("\"history\"") < at("after the gap"), "{rows:?}");
     }
 }

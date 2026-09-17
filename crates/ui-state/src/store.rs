@@ -559,7 +559,42 @@ pub struct ChatWindow {
     newest_evicted: bool,
 }
 
+/// One item of a chat window in reading order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WindowItem<'a> {
+    Entry(&'a StoredDto),
+    /// Where the window's history is not continuous: rows that were never
+    /// received, a change of entry version, or rows evicted from the store.
+    Boundary(&'a BoundaryAt),
+}
+
 impl ChatWindow {
+    /// The window's entries with each history boundary placed before the
+    /// entry it precedes. A boundary at a segment's start precedes that
+    /// segment's first entry, and one past every entry comes last.
+    pub fn history(&self) -> Vec<WindowItem<'_>> {
+        let mut items = Vec::with_capacity(self.entries.len() + self.boundaries.len());
+        let mut boundaries = self.boundaries.iter().peekable();
+        for entry in &self.entries {
+            let (segment, order, key) = entry.position();
+            while let Some(boundary) = boundaries.next_if(|boundary| {
+                boundary.segment < segment
+                    || (boundary.segment == segment
+                        && boundary
+                            .before
+                            .as_ref()
+                            .is_none_or(|(before_order, before_key)| {
+                                (before_order, before_key) <= (&order, key)
+                            }))
+            }) {
+                items.push(WindowItem::Boundary(boundary));
+            }
+            items.push(WindowItem::Entry(entry));
+        }
+        items.extend(boundaries.map(WindowItem::Boundary));
+        items
+    }
+
     /// Encoded size governed by the visible-window memory budget.
     pub fn encoded_window_bytes(&self) -> usize {
         postcard::to_allocvec(self.entries.as_slice()).map_or(usize::MAX, |bytes| bytes.len())

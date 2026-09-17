@@ -63,6 +63,10 @@ pub enum FeedEntryDto {
     ClaudePty(claude::FeedEntry),
     ClaudeSdk(claude_sdk::FeedEntry),
     Codex(codex::FeedEntry),
+    /// A place where a stored conversation's history is not continuous. It
+    /// belongs to the store rather than to any provider, so it keeps a
+    /// vocabulary of its own.
+    History(HistoryRow),
 }
 
 impl FeedEntryDto {
@@ -71,6 +75,39 @@ impl FeedEntryDto {
             Self::ClaudePty(row) => row.seq,
             Self::Codex(row) => row.seq,
             Self::ClaudeSdk(row) => row.seq,
+            Self::History(row) => row.seq,
+        }
+    }
+}
+
+/// A break in a stored conversation, drawn between the rows it separates so a
+/// reader never takes the rows on either side for one continuous exchange.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HistoryRow {
+    pub id: u64,
+    /// Always 0: a break is not folded from any stream row.
+    pub seq: u64,
+    pub boundary: HistoryBoundary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryBoundary {
+    /// Rows this device never received, because the machine no longer held
+    /// them when it reconnected or the history was cut short.
+    Missing,
+    /// The rows after this were written in a different entry version.
+    VersionChanged,
+    /// Older rows were evicted from this device's store.
+    Evicted,
+}
+
+impl From<ui_state::Boundary> for HistoryBoundary {
+    fn from(boundary: ui_state::Boundary) -> Self {
+        match boundary {
+            ui_state::Boundary::Truncated | ui_state::Boundary::Gap => Self::Missing,
+            ui_state::Boundary::VersionGap => Self::VersionChanged,
+            ui_state::Boundary::Evicted => Self::Evicted,
         }
     }
 }
@@ -429,17 +466,32 @@ struct FeedState {
 /// reports.
 ///
 /// A store window slides: new entries join its tail, the oldest leave its
-/// head, and a merge rewrites an entry in place. Each entry keeps the position
-/// it was first given for as long as the window stays one continuous run of
-/// the keys already projected. A window that stops being that run (paging
-/// toward older history, or a reload after a gap) starts a new run, which the
-/// feed reports as a new window rather than as rows edited out of order.
+/// head, and a merge rewrites an entry in place. Each entry, and each break in
+/// the history between entries, keeps the position it was first given for as
+/// long as the window stays one continuous run of the items already
+/// projected. A window that stops being that run (paging toward older history,
+/// or a reload after a gap) starts a new run, which the feed reports as a new
+/// window rather than as rows edited out of order.
 #[derive(Default)]
 struct StoredFeed {
     run: u64,
     base: u64,
-    keys: Vec<ui_state::EntryKey>,
+    slots: Vec<Slot>,
     converted: BTreeMap<ui_state::EntryKey, (ui_state::StoredDto, Restored)>,
+}
+
+/// What holds a position in a stored feed. A break is identified by where it
+/// sits rather than by its kind, so a break whose kind the store revises is
+/// redrawn in place.
+#[derive(PartialEq)]
+enum Slot {
+    Entry(ui_state::EntryKey),
+    Boundary(u32, Option<(ui_state::Order, ui_state::EntryKey)>),
+}
+
+enum StoredRow<'a> {
+    Entry(&'a Restored),
+    Boundary(ui_state::Boundary),
 }
 
 enum Restored {
@@ -449,31 +501,33 @@ enum Restored {
 }
 
 impl StoredFeed {
-    /// The window's entries as renderer rows with their stable positions, and
-    /// the identity of the run they belong to.
-    fn rows(&mut self, window: &ui_state::ChatWindow) -> (u64, Vec<(u64, &Restored)>) {
-        let keys: Vec<_> = window
-            .entries
+    /// The window's entries and breaks as renderer rows with their stable
+    /// positions, and the identity of the run they belong to.
+    fn rows(&mut self, window: &ui_state::ChatWindow) -> (u64, Vec<(u64, StoredRow<'_>)>) {
+        let history = window.history();
+        let slots: Vec<_> = history
             .iter()
-            .map(|entry| entry.key().clone())
+            .map(|item| match item {
+                ui_state::WindowItem::Entry(entry) => Slot::Entry(entry.key().clone()),
+                ui_state::WindowItem::Boundary(boundary) => {
+                    Slot::Boundary(boundary.segment, boundary.before.clone())
+                }
+            })
             .collect();
-        let continues = keys.first().and_then(|first| {
-            let start = self.keys.iter().position(|key| key == first)?;
-            let held = &self.keys[start..];
-            (held.len() <= keys.len() && held.iter().zip(&keys).all(|(a, b)| a == b))
+        let continues = slots.first().and_then(|first| {
+            let start = self.slots.iter().position(|slot| slot == first)?;
+            let held = &self.slots[start..];
+            (held.len() <= slots.len() && held.iter().zip(&slots).all(|(a, b)| a == b))
                 .then_some(start)
         });
         match continues {
-            Some(start) => {
-                self.base += start as u64;
-                self.keys = keys;
-            }
+            Some(start) => self.base += start as u64,
             None => {
                 self.run += 1;
                 self.base = 0;
-                self.keys = keys;
             }
         }
+        self.slots = slots;
         let mut converted = BTreeMap::new();
         for entry in &window.entries {
             let key = entry.key().clone();
@@ -494,11 +548,20 @@ impl StoredFeed {
             converted.insert(key, (entry.clone(), restored));
         }
         self.converted = converted;
-        let rows = self
-            .keys
+        let rows = history
             .iter()
             .enumerate()
-            .map(|(index, key)| (self.base + index as u64, &self.converted[key].1))
+            .map(|(index, item)| {
+                let row = match item {
+                    ui_state::WindowItem::Entry(entry) => {
+                        StoredRow::Entry(&self.converted[entry.key()].1)
+                    }
+                    ui_state::WindowItem::Boundary(boundary) => {
+                        StoredRow::Boundary(boundary.boundary)
+                    }
+                };
+                (self.base + index as u64, row)
+            })
             .collect();
         (self.run, rows)
     }
@@ -509,6 +572,7 @@ enum RowRef<'a> {
     Claude(&'a claude::FeedEntry),
     ClaudeSdk(&'a claude_sdk::FeedEntry),
     Codex(&'a codex::FeedEntry),
+    History(&'a HistoryRow),
 }
 impl<'a> RowRef<'a> {
     fn of(row: &'a FeedEntryDto) -> Self {
@@ -516,6 +580,7 @@ impl<'a> RowRef<'a> {
             FeedEntryDto::ClaudePty(row) => Self::Claude(row),
             FeedEntryDto::ClaudeSdk(row) => Self::ClaudeSdk(row),
             FeedEntryDto::Codex(row) => Self::Codex(row),
+            FeedEntryDto::History(row) => Self::History(row),
         }
     }
 
@@ -524,6 +589,7 @@ impl<'a> RowRef<'a> {
             Self::Claude(row) => row.id,
             Self::ClaudeSdk(row) => row.id,
             Self::Codex(row) => row.id,
+            Self::History(row) => row.id,
         }
     }
     fn seq(&self) -> u64 {
@@ -531,6 +597,7 @@ impl<'a> RowRef<'a> {
             Self::Claude(row) => row.seq,
             Self::ClaudeSdk(row) => row.seq,
             Self::Codex(row) => row.seq,
+            Self::History(row) => row.seq,
         }
     }
     fn same(&self, previous: &FeedEntryDto) -> bool {
@@ -538,6 +605,7 @@ impl<'a> RowRef<'a> {
             (Self::Claude(row), FeedEntryDto::ClaudePty(old)) => *row == old,
             (Self::ClaudeSdk(row), FeedEntryDto::ClaudeSdk(old)) => *row == old,
             (Self::Codex(row), FeedEntryDto::Codex(old)) => *row == old,
+            (Self::History(row), FeedEntryDto::History(old)) => *row == old,
             _ => false,
         }
     }
@@ -546,6 +614,7 @@ impl<'a> RowRef<'a> {
             Self::Claude(row) => FeedEntryDto::ClaudePty((*row).clone()),
             Self::ClaudeSdk(row) => FeedEntryDto::ClaudeSdk((*row).clone()),
             Self::Codex(row) => FeedEntryDto::Codex((*row).clone()),
+            Self::History(row) => FeedEntryDto::History((*row).clone()),
         }
     }
 }
@@ -765,19 +834,28 @@ impl Projection {
                 let evicted = rows.first().map_or(0, |(id, _)| *id);
                 let rows: Vec<_> = rows
                     .into_iter()
-                    .map(|(id, restored)| match restored {
-                        Restored::Claude(entry) => FeedEntryDto::ClaudePty(claude::FeedEntry {
-                            id,
-                            ..entry.clone()
-                        }),
-                        Restored::ClaudeSdk(entry) => {
+                    .map(|(id, row)| match row {
+                        StoredRow::Entry(Restored::Claude(entry)) => {
+                            FeedEntryDto::ClaudePty(claude::FeedEntry {
+                                id,
+                                ..entry.clone()
+                            })
+                        }
+                        StoredRow::Entry(Restored::ClaudeSdk(entry)) => {
                             let mut entry = entry.clone();
                             entry.id = id;
                             FeedEntryDto::ClaudeSdk(entry)
                         }
-                        Restored::Codex(entry) => FeedEntryDto::Codex(codex::FeedEntry {
+                        StoredRow::Entry(Restored::Codex(entry)) => {
+                            FeedEntryDto::Codex(codex::FeedEntry {
+                                id,
+                                ..entry.clone()
+                            })
+                        }
+                        StoredRow::Boundary(boundary) => FeedEntryDto::History(HistoryRow {
                             id,
-                            ..entry.clone()
+                            seq: 0,
+                            boundary: boundary.into(),
                         }),
                     })
                     .collect();

@@ -1,3 +1,15 @@
+2026-09-17 — **The phone shows where a stored conversation is missing
+history.** A conversation read from the store drew its entries alone, so after
+a reconnect the machine could not fully serve, the rows from before the break
+ran straight into the rows after it. The phone projection now places every
+break the store window holds (missing history, a change of entry version,
+evicted history) as a row of its own between the entries it separates, for
+Claude over a terminal, the Claude SDK and Codex, and keeps positions stable as
+the window slides past it. Breaks travel in a `history` feed layer the app
+draws as a rule, and the terminal client places them through the same
+reading-order helper. A new `cached-chat-gap` goldens state photographs a
+stored conversation with its missing-history rule in both appearances.
+
 2026-09-17 — **The phone's cold start is measured on a quiet machine.** With
 no other simulator suite running, five cold launches read a first frame median
 of 458.5 ms against the 500 ms budget and a store read median of 4.8 ms against

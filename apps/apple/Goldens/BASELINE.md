@@ -323,6 +323,10 @@ Added state using the `cached-fleet-removal` fixture. The same launch after Stud
 
 Added state using the `cached-chat` fixture. A conversation opened before anything has connected, painted from the window its store kept rather than from a live stream. It follows the same visual system as its parent screen.
 
+## cached-chat-gap
+
+Added state using the `cached-chat-gap` fixture. The same stored conversation after the phone reconnected to a machine that no longer held what was said while it was away: the store kept the rows from before and after, and a missing-history rule sits between them so they are not read as one exchange. It follows the same visual system as its parent screen.
+
 ## small-home
 
 Added state using the `home` fixture. The home screen on the narrowest supported display. It follows the same visual system as its parent screen.

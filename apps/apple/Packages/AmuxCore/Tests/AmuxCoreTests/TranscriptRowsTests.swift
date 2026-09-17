@@ -212,6 +212,19 @@ final class TranscriptRowsTests: XCTestCase {
             .compaction(before: nil, after: nil))
     }
 
+    func testABreakInStoredHistoryIsARuleNamingWhatIsMissing() {
+        func history(_ boundary: String) -> TranscriptRow.Kind {
+            FeedEntry(layer: .history, row: .object([
+                "id": .int(4), "seq": .int(0), "boundary": .string(boundary),
+            ])).kind
+        }
+        XCTAssertEqual(history("missing"), .historyBreak(label: "missing history"))
+        XCTAssertEqual(history("version_changed"), .historyBreak(label: "history format changed"))
+        XCTAssertEqual(history("evicted"), .historyBreak(label: "older history cleared"))
+        XCTAssertFalse(TranscriptRow(id: "history:4", layer: .history,
+                                     kind: history("missing")).onRail)
+    }
+
     func testAnUnknownRowIsKeptAndNamedByWhateverItSaidAboutItself() {
         XCTAssertEqual(
             claude(0, .object(["entry": .string("unrecognized"),

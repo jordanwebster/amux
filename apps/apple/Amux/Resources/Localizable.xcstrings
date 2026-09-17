@@ -85,6 +85,18 @@
         }
       }
     },
+    "history format changed": {
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "history format changed"
+          }
+        }
+      }
+    },
     "in this session": {
       "comment": "English app copy. Used in Facts.swift.",
       "extractionState": "manual",
@@ -93,6 +105,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "in this session"
+          }
+        }
+      }
+    },
+    "missing history": {
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "missing history"
+          }
+        }
+      }
+    },
+    "older history cleared": {
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "older history cleared"
           }
         }
       }
@@ -4305,6 +4341,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "a gap in the history"
+          }
+        }
+      }
+    },
+    "a break with no kind": {
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a break with no kind"
           }
         }
       }

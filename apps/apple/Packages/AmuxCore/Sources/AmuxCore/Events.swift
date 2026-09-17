@@ -527,6 +527,9 @@ public struct FeedEntry: Codable, Sendable, Equatable, Identifiable {
         case claudePty = "claude_pty"
         case claudeSdk = "claude_sdk"
         case codex
+        /// A break in a stored conversation's history. It belongs to the
+        /// phone's store rather than to any provider.
+        case history
     }
 
     private enum CodingKeys: String, CodingKey { case layer, row }

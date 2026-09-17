@@ -32,16 +32,21 @@ public struct Remembered: Sendable {
     public var removed: [AgentId]
     /// Each conversation's transcript rows, as the provider wrote them.
     public var chats: [AgentId: [String]]
+    /// Rows a later connection delivered for a conversation in `chats` after
+    /// its machine could no longer serve the rows in between.
+    public var afterGap: [AgentId: [String]]
 
     public init(
         local: HostId = Scenario.phone, hosts: [HostEntry], agents: [Agent],
-        removed: [AgentId] = [], chats: [AgentId: [String]] = [:]
+        removed: [AgentId] = [], chats: [AgentId: [String]] = [:],
+        afterGap: [AgentId: [String]] = [:]
     ) {
         self.local = local
         self.hosts = hosts
         self.agents = agents
         self.removed = removed
         self.chats = chats
+        self.afterGap = afterGap
     }
 
     /// The JSON the bridge's seeding entry point reads.
@@ -57,13 +62,17 @@ public struct Remembered: Sendable {
         guard var object = try JSONSerialization.jsonObject(with: fleet) as? [String: Any] else {
             return fleet
         }
-        var chats: [String: Any] = [:]
-        for (agent, rows) in self.chats {
-            chats[agent.description] = try rows.map {
-                try JSONSerialization.jsonObject(with: Data($0.utf8))
+        func rows(_ conversations: [AgentId: [String]]) throws -> [String: Any] {
+            var object: [String: Any] = [:]
+            for (agent, rows) in conversations {
+                object[agent.description] = try rows.map {
+                    try JSONSerialization.jsonObject(with: Data($0.utf8))
+                }
             }
+            return object
         }
-        object["chats"] = chats
+        object["chats"] = try rows(chats)
+        object["after_gap"] = try rows(afterGap)
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 }
@@ -95,6 +104,22 @@ extension Remembered {
         remembered.chats = [Scenario.focus: rememberedTranscript]
         return remembered
     }
+
+    /// The same conversation after the phone reconnected to a machine that no
+    /// longer held what was said while it was away: the store keeps what came
+    /// before and after, with a break between them.
+    public static var gap: Remembered {
+        var remembered = chat
+        remembered.afterGap = [Scenario.focus: transcriptAfterGap]
+        return remembered
+    }
+
+    /// What the conversation went on to say once the phone could hear it
+    /// again.
+    static let transcriptAfterGap: [String] = [
+        #"{"type":"user","uuid":"dddddddd-0000-4000-8000-000000000011","sessionId":"22222222-2222-4222-8222-222222222222","timestamp":"2025-12-01T09:40:00.000Z","message":{"role":"user","content":"Did collapsing them into one timer fix it?"},"origin":{"kind":"human"},"promptSource":"typed"}"#,
+        #"{"type":"assistant","uuid":"dddddddd-0000-4000-8000-000000000012","sessionId":"22222222-2222-4222-8222-222222222222","timestamp":"2025-12-01T09:40:06.000Z","message":{"id":"message-11","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Yes. A dropped link now waits once, and the reconnect test passes."}]}}"#,
+    ]
 
     /// A short Claude transcript: the session starting, one question and its
     /// answer.

@@ -28,7 +28,7 @@ use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
 use ui_state::{
     AgentId, AgentMessagePresentation, AgentMessageSender, Boundary, ChatState, Command,
-    FamilyNeed, Model, OpId, StructuredProtocol, Why, behind, message_digest,
+    FamilyNeed, Model, OpId, StructuredProtocol, Why, WindowItem, behind, message_digest,
 };
 use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
 
@@ -782,38 +782,31 @@ fn install_store_feed(
         return;
     }
 
-    let mut boundaries = chat.boundaries.iter().peekable();
+    let (reports_open, leader) = match &view.inner {
+        AgentChatView::Claude(provider) => (provider.reports_open, provider.leader),
+        AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader),
+        AgentChatView::Codex(provider) => (provider.reports_open, provider.leader),
+    };
     let mut durable = Vec::with_capacity(chat.entries.len() + chat.boundaries.len());
-    for entry in &chat.entries {
-        let (segment, order, key) = entry.position();
-        while boundaries.peek().is_some_and(|boundary| {
-            boundary.segment < segment
-                || (boundary.segment == segment
-                    && boundary
-                        .before
-                        .as_ref()
-                        .is_none_or(|(before_order, before_key)| {
-                            (before_order, before_key) <= (&order, key)
-                        }))
-        }) {
-            let boundary = boundaries.next().expect("peeked boundary");
-            let identity = format!(
-                "{}:{:?}:{:?}",
-                boundary.segment, boundary.before, boundary.boundary
-            );
-            durable.push(blocks::paint_history_boundary(
-                stable_block_key(0xe000_0000_0000_0000, &identity),
-                boundary_label(boundary.boundary),
-                ctx.theme,
-                ctx.viewport.0 as usize,
-            ));
-        }
-        let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-        let (reports_open, leader) = match &view.inner {
-            AgentChatView::Claude(provider) => (provider.reports_open, provider.leader),
-            AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader),
-            AgentChatView::Codex(provider) => (provider.reports_open, provider.leader),
+    for item in chat.history() {
+        let entry = match item {
+            WindowItem::Boundary(boundary) => {
+                let identity = format!(
+                    "{}:{:?}:{:?}",
+                    boundary.segment, boundary.before, boundary.boundary
+                );
+                durable.push(blocks::paint_history_boundary(
+                    stable_block_key(0xe000_0000_0000_0000, &identity),
+                    boundary_label(boundary.boundary),
+                    ctx.theme,
+                    ctx.viewport.0 as usize,
+                ));
+                continue;
+            }
+            WindowItem::Entry(entry) => entry,
         };
+        let (_, _, key) = entry.position();
+        let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
         let message_view = MessageView::new(model, agent, reports_open, leader);
         let painted = match entry {
             ui_state::StoredDto::Claude(stored) => Some(claude::stored_entry_block(
@@ -841,18 +834,6 @@ fn install_store_feed(
         if let Some(painted) = painted {
             durable.push(painted);
         }
-    }
-    for boundary in boundaries {
-        let identity = format!(
-            "{}:{:?}:{:?}",
-            boundary.segment, boundary.before, boundary.boundary
-        );
-        durable.push(blocks::paint_history_boundary(
-            stable_block_key(0xe000_0000_0000_0000, &identity),
-            boundary_label(boundary.boundary),
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        ));
     }
     parts.feed.blocks = durable;
     if !chat.live_only {

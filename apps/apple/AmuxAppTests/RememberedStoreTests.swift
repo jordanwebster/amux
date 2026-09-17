@@ -42,4 +42,18 @@ final class RememberedStoreTests: XCTestCase {
             stores.fleet.rows.first { $0.id == Scenario.focus }?.card.awaiting ?? false,
             "the conversation's agent was confirmed without a connection")
     }
+
+    func testACachedConversationShowsWhereItsHistoryIsMissing() async {
+        let stores = await open(.run, "cached-chat-gap")
+        let rows = (stores.conversations[Scenario.focus]?.entries ?? []).transcriptRows()
+        let text = rows.map { "\($0.kind)" }
+        let marker = rows.firstIndex { $0.kind == .historyBreak(label: "missing history") }
+        let before = rows.firstIndex {
+            "\($0.kind)".contains("so a dropped link waits for each in turn")
+        }
+        let after = rows.firstIndex { "\($0.kind)".contains("the reconnect test passes") }
+        XCTAssertNotNil(marker, "\(text)")
+        XCTAssertLessThan(before ?? .max, marker ?? .min, "\(text)")
+        XCTAssertLessThan(marker ?? .max, after ?? .min, "\(text)")
+    }
 }

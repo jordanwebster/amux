@@ -61,6 +61,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case turnEnd(meta: String?)
         /// The rule that marks history being compacted away.
         case compaction(before: UInt64?, after: UInt64?)
+        /// The rule that marks where a stored conversation is not continuous,
+        /// so the rows either side of it are not read as one exchange.
+        case historyBreak(label: String)
         /// A row shape this build does not know, named by whatever the row
         /// did say about itself.
         case unreadable(label: String)
@@ -129,7 +132,7 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     /// run the full width; everything else hangs off it.
     public var onRail: Bool {
         switch kind {
-        case .prompt, .prose, .turnEnd, .compaction: false
+        case .prompt, .prose, .turnEnd, .compaction, .historyBreak: false
         default: true
         }
     }
@@ -196,7 +199,7 @@ extension FeedEntry {
             case "query": return (true, invocation["text"]?.stringValue ?? "the tree", groups)
             default: return nil
             }
-        case .codex:
+        case .codex, .history:
             return nil
         }
     }
@@ -207,6 +210,7 @@ extension FeedEntry {
         case .claudePty: claudePtyKind
         case .claudeSdk: claudeSdkKind
         case .codex: codexKind
+        case .history: historyKind
         }
     }
 }
@@ -558,6 +562,21 @@ extension FeedEntry {
             return .exit(text: "The conversation was reset")
         case let other:
             return .unreadable(label: other ?? "a boundary with no kind")
+        }
+    }
+}
+
+// MARK: - A stored conversation's breaks
+
+extension FeedEntry {
+    /// Why the history stops being continuous here, in the phone's words
+    /// rather than the store's.
+    fileprivate var historyKind: TranscriptRow.Kind {
+        switch row["boundary"]?.stringValue {
+        case "missing": .historyBreak(label: "missing history")
+        case "version_changed": .historyBreak(label: "history format changed")
+        case "evicted": .historyBreak(label: "older history cleared")
+        case let other: .unreadable(label: other ?? "a break with no kind")
         }
     }
 }

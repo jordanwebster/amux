@@ -807,6 +807,10 @@
       {"literal": "\"amux.sh\"", "context": "case .web: \"amux.sh\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift": [
+      {"literal": "\"boundary\"", "context": "switch row[\"boundary\"]?.stringValue {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"missing\"", "context": "case \"missing\": .historyBreak(label: \"missing history\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"version_changed\"", "context": "case \"version_changed\": .historyBreak(label: \"history format changed\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"evicted\"", "context": "case \"evicted\": .historyBreak(label: \"older history cleared\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"kind\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 3},
       {"literal": "\"tool\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"entry\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1650,6 +1654,8 @@
       {"literal": "\"chevron.forward\"", "context": "case .command: \"chevron.forward\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift": [
+      {"literal": "\"history-break\"", "context": "FeedRule(kind: \"history-break\", glyph: \"scissors\", label: label)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"scissors\"", "context": "FeedRule(kind: \"history-break\", glyph: \"scissors\", label: label)", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"<amux-attachment\"", "context": "if text.contains(\"<amux-attachment\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"compaction\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.down.right.and.arrow.up.left\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1681,7 +1687,7 @@
       {"literal": "\"arrow.turn.down.left\"", "context": "outbound ? \"arrow.turn.up.right\" : \"arrow.turn.down.left\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"power\"", "context": "case .exit: \"power\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"questionmark.square.dashed\"", "context": "case .unreadable: \"questionmark.square.dashed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"circle\"", "context": "case .prompt, .prose, .turnEnd, .compaction: \"circle\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"circle\"", "context": "case .prompt, .prose, .turnEnd, .compaction, .historyBreak: \"circle\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"transcript.prompt\"", "context": ".identified(\"transcript.prompt\", label: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"transcript.prose\"", "context": ".identified(\"transcript.prose\", value: open ? \"open\" : \"final\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"transcript.code\"", "context": ".identified(\"transcript.code\", value: language ?? \"plain\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1905,6 +1911,8 @@
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"cached-chat-gap\"", "context": "Built(.run, \"cached-chat-gap\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-chat-gap\"", "context": "Fixture(id: \"cached-chat-gap\", screen: .run) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"home-offline\"", "context": "Built(.home, \"home-offline\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"home-offline\"", "context": "Fixture(id: \"home-offline\", screen: .home) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"dictation-listening\"", "context": "Built(.typing, \"dictation-listening\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
@@ -2843,8 +2851,11 @@
       {"literal": "\"remembered-stores\"", "context": ".appendingPathComponent(\"remembered-stores\", isDirectory: true)", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/RememberedStores.swift": [
+      {"literal": "\"after_gap\"", "context": "object[\"after_gap\"] = try rows(afterGap)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "#\"{\"type\":\"user\",\"uuid\":\"dddddddd-0000-4000-8000-000000000011\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:40:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"Did collapsing them into one timer fix it?\"},\"origin\":{\"kind\":\"human\"},\"promptSource\":\"typed\"}\"#", "context": "#\"{\"type\":\"user\",\"uuid\":\"dddddddd-0000-4000-8000-000000000011\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:40:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"Did collapsing them into one timer fix it?\"},\"origin\":{\"kind\":\"human\"},\"promptSource\":\"typed\"}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "#\"{\"type\":\"assistant\",\"uuid\":\"dddddddd-0000-4000-8000-000000000012\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:40:06.000Z\",\"message\":{\"id\":\"message-11\",\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Yes. A dropped link now waits once, and the reconnect test passes.\"}]}}\"#", "context": "#\"{\"type\":\"assistant\",\"uuid\":\"dddddddd-0000-4000-8000-000000000012\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:40:06.000Z\",\"message\":{\"id\":\"message-11\",\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Yes. A dropped link now waits once, and the reconnect test passes.\"}]}}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"door\"", "context": "public static let account = AccountId(\"door\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"chats\"", "context": "object[\"chats\"] = chats", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"chats\"", "context": "object[\"chats\"] = try rows(chats)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"docs-pass\"", "context": "remembered.removed = [Scenario.agentId(\"docs-pass\"), Scenario.agentId(\"ios-bridge\")]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"ios-bridge\"", "context": "remembered.removed = [Scenario.agentId(\"docs-pass\"), Scenario.agentId(\"ios-bridge\")]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "#\"{\"type\":\"amux.transcript_ready\"}\"#", "context": "#\"{\"type\":\"amux.transcript_ready\"}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},

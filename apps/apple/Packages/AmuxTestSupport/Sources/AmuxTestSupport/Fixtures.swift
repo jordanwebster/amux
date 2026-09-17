@@ -78,6 +78,7 @@ public enum Fixtures {
         Built(.home, "cached-fleet-unreachable"),
         Built(.home, "cached-fleet-removal"),
         Built(.run, "cached-chat"),
+        Built(.run, "cached-chat-gap"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
@@ -647,6 +648,11 @@ public enum Fixtures {
         // the window its store kept.
         Fixture(id: "cached-chat", screen: .run) { bundle in
             States.remembered(bundle, .chat, chat: Scenario.focus)
+        },
+        // The same conversation after a reconnect that could not recover what
+        // was said in between: a rule marks where its history is missing.
+        Fixture(id: "cached-chat-gap", screen: .run) { bundle in
+            States.remembered(bundle, .gap, chat: Scenario.focus)
         },
         // Nothing yet: one action, and no list pretending to be loading.
         Fixture(id: "home-empty", screen: .home) { bundle in
