@@ -1668,10 +1668,20 @@ impl Runtime {
 /// corruption is pending quarantine until a later open can take the exclusive
 /// lease.
 pub fn store_failure_message(path: &Path, error: DurableStoreError) -> String {
-    let quarantine = if error == DurableStoreError::Corrupt {
-        QuarantineOutcome::Pending
-    } else {
-        QuarantineOutcome::NotRequested
+    store_open_failure_message(path, error, false)
+}
+
+/// The diagnosis for an opening failure after the caller has made the one
+/// follow-up open that can finish a pending corruption quarantine.
+pub fn store_open_failure_message(
+    path: &Path,
+    error: DurableStoreError,
+    quarantine_completed: bool,
+) -> String {
+    let quarantine = match (error, quarantine_completed) {
+        (DurableStoreError::Corrupt, true) => QuarantineOutcome::Completed,
+        (DurableStoreError::Corrupt, false) => QuarantineOutcome::Pending,
+        _ => QuarantineOutcome::NotRequested,
     };
     format_store_failure(path, error, quarantine)
 }

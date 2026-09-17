@@ -65,6 +65,6 @@ pub use runtime::{
     HostInventory, LateResult, MAX_STREAM_BATCH, MsgTap, ProfileDirectory, ProfileEntry,
     ReportExtras, ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions,
     RuntimeRetentionReport, ShellEdge, execute_put, execute_put_then_send, store_failure_message,
-    write_panic_report,
+    store_open_failure_message, write_panic_report,
 };
 pub use store_worker::LOCAL_HOST_VIEW;

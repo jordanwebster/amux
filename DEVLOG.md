@@ -1,3 +1,10 @@
+2026-09-17 — **Phone cache launch completes corruption quarantine.** The
+launch-time cached-fleet read now retries a corrupt open once so an uncontended
+store is quarantined immediately and the next launch starts from an empty
+derived cache. An unresolved quarantine no longer hides otherwise readable
+fleet rows merely because the durable local-host marker is unavailable; the
+phone projects those rows with its local host unknown.
+
 2026-09-17 — **Persisted provider entry encodings are version-pinned.** Claude
 PTY entries now use entry version 2 after their body variants and stored tool
 and interruption content changed, so an older cache is selectively discarded

@@ -60,10 +60,11 @@ pub async fn cached_fleet(store: &Store) -> Result<Event, StoreError> {
         .ok_or(StoreError::Corrupt)?;
     let fleet = store.fleet(generations).await?;
     let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
-    let local = store
-        .view_get(kind, key)
-        .await?
-        .and_then(|value| value.parse().ok());
+    let local = match store.view_get(kind, key).await {
+        Ok(value) => value.and_then(|value| value.parse().ok()),
+        Err(StoreError::RecoveryRequired) => None,
+        Err(error) => return Err(error),
+    };
     Ok(remembered(fleet, generations, local))
 }
 
@@ -101,14 +102,40 @@ pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Result<Event,
         }
         Err(error) => return Err(open_failure_message(&path, &error)),
     }
-    let store = Store::open(&path)
-        .await
-        .map_err(|error| ui_runtime::store_failure_message(&path, error))?;
-    let fleet = cached_fleet(&store)
-        .await
-        .map_err(|error| ui_runtime::store_failure_message(&path, error));
+    let store = match Store::open(&path).await {
+        Ok(store) => store,
+        Err(error) => {
+            let quarantined = complete_corruption_quarantine(&path, error).await;
+            return Err(ui_runtime::store_open_failure_message(
+                &path,
+                error,
+                quarantined,
+            ));
+        }
+    };
+    let fleet = cached_fleet(&store).await;
     store.close().await;
-    fleet
+    match fleet {
+        Ok(fleet) => Ok(fleet),
+        Err(error) => Err(ui_runtime::store_open_failure_message(
+            &path,
+            error,
+            complete_corruption_quarantine(&path, error).await,
+        )),
+    }
+}
+
+async fn complete_corruption_quarantine(path: &Path, error: StoreError) -> bool {
+    if error != StoreError::Corrupt {
+        return false;
+    }
+    match Store::open(path).await {
+        Ok(store) => {
+            store.close().await;
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn open_failure_message(path: &Path, error: &std::io::Error) -> String {
@@ -359,10 +386,57 @@ mod tests {
         std::fs::write(&corrupt, b"not a database").unwrap();
         let failure = read_cached_fleet(root.path(), "corrupt").await.unwrap_err();
         assert!(failure.contains("it is corrupt"), "{failure}");
+        assert!(failure.contains("has been quarantined"), "{failure}");
         assert!(
-            failure.contains("close that process and relaunch"),
+            failure.contains("nothing the daemon still retains is lost"),
             "{failure}"
         );
+        let empty = read_cached_fleet(root.path(), "corrupt").await.unwrap();
+        assert!(cards(&empty).is_empty());
+        assert!(hosts(&empty).is_empty());
+    }
+
+    #[tokio::test]
+    async fn unresolved_quarantine_keeps_the_remembered_fleet_with_unknown_local_host() {
+        let root = tempfile::tempdir().unwrap();
+        let path = store_path(root.path(), "owner");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"not a database").unwrap();
+        let failure = read_cached_fleet(root.path(), "owner").await.unwrap_err();
+        assert!(failure.contains("has been quarantined"), "{failure}");
+
+        let store = Store::open(&path).await.unwrap();
+        let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
+        assert_eq!(
+            store.view_get(kind, key).await,
+            Err(StoreError::RecoveryRequired)
+        );
+        let generations = store.generations().for_provider("codex").unwrap();
+        store
+            .apply_fleet(
+                generations,
+                FleetDelta::Host {
+                    host: host(1, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .apply_fleet(
+                generations,
+                FleetDelta::AgentUp {
+                    agent: agent(11, 1, 1),
+                    revision: 1,
+                },
+            )
+            .await
+            .unwrap();
+        store.close().await;
+
+        let fleet = read_cached_fleet(root.path(), "owner").await.unwrap();
+        assert_eq!(cards(&fleet), [(11, true)]);
+        assert_eq!(hosts(&fleet), [1]);
     }
 
     #[tokio::test]
