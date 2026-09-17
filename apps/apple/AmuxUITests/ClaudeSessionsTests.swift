@@ -45,7 +45,7 @@ final class ClaudeSessionsTests: JourneyCase {
         record["createdConversation"] = try reading(runner, createdID, layer: "claude_sdk")
 
         backToAgents(app)
-        openFromAgents(app, runner.agent, "the existing SDK agent did not open")
+        openFromAgents(runner, app, runner.agent, "the existing SDK agent did not open")
         waitFor(app, "composer", "the existing SDK agent has no composer")
         try prompt(app, runner, agent: runner.agent, text: "Existing SDK prompt", reply: "The SDK session received your prompt.")
         record["sdkConversation"] = try reading(runner, runner.agent, layer: "claude_sdk")
@@ -61,7 +61,7 @@ final class ClaudeSessionsTests: JourneyCase {
         record["sdkModel"] = said(try declared(runner), "composer.model")?.value ?? ""
 
         backToAgents(app)
-        openFromAgents(app, pty, "the existing PTY agent did not open")
+        openFromAgents(runner, app, pty, "the existing PTY agent did not open")
         waitFor(app, "composer", "the existing PTY agent has no composer")
         try prompt(app, runner, agent: pty, text: "Existing PTY prompt", reply: "The PTY session received your prompt.")
         record["ptyConversation"] = try reading(runner, pty, layer: "claude_pty")

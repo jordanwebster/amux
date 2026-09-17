@@ -68,7 +68,7 @@ final class AskTests: JourneyCase {
         // do with any answer. The draft belongs to the conversation's store,
         // so coming back to it finds what was being written.
         backToAgents(app)
-        openFromAgents(app, runner.agent, "coming back did not reopen this agent")
+        openFromAgents(runner, app, runner.agent, "coming back did not reopen this agent")
         XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
                        "what was being written did not survive leaving the conversation")
 
@@ -343,7 +343,7 @@ final class AskTests: JourneyCase {
         pressTab(app, "Hosts")
         waitFor(app, "hosts", "leaving the conversation did not reach Hosts")
         pressTab(app, "Agents")
-        openFromAgents(app, runner.agent, "coming back from Hosts did not reopen the agent")
+        openFromAgents(runner, app, runner.agent, "coming back from Hosts did not reopen the agent")
         waitFor(app, "conversation.changes",
                 "coming back to a finished turn lost the way to review its changes")
         press(app, "conversation.changes")

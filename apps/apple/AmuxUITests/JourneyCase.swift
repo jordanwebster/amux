@@ -514,13 +514,20 @@ class JourneyCase: XCTestCase {
     }
 
     /// Opens one agent's conversation from the Agents list and waits until it
-    /// is that agent's conversation on show.
-    func openFromAgents(_ app: XCUIApplication, _ agent: String, _ complaint: String) {
+    /// is that agent's conversation on show, as the screen tells the door.
+    func openFromAgents(
+        _ runner: Runner, _ app: XCUIApplication, _ agent: String, _ complaint: String
+    ) {
         waitFor(app, "home.row.\(agent)", "\(complaint): the Agents list does not hold \(agent)")
         press(app, "home.row.\(agent)")
+        var showing = ""
         XCTAssertTrue(
-            waitUntil { self.value(app, "conversation") == agent },
-            "\(complaint); the conversation on show is \(value(app, "conversation") ?? "none")")
+            waitUntil {
+                showing = self.said((try? self.declared(runner, settling: false)) ?? [],
+                                    "conversation")?.value ?? ""
+                return showing == agent
+            },
+            "\(complaint); the conversation on show is \(showing.isEmpty ? "none" : showing)")
     }
 
     func pressTab(_ app: XCUIApplication, _ title: String) {

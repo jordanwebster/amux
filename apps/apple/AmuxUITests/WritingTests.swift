@@ -324,7 +324,7 @@ final class WritingTests: JourneyCase {
 
         // MARK: The Codex agent, which offers what a terminal session cannot.
         backToAgents(app)
-        openFromAgents(app, codex, "the Agents list did not open the other agent's conversation")
+        openFromAgents(runner, app, codex, "the Agents list did not open the other agent's conversation")
         waitFor(app, "composer", "the Codex conversation offered nowhere to write")
 
         // MARK: A command, raised by a slash and sent as a token.

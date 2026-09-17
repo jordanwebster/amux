@@ -316,9 +316,9 @@ final class ConversationTests: XCTestCase {
         // draft belongs to the conversation and not to the field it was typed
         // into.
         backToAgents(app)
-        chooseConversation(app, runner.ended, "leaving did not reach the other conversation")
+        chooseConversation(runner, app, runner.ended, "leaving did not reach the other conversation")
         backToAgents(app)
-        chooseConversation(app, runner.agent, "coming back did not lead to the conversation")
+        chooseConversation(runner, app, runner.agent, "coming back did not lead to the conversation")
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
                       "the half-written message did not survive leaving the conversation; the "
                       + "field says \(value(app, "composer.field") ?? "nothing")")
@@ -355,7 +355,7 @@ final class ConversationTests: XCTestCase {
         // Opened first and ended while it is open, which is how somebody would
         // see a run end: they are reading it when it stops.
         chooseConversation(
-            app, runner.ended, "opening the second agent did not lead to a conversation")
+            runner, app, runner.ended, "opening the second agent did not lead to a conversation")
         try control.ask(["AgentExit": ["agent": "ran-its-course", "code": 7]])
         let ended = app.staticTexts["Exited · code 7"]
         XCTAssertTrue(ended.waitForExistence(timeout: waiting),
@@ -376,7 +376,7 @@ final class ConversationTests: XCTestCase {
         // already said the only thing it has to say.
         backToAgents(app)
         chooseConversation(
-            app, runner.agent, "reopening the running agent did not lead to its conversation")
+            runner, app, runner.agent, "reopening the running agent did not lead to its conversation")
         // The turn's changes remain available from the compact header chip;
         // the composer itself stays available until the machine goes away.
         // What is on screen before the machine goes, to compare against what
@@ -1159,14 +1159,32 @@ final class ConversationTests: XCTestCase {
 
     /// Opens a conversation from the Agents list and waits until the push has
     /// landed on that agent.
+    ///
+    /// Whose conversation it is is asked of the door: a name a screen declares
+    /// reaches XCUITest as an identifier alone, and its value only through
+    /// the app's own door.
     private func chooseConversation(
-        _ app: XCUIApplication, _ agent: String, _ complaint: String
+        _ runner: Runner, _ app: XCUIApplication, _ agent: String, _ complaint: String
     ) {
         press(app, "home.row.\(agent)")
+        var showing = ""
         XCTAssertTrue(
-            waitUntil { self.value(app, "conversation") == agent },
-            "\(complaint); the conversation on show is \(value(app, "conversation") ?? "none")")
+            waitUntil {
+                showing = (try? self.conversationOnShow(runner)) ?? ""
+                return showing == agent
+            },
+            "\(complaint); the conversation on show is \(showing.isEmpty ? "none" : showing)")
         settleNavigation()
+    }
+
+    /// The agent the conversation on screen says it is, from the door.
+    private func conversationOnShow(_ runner: Runner) throws -> String {
+        let answer = try door(runner, .init(kind: "query"))
+        let elements = (answer["state"] as? [String: Any])?["elements"] as? [[String: Any]] ?? []
+        return elements.lazy
+            .filter { $0["identifier"] as? String == "conversation" }
+            .compactMap { $0["value"] as? String }
+            .first { !$0.isEmpty } ?? ""
     }
 
     private func settleNavigation() {
