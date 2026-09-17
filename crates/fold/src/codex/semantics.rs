@@ -1447,6 +1447,92 @@ mod tests {
             .collect()
     }
 
+    fn body_variant_name(body: &CodexBody) -> &'static str {
+        match body {
+            CodexBody::None => "none",
+            CodexBody::Item { .. } => "item",
+            CodexBody::Steer { .. } => "steer",
+            CodexBody::Turn { .. } => "turn",
+            CodexBody::Snapshot { .. } => "snapshot",
+            CodexBody::AgentMessage { .. } => "agent_message",
+            CodexBody::Boundary { .. } => "boundary",
+            CodexBody::Error { .. } => "error",
+            CodexBody::Unrecognized { .. } => "unrecognized",
+        }
+    }
+
+    fn entry_encoding(body: CodexBody) -> String {
+        let entry = CodexEntry::from_partial(&CodexPartial {
+            body: Patch::set(body, Revision::row(7)),
+            ..CodexPartial::default()
+        })
+        .unwrap();
+        postcard::to_allocvec(&entry)
+            .unwrap()
+            .into_iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn codex_entry_version_pins_every_body_variant_encoding() {
+        const ENCODING_ENTRY_VERSION: u32 = 3;
+        assert_eq!(CodexFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
+
+        let bodies = [
+            CodexBody::None,
+            CodexBody::Item {
+                item_id: "i".into(),
+                item_type: "commandExecution".into(),
+            },
+            CodexBody::Steer {
+                input_id: "s".into(),
+            },
+            CodexBody::Turn {
+                turn_id: "t".into(),
+                status: "done".into(),
+                token_usage: None,
+            },
+            CodexBody::Snapshot {
+                turn_id: Some("t".into()),
+                kind: "plan".into(),
+            },
+            CodexBody::AgentMessage {
+                id: Some("e".into()),
+                context: Some("c".into()),
+                from: "worker".into(),
+                kind: AgentMessageKind::Message,
+                delivery: Some("socket".into()),
+            },
+            CodexBody::Boundary { kind: "gap".into() },
+            CodexBody::Error {
+                severity: "error".into(),
+                will_retry: true,
+            },
+            CodexBody::Unrecognized {
+                method: "future".into(),
+            },
+        ];
+        let actual = bodies
+            .into_iter()
+            .map(|body| format!("{}={}", body_variant_name(&body), entry_encoding(body)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            actual,
+            r#"none=0000010700000100000000000000000000000000000000
+item=0000010700000101016910636f6d6d616e64457865637574696f6e000000000000000000000000000000
+steer=00000107000001020173000000000000000000000000000000
+turn=0000010700000103017404646f6e6500000000000000000000000000000000
+snapshot=000001070000010401017404706c616e000000000000000000000000000000
+agent_message=000001070000010501016501016306776f726b6572000106736f636b6574000000000000000000000000000000
+boundary=000001070000010603676170000000000000000000000000000000
+error=0000010700000107056572726f7201000000000000000000000000000000
+unrecognized=000001070000010806667574757265000000000000000000000000000000"#
+        );
+    }
+
     fn fold_pty_delivery_variants(input: &[Vec<u8>], observed: &mut BTreeSet<&'static str>) {
         let mut fold = ClaudeFold::default();
         fold.begin(1, Baseline::Start);

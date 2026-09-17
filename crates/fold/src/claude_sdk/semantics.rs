@@ -2466,6 +2466,111 @@ mod tests {
         (fold, oracle)
     }
 
+    fn body_variant_name(body: &ClaudeSdkBody) -> &'static str {
+        match body {
+            ClaudeSdkBody::None => "none",
+            ClaudeSdkBody::Prompt { .. } => "prompt",
+            ClaudeSdkBody::Thinking { .. } => "thinking",
+            ClaudeSdkBody::Tool { .. } => "tool",
+            ClaudeSdkBody::Task { .. } => "task",
+            ClaudeSdkBody::Turn { .. } => "turn",
+            ClaudeSdkBody::Compaction { .. } => "compaction",
+            ClaudeSdkBody::AgentMessage { .. } => "agent_message",
+            ClaudeSdkBody::Status { .. } => "status",
+            ClaudeSdkBody::Boundary { .. } => "boundary",
+            ClaudeSdkBody::ApiError => "api_error",
+            ClaudeSdkBody::Unrecognized { .. } => "unrecognized",
+        }
+    }
+
+    fn entry_encoding(body: ClaudeSdkBody) -> String {
+        let entry = ClaudeSdkEntry::from_partial(&ClaudeSdkPartial {
+            body: Patch::set(body, Revision::row(7)),
+            ..ClaudeSdkPartial::default()
+        })
+        .unwrap();
+        postcard::to_allocvec(&entry)
+            .unwrap()
+            .into_iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn claude_sdk_entry_version_pins_every_body_variant_encoding() {
+        const ENCODING_ENTRY_VERSION: u32 = 2;
+        assert_eq!(ClaudeSdkFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
+
+        let bodies = [
+            ClaudeSdkBody::None,
+            ClaudeSdkBody::Prompt {
+                uuid: Some("u".into()),
+                image_count: 2,
+                synthetic: true,
+                replay: false,
+            },
+            ClaudeSdkBody::Thinking { redacted: true },
+            ClaudeSdkBody::Tool {
+                tool_use_id: "t".into(),
+                parent_tool_use_id: Some("p".into()),
+            },
+            ClaudeSdkBody::Task {
+                task_id: "task".into(),
+            },
+            ClaudeSdkBody::Turn {
+                uuid: Some("u".into()),
+                outcome: "done".into(),
+                is_error: true,
+                stop_reason: Some("stop".into()),
+            },
+            ClaudeSdkBody::Compaction {
+                trigger: Some("auto".into()),
+                pre_tokens: Some(3),
+                post_tokens: Some(2),
+            },
+            ClaudeSdkBody::AgentMessage {
+                id: Some("e".into()),
+                context: Some("c".into()),
+                from: "worker".into(),
+                kind: AgentMessageKind::Message,
+                delivery: Some("socket".into()),
+            },
+            ClaudeSdkBody::Status {
+                status: "working".into(),
+            },
+            ClaudeSdkBody::Boundary {
+                boundary: "gap".into(),
+                session_id: Some("s".into()),
+            },
+            ClaudeSdkBody::ApiError,
+            ClaudeSdkBody::Unrecognized {
+                row_type: "future".into(),
+                detail: "shape".into(),
+            },
+        ];
+        let actual = bodies
+            .into_iter()
+            .map(|body| format!("{}={}", body_variant_name(&body), entry_encoding(body)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            actual,
+            r#"none=00000107000001000000000000000000000000000000000000000000000000000000000000000000000000
+prompt=00000107000001010101750201000000000000000000000000000000000000000000000000000000000000000000000000
+thinking=0000010700000102010000000000000000000000000000000000000000000000000000000000000000000000
+tool=000001070000010301740101700000000000000000000000000000000000000000000000000000000000000000000000
+task=0000010700000104047461736b0000000000000000000000000000000000000000000000000000000000000000000000
+turn=000001070000010501017504646f6e6501010473746f700000000000000000000000000000000000000000000000000000000000000000000000
+compaction=000001070000010601046175746f010301020000000000000000000000000000000000000000000000000000000000000000000000
+agent_message=000001070000010701016501016306776f726b6572000106736f636b65740000000000000000000000000000000000000000000000000000000000000000000000
+status=000001070000010807776f726b696e670000000000000000000000000000000000000000000000000000000000000000000000
+boundary=0000010700000109036761700101730000000000000000000000000000000000000000000000000000000000000000000000
+api_error=000001070000010a0000000000000000000000000000000000000000000000000000000000000000000000
+unrecognized=000001070000010b066675747572650573686170650000000000000000000000000000000000000000000000000000000000000000000000"#
+        );
+    }
+
     fn keys(oracle: &MutationOracle<ClaudeSdkEntry>) -> Vec<String> {
         oracle
             .entries()

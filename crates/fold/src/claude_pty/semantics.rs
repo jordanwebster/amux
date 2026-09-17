@@ -1276,7 +1276,7 @@ impl ProviderFold for ClaudeFold {
     type Entry = ClaudeEntry;
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudePtyTranscript;
-    const ENTRY_VERSION: u32 = 1;
+    const ENTRY_VERSION: u32 = 2;
     const TIP_VERSION: u32 = 4;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
@@ -1971,6 +1971,96 @@ mod tests {
             apply_row(&mut fold, &mut oracle, index as u64 + 1, payload);
         }
         (fold, oracle)
+    }
+
+    fn body_variant_name(body: &ClaudeBody) -> &'static str {
+        match body {
+            ClaudeBody::None => "none",
+            ClaudeBody::Prompt { .. } => "prompt",
+            ClaudeBody::Thinking { .. } => "thinking",
+            ClaudeBody::Turn { .. } => "turn",
+            ClaudeBody::Compaction { .. } => "compaction",
+            ClaudeBody::Tool { .. } => "tool",
+            ClaudeBody::AgentMessage { .. } => "agent_message",
+            ClaudeBody::ApiError { .. } => "api_error",
+            ClaudeBody::Unrecognized { .. } => "unrecognized",
+        }
+    }
+
+    fn entry_encoding(body: ClaudeBody) -> String {
+        let entry = ClaudeEntry::from_partial(&ClaudePartial {
+            body: Patch::set(body, Revision::row(7)),
+            ..ClaudePartial::default()
+        })
+        .unwrap();
+        postcard::to_allocvec(&entry)
+            .unwrap()
+            .into_iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn claude_pty_entry_version_pins_every_body_variant_encoding() {
+        const ENCODING_ENTRY_VERSION: u32 = 2;
+        assert_eq!(ClaudeFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
+
+        let bodies = [
+            ClaudeBody::None,
+            ClaudeBody::Prompt {
+                source: "human".into(),
+                prompt_id: Some("p".into()),
+            },
+            ClaudeBody::Thinking {
+                duration_ms: Some(7),
+                redacted: true,
+            },
+            ClaudeBody::Turn {
+                duration_ms: 9,
+                inferred: true,
+                message_count: Some(2),
+                pending_background_agents: Some(1),
+            },
+            ClaudeBody::Compaction {
+                trigger: Some("auto".into()),
+                pre_tokens: Some(3),
+                post_tokens: Some(2),
+            },
+            ClaudeBody::Tool {
+                tool_use_id: "t".into(),
+            },
+            ClaudeBody::AgentMessage {
+                id: Some("e".into()),
+                context: Some("c".into()),
+                from: "worker".into(),
+                kind: AgentMessageKind::Message,
+            },
+            ClaudeBody::ApiError {
+                error: Some("boom".into()),
+            },
+            ClaudeBody::Unrecognized {
+                row_type: Some("future".into()),
+                detail: Some("shape".into()),
+            },
+        ];
+        let actual = bodies
+            .into_iter()
+            .map(|body| format!("{}={}", body_variant_name(&body), entry_encoding(body)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            actual,
+            r#"none=000001070000010000000000000000000000000000000000000000
+prompt=00000107000001010568756d616e01017000000000000000000000000000000000000000
+thinking=0000010700000102010e0100000000000000000000000000000000000000
+turn=000001070000010312010102010100000000000000000000000000000000000000
+compaction=000001070000010401046175746f0103010200000000000000000000000000000000000000
+tool=0000010700000105017400000000000000000000000000000000000000
+agent_message=000001070000010601016501016306776f726b65720000000000000000000000000000000000000000
+api_error=00000107000001070104626f6f6d00000000000000000000000000000000000000
+unrecognized=000001070000010801066675747572650105736861706500000000000000000000000000000000000000"#
+        );
     }
 
     #[test]

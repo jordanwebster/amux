@@ -1,3 +1,10 @@
+2026-09-17 — **Persisted provider entry encodings are version-pinned.** Claude
+PTY entries now use entry version 2 after their body variants and stored tool
+and interruption content changed, so an older cache is selectively discarded
+instead of being decoded under the new shape. Each provider fold now snapshots
+one postcard entry for every body variant beside the entry version, making a
+future shape change require an explicit version decision.
+
 2026-09-17 — **The store window is the only retained conversation.** Claude
 PTY, Claude SDK, and Codex provider layers no longer retain presentation rows;
 they keep only running state such as attention, session facts, obligations,
