@@ -354,20 +354,26 @@ struct TranscriptContainer<Content: View>: View {
                 withAnimation(animation) { position.scrollTo(edge: .bottom) }
             }
         }
-        // A chat shorter than the page rests at its top, and the bottom anchor
-        // for size changes keeps a feed on its tail only once it is on it. So
-        // the moment a growing chat first runs past the page is followed here:
-        // a reader who has not taken the feed anywhere is taken to its tail,
-        // where the anchor keeps them from then on. Only whether the feed
-        // overflows is watched, which changes once rather than with every row.
-        .onScrollGeometryChange(for: Bool.self) { geometry in
+        // A chat shorter than the page rests at its top, and with that
+        // alignment the bottom anchor for size changes does not carry a
+        // growing feed along with its tail: rows arriving, or the open row
+        // growing in place, leave the reader where they were. So growth is
+        // followed here instead. Only the content's height is read, and a
+        // follow is asked for only when the tail has gone out of sight, the
+        // reader has not taken the feed anywhere, and no follow is already on
+        // its way — so a stream costs one comparison per layout and one scroll
+        // per frame at most.
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
             page.tailHidden = geometry.contentOffset.y + geometry.containerSize.height
                 - geometry.contentInsets.bottom < geometry.contentSize.height - 0.5
-            return geometry.contentSize.height + geometry.contentInsets.top
-                + geometry.contentInsets.bottom > geometry.containerSize.height + 0.5
-        } action: { _, overflows in
-            guard overflows, page.tailHidden, resting == nil, !readerMoved else { return }
-            Task { @MainActor in position.scrollTo(edge: .bottom) }
+            return geometry.contentSize.height.rounded()
+        } action: { _, _ in
+            guard page.tailHidden, resting == nil, !readerMoved, !page.following else { return }
+            page.following = true
+            Task { @MainActor in
+                page.following = false
+                position.scrollTo(edge: .bottom)
+            }
         }
         .scrollPosition($position))
         .onChange(of: tail, initial: true) { _, tail in
@@ -498,6 +504,10 @@ private final class TranscriptPage {
 
     /// How many of those have been spent.
     var tailScrolls = 0
+
+    /// Whether a scroll to the tail for growth has been asked for and not yet
+    /// made, so a stream asks for at most one at a time.
+    var following = false
 
     /// Whether the feed's last row is under the space reserved beneath it, as
     /// of the latest geometry. A feed whose tail is still in view is not sent

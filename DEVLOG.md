@@ -24,7 +24,9 @@ under the clock and the pill. The chrome's height is now given back to the
 scroll content as a top margin, so the first row rests just below the pill and
 content still slides under the glass when scrolled. A chat shorter than the
 screen now starts at the top under the header instead of sitting at the bottom
-by the composer; longer chats still open at their tail and follow new rows.
+by the composer; longer chats still open at their tail. Because the bottom
+scroll anchor no longer carries a top-aligned feed as it grows, growth is now
+followed explicitly while the reader has not scrolled away.
 
 2026-09-17 — **The composer grows as one piece, and a sent message is a row.**
 When a turn started or ended, the working line animated inside the composer
