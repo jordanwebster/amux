@@ -97,10 +97,7 @@ pub(crate) fn open_database(
 
     configure(&connection, new_file)?;
     let library = qualify_library(&connection)?;
-    let generations = match initialize_once(&mut connection, pending_quarantines) {
-        Err(StoreError::Busy) => initialize_once(&mut connection, pending_quarantines)?,
-        result => result?,
-    };
+    let generations = initialize_once(&mut connection, pending_quarantines)?;
     set_synchronous(&connection, "NORMAL")?;
     connection
         .progress_handler(0, None::<fn() -> bool>)

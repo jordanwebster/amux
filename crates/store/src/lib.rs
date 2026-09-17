@@ -533,7 +533,10 @@ fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), St
     } else {
         Vec::new()
     };
-    let opened = db::open_database(path, &pending)?;
+    let opened = match db::open_database(path, &pending) {
+        Err(StoreError::Busy) => db::open_database(path, &pending)?,
+        result => result?,
+    };
     if exclusive {
         quarantine::finish_pending(&pending)?;
         lock_file.unlock().map_err(map_io)?;

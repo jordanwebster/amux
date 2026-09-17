@@ -1,3 +1,11 @@
+2026-09-17 — **A busy store open retries the complete SQLite operation.** Two
+clients creating the same store can contend while setting the new-file pragmas,
+before the schema transaction begins. The one permitted `Busy` retry now
+reopens and reconfigures SQLite from the start instead of retrying only the
+later initialization transaction, so concurrent first openers converge while
+an exclusive sidecar lease still returns `Busy` after its single five-second
+wait.
+
 2026-09-17 — **The phone C-boundary test follows automatic quarantine.** A
 corrupt remembered-fleet store is now asserted to report that it was
 quarantined and that daemon-retained rows can be recovered, then a second
