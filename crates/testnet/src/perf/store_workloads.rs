@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
@@ -184,14 +184,41 @@ fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
         .master
         .try_clone_reader()
         .context("clone cold-start pseudo-terminal reader")?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .context("open cold-start pseudo-terminal writer")?;
     let (sender, receiver) = mpsc::channel();
     let reader_thread = std::thread::spawn(move || {
         let mut buffer = [0_u8; 4_096];
+        let mut terminal_query = Vec::new();
+        let mut answered_attributes = false;
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
-                Ok(length) if sender.send(buffer[..length].to_vec()).is_err() => break,
-                Ok(_) => {}
+                Ok(length) => {
+                    terminal_query.extend_from_slice(&buffer[..length]);
+                    if !answered_attributes
+                        && terminal_query
+                            .windows(b"\x1b[?u\x1b[c".len())
+                            .any(|window| window == b"\x1b[?u\x1b[c")
+                    {
+                        // A pseudo-terminal is only the transport half of a terminal.
+                        // Answer the release client's capability probe as the generic
+                        // xterm named below would, otherwise crossterm waits its full
+                        // two-second missing-emulator timeout before the first frame.
+                        if writer.write_all(b"\x1b[?1;2c").is_err() || writer.flush().is_err() {
+                            break;
+                        }
+                        answered_attributes = true;
+                    }
+                    if terminal_query.len() > 64 {
+                        terminal_query.drain(..terminal_query.len() - 64);
+                    }
+                    if sender.send(buffer[..length].to_vec()).is_err() {
+                        break;
+                    }
+                }
             }
         }
     });

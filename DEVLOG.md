@@ -3,8 +3,12 @@ The 40- and 200-agent rows exec the release `amux` binary under a pseudo-termina
 point it at an offline fixture profile with more than 10 MiB stored, and stop at
 the first seeded fleet row written to the terminal. The performance-only direct
 profile route bypasses daemon auto-start without changing production launches;
-the former in-process render stand-in is gone. Both rows enforce a median below
-100 ms and a worst sample below 200 ms.
+the former in-process render stand-in is gone. The harness answers the generic
+xterm device-attributes probe because a pseudo-terminal supplies transport but
+no terminal emulator; without that answer, crossterm's synthetic two-second
+probe timeout dominated every launch. A cold-only diagnostic measured 12.0 ms
+and 13.8 ms medians with 17.0 ms and 16.3 ms worst samples. Both rows enforce a
+median below 100 ms and a worst sample below 200 ms.
 
 2026-09-17 — **Scroll-back qualification walks the client window.** The
 50,000-entry workload now opens through the offline UI runtime, executes every
