@@ -138,9 +138,11 @@ SQLite commit and maintenance work, summarizer cost, and reconnect wire size.
 The report names the enrolled hardware and OS, profile and features, workload
 seed, identity-growth mode, warm-up, sample count, timestamps, statistic,
 budget, committed baseline and drift. It fails on an absolute budget miss, on
-time drift above 15%, or on memory drift above 10%. On a Mac with a simulator
-already booted, the same invocation also runs `just ios perf`; a failure there
-fails the combined recipe.
+time drift above 15%, or on memory drift above 10%. On a Mac with Xcode, the
+same invocation also runs `just ios perf` under its own simulator lease; that
+recipe prepares the pinned simulator, and a failure there fails the combined
+recipe. A desktop build or measurement failure stops the recipe before the
+phone suite starts.
 
 ```sh
 just perf

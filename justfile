@@ -163,7 +163,8 @@ warm: build test-build
 ci: check lint fmt-check codegen-check dependency-policy test doctest release-check e2e embedded-check embedded-test mobile-check
 
 # Qualify desktop performance on an enrolled machine and include the phone
-# suite whenever a simulator is already booted. Pass --baseline to record the
-# current release medians after every absolute budget passes.
+# suite whenever Xcode is available. The phone recipe takes its own simulator
+# lease and prepares the pinned device. Pass --baseline to record the current
+# release medians after every absolute budget passes.
 perf *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p testnet --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != soak ] && command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices booted 2>/dev/null | grep -q '(Booted)'; then {{bounded}} 3600 just ios perf; fi
+    set -e; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p testnet --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != soak ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf; fi

@@ -1,3 +1,9 @@
+2026-09-17 — **Performance qualification fails closed across platforms.**
+The combined recipe now stops on a release-build or desktop-measurement
+failure, and a phone failure remains the recipe's failure. On Macs with Xcode,
+the phone suite takes its own lease and prepares the pinned simulator instead
+of depending on some simulator already being booted.
+
 2026-09-17 — **Mobile profile tests wait for the boundary they prove.**
 The account-switch test waits for its injected inventory result instead of an
 unrelated retired store command, while the off-screen attention test observes
