@@ -1,3 +1,12 @@
+2026-09-17 — **The top of a chat rests below the header.** The transcript
+ignores the top safe area so its soft edge fades behind the status bar, which
+also removed the scroll view's top inset: scrolled fully up, the first row sat
+under the clock and the pill. The chrome's height is now given back to the
+scroll content as a top margin, so the first row rests just below the pill and
+content still slides under the glass when scrolled. A chat shorter than the
+screen now starts at the top under the header instead of sitting at the bottom
+by the composer; longer chats still open at their tail and follow new rows.
+
 2026-09-17 — **The composer grows as one piece, and a sent message is a row.**
 When a turn started or ended, the working line animated inside the composer
 while the panel behind it, the task strip above it and the space the feed keeps

@@ -237,9 +237,11 @@ extension EnvironmentValues {
 /// A conversation opens at its latest row and follows the tail while a turn
 /// streams, which is what a chat does: what just happened is what you are
 /// looking at, and a row arriving while you read the tail brings you with it.
-/// The latest row stays beside the composer, including when the whole transcript
-/// is shorter than the viewport. Longer transcripts still open at their tail and
-/// follow it while a turn streams.
+/// A transcript shorter than the viewport starts at the top, just under the
+/// chrome, and grows down towards the composer: a first message reads as the
+/// start of a page rather than as something dropped at the bottom of an empty
+/// one. Longer transcripts still open at their tail and follow it while a turn
+/// streams.
 ///
 /// Markdown and lazy rows acquire their heights after the scroll view first
 /// lays out. The composer can also change the viewport as its measured height
@@ -298,8 +300,7 @@ struct TranscriptContainer<Content: View>: View {
             content
             // Every terminal row owns its trailing feed gap, just as the
             // source transcript does. Adding another gap at the container
-            // would shift a short, bottom-anchored conversation upward and
-            // leave an empty band above the composer.
+            // would leave an empty band above the composer at the tail.
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Named on the page rather than on the feed inside it, so a row
@@ -314,7 +315,10 @@ struct TranscriptContainer<Content: View>: View {
         // below them is not a reason to be taken to the bottom of the feed.
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .initialOffset)
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
-        .defaultScrollAnchor(.bottom, for: .alignment)
+        // Content shorter than the page sits at its top. Only where short
+        // content rests; opening at the tail and following it are the two
+        // anchors above.
+        .defaultScrollAnchor(.top, for: .alignment)
         // The one place the bottom anchor cannot reach on its own. The space
         // the composer and the strip reserve under the feed arrives as a
         // bottom inset, which the scroll view does not count as a change of

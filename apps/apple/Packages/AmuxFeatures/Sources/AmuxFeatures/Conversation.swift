@@ -268,6 +268,11 @@ public struct Conversation: View {
     /// feed to its foot, and a composer growing on a curve has the feed's tail
     /// follow it on the same curve.
     @State private var follow = TranscriptFollow()
+    /// Where the floating chrome ends and where the feed begins, both on the
+    /// display. The feed runs up behind the chrome, so the difference is how
+    /// far down its first row has to rest to be read.
+    @State private var chromeBottom: CGFloat = 0
+    @State private var feedTop: CGFloat = 0
 
     public init(
         model: ConversationStore,
@@ -361,6 +366,12 @@ public struct Conversation: View {
         ConversationTranscript(
             model: model, subject: subject, resting: resting, reading: reading,
             follow: follow)
+        // Ignoring the top safe area below also takes away the scroll view's
+        // own inset for it, which left the first row of a transcript scrolled
+        // to its top under the clock and the pill. The space is given back to
+        // the content instead: it rests just below the chrome and still
+        // travels under the glass as it scrolls.
+        .contentMargins(.top, max(0, chromeBottom - feedTop), for: .scrollContent)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
@@ -369,6 +380,9 @@ public struct Conversation: View {
         // its soft edge effect fade continuously behind the status region
         // instead of starting at the chrome's lower boundary.
         .ignoresSafeArea(edges: .top)
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: {
+            feedTop = $0
+        }
         .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
@@ -486,6 +500,9 @@ public struct Conversation: View {
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
+            chromeBottom = $0
+        }
     }
 
     /// The agent, its machine and its directory, on one floating surface with
