@@ -41,8 +41,15 @@ struct ComposerBox: View {
                 // Grown into and settled out of, rather than appearing and
                 // vanishing: the box getting taller *is* the turn starting,
                 // and a jump there is the composer moving under a thumb that
-                // is about to write in it.
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                // is about to write in it. The line fades where it stands
+                // while the box's top edge rises over it. Sliding it up out of
+                // the field drew it across the words being written.
+                //
+                // The curve is not set here. Whether a turn is running changes
+                // in an animated transaction of the conversation's, which is
+                // the one thing that also reaches the panel behind this, the
+                // strip above it and the space the feed keeps clear.
+                .transition(.opacity)
             }
             field
                 .padding(.horizontal, 14)
@@ -73,7 +80,10 @@ struct ComposerBox: View {
                 .padding(.bottom, 9)
                 .padding(.top, 3)
         }
-        .moving(value: state.activity != nil)
+        // While the box changes height, what it holds is cut to the box's
+        // own shape, so nothing arriving or leaving is drawn outside the
+        // glass before the glass has reached it.
+        .clipShape(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .frosted(
             RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
             as: .glass)

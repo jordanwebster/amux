@@ -199,6 +199,69 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(store.rows().count, 2)
     }
 
+    /// A host may store a message with its whitespace spelled differently —
+    /// a trailing newline trimmed, a line ending rewritten. That is still the
+    /// message that was sent, and leaving the optimistic row up beside it
+    /// would draw it twice.
+    func testTheEchoMatchesWhateverTheWhitespace() {
+        let store = ConversationStore(agent: agent)
+        store.sent("Run the suite\n")
+        store.sent("First line\r\nsecond  line")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [
+                prompt(0, seq: 1, text: "Run the suite"),
+                prompt(1, seq: 2, text: " First line\nsecond line"),
+            ],
+            replace: [], evicted: 0)))
+        XCTAssertTrue(store.unacknowledged.isEmpty)
+        XCTAssertEqual(store.rows().map(\.id), ["claude_pty:0", "claude_pty:1"])
+    }
+
+    /// A layer may place a row and settle it into the prompt afterwards. The
+    /// prompt arriving by a rewrite is as much the echo as one appended.
+    func testAPromptArrivingByRewriteReplacesTheOptimisticOne() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [running(0, seq: 1, command: "ls")],
+            replace: [], evicted: 0)))
+        store.sent("Run the suite")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(position: 0, entry: prompt(0, seq: 1, text: "Run the suite"))],
+            evicted: 0)))
+        XCTAssertTrue(store.unacknowledged.isEmpty)
+        XCTAssertEqual(store.rows().map(\.id), ["claude_pty:0"])
+    }
+
+    /// An earlier prompt the host only settles again is not the echo of a
+    /// message sent since with the same words.
+    func testAnOldPromptRewrittenAsItselfConfirmsNothing() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [prompt(0, seq: 1, text: "yes")],
+            replace: [], evicted: 0)))
+        store.sent("yes")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(position: 0, entry: prompt(0, seq: 1, text: "yes"))],
+            evicted: 0)))
+        XCTAssertEqual(store.unacknowledged.map(\.text), ["yes"])
+    }
+
+    /// The same short answer sent twice is two messages. One echo confirms
+    /// one of them, and the other stays on screen until its own arrives.
+    func testOneEchoConfirmsOneOfTwoIdenticalSends() {
+        let store = ConversationStore(agent: agent)
+        store.sent("yes")
+        store.sent("yes")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [prompt(0, seq: 1, text: "yes")],
+            replace: [], evicted: 0)))
+        XCTAssertEqual(store.unacknowledged.map(\.text), ["yes"])
+        XCTAssertEqual(store.rows().count, 2)
+    }
+
     // MARK: - What leaves the phone
 
     func testSendingDispatchesTheSharedSendAndClearsTheDraft() throws {

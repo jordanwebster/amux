@@ -1,3 +1,20 @@
+2026-09-17 — **The composer grows as one piece, and a sent message is a row.**
+When a turn started or ended, the working line animated inside the composer
+while the panel behind it, the task strip above it and the space the feed keeps
+clear snapped to the new height in one frame, and the line slid up across the
+text field. Whether a turn is running now changes in its own animated
+transaction, so the panel, its glass, the strip and the feed's bottom inset
+move together on one curve without also animating rows that arrive at the same
+moment; the line fades, content is clipped to the panel, and the placeholder
+and Stop/Send button change in the same transaction. When the composer grows
+over the tail, the feed follows on the same curve. A message waiting for the
+host's echo was drawn over the bottom of the transcript, covering the last rows,
+and a second send stacked on the first. Pending sends are now rows at the foot
+of the feed, in order, and sending takes the feed back to its tail even if the
+reader had scrolled up. The echo that replaces a pending row now matches
+whatever its whitespace, can arrive as a rewrite of an existing row, and
+confirms one pending send per echo, so a confirmed message is not drawn twice.
+
 2026-09-17 — **The composer is glass again.** The papercut pass had moved
 every floating panel to frosted material. The composer, the strip of work
 above it and the plate that stands in the composer's place when a message

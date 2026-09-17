@@ -33,16 +33,20 @@ public extension View {
 /// The rows themselves come from ``TranscriptRow``, which reads each layer in
 /// its own vocabulary. This file decides nothing about what a row means; it
 /// only draws what the projection already named.
-struct TranscriptFeed: View {
+struct TranscriptFeed<Trailing: View>: View {
     @Environment(\.design) private var design
     @Environment(\.transcriptTops) private var tops
     let rows: [TranscriptRow]
+    /// What stands after the last confirmed row, inside the same lazy stack
+    /// so it is laid out and scrolled as part of the feed.
+    @ViewBuilder let trailing: Trailing
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, _ in
                 entry(at: index)
             }
+            trailing
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.top, 4)
@@ -83,16 +87,66 @@ struct TranscriptFeed: View {
 
 /// The optimistic tail is its own observation boundary. A local send can add
 /// one prompt without rebuilding the confirmed lazy history beside it.
+///
+/// Each pending send is drawn exactly as its confirmed row will be — the same
+/// bubble and the same gap under it, inside the feed's own gutter — so when the
+/// host's echo arrives and takes its place in the same frame, nothing on the
+/// page moves.
 struct PendingTranscriptFeed: View {
-    @Environment(\.design) private var design
     let model: ConversationStore
 
     var body: some View {
         ForEach(model.unacknowledged) { pending in
             PendingPrompt(text: pending.text)
                 .padding(.bottom, 15)
-                .padding(.horizontal, design.metrics.gutter)
         }
+    }
+}
+
+/// Takes the transcript back to its foot whenever a new message is sent.
+///
+/// A person who scrolled back to reread something and then wrote a reply
+/// expects to watch the reply go. This stands beside the scroll view rather
+/// than in the feed, because the feed is lazy: a row at the foot of a long
+/// transcript read from its top has not been built, and could not notice
+/// anything. It observes only the newest pending send, so the transcript it
+/// sits beside is not re-evaluated by a send.
+struct SendFollower: View {
+    let model: ConversationStore
+    let follow: TranscriptFollow
+
+    var body: some View {
+        Color.clear
+            .accessibilityHidden(true)
+            .onChange(of: model.unacknowledged.last?.id) { before, now in
+                guard let now, now != before else { return }
+                follow.action?()
+            }
+    }
+}
+
+/// How the things standing beside a transcript reach its scroll view.
+///
+/// A reference, filled in by the scroll view that can act on it, so that
+/// asking does not route through view state that would rebuild the feed.
+@MainActor
+final class TranscriptFollow {
+    /// Takes the feed to its foot. Set by the transcript once it is on screen.
+    var action: (@MainActor () -> Void)?
+
+    /// The curve the next change in the space reserved under the feed is
+    /// happening on, when whoever changed it animated it.
+    private var curve: Animation?
+
+    /// Says the space reserved under the feed is about to change on this
+    /// curve, so the feed's tail can travel with it.
+    func reserving(on curve: Animation?) {
+        self.curve = curve
+    }
+
+    func takeCurve() -> Animation? {
+        defer { curve = nil }
+        return curve
     }
 }
 
@@ -216,7 +270,13 @@ struct TranscriptContainer<Content: View>: View {
     /// is cheaper and more stable than issuing a scroll from every geometry
     /// change the resulting layout causes.
     var tail: String?
+    /// Where something beside the feed asks to be taken back to its foot —
+    /// a message being sent — and says how the next change in the space
+    /// reserved under the feed should be followed.
+    var follow: TranscriptFollow?
     @ViewBuilder let content: Content
+    @Environment(\.photographed) private var photographed
+    @Environment(\.reducesMotion) private var reduceMotion
     @State private var position = ScrollPosition()
     @State private var readerMoved = false
     @State private var openedAtTail = false
@@ -274,11 +334,21 @@ struct TranscriptContainer<Content: View>: View {
                 - geometry.contentInsets.bottom < geometry.contentSize.height - 0.5
             return geometry.contentInsets.bottom
         } action: { _, _ in
+            // Taken whether or not a scroll follows, so a curve meant for one
+            // change is never applied to some later, unrelated one.
+            let curve = follow?.takeCurve()
             guard page.tailHidden, resting == nil, !readerMoved,
                   page.tailScrolls < TranscriptPage.tailScrolls
             else { return }
             page.tailScrolls += 1
-            Task { @MainActor in position.scrollTo(edge: .bottom) }
+            // A composer growing because a turn started grows on a curve, and
+            // the feed keeps its tail beside it on the same curve rather than
+            // jumping ahead of it. Every other change — the keyboard, a strip
+            // measuring itself as the screen opens — is followed at once.
+            let animation = still ? nil : curve
+            Task { @MainActor in
+                withAnimation(animation) { position.scrollTo(edge: .bottom) }
+            }
         }
         .scrollPosition($position))
         .onChange(of: tail, initial: true) { _, tail in
@@ -302,9 +372,26 @@ struct TranscriptContainer<Content: View>: View {
         .onChange(of: position.isPositionedByUser) { _, byReader in
             if byReader { readerMoved = true }
         }
-        .onAppear { page.entries = entries }
+        .onAppear {
+            page.entries = entries
+            follow?.action = {
+                // Sending is taking the feed back: the reader who had
+                // scrolled away has now said where they want to be, and it
+                // is where the tail keeps being followed from here on.
+                readerMoved = false
+                page.tailScrolls = 0
+                guard page.tailHidden, resting == nil else { return }
+                withAnimation(still ? nil : Motion.quick) {
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+        }
         }
     }
+
+    /// Held still in front of a camera and for a reader who asked for less
+    /// motion, like every other movement in the app.
+    private var still: Bool { photographed || reduceMotion }
 
     /// Installs scroll geometry only for recording or restoring a reading
     /// position. An ordinary conversation has neither consumer; writing

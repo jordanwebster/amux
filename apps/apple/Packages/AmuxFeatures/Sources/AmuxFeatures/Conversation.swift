@@ -264,7 +264,10 @@ public struct Conversation: View {
     /// up. A system sheet rather than one of the cards above: it is read and
     /// put away, and nothing on the conversation waits on it.
     @State private var placeOpen = false
-
+    /// How the composer and the feed behind it keep in step: a send takes the
+    /// feed to its foot, and a composer growing on a curve has the feed's tail
+    /// follow it on the same curve.
+    @State private var follow = TranscriptFollow()
 
     public init(
         model: ConversationStore,
@@ -356,7 +359,8 @@ public struct Conversation: View {
     /// frosting the top edge means anything.
     private var transcript: some View {
         ConversationTranscript(
-            model: model, subject: subject, resting: resting, reading: reading)
+            model: model, subject: subject, resting: resting, reading: reading,
+            follow: follow)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
@@ -418,7 +422,7 @@ public struct Conversation: View {
     @ViewBuilder
     private var standing: some View {
         ConversationStanding(
-            model: model, subject: subject, showing: $showing,
+            model: model, subject: subject, showing: $showing, follow: follow,
             naming: naming, actions: actions)
     }
 
@@ -582,6 +586,7 @@ private struct ConversationStanding: View {
     let model: ConversationStore
     let subject: ConversationSubject
     @Binding var showing: ConversationOverlay?
+    let follow: TranscriptFollow
     let naming: (AgentId) -> String
     let actions: @MainActor (ConversationAction) -> Void
 
@@ -621,7 +626,7 @@ private struct ConversationStanding: View {
                 gate: model.gate, tail: activityTail, elapsed: subject.working) {
                 ConversationComposerStanding(
                     model: model, subject: subject, state: composer,
-                    showing: $showing, naming: naming, actions: actions)
+                    showing: $showing, follow: follow, naming: naming, actions: actions)
             }
         }
         .moving(value: showing)
@@ -644,22 +649,72 @@ private struct ConversationStanding: View {
 /// Draft-sized invalidations stop here. The surrounding footer chooses which
 /// state exists; this view handles the state that changes with every edit.
 private struct ConversationComposerStanding: View {
+    @Environment(\.photographed) private var photographed
+    @Environment(\.reducesMotion) private var reduceMotion
     let model: ConversationStore
     let subject: ConversationSubject
     let state: ComposerState
     @Binding var showing: ConversationOverlay?
+    let follow: TranscriptFollow
     let naming: (AgentId) -> String
     let actions: @MainActor (ConversationAction) -> Void
+    /// The composer as it is drawn, which is `state` except for the moment a
+    /// turn starts or ends.
+    ///
+    /// A turn starting grows the box by the working line and a turn ending
+    /// shrinks it, and that change has to move as one piece: the line, the
+    /// placeholder, the button, the panel's shape behind them, the strip
+    /// standing on it and the space the feed keeps clear under itself. An
+    /// animation attached to the box reaches only what is inside the box; the
+    /// rest snapped to the new height in one frame while the words crossed
+    /// over it. So the change is made here, as its own animated transaction,
+    /// which carries every layout it causes and nothing else — a row arriving
+    /// in the same instant is not dragged along on the curve.
+    @State private var shown: ComposerState
+
+    init(
+        model: ConversationStore, subject: ConversationSubject, state: ComposerState,
+        showing: Binding<ConversationOverlay?>, follow: TranscriptFollow,
+        naming: @escaping (AgentId) -> String,
+        actions: @escaping @MainActor (ConversationAction) -> Void
+    ) {
+        self.model = model
+        self.subject = subject
+        self.state = state
+        _showing = showing
+        self.follow = follow
+        self.naming = naming
+        self.actions = actions
+        _shown = State(initialValue: state)
+    }
 
     var body: some View {
+        let drawn = drawn
         VStack(spacing: 8) {
             strip
             ConversationDraftCommands(model: model, actions: actions)
             opened
             ConversationComposerBox(
-                model: model, state: state, agent: subject.name,
+                model: model, state: drawn, agent: subject.name,
                 showing: $showing, actions: actions)
         }
+        .onChange(of: state) { before, now in
+            guard before.busy != now.busy else {
+                shown = now
+                return
+            }
+            let curve = photographed || reduceMotion ? nil : Motion.standard
+            follow.reserving(on: curve)
+            withAnimation(curve) { shown = now }
+        }
+    }
+
+    /// Whatever the gate says, except that whether a turn is running changes
+    /// only in the animated transaction above. Until that lands this keeps the
+    /// box the shape it was drawn at; the name of what is running and how long
+    /// it has run still change the moment they arrive.
+    private var drawn: ComposerState {
+        shown.busy == state.busy ? state : shown
     }
 
     @ViewBuilder
@@ -781,10 +836,13 @@ private struct ConversationTranscript: View {
     let subject: ConversationSubject
     let resting: TranscriptResting?
     let reading: (@MainActor (TranscriptResting) -> Void)?
+    let follow: TranscriptFollow
 
     var body: some View {
         let rows = withUnreadable(model.confirmedRows())
-        TranscriptContainer(resting: resting, moved: reading, tail: rows.last?.id) {
+        TranscriptContainer(
+            resting: resting, moved: reading, tail: rows.last?.id, follow: follow
+        ) {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)
@@ -794,7 +852,16 @@ private struct ConversationTranscript: View {
                 // provides no context and makes both surfaces harder to read.
                 EmptyView()
             } else {
-                TranscriptFeed(rows: rows)
+                // A message this phone has sent and the host has not echoed
+                // yet is a row at the foot of the feed, after everything the
+                // host has confirmed and in the order it was sent, so it pushes
+                // the transcript up the way its confirmed row will rather than
+                // being drawn over the last thing the agent said. The pending
+                // rows are their own observation boundary: a send does not
+                // re-evaluate this view or the confirmed rows above.
+                TranscriptFeed(rows: rows) {
+                    PendingTranscriptFeed(model: model)
+                }
             }
             // A finished run is the last event in the feed, not a screen
             // state placed under it.
@@ -804,16 +871,7 @@ private struct ConversationTranscript: View {
                     .padding(.top, design.metrics.feedGap)
             }
         }
-        // A local send occupies the same bottom edge its confirmed row will
-        // inherit, without changing the lazy history merely to show one
-        // optimistic bubble. When the host echoes it, the inset disappears
-        // as the identical row arrives at the anchored tail.
-        .overlay(alignment: .bottom) {
-            if subject.readable,
-               !(typeSize.isAccessibilitySize && model.asks.panel != nil) {
-                PendingTranscriptFeed(model: model)
-            }
-        }
+        .background { SendFollower(model: model, follow: follow) }
     }
 }
 
