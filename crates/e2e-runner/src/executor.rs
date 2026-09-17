@@ -152,6 +152,8 @@ fn write_fixture_yaml(path: &Path, value: &serde_json::Value) -> Result<(), Stri
     .map_err(|e| format!("Failed to write {}: {e}", path.display()))
 }
 
+const INERT_UPDATE_MANIFEST_URL: &str = "http://127.0.0.1:1/manifest.json";
+
 fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> PathBuf {
     let pid = std::process::id();
     #[cfg(unix)]
@@ -931,7 +933,7 @@ impl Executor {
                         "root": root, "front_door_socket": root.join("amux.sock"),
                         "host_name": host_name, "prevent_idle_sleep": false,
                         "keymaps_dir": root.join("keymaps"),
-                        "update_manifest_url": cloud_fixture.as_ref().map(|fixture| format!("{}/update/manifest.json", fixture.url)).unwrap_or_else(|| "https://amux.sh/manifest.json".into()),
+                        "update_manifest_url": cloud_fixture.as_ref().map(|fixture| format!("{}/update/manifest.json", fixture.url)).unwrap_or_else(|| INERT_UPDATE_MANIFEST_URL.into()),
                     }),
                 )?;
                 let (profile_path, socket) = if cfg.worktree {
@@ -943,13 +945,13 @@ impl Executor {
                     let template = wt["files"][".wt/amux/installation.yaml"]["content"]
                         .as_str()
                         .ok_or("missing worktree installation template")?;
-                    std::fs::write(
-                        &installation_path,
-                        template
-                            .replace("{{root()}}", &checkout.to_string_lossy())
-                            .replace("{{name_short()}}", &cfg.name),
-                    )
-                    .map_err(|e| e.to_string())?;
+                    let rendered = template
+                        .replace("{{root()}}", &checkout.to_string_lossy())
+                        .replace("{{name_short()}}", &cfg.name);
+                    let mut installation: serde_json::Value =
+                        serde_yaml::from_str(&rendered).map_err(|e| e.to_string())?;
+                    installation["update_manifest_url"] = INERT_UPDATE_MANIFEST_URL.into();
+                    write_fixture_yaml(&installation_path, &installation)?;
                     let generated = Command::new("python3")
                         .arg(crate::workspace_root().join("scripts/worktree-profile.py"))
                         .arg(&root)

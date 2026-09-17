@@ -1,3 +1,9 @@
+2026-09-17 — **End-to-end fixtures do not consult the live update feed.**
+Ordinary scenarios use an inert loopback manifest URL, including fixtures made
+from the worktree template; the dedicated update scenario still owns a local
+manifest server. The top-level help fixture also names the shipped store
+inspection command.
+
 2026-09-17 — **A stopped testnet releases its scripted providers.** The
 terminal shutdown path clears the harness-only provider registry after every
 daemon has stopped, so an executor that outlives a topology cannot retain its

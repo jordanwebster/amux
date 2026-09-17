@@ -26,6 +26,7 @@ Commands:
   login     Connect a cloud account, optionally to an explicit profile
   logout    Forget a profile's credential, preserving its device and local agents
   profile   Manage profiles in this installation (select with --profile)
+  store     Inspect the selected profile's local store
   server    Manage the amux server lifecycle
   init      Initialize local device preferences
   pair      Pair this device with another amux daemon
