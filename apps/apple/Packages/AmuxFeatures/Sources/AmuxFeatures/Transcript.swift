@@ -354,6 +354,21 @@ struct TranscriptContainer<Content: View>: View {
                 withAnimation(animation) { position.scrollTo(edge: .bottom) }
             }
         }
+        // A chat shorter than the page rests at its top, and the bottom anchor
+        // for size changes keeps a feed on its tail only once it is on it. So
+        // the moment a growing chat first runs past the page is followed here:
+        // a reader who has not taken the feed anywhere is taken to its tail,
+        // where the anchor keeps them from then on. Only whether the feed
+        // overflows is watched, which changes once rather than with every row.
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            page.tailHidden = geometry.contentOffset.y + geometry.containerSize.height
+                - geometry.contentInsets.bottom < geometry.contentSize.height - 0.5
+            return geometry.contentSize.height + geometry.contentInsets.top
+                + geometry.contentInsets.bottom > geometry.containerSize.height + 0.5
+        } action: { _, overflows in
+            guard overflows, page.tailHidden, resting == nil, !readerMoved else { return }
+            Task { @MainActor in position.scrollTo(edge: .bottom) }
+        }
         .scrollPosition($position))
         .onChange(of: tail, initial: true) { _, tail in
             guard resting == nil, !readerMoved, !openedAtTail, tail != nil else { return }

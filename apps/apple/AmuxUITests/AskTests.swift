@@ -272,7 +272,12 @@ final class AskTests: JourneyCase {
         try control.ask(["AgentPlay": ["agent": "mind-the-gap",
                                        "steps": [["ChildStarted": ["name": "scout"]]]]])
         waitFor(app, "facts.grow", "the provider child count offered no Started list")
-        press(app, "facts.grow")
+        // Coming back from the child is going back to the parent that was
+        // underneath it, which still has the Started list open where the child
+        // was pressed. Pressing the control again would fold it.
+        if said(try declared(runner), "facts")?.value != "open" {
+            press(app, "facts.grow")
+        }
         // A subagent is named by what it is as well as what it is called —
         // the provider reports both and two of the same name doing different
         // work are two rows — so the chip is found by what it starts with
