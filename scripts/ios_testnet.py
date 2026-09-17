@@ -58,7 +58,11 @@ def free_port() -> int:
 def runner(topology: str):
     """The test relay and its daemons, started from a committed topology and
     torn down completely: no listener left bound, no state left behind."""
-    with tempfile.TemporaryDirectory(prefix="amux-testnet-") as temporary:
+    # Each daemon listens on a Unix socket inside this root, and macOS caps a
+    # socket path at 104 bytes. Under the per-user temporary directory a
+    # seven-letter machine name already reaches that cap, so the root lives
+    # in /tmp, where the socket paths stay far short of it.
+    with tempfile.TemporaryDirectory(prefix="amux-tn-", dir="/tmp") as temporary:
         root = Path(temporary)
         environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
         process = subprocess.Popen(

@@ -1,3 +1,10 @@
+2026-09-17 — **The phone's performance run starts its test relay again.** The
+test relay's machines listen on Unix sockets inside a temporary root, and under
+the per-user temporary directory the machine called `desktop` put its socket
+at 104 bytes, past the macOS limit, so the lifecycle group of `just ios perf`
+failed before measuring anything. The root now lives in `/tmp`; the lifecycle
+group runs and passes.
+
 2026-09-17 — **The phone shows where a stored conversation is missing
 history.** A conversation read from the store drew its entries alone, so after
 a reconnect the machine could not fully serve, the rows from before the break
