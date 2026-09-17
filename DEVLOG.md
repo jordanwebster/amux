@@ -1,3 +1,8 @@
+2026-09-17 — **Conversation baselines regenerated.** The glass composer and
+strip, the back chevron in the pill, the transcript's top margin and the
+top alignment of short chats change every conversation golden; the drawer
+golden is gone. Home, Hosts, You, pairing and account screens are unchanged.
+
 2026-09-17 — **A conversation has a back arrow instead of a drawer.** The
 conversation's pill opened a drawer listing the fleet (and a rightward drag
 anywhere opened it too). The drawer is gone: the pill's leading control is now
