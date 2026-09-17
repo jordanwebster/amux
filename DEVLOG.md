@@ -17,6 +17,11 @@ durable views remain unrestored until the operator runs the explicit resolution
 command. Startup cannot dial the daemon until both store reads have settled, so
 an unusable store exits without making a network connection.
 
+The remembered-chat runtime coverage now waits for the fleet and both durable
+effects it actually consumes, then retires its first worker before reopening
+the same store. It matches a process relaunch without depending on queued
+write or detached-thread timing.
+
 2026-09-17 — **Quarantine recovery is an explicit, atomic operator action.**
 `amux store resolve` first reports each unresolved manifest, the durable
 families known to have existed (or that they could not be determined), and the

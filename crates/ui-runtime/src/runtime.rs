@@ -4216,6 +4216,17 @@ mod tests {
             .expect("read chat recency")
     }
 
+    fn stored_remembered_chat(path: &Path) -> Option<String> {
+        rusqlite::Connection::open(path)
+            .expect("open store for remembered chat inspection")
+            .query_row(
+                "SELECT value FROM view_state WHERE kind='ui' AND key='remembered_chat'",
+                [],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
     #[tokio::test]
     async fn store_maintenance_starts_after_the_first_frame_and_is_hourly() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -4297,17 +4308,29 @@ mod tests {
             ..RuntimeOptions::default()
         };
         let mut runtime = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
-        for _ in 0..3 {
-            next_store_runtime_message(&mut runtime).await;
-        }
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime.model().agent(agent).is_some()
+        })
+        .await;
         runtime.open_chat(agent);
+        let agent_id = agent.to_string();
         tokio::time::timeout(Duration::from_secs(5), async {
-            while stored_last_opened_at(&path, agent).is_none() {
+            while stored_last_opened_at(&path, agent).is_none()
+                || stored_remembered_chat(&path).as_deref() != Some(agent_id.as_str())
+            {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("explicit user open did not record recency");
+        .expect("explicit user open did not record its durable state");
+        assert_eq!(
+            runtime
+                .store_worker
+                .take()
+                .expect("store worker")
+                .shutdown(),
+            QuarantineOutcome::NotRequested
+        );
         drop(runtime);
 
         let connection = rusqlite::Connection::open(&path).expect("open store recency marker");
