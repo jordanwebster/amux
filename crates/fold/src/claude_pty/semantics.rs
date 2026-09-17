@@ -506,6 +506,11 @@ impl ClaudeFold {
     ) {
         let uuid = string(row, "uuid");
         let content = row.pointer("/message/content");
+        if row.get("isMeta").and_then(Value::as_bool) == Some(true)
+            && !content.is_some_and(Value::is_string)
+        {
+            return;
+        }
         if let Some(text) = content.and_then(Value::as_str) {
             let Some(uuid) = uuid.as_deref() else {
                 mutations.push(unrecognized(row, seq, 0, revision, "user", "missing uuid"));
@@ -634,12 +639,9 @@ impl ClaudeFold {
                             revision,
                         ),
                     ));
-                    {
+                    if let (Some(start), Some(end)) = (self.prompt_at, activity_at) {
                         let turn = namespaced_or_delivery("turn", Some(uuid), seq, slot);
-                        let ms = match (self.prompt_at, activity_at) {
-                            (Some(start), Some(end)) => (end - start).num_milliseconds().max(0),
-                            _ => 0,
-                        };
+                        let ms = (end - start).num_milliseconds().max(0);
                         mutations.push(upsert(
                             turn.clone(),
                             seq,
@@ -1073,7 +1075,7 @@ impl ClaudeFold {
             self.todo = Some(progress);
             self.known_todo = true;
         }
-        if let Some(index) = self
+        let failed_todo = if let Some(index) = self
             .pending_todos
             .iter()
             .position(|todo| todo.tool_use_id == id)
@@ -1084,7 +1086,10 @@ impl ClaudeFold {
                 self.known_todo = true;
                 return;
             }
-        }
+            true
+        } else {
+            false
+        };
         let key = namespaced_or_delivery("tool", Some(&id), seq, slot);
         let mut stored_outcome = block.clone();
         if let Some(object) = stored_outcome.as_object_mut() {
@@ -1107,6 +1112,11 @@ impl ClaudeFold {
                 JsonBytes(bounded_json(&stored_outcome, OUTPUT_HEAD_BYTES)),
                 revision,
             ),
+            tool_name: if failed_todo {
+                Patch::set("TodoWrite".into(), revision)
+            } else {
+                Patch::Unchanged
+            },
             ..ClaudePartial::default()
         };
         mutations.push(upsert(key, seq, slot, revision, patch));
@@ -1276,7 +1286,7 @@ impl ProviderFold for ClaudeFold {
     type Entry = ClaudeEntry;
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudePtyTranscript;
-    const ENTRY_VERSION: u32 = 2;
+    const ENTRY_VERSION: u32 = 3;
     const TIP_VERSION: u32 = 4;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
@@ -2002,7 +2012,7 @@ mod tests {
 
     #[test]
     fn claude_pty_entry_version_pins_every_body_variant_encoding() {
-        const ENCODING_ENTRY_VERSION: u32 = 2;
+        const ENCODING_ENTRY_VERSION: u32 = 3;
         assert_eq!(ClaudeFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
 
         let bodies = [
@@ -2155,7 +2165,7 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
         let interruption = one(
             json!({"type":"user","uuid":"u3","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}),
         );
-        assert_eq!(keys(&interruption.1), ["user:u3", "turn:u3"]);
+        assert_eq!(keys(&interruption.1), ["user:u3"]);
         assert_eq!(interruption.0.summary().attention, Attention::Idle);
         let compact = one(json!({"type":"system","subtype":"compact_boundary","uuid":"s2"}));
         assert_eq!(keys(&compact.1), ["sys:s2"]);
@@ -2279,11 +2289,15 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
     #[test]
     fn claude_pty_inferred_turn_aliases_only_while_correlation_is_in_tip() {
         let input = vec![
-            serde_json::to_vec(&json!({"type":"user","uuid":"interrupt","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}})).unwrap(),
+            serde_json::to_vec(&json!({"type":"user","uuid":"prompt","timestamp":"2026-01-01T00:00:00Z","origin":{"kind":"human"},"message":{"content":"work"}})).unwrap(),
+            serde_json::to_vec(&json!({"type":"user","uuid":"interrupt","timestamp":"2026-01-01T00:00:02Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}})).unwrap(),
             serde_json::to_vec(&json!({"type":"system","subtype":"turn_duration","uuid":"authority","durationMs":9})).unwrap(),
         ];
         let (_, oracle) = fold_rows(&input);
-        assert_eq!(keys(&oracle), ["user:interrupt", "turn:authority"]);
+        assert_eq!(
+            keys(&oracle),
+            ["user:prompt", "user:interrupt", "turn:authority"]
+        );
         assert_eq!(
             oracle
                 .redirects()
@@ -2292,6 +2306,48 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
                 .collect::<Vec<_>>(),
             [("turn:interrupt", "turn:authority")]
         );
+    }
+
+    #[test]
+    fn claude_pty_meta_array_is_inert_and_lone_interrupt_has_no_turn() {
+        let input = rows(
+            r#"
+{"type":"user","uuid":"meta","isMeta":true,"message":{"content":[{"type":"text","text":"<system-note>hook feedback</system-note>"}]}}
+{"type":"user","uuid":"interrupt","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+"#,
+        );
+        let (_, oracle) = fold_rows(&input);
+        let entries = oracle.entries();
+        assert_eq!(
+            entries.len(),
+            1,
+            "the meta row and inferred zero stay absent"
+        );
+        assert_eq!(entries[0].key.as_str(), "user:interrupt");
+        assert_eq!(
+            entries[0].entry.entry_kind(),
+            Some(ClaudeEntryKind::Interruption)
+        );
+    }
+
+    #[test]
+    fn claude_pty_failed_todo_write_remains_named_and_failed() {
+        let mut input = todo_rows("ship");
+        let mut result: Value = serde_json::from_slice(&input[1]).unwrap();
+        result["message"]["content"][0]["is_error"] = Value::Bool(true);
+        result["message"]["content"][0]["content"] = Value::String("invalid todo".into());
+        input[1] = serde_json::to_vec(&result).unwrap();
+        let (_, oracle) = fold_rows(&input);
+        let entry = oracle
+            .entries()
+            .into_iter()
+            .find(|stored| stored.key.as_str() == "tool:todo-ship")
+            .expect("failed TodoWrite remains visible");
+        assert_eq!(entry.entry.tool_name(), Some("TodoWrite"));
+        let outcome: Value =
+            serde_json::from_slice(&entry.entry.tool_outcome().unwrap().0).unwrap();
+        assert_eq!(outcome["is_error"], true);
+        assert_eq!(outcome["content"], "invalid todo");
     }
 
     fn todo_rows(label: &str) -> Vec<Vec<u8>> {

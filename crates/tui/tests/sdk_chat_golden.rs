@@ -176,6 +176,42 @@ fn session(name: &str) -> Model {
     fold(msgs)
 }
 
+fn exploration_with_subagent_reads() -> Model {
+    let assistant = |uuid: &str, message_id: &str, parent: Option<&str>, content: Vec<Value>| {
+        json!({
+            "type": "assistant",
+            "uuid": uuid,
+            "parent_tool_use_id": parent,
+            "message": {"id": message_id, "content": content},
+        })
+    };
+    let read = |id: &str, path: &str| json!({"type":"tool_use","id":id,"name":"Read","input":{"file_path":path}});
+    let grep = |id: &str, pattern: &str| json!({"type":"tool_use","id":id,"name":"Grep","input":{"pattern":pattern}});
+    let rows = vec![
+        assistant(
+            "top-before",
+            "message-before",
+            None,
+            vec![read("read-a", "a.rs"), read("read-b", "b.rs")],
+        ),
+        assistant(
+            "child",
+            "message-child",
+            Some("task-child"),
+            vec![read("read-c", "c.rs"), read("read-d", "d.rs")],
+        ),
+        assistant(
+            "top-after",
+            "message-after",
+            None,
+            vec![read("read-e", "e.rs"), grep("grep-retry", "retry")],
+        ),
+    ];
+    let mut msgs = base();
+    msgs.push(batch(100, rows));
+    fold(msgs)
+}
+
 /// The same recording stopped at the first frame that has a reply
 /// half-written: the session is still speaking and the feed has to show
 /// that without pretending the block is finished.
@@ -568,6 +604,15 @@ fn sdk_chat_paints_a_streaming_reply() {
     );
 }
 
+#[test]
+fn sdk_chat_paints_a_finished_streamed_reply_without_a_caret() {
+    let text = assert_surface("sdk_chat_finished_stream", &session("streamed"));
+    assert!(
+        !text.contains("SEVEN▌"),
+        "the final assistant row keeps later stop events from reopening the block: {text}"
+    );
+}
+
 /// Tools and the subagents they start each get their own row.
 /// A landed edit is a file change, not a tool outcome: it states what
 /// moved and by how much, and hangs the patch the session sent back
@@ -667,6 +712,20 @@ fn sdk_chat_folds_consecutive_reads_and_searches_into_one_run() {
             "the edit between the runs stays on its own line: {frame}"
         );
     }
+}
+
+#[test]
+fn sdk_chat_keeps_subagent_reads_out_of_session_exploration_runs() {
+    let text = assert_surface(
+        "sdk_chat_subagent_exploration",
+        &exploration_with_subagent_reads(),
+    );
+    assert_eq!(text.matches("2 reads").count(), 1, "{text}");
+    assert!(
+        text.contains("Read c.rs") && text.contains("Read d.rs"),
+        "{text}"
+    );
+    assert!(text.contains("1 read · 1 search"), "{text}");
 }
 
 #[test]

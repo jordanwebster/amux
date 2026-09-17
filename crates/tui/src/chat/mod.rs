@@ -1090,6 +1090,9 @@ fn stored_exploration(entry: &ui_state::StoredDto) -> Option<StoredExploration> 
         }
         ui_state::StoredDto::ClaudeSdk(stored) => {
             let entry = ui_state::restored::claude_sdk::feed_entry(0, &stored.entry);
+            if entry.parent_tool_use_id.is_some() {
+                return None;
+            }
             let ui_state::claude_sdk::FeedEntryKind::Tool(tool) = entry.kind else {
                 return None;
             };

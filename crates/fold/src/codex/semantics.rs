@@ -444,10 +444,38 @@ impl CodexFold {
             }
             "thread/tokenUsage/updated" => self.usage(row),
             "mcpServer/startupStatus/updated" => {
+                let name = row
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty());
+                let status = row.get("status").and_then(Value::as_str);
+                let optional_string = |key| match row.get(key) {
+                    None | Some(Value::Null) | Some(Value::String(_)) => true,
+                    Some(_) => false,
+                };
+                let detail = if name.is_none() {
+                    Some("missing MCP server name")
+                } else if !matches!(status, Some("starting" | "ready" | "failed" | "cancelled")) {
+                    Some(if status.is_some() {
+                        "unknown MCP startup status"
+                    } else {
+                        "missing MCP startup status"
+                    })
+                } else if !optional_string("error") {
+                    Some("invalid MCP startup error")
+                } else if !optional_string("failureReason") {
+                    Some("invalid MCP startup failure reason")
+                } else {
+                    None
+                };
+                if let Some(detail) = detail {
+                    out.push(unrecognized(seq, revision, detail));
+                    return out;
+                }
                 let mut patch = partial(
                     CodexEntryKind::McpStartup,
                     CodexBody::None,
-                    string(row, "name"),
+                    name.map(str::to_owned),
                     revision,
                     None,
                 );
@@ -883,7 +911,7 @@ impl CodexFold {
 impl ProviderFold for CodexFold {
     type Entry = CodexEntry;
     const PROTOCOL: StructuredProtocol = StructuredProtocol::Codex;
-    const ENTRY_VERSION: u32 = 3;
+    const ENTRY_VERSION: u32 = 4;
     const TIP_VERSION: u32 = 3;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
@@ -1480,7 +1508,7 @@ mod tests {
 
     #[test]
     fn codex_entry_version_pins_every_body_variant_encoding() {
-        const ENCODING_ENTRY_VERSION: u32 = 3;
+        const ENCODING_ENTRY_VERSION: u32 = 4;
         assert_eq!(CodexFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
 
         let bodies = [
@@ -1696,6 +1724,40 @@ unrecognized=000001070000010806667574757265000000000000000000000000000000"#
                 );
             }
         }
+    }
+
+    #[test]
+    fn codex_malformed_mcp_startup_rows_remain_visible_drift() {
+        let input = [
+            json!({"type":"mcpServer/startupStatus/updated","name":"future","status":"warming"}),
+            json!({"type":"mcpServer/startupStatus/updated","status":"ready"}),
+            json!({"type":"mcpServer/startupStatus/updated","name":"broken","status":"failed","error":{"message":"wrong shape"}}),
+        ]
+        .into_iter()
+        .map(|row| serde_json::to_vec(&row).unwrap())
+        .collect::<Vec<_>>();
+        let (_, oracle) = fold_rows(&input);
+        let entries = oracle.entries();
+        assert_eq!(entries.len(), 3);
+        assert!(
+            entries
+                .iter()
+                .all(|stored| { stored.entry.entry_kind() == Some(CodexEntryKind::Unrecognized) })
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter_map(|stored| match stored.entry.body() {
+                    Some(CodexBody::Unrecognized { method }) => Some(method.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [
+                "unknown MCP startup status",
+                "missing MCP server name",
+                "invalid MCP startup error",
+            ]
+        );
     }
 
     #[test]

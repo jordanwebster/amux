@@ -1140,6 +1140,9 @@ fn restored_exploration(entry: &ui_state::StoredDto) -> Option<()> {
         }
         ui_state::StoredDto::ClaudeSdk(stored) => {
             let entry = ui_state::restored::claude_sdk::feed_entry(0, &stored.entry);
+            if entry.parent_tool_use_id.is_some() {
+                return None;
+            }
             match entry.kind {
                 ui_state::claude_sdk::FeedEntryKind::Tool(tool) => tool.invocation,
                 _ => return None,

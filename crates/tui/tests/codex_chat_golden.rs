@@ -220,8 +220,10 @@ fn buffer_styles(buffer: &ratatui::buffer::Buffer, theme: Theme) -> String {
     out
 }
 
-fn assert_surface(name: &str, model: &Model) {
-    assert_state_surface(name, model, &view(model), HEIGHT);
+fn assert_surface(name: &str, model: &Model) -> String {
+    let view = view(model);
+    assert_state_surface(name, model, &view, HEIGHT);
+    buffer_text(&render_buffer(model, &view, Theme::default(), HEIGHT))
 }
 
 fn assert_state_surface(name: &str, model: &Model, view: &ViewState, _height: u16) {
@@ -304,6 +306,13 @@ fn mcp_startup_rows() -> Vec<Value> {
         json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"codex_apps","status":"starting","error":null,"failureReason":null}),
         json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"issues","status":"failed","error":"launch failed","failureReason":"process exited"}),
         json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"legacy","status":"cancelled","error":null,"failureReason":null}),
+    ]
+}
+
+fn malformed_mcp_startup_rows() -> Vec<Value> {
+    vec![
+        ready(),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"future","status":"warming","error":null,"failureReason":null}),
     ]
 }
 
@@ -565,6 +574,14 @@ fn codex_approval_pending_both_themes() {
 #[test]
 fn codex_mcp_startup_both_themes() {
     assert_surface("mcp_startup", &model(mcp_startup_rows()));
+}
+
+#[test]
+fn codex_unknown_mcp_startup_status_is_visible_drift() {
+    let text = assert_surface("mcp_startup_unknown", &model(malformed_mcp_startup_rows()));
+    assert!(text.contains("unrecognized Codex row"), "{text}");
+    assert!(text.contains("unknown MCP startup status"), "{text}");
+    assert!(!text.contains("0 starting · 0 ready · 0 failed"), "{text}");
 }
 
 #[test]

@@ -1,3 +1,14 @@
+2026-09-17 — **Stored chats preserve provider edge semantics.** Finished
+Claude SDK stream blocks stay complete when their trailing stop events arrive,
+subagent reads stay outside the session's exploration runs, and failed
+TodoWrite calls remain visible and named in both Claude transports. Claude PTY
+bookkeeping arrays no longer paint as unknown rows, and interrupts without a
+known prompt time no longer invent zero-length turns. Malformed Codex MCP
+startup updates remain visible as protocol drift instead of being counted as
+ready. The affected provider entry versions, and the SDK checkpoint version,
+advance so previously stored incorrect rows are rebuilt. Store-backed goldens
+cover the finished SDK reply, subagent exploration boundary, and MCP drift.
+
 2026-09-17 — **Flood performance rows repaint the stored transcript.** The
 frame-under-flood workload now sends every generated Codex batch through the
 open chat's store stream and applies the canonical commit acknowledgement

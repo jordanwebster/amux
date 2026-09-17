@@ -392,6 +392,7 @@ impl Entry for ClaudeSdkEntry {
 struct BlockRef {
     index: u64,
     key: EntryKey,
+    finalized: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -840,14 +841,32 @@ impl ClaudeSdkFold {
                             promote: None,
                         });
                     }
+                    if let Some(cursor_index) = cursor_index
+                        && let Some(block) = self.cursors[cursor_index]
+                            .blocks
+                            .iter_mut()
+                            .find(|block| block.index == block_index)
+                    {
+                        block.finalized = true;
+                    }
                 }
-                Some("tool_use" | "server_tool_use") => self.tool_use(
-                    (seq, slot, revision),
-                    parent.clone(),
-                    block,
-                    "complete",
-                    mutations,
-                ),
+                Some("tool_use" | "server_tool_use") => {
+                    self.tool_use(
+                        (seq, slot, revision),
+                        parent.clone(),
+                        block,
+                        "complete",
+                        mutations,
+                    );
+                    if let Some(cursor_index) = cursor_index
+                        && let Some(streamed) = self.cursors[cursor_index]
+                            .blocks
+                            .iter_mut()
+                            .find(|streamed| streamed.index == block_index)
+                    {
+                        streamed.finalized = true;
+                    }
+                }
                 other => mutations.push(unrecognized(
                     seq,
                     slot,
@@ -943,6 +962,7 @@ impl ClaudeSdkFold {
                 self.cursors[cursor_index].blocks.push(BlockRef {
                     index: block_index,
                     key: key.clone(),
+                    finalized: false,
                 });
                 self.stream_start(
                     (seq, revision),
@@ -968,11 +988,10 @@ impl ClaudeSdkFold {
                     mutations.push(unrecognized(seq, 0, revision, kind, "missing block index"));
                     return;
                 };
-                let Some(key) = self.cursors[cursor_index]
+                let Some(block) = self.cursors[cursor_index]
                     .blocks
                     .iter()
                     .find(|block| block.index == block_index)
-                    .map(|block| block.key.clone())
                 else {
                     mutations.push(unrecognized(
                         seq,
@@ -983,9 +1002,12 @@ impl ClaudeSdkFold {
                     ));
                     return;
                 };
+                let key = block.key.clone();
                 let mut patch = ClaudeSdkPartial::default();
                 if kind == "content_block_stop" {
-                    patch.finality = Patch::set("stopped".into(), revision);
+                    if !block.finalized {
+                        patch.finality = Patch::set("stopped".into(), revision);
+                    }
                 } else {
                     let delta = event.get("delta").unwrap_or(&Value::Null);
                     let text = match delta.get("type").and_then(Value::as_str) {
@@ -1016,6 +1038,7 @@ impl ClaudeSdkFold {
                     let keys = self.cursors[cursor_index]
                         .blocks
                         .iter()
+                        .filter(|block| !block.finalized)
                         .map(|block| block.key.clone())
                         .collect::<Vec<_>>();
                     for key in keys {
@@ -1345,7 +1368,7 @@ impl ClaudeSdkFold {
             self.todo = Some(progress);
             self.known_todo = true;
         }
-        if let Some(index) = self
+        let failed_todo = if let Some(index) = self
             .pending_todos
             .iter()
             .position(|todo| todo.tool_use_id == tool_id)
@@ -1354,13 +1377,16 @@ impl ClaudeSdkFold {
             if block.get("is_error").and_then(Value::as_bool) != Some(true) {
                 self.todo = Some(pending.progress);
                 self.known_todo = true;
+                mutations.push(Mutation::Delete {
+                    key: namespaced_key("tool", &tool_id, seq, slot),
+                    revision,
+                });
+                return;
             }
-            mutations.push(Mutation::Delete {
-                key: namespaced_key("tool", &tool_id, seq, slot),
-                revision,
-            });
-            return;
-        }
+            true
+        } else {
+            false
+        };
         let mut text = String::new();
         if let Some(content) = block.get("content").and_then(Value::as_str) {
             append_text(&mut text, content, TEXT_MAX_BYTES);
@@ -1388,6 +1414,9 @@ impl ClaudeSdkFold {
             None,
             revision,
         );
+        if failed_todo {
+            patch.tool_name = Patch::set("TodoWrite".into(), revision);
+        }
         patch.tool_outcome = Patch::set(
             JsonBytes(bounded_json(&serde_json::json!({
                 "text": text,
@@ -1728,8 +1757,8 @@ impl ProviderFold for ClaudeSdkFold {
     type Entry = ClaudeSdkEntry;
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudeSdk;
-    const ENTRY_VERSION: u32 = 2;
-    const TIP_VERSION: u32 = 3;
+    const ENTRY_VERSION: u32 = 3;
+    const TIP_VERSION: u32 = 4;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
@@ -2322,6 +2351,7 @@ impl crate::private::Sealed for BlockRef {
     fn assert_fields_are_postcard_safe() {
         crate::assert_postcard_safe::<u64>();
         crate::assert_postcard_safe::<EntryKey>();
+        crate::assert_postcard_safe::<bool>();
     }
 }
 impl PostcardSafe for BlockRef {}
@@ -2504,7 +2534,7 @@ mod tests {
 
     #[test]
     fn claude_sdk_entry_version_pins_every_body_variant_encoding() {
-        const ENCODING_ENTRY_VERSION: u32 = 2;
+        const ENCODING_ENTRY_VERSION: u32 = 3;
         assert_eq!(ClaudeSdkFold::ENTRY_VERSION, ENCODING_ENTRY_VERSION);
 
         let bodies = [
@@ -2978,6 +3008,48 @@ unrecognized=000001070000010b066675747572650573686170650000000000000000000000000
             old_permission.entry.entry_kind(),
             Some(ClaudeSdkEntryKind::Tool)
         );
+    }
+
+    #[test]
+    fn claude_sdk_finished_stream_blocks_remain_complete_after_stop_rows() {
+        let input = rows(include_str!(
+            "../../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl"
+        ));
+        let (_, oracle) = fold_rows(&input);
+        let messages = oracle
+            .entries()
+            .into_iter()
+            .filter(|stored| stored.entry.entry_kind() == Some(ClaudeSdkEntryKind::Message))
+            .collect::<Vec<_>>();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].entry.finality(), Some("complete"));
+        assert!(
+            messages[0]
+                .entry
+                .text()
+                .is_some_and(|text| !text.is_empty())
+        );
+    }
+
+    #[test]
+    fn claude_sdk_failed_todo_write_remains_named_and_failed() {
+        let input = rows(
+            r#"
+{"type":"assistant","uuid":"todo-row","message":{"id":"m","content":[{"type":"tool_use","id":"todo","name":"TodoWrite","input":{"todos":[{"content":"ship","activeForm":"shipping","status":"in_progress"}]}}]}}
+{"type":"user","uuid":"result","message":{"content":[{"type":"tool_result","tool_use_id":"todo","content":"invalid todo","is_error":true}]}}
+"#,
+        );
+        let (_, oracle) = fold_rows(&input);
+        let entry = oracle
+            .entries()
+            .into_iter()
+            .find(|stored| stored.key.as_str() == "tool:todo")
+            .expect("failed TodoWrite remains visible");
+        assert_eq!(entry.entry.tool_name(), Some("TodoWrite"));
+        let outcome: Value =
+            serde_json::from_slice(&entry.entry.tool_outcome().unwrap().0).unwrap();
+        assert_eq!(outcome["is_error"], true);
+        assert_eq!(outcome["text"], "invalid todo");
     }
 
     #[test]
