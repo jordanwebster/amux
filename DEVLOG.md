@@ -1,3 +1,10 @@
+2026-09-17 — **The composer is glass again.** The papercut pass had moved
+every floating panel to frosted material. The composer, the strip of work
+above it and the plate that stands in the composer's place when a message
+cannot go are back on the liquid glass they had before, so the bottom of a
+conversation matches the pill at its top. Cards, menus, asks and the Agents
+list stay frosted. The finish formerly called `control` is now `glass`.
+
 2026-09-16 — **Remove from This Phone.** An account could only be signed out
 (and stay listed) or deleted from amux.sh. Remove from This Phone, beside Sign
 Out and in the menu on every account row so a signed-out account can be removed

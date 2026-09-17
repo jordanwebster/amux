@@ -510,7 +510,7 @@ public struct Conversation: View {
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
-                .frosted(Capsule(), as: .control)
+                .frosted(Capsule(), as: .glass)
             }
         }
         .accessibilityElement(children: .contain)
@@ -535,7 +535,7 @@ public struct Conversation: View {
         }
         .padding(.leading, 2)
         .frame(minHeight: 52)
-        .frosted(Capsule(), wash: 1, as: .control)
+        .frosted(Capsule(), wash: 1, as: .glass)
     }
 
     private var subjectLabel: some View {
@@ -863,7 +863,7 @@ struct ChangesChip: View {
             // in the label's colours, which on a light ground is a black
             // capsule; a layer behind it is the frosted plate this wants.
             .frame(minWidth: 44, minHeight: 44)
-            .background { Color.clear.frosted(Capsule(), as: .control) }
+            .background { Color.clear.frosted(Capsule(), as: .glass) }
             .contentShape(Capsule())
         }
         .buttonStyle(.amuxControl)

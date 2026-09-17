@@ -32,7 +32,7 @@ public struct ReportPrompt: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
-            .frosted(Capsule(), wash: 0.88, as: .control)
+            .frosted(Capsule(), wash: 0.88, as: .glass)
             .thumbTarget(y: 2)
         }
         .buttonStyle(.plain)

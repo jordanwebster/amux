@@ -359,7 +359,7 @@ private struct Keypad: View {
                 .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous), as: .control)
+                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous), as: .glass)
         }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)

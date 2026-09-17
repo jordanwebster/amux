@@ -99,8 +99,7 @@ public enum ConversationFootState: Equatable {
 
 /// The panel in the composer's place.
 ///
-/// It is the same plate the composer is — a frosted card along the bottom
-/// edge — so a conversation whose layer stops taking messages does not change
+/// It is the same plate the composer is — glass along the bottom edge — so a conversation whose layer stops taking messages does not change
 /// shape under a reader, only what is written down there.
 struct ConversationFoot: View {
     @Environment(\.design) private var design
@@ -111,7 +110,9 @@ struct ConversationFoot: View {
     var body: some View {
         plate
             .padding(14)
-            .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+            .frosted(
+                RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+                as: .glass)
             .accessibilityElement(children: .contain)
             .identified("conversation.foot", label: headline, value: detail)
     }

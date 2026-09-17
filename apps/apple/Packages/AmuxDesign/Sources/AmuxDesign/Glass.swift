@@ -22,12 +22,16 @@ public struct Ground: View {
 
 /// What floats over content, in one of the two finishes this app uses.
 ///
-/// Glass is for small controls: the conversation's pill, the round icon
-/// buttons, the changes chip, the tab bar. On something that size the rim and
-/// the edge lensing are what say "this floats and can be pressed", and there
-/// is too little of it to be read through.
+/// Glass is for the controls and for the conversation's bottom chrome: the
+/// pill, the round icon buttons, the changes chip, the tab bar, and the
+/// composer with the strip of work above it. On a control the rim and the edge
+/// lensing are what say "this floats and can be pressed". The composer is the
+/// control a conversation is written with, and it and the strip grow and
+/// shrink together as one piece along the bottom edge, so they wear the same
+/// finish as the pill at the top rather than reading as a card laid over the
+/// feed.
 ///
-/// A panel that carries content — the composer, an ask, a card, a menu, the
+/// A panel that carries content to be read — an ask, a card, a menu, the
 /// home's groups of rows — is frosted material with a hairline rim instead.
 /// Glass over something that size is a sheet of highlights with words under
 /// it; the rim and lensing that read as "control" on a button read as gloss
@@ -45,8 +49,8 @@ public struct Ground: View {
 /// once the blur is gone — without it a solid panel over a solid ground is two
 /// flat areas with no edge between them.
 public enum Frost: Sendable {
-    /// Liquid glass, for small controls.
-    case control
+    /// Liquid glass, for controls and the conversation's bottom chrome.
+    case glass
     /// Frosted material with a hairline rim, for panels that carry content.
     case panel
 }
@@ -68,7 +72,7 @@ private struct Frosted<S: Shape>: ViewModifier {
                 }
         } else {
             switch finish {
-            case .control:
+            case .glass:
                 content
                     .background { shape.fill(design.ground.color.opacity(wash)) }
                     .glassEffect(.regular, in: shape)
@@ -89,7 +93,7 @@ private struct Frosted<S: Shape>: ViewModifier {
 
 extension View {
     /// A floating surface with the ground washed in behind it: frosted
-    /// material for a panel, which is most of them, or glass for a control.
+    /// material for a panel, which is most of them, or glass.
     public func frosted<S: Shape>(
         _ shape: S, wash: Double = Glass.wash, as finish: Frost = .panel
     ) -> some View {

@@ -316,7 +316,7 @@ public struct GlassIcon: View {
                 if prominent {
                     Circle().fill(design.accent.color)
                 } else {
-                    Color.clear.frosted(Circle(), as: .control)
+                    Color.clear.frosted(Circle(), as: .glass)
                 }
             }
             .contentShape(Circle())

@@ -74,7 +74,9 @@ struct ComposerBox: View {
                 .padding(.top, 3)
         }
         .moving(value: state.activity != nil)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            as: .glass)
         .accessibilityElement(children: .contain)
         .identified("composer", label: placeholder, value: spoken)
     }
