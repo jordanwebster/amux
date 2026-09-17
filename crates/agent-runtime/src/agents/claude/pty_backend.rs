@@ -218,17 +218,12 @@ impl ClaudePtyBackend {
             progress: None,
             inventory_revision: 0,
         };
-        let mut backend = Self::with_session(record, session);
+        let backend = Self::with_session(record, session);
         backend
             .runtime
             .lock()
             .expect("Claude runtime poisoned")
             .hook_tx = Some(hook_tx);
-        let (event_tx, _event_rx) = mpsc::channel(1);
-        let handle = backend
-            .activate_injected(&event_tx)
-            .expect("fresh external session activates");
-        backend.ingest_abort = Some(handle.abort_handle());
         backend
     }
 
@@ -248,14 +243,14 @@ impl ClaudePtyBackend {
         )
     }
 
-    /// A backend over a session somebody else built, active from the start.
+    /// A backend over a session somebody else built. The host attaches its
+    /// summarizer before starting the supplied session.
     /// Sources supplied through the runtime's deps still observe its input.
     pub(crate) fn with_supplied_session(
         req: &CreateAgentRequest,
         deps: &AgentDeps,
         session: Session,
-        event_tx: &mpsc::Sender<SessionEvent>,
-    ) -> Result<Self> {
+    ) -> Self {
         let mut backend = Self::new(
             req,
             deps.runtime_dir.clone(),
@@ -265,10 +260,8 @@ impl ClaudePtyBackend {
         );
         backend.sources = deps.sources.clone();
         backend.artifact_root = deps.artifact_root(req.agent_id);
-        let handle = backend.activate(session, event_tx)?;
-        backend.ingest_abort = Some(handle.abort_handle());
-        backend.started = true;
-        Ok(backend)
+        backend.injected = Some(session);
+        backend
     }
 
     pub(super) fn scripted(
@@ -293,11 +286,6 @@ impl ClaudePtyBackend {
             .expect("Claude runtime poisoned")
             .hook_tx = Some(hook_tx);
         backend.delivery_ready.store(true, Ordering::Release);
-        let (event_tx, _event_rx) = mpsc::channel(1);
-        let handle = backend
-            .activate_injected(&event_tx)
-            .expect("scripted session activates");
-        backend.ingest_abort = Some(handle.abort_handle());
         backend
     }
 
@@ -496,7 +484,6 @@ impl ClaudePtyBackend {
         }
         let mut backend = Self::new_readonly(agent_id, hook.common().cwd.clone());
         backend.sync_messaging(env);
-        backend.send_hook(hook).await?;
         Ok(Some(backend))
     }
 
@@ -624,25 +611,28 @@ impl AgentBackend for ClaudePtyBackend {
             return Err(anyhow!("Claude session {} already started", self.agent_id));
         }
         self.started = true;
-        if self.injected.is_some() {
-            return self.activate_injected(event_tx);
-        }
-        let version = self
-            .version_cache
-            .current()
-            .context("Claude version probe did not complete")?;
-        let launch = self.launch()?;
-        let size = self.terminal_size.unwrap_or_default();
-        let session = claude::pty::spawn_with_version(
-            &launch,
-            &self.keymaps,
-            pty_host::PtySize {
-                rows: size.rows,
-                cols: size.cols,
-            },
-            version,
-        )?;
-        self.activate(session, event_tx)
+        let handle = if self.injected.is_some() {
+            self.activate_injected(event_tx)?
+        } else {
+            let version = self
+                .version_cache
+                .current()
+                .context("Claude version probe did not complete")?;
+            let launch = self.launch()?;
+            let size = self.terminal_size.unwrap_or_default();
+            let session = claude::pty::spawn_with_version(
+                &launch,
+                &self.keymaps,
+                pty_host::PtySize {
+                    rows: size.rows,
+                    cols: size.cols,
+                },
+                version,
+            )?;
+            self.activate(session, event_tx)?
+        };
+        self.ingest_abort = Some(handle.abort_handle());
+        Ok(handle)
     }
 
     async fn stop(&self, _policy: StopPolicy) {

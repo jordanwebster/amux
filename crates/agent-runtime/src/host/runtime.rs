@@ -32,7 +32,7 @@ use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, ArtifactOwners, CreateAgentRequest,
-    DeliveryError, ExternalHookBootstrap, HookEnvironment, HookOutcome, McpLaunchRoute,
+    DeliveryError, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome, McpLaunchRoute,
     RenameAgentRequest, SessionCloseReason, SessionEvent, SpawnInheritance, StopPolicy,
     bootstrap_external_hook, compute_diff, store_error,
 };
@@ -215,7 +215,7 @@ impl AgentRuntime {
     ) -> Result<Agent, ProtocolError> {
         let agent_id = request.agent_id;
         let mut state = self.state.write().await;
-        let session: AgentSession = Box::new(ClaudeSession::scripted_for_testnet(
+        let mut session: AgentSession = Box::new(ClaudeSession::scripted_for_testnet(
             &request,
             state.deps.runtime_dir.clone(),
             state.deps.claude_version_cache.clone(),
@@ -225,6 +225,12 @@ impl AgentRuntime {
         let summarizer = attach_summarizer(&state, agent_id, &session)
             .await
             .map_err(|message| ProtocolError::ServerError { message })?;
+        let exit_handle =
+            session
+                .start(&self.event_tx)
+                .map_err(|error| ProtocolError::ServerError {
+                    message: error.to_string(),
+                })?;
         let announce = state
             .register_local_agent_context_with_summarizer(
                 self.host_id,
@@ -246,6 +252,7 @@ impl AgentRuntime {
         };
         let agent = agent.clone();
         state.local_agent_events.emit(announce);
+        super::lifecycle::monitor_session_exit(exit_handle, self.event_tx.clone(), agent_id);
         Ok(agent)
     }
 
@@ -256,15 +263,19 @@ impl AgentRuntime {
         request: CreateAgentRequest,
         session: claude::pty::Session,
     ) -> Result<Agent, ProtocolError> {
-        let error = |error: String| ProtocolError::ServerError { message: error };
+        let protocol_error = |error: String| ProtocolError::ServerError { message: error };
         let mut state = self.state.write().await;
-        let session: AgentSession = Box::new(
-            ClaudeSession::with_supplied_session(&request, &state.deps, session, &self.event_tx)
-                .map_err(|e| error(e.to_string()))?,
-        );
+        let mut session: AgentSession = Box::new(ClaudeSession::with_supplied_session(
+            &request,
+            &state.deps,
+            session,
+        ));
         let summarizer = attach_summarizer(&state, request.agent_id, &session)
             .await
-            .map_err(error)?;
+            .map_err(protocol_error)?;
+        let exit_handle = session
+            .start(&self.event_tx)
+            .map_err(|error| protocol_error(error.to_string()))?;
         let announce = state
             .register_local_agent_context_with_summarizer(
                 self.host_id,
@@ -273,7 +284,7 @@ impl AgentRuntime {
                 None,
                 summarizer,
             )
-            .map_err(error)?;
+            .map_err(protocol_error)?;
         if let Some(summarizer) = state
             .local_agents
             .get(&request.agent_id)
@@ -286,6 +297,11 @@ impl AgentRuntime {
         };
         let agent = agent.clone();
         state.local_agent_events.emit(announce);
+        super::lifecycle::monitor_session_exit(
+            exit_handle,
+            self.event_tx.clone(),
+            request.agent_id,
+        );
         Ok(agent)
     }
 
@@ -949,10 +965,21 @@ impl LocalAgentHost for AgentRuntime {
             } else {
                 match bootstrap_external_hook(agent_id, &payload, &env).await {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
-                    Ok(ExternalHookBootstrap::Register(session)) => {
+                    Ok(ExternalHookBootstrap::Register(mut session)) => {
                         let summarizer = attach_summarizer(&state, agent_id, &session)
                             .await
                             .map_err(|message| ProtocolError::ServerError { message })?;
+                        // Queue the bootstrap hook only after the tail-0 reader exists. The
+                        // inert external session cannot publish it until start below.
+                        session
+                            .handle_hook_payload(&payload, &env)
+                            .await
+                            .map_err(HookError::into_protocol_error)?;
+                        let exit_handle = session.start(self.event_tx()).map_err(|error| {
+                            ProtocolError::ServerError {
+                                message: error.to_string(),
+                            }
+                        })?;
                         match state.register_local_agent_context_with_summarizer(
                             self.host_id(),
                             agent_id,
@@ -968,6 +995,11 @@ impl LocalAgentHost for AgentRuntime {
                                     }
                                 }
                                 state.local_agent_events.emit(announce);
+                                super::lifecycle::monitor_session_exit(
+                                    exit_handle,
+                                    self.event_tx().clone(),
+                                    agent_id,
+                                );
                                 tracing::info!(%agent_id, "created readonly session from external hook");
                                 Ok(())
                             }
@@ -1466,6 +1498,155 @@ mod replay_query_tests {
             },
         )));
         assert!(!is_exact_cursor(&model::SessionArgs::TestEchoV1));
+    }
+}
+
+#[cfg(test)]
+mod summarizer_registration_tests {
+    use std::future;
+
+    use claude::pty::{DelaySource, HookSource, PtySource, Session, Sources, TranscriptSource};
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn permission_hook(agent_id: Uuid) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "session_id": agent_id,
+            "transcript_path": "/tmp/amux-summarizer-registration.jsonl",
+            "cwd": "/tmp",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo one"},
+        }))
+        .unwrap()
+    }
+
+    fn supplied_session() -> (Session, mpsc::Sender<claude::hooks::HookPayload>) {
+        let (_output_tx, output) = mpsc::channel(1);
+        let (hooks, hook_tx) = HookSource::channel(8);
+        let session = claude::pty::from_sources(
+            Sources {
+                pty: PtySource {
+                    output,
+                    writer: Box::new(tokio::io::sink()),
+                    handle: None,
+                    exit: Box::pin(future::pending()),
+                },
+                hooks,
+                transcript: TranscriptSource::live(),
+                version: claude::version::ClaudeVersion(semver::Version::new(2, 1, 251)),
+                delays: DelaySource::live(),
+            },
+            &claude::pty::keymap::KeymapSources::default(),
+        );
+        (session, hook_tx)
+    }
+
+    async fn assert_first_row_reached_summary(host: &AgentRuntime, agent_id: Uuid) {
+        let summary = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+            loop {
+                let summary = host
+                    .state
+                    .read()
+                    .await
+                    .local_agents
+                    .get(&agent_id)
+                    .and_then(|context| context.summary.clone());
+                if summary.as_ref().is_some_and(|summary| {
+                    summary.through >= 1
+                        && summary.summary.attention
+                            == model::Attention::NeedsYou {
+                                why: model::Why::Permission,
+                            }
+                }) {
+                    break summary.unwrap();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let summary = match summary {
+            Ok(summary) => summary,
+            Err(_) => {
+                let (summary, log) = {
+                    let state = host.state.read().await;
+                    let context = state.local_agents.get(&agent_id).unwrap();
+                    (
+                        context.summary.clone(),
+                        context.session.attachment_log().unwrap(),
+                    )
+                };
+                panic!(
+                    "row one did not reach the registered agent summary; summary={summary:?}, log_through={}",
+                    log.current_seq().await
+                );
+            }
+        };
+
+        assert_eq!(
+            summary.summary.attention,
+            model::Attention::NeedsYou {
+                why: model::Why::Permission
+            }
+        );
+        assert!(
+            !summary
+                .summary
+                .unknown
+                .contains(&model::SummaryField::Attention),
+            "row one must be folded from a Start baseline, not skipped behind Truncated"
+        );
+    }
+
+    #[tokio::test]
+    async fn daemon_summarizer_registration_paths_fold_the_immediate_first_row() {
+        let external_host = AgentRuntime::new(Uuid::new_v4());
+        let external_id = Uuid::new_v4();
+        <AgentRuntime as LocalAgentHost>::handle_hook(
+            &external_host,
+            external_id,
+            permission_hook(external_id),
+            HookEnvironment::new(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_first_row_reached_summary(&external_host, external_id).await;
+
+        let supplied_host = AgentRuntime::new(Uuid::new_v4());
+        let supplied_id = Uuid::new_v4();
+        let (session, hook_tx) = supplied_session();
+        hook_tx
+            .send(
+                claude::hooks::parse(&permission_hook(supplied_id))
+                    .expect("permission hook fixture parses"),
+            )
+            .await
+            .unwrap();
+        supplied_host
+            .register_claude_pty_session(
+                CreateAgentRequest {
+                    agent_id: supplied_id,
+                    host_id: None,
+                    name: Some("supplied-summary".into()),
+                    agent_type: AgentType::Claude {
+                        driver: model::ClaudeDriver::Pty,
+                    },
+                    working_dir: std::env::temp_dir(),
+                    terminal_size: None,
+                    args: Vec::new(),
+                    parent: None,
+                    initial_prompt: None,
+                },
+                session,
+            )
+            .await
+            .unwrap();
+        assert_first_row_reached_summary(&supplied_host, supplied_id).await;
+
+        external_host.stop_all().await;
+        supplied_host.stop_all().await;
     }
 }
 

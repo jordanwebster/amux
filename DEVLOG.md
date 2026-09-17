@@ -1,3 +1,11 @@
+2026-09-18 — **Structured PTY ingestion starts after its summarizer attaches.**
+External read-only hook sessions, supplied provider sessions, and scripted PTY
+sessions are now constructed inert. The host subscribes the daemon summarizer
+at the empty tail before it starts ingestion, so an immediately queued first
+permission row contributes to the published standing instead of forcing an
+unknown truncated baseline. The host also owns and monitors the ingestion task
+for these injected sessions in the same way it does for launched sessions.
+
 2026-09-18 — **The combined performance command records both baselines.**
 `just perf --baseline` now forwards baseline mode to its iOS qualification leg,
 so one quiet reference-machine run records both the desktop and phone medians
