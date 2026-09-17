@@ -1,3 +1,8 @@
+2026-09-17 — **The summarizer benchmark enters its Tokio timer context.**
+The ten-second idle interval is now constructed inside the benchmark runtime,
+so the release performance binary can measure the shipping summarizer tasks
+without panicking before the timer starts.
+
 2026-09-17 — **Daemon performance qualification exercises live rings and
 summarizers.** The idle-agent memory sample now fills every one of its 200
 structured replay rings to the 1 MiB byte ceiling with valid provider rows,

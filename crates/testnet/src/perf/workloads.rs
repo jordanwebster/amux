@@ -384,7 +384,7 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
     idle_runtime.block_on(idle.add_idle_summarizers(IDLE_SUMMARIZERS));
     let idle_wall_started = Instant::now();
     let idle_cpu_started = cpu_time()?;
-    idle_runtime.block_on(tokio::time::sleep(IDLE_WALL_TIME));
+    block_on_sleep(&idle_runtime, IDLE_WALL_TIME);
     let idle_cpu = cpu_time()?.saturating_sub(idle_cpu_started);
     let idle_wall = idle_wall_started.elapsed();
     anyhow::ensure!(
@@ -436,6 +436,10 @@ fn summarizer_runtime() -> Result<tokio::runtime::Runtime> {
         .enable_all()
         .build()
         .context("build summarizer performance runtime")
+}
+
+fn block_on_sleep(runtime: &tokio::runtime::Runtime, duration: Duration) {
+    runtime.block_on(async { tokio::time::sleep(duration).await });
 }
 
 fn protocols() -> [StructuredProtocol; 3] {
@@ -504,6 +508,12 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarizer_runtime_enters_timer_context() {
+        let runtime = summarizer_runtime().unwrap();
+        block_on_sleep(&runtime, Duration::from_millis(1));
+    }
 
     #[test]
     fn flood_second_uses_runtime_sized_batches() {
