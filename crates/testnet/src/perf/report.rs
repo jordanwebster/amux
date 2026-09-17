@@ -159,6 +159,24 @@ impl Baselines {
         }
         Ok(Some(value))
     }
+
+    pub fn project(&self, metrics: &[&str]) -> Result<Self, PerfError> {
+        let mut medians = BTreeMap::new();
+        for metric in metrics {
+            let value = self
+                .medians
+                .get(*metric)
+                .ok_or_else(|| PerfError::Baseline(format!("baseline has no metric {metric:?}")))?;
+            medians.insert((*metric).to_owned(), *value);
+        }
+        Ok(Self {
+            schema_version: self.schema_version,
+            machine_model: self.machine_model.clone(),
+            profile: self.profile.clone(),
+            features: self.features.clone(),
+            medians,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -527,6 +545,34 @@ mod tests {
         assert_eq!(verdict.median, 11.6);
         assert_eq!(verdict.measured, 12.0);
         assert!(!verdict.pass, "16% median drift exceeds the 15% time limit");
+    }
+
+    #[test]
+    fn perf_baseline_can_be_projected_for_a_focused_run() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            medians: BTreeMap::from([
+                ("fixture".to_owned(), Some(10.0)),
+                ("other".to_owned(), Some(20.0)),
+            ]),
+        };
+        let projected = baseline.project(&["fixture"]).unwrap();
+
+        assert_eq!(
+            projected.medians,
+            BTreeMap::from([("fixture".to_owned(), Some(10.0))])
+        );
+        Report::evaluate(
+            machine(),
+            vec![run(Unit::Milliseconds, Statistic::Median, &[9.0])],
+            Some(&projected),
+            false,
+        )
+        .unwrap();
+        assert!(baseline.project(&["missing"]).is_err());
     }
 
     #[test]

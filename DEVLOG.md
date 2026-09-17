@@ -1,3 +1,11 @@
+2026-09-17 — **Summarizer performance samples are repeatable.** The daemon
+memory harness now waits on each live summarizer's folded-through signal instead
+of charging a busy-yield loop to process CPU. Qualification takes the median of
+five independent 20,000-row active repetitions and three consecutive ten-second
+idle windows with 200 live tasks, and reports those sample counts. A release
+`perf --only summarizer` mode runs the listener-free workload in isolation
+without permitting a partial baseline rewrite.
+
 2026-09-17 — **Live summarizer costs have a reference-machine baseline.**
 The Mac14,6 baseline now records the shipping ring-reader and summarizer-task
 measurements: 5.104 microseconds of process CPU per consumed row and 0.128% of

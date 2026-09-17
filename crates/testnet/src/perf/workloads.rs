@@ -43,9 +43,9 @@ const TIP_WORKLOAD: Workload = Workload {
 };
 
 const SUMMARIZER_WORKLOAD: Workload = Workload {
-    description: "shipping ring readers and summarizer tasks: 200 idle for at least 10 s, then 20 active consuming 1,000 rows each",
+    description: "shipping ring readers and summarizer tasks: 200 idle across three consecutive 10 s windows, then the same 20 active summarizers consuming 1,000 fresh rows each across five repetitions",
     seed: SEED,
-    identity_growth: "fresh active row ids",
+    identity_growth: "fresh active row ids in every repetition",
     warm_up: "initial publications drained; one ring row per active summarizer",
 };
 
@@ -57,6 +57,10 @@ pub fn run_fast() -> Result<Vec<MetricRun>> {
     runs.extend(summarizer_cost()?);
     runs.extend(super::store_workloads::run_store()?);
     Ok(runs)
+}
+
+pub fn run_summarizer() -> Result<Vec<MetricRun>> {
+    Ok(summarizer_cost()?.into_iter().collect())
 }
 
 fn steady_state_frame() -> Result<MetricRun> {
@@ -374,7 +378,9 @@ fn tip_bound() -> MetricRun {
 
 fn summarizer_cost() -> Result<[MetricRun; 2]> {
     const IDLE_WALL_TIME: Duration = Duration::from_secs(10);
+    const IDLE_REPETITIONS: usize = 3;
     const IDLE_SUMMARIZERS: usize = 200;
+    const ACTIVE_REPETITIONS: usize = 5;
     const ACTIVE_SUMMARIZERS: usize = 20;
     const ACTIVE_ROWS_PER_SUMMARIZER: u64 = 1_000;
 
@@ -382,16 +388,23 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
     let idle_runtime = summarizer_runtime()?;
     let mut idle = agent_runtime::test_support::DaemonMemoryHarness::new();
     idle_runtime.block_on(idle.add_idle_summarizers(IDLE_SUMMARIZERS));
-    let idle_wall_started = Instant::now();
-    let idle_cpu_started = cpu_time()?;
-    block_on_sleep(&idle_runtime, IDLE_WALL_TIME);
-    let idle_cpu = cpu_time()?.saturating_sub(idle_cpu_started);
-    let idle_wall = idle_wall_started.elapsed();
-    anyhow::ensure!(
-        idle_wall >= IDLE_WALL_TIME,
-        "summarizer idle sample ended before its 10 second wall-clock floor"
-    );
-    let idle_percent = idle_cpu.as_secs_f64() / idle_wall.as_secs_f64() * 100.0;
+    let mut idle_samples = Vec::with_capacity(IDLE_REPETITIONS);
+    for _ in 0..IDLE_REPETITIONS {
+        let wall_started = Instant::now();
+        let cpu_started = cpu_time()?;
+        block_on_sleep(&idle_runtime, IDLE_WALL_TIME);
+        let cpu = cpu_time()?.saturating_sub(cpu_started);
+        let wall = wall_started.elapsed();
+        anyhow::ensure!(
+            wall >= IDLE_WALL_TIME,
+            "summarizer idle sample ended before its 10 second wall-clock floor"
+        );
+        idle_samples.push(sample(
+            "summarizer idle core",
+            cpu.as_secs_f64() / wall.as_secs_f64() * 100.0,
+            Unit::Percent,
+        ));
+    }
     drop(idle);
     drop(idle_runtime);
 
@@ -399,10 +412,17 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
     let mut active = agent_runtime::test_support::DaemonMemoryHarness::new();
     active_runtime.block_on(active.add_active(ACTIVE_SUMMARIZERS));
     active_runtime.block_on(active.consume_active_rows(1));
-    let active_cpu_started = cpu_time()?;
-    let rows = active_runtime.block_on(active.consume_active_rows(ACTIVE_ROWS_PER_SUMMARIZER));
-    let active_cpu = cpu_time()?.saturating_sub(active_cpu_started);
-    let per_row_us = active_cpu.as_secs_f64() * 1_000_000.0 / rows as f64;
+    let mut active_samples = Vec::with_capacity(ACTIVE_REPETITIONS);
+    for _ in 0..ACTIVE_REPETITIONS {
+        let cpu_started = cpu_time()?;
+        let rows = active_runtime.block_on(active.consume_active_rows(ACTIVE_ROWS_PER_SUMMARIZER));
+        let cpu = cpu_time()?.saturating_sub(cpu_started);
+        active_samples.push(sample(
+            "summarizer CPU per row",
+            cpu.as_secs_f64() * 1_000_000.0 / rows as f64,
+            Unit::Microseconds,
+        ));
+    }
 
     Ok([
         run(
@@ -412,11 +432,7 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
             Unit::Microseconds,
             SUMMARIZER_WORKLOAD,
             started_at,
-            vec![sample(
-                "summarizer CPU per row",
-                per_row_us,
-                Unit::Microseconds,
-            )],
+            active_samples,
         ),
         run(
             "summarizer idle core",
@@ -425,7 +441,7 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
             Unit::Percent,
             SUMMARIZER_WORKLOAD,
             started_at,
-            vec![sample("summarizer idle core", idle_percent, Unit::Percent)],
+            idle_samples,
         ),
     ])
 }

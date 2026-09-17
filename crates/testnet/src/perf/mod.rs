@@ -16,7 +16,7 @@ pub use report::{
 #[cfg(feature = "perf")]
 pub use soak::{run_soak, soak_child};
 #[cfg(feature = "perf")]
-pub use workloads::run_fast;
+pub use workloads::{run_fast, run_summarizer};
 
 /// The platform's process-residency measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

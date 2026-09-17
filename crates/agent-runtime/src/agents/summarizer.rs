@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeZone, Utc};
 use fold::{AgentFold, Baseline, Input};
 use model::{AgentKind, ClaudeDriver, StructuredProtocol, Summary};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -37,22 +37,46 @@ pub(crate) struct SummarizerPublication {
 }
 
 #[derive(Clone)]
-struct SharedSummary(Arc<Mutex<SummaryCut>>);
+struct SharedSummary {
+    cut: Arc<Mutex<SummaryCut>>,
+    through: watch::Sender<u64>,
+}
 
 impl SharedSummary {
+    fn new(cut: SummaryCut) -> Self {
+        let (through, _) = watch::channel(cut.through);
+        Self {
+            cut: Arc::new(Mutex::new(cut)),
+            through,
+        }
+    }
+
     fn get(&self) -> SummaryCut {
-        self.0
+        self.cut
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 
     fn replace(&self, cut: SummaryCut) {
-        *self.0.lock().unwrap_or_else(|poison| poison.into_inner()) = cut;
+        let through = cut.through;
+        *self.cut.lock().unwrap_or_else(|poison| poison.into_inner()) = cut;
+        self.through.send_if_modified(|current| {
+            if *current == through {
+                false
+            } else {
+                *current = through;
+                true
+            }
+        });
+    }
+
+    fn subscribe_through(&self) -> watch::Receiver<u64> {
+        self.through.subscribe()
     }
 
     fn set_stale(&self, stale: bool) -> Option<SummaryCut> {
-        let mut cut = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut cut = self.cut.lock().unwrap_or_else(|poison| poison.into_inner());
         if cut.stale == stale {
             return None;
         }
@@ -90,13 +114,13 @@ impl SummarizerHandle {
             .await?;
         let fold = initial_fold(protocol, facts.through);
         let now = Utc::now();
-        let shared = SharedSummary(Arc::new(Mutex::new(SummaryCut {
+        let shared = SharedSummary::new(SummaryCut {
             through: facts.through,
             producer_version: fold.tip_version(),
             observed_at: now,
             stale: false,
             summary: fold.summary(),
-        })));
+        });
         let (control_tx, control_rx) = mpsc::unbounded_channel();
         let activate = Arc::new(tokio::sync::Notify::new());
         let cancel = CancellationToken::new();
@@ -127,6 +151,10 @@ impl SummarizerHandle {
 
     pub(crate) fn snapshot(&self) -> SummaryCut {
         self.shared.get()
+    }
+
+    pub(crate) fn subscribe_through(&self) -> watch::Receiver<u64> {
+        self.shared.subscribe_through()
     }
 
     pub(crate) fn process_exited(&self, exit_code: Option<i32>) -> Option<oneshot::Receiver<()>> {

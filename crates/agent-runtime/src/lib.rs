@@ -485,16 +485,17 @@ pub mod test_support {
         }
 
         async fn wait_until_folded(&mut self, range: std::ops::Range<usize>, through: u64) {
+            let mut progress = range
+                .map(|index| self.summarizers[index].subscribe_through())
+                .collect::<Vec<_>>();
             tokio::time::timeout(std::time::Duration::from_secs(60), async {
-                loop {
-                    if range
-                        .clone()
-                        .all(|index| self.summarizers[index].snapshot().through >= through)
-                    {
-                        return;
+                for receiver in &mut progress {
+                    while *receiver.borrow_and_update() < through {
+                        receiver
+                            .changed()
+                            .await
+                            .expect("live summarizer retains its progress signal");
                     }
-                    self.drain_publications();
-                    tokio::task::yield_now().await;
                 }
             })
             .await
