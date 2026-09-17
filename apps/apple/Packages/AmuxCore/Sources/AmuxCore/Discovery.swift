@@ -62,22 +62,49 @@ public final class LocalDiscovery {
     /// Told when the answer changes, so a screen can explain a refusal.
     public var permissionChanged: (@MainActor (LocalNetworkPermission) -> Void)?
 
+    /// Starts resolving one route to an address and reports the address, or
+    /// nothing where the route gave none in time. Returns what abandons it.
+    typealias Resolve = @MainActor (
+        _ route: NWEndpoint, _ within: TimeInterval, _ settled: @escaping @MainActor (String?) -> Void
+    ) -> @MainActor () -> Void
+    /// Runs something on the main actor after a delay.
+    typealias After = @MainActor (_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) -> Void
+
+    /// How long one route may take to give an address. A healthy lookup on a
+    /// local network settles in well under a second; one that has not by now
+    /// is waiting on a record nobody will answer for.
+    nonisolated static let resolveTimeout: TimeInterval = 3
+    /// How long to wait before trying every route of an advertisement again
+    /// once all of them have failed.
+    nonisolated static let retryDelay: TimeInterval = 5
+
     private let handOver: HandOver
     /// The only machines this browser may report, or nothing where it reports
     /// every amux machine it resolves. Set by a driven debug launch, whose
     /// simulator browses the Mac's real network and would otherwise report
     /// whatever else is running on it.
     private let only: Set<HostId>?
+    private let resolve: Resolve
+    private let after: After
     private var browser: NWBrowser?
-    /// One in-flight address resolution per advertisement.
-    private var resolving: [NWEndpoint: NWConnection] = [:]
-    /// What each advertisement claimed about itself, before its address is known.
-    private var claims: [NWEndpoint: (host: HostId, name: String, version: UInt32)] = [:]
+    /// Every advertisement being resolved or already resolved, by the endpoint
+    /// the browser reports it under.
+    private var tracked: [NWEndpoint: Tracked] = [:]
     /// The advertisements whose addresses are known, which is what is handed over.
     private var found: [NWEndpoint: FoundHost] = [:]
+    /// Bumped whenever an advertisement starts resolving afresh, so an answer
+    /// or a retry belonging to an attempt that was replaced is ignored.
+    private var attempts = 0
 
-    public init(only: Set<HostId>? = nil, handOver: @escaping HandOver) {
+    public convenience init(only: Set<HostId>? = nil, handOver: @escaping HandOver) {
+        self.init(only: only, resolve: Self.connecting, after: Self.mainQueue, handOver: handOver)
+    }
+
+    init(only: Set<HostId>?, resolve: @escaping Resolve, after: @escaping After,
+         handOver: @escaping HandOver) {
         self.only = only
+        self.resolve = resolve
+        self.after = after
         self.handOver = handOver
     }
 
@@ -92,7 +119,14 @@ public final class LocalDiscovery {
             MainActor.assumeIsolated { self.permission = Self.permission(for: state) }
         }
         browser.browseResultsChangedHandler = { results, _ in
-            MainActor.assumeIsolated { self.browsed(results) }
+            MainActor.assumeIsolated {
+                self.saw(results.map { result in
+                    Sighting(
+                        endpoint: result.endpoint,
+                        record: Self.record(of: result.metadata),
+                        routes: Self.routes(to: result.endpoint, on: result.interfaces))
+                })
+            }
         }
         self.browser = browser
         browser.start(queue: .main)
@@ -110,63 +144,189 @@ public final class LocalDiscovery {
         guard browser != nil else { return }
         browser?.cancel()
         browser = nil
-        for connection in resolving.values { connection.cancel() }
-        resolving = [:]
-        claims = [:]
-        found = [:]
+        forget()
         permission = .unknown
     }
 
-    /// The set the browser can currently see, resolving the ones that are new.
-    private func browsed(_ results: Set<NWBrowser.Result>) {
-        let endpoints = Set(results.map(\.endpoint))
-        for endpoint in Array(claims.keys) where !endpoints.contains(endpoint) {
-            resolving.removeValue(forKey: endpoint)?.cancel()
-            claims.removeValue(forKey: endpoint)
+    private func forget() {
+        for entry in tracked.values { entry.abandon?() }
+        tracked = [:]
+        found = [:]
+        attempts += 1
+    }
+
+    /// One advertisement as the browser reported it.
+    struct Sighting {
+        let endpoint: NWEndpoint
+        let record: NWTXTRecord?
+        /// The same advertisement scoped to each interface it was seen on, in
+        /// the order they are tried.
+        let routes: [NWEndpoint]
+    }
+
+    private struct Claim: Equatable {
+        let host: HostId
+        let name: String
+        let version: UInt32
+    }
+
+    private struct Tracked {
+        let claim: Claim
+        let routes: [NWEndpoint]
+        let attempt: Int
+        var next = 0
+        var abandon: (@MainActor () -> Void)?
+    }
+
+    /// The set the browser can currently see.
+    ///
+    /// An advertisement is resolved when it first appears and again whenever
+    /// what it claims or where it was seen changes, because a machine that
+    /// came back under the same name may be listening somewhere else.
+    func saw(_ sightings: [Sighting]) {
+        let visible = Set(sightings.map(\.endpoint))
+        for endpoint in Array(tracked.keys) where !visible.contains(endpoint) {
+            tracked.removeValue(forKey: endpoint)?.abandon?()
             found.removeValue(forKey: endpoint)
         }
-        for result in results {
-            guard claims[result.endpoint] == nil,
-                  case .bonjour(let record) = result.metadata,
+        for sighting in sightings {
+            guard let record = sighting.record,
                   let claimed = Self.claim(from: record),
                   only?.contains(claimed.host) ?? true,
-                  let name = Self.serviceName(of: result.endpoint)
+                  let name = Self.serviceName(of: sighting.endpoint)
             else { continue }
-            claims[result.endpoint] = (claimed.host, name, claimed.version)
-            resolve(result.endpoint)
+            let claim = Claim(host: claimed.host, name: name, version: claimed.version)
+            if let current = tracked[sighting.endpoint],
+               current.claim == claim, current.routes == sighting.routes {
+                continue
+            }
+            tracked[sighting.endpoint]?.abandon?()
+            if found[sighting.endpoint]?.host != claim.host {
+                found.removeValue(forKey: sighting.endpoint)
+            }
+            attempts += 1
+            tracked[sighting.endpoint] = Tracked(
+                claim: claim, routes: sighting.routes, attempt: attempts)
+            tryNextRoute(of: sighting.endpoint)
         }
         handOver(Array(found.values))
     }
 
-    /// Turns an advertisement into an address by opening the connection the
-    /// system resolves it for, reading the address it settled on and dropping
-    /// it again. Bonjour gives a name and a port; only a connection gives the
+    /// Resolves the next route of an advertisement, and once every route has
+    /// failed, starts over from the first after a pause.
+    ///
+    /// A lookup that never settles is not an error the system reports: the
+    /// connection waits for a record indefinitely. Without a deadline one
+    /// unanswerable route would hide the machine for as long as the browser
+    /// runs.
+    private func tryNextRoute(of endpoint: NWEndpoint) {
+        guard var entry = tracked[endpoint] else { return }
+        let attempt = entry.attempt
+        guard entry.next < entry.routes.count else {
+            entry.next = 0
+            entry.abandon = nil
+            tracked[endpoint] = entry
+            after(Self.retryDelay) { [weak self] in
+                guard let self, self.tracked[endpoint]?.attempt == attempt else { return }
+                self.tryNextRoute(of: endpoint)
+            }
+            return
+        }
+        let route = entry.routes[entry.next]
+        entry.next += 1
+        tracked[endpoint] = entry
+        let abandon = resolve(route, Self.resolveTimeout) { [weak self] address in
+            guard let self, let entry = self.tracked[endpoint], entry.attempt == attempt else { return }
+            guard let address else {
+                self.tryNextRoute(of: endpoint)
+                return
+            }
+            self.tracked[endpoint]?.abandon = nil
+            self.found[endpoint] = FoundHost(
+                host: entry.claim.host, name: entry.claim.name, version: entry.claim.version,
+                addrs: [address])
+            self.handOver(Array(self.found.values))
+        }
+        if tracked[endpoint]?.attempt == attempt, tracked[endpoint]?.next == entry.next {
+            tracked[endpoint]?.abandon = abandon
+        }
+    }
+
+    /// The routes to try for an advertisement seen on these interfaces:
+    /// the same advertisement scoped to each one, loopback last.
+    ///
+    /// Only a simulator sees a Mac's loopback interface. There the system
+    /// looks the advertised host name up in the Mac's own responder alone,
+    /// which answers only for what was registered with it, so an advertisement
+    /// published by a daemon's own mDNS library resolves over the network and
+    /// never over loopback.
+    nonisolated static func routes(to endpoint: NWEndpoint, on interfaces: [NWInterface]) -> [NWEndpoint] {
+        guard case .service(let name, let type, let domain, _) = endpoint, !interfaces.isEmpty else {
+            return [endpoint]
+        }
+        let ordered = interfaces.filter { $0.type != .loopback } + interfaces.filter { $0.type == .loopback }
+        return ordered.map { .service(name: name, type: type, domain: domain, interface: $0) }
+    }
+
+    /// Turns a route into an address by opening the connection the system
+    /// resolves it for, reading the address it settled on and dropping it
+    /// again. Bonjour gives a name and a port; only a connection gives the
     /// address behind them, and nothing here wants the connection itself.
-    private func resolve(_ endpoint: NWEndpoint) {
-        let connection = NWConnection(to: endpoint, using: .udp)
-        resolving[endpoint] = connection
+    private static func connecting(
+        to route: NWEndpoint, within timeout: TimeInterval,
+        settled: @escaping @MainActor (String?) -> Void
+    ) -> @MainActor () -> Void {
+        let connection = NWConnection(to: route, using: .udp)
+        let once = Once()
+        let finish: @MainActor (String?) -> Void = { address in
+            guard once.claim() else { return }
+            connection.cancel()
+            settled(address)
+        }
         connection.stateUpdateHandler = { state in
             MainActor.assumeIsolated {
                 switch state {
                 case .ready:
-                    self.resolved(endpoint, at: connection.currentPath?.remoteEndpoint)
-                case .failed, .cancelled:
-                    self.resolving.removeValue(forKey: endpoint)
+                    finish(connection.currentPath?.remoteEndpoint.flatMap(Self.address(of:)))
+                case .failed:
+                    finish(nil)
                 default: break
                 }
             }
         }
         connection.start(queue: .main)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            MainActor.assumeIsolated { finish(nil) }
+        }
+        return {
+            guard once.claim() else { return }
+            connection.cancel()
+        }
     }
 
-    private func resolved(_ endpoint: NWEndpoint, at remote: NWEndpoint?) {
-        resolving.removeValue(forKey: endpoint)?.cancel()
-        guard let claim = claims[endpoint], let remote,
-              let address = Self.address(of: remote)
-        else { return }
-        found[endpoint] = FoundHost(
-            host: claim.host, name: claim.name, version: claim.version, addrs: [address])
-        handOver(Array(found.values))
+    private static func mainQueue(_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            MainActor.assumeIsolated { work() }
+        }
+    }
+
+    /// Settles a lookup exactly once, whichever of its answer, its deadline or
+    /// its abandonment comes first.
+    @MainActor
+    private final class Once {
+        private var settled = false
+
+        func claim() -> Bool {
+            guard !settled else { return false }
+            settled = true
+            return true
+        }
+    }
+
+    /// The TXT record a browse result carries, where it carries one.
+    nonisolated static func record(of metadata: NWBrowser.Result.Metadata) -> NWTXTRecord? {
+        guard case .bonjour(let record) = metadata else { return nil }
+        return record
     }
 
     /// What an advertisement's own record claims it is.

@@ -86,6 +86,86 @@ final class DiscoveryTests: XCTestCase {
     }
 
     @MainActor
+    func testARouteThatGivesNoAddressInTimeGivesWayToTheNext() {
+        // A Mac's own loopback is one route a simulator sees, and a lookup
+        // over it can wait forever for a record nobody answers for. The
+        // machine is still reached over the next route.
+        let browser = Browser()
+        browser.discovery.saw([browser.sighting(routes: ["loopback", "wifi"])])
+        XCTAssertEqual(browser.lookups.map(\.route), ["loopback"])
+        XCTAssertEqual(browser.lookups[0].within, LocalDiscovery.resolveTimeout)
+
+        browser.lookups[0].settle(nil)
+        XCTAssertEqual(browser.lookups.map(\.route), ["loopback", "wifi"])
+        browser.lookups[1].settle("192.168.1.24:41234")
+
+        XCTAssertEqual(browser.handedOver.last, [browser.found("192.168.1.24:41234")])
+    }
+
+    @MainActor
+    func testAMachineNoRouteResolvedIsTriedAgainAfterAPause() {
+        let browser = Browser()
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        browser.lookups[0].settle(nil)
+        XCTAssertEqual(browser.pauses, [LocalDiscovery.retryDelay])
+        XCTAssertEqual(browser.lookups.count, 1)
+
+        browser.resume()
+        XCTAssertEqual(browser.lookups.map(\.route), ["wifi", "wifi"])
+        browser.lookups[1].settle("192.168.1.24:41234")
+        XCTAssertEqual(browser.handedOver.last, [browser.found("192.168.1.24:41234")])
+    }
+
+    @MainActor
+    func testAMachineIsResolvedAgainWhenWhatItAdvertisesChanges() {
+        // The same name coming back with a different record is a machine that
+        // restarted, and may be listening somewhere else now.
+        let browser = Browser()
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        browser.lookups[0].settle("192.168.1.24:41234")
+
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        XCTAssertEqual(browser.lookups.count, 1, "an unchanged advertisement was looked up again")
+
+        browser.discovery.saw([browser.sighting(version: 8, routes: ["wifi"])])
+        XCTAssertEqual(browser.lookups.count, 2)
+        browser.lookups[1].settle("192.168.1.24:50000")
+        XCTAssertEqual(
+            browser.handedOver.last, [browser.found("192.168.1.24:50000", version: 8)])
+
+        browser.discovery.saw([browser.sighting(version: 8, routes: ["wifi", "ethernet"])])
+        XCTAssertEqual(browser.lookups.count, 3, "a newly seen interface was not tried")
+    }
+
+    @MainActor
+    func testAnAnswerForALookupThatWasReplacedIsIgnored() {
+        let browser = Browser()
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        browser.discovery.saw([browser.sighting(version: 8, routes: ["wifi"])])
+        XCTAssertTrue(browser.lookups[0].abandoned)
+
+        browser.lookups[0].settle("192.168.1.24:41234")
+        XCTAssertEqual(browser.handedOver.last, [])
+        browser.lookups[1].settle("192.168.1.24:50000")
+        XCTAssertEqual(
+            browser.handedOver.last, [browser.found("192.168.1.24:50000", version: 8)])
+    }
+
+    @MainActor
+    func testAMachineThatLeavesIsWithdrawnAndItsLookupAbandoned() {
+        let browser = Browser()
+        browser.discovery.saw([browser.sighting(routes: ["wifi"])])
+        browser.lookups[0].settle("192.168.1.24:41234")
+        browser.discovery.saw([browser.sighting(version: 8, routes: ["wifi"])])
+
+        browser.discovery.saw([])
+        XCTAssertTrue(browser.lookups[1].abandoned)
+        XCTAssertEqual(browser.handedOver.last, [])
+        browser.resume()
+        XCTAssertEqual(browser.lookups.count, 2)
+    }
+
+    @MainActor
     func testStoppingDoesNotWithdrawWhatWasFound() {
         // The library is told separately that the app went away, and closes
         // its direct links itself. Withdrawing here as well would leave a
@@ -95,6 +175,63 @@ final class DiscoveryTests: XCTestCase {
         let discovery = LocalDiscovery { handedOver.append($0) }
         discovery.stop()
         XCTAssertEqual(handedOver.count, 0)
+    }
+}
+
+/// A browser whose lookups and pauses the test settles by hand.
+@MainActor
+private final class Browser {
+    final class Lookup {
+        let route: String
+        let within: TimeInterval
+        let settle: @MainActor (String?) -> Void
+        var abandoned = false
+
+        init(route: String, within: TimeInterval, settle: @escaping @MainActor (String?) -> Void) {
+            self.route = route
+            self.within = within
+            self.settle = settle
+        }
+    }
+
+    let host = HostId(UUID(uuidString: "6D7A4B1E-3C2F-4A58-9B0D-1E2F3A4B5C6D")!)
+    var lookups: [Lookup] = []
+    var pauses: [TimeInterval] = []
+    var handedOver: [[FoundHost]] = []
+    private var paused: [@MainActor () -> Void] = []
+    private(set) lazy var discovery = LocalDiscovery(
+        only: nil,
+        resolve: { [unowned self] route, within, settle in
+            let lookup = Lookup(route: Self.name(of: route), within: within, settle: settle)
+            self.lookups.append(lookup)
+            return { lookup.abandoned = true }
+        },
+        after: { [unowned self] delay, work in
+            self.pauses.append(delay)
+            self.paused.append(work)
+        },
+        handOver: { [unowned self] in self.handedOver.append($0) })
+
+    func sighting(version: UInt32 = 7, routes: [String]) -> LocalDiscovery.Sighting {
+        LocalDiscovery.Sighting(
+            endpoint: .service(name: "kitchen", type: LocalDiscovery.service, domain: "local.", interface: nil),
+            record: NWTXTRecord(["hid": host.description, "v": String(version)]),
+            routes: routes.map { .hostPort(host: .name($0, nil), port: 1) })
+    }
+
+    func found(_ address: String, version: UInt32 = 7) -> FoundHost {
+        FoundHost(host: host, name: "kitchen", version: version, addrs: [address])
+    }
+
+    func resume() {
+        let work = paused
+        paused = []
+        for run in work { run() }
+    }
+
+    private static func name(of route: NWEndpoint) -> String {
+        guard case .hostPort(.name(let name, _), _) = route else { return "\(route)" }
+        return name
     }
 }
 

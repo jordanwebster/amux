@@ -1,3 +1,30 @@
+2026-09-17 — **The phone keeps looking for a machine whose address lookup
+stalled.** A simulator paired with this tree's daemon stopped finding it once
+the daemon restarted on a new port: the app dialled only the saved address,
+which was dead, and never offered the runtime the new one. The simulator's
+network log showed why. The browser found the advertisement with the new port,
+reached over the Mac's loopback interface as well as Wi-Fi. When the loopback
+sighting was used, the system looked the advertised host name up in the Mac's
+own mDNS responder alone. A daemon publishes through its own mDNS library, so
+that lookup returned NoSuchRecord, and the connection opened to learn the address
+waited in `preparing` indefinitely. The browser resolved each advertisement
+once for as long as it ran, so nothing asked again. Which sighting was used
+varied, which is why the same daemon was found every time earlier in the day
+and never in the evening.
+
+The browser now resolves an advertisement over each interface it was seen on,
+loopback last. It gives each lookup three seconds, moves on to the next
+interface when one gives no address, and tries every interface again after five
+seconds once all have failed. It also resolves again whenever the browser
+reports a changed record or a changed set of interfaces for a machine, and
+ignores an answer from a lookup that was replaced. A real phone never sees a
+Mac's loopback, but a lookup that stalls for any other reason no longer hides
+the machine until the app is next backgrounded. Unit tests drive the browser
+with a fake resolver and a clock the test advances. On the simulator, three cold
+launches that each followed a restart onto a new port, and one restart while
+the app was open, all reconnected at the new port after the saved address timed
+out.
+
 2026-09-17 — **The daemon logs its own crates at debug, and `ios unit` tests
 current Rust.** The server's default log filter named only the `amux` crate, so
 nothing below warn from `node`, where connections are made, reached the log
