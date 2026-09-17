@@ -557,9 +557,14 @@ impl CodexFold {
                 };
                 let key = native_or_delivery("item", Some(&item_id), seq, 0);
                 self.asks.retain(|ask| ask.request_id != request);
-                let state = string(row, "resolution")
+                let resolution = string(row, "resolution")
                     .or_else(|| string(row, "reason"))
                     .unwrap_or_else(|| "resolved".into());
+                let state = if matches!(resolution.as_str(), "answered" | "answered_elsewhere") {
+                    "running".into()
+                } else {
+                    resolution
+                };
                 out.push(upsert(
                     key,
                     seq,
@@ -567,7 +572,6 @@ impl CodexFold {
                     revision,
                     CodexPartial {
                         state: Patch::set(state, revision),
-                        details: Patch::set(JsonBytes(bounded_json(row)), revision),
                         ..CodexPartial::default()
                     },
                 ));
@@ -1709,15 +1713,19 @@ unrecognized=000001070000010806667574757265000000000000000000000000000000"#
 {"type":"item/started","item":{"id":"message-1","type":"agentMessage","text":""}}
 {"type":"item/agentMessage/delta","itemId":"message-1","delta":"hel"}
 {"type":"item/completed","item":{"id":"message-1","type":"agentMessage","text":"hello"}}
-{"type":"item/tool/call","callId":"tool-1","tool":"send","arguments":{}}
-{"type":"amux.codex_approval_required","item_id":"tool-1","request_id":1}
-{"type":"amux.codex_approval_resolved","item_id":"tool-1","request_id":1,"resolution":"answered"}
+{"type":"item/commandExecution/requestApproval","itemId":"command-1","command":"cargo test --workspace","cwd":"/work"}
+{"type":"amux.codex_approval_required","item_id":"command-1","request_id":1}
+{"type":"amux.codex_approval_resolved","item_id":"command-1","request_id":1,"reason":"answered"}
 "#,
         );
         let (_, oracle) = fold_rows(&input);
-        assert_eq!(keys(&oracle), ["item:message-1", "item:tool-1"]);
+        assert_eq!(keys(&oracle), ["item:message-1", "item:command-1"]);
         assert_eq!(oracle.entries()[0].entry.text(), Some("hello"));
-        assert_eq!(oracle.entries()[1].entry.state(), Some("answered"));
+        let command = &oracle.entries()[1].entry;
+        assert_eq!(command.state(), Some("running"));
+        let details: Value = serde_json::from_slice(&command.details().unwrap().0).unwrap();
+        assert_eq!(details["type"], "item/commandExecution/requestApproval");
+        assert_eq!(details["command"], "cargo test --workspace");
     }
 
     #[test]

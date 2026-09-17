@@ -3,7 +3,7 @@ use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::codex::AskContext;
 use ui_state::{CodexCommand, CodexDecision, Command as UiCommand};
 
-use super::agents_tests::{stored_has_text, succeeded, wait_for};
+use super::agents_tests::{stored_has_text, stored_kind_count, succeeded, wait_for};
 use super::*;
 
 const PROMPT: &str =
@@ -177,6 +177,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         } else {
             wait_for(&mut runtime, "recorded DONE and turn completion", |model| {
                 stored_has_text(model, agent, "DONE")
+                    && stored_kind_count(model, agent, "turn") > 0
                     && model
                         .codex(agent)
                         .is_some_and(|layer| layer.ask_count() == 0)

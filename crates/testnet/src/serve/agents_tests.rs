@@ -50,7 +50,7 @@ pub(super) fn stored_has_text(model: &Model, agent: Uuid, text: &str) -> bool {
     })
 }
 
-fn stored_kind_count(model: &Model, agent: Uuid, kind: &str) -> usize {
+pub(super) fn stored_kind_count(model: &Model, agent: Uuid, kind: &str) -> usize {
     use fold::Entry as _;
     model.chat(agent).map_or(0, |chat| {
         chat.entries

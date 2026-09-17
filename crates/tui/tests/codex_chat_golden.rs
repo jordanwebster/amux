@@ -146,15 +146,11 @@ fn model_with_extra(rows: Vec<Value>, extra: Vec<Msg>) -> Model {
         }
         update(&mut model, msg);
     }
-    let truncated = store_rows
-        .iter()
-        .any(|row| row.get("type").and_then(Value::as_str) == Some("amux.codex_gap"));
-    tui::fixtures::install_static_store_rows_for_with_truncation(
+    tui::fixtures::install_static_store_rows_for(
         &mut model,
         agent_id(),
         ui_state::StructuredProtocol::Codex,
         store_rows,
-        truncated,
     );
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");

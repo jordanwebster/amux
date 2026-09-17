@@ -378,20 +378,6 @@ fn fold(msgs: Vec<Msg>) -> Model {
             let rows = rows_by_agent.entry(*agent).or_default();
             for entry in entries {
                 rows.push(entry.payload.clone());
-                if entry.payload["type"] == "amux.codex_approval_resolved"
-                    && entry.payload["item_id"] == "exec-ask"
-                {
-                    rows.push(json!({
-                        "type": "item/started",
-                        "item": {
-                            "id": "exec-ask",
-                            "type": "commandExecution",
-                            "command": "cargo test --workspace",
-                            "cwd": "/work",
-                            "status": "inProgress",
-                        },
-                    }));
-                }
             }
         }
         update(&mut model, msg);
@@ -2070,9 +2056,6 @@ fn a2a_inline_answer_session_child() {
 /// envelope as every other carrier delivers; the session states it as a
 /// typed row rather than pasting it into a prompt.
 fn session_message_row(id: u32, kind: &str, from: &str, text: &str) -> Value {
-    // The durable fold rejects a missing or empty envelope body. Exit notices
-    // still paint as bodyless, so use a single blank as their wire payload.
-    let text = if text.is_empty() { " " } else { text };
     json!({
         "type": "amux.claude_sdk.message",
         "delivery": "stream",

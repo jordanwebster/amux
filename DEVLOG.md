@@ -1,3 +1,13 @@
+2026-09-17 — **Golden fixtures now exercise the same stored rows as
+production.** Approval resolution preserves a Codex work item's command and
+moves an accepted item back to running, while Claude SDK exit envelopes accept
+the empty body emitted by the daemon. The chat harnesses no longer inject a
+replacement Codex item, a space into an exit notice, or a truncated store
+boundary for a provider gap. Consequently, the Codex error-gap golden loses
+only its former top “earlier history unavailable” line: that history marker now
+comes exclusively from a real store boundary. The recorded Codex journey also
+waits for its stored turn completion before declaring the replay finished.
+
 2026-09-17 — **A stopped store worker always ends its client session.** Every
 executed store operation that discovers corruption now reports the worker
 failure independently of its reducer result. A stale operation or superseded

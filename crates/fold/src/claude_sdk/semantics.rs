@@ -1561,7 +1561,13 @@ impl ClaudeSdkFold {
         mutations: &mut Vec<Mutation<ClaudeSdkEntry>>,
     ) {
         let envelope = row.get("envelope").unwrap_or(&Value::Null);
-        let Some(text) = string(envelope, "text") else {
+        let message_kind = AgentMessageKind::read(envelope.get("kind").and_then(Value::as_str));
+        let text = envelope
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty() || message_kind == AgentMessageKind::Exited)
+            .map(|text| clipped_text(text, TEXT_MAX_BYTES));
+        let Some(text) = text else {
             mutations.push(unrecognized(
                 seq,
                 0,
@@ -1595,7 +1601,7 @@ impl ClaudeSdkFold {
             id: Some(bounded_id(envelope_id)),
             context: id(envelope, "context").map(bounded_id),
             from: sender,
-            kind: AgentMessageKind::read(envelope.get("kind").and_then(Value::as_str)),
+            kind: message_kind,
             delivery: string(row, "delivery"),
         };
         mutations.push(upsert(
@@ -2651,6 +2657,38 @@ unrecognized=000001070000010b066675747572650573686170650000000000000000000000000
             [("blk:m:0", "final:r1:0"), ("blk:m:1", "final:r2:0")]
         );
         assert_eq!(oracle.entries()[0].entry.text(), Some("hello"));
+    }
+
+    #[test]
+    fn claude_sdk_empty_exit_envelope_is_a_bodyless_agent_notice() {
+        let input = vec![
+            serde_json::to_vec(&json!({
+                "type": "amux.claude_sdk.message",
+                "delivery": "stream",
+                "envelope": {
+                    "id": "exit-1",
+                    "from": {"type":"agent", "name":"worker"},
+                    "kind": "exited",
+                    "text": ""
+                }
+            }))
+            .unwrap(),
+        ];
+        let (_, oracle) = fold_rows(&input);
+        let entries = oracle.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].entry.entry_kind(),
+            Some(ClaudeSdkEntryKind::AgentMessage)
+        );
+        assert_eq!(entries[0].entry.text(), None);
+        assert!(matches!(
+            entries[0].entry.body(),
+            Some(ClaudeSdkBody::AgentMessage {
+                kind: AgentMessageKind::Exited,
+                ..
+            })
+        ));
     }
 
     #[test]
