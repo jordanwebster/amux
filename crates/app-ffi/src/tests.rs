@@ -983,7 +983,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
         report["msgs"]["format_version"],
         ui_runtime::MSGS_SCHEMA_VERSION
     );
-    assert_eq!(report["msgs"]["mode"], "fold");
+    assert_eq!(report["msgs"]["invariant_violation"], false);
     assert!(
         report["msgs"]["msgs"]
             .as_array()
@@ -997,7 +997,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
         json!({
             "format_version": report["msgs"]["format_version"],
             "checkpoint": report["msgs"]["checkpoint"],
-            "mode": report["msgs"]["mode"],
+            "invariant_violation": report["msgs"]["invariant_violation"],
         })
         .to_string(),
     ];

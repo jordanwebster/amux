@@ -1,3 +1,24 @@
+2026-09-17 — **Every bounded recorder window starts from an exact on-disk
+checkpoint.** The recorder now owns only its 2 MiB/count-bounded ring of
+serialized reducer messages. Each runtime with report storage writes a private
+rolling Model checkpoint at startup and atomically replaces it before a message
+would cross either ring bound; an individually oversized message advances the
+checkpoint again after it folds. Report bundles embed that checkpoint and the
+following ring, so ordinary, invariant and panic reports all replay through the
+same unconditional fold without a captured-model or recent-context mode. The
+sticky invariant warning is report framing applied after replay, and recorder
+retention attributes zero bytes to a Model checkpoint.
+
+On the Mac14,6 reference machine, eleven release-profile serialize, private
+temp-file write, `sync_all` and rename samples measured a 7.009 ms median for
+the 1,570,638-byte desktop Model with ten chats at 96 entries each, and a
+6.646 ms median for the 1,181,749-byte phone shape with one 800-entry chat.
+That bounded reset cost stays synchronous: even added to the measured 8.978 ms
+flood-frame render it remains inside one 16.667 ms frame and well below the
+50 ms key-to-flush budget, while preserving an atomic checkpoint/ring cut for
+panic capture. At 2,000 rows/s it is paid only when the unchanged 2 MiB ring
+fills, not per row.
+
 2026-09-17 — **Daemon replay retention is one byte budget per buffer.** Claude
 PTY, Claude SDK and Codex structured rings now retain at most 1 MiB of encoded
 rows, with no row ceiling, idle timer or second idle-trim budget. Claude PTY raw
@@ -41,8 +62,9 @@ or 769.4 B per row. Store windows including their fold heads fell from 980.9 to
 247.5 B/row, provider state from 492.5 to 44.3, other model state from 125.5 to
 76.8, and SQLite from 448.4 to 0.0; the bounded recorder is 185.8 and remaining
 runtime/store-worker ownership is 291.7 B/row. The recorder still keeps only its
-2 MiB recent-message ring during steady state and captures the authoritative
-Model when a report is requested. Earlier real-client diagnostics measured
+2 MiB recent-message ring during steady state; the authoritative Model now
+lives only in its rolling on-disk checkpoint. Earlier real-client diagnostics
+measured
 5.162 MiB/min before these repairs and, at commit 6c525e1f, 2.271 MiB/min with a
 22.204 MiB peak and a zero slope after reset. The next driver-owned four-minute
 diagnostic supplies the final after slope and peak; the unchanged ten-minute

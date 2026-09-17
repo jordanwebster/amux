@@ -9,7 +9,7 @@ private func wholeCapture() -> ReportCapture {
     ReportCapture(
         frame: FrozenFrame(png: Data([0x89, 0x50, 0x4E, 0x47]), width: 402, height: 874, scale: 3),
         snapshot: """
-            {"msgs":{"format_version":2,"mode":"fold","checkpoint":{"agents":[]},\
+            {"msgs":{"format_version":3,"invariant_violation":false,"checkpoint":{"agents":[]},\
             "msgs":["{\\"kind\\":\\"fleet\\"}"]},"daemon":"{\\"hosts\\":[]}"}
             """,
         trace: "{\"kind\":\"route\",\"screen\":\"run\"}\n",
@@ -160,7 +160,7 @@ final class ReportBundleTests: XCTestCase {
         XCTAssertEqual(read["replay"] as? String, "unchecked")
     }
 
-    /// `msgs.jsonl` is the Model and replay mode as a header line with the
+    /// `msgs.jsonl` is the Model and invariant flag as a header line with the
     /// messages under it, and the daemon's dump is its own file.
     func testTheRuntimeRecordingIsSplitIntoTheTwoFilesABundleCarries() throws {
         let bundle = ReportAssembly.bundle(
@@ -172,8 +172,8 @@ final class ReportBundleTests: XCTestCase {
         XCTAssertEqual(lines.count, 2)
         let head = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
-        XCTAssertEqual(head["format_version"] as? Int, 2)
-        XCTAssertEqual(head["mode"] as? String, "fold")
+        XCTAssertEqual(head["format_version"] as? Int, 3)
+        XCTAssertEqual(head["invariant_violation"] as? Bool, false)
         XCTAssertNotNil(head["checkpoint"])
         XCTAssertEqual(lines[1], "{\"kind\":\"fleet\"}")
 

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
-use ui_runtime::{RecorderSnapshot, RecorderSnapshotMode};
+use ui_runtime::RecorderSnapshot;
 use ui_state::{Model, Msg, ServerMsg, StreamMsg, StructuredProtocol};
 
 use crate::script::{Reaction, Script, Step, Trigger};
@@ -21,8 +21,6 @@ pub enum ConversionRefusal {
     UnsupportedRow(String),
     #[error("InvalidMessage at retained line {line}: {message}")]
     InvalidMessage { line: usize, message: String },
-    #[error("ContextOnly: retained messages are diagnostic context, not a foldable session")]
-    ContextOnly,
 }
 
 pub fn read_snapshot(path: &Path) -> Result<RecorderSnapshot> {
@@ -30,7 +28,7 @@ pub fn read_snapshot(path: &Path) -> Result<RecorderSnapshot> {
     struct Header {
         format_version: u32,
         checkpoint: Model,
-        mode: RecorderSnapshotMode,
+        invariant_violation: bool,
     }
     let contents = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
     let mut lines = contents.lines();
@@ -42,7 +40,7 @@ pub fn read_snapshot(path: &Path) -> Result<RecorderSnapshot> {
     );
     Ok(RecorderSnapshot {
         checkpoint: header.checkpoint,
-        mode: header.mode,
+        invariant_violation: header.invariant_violation,
         msgs: lines
             .filter(|line| !line.trim().is_empty())
             .map(str::to_owned)
@@ -53,9 +51,6 @@ pub fn read_snapshot(path: &Path) -> Result<RecorderSnapshot> {
 /// Preserve raw transcript rows in a single reaction. The caller supplies the
 /// playback trigger; interactive asks require an authored script with hooks.
 pub fn script_from_report(snapshot: &RecorderSnapshot) -> Result<Script, ConversionRefusal> {
-    if snapshot.mode != RecorderSnapshotMode::Fold {
-        return Err(ConversionRefusal::ContextOnly);
-    }
     let rows = snapshot
         .checkpoint
         .agents()
@@ -236,16 +231,20 @@ mod tests {
     }
 
     #[test]
-    fn script_from_report_refuses_recent_context_beside_a_captured_model() {
-        let snapshot = RecorderSnapshot {
-            checkpoint: Model::default(),
-            msgs: Vec::new(),
-            mode: RecorderSnapshotMode::Captured,
+    fn script_from_report_converts_after_a_recorder_checkpoint_reset() {
+        let mut snapshot = fixture("complete");
+        let retained = snapshot.msgs.split_off(3);
+        for line in snapshot.msgs.drain(..) {
+            let msg: Msg = serde_json::from_str(&line).unwrap();
+            let _ = ui_state::update(&mut snapshot.checkpoint, msg);
+        }
+        snapshot.msgs = retained;
+
+        let script = script_from_report(&snapshot).expect("post-reset report converts");
+        let Step::Rows { jsonl } = &script.reactions[0].play[0] else {
+            panic!("raw rows")
         };
-        assert_eq!(
-            script_from_report(&snapshot),
-            Err(ConversionRefusal::ContextOnly)
-        );
+        assert_eq!(jsonl.len(), 3);
     }
 
     /// The phone's own bundle, read by the host tooling, and what can be made

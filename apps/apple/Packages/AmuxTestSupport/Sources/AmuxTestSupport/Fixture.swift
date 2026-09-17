@@ -194,11 +194,11 @@ public enum FrozenFixture {
             route: "run")
     }
 
-    /// What the runtime would have answered: a checkpoint, its replay mode,
+    /// What the runtime would have answered: a checkpoint, its invariant flag,
     /// one folded message and the embedded daemon's dump. Small on purpose — what a bundle test
     /// checks is that each part is declared and carried, not what is in it.
     private static let snapshot = """
-        {"msgs":{"format_version":2,"mode":"fold","checkpoint":{"agents":[]},\
+        {"msgs":{"format_version":3,"invariant_violation":false,"checkpoint":{"agents":[]},\
         "msgs":["{\\"kind\\":\\"fleet\\"}"]},"daemon":"{\\"hosts\\":[]}"}
         """
 }

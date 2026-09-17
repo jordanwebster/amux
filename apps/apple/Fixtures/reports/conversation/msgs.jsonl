@@ -1,4 +1,4 @@
-{"checkpoint":{"remote_inventories":{},"streams":{},"agents":{},"now":null,"finished_ops":[],"queues":{},"epoch":0,"invariant_warning":false,"pending_ops":{},"connection":{"connection":"connecting"},"cloud_auth_required":false,"hosts":{},"cloud_subscription_required":false,"local_host_id":null,"op_seq":0},"format_version":2,"mode":"fold"}
+{"checkpoint":{"remote_inventories":{},"streams":{},"agents":{},"now":null,"finished_ops":[],"queues":{},"epoch":0,"invariant_warning":false,"pending_ops":{},"connection":{"connection":"connecting"},"cloud_auth_required":false,"hosts":{},"cloud_subscription_required":false,"local_host_id":null,"op_seq":0},"format_version":3,"invariant_violation":false}
 {"msg":"server","server":"connected","local_host_id":"6997df82-dd1b-4a35-a64d-e6913f20b98f"}
 {"msg":"server","server":"host_upserted","host":{"id":"6997df82-dd1b-4a35-a64d-e6913f20b98f","name":"amux-golden","online":true,"version":"0.6.0","capabilities":{},"trust_status":"trusted","last_dial_error":null,"platform":"ios"}}
 {"msg":"server","server":"hosts_synchronized"}

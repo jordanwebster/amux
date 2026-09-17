@@ -6,7 +6,7 @@ use model::{Agent, Capabilities, HostEntry, HostTrustStatus};
 use ui_runtime::report::{
     ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
 };
-use ui_runtime::{BUILD, Recorder, replay_msgs};
+use ui_runtime::{BUILD, RecorderSnapshot, replay_msgs};
 use ui_state::{DisconnectReason, Model, Msg, ServerMsg, StreamEntry, StreamMsg, update};
 use uuid::Uuid;
 
@@ -74,16 +74,13 @@ fn sequence() -> Vec<Msg> {
     ]
 }
 
-/// The recorder capacity is deliberately tiny so the report must capture the
-/// live Model after eviction; replay must still land on that exact Model.
+/// A checkpoint plus its following messages must replay deterministically.
 #[test]
 fn replaying_a_recorded_log_twice_yields_identical_models() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut live = Model::default();
-    let mut recorder = Recorder::new(4, &live);
-
-    for msg in sequence() {
-        recorder.record(&msg);
+    let messages = sequence();
+    for msg in messages.clone() {
         update(&mut live, msg);
     }
     let report = ReportWriter::new(dir.path().to_path_buf(), BUILD, "test")
@@ -100,7 +97,14 @@ fn replaying_a_recorded_log_twice_yields_identical_models() {
                 frame: None,
                 trace: None,
                 trace_kind: TraceKind::TerminalChrome,
-                msgs: Some(recorder.snapshot_with_model(&live)),
+                msgs: Some(RecorderSnapshot {
+                    checkpoint: Model::default(),
+                    msgs: messages
+                        .iter()
+                        .map(|msg| serde_json::to_string(msg).unwrap())
+                        .collect(),
+                    invariant_violation: false,
+                }),
                 daemon: None,
                 log: None,
                 absent_reason: "test".to_string(),

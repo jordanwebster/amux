@@ -57,7 +57,7 @@ mod store_worker;
 
 pub use recorder::{
     DEFAULT_RECORDER_CAPACITY, DEFAULT_RECORDER_MAX_BYTES, MSGS_SCHEMA_VERSION, Recorder,
-    RecorderSnapshot, RecorderSnapshotMode, ReplayError, replay_msgs,
+    RecorderSnapshot, ReplayError, replay_msgs,
 };
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ChatRetentionReport,

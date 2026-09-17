@@ -326,7 +326,7 @@ fn write_recorder_snapshot(path: &Path, snapshot: &RecorderSnapshot) -> io::Resu
     let header = RecorderSnapshotHeader {
         format_version: MSGS_SCHEMA_VERSION,
         checkpoint: &snapshot.checkpoint,
-        mode: snapshot.mode,
+        invariant_violation: snapshot.invariant_violation,
     };
     serde_json::to_writer(&mut file, &header).map_err(io::Error::other)?;
     file.write_all(b"\n")?;
@@ -337,10 +337,51 @@ fn write_recorder_snapshot(path: &Path, snapshot: &RecorderSnapshot) -> io::Resu
     file.flush()
 }
 
+/// Atomically advance one runtime's rolling Model checkpoint.
+pub(crate) fn write_model_checkpoint(path: &Path, model: &ui_state::Model) -> io::Result<usize> {
+    let bytes = serde_json::to_vec(model).map_err(io::Error::other)?;
+    write_private_atomic(path, &bytes)?;
+    Ok(bytes.len())
+}
+
+pub(crate) fn read_model_checkpoint(path: &Path) -> io::Result<ui_state::Model> {
+    serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = create_private_file(path)?;
     file.write_all(bytes)?;
     file.flush()
+}
+
+fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("checkpoint path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("recorder-checkpoint");
+    let temp = parent.join(format!(
+        ".{name}.tmp-{}-{}",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = create_private_file(&temp)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 #[cfg(unix)]
@@ -614,7 +655,7 @@ mod tests {
                 })
                 .unwrap(),
             ],
-            mode: crate::RecorderSnapshotMode::Fold,
+            invariant_violation: false,
         }
     }
 

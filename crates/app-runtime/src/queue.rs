@@ -208,10 +208,16 @@ pub async fn run(
                             Ok(Err(error)) => (None, Some(error.to_string())),
                             Err(_) => (None, Some("daemon dump timed out".to_owned())),
                         };
-                        let result = json!({
-                            "msgs": {"format_version": MSGS_SCHEMA_VERSION, "checkpoint": snapshot.checkpoint, "mode": snapshot.mode, "msgs": snapshot.msgs},
-                            "daemon": daemon, "daemon_absent_reason": reason,
-                        });
+                        let result = match snapshot {
+                            Ok(snapshot) => json!({
+                                "msgs": {"format_version": MSGS_SCHEMA_VERSION, "checkpoint": snapshot.checkpoint, "invariant_violation": snapshot.invariant_violation, "msgs": snapshot.msgs},
+                                "daemon": daemon, "daemon_absent_reason": reason,
+                            }),
+                            Err(error) => json!({
+                                "msgs_absent_reason": error.to_string(),
+                                "daemon": daemon, "daemon_absent_reason": reason,
+                            }),
+                        };
                         let _ = reply.send(serde_json::to_string(&result).ok());
                     });
                 }

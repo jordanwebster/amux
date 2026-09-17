@@ -86,7 +86,9 @@ impl Frozen {
             frame: last_frame.clone(),
             now,
             trace: window,
-            msgs: runtime.recorder_snapshot(),
+            msgs: runtime
+                .recorder_snapshot()
+                .expect("configured report checkpoint must be readable"),
             daemon: tokio::spawn((diagnostics.daemon_dump)()),
             log,
             log_absent_reason,

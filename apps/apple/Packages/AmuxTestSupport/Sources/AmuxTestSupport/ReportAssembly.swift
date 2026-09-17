@@ -163,11 +163,11 @@ public enum ReportAssembly {
 /// bundle carries.
 ///
 /// The runtime answers one JSON object holding a Model, the bounded recent
-/// message lines, their replay mode, and the embedded daemon's own dump. On
-/// disk those are two files: `msgs.jsonl` is the Model and mode as a header
-/// line with the messages under it, and `daemon.json` is the dump. Splitting
-/// it here rather than at the writer means the phone's report and the phone's
-/// debug recording are assembled from one reading of the same shape.
+/// message lines, its sticky invariant-warning flag, and the embedded daemon's
+/// own dump. On disk those are two files: `msgs.jsonl` is the Model and flag as
+/// a header line with the messages under it, and `daemon.json` is the dump.
+/// Splitting it here rather than at the writer means the phone's report and the
+/// phone's debug recording are assembled from one reading of the same shape.
 public enum RuntimeRecording {
     public struct Split: Sendable, Equatable {
         /// `msgs.jsonl`, header line and all, or nothing.
@@ -197,16 +197,18 @@ public enum RuntimeRecording {
         if let recording = report["msgs"] as? [String: Any],
            let version = recording["format_version"],
            let checkpoint = recording["checkpoint"],
-           let mode = recording["mode"],
+           let invariantViolation = recording["invariant_violation"],
            let messages = recording["msgs"] as? [String],
            let header = try? JSONSerialization.data(
                withJSONObject: [
-                   "format_version": version, "checkpoint": checkpoint, "mode": mode,
+                   "format_version": version, "checkpoint": checkpoint,
+                   "invariant_violation": invariantViolation,
                ]) {
             let lines = [String(decoding: header, as: UTF8.self)] + messages
             split.messages = lines.joined(separator: "\n") + "\n"
         } else {
-            split.messagesAbsent = "the runtime answered without a recording in it"
+            split.messagesAbsent = report["msgs_absent_reason"] as? String
+                ?? "the runtime answered without a recording in it"
         }
 
         if let daemon = report["daemon"] as? String {

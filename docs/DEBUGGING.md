@@ -110,12 +110,18 @@ A full user capture contains these files:
 | `frame.txt` | One row of frozen terminal cell text per line |
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
-| `msgs.jsonl` | A foldable checkpoint for short sessions, or a captured Model plus the bounded recent-message context |
+| `msgs.jsonl` | The last on-disk Model checkpoint followed by the bounded ring of Msgs folded after it |
 | `daemon.json` | Selected profile's hosts, routes, links, tunnels and session diagnostics |
 | `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 
 The text and style map are the screenshot. A report contains no OS screenshot
 or image file.
+
+`msgs.jsonl` reconstructs the exact client Model at the checkpoint and at every
+following Msg through the final recorded state. It carries at most one bounded
+ring of Msgs, and replay folds them without executing effects. It cannot
+reconstruct client history before that rolling checkpoint or any daemon-side
+state; `daemon.json` is a separate diagnostic snapshot, not part of the fold.
 
 The log tail is **installation-wide**, not filtered to the selected profile.
 It can include activity from other profiles and local clients even when the

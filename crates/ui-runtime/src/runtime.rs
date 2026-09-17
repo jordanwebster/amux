@@ -39,7 +39,7 @@ use uuid::Uuid;
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
 use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
-    ReportWriter, TraceKind, log_tail,
+    ReportWriter, TraceKind, log_tail, read_model_checkpoint, write_model_checkpoint,
 };
 use crate::store_worker::StoreWorker;
 
@@ -435,6 +435,9 @@ pub struct Runtime {
     /// so a panic can snapshot the ring after terminal restore. The fold is
     /// single-threaded — contention is nil; the mutex exists for the hook.
     recorder: Arc<StdMutex<Recorder>>,
+    /// Private rolling checkpoint paired with the recorder ring. Absent for
+    /// runtimes that have no report directory.
+    recorder_checkpoint: Option<PathBuf>,
     msg_sink: MsgSink,
     msg_rx: mpsc::Receiver<(Generation, Msg)>,
     client: Arc<StdMutex<Option<Client>>>,
@@ -799,10 +802,18 @@ impl Runtime {
         generation: Generation,
     ) -> Self {
         let model = Model::default();
-        let recorder = Arc::new(StdMutex::new(Recorder::new(
-            options.recorder_capacity,
-            &model,
-        )));
+        let recorder = Arc::new(StdMutex::new(Recorder::new(options.recorder_capacity)));
+        let recorder_checkpoint = options.report_dir.as_ref().map(|dir| {
+            let path = dir.join(format!(
+                ".runtime-{}-{}.checkpoint.json",
+                std::process::id(),
+                Uuid::new_v4()
+            ));
+            if let Err(error) = write_model_checkpoint(&path, &model) {
+                tracing::error!(path = %path.display(), %error, "failed to write initial recorder checkpoint");
+            }
+            path
+        });
         let msg_sink = MsgSink {
             tx: msg_tx,
             generation,
@@ -844,6 +855,7 @@ impl Runtime {
         Self {
             model,
             recorder,
+            recorder_checkpoint,
             msg_sink,
             msg_rx,
             client,
@@ -1104,7 +1116,7 @@ impl Runtime {
                 frame: extras.frame,
                 trace: extras.trace,
                 trace_kind: extras.trace_kind,
-                msgs: Some(self.recorder_snapshot()),
+                msgs: Some(self.recorder_snapshot()?),
                 daemon: None,
                 log,
                 absent_reason: automatic_absent_reason().to_string(),
@@ -1114,8 +1126,14 @@ impl Runtime {
         )
     }
 
-    pub fn recorder_snapshot(&self) -> crate::RecorderSnapshot {
-        lock_recorder(&self.recorder).snapshot_with_model(&self.model)
+    pub fn recorder_snapshot(&self) -> io::Result<crate::RecorderSnapshot> {
+        let recorder = lock_recorder(&self.recorder);
+        let path = self
+            .recorder_checkpoint
+            .as_deref()
+            .ok_or_else(|| io::Error::other("no report directory configured"))?;
+        let checkpoint = read_model_checkpoint(path)?;
+        Ok(recorder.snapshot(checkpoint))
     }
 
     /// Register this Runtime's recorder with the process-global panic-report
@@ -1133,6 +1151,7 @@ impl Runtime {
     fn panic_report_context(&self) -> Option<PanicReportContext> {
         Some(PanicReportContext {
             recorder: self.recorder.clone(),
+            recorder_checkpoint: self.recorder_checkpoint.clone()?,
             report_dir: self.report_dir.clone()?,
             log_path: self.log_path.clone(),
             git_sha: self.git_sha,
@@ -1145,6 +1164,55 @@ impl Runtime {
         lock_panic_report()
             .as_ref()
             .is_some_and(|context| Arc::ptr_eq(&context.recorder, &self.recorder))
+    }
+
+    fn record_msg(&mut self, msg: &Msg) {
+        let mut recorder = lock_recorder(&self.recorder);
+        let Some(prepared) = recorder.prepare(msg) else {
+            return;
+        };
+        let checkpoint = self.recorder_checkpoint.as_deref();
+
+        // A failed initial/oversized write removes the checkpoint. Retry it
+        // before admitting another Msg so a later report can never combine a
+        // stale Model with a newer ring.
+        if let Some(path) = checkpoint
+            && !path.is_file()
+        {
+            if let Err(error) = write_model_checkpoint(path, &self.model) {
+                tracing::error!(path = %path.display(), %error, "failed to restore recorder checkpoint");
+                return;
+            }
+            recorder.clear();
+        }
+
+        if recorder.requires_checkpoint(&prepared) {
+            if let Some(path) = checkpoint
+                && let Err(error) = write_model_checkpoint(path, &self.model)
+            {
+                tracing::error!(path = %path.display(), %error, "failed to advance recorder checkpoint");
+                return;
+            }
+            recorder.clear();
+        }
+        recorder.push(prepared);
+    }
+
+    /// A single Msg can itself be larger than the ring's byte ceiling. It is
+    /// retained only until the reducer has folded it, then represented by the
+    /// advanced checkpoint so the steady-state ring remains bounded.
+    fn finish_oversized_record(&mut self) {
+        let mut recorder = lock_recorder(&self.recorder);
+        if !recorder.exceeds_limits() {
+            return;
+        }
+        if let Some(path) = self.recorder_checkpoint.as_deref()
+            && let Err(error) = write_model_checkpoint(path, &self.model)
+        {
+            tracing::error!(path = %path.display(), %error, "failed to checkpoint oversized recorder message");
+            let _ = std::fs::remove_file(path);
+        }
+        recorder.clear();
     }
 
     fn process(&mut self, msg: Msg) {
@@ -1165,7 +1233,7 @@ impl Runtime {
             }
         }
 
-        lock_recorder(&self.recorder).record(&msg);
+        self.record_msg(&msg);
         if let Some(tap) = self.msg_tap.as_mut() {
             tap(&msg);
         }
@@ -1214,6 +1282,7 @@ impl Runtime {
             self.store_streams.remove(agent);
         }
         let effects = update(&mut self.model, msg);
+        self.finish_oversized_record();
         if let Some(agent) = paged_agent
             && let Some(chat) = self.model.chat(agent)
         {
@@ -1544,12 +1613,16 @@ impl Drop for Runtime {
         for stream in self.store_streams.values() {
             stream.task.abort();
         }
+        if let Some(path) = &self.recorder_checkpoint {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
 #[derive(Clone)]
 struct PanicReportContext {
     recorder: Arc<StdMutex<Recorder>>,
+    recorder_checkpoint: PathBuf,
     report_dir: PathBuf,
     log_path: Option<PathBuf>,
     git_sha: &'static str,
@@ -1643,7 +1716,14 @@ pub fn write_panic_report(detail: &str) {
         })
         .unwrap_or_default();
     let (log, log_absent_reason) = capture_log_tail(context.log_path.as_deref());
-    let snapshot = lock_recorder(&context.recorder).snapshot();
+    let snapshot = {
+        let recorder = lock_recorder(&context.recorder);
+        read_model_checkpoint(&context.recorder_checkpoint)
+            .map(|checkpoint| recorder.snapshot(checkpoint))
+    };
+    let Ok(snapshot) = snapshot else {
+        return;
+    };
     let _ = ReportWriter::new(context.report_dir.clone(), BUILD, context.git_sha).write(
         ReportDraft {
             kind: ReportKind::Panic,
@@ -3139,14 +3219,18 @@ mod tests {
         let log_path = report_dir.join("amux.log");
         std::fs::write(&log_path, "runtime test log\n").expect("write test log");
         let model = Model::default();
-        let recorder = Arc::new(StdMutex::new(Recorder::new(
-            DEFAULT_RECORDER_CAPACITY,
-            &model,
-        )));
+        let recorder = Arc::new(StdMutex::new(Recorder::new(DEFAULT_RECORDER_CAPACITY)));
+        let recorder_checkpoint = report_dir.join(format!(
+            ".runtime-{}-{}.checkpoint.json",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        write_model_checkpoint(&recorder_checkpoint, &model).expect("write initial checkpoint");
         let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
         Runtime {
             model,
             recorder,
+            recorder_checkpoint: Some(recorder_checkpoint),
             msg_sink: MsgSink {
                 tx: msg_tx,
                 generation: Generation::default(),
@@ -3273,15 +3357,15 @@ mod tests {
             )
         ));
         assert!(
-            runtime
-                .recorder_snapshot()
+            lock_recorder(&runtime.recorder)
+                .snapshot(Model::default())
                 .msgs
                 .iter()
                 .any(|line| line.contains("FleetLoaded"))
         );
         assert!(
-            runtime
-                .recorder_snapshot()
+            lock_recorder(&runtime.recorder)
+                .snapshot(Model::default())
                 .msgs
                 .iter()
                 .any(|line| line.contains("ViewLoaded"))
@@ -3544,6 +3628,26 @@ mod tests {
         after.saturating_sub(before)
     }
 
+    fn checkpoint_cost(label: &str, model: &Model, directory: &Path) {
+        let path = directory.join(format!("{label}-checkpoint.json"));
+        let mut samples = Vec::new();
+        let mut bytes = 0;
+        for _ in 0..11 {
+            let started = std::time::Instant::now();
+            bytes = write_model_checkpoint(&path, model).expect("write measured checkpoint");
+            samples.push(started.elapsed());
+        }
+        samples.sort_unstable();
+        println!(
+            "recorder checkpoint {label}: bytes={bytes}, samples_us={:?}, median_us={}",
+            samples
+                .iter()
+                .map(std::time::Duration::as_micros)
+                .collect::<Vec<_>>(),
+            samples[samples.len() / 2].as_micros(),
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn client_heap_retention_per_delivered_row() {
         const CHILD_ENV: &str = "AMUX_HEAP_RETENTION_CHILD";
@@ -3749,6 +3853,31 @@ mod tests {
                 .sum::<usize>(),
             CHAT_COUNT * ui_state::WINDOW_MAX_ENTRIES,
         );
+
+        checkpoint_cost("desktop-10x96", runtime.model(), directory.path());
+        let mut phone_value = serde_json::to_value(runtime.model()).expect("serialize phone shape");
+        let chats = phone_value["store"]["chats"]
+            .as_object_mut()
+            .expect("serialized chats");
+        let (agent, mut chat) = chats
+            .iter()
+            .next()
+            .map(|(agent, chat)| (agent.clone(), chat.clone()))
+            .expect("one desktop chat");
+        let entries = chat["entries"].as_array_mut().expect("serialized entries");
+        let seed = entries.clone();
+        while entries.len() < ui_state::store::PHONE_WINDOW_MAX_ENTRIES {
+            entries.push(seed[entries.len() % seed.len()].clone());
+        }
+        chat["max_entries"] = serde_json::json!(ui_state::store::PHONE_WINDOW_MAX_ENTRIES);
+        chats.clear();
+        chats.insert(agent, chat);
+        let phone: Model = serde_json::from_value(phone_value).expect("deserialize phone shape");
+        assert_eq!(
+            phone.chats().next().expect("phone chat").1.entries.len(),
+            ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
+        );
+        checkpoint_cost("phone-800", &phone, directory.path());
 
         drop(runtime);
         let mut runtime = Runtime::start(
@@ -4610,6 +4739,76 @@ mod tests {
         assert_eq!(header.parts.msgs, crate::report::PartState::Present);
     }
 
+    #[test]
+    fn report_replays_exactly_after_several_recorder_resets_without_model_retention() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        runtime.recorder = Arc::new(StdMutex::new(Recorder::with_limits(3, 512)));
+
+        for second in 0..24 {
+            runtime.process(Msg::Tick {
+                now: DateTime::from_timestamp(1_754_697_600 + second, 0)
+                    .expect("valid fixture time"),
+            });
+            assert_eq!(
+                lock_recorder(&runtime.recorder)
+                    .retention()
+                    .checkpoint_bytes,
+                0,
+                "the recorder never owns the rolling Model checkpoint"
+            );
+        }
+        assert!(
+            lock_recorder(&runtime.recorder).len() <= 3,
+            "twenty-four inputs must cross several three-entry reset boundaries"
+        );
+
+        let report = runtime
+            .report(DumpReason::Tripwire {
+                detail: "post-reset replay fixture".to_string(),
+            })
+            .expect("write post-reset report");
+        let replayed = crate::recorder::replay_msgs(&report.join("msgs.jsonl"))
+            .expect("replay post-reset report");
+        assert_eq!(replayed, *runtime.model());
+        assert_eq!(
+            lock_recorder(&runtime.recorder)
+                .retention()
+                .checkpoint_bytes,
+            0
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(
+                runtime
+                    .recorder_checkpoint
+                    .as_deref()
+                    .expect("configured checkpoint"),
+            )
+            .expect("checkpoint metadata")
+            .permissions()
+            .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_without_a_report_directory_writes_no_checkpoint_or_report() {
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions::default(),
+        );
+        runtime.process(Msg::Tick {
+            now: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+        });
+
+        assert!(runtime.recorder_checkpoint.is_none());
+        assert!(runtime.recorder_snapshot().is_err());
+        assert!(runtime.report(DumpReason::UserRequested).is_err());
+    }
+
     fn run_invariant_policy_child(case: &str, fatal: Option<&str>) -> std::process::Output {
         let mut command =
             std::process::Command::new(std::env::current_exe().expect("current test executable"));
@@ -4921,6 +5120,13 @@ mod tests {
         let _turn = panic_report_test_turn();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut runtime = a_runtime(dir.path().to_path_buf());
+        runtime.recorder = Arc::new(StdMutex::new(Recorder::with_limits(2, 256)));
+        for second in 0..10 {
+            runtime.process(Msg::Tick {
+                now: DateTime::from_timestamp(1_754_697_500 + second, 0)
+                    .expect("valid fixture time"),
+            });
+        }
         runtime.observe_now(DateTime::from_timestamp(1_754_697_600, 0).expect("valid time"));
         runtime.dispatch(Command::DeleteAgent {
             agent: Uuid::from_u128(7),
@@ -4943,6 +5149,10 @@ mod tests {
         assert!(
             contents.lines().count() > 1,
             "the recorded Msgs ride along in the report"
+        );
+        assert_eq!(
+            crate::recorder::replay_msgs(&report.join("msgs.jsonl")).expect("panic report replays"),
+            *runtime.model(),
         );
     }
 
