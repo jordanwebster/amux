@@ -1,3 +1,14 @@
+2026-09-17 — **Quarantine recovery is an explicit, atomic operator action.**
+`amux store resolve` first reports each unresolved manifest, the durable
+families known to have existed (or that they could not be determined), and the
+paths holding the moved database files. It changes nothing until an interactive
+confirmation or `--yes`, then takes the store lease exclusively and clears
+exactly the reported unresolved rows in one FULL-durability transaction. A
+concurrent client, a newly pending quarantine or a changed report refuses the
+resolution; an interruption leaves all confirmed rows unresolved or all
+resolved. Resolution enables the fresh store's durable reads and writes but
+does not claim its empty durable tables recovered quarantined data.
+
 2026-09-17 — **Every bounded recorder window starts from an exact on-disk
 checkpoint.** The recorder now owns only its 2 MiB/count-bounded ring of
 serialized reducer messages. Each runtime with report storage writes a private

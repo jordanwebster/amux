@@ -37,6 +37,7 @@ use fold::{
 };
 pub use maintain::{Budget, MaintenanceReport};
 use model::AgentId;
+pub use quarantine::{QuarantineDurableState, QuarantineRecord, QuarantineReport};
 
 const LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -49,6 +50,7 @@ enum LockMode {
 pub struct Store {
     sender: Option<Sender<Command>>,
     worker: Option<JoinHandle<()>>,
+    path: PathBuf,
     generations: StoreGenerations,
     library: LibraryReport,
     open_report: OpenReport,
@@ -57,17 +59,19 @@ pub struct Store {
 impl Store {
     pub async fn open(path: &Path) -> Result<Self, StoreError> {
         let path = path.to_owned();
+        let worker_path = path.clone();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::Builder::new()
             .name("amux-store".to_owned())
-            .spawn(move || worker(path, receiver, ready_sender))
+            .spawn(move || worker(worker_path, receiver, ready_sender))
             .map_err(|_| StoreError::Io)?;
 
         match ready_receiver.recv().map_err(|_| StoreError::Io)? {
             Ok(ready) => Ok(Self {
                 sender: Some(sender),
                 worker: Some(worker),
+                path,
                 generations: ready.generations,
                 library: ready.library,
                 open_report: ready.open_report,
@@ -315,6 +319,43 @@ impl Store {
         reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
     }
 
+    pub async fn quarantine_report(&self) -> Result<QuarantineReport, StoreError> {
+        let path = self.path.clone();
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = quarantine::inspect(connection, &path);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn resolve_quarantine(
+        path: &Path,
+        report: &QuarantineReport,
+    ) -> Result<(), StoreError> {
+        if report.is_empty() {
+            return Err(StoreError::Invalid);
+        }
+        let parent = path.parent().ok_or(StoreError::Io)?;
+        std::fs::create_dir_all(parent).map_err(map_io)?;
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(parent.join("store.lock"))
+            .map_err(map_io)?;
+        acquire_lock(&lock_file, LockMode::Exclusive)?;
+
+        if quarantine::has_pending(path)? {
+            return Err(StoreError::Invalid);
+        }
+        let mut opened = db::open_database(path, &[])?;
+        quarantine::resolve(&mut opened.connection, &report.ids())
+    }
+
     fn send_run(
         &self,
         run: impl FnOnce(&mut rusqlite::Connection) -> bool + Send + 'static,
@@ -381,7 +422,7 @@ fn worker(
         Ok(opened) => opened,
         Err(error) => {
             if error == StoreError::Corrupt {
-                let _ = quarantine::request(&path);
+                let _ = quarantine::request(&path, QuarantineDurableState::Unknown);
             }
             let _ = ready.send(Err(error));
             return;
@@ -454,7 +495,7 @@ fn worker(
     drop(connection);
     drop(lock_file);
     if corrupt {
-        let _ = quarantine::request(&path);
+        let _ = quarantine::request(&path, quarantine::known_durable_state());
     }
 }
 

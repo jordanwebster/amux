@@ -342,6 +342,8 @@ fn lifecycle_interrupted_quarantine_finishes_idempotent_moves() {
           "id":"interrupted",
           "database":"store.sqlite",
           "files":["store.sqlite","store.sqlite-wal","store.sqlite-shm"],
+          "moved_files":[],
+          "durable_state":{"status":"unknown"},
           "durable_unresolved":true,
           "moved":false,
           "complete":false
@@ -350,6 +352,18 @@ fn lifecycle_interrupted_quarantine_finishes_idempotent_moves() {
     .expect("manifest");
 
     let store = runtime().block_on(Store::open(&path)).expect("recover");
+    let report = runtime()
+        .block_on(store.quarantine_report())
+        .expect("unknown durable-state report");
+    assert_eq!(
+        report.quarantines[0].durable_state,
+        store::QuarantineDurableState::Unknown
+    );
+    assert!(
+        report
+            .to_string()
+            .contains("durable families: could not be determined")
+    );
     runtime().block_on(store.close());
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.join("manifest.json")).expect("read manifest"))
@@ -364,6 +378,225 @@ fn lifecycle_interrupted_quarantine_finishes_idempotent_moves() {
         )
         .expect("quarantine row");
     assert_eq!(unresolved, 1);
+}
+
+fn request_known_quarantine(path: &Path) {
+    let root = path.parent().unwrap().join("quarantine");
+    fs::create_dir_all(&root).expect("quarantine root");
+    fs::write(
+        root.join("request.json"),
+        r#"{
+          "database":"store.sqlite",
+          "durable_state":{"status":"present","families":["meta","view"]}
+        }"#,
+    )
+    .expect("quarantine request");
+}
+
+fn seed_unresolved_quarantine(temp: &TempDir) -> (PathBuf, store::QuarantineReport) {
+    let path = database(temp);
+    let store = runtime().block_on(Store::open(&path)).expect("seed store");
+    runtime()
+        .block_on(store.view_set("remembered", "chat", "kept only in quarantine"))
+        .expect("seed durable value");
+    runtime().block_on(store.close());
+    request_known_quarantine(&path);
+
+    let store = runtime()
+        .block_on(Store::open(&path))
+        .expect("complete quarantine");
+    let report = runtime()
+        .block_on(store.quarantine_report())
+        .expect("quarantine report");
+    runtime().block_on(store.close());
+    (path, report)
+}
+
+#[test]
+fn lifecycle_explicit_resolution_restores_durable_service_without_recovering_empty_tables() {
+    let temp = TempDir::new().expect("tempdir");
+    let (path, report) = seed_unresolved_quarantine(&temp);
+    assert_eq!(report.len(), 1);
+    assert_eq!(
+        report.quarantines[0].durable_state,
+        store::QuarantineDurableState::Present(vec!["meta".to_owned(), "view".to_owned()])
+    );
+    assert_eq!(
+        report.quarantines[0].named_files,
+        ["store.sqlite", "store.sqlite-wal", "store.sqlite-shm"]
+    );
+    assert_eq!(report.quarantines[0].moved_files.len(), 1);
+    assert!(report.quarantines[0].moved_files[0].exists());
+    let rendered = report.to_string();
+    assert!(rendered.contains("durable families: present (meta, view)"));
+    assert!(
+        rendered
+            .contains("files named by manifest: store.sqlite, store.sqlite-wal, store.sqlite-shm")
+    );
+    assert!(rendered.contains("manifest.json"));
+    assert!(rendered.contains("store.sqlite"));
+    println!("{rendered}");
+
+    let store = runtime()
+        .block_on(Store::open(&path))
+        .expect("open blocked store");
+    assert_eq!(
+        runtime().block_on(store.view_get("remembered", "chat")),
+        Err(StoreError::RecoveryRequired)
+    );
+    assert_eq!(
+        runtime().block_on(store.view_set("remembered", "chat", "new value")),
+        Err(StoreError::RecoveryRequired)
+    );
+    runtime().block_on(store.close());
+
+    runtime()
+        .block_on(Store::resolve_quarantine(&path, &report))
+        .expect("explicit resolution");
+    let store = runtime()
+        .block_on(Store::open(&path))
+        .expect("reopen resolved store");
+    assert_eq!(
+        runtime()
+            .block_on(store.view_get("remembered", "chat"))
+            .expect("durable read"),
+        None,
+        "the fresh empty durable table must not be presented as recovered data"
+    );
+    runtime()
+        .block_on(store.view_set("remembered", "chat", "new value"))
+        .expect("durable write");
+    assert_eq!(
+        runtime()
+            .block_on(store.view_get("remembered", "chat"))
+            .expect("durable reread"),
+        Some("new value".to_owned())
+    );
+    runtime().block_on(store.close());
+}
+
+#[test]
+fn lifecycle_resolution_refuses_while_another_process_holds_the_store() {
+    let temp = TempDir::new().expect("tempdir");
+    let (path, report) = seed_unresolved_quarantine(&temp);
+    let ready = temp.path().join("resolve-child-ready");
+    let release = temp.path().join("resolve-child-release");
+    let mut child = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "lifecycle_helper_holds_shared_store",
+            "--nocapture",
+        ])
+        .env("AMUX_STORE_HELPER_DB", &path)
+        .env("AMUX_STORE_HELPER_READY", &ready)
+        .env("AMUX_STORE_HELPER_RELEASE", &release)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn helper");
+    wait_for(&ready, Duration::from_secs(10));
+
+    assert_eq!(
+        runtime().block_on(Store::resolve_quarantine(&path, &report)),
+        Err(StoreError::Busy)
+    );
+    fs::write(&release, b"release").expect("release helper");
+    assert!(child.wait().expect("wait helper").success());
+
+    let store = runtime()
+        .block_on(Store::open(&path))
+        .expect("reopen unresolved store");
+    assert_eq!(
+        runtime().block_on(store.view_get("remembered", "chat")),
+        Err(StoreError::RecoveryRequired)
+    );
+    runtime().block_on(store.close());
+}
+
+#[test]
+fn lifecycle_interrupted_resolution_is_atomic() {
+    let temp = TempDir::new().expect("tempdir");
+    let (path, _) = seed_unresolved_quarantine(&temp);
+    let connection = Connection::open(&path).expect("open raw store");
+    let first_manifest: String = connection
+        .query_row("SELECT manifest FROM quarantine LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .expect("first manifest");
+    let mut second_manifest: serde_json::Value =
+        serde_json::from_str(&first_manifest).expect("parse first manifest");
+    second_manifest["id"] = serde_json::Value::String("second".to_owned());
+    let second_directory = temp.path().join("quarantine/second");
+    fs::create_dir_all(&second_directory).expect("second quarantine directory");
+    fs::write(
+        second_directory.join("manifest.json"),
+        serde_json::to_vec_pretty(&second_manifest).expect("encode second manifest"),
+    )
+    .expect("second manifest file");
+    connection
+        .execute(
+            "INSERT INTO quarantine(id,manifest,durable_unresolved) VALUES ('second',?1,1)",
+            [serde_json::to_string_pretty(&second_manifest).expect("encode manifest row")],
+        )
+        .expect("second quarantine row");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER interrupt_quarantine_resolution
+             BEFORE UPDATE OF durable_unresolved ON quarantine
+             WHEN OLD.id='second'
+             BEGIN
+                 SELECT RAISE(ABORT, 'interrupted resolution');
+             END;",
+        )
+        .expect("resolution interruption");
+    drop(connection);
+
+    let store = runtime()
+        .block_on(Store::open(&path))
+        .expect("inspect two quarantines");
+    let report = runtime()
+        .block_on(store.quarantine_report())
+        .expect("two-row report");
+    runtime().block_on(store.close());
+    assert_eq!(report.len(), 2);
+    assert!(
+        runtime()
+            .block_on(Store::resolve_quarantine(&path, &report))
+            .is_err()
+    );
+    let connection = Connection::open(&path).expect("inspect interrupted resolution");
+    let unresolved: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM quarantine WHERE durable_unresolved=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("unresolved count");
+    assert_eq!(
+        unresolved, 2,
+        "an interrupted resolution must clear no rows"
+    );
+    connection
+        .execute("DROP TRIGGER interrupt_quarantine_resolution", [])
+        .expect("remove interruption");
+    drop(connection);
+
+    runtime()
+        .block_on(Store::resolve_quarantine(&path, &report))
+        .expect("complete resolution");
+    let connection = Connection::open(path).expect("inspect completed resolution");
+    let unresolved: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM quarantine WHERE durable_unresolved=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("resolved count");
+    assert_eq!(
+        unresolved, 0,
+        "a completed resolution must clear every confirmed row"
+    );
 }
 
 #[test]

@@ -398,6 +398,12 @@ enum StoreCommands {
         /// Agent UUID
         agent: String,
     },
+    /// Resolve quarantined durable state after reviewing where it was moved
+    Resolve {
+        /// Skip the interactive confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -687,6 +693,38 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     .map_err(|error| anyhow!("cannot dump stored transcript: {error}"))?;
                 print!("{dump}");
                 store.close().await;
+            }
+            StoreCommands::Resolve { yes } => {
+                let path = config.data_dir.join("store.sqlite");
+                let store = store::Store::open(&path)
+                    .await
+                    .map_err(|error| anyhow!("cannot open profile store: {error}"))?;
+                let report = store
+                    .quarantine_report()
+                    .await
+                    .map_err(|error| anyhow!("cannot inspect store quarantine: {error}"))?;
+                store.close().await;
+                if report.is_empty() {
+                    println!("No unresolved store quarantine was found.");
+                    return Ok(ExitCode::SUCCESS);
+                }
+
+                print!("{report}");
+                if !yes
+                    && !profiles::confirm(
+                        "Enable durable reads and writes without restoring the quarantined data?",
+                    )
+                    .context("Use --yes to confirm scripted quarantine resolution")?
+                {
+                    println!("Quarantine resolution cancelled.");
+                    return Ok(ExitCode::SUCCESS);
+                }
+                store::Store::resolve_quarantine(&path, &report)
+                    .await
+                    .map_err(|error| anyhow!("cannot resolve store quarantine: {error}"))?;
+                println!(
+                    "Quarantine resolved. Durable reads and writes are enabled; quarantined data was not restored."
+                );
             }
         },
         Commands::Keymap { .. } => unreachable!("keymaps dispatches before profile configuration"),
@@ -1744,6 +1782,24 @@ mod tests {
         ));
         assert!(Cli::try_parse_from(["amux", "store", "dump"]).is_err());
         assert!(Cli::try_parse_from(["amux", "store", "dump", "one", "two"]).is_err());
+    }
+
+    #[test]
+    fn store_resolve_requires_explicit_scripted_confirmation() {
+        let cli = Cli::try_parse_from(["amux", "store", "resolve", "--yes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Store {
+                command: StoreCommands::Resolve { yes: true }
+            })
+        ));
+        let cli = Cli::try_parse_from(["amux", "store", "resolve"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Store {
+                command: StoreCommands::Resolve { yes: false }
+            })
+        ));
     }
 
     #[test]
