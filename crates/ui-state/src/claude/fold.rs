@@ -21,11 +21,11 @@ use serde_json::Value;
 use super::facts::{self, AskDocument, InboundMessage};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, Ask, AskKind, AskState, ClaudeLayer,
-    FeedEntryKind, InterruptionKind, MESSAGES_RETAINED,
-    MessageFinality, MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED,
-    PromptEntry, PromptSource, QuestionAnswer, SlotState, SuccessFacts, SuggestionDestination,
-    SuggestionFact, SuggestionKind, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
-    TurnDuration, TurnEntry, UnrecognizedEntry,
+    FeedEntryKind, InterruptionKind, MESSAGES_RETAINED, MessageFinality, MessageSlot,
+    OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry, PromptSource,
+    QuestionAnswer, SlotState, SuccessFacts, SuggestionDestination, SuggestionFact, SuggestionKind,
+    ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry,
+    UnrecognizedEntry,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -697,7 +697,7 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
     }
 
     // B6: an approved plan is retained as session state keyed by tool_use
-    // id, outside feed windowing — even if the feed entry was evicted.
+    // id, outside the drawable store window — even if the row is evicted.
     if matches!(
         outcome,
         ToolOutcome::Success {
@@ -1158,5 +1158,4 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
 /// Provider rows still drive condition and obligation state here. Their
 /// presentation is emitted independently by the durable fold and retained
 /// only in the store window, so this facade deliberately drops row bodies.
-fn push(_layer: &mut ClaudeLayer, _seq: u64, _kind: FeedEntryKind) {
-}
+fn push(_layer: &mut ClaudeLayer, _seq: u64, _kind: FeedEntryKind) {}

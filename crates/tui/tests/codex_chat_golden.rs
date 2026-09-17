@@ -112,9 +112,50 @@ fn model_with_extra(rows: Vec<Value>, extra: Vec<Msg>) -> Model {
     msgs.push(batch(10, rows));
     msgs.extend(extra);
     let mut model = Model::default();
+    let mut store_rows = Vec::new();
+    let mut steers = Vec::new();
     for msg in msgs {
+        if let Msg::Command {
+            op,
+            command: Command::Codex(CodexCommand::Steer { text, .. }),
+        } = &msg
+        {
+            steers.push((
+                serde_json::to_value(op.0.as_bytes()).expect("input id serializes"),
+                (*op, text.clone()),
+            ));
+        }
+        if let Msg::Stream {
+            event: StreamMsg::Batch { entries, .. },
+            ..
+        } = &msg
+        {
+            store_rows.extend(entries.iter().map(|entry| {
+                let mut row = entry.payload.clone();
+                if row.get("type").and_then(Value::as_str) == Some("amux.input_result")
+                    && row.pointer("/ok/text").is_none()
+                    && let Some((_, (op, text))) = steers
+                        .iter()
+                        .find(|(input_id, _)| row.get("input_id") == Some(input_id))
+                {
+                    row["ok"]["text"] = Value::String(text.clone());
+                    row["echo_id"] = Value::String(format!("steer:{}", op.0));
+                }
+                row
+            }));
+        }
         update(&mut model, msg);
     }
+    let truncated = store_rows
+        .iter()
+        .any(|row| row.get("type").and_then(Value::as_str) == Some("amux.codex_gap"));
+    tui::fixtures::install_static_store_rows_for_with_truncation(
+        &mut model,
+        agent_id(),
+        ui_state::StructuredProtocol::Codex,
+        store_rows,
+        truncated,
+    );
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");
     model

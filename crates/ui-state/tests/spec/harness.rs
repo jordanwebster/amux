@@ -422,24 +422,6 @@ pub fn chat_session_id(fixture: &str) -> String {
         .expect("chat fixture carries a session id")
 }
 
-/// Rows of a graduated a2a carrier capture: a redacted, provenance-stamped
-/// recording of a real Claude 2.1.240 receiving an agent message over each
-/// carrier (`crates/testnet/fixtures/a2a/`).
-pub fn a2a_rows(fixture: &str) -> Vec<serde_json::Value> {
-    let raw = match fixture {
-        "socket_delivery" => {
-            include_str!("../../../testnet/fixtures/a2a/socket_delivery.jsonl")
-        }
-        "pty_delivery" => include_str!("../../../testnet/fixtures/a2a/pty_delivery.jsonl"),
-        "mcp_tools" => include_str!("../../../testnet/fixtures/a2a/mcp_tools.jsonl"),
-        other => panic!("unknown a2a fixture {other}"),
-    };
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("fixture row parses"))
-        .collect()
-}
-
 /// A local claude agent with a live structured stream (complete window):
 /// the base every feed chapter folds fixture batches onto.
 pub fn chat_base(agent: &str) -> Vec<Msg> {
@@ -465,41 +447,6 @@ pub fn chat_feed(agent: &str, fixture: &str) -> Vec<Msg> {
 /// The folded Claude layer for an agent.
 pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
     model.claude(agent_id(agent)).expect("claude layer folded")
-}
-
-/// Backend rows derived from every recording in the canonical Codex corpus.
-pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
-    [
-        include_str!("../../../codex-specs/fixtures/codex/initialize_and_start.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/turn_round_trip.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/approval_allow.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/approval_deny.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/interrupt.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/thread_list_and_resume.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/dynamic_tools.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/inject_idle.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/inject_busy.rows.jsonl"),
-        include_str!("../../../codex-specs/fixtures/codex/two_assistant_messages.rows.jsonl"),
-    ]
-    .into_iter()
-    .flat_map(str::lines)
-    .filter(|line| !line.trim().is_empty())
-    .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
-    .collect()
-}
-
-/// Backend rows derived from one recording in the Codex corpus.
-pub fn codex_rows(fixture: &str) -> Vec<serde_json::Value> {
-    let raw = match fixture {
-        "approval_deny" => {
-            include_str!("../../../codex-specs/fixtures/codex/approval_deny.rows.jsonl")
-        }
-        other => panic!("unknown Codex fixture: {other}"),
-    };
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
-        .collect()
 }
 
 pub fn codex_base(agent: &str) -> Vec<Msg> {

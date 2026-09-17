@@ -538,20 +538,25 @@ impl StoredFeed {
         for entry in &window.entries {
             let key = entry.key().clone();
             let seq = entry.position().1.seq();
-            let restored = match self.converted.remove(&key) {
+            let mut restored = match self.converted.remove(&key) {
                 Some((held, restored)) if held == *entry => restored,
                 _ => match entry {
                     ui_state::StoredDto::Claude(stored) => {
-                        Restored::Claude(ui_state::restored::claude::feed_entry(seq, &stored.entry))
+                        Restored::Claude(ui_state::restored::claude::feed_entry(0, &stored.entry))
                     }
                     ui_state::StoredDto::ClaudeSdk(stored) => Restored::ClaudeSdk(
-                        ui_state::restored::claude_sdk::feed_entry(seq, &stored.entry),
+                        ui_state::restored::claude_sdk::feed_entry(0, &stored.entry),
                     ),
                     ui_state::StoredDto::Codex(stored) => {
-                        Restored::Codex(ui_state::restored::codex::feed_entry(seq, &stored.entry))
+                        Restored::Codex(ui_state::restored::codex::feed_entry(0, &stored.entry))
                     }
                 },
             };
+            match &mut restored {
+                Restored::Claude(entry) => entry.seq = seq,
+                Restored::ClaudeSdk(entry) => entry.seq = seq,
+                Restored::Codex(entry) => entry.seq = seq,
+            }
             converted.insert(key, (entry.clone(), restored));
         }
         self.converted = converted;

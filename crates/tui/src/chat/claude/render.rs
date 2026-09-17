@@ -18,10 +18,9 @@ use ui_state::claude::{
 
 use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
-    self, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant,
-    paint_compaction_rule, paint_composer_block, paint_error, paint_file_change, paint_header,
-    paint_plan, paint_subagent, paint_thinking, paint_tool_line, paint_turn_rule,
-    paint_unrecognized, paint_user_prompt,
+    self, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant, paint_compaction_rule,
+    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan, paint_subagent,
+    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude::{View, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
@@ -637,18 +636,15 @@ pub(crate) fn stored_entry_block(
 
     let mut presentation = ui_state::restored::claude::feed_entry(key.0, entry);
     match &mut presentation.kind {
-        FeedEntryKind::Prompt(prompt) => prompt.content = index.segments(entry.text().unwrap_or_default()),
-        FeedEntryKind::Message(message) => message.content = index.segments(entry.text().unwrap_or_default()),
+        FeedEntryKind::Prompt(prompt) => {
+            prompt.content = index.segments(entry.text().unwrap_or_default())
+        }
+        FeedEntryKind::Message(message) => {
+            message.content = index.segments(entry.text().unwrap_or_default())
+        }
         _ => {}
     }
-    entry_block(
-        &presentation,
-        index,
-        theme,
-        width,
-        true,
-        message_view,
-    )
+    entry_block(&presentation, index, theme, width, true, message_view)
 }
 
 // --- tool lines -------------------------------------------------------------

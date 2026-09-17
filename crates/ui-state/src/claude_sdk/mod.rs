@@ -1,7 +1,8 @@
 //! Claude SDK UI facade.
 //!
-//! Provider-derived feed and standing facts live in `fold`; this layer keeps
-//! reducer-local answer, input, attachment, and connection overlays.
+//! Provider-derived standing facts live in `fold`; drawable history lives in
+//! the store window, and this layer keeps reducer-local answer, input,
+//! attachment, and connection overlays.
 
 mod answer;
 mod asks;

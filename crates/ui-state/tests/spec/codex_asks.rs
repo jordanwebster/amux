@@ -307,9 +307,11 @@ fn unsupported_user_input_blocks_without_creating_an_answerable_ask() {
     ]);
     let layer = codex_layer(&model, AGENT);
     assert_eq!(layer.ask_count(), 0);
-    assert!(layer
-        .work()
-        .any(|work| work.state == WorkState::BlockedUnsupported));
+    assert!(
+        layer
+            .work()
+            .any(|work| work.state == WorkState::BlockedUnsupported)
+    );
     assert!(matches!(
         ui_state::codex::phase(&model, agent_id(AGENT)),
         CodexPhase::BlockedUnsupported { .. }

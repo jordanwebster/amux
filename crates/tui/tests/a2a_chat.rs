@@ -10,11 +10,14 @@
 //! Regenerate with `UPDATE_GOLDENS=1 just test-crate tui -- --features fixtures --test a2a_chat`
 //! and review the diff like code.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
+use tui::fixtures::install_static_store_rows_for;
 use tui::view::{UiAction, ViewState};
 use tui::{ChatView, ColorMode, FrameContext, Theme, render};
 use ui_state::{
@@ -235,7 +238,7 @@ fn codex_message_row(kind: &str, from: &str, text: &str) -> Value {
 fn codex_message_row_from(kind: &str, from: &str, host: &str, text: &str) -> Value {
     json!({
         "type": "amux.codex_message",
-        "id": "00000000-0000-0000-0000-0000000000a1",
+        "id": format!("{kind}:{from}"),
         "kind": kind,
         "from": format!("{from}/{host}"),
         "from_id": "00000000-0000-0000-0000-0000000000b0",
@@ -365,8 +368,40 @@ fn family_msgs() -> Vec<Msg> {
 
 fn fold(msgs: Vec<Msg>) -> Model {
     let mut model = Model::default();
+    let mut rows_by_agent = BTreeMap::<AgentId, Vec<Value>>::new();
     for msg in msgs {
+        if let Msg::Stream {
+            agent,
+            event: StreamMsg::Batch { entries, .. },
+        } = &msg
+        {
+            let rows = rows_by_agent.entry(*agent).or_default();
+            for entry in entries {
+                rows.push(entry.payload.clone());
+                if entry.payload["type"] == "amux.codex_approval_resolved"
+                    && entry.payload["item_id"] == "exec-ask"
+                {
+                    rows.push(json!({
+                        "type": "item/started",
+                        "item": {
+                            "id": "exec-ask",
+                            "type": "commandExecution",
+                            "command": "cargo test --workspace",
+                            "cwd": "/work",
+                            "status": "inProgress",
+                        },
+                    }));
+                }
+            }
+        }
         update(&mut model, msg);
+    }
+    for (agent, rows) in rows_by_agent {
+        let protocol = model
+            .agent(agent)
+            .and_then(|card| card.structured_protocol())
+            .expect("fixture agent has a structured protocol");
+        install_static_store_rows_for(&mut model, agent, protocol, rows);
     }
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");
@@ -2035,6 +2070,9 @@ fn a2a_inline_answer_session_child() {
 /// envelope as every other carrier delivers; the session states it as a
 /// typed row rather than pasting it into a prompt.
 fn session_message_row(id: u32, kind: &str, from: &str, text: &str) -> Value {
+    // The durable fold rejects a missing or empty envelope body. Exit notices
+    // still paint as bodyless, so use a single blank as their wire payload.
+    let text = if text.is_empty() { " " } else { text };
     json!({
         "type": "amux.claude_sdk.message",
         "delivery": "stream",

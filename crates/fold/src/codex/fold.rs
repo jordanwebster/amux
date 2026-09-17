@@ -1497,7 +1497,9 @@ fn upsert_item<C>(
             layer.work_entries.insert(item_id.to_string(), entry);
         }
         FeedEntryKind::Message(entry) => {
-            layer.message_phases.insert(item_id.to_string(), entry.phase);
+            layer
+                .message_phases
+                .insert(item_id.to_string(), entry.phase);
         }
         _ => {}
     }

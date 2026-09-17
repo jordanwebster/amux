@@ -5553,7 +5553,10 @@ mod tests {
         }
 
         let layer = runtime.model().codex(agent).expect("folded Codex layer");
-        assert!(layer.cursor() > 0, "resumed replay must advance provider state");
+        assert!(
+            layer.cursor() > 0,
+            "resumed replay must advance provider state"
+        );
         assert_eq!(
             layer.attention(),
             ui_state::Attention::NeedsYou {

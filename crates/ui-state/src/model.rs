@@ -234,7 +234,7 @@ impl AgentCard {
         AgentLayer::from_kind(&self.agent.kind).map(|layer| layer.protocol())
     }
 
-    /// The Claude chat layer's feed facts, when the agent's structured
+    /// The Claude chat layer's live running facts, when the agent's structured
     /// stream has produced any.
     pub fn claude(&self) -> Option<&ClaudeLayer> {
         self.layer.as_ref().and_then(AgentLayer::claude)

@@ -10,6 +10,7 @@ use model::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::TokenUsage;
 use crate::{
     Baseline, Changes, Component, ComponentSource, Components, Entry, EntryKey, FieldPatch, Input,
     JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, RestoreRow,
@@ -59,6 +60,7 @@ pub enum CodexBody {
     Turn {
         turn_id: String,
         status: String,
+        token_usage: Option<TokenUsage>,
     },
     Snapshot {
         turn_id: Option<String>,
@@ -238,7 +240,7 @@ pub struct CodexFold {
     attention: Attention,
     phase: AgentPhase,
     last_activity: Option<DateTime<Utc>>,
-    context: Option<ContextMeter>,
+    token_usage: Option<TokenUsage>,
     model: Option<String>,
     ready_seen: bool,
     known_attention: bool,
@@ -266,7 +268,7 @@ impl Default for CodexFold {
             attention: Attention::Unknown,
             phase: AgentPhase::Running,
             last_activity: None,
-            context: None,
+            token_usage: None,
             model: None,
             ready_seen: false,
             known_attention: false,
@@ -411,6 +413,7 @@ impl CodexFold {
                             CodexBody::Turn {
                                 turn_id,
                                 status: status.clone(),
+                                token_usage: self.token_usage.clone(),
                             },
                             None,
                             revision,
@@ -470,7 +473,9 @@ impl CodexFold {
                     .or_else(|| {
                         self.pending_approval_context
                             .as_ref()
-                            .and_then(|context| serde_json::from_slice::<Value>(&context.payload.0).ok())
+                            .and_then(|context| {
+                                serde_json::from_slice::<Value>(&context.payload.0).ok()
+                            })
                             .and_then(|context| {
                                 id(&context, "item_id")
                                     .or_else(|| id(&context, "itemId"))
@@ -523,7 +528,25 @@ impl CodexFold {
                 out.push(upsert(key, seq, 0, revision, patch));
             }
             "amux.codex_approval_resolved" => {
-                let item_id = id(row, "item_id").or_else(|| id(row, "itemId"));
+                let request = compact_id(row.get("request_id").unwrap_or(&Value::Null));
+                let item_id = id(row, "item_id")
+                    .or_else(|| id(row, "itemId"))
+                    .or_else(|| {
+                        self.asks
+                            .iter()
+                            .find(|ask| ask.request_id == request)
+                            .and_then(|ask| {
+                                ask.rows.iter().find_map(|context| {
+                                    serde_json::from_slice::<Value>(&context.payload.0)
+                                        .ok()
+                                        .and_then(|context| {
+                                            id(&context, "item_id")
+                                                .or_else(|| id(&context, "itemId"))
+                                                .or_else(|| id(&context, "callId"))
+                                        })
+                                })
+                            })
+                    });
                 let Some(item_id) = item_id else {
                     out.push(unrecognized(
                         seq,
@@ -533,7 +556,6 @@ impl CodexFold {
                     return out;
                 };
                 let key = native_or_delivery("item", Some(&item_id), seq, 0);
-                let request = compact_id(row.get("request_id").unwrap_or(&Value::Null));
                 self.asks.retain(|ask| ask.request_id != request);
                 let state = string(row, "resolution")
                     .or_else(|| string(row, "reason"))
@@ -708,7 +730,17 @@ impl CodexFold {
                 value: clipped(text, TEXT_MAX),
             });
         }
-        patch.details = Patch::set(JsonBytes(bounded_json(row)), revision);
+        if matches!(
+            method,
+            "item/agentMessage/delta"
+                | "item/reasoning/textDelta"
+                | "item/reasoning/summaryTextDelta"
+                | "item/reasoning/summaryPartAdded"
+                | "item/fileChange/patchUpdated"
+                | "item/plan/delta"
+        ) {
+            patch.details = Patch::set(JsonBytes(bounded_json(row)), revision);
+        }
         out.push(upsert(key, seq, 0, revision, patch));
     }
 
@@ -783,18 +815,19 @@ impl CodexFold {
             .pointer("/tokenUsage/last")
             .or_else(|| row.pointer("/tokenUsage/total"))
             .unwrap_or(&Value::Null);
-        let used = usage
-            .get("inputTokens")
-            .and_then(Value::as_u64)
-            .or_else(|| usage.get("totalTokens").and_then(Value::as_u64));
-        if let Some(used_tokens) = used {
-            self.context = Some(ContextMeter {
-                used_tokens,
-                window_tokens: row
-                    .pointer("/tokenUsage/modelContextWindow")
-                    .and_then(Value::as_u64),
-                source: ContextMeterSource::ResultUsage,
-            });
+        let token_usage = TokenUsage {
+            input_tokens: usage.get("inputTokens").and_then(Value::as_u64),
+            cached_input_tokens: usage.get("cachedInputTokens").and_then(Value::as_u64),
+            cache_write_input_tokens: usage.get("cacheWriteInputTokens").and_then(Value::as_u64),
+            output_tokens: usage.get("outputTokens").and_then(Value::as_u64),
+            reasoning_output_tokens: usage.get("reasoningOutputTokens").and_then(Value::as_u64),
+            total_tokens: usage.get("totalTokens").and_then(Value::as_u64),
+            model_context_window: row
+                .pointer("/tokenUsage/modelContextWindow")
+                .and_then(Value::as_u64),
+        };
+        if token_usage.total_tokens.is_some() || token_usage.input_tokens.is_some() {
+            self.token_usage = Some(token_usage);
             self.known_context = true;
         }
     }
@@ -846,8 +879,8 @@ impl CodexFold {
 impl ProviderFold for CodexFold {
     type Entry = CodexEntry;
     const PROTOCOL: StructuredProtocol = StructuredProtocol::Codex;
-    const ENTRY_VERSION: u32 = 2;
-    const TIP_VERSION: u32 = 2;
+    const ENTRY_VERSION: u32 = 3;
+    const TIP_VERSION: u32 = 3;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
         self.segment = segment;
@@ -938,7 +971,16 @@ impl ProviderFold for CodexFold {
             phase: self.phase.clone(),
             last_activity: self.last_activity,
             todo: None,
-            context: self.context.clone(),
+            context: self.token_usage.as_ref().and_then(|usage| {
+                usage
+                    .total_tokens
+                    .or(usage.input_tokens)
+                    .map(|used_tokens| ContextMeter {
+                        used_tokens,
+                        window_tokens: usage.model_context_window,
+                        source: ContextMeterSource::ResultUsage,
+                    })
+            }),
             model: self.model.clone(),
             unknown,
         }
@@ -1145,6 +1187,28 @@ impl crate::private::Sealed for CodexEntryKind {
     }
 }
 impl PostcardSafe for CodexEntryKind {}
+impl crate::private::Sealed for TokenUsage {
+    fn assert_fields_are_postcard_safe() {
+        let _ = |TokenUsage {
+                     input_tokens,
+                     cached_input_tokens,
+                     cache_write_input_tokens,
+                     output_tokens,
+                     reasoning_output_tokens,
+                     total_tokens,
+                     model_context_window,
+                 }: TokenUsage| {
+            crate::assert_value_safe(&input_tokens);
+            crate::assert_value_safe(&cached_input_tokens);
+            crate::assert_value_safe(&cache_write_input_tokens);
+            crate::assert_value_safe(&output_tokens);
+            crate::assert_value_safe(&reasoning_output_tokens);
+            crate::assert_value_safe(&total_tokens);
+            crate::assert_value_safe(&model_context_window);
+        };
+    }
+}
+impl PostcardSafe for TokenUsage {}
 impl crate::private::Sealed for CodexBody {
     fn assert_fields_are_postcard_safe() {
         let _ = |v: CodexBody| match v {
@@ -1154,9 +1218,14 @@ impl crate::private::Sealed for CodexBody {
                 crate::assert_value_safe(&item_type);
             }
             CodexBody::Steer { input_id } => crate::assert_value_safe(&input_id),
-            CodexBody::Turn { turn_id, status } => {
+            CodexBody::Turn {
+                turn_id,
+                status,
+                token_usage,
+            } => {
                 crate::assert_value_safe(&turn_id);
                 crate::assert_value_safe(&status);
+                crate::assert_value_safe(&token_usage);
             }
             CodexBody::Snapshot { turn_id, kind } => {
                 crate::assert_value_safe(&turn_id);
@@ -1272,7 +1341,7 @@ impl crate::private::Sealed for CodexFold {
                      attention,
                      phase,
                      last_activity,
-                     context,
+                     token_usage,
                      model,
                      ready_seen,
                      known_attention,
@@ -1290,7 +1359,7 @@ impl crate::private::Sealed for CodexFold {
             crate::assert_value_safe(&attention);
             crate::assert_value_safe(&phase);
             crate::assert_value_safe(&last_activity);
-            crate::assert_value_safe(&context);
+            crate::assert_value_safe(&token_usage);
             crate::assert_value_safe(&model);
             crate::assert_value_safe(&ready_seen);
             crate::assert_value_safe(&known_attention);

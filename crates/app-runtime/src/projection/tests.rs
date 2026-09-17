@@ -90,20 +90,6 @@ fn message(id: usize, text: &str) -> Value {
         "message":{"id":format!("message-{id}"), "role":"assistant", "stop_reason":"end_turn",
             "content":[{"type":"text", "text":text}]}})
 }
-fn settle_claude_turn(model: &mut Model, seq: u64) {
-    let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
-    row(
-        model,
-        seq,
-        json!({"type":"hook.stop","hook_event_name":"Stop","stop_id":seq}),
-    );
-    update(
-        model,
-        Msg::Tick {
-            now: at + chrono::Duration::seconds(61),
-        },
-    );
-}
 fn collect(projection: &mut Projection, model: &Model) -> Vec<Event> {
     let mut events = vec![];
     projection.collect(model, &RelayConnection::Connected, &mut events);
@@ -167,6 +153,12 @@ fn mobile_projection_schema_snapshot() {
             message(0, "Hello"),
             json!({"type":"hook.stop","hook_event_name":"Stop","stop_id":2}),
         ],
+    );
+    update(
+        &mut model,
+        Msg::Tick {
+            now: DateTime::from_timestamp(1_700_000_061, 0).unwrap(),
+        },
     );
     let mut projection = subscribed();
     let mut events = vec![Event::connection(&RelayConnection::Connecting)];
@@ -282,7 +274,6 @@ fn mobile_projection_schema_snapshot() {
         )
         .unwrap();
     } else {
-        std::fs::write("/tmp/amux-mobile-projection-actual.json", &actual).unwrap();
         assert_eq!(actual, include_str!("schema.json"));
     }
     assert_eq!(serde_json::from_str::<Vec<Event>>(&actual).unwrap(), events);
@@ -314,7 +305,11 @@ fn mobile_projection_does_not_project_codex_rows_without_a_store_window() {
         );
     }
     let events = collect(&mut projection, &model);
-    assert!(!events.iter().any(|event| matches!(event, Event::Feed { .. })));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Feed { .. }))
+    );
     phone.apply_events(&events);
     assert!(phone.rows.is_empty());
     assert!(collect(&mut projection, &model).is_empty());
@@ -413,7 +408,10 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
         row(&mut model, id as u64 + 1, message(id, "before the outage"));
     }
     phone.apply_events(&collect(&mut projection, &model));
-    assert!(phone.rows.is_empty(), "the replay created a fallback transcript");
+    assert!(
+        phone.rows.is_empty(),
+        "the replay created a fallback transcript"
+    );
 
     // An agent removed from a machine that is still answering is not stale,
     // it is gone, and its rows go with it.
@@ -1155,8 +1153,10 @@ fn persisted(model: &Model) -> Model {
     serde_json::from_value(value).unwrap()
 }
 fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payload: Value) {
-    use fold::{CommitResult, ExpectedHead, JsonBytes, MutationOracle, Stored};
-    use ui_state::{Effect, MutationBatchDto, ProfileGeneration, StoreMsg, StoreOp};
+    use fold::{
+        CommitResult, ExpectedHead, JsonBytes, MutationOracle, RedirectState, Revision, Stored,
+    };
+    use ui_state::{Effect, MutationBatchDto, ProfileGeneration, StoreMsg, StoreOp, StoredDto};
 
     let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
     let effects = update(
@@ -1182,12 +1182,48 @@ fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payloa
         return;
     };
     macro_rules! canonical {
-        ($mutations:expr) => {{
-            let mut oracle = MutationOracle::default();
+        ($mutations:expr, $variant:ident) => {{
+            let chat = model.chat(AGENT).expect("chat window");
+            let entries = chat
+                .entries
+                .iter()
+                .filter_map(|stored| match stored {
+                    StoredDto::$variant(stored) => Some((**stored).clone()),
+                    _ => None,
+                })
+                .collect();
+            let redirects = chat
+                .aliases
+                .iter()
+                .cloned()
+                .map(|(from, to)| RedirectState {
+                    from,
+                    to,
+                    revision: Revision {
+                        seq: 0,
+                        fence: 0,
+                        ordinal: 0,
+                    },
+                    promote: None,
+                })
+                .collect();
+            let mut oracle = MutationOracle::from_state(
+                chat.segment_high_water.max(1),
+                fold::DESKTOP_ENTRY_MAX_BYTES,
+                entries,
+                Vec::new(),
+                redirects,
+            )
+            .expect("valid fixture window");
             let placed = oracle.apply(&$mutations).expect("valid fixture mutations");
+            let placed_keys = placed
+                .iter()
+                .map(|placement| &placement.key)
+                .collect::<std::collections::BTreeSet<_>>();
             let bodies = oracle
                 .entries()
                 .into_iter()
+                .filter(|entry| placed_keys.contains(&entry.key))
                 .map(|entry| Stored {
                     key: entry.key,
                     segment: entry.segment,
@@ -1200,9 +1236,9 @@ fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payloa
         }};
     }
     let (placed, bodies) = match mutations {
-        MutationBatchDto::Claude(mutations) => canonical!(mutations),
-        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
-        MutationBatchDto::Codex(mutations) => canonical!(mutations),
+        MutationBatchDto::Claude(mutations) => canonical!(mutations, Claude),
+        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations, ClaudeSdk),
+        MutationBatchDto::Codex(mutations) => canonical!(mutations, Codex),
     };
     update(
         model,

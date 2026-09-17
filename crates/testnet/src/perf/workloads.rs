@@ -22,7 +22,7 @@ const FLOOD_ROWS_PER_SECOND: usize = 2_000;
 const FLOOD_SECONDS: usize = 30;
 
 const FRAME_WORKLOAD: Workload = Workload {
-    description: "three provider chats with 1,000 retained entries",
+    description: "three provider chats with 1,000 stored entries",
     seed: SEED,
     identity_growth: "fixed 1,000-entry windows",
     warm_up: "one complete frame per provider",

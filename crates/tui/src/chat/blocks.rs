@@ -726,36 +726,6 @@ pub(crate) fn fmt_thousands(count: u64) -> String {
     out
 }
 
-/// A row a subagent produced, as one muted line in the session's own
-/// timeline: which task it belongs to, then what it did. The task block
-/// states the subagent's progress; this is only its visible footprint,
-/// kept apart from the session's own rows so the two never read as one.
-pub(crate) fn paint_subagent_activity(
-    key: BlockKey,
-    owner: &str,
-    text: &str,
-    theme: Theme,
-    width: usize,
-) -> PaintedBlock {
-    let lead = format!("{owner} · ");
-    let available = text_width(width).saturating_sub(str_width(&lead)).max(1);
-    let text = text.split('\n').next().unwrap_or_default().trim();
-    let body = if str_width(text) > available {
-        format!("{}…", clip_to_width(text, available.saturating_sub(1)))
-    } else {
-        text.to_string()
-    };
-    let row = vec![
-        Span::styled(lead, theme.muted()),
-        Span::styled(body, theme.muted()),
-    ];
-    block(
-        key,
-        BlockKind::Activity,
-        glyph_rows(("└", theme.muted()), vec![row], theme),
-    )
-}
-
 /// A message from another agent: who sent it, what it said, and the one
 /// row naming what is not being shown.
 pub(crate) fn paint_agent_message(
@@ -804,7 +774,7 @@ pub(crate) fn paint_history_boundary(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    paint_turn_rule(key, label, theme, width)
+    block(key, BlockKind::Divider, vec![rule_row(label, theme, width)])
 }
 
 /// Something went wrong. The accent is on the glyph alone: a red wall of

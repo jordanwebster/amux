@@ -129,8 +129,32 @@ fn batch(arrived: &str, first_seq: u64, rows: Vec<Value>) -> Msg {
 
 fn fold(msgs: Vec<Msg>) -> Model {
     let mut model = Model::default();
+    let mut rows = Vec::new();
+    let mut truncated = false;
+    let mut complete = false;
     for msg in msgs {
+        if let Msg::Stream { event, .. } = &msg {
+            match event {
+                StreamMsg::Opened {
+                    truncated: starts_late,
+                } => truncated = *starts_late,
+                StreamMsg::ReplayComplete => complete = true,
+                StreamMsg::Batch { entries, .. } => {
+                    rows.extend(entries.iter().map(|entry| entry.payload.clone()));
+                }
+                _ => {}
+            }
+        }
         update(&mut model, msg);
+    }
+    if complete {
+        tui::fixtures::install_static_store_rows_for_with_truncation(
+            &mut model,
+            agent_id(),
+            ui_state::StructuredProtocol::ClaudePtyTranscript,
+            rows,
+            truncated,
+        );
     }
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");
@@ -790,8 +814,7 @@ fn chat_scrolled_back() {
     assert_golden("chat_scrolled_back", &rendered);
 }
 
-/// A truncated window scrolled to its very top: the rule row states the
-/// honest boundary (`─ earlier history unavailable ─`).
+/// A truncated window scrolled to its very top states the honest boundary.
 #[test]
 fn chat_truncated_top() {
     let mut msgs = base_msgs();

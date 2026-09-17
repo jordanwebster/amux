@@ -267,7 +267,9 @@ fn attachments_duplicate_rows_are_noops_and_relinks_refold_identically() {
         claude_layer(&relinked, CLAUDE).attachments(),
         claude_layer(&direct, CLAUDE).attachments()
     );
-    let relinked_prompt = claude_layer(&relinked, CLAUDE).attachments().segments(&text);
+    let relinked_prompt = claude_layer(&relinked, CLAUDE)
+        .attachments()
+        .segments(&text);
     let direct_prompt = claude_layer(&direct, CLAUDE).attachments().segments(&text);
     assert_eq!(relinked_prompt, direct_prompt);
 

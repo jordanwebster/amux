@@ -1128,7 +1128,7 @@ mod tests {
             * agents.len();
         print_retention_delta("second retained interval", second_rows, &first, &second);
         println!(
-            "window plateau: one drawable store window caps at {} entries per chat ({} s at the soak's 2 rows/s per chat); store-backed provider feeds and row-identity sets retain no entries",
+            "window plateau: one drawable store window caps at {} entries per chat ({} s at the soak's 2 rows/s per chat); provider layers and row-identity sets retain no entries",
             ui_state::WINDOW_MAX_ENTRIES,
             ui_state::WINDOW_MAX_ENTRIES / 2,
         );

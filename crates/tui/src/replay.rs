@@ -281,11 +281,11 @@ fn bounding_mark(cells: &[(u16, u16)]) -> Option<Mark> {
 pub(crate) mod tests {
     use chrono::{DateTime, TimeDelta, Utc};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use fold::ExpectedHead;
     use ui_runtime::BUILD;
     use ui_runtime::report::{
         FrameCapture, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
     };
-    use fold::ExpectedHead;
     use ui_state::{AgentId, ChatCommand, ChatStreamMsg, Effect, Msg, StreamEntry};
 
     use super::*;
@@ -474,7 +474,10 @@ pub(crate) mod tests {
     fn assistant_entry(model: &Model, seq: u64, text: &str) -> Msg {
         Msg::ChatStream {
             agent: CLAUDE_AGENT,
-            attempt: model.chat(CLAUDE_AGENT).expect("fixture chat").stream_attempt,
+            attempt: model
+                .chat(CLAUDE_AGENT)
+                .expect("fixture chat")
+                .stream_attempt,
             event: ChatStreamMsg::Batch {
                 at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
                 entries: vec![StreamEntry::observed(
@@ -507,11 +510,7 @@ pub(crate) mod tests {
         session.draw();
         let expected = next_store_head(&session.model);
         let revision = session.model.chat(CLAUDE_AGENT).unwrap().content_revision + 1;
-        let message = assistant_entry(
-            &session.model,
-            6,
-            "the retry budget is now configurable",
-        );
+        let message = assistant_entry(&session.model, 6, "the retry budget is now configurable");
         let effects = session.fold(message);
         let effects = if effects
             .iter()

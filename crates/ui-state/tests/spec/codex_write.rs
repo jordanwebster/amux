@@ -5,7 +5,9 @@
 //! The reducer-minted operation UUID is forwarded as the input correlation id.
 
 use serde_json::json;
-use ui_state::codex::{CodexCommand, CodexDecision, CodexInput, CodexPhase, InFlightKind, SendGate};
+use ui_state::codex::{
+    CodexCommand, CodexDecision, CodexInput, CodexPhase, InFlightKind, SendGate,
+};
 use ui_state::{
     Attention, Command, Effect, InputPayload, Msg, OpOutcome, StreamCloseReason, StreamMsg,
 };
@@ -252,7 +254,6 @@ fn input_result_not_rpc_success_closes_the_layer_in_flight_marker() {
         0
     );
 }
-
 
 #[test]
 fn active_steer_and_interrupt_carry_the_authoritative_turn_id() {

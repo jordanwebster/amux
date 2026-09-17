@@ -6,9 +6,7 @@ pub mod claude {
     use serde_json::Value;
 
     use crate::attachments::Segment;
-    use crate::claude::{
-        FeedEntry, FeedEntryKind, ToolEntry, ToolOutcome, TurnDuration,
-    };
+    use crate::claude::{FeedEntry, FeedEntryKind, ToolEntry, ToolOutcome, TurnDuration};
 
     /// The Claude PTY entry a stored canonical entry paints as.
     pub fn feed_entry(id: u64, entry: &crate::StoredClaudeEntry) -> FeedEntry {
@@ -192,7 +190,6 @@ pub mod claude {
         };
         FeedEntry { id, seq: 0, kind }
     }
-
 }
 
 pub mod claude_sdk {
@@ -477,7 +474,7 @@ pub mod codex {
 
         let body = entry.body().cloned().unwrap_or_default();
         let text = entry.text().unwrap_or_default().to_string();
-        let finality = if entry.finality() == Some("open") {
+        let finality = if entry.finality().or_else(|| entry.state()) == Some("open") {
             ItemFinality::Open
         } else {
             ItemFinality::Complete
@@ -498,32 +495,60 @@ pub mod codex {
                 })
             }
             CodexEntryKind::Message => {
-                let item_id = match body {
-                    CodexBody::Item { item_id, .. } => item_id,
-                    _ => String::new(),
+                let (item_id, item_type) = match body {
+                    CodexBody::Item { item_id, item_type } => (item_id, item_type),
+                    _ => (String::new(), String::new()),
                 };
+                let phase = entry
+                    .details()
+                    .and_then(|details| serde_json::from_slice::<Value>(&details.0).ok())
+                    .and_then(|details| {
+                        details
+                            .get("phase")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .filter(|phase| phase == "commentary")
+                    .map_or_else(
+                        || {
+                            if item_type.contains("agentMessage/delta") {
+                                MessagePhase::Commentary
+                            } else {
+                                MessagePhase::FinalAnswer
+                            }
+                        },
+                        |_| MessagePhase::Commentary,
+                    );
                 FeedEntryKind::Message(crate::codex::MessageEntry {
                     item_id,
                     text: text.clone(),
                     content: vec![crate::attachments::Segment::Prose(text)],
-                    phase: MessagePhase::FinalAnswer,
+                    phase,
                     finality,
                 })
             }
             CodexEntryKind::Reasoning => {
-                let item_id = match body {
-                    CodexBody::Item { item_id, .. } => item_id,
-                    _ => String::new(),
+                let (item_id, item_type) = match body {
+                    CodexBody::Item { item_id, item_type } => (item_id, item_type),
+                    _ => (String::new(), String::new()),
                 };
-                let summary = entry
+                let mut summary: Vec<String> = entry
                     .details()
                     .and_then(|details| serde_json::from_slice::<Value>(&details.0).ok())
                     .and_then(|details| details.get("summary").cloned())
                     .and_then(|summary| serde_json::from_value(summary).ok())
                     .unwrap_or_default();
+                let reasoning_text = if item_type.contains("reasoning/summary") {
+                    if summary.is_empty() && !text.is_empty() {
+                        summary.push(text.clone());
+                    }
+                    String::new()
+                } else {
+                    text
+                };
                 FeedEntryKind::Reasoning(crate::codex::ReasoningEntry {
                     item_id,
-                    text,
+                    text: reasoning_text,
                     summary,
                     finality,
                 })
@@ -592,9 +617,13 @@ pub mod codex {
                 })
             }
             CodexEntryKind::Turn => {
-                let (turn_id, status) = match body {
-                    CodexBody::Turn { turn_id, status } => (turn_id, status),
-                    _ => (String::new(), "completed".into()),
+                let (turn_id, status, token_usage) = match body {
+                    CodexBody::Turn {
+                        turn_id,
+                        status,
+                        token_usage,
+                    } => (turn_id, status, token_usage),
+                    _ => (String::new(), "completed".into(), None),
                 };
                 let status = match status.as_str() {
                     "interrupted" => TurnStatus::Interrupted,
@@ -604,7 +633,7 @@ pub mod codex {
                 FeedEntryKind::Turn(crate::codex::TurnEntry {
                     turn_id,
                     status,
-                    token_usage: None,
+                    token_usage,
                 })
             }
             CodexEntryKind::Boundary => {
@@ -693,16 +722,22 @@ pub mod codex {
             *patch_head = entry.text().unwrap_or_default().to_string();
             *patch_truncated = entry.is_clipped();
         }
+        if matches!(work.kind, WorkKind::Command { .. })
+            && let Some(output) = entry.text()
+        {
+            work.stdout_head = output.to_string();
+            work.output_truncated = entry.is_clipped();
+        }
         work.state = match entry.state() {
-                Some("awaiting_approval") => WorkState::AwaitingApproval {
-                    request_id: serde_json::Value::Null,
-                },
-                Some("running" | "open") => WorkState::Running,
-                Some("denied") => WorkState::Denied,
-                Some("blocked_unsupported") => WorkState::BlockedUnsupported,
-                Some("proposed") => WorkState::Proposed,
-                _ => work.state.clone(),
-            };
+            Some("awaiting_approval") => WorkState::AwaitingApproval {
+                request_id: serde_json::Value::Null,
+            },
+            Some("running" | "open") => WorkState::Running,
+            Some("denied") => WorkState::Denied,
+            Some("blocked_unsupported") => WorkState::BlockedUnsupported,
+            Some("proposed") => WorkState::Proposed,
+            _ => work.state.clone(),
+        };
         Some(FeedEntry {
             id: 0,
             seq: 0,

@@ -298,9 +298,10 @@ not a comment, is the control.
 The amux TUI owns fleet chrome — attention, create/rename/delete, host state —
 and one full-screen frame shell shared by the native Claude and Codex chats.
 The shell owns geometry, windowing, scrolling, the composer, block focus, and
-theme. Each per-agent TUI adapter owns its native typed feed walk, content and
-panels, and its own keys; it hands already-painted blocks and agent-specific
-surfaces to the shell. The configured `chat`/`raw` default chooses a local
+theme. It walks the canonical SQLite window and asks each per-agent adapter to
+paint that provider's durable entry type. Provider layers contribute only
+live running facts, obligations, panels, and keys; they retain no second
+drawable transcript. The configured `chat`/`raw` default chooses a local
 terminal-capable agent's fleet entry mode. Agents on another machine default
 to chat; the other-mode key still opens raw attach when available. Read-only
 and SDK agents offer chat only. The hints and help read the same per-agent
@@ -309,11 +310,10 @@ entry policy; `docs/CHAT.md` describes the command-line attach policy.
 Sharing this presentation shell is not content normalization. The shell never
 classifies a Claude transcript row or a Codex control-plane entry, and adding
 an agent-specific concept must not force a change that the other agent can
-see. There is no common feed-entry type, cross-layer trait, or capability
-vocabulary: Claude and Codex retain their asymmetric models and exhaustive
-native dispatch. Geometry is singular because copied geometry drifts; content
-and interpretation remain native because merging them would erase real agent
-differences.
+see. The store transport uses a closed provider-tagged DTO, while Claude and
+Codex retain asymmetric durable entry types and exhaustive native dispatch.
+Geometry is singular because copied geometry drifts; content and interpretation
+remain native because merging them would erase real agent differences.
 
 Raw attach is byte passthrough to the agent's own TUI. Entering it from chrome
 or a native chat suspends amux's TUI (leave the alternate screen, restore

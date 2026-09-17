@@ -908,8 +908,8 @@ mod tests {
     use super::*;
     use crate::chat::FeedScroll;
     use crate::chat::claude::render;
-    use crate::chat::frame::{FrameSpacing, PaintCache, compose_chat_frame, feed_metrics};
-    use crate::chat::viewport::{FeedViewport, apply_scroll};
+    use crate::chat::frame::{PaintCache, compose_chat_frame};
+    use crate::chat::viewport::FeedViewport;
 
     pub(super) fn agent_id() -> ui_state::AgentId {
         Uuid::from_u128(7)
@@ -1249,7 +1249,10 @@ mod tests {
         else {
             panic!("PgUp pauses following");
         };
-        assert!(entry_watermark > 0, "watermark is the store revision at pause");
+        assert!(
+            entry_watermark > 0,
+            "watermark is the store revision at pause"
+        );
 
         drive_scroll(&mut chat, &model, press(KeyCode::PageUp));
         drive_scroll(&mut chat, &model, press(KeyCode::PageDown));

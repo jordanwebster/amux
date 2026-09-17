@@ -15,7 +15,7 @@ use serde_json::Value;
 /// The native structured protocol owned by this layer.
 pub const PROTOCOL: &str = "codex_sdk_v1";
 
-/// Pending obligations live outside the feed window.  This cap matches the
+/// Pending obligations live outside the drawable store window. This cap matches the
 /// backend's complete Codex row ring rather than the smaller UI tail.
 pub const ASKS_RETAINED: usize = 8192;
 /// A compact command/patch preview; full content remains behind the stream.

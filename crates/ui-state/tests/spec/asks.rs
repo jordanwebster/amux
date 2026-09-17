@@ -699,7 +699,7 @@ fn unpaired_question_and_plan_tool_uses_are_asks_without_hooks() {
 }
 
 /// Evicting content never evicts asks (B9): a pending ask survives the
-/// feed window being flooded past its bound, and the late resolution
+/// store window being flooded past its bound, and the late resolution
 /// still lands — the obligation outlives the bytes. (The flood is
 /// unstated-source rows: a HUMAN prompt would legitimately close the ask
 /// as stale — a new human turn implies nothing was blocking.)

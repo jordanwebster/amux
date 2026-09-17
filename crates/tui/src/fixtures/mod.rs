@@ -10,13 +10,13 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use fold::{
+    Baseline, CommitResult, ExpectedHead, Generations, HeadState, Input, JsonBytes, Loaded,
+    MutationOracle, Placement, ProviderFold, Stored,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
-use fold::{
-    CommitResult, ExpectedHead, Generations, HeadState, JsonBytes, Loaded, MutationOracle,
-    Placement, Stored,
-};
 use ui_runtime::ProfileEntry;
 use ui_state::{
     Agent, AgentId, ChatCommand, ChatStreamMsg, Command, Effect, HostEntry, HostId,
@@ -631,7 +631,7 @@ fn claude_attachment_rows() -> Vec<Value> {
     ]
 }
 
-/// Build a retained feed of exactly `entries` provider-native items.
+/// Build a stored chat window of exactly `entries` provider-native items.
 pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
     let mut rows = Vec::with_capacity(entries + 1);
     rows.push(match protocol {
@@ -867,7 +867,7 @@ pub fn install_store_rows_for(
         })
         .expect("fixture chat opens its store stream");
     let through = rows.len() as u64;
-    let effects = update(
+    update(
         model,
         Msg::ChatStream {
             agent,
@@ -895,11 +895,20 @@ pub fn install_store_rows_for(
                     .into_iter()
                     .enumerate()
                     .map(|(offset, payload)| {
-                        StreamEntry::observed(
-                            offset as u64 + 1,
-                            at("2026-08-12T09:12:20Z"),
+                        let published_at = at("2026-08-12T09:12:20Z");
+                        let activity_at = payload
+                            .get("timestamp")
+                            .and_then(Value::as_str)
+                            .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+                            .map(|timestamp| timestamp.with_timezone(&Utc))
+                            .unwrap_or(published_at);
+                        StreamEntry {
+                            seq: offset as u64 + 1,
+                            published_at,
+                            activity_at: Some(activity_at),
+                            historical: false,
                             payload,
-                        )
+                        }
                     })
                     .collect(),
             },
@@ -930,6 +939,109 @@ pub fn install_store_rows_for(
             2,
         );
         update(model, message);
+    }
+}
+
+/// Paint fixture rows from a store window while leaving an already-folded
+/// provider layer alone. Integration fixtures use this when the same rows
+/// also establish asks, phase, and other live state through `Msg::Stream`.
+#[doc(hidden)]
+pub fn install_static_store_rows_for(
+    model: &mut Model,
+    agent: AgentId,
+    protocol: StructuredProtocol,
+    rows: Vec<Value>,
+) {
+    install_static_store_rows_for_with_truncation(model, agent, protocol, rows, false);
+}
+
+#[doc(hidden)]
+pub fn install_static_store_rows_for_with_truncation(
+    model: &mut Model,
+    agent: AgentId,
+    protocol: StructuredProtocol,
+    rows: Vec<Value>,
+    truncated: bool,
+) {
+    let effects = update(model, Msg::Chat(ChatCommand::Open { agent }));
+    let (attempt, load_op) = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
+            _ => None,
+        })
+        .expect("fixture chat loads the store");
+    let loaded = match protocol {
+        StructuredProtocol::ClaudePtyTranscript => LoadedDto::Claude(materialized_loaded::<
+            fold::claude_pty::ClaudeFold,
+        >(rows, truncated)),
+        StructuredProtocol::ClaudeSdk => LoadedDto::ClaudeSdk(materialized_loaded::<
+            fold::claude_sdk::ClaudeSdkFold,
+        >(rows, truncated)),
+        StructuredProtocol::Codex => LoadedDto::Codex(
+            materialized_loaded::<fold::codex::CodexFold>(rows, truncated),
+        ),
+    };
+    update(
+        model,
+        Msg::Store(StoreMsg::Loaded {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: load_op,
+            agent,
+            loaded: Box::new(loaded),
+        }),
+    );
+}
+
+fn materialized_loaded<F: ProviderFold>(rows: Vec<Value>, truncated: bool) -> Loaded<F> {
+    const GENERATIONS: Generations = Generations {
+        fleet: 1,
+        chat: 1,
+        provider: 1,
+    };
+    let mut provider = F::default();
+    provider.begin(1, Baseline::Start);
+    let mut oracle = MutationOracle::<F::Entry>::default();
+    for (offset, row) in rows.into_iter().enumerate() {
+        let seq = offset as u64 + 1;
+        let activity_at = row
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .unwrap_or_else(fixed_now);
+        let payload = serde_json::to_vec(&row).expect("fixture row serializes");
+        let changes = provider.apply(Input::Row {
+            seq,
+            published_at: activity_at,
+            activity_at: Some(activity_at),
+            historical: false,
+            payload: &payload,
+        });
+        oracle
+            .apply(&changes.mutations)
+            .expect("fixture mutations materialize");
+    }
+    Loaded {
+        generations: GENERATIONS,
+        fence: 0,
+        content_revision: 1,
+        segment_high_water: 1,
+        head: HeadState::None,
+        window: oracle.entries(),
+        boundaries: truncated
+            .then_some(fold::BoundaryAt {
+                segment: 1,
+                before: None,
+                boundary: fold::Boundary::Truncated,
+            })
+            .into_iter()
+            .collect(),
+        first_page: None,
+        aliases: oracle.redirects(),
+        host: None,
+        progress: None,
     }
 }
 
@@ -991,20 +1103,20 @@ pub(crate) fn canonical_commit_msg(
         MutationBatchDto::Codex(mutations) => canonical!(mutations),
     };
     Msg::Store(StoreMsg::Committed {
-            profile: ProfileGeneration(0),
-            attempt,
-            op,
-            agent,
-            result: CommitResult {
-                expected,
-                content_revision,
-                placed,
-                bodies,
-                deleted: Vec::new(),
-                redirected: Vec::new(),
-                boundaries: Vec::new(),
-            },
-        })
+        profile: ProfileGeneration(0),
+        attempt,
+        op,
+        agent,
+        result: CommitResult {
+            expected,
+            content_revision,
+            placed,
+            bodies,
+            deleted: Vec::new(),
+            redirected: Vec::new(),
+            boundaries: Vec::new(),
+        },
+    })
 }
 
 fn first_exploration_run(model: &Model, agent: AgentId) -> Option<u64> {
@@ -2361,17 +2473,20 @@ mod tests {
         assert_eq!(claude_chat.entries.len(), ui_state::WINDOW_MAX_ENTRIES);
         assert!(
             claude_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "prompt")
         );
         assert!(
             claude_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "message")
         );
         assert!(
             claude_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "tool")
         );
 
@@ -2390,17 +2505,20 @@ mod tests {
         assert_eq!(codex_chat.entries.len(), ui_state::WINDOW_MAX_ENTRIES);
         assert!(
             codex_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "prompt")
         );
         assert!(
             codex_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "message")
         );
         assert!(
             codex_chat
-                .entries.iter()
+                .entries
+                .iter()
                 .any(|entry| entry.kind() == "work")
         );
     }

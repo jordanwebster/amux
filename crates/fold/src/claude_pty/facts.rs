@@ -2,8 +2,8 @@
 //!
 //! This module translates Claude's own tool, question, plan, document, and
 //! agent-message envelope vocabulary. It is deliberately not a normalized
-//! agent representation: each Claude layer keeps its own lifecycle and feed
-//! fold while reading these identical provider facts in one place.
+//! agent representation: each Claude transport keeps its own lifecycle while
+//! its durable fold emits provider-native entries for the store.
 //!
 //! Ask-time documents (`docs/CHAT.md` §Diffs and the reader's documents)
 //! are also derived here.

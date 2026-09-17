@@ -388,7 +388,10 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         ] {
             assert!(control.request(request).await.get("Error").is_some());
         }
-        eprintln!("projected stored transcript: {:?}", runtime.model().chat(agent));
+        eprintln!(
+            "projected stored transcript: {:?}",
+            runtime.model().chat(agent)
+        );
         control
             .ack(json!({"AgentExit":{"agent":"helper","code":7}}))
             .await;

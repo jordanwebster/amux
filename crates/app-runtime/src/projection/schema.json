@@ -57,13 +57,12 @@
       "agent": "00000000-0000-0000-0000-000000000001",
       "gate": {
         "layer": "claude_pty",
-        "value": "ready"
+        "value": "unknown"
       },
       "phase": {
         "layer": "claude_pty",
         "value": {
-          "phase": "idle",
-          "tag": "inferred"
+          "phase": "unknown"
         }
       },
       "stream": {
@@ -113,7 +112,7 @@
             "seq": 1,
             "kind": {
               "entry": "message",
-              "message_id": "message-0",
+              "message_id": "",
               "segments": [
                 "Hello"
               ],
@@ -204,6 +203,54 @@
     }
   },
   {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "claude",
+              "driver": "pty"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "needs_you",
+            "why": "finished"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
     "Feed": {
       "agent": "00000000-0000-0000-0000-000000000001",
       "base": 1,
@@ -218,10 +265,9 @@
               "seq": 1,
               "kind": {
                 "entry": "message",
-                "message_id": "message-0",
+                "message_id": "",
                 "segments": [
-                  "Hello",
-                  "Updated"
+                  "Hello\n\nUpdated"
                 ],
                 "content": [
                   {
@@ -347,7 +393,7 @@
                 }
               ],
               "phase": "final_answer",
-              "finality": "open"
+              "finality": "complete"
             }
           }
         }

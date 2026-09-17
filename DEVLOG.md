@@ -1,3 +1,22 @@
+2026-09-17 — **The store window is the only retained conversation.** Claude
+PTY, Claude SDK, and Codex provider layers no longer retain presentation rows;
+they keep only running state such as attention, session facts, obligations,
+open work, plans, cursors, and attachment metadata. Desktop and phone render
+canonical SQLite entries, and only store boundary markers can report truncated
+history. The terminal's store-entry adapter uses the existing block cache, so
+steady redraws still repaint no transcript blocks.
+
+The daemon summarizer was audited independently: production code owns the
+closed `AgentFold` and calls only its baseline, summary, version, and row-fold
+operations; it never constructed or read the deleted client observation
+windows. Its measured inline per-agent fold state is therefore 360 bytes before
+and 360 bytes after this change. Codex's tip now keeps the provider's fixed-size
+112-byte token-usage fact instead of only its context-meter projection so a
+stored turn can reproduce the existing usage line; the closed `AgentFold` size
+is still dominated by another provider and no feed-sized allocation moved into
+the daemon. The removed allocation was client-only: as many as 1,000 provider
+presentation entries per chat in addition to the store window.
+
 2026-09-17 — **The phone stops visibly when its store is unusable.**
 The cached-fleet bridge now distinguishes an absent disposable store from a
 store that exists but cannot be opened or read: the former is an empty cold

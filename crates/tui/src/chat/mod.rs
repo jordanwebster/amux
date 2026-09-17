@@ -21,8 +21,8 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 pub use frame::PaintStats;
 use frame::{
-    ChatFrameParts, ChatGeometry, FeedMetrics, FrameSpacing, PaintCache, PaintedBlock,
-    compose_chat_frame, feed_metrics,
+    CacheView, ChatFrameParts, ChatGeometry, FeedMetrics, FrameSpacing, PaintCache, PaintInputs,
+    PaintedBlock, compose_chat_frame, feed_metrics,
 };
 use ratatui::text::Line;
 use serde::{Deserialize, Serialize};
@@ -131,9 +131,9 @@ fn frame_parts(
 impl ChatView {
     /// Set expansion for a folded exploration run in this view instance.
     ///
-    /// The identifier comes from the presentation feed. Keeping this operation
-    /// on the view prevents fixture and client code from depending on the
-    /// renderer's private viewport representation.
+    /// The identifier comes from the first canonical store entry in the run.
+    /// Keeping this operation on the view prevents fixture and client code
+    /// from depending on the renderer's private viewport representation.
     #[doc(hidden)]
     pub fn set_exploration_run_expanded(&mut self, run_id: u64, expanded: bool) {
         let run = blocks::RunKey(run_id);
@@ -336,7 +336,7 @@ impl ChatView {
         };
         let mut cache = self.paint_cache.borrow_mut();
         let mut parts = frame_parts(model, self, &mut cache, &ctx);
-        install_store_feed(model, self, &mut parts, &ctx);
+        install_store_feed(model, self, &mut parts, &mut cache, &ctx);
         drop(cache);
         let following_geometry = parts.geometry(viewport, false);
         let paused_geometry = parts.geometry(viewport, true);
@@ -717,7 +717,7 @@ pub(crate) fn build_chat_lines(
     let mut cache = chat.paint_cache.borrow_mut();
     cache.reset_stats();
     let mut parts = frame_parts(model, chat, &mut cache, ctx);
-    install_store_feed(model, chat, &mut parts, ctx);
+    install_store_feed(model, chat, &mut parts, &mut cache, ctx);
     drop(cache);
     let overlaid = parts.overlay.is_some();
     let banner = parts.banner.is_some();
@@ -768,6 +768,7 @@ fn install_store_feed(
     model: &Model,
     view: &ChatView,
     parts: &mut ChatFrameParts,
+    cache: &mut PaintCache,
     ctx: &FrameContext,
 ) {
     let agent = view.agent;
@@ -781,26 +782,58 @@ fn install_store_feed(
 
     let (reports_open, leader, kitty) = match &view.inner {
         AgentChatView::Claude(provider) => (provider.reports_open, provider.leader, provider.kitty),
-        AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader, provider.kitty),
+        AgentChatView::ClaudeSdk(provider) => {
+            (provider.reports_open, provider.leader, provider.kitty)
+        }
         AgentChatView::Codex(provider) => (provider.reports_open, provider.leader, provider.kitty),
     };
     let history = chat.history();
-    let starts_at_boundary = matches!(history.first(), Some(WindowItem::Boundary(_)));
+    let starts_truncated = matches!(
+        history.first(),
+        Some(WindowItem::Boundary(fold::BoundaryAt {
+            boundary: Boundary::Truncated,
+            ..
+        }))
+    );
     let mut durable = Vec::with_capacity(history.len());
     let mut cursor = 0;
     while cursor < history.len() {
         let entry = match history[cursor] {
             WindowItem::Boundary(boundary) => {
+                // A leading truncation drives the frame's established
+                // retained-history row. Gaps, version changes, evictions, and
+                // boundaries inside the window remain visible dividers at
+                // their exact durable position.
+                if cursor == 0 && boundary.boundary == Boundary::Truncated {
+                    cursor += 1;
+                    continue;
+                }
                 let identity = format!(
                     "{}:{:?}:{:?}",
                     boundary.segment, boundary.before, boundary.boundary
                 );
-                durable.push(blocks::paint_history_boundary(
-                    stable_block_key(0xe000_0000_0000_0000, &identity),
-                    boundary_label(boundary.boundary),
-                    ctx.theme,
-                    ctx.viewport.0 as usize,
-                ));
+                let block_key = stable_block_key(0xe000_0000_0000_0000, &identity);
+                durable.push(
+                    cache
+                        .get_or_paint(
+                            block_key,
+                            boundary,
+                            PaintInputs {
+                                width: ctx.viewport.0 as usize,
+                                theme: ctx.theme,
+                                expanded: false,
+                            },
+                            || {
+                                blocks::paint_history_boundary(
+                                    block_key,
+                                    boundary_label(boundary.boundary),
+                                    ctx.theme,
+                                    ctx.viewport.0 as usize,
+                                )
+                            },
+                        )
+                        .clone(),
+                );
                 cursor += 1;
                 continue;
             }
@@ -818,12 +851,27 @@ fn install_store_feed(
             }
             let (_, _, key) = entry.position();
             let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-            durable.push(codex::render::stored_mcp_block(
-                block_key,
-                servers,
-                ctx.theme,
-                ctx.viewport.0 as usize,
-            ));
+            durable.push(
+                cache
+                    .get_or_paint(
+                        block_key,
+                        &servers,
+                        PaintInputs {
+                            width: ctx.viewport.0 as usize,
+                            theme: ctx.theme,
+                            expanded: false,
+                        },
+                        || {
+                            codex::render::stored_mcp_block(
+                                block_key,
+                                servers.clone(),
+                                ctx.theme,
+                                ctx.viewport.0 as usize,
+                            )
+                        },
+                    )
+                    .clone(),
+            );
             cursor = next;
             continue;
         }
@@ -861,33 +909,134 @@ fn install_store_feed(
                 let summary = blocks::run_summary(reads, searches, &paths);
                 let member_blocks = members
                     .iter()
-                    .filter_map(|entry| paint_stored_entry(model, agent, entry, reports_open, leader, ctx))
+                    .filter_map(|entry| {
+                        paint_stored_entry(model, agent, entry, reports_open, leader, ctx)
+                    })
                     .collect::<Vec<_>>();
                 let expanded = view.viewport.expanded.contains(&run);
                 let hint = crate::bindings::Effective::new(kitty, leader).fold_hint(expanded);
-                durable.push(blocks::paint_exploration_run(
-                    block_key,
-                    run,
-                    &summary,
-                    &member_blocks,
-                    expanded,
-                    &hint,
-                    ctx.theme,
-                    ctx.viewport.0 as usize,
-                ));
+                let content = (
+                    members
+                        .iter()
+                        .map(|entry| (*entry).clone())
+                        .collect::<Vec<_>>(),
+                    summary.clone(),
+                    hint.clone(),
+                );
+                durable.push(
+                    cache
+                        .get_or_paint(
+                            block_key,
+                            &content,
+                            PaintInputs {
+                                width: ctx.viewport.0 as usize,
+                                theme: ctx.theme,
+                                expanded,
+                            },
+                            || {
+                                blocks::paint_exploration_run(
+                                    block_key,
+                                    run,
+                                    &summary,
+                                    &member_blocks,
+                                    expanded,
+                                    &hint,
+                                    ctx.theme,
+                                    ctx.viewport.0 as usize,
+                                )
+                            },
+                        )
+                        .clone(),
+                );
                 cursor = next;
                 continue;
             }
         }
-        if let Some(painted) = paint_stored_entry(model, agent, entry, reports_open, leader, ctx) {
+        if let Some(painted) =
+            paint_stored_entry_cached(model, agent, entry, reports_open, leader, cache, ctx)
+        {
             durable.push(painted);
         }
-        push_stored_attachments(model, agent, entry, &mut durable, ctx);
+        push_stored_attachments(model, agent, entry, &mut durable, cache, ctx);
         cursor += 1;
     }
+    push_pending_echoes(model, agent, &mut durable, cache, ctx);
+    cache.retain(&durable.iter().map(|block| block.key).collect::<Vec<_>>());
     parts.feed.blocks = durable;
-    parts.feed.history_truncated = starts_at_boundary;
+    parts.feed.history_truncated = starts_truncated;
     parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
+}
+
+fn push_pending_echoes(
+    model: &Model,
+    agent: AgentId,
+    blocks: &mut Vec<PaintedBlock>,
+    cache: &mut PaintCache,
+    ctx: &FrameContext,
+) {
+    const ECHO_KEY_BASE: u64 = u64::MAX;
+    let width = ctx.viewport.0 as usize;
+    let mut push = |index: usize,
+                    text: &str,
+                    cache_content: &dyn std::fmt::Debug,
+                    attachment_index: &ui_state::AttachmentIndex| {
+        let key = frame::BlockKey(ECHO_KEY_BASE - index as u64);
+        let content = attachment_index.segments(text);
+        let words = attachments::words(attachment_index, &content);
+        let identity = format!("{cache_content:?}");
+        blocks.push(
+            cache
+                .get_or_paint(
+                    key,
+                    &identity,
+                    PaintInputs {
+                        width,
+                        theme: ctx.theme,
+                        expanded: false,
+                    },
+                    || blocks::paint_user_prompt(key, &words, true, ctx.theme, width),
+                )
+                .clone(),
+        );
+        for (position, attachment) in attachments::described(attachment_index, &content)
+            .iter()
+            .enumerate()
+        {
+            let attachment_key =
+                attachments::attachment_key(attachments::echo_owner(index), position);
+            blocks.push(
+                cache
+                    .get_or_paint(
+                        attachment_key,
+                        attachment,
+                        PaintInputs {
+                            width,
+                            theme: ctx.theme,
+                            expanded: false,
+                        },
+                        || {
+                            blocks::paint_attachment(
+                                attachment_key,
+                                attachment,
+                                blocks::Carrier::Person,
+                                ctx.theme,
+                                width,
+                            )
+                        },
+                    )
+                    .clone(),
+            );
+        }
+    };
+    if let Some(layer) = model.claude(agent) {
+        for (index, echo) in layer.pending_echoes().iter().enumerate() {
+            push(index, &echo.text, echo, layer.attachments());
+        }
+    } else if let Some(layer) = model.claude_sdk(agent)
+        && let Some(echo) = layer.pending_echo()
+    {
+        push(0, &echo.text, echo, layer.attachments());
+    }
 }
 
 struct StoredExploration {
@@ -918,7 +1067,10 @@ fn stored_mcp_server(
         name,
         ui_state::codex::McpServerStartup {
             status,
-            error: raw.get("error").and_then(serde_json::Value::as_str).map(str::to_string),
+            error: raw
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             failure_reason: raw
                 .get("failureReason")
                 .and_then(serde_json::Value::as_str)
@@ -999,11 +1151,82 @@ fn paint_stored_entry(
     }
 }
 
+#[derive(PartialEq)]
+struct StoredPaintKey {
+    entry: ui_state::StoredDto,
+    content: Vec<ui_state::attachments::Segment>,
+}
+
+#[derive(Clone, Copy)]
+struct StoredPaintKeyView<'a> {
+    entry: &'a ui_state::StoredDto,
+    content: &'a [ui_state::attachments::Segment],
+}
+
+impl PartialEq<StoredPaintKeyView<'_>> for StoredPaintKey {
+    fn eq(&self, other: &StoredPaintKeyView<'_>) -> bool {
+        &self.entry == other.entry && self.content == other.content
+    }
+}
+
+impl CacheView for StoredPaintKeyView<'_> {
+    type Owned = StoredPaintKey;
+
+    fn to_owned_key(self) -> Self::Owned {
+        StoredPaintKey {
+            entry: self.entry.clone(),
+            content: self.content.to_vec(),
+        }
+    }
+}
+
+fn paint_stored_entry_cached(
+    model: &Model,
+    agent: AgentId,
+    entry: &ui_state::StoredDto,
+    reports_open: bool,
+    leader: char,
+    cache: &mut PaintCache,
+    ctx: &FrameContext,
+) -> Option<PaintedBlock> {
+    if let ui_state::StoredDto::ClaudeSdk(stored) = entry
+        && !claude_sdk::stored_entry_paints(&stored.entry)
+    {
+        return None;
+    }
+    let (_, _, key) = entry.position();
+    let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
+    let empty = ui_state::AttachmentIndex::default();
+    let index = attachment_index(model, agent).unwrap_or(&empty);
+    let content = index.segments(entry.text().unwrap_or_default());
+    Some(
+        cache
+            .get_or_paint_view(
+                block_key,
+                StoredPaintKeyView {
+                    entry,
+                    content: &content,
+                },
+                PaintInputs {
+                    width: ctx.viewport.0 as usize,
+                    theme: ctx.theme,
+                    expanded: reports_open,
+                },
+                || {
+                    paint_stored_entry(model, agent, entry, reports_open, leader, ctx)
+                        .expect("paintable stored entry")
+                },
+            )
+            .clone(),
+    )
+}
+
 fn push_stored_attachments(
     model: &Model,
     agent: AgentId,
     entry: &ui_state::StoredDto,
     blocks: &mut Vec<PaintedBlock>,
+    cache: &mut PaintCache,
     ctx: &FrameContext,
 ) {
     if !matches!(entry.kind(), "prompt" | "message") {
@@ -1022,13 +1245,28 @@ fn push_stored_attachments(
     };
     for (position, attachment) in attachments::described(index, &content).iter().enumerate() {
         let key = attachments::attachment_key(owner, position);
-        blocks.push(blocks::paint_attachment(
-            key,
-            attachment,
-            carrier,
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        ));
+        blocks.push(
+            cache
+                .get_or_paint(
+                    key,
+                    attachment,
+                    PaintInputs {
+                        width: ctx.viewport.0 as usize,
+                        theme: ctx.theme,
+                        expanded: false,
+                    },
+                    || {
+                        blocks::paint_attachment(
+                            key,
+                            attachment,
+                            carrier,
+                            ctx.theme,
+                            ctx.viewport.0 as usize,
+                        )
+                    },
+                )
+                .clone(),
+        );
     }
 }
 
@@ -1293,9 +1531,11 @@ pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::Fam
 /// screen. A completion that said one thing is already showing all of
 /// it, and a chat of those has nothing to open.
 fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
-    model
-        .chat(agent)
-        .is_some_and(|chat| chat.entries.iter().any(ui_state::StoredDto::has_foldable_completion))
+    model.chat(agent).is_some_and(|chat| {
+        chat.entries
+            .iter()
+            .any(ui_state::StoredDto::has_foldable_completion)
+    })
 }
 
 /// The header's family marker (U3): how many agents this one has spawned,

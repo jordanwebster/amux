@@ -76,8 +76,6 @@ macro_rules! differential_partitions {
     };
 }
 
-pub(crate) use differential_partitions;
-
 differential_partitions!(
     differential_fold_matches_live_state_after_every_msg,
     all_sequences()

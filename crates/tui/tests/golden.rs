@@ -906,6 +906,8 @@ fn provider_store_rows(protocol: ui_state::StructuredProtocol) -> Vec<serde_json
 
 fn provider_live_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
     let id = agent.id;
+    let protocol = fixture_protocol(&agent);
+    let stored_rows = rows.clone();
     let mut messages = vec![
         server(ServerMsg::Connected {
             local_host_id: Some(host_id("nova")),
@@ -938,7 +940,9 @@ fn provider_live_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
         agent: id,
         event: StreamMsg::ReplayComplete,
     });
-    fold(messages)
+    let mut model = fold(messages);
+    tui::fixtures::install_static_store_rows_for(&mut model, id, protocol, stored_rows);
+    model
 }
 
 #[test]

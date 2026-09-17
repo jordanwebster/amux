@@ -21,9 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::attachments::{AttachmentIndex, Segment};
-use crate::model::{
-    AgentPhase, Attention, Model, StreamPhase, Violation, Why,
-};
+use crate::model::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
 pub type FeedEntry = ::fold::codex::FeedEntry<Vec<Segment>>;

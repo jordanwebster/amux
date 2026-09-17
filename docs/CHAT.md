@@ -251,7 +251,7 @@ same client sequence epoch.
   permanently re-openable in the reader (opencode's plan-stays-
   addressable property, which neither study's subject actually ships
   for plans). Accepted plan payloads are retained as session state
-  keyed by tool_use id, outside feed windowing, bounded by count; a
+  keyed by tool_use id, outside the drawable store window, bounded by count; a
   plan that predates available history after relink is honestly absent.
 - **Subagents** (B7). The `Task` tool_use renders as one line with the
   child's description; synchronous completion is FACT
@@ -335,20 +335,20 @@ therefore does not synthesize runs from shell commands.
 
 ### Retention and windowing (B9)
 
-Retention is bounded and honest. The source buffer is a bounded tail
-(1000 entries today), so a fold that starts past the beginning renders
-an explicit `─ earlier history unavailable ─` boundary as the feed's
-first line — a statement, not an apology. Evicting content never evicts
-asks: a pending permission or question survives any window, per
-UI.md's retention rule.
+Retention is bounded and honest. SQLite owns the only drawable transcript
+window: desktop clients keep 96 canonical entries and page older stored rows
+in 96-entry chunks, while phone clients keep their separate 800-entry window.
+Provider layers retain running facts and obligations but no presentation
+history. When the store reports a truncated, gapped, version-changed, or
+evicted edge, the first row states that boundary explicitly. Pending asks and
+accepted plans remain independently bounded state, so paging or evicting
+drawable content never discards an obligation.
 
-This section resolves `docs/UI.md`'s deferred **content windowing**
-decision for the chat milestone: the feed is the first windowed
-transcript-scale entity. The window is the bounded source tail; deltas
-apply within the window; the relink is the epoch that guards
-snapshot/live reconciliation (buffer cleared, new file replayed, fresh
-synchronized marker). Nothing outside the window is fetched in V1;
-future backfill goes through the Effect seam.
+The store's segment and revision fences guard snapshot/live reconciliation.
+A relink starts a fresh segment, and incoming mutations replace or merge the
+canonical rows in the visible window. Older content is fetched from SQLite
+through the paging effect; history truncation is derived only from the store
+window's boundary markers.
 
 ### Replay and live (B10)
 
@@ -504,11 +504,11 @@ viewport it would leave roughly 55 columns per side and wrap ordinary code.
 
 There are three native producers feeding one pure row painter:
 
-- **Claude post-hoc** (feed): `toolUseResult.structuredPatch` hunks are
+- **Claude post-hoc** (stored window): `toolUseResult.structuredPatch` hunks are
   restated verbatim — absolute line numbers, FACT magnitude for the
   feed line's `(+9 -2)`. The transcript already states every landed
   edit; the client never recomputes one.
-- **Codex landed changes** (feed): the Codex layer parses its native unified
+- **Codex landed changes** (stored window): the Codex fold parses its native unified
   patch into the same numbered row facts. Headerless or bodyless malformed
   patch text yields no speculative diff rows; a hunk with valid body rows
   retains that observed prefix and states that the preview is incomplete.

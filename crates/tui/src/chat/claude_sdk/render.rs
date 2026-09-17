@@ -13,8 +13,8 @@ use ui_state::Model;
 use ui_state::attachments::Segment;
 use ui_state::claude::ToolInvocation;
 use ui_state::claude_sdk::{
-    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact,
-    SdkPhase, TaskEntry, TaskState, ToolEntry,
+    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact, SdkPhase,
+    TaskEntry, TaskState, ToolEntry,
 };
 
 use crate::chat::attachments::{prose, words};
@@ -832,6 +832,13 @@ pub(crate) fn stored_entry_block(
             message_view,
         )
     })
+}
+
+pub(crate) fn stored_entry_paints(entry: &ui_state::StoredClaudeSdkEntry) -> bool {
+    use ui_state::StoredClaudeSdkEntryKind as ClaudeSdkEntryKind;
+
+    entry.entry_kind() == Some(ClaudeSdkEntryKind::ApiError)
+        || paints(&ui_state::restored::claude_sdk::feed_entry(0, entry))
 }
 
 fn paints(entry: &FeedEntry) -> bool {

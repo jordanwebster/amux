@@ -177,8 +177,11 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         } else {
             wait_for(&mut runtime, "recorded DONE and turn completion", |model| {
                 stored_has_text(model, agent, "DONE")
-                    && model.codex(agent).is_some_and(|layer| layer.ask_count() == 0)
-            }).await;
+                    && model
+                        .codex(agent)
+                        .is_some_and(|layer| layer.ask_count() == 0)
+            })
+            .await;
             println!(
                 "Projected Codex transcript: {}",
                 serde_json::to_string(runtime.model().codex(agent).unwrap()).unwrap()
@@ -337,9 +340,7 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
         wait_for(
             &mut runtime,
             "the recorded answer to the command",
-            |model| {
-                stored_has_text(model, agent, "Planning the parser before the wire format.")
-            },
+            |model| stored_has_text(model, agent, "Planning the parser before the wire format."),
         )
         .await;
 

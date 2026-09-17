@@ -19,7 +19,7 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::{claude_sdk_frame_parts, stored_entry_block};
+pub(crate) use render::{claude_sdk_frame_parts, stored_entry_block, stored_entry_paints};
 use serde::{Deserialize, Serialize};
 use ui_state::claude::facts::ask_document;
 use ui_state::claude::{AcceptedPlan, ToolInvocation};
@@ -607,25 +607,25 @@ pub(crate) fn accepted_plans(model: &Model, agent: AgentId) -> Vec<AcceptedPlan>
         .into_iter()
         .flat_map(|chat| &chat.entries)
         .filter_map(|entry| match entry {
-                ui_state::StoredDto::ClaudeSdk(stored) => {
-                    Some(ui_state::restored::claude_sdk::feed_entry(0, &stored.entry))
-                }
-                _ => None,
-            })
-            .filter_map(|entry| match entry.kind {
-                FeedEntryKind::Tool(tool) => Some(tool),
-                _ => None,
-            })
-            .filter(|tool| tool.result.as_ref().is_some_and(|result| !result.is_error))
-            .filter_map(|tool| match tool.invocation {
-                ToolInvocation::Plan {
-                    plan: Some(plan), ..
-                } => Some(AcceptedPlan {
-                    tool_use_id: tool.tool_use_id,
-                    plan,
-                }),
-                _ => None,
-            })
+            ui_state::StoredDto::ClaudeSdk(stored) => {
+                Some(ui_state::restored::claude_sdk::feed_entry(0, &stored.entry))
+            }
+            _ => None,
+        })
+        .filter_map(|entry| match entry.kind {
+            FeedEntryKind::Tool(tool) => Some(tool),
+            _ => None,
+        })
+        .filter(|tool| tool.result.as_ref().is_some_and(|result| !result.is_error))
+        .filter_map(|tool| match tool.invocation {
+            ToolInvocation::Plan {
+                plan: Some(plan), ..
+            } => Some(AcceptedPlan {
+                tool_use_id: tool.tool_use_id,
+                plan,
+            }),
+            _ => None,
+        })
         .collect()
 }
 

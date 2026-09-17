@@ -390,6 +390,26 @@ impl ClaudeFold {
         }
 
         let kind = classify_row(row);
+        let breaks_duration_chain = match kind {
+            RowKind::User => row
+                .pointer("/message/content")
+                .and_then(Value::as_array)
+                .is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        matches!(
+                            block.get("text").and_then(Value::as_str),
+                            Some(
+                                "[Request interrupted by user]"
+                                    | "[Request interrupted by user for tool use]"
+                            )
+                        )
+                    })
+                }),
+            RowKind::System => {
+                row.get("subtype").and_then(Value::as_str) == Some("compact_boundary")
+            }
+            _ => false,
+        };
         let revision = Revision::row(seq);
         let mut mutations = Vec::new();
         match kind {
@@ -467,7 +487,11 @@ impl ClaudeFold {
                 ));
             }
         }
-        self.previous_row_at = activity_at.or(self.previous_row_at);
+        self.previous_row_at = if breaks_duration_chain {
+            None
+        } else {
+            activity_at.or(self.previous_row_at)
+        };
         self.enforce_tip(&mut mutations, revision);
         mutations
     }
@@ -619,7 +643,11 @@ impl ClaudeFold {
                         mutations.push(upsert(
                             turn.clone(),
                             seq,
-                            slot,
+                            // The marker and inferred turn are distinct
+                            // presentation facts from one provider block.
+                            // Keep their provider order deterministic rather
+                            // than letting entry-key sorting put the turn first.
+                            slot.saturating_add(1),
                             revision,
                             partial(
                                 ClaudeEntryKind::Turn,
@@ -2037,7 +2065,7 @@ mod tests {
         let interruption = one(
             json!({"type":"user","uuid":"u3","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}),
         );
-        assert_eq!(keys(&interruption.1), ["turn:u3", "user:u3"]);
+        assert_eq!(keys(&interruption.1), ["user:u3", "turn:u3"]);
         assert_eq!(interruption.0.summary().attention, Attention::Idle);
         let compact = one(json!({"type":"system","subtype":"compact_boundary","uuid":"s2"}));
         assert_eq!(keys(&compact.1), ["sys:s2"]);
@@ -2068,6 +2096,56 @@ mod tests {
                 "claude_pty.unrecognized_without_uuid"
             ]
         );
+    }
+
+    #[test]
+    fn interruption_precedes_its_turn_and_breaks_thinking_duration_chain() {
+        let input = [
+            json!({
+                "type": "user",
+                "uuid": "prompt",
+                "timestamp": "2026-08-12T09:00:00Z",
+                "message": {"content": "go"},
+                "origin": {"kind": "human"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "thinking-before",
+                "timestamp": "2026-08-12T09:00:03Z",
+                "message": {"id": "m1", "content": [{"type": "thinking", "thinking": "x"}]}
+            }),
+            json!({
+                "type": "user",
+                "uuid": "interrupt",
+                "timestamp": "2026-08-12T09:00:06Z",
+                "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "thinking-after",
+                "timestamp": "2026-08-12T09:00:20Z",
+                "message": {"id": "m2", "content": [{"type": "thinking", "thinking": "x"}]}
+            }),
+        ]
+        .map(|row| serde_json::to_vec(&row).unwrap());
+
+        let (_, oracle) = fold_rows(&input);
+        let entries = oracle.entries();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|stored| stored.entry.kind())
+                .collect::<Vec<_>>(),
+            ["prompt", "thinking", "interruption", "turn", "thinking"]
+        );
+        let durations = entries
+            .iter()
+            .filter_map(|stored| match stored.entry.body() {
+                Some(ClaudeBody::Thinking { duration_ms, .. }) => Some(*duration_ms),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(durations, [Some(3_000), None]);
     }
 
     #[test]

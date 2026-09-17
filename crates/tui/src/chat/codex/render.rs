@@ -1,21 +1,21 @@
-//! The Codex chat's adapter onto the shared frame: it walks Codex's own
-//! typed entries, formats their words, and hands the shell finished
+//! The Codex chat's adapter onto the shared frame: it formats Codex's durable
+//! store entries and hands the shell finished
 //! blocks.
 //!
 //! Nothing here draws. Every row comes from the painter kit in
 //! `chat::blocks`, the same one the Claude adapter uses, so the two
 //! screens cannot drift apart. Phase and attention-like presentation come
-//! only from `ui_state::codex::phase`; feed blocks format the layer's typed
-//! entries without reconstructing a second semantic model.
+//! only from `ui_state::codex::phase`; stored blocks do not reconstruct a
+//! second semantic model.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 use ui_state::codex::{
     ApprovalResolution, Ask, AskActionMeaning, AskContext, BoundaryEntry, CodexPhase,
-    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpServerStartup, McpStartupEntry, McpStartupStatus,
-    MessagePhase, NetworkPolicyAction, PromptEntry, PromptPart, PromptSource, TokenUsage,
-    TurnStatus, WorkEntry, WorkKind, WorkOutcome, WorkState,
+    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpServerStartup, McpStartupEntry,
+    McpStartupStatus, MessagePhase, NetworkPolicyAction, PromptEntry, PromptPart, PromptSource,
+    TokenUsage, TurnStatus, WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
 use ui_state::{AgentId, Model};
 
@@ -23,12 +23,14 @@ use super::View;
 use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
     self, fmt_thousands, fmt_tokens, paint_agent_message, paint_ask_fact, paint_ask_panel,
-    paint_assistant, paint_compaction_rule, paint_composer_block, paint_error,
-    paint_header, paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule,
-    paint_unrecognized, paint_user_prompt,
+    paint_assistant, paint_compaction_rule, paint_composer_block, paint_error, paint_header,
+    paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized,
+    paint_user_prompt,
 };
 use crate::chat::claude_shared::reader;
-use crate::chat::frame::{BlockKey, BlockKind, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
+use crate::chat::frame::{
+    BlockKey, BlockKind, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock,
+};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
@@ -1022,17 +1024,15 @@ pub(crate) fn stored_entry_block(
 
     let mut presentation = ui_state::restored::codex::feed_entry(key.0, entry);
     match &mut presentation.kind {
-        FeedEntryKind::Prompt(prompt) => prompt.content = index.segments(entry.text().unwrap_or_default()),
-        FeedEntryKind::Message(message) => message.content = index.segments(entry.text().unwrap_or_default()),
+        FeedEntryKind::Prompt(prompt) => {
+            prompt.content = index.segments(entry.text().unwrap_or_default())
+        }
+        FeedEntryKind::Message(message) => {
+            message.content = index.segments(entry.text().unwrap_or_default())
+        }
         _ => {}
     }
-    entry_block(
-        &presentation,
-        index,
-        theme,
-        width,
-        message_view,
-    )
+    entry_block(&presentation, index, theme, width, message_view)
 }
 
 pub(crate) fn stored_mcp_block(

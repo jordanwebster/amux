@@ -1,13 +1,13 @@
-//! The Claude chat layer: a typed child model folding native
-//! `claude_pty_transcript_v1` rows into feed facts (`docs/CHAT.md` §The
-//! feed; `docs/UI.md` "Kernel and per-agent layers").
+//! The Claude chat layer: live running state folded from native
+//! `claude_pty_transcript_v1` rows (`docs/CHAT.md` §The feed;
+//! `docs/UI.md` "Kernel and per-agent layers"). Drawable entries come from
+//! the canonical store window.
 //!
 //! This is a per-agent layer, not a projection: it consumes the agent's
 //! native rows directly — transcript rows interleaved with amux hook rows —
-//! and derives typed feed entries. There is no intermediate representation
-//! and no capability flags; unknown rows become explicit unrecognized
-//! entries, never silent drops (G1). Interpretation happens only here, in
-//! the fold; renderers format these facts and never re-derive them.
+//! and derives live facts and obligations. The durable fold emits typed store
+//! mutations from the same rows; renderers format those entries without
+//! retaining a second presentation history.
 //!
 //! Grounding: `docs/CLAUDE_TRANSCRIPT.md` (the row survey) and the derived rows
 //! at `crates/claude-specs/fixtures/claude-pty/`. Every
@@ -50,9 +50,7 @@ use uuid::Uuid;
 
 use crate::attachments::{AttachmentIndex, Segment};
 use crate::claude::answer::AskAnswer;
-use crate::model::{
-    AgentPhase, Attention, Model, StreamPhase, Violation, Why,
-};
+use crate::model::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
 /// The native structured protocol owned by this layer.
@@ -95,10 +93,10 @@ pub(crate) const MESSAGES_RETAINED: usize = 64;
 pub(crate) const OPEN_TOOLS_RETAINED: usize = 256;
 
 /// Accepted plan payload retention (B6): session state keyed by tool_use
-/// id, outside feed windowing, bounded by count.
+/// id, outside the drawable store window, bounded by count.
 pub(crate) const PLANS_RETAINED: usize = 8;
 
-/// Pending-ask retention (C): asks queue outside the feed window — evicting
+/// Pending-ask retention (C): asks queue outside the drawable store window — evicting
 /// content never evicts asks (B9) — under their own explicit bound.
 /// Realistically a handful pend at once (parallel tool use enqueues a few);
 /// overflow drops the oldest, honestly bounded like everything else.
@@ -122,10 +120,9 @@ pub(crate) const WORKING_STALENESS_CAP_SECS: i64 = 600;
 /// The full text stays on disk behind the Effect seam.
 const OUTPUT_HEAD_MAX: usize = 400;
 
-/// A landed patch is retained as a head for feed previews. Eight KiB holds
-/// roughly a hundred ordinary terminal rows, enough for useful transcript
-/// inspection beyond the eight-row feed preview without letting 1,000
-/// retained entries turn wide patches into an unbounded per-agent cost.
+/// A landed patch is retained as a head for the compact live work preview.
+/// Eight KiB holds roughly a hundred ordinary terminal rows, enough for useful
+/// inspection without letting a wide patch become an unbounded per-agent cost.
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
 /// chat-layer surface of a live obligation. Queued in arrival order; the
 /// head renders with an honest `(1 of N)` count.
@@ -640,8 +637,8 @@ pub struct ClaudeLayer {
     messages: VecDeque<MessageSlot>,
     open_tools: VecDeque<OpenTool>,
     plans: Vec<AcceptedPlan>,
-    /// Pending asks in arrival order (C). Outside the feed window: feed
-    /// eviction never touches this queue (B9).
+    /// Pending asks in arrival order (C). Store-window eviction never touches
+    /// this queue (B9).
     asks: VecDeque<Ask>,
     next_ask_id: u64,
     /// Optimistic prompt echoes awaiting their transcript row (B1).
@@ -936,7 +933,6 @@ impl ClaudeLayer {
         if !echo_ops_distinct {
             out.push(Violation::Claude(ClaudeViolation::EchoDuplicate { agent }));
         }
-
     }
 }
 

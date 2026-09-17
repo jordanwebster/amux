@@ -5,13 +5,13 @@
 
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use fold::Entry as _;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
 use tui::fixtures::{NamedState, fixture};
 use tui::view::{UiAction, ViewState};
 use tui::{ChatView, ColorMode, FrameContext, Theme, render};
-use fold::Entry as _;
 use ui_state::claude_sdk::ClaudeSdkCommand;
 use ui_state::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
