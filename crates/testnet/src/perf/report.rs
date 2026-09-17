@@ -41,6 +41,7 @@ impl Statistic {
 pub enum Unit {
     Milliseconds,
     Microseconds,
+    MegabytesPerMinute,
     Bytes,
     Megabytes,
     Percent,
@@ -52,6 +53,7 @@ impl Unit {
         match self {
             Self::Milliseconds => "ms",
             Self::Microseconds => "µs",
+            Self::MegabytesPerMinute => "MiB/min",
             Self::Bytes => "bytes",
             Self::Megabytes => "MiB",
             Self::Percent => "%",
@@ -61,7 +63,7 @@ impl Unit {
 
     const fn drift_limit(self) -> f64 {
         match self {
-            Self::Bytes | Self::Megabytes | Self::Ratio => 0.10,
+            Self::Bytes | Self::Megabytes | Self::MegabytesPerMinute | Self::Ratio => 0.10,
             Self::Milliseconds | Self::Microseconds | Self::Percent => 0.15,
         }
     }

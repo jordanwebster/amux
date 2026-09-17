@@ -323,6 +323,136 @@ pub mod test_support {
     ) -> Result<Vec<model::ArtifactId>, ProtocolError> {
         concrete(host).sweep_artifacts_for_test()
     }
+
+    /// Daemon-owned rings and summarizers used by the release memory soak.
+    /// The wrapper keeps private runtime machinery out of the test harness
+    /// while ensuring the qualification allocates the same state as a live
+    /// structured agent.
+    #[doc(hidden)]
+    pub struct DaemonMemoryHarness {
+        sources: Vec<crate::agents::StructuredLogSource>,
+        summarizers: Vec<crate::agents::SummarizerHandle>,
+        publications: tokio::sync::mpsc::UnboundedReceiver<crate::agents::SummarizerPublication>,
+        publisher: tokio::sync::mpsc::UnboundedSender<crate::agents::SummarizerPublication>,
+        active_from: usize,
+        sequence: u64,
+    }
+
+    impl Default for DaemonMemoryHarness {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl DaemonMemoryHarness {
+        pub fn new() -> Self {
+            let (publisher, publications) = tokio::sync::mpsc::unbounded_channel();
+            Self {
+                sources: Vec::new(),
+                summarizers: Vec::new(),
+                publications,
+                publisher,
+                active_from: 0,
+                sequence: 0,
+            }
+        }
+
+        pub async fn add_idle(&mut self, count: usize) {
+            for offset in 0..count {
+                self.add_agent(offset).await;
+            }
+            self.active_from = self.sources.len();
+        }
+
+        pub async fn add_active(&mut self, count: usize) {
+            let first = self.sources.len();
+            for offset in 0..count {
+                self.add_agent(first + offset).await;
+            }
+        }
+
+        async fn add_agent(&mut self, index: usize) {
+            let source = crate::agents::StructuredLogSource::with_policy(
+                crate::agents::RingPolicy::claude_sdk(),
+            );
+            let handle = crate::agents::SummarizerHandle::attach(
+                uuid::Uuid::from_u128(0xDAE0_0000 + index as u128),
+                model::StructuredProtocol::ClaudeSdk,
+                source.clone(),
+                self.publisher.clone(),
+            )
+            .await
+            .expect("an open daemon performance source accepts a summarizer");
+            handle.activate();
+            self.sources.push(source);
+            self.summarizers.push(handle);
+        }
+
+        pub async fn pulse(&mut self, iteration: u64) {
+            if iteration == 0 {
+                self.seed_edge_cases().await;
+            }
+            if iteration == 200
+                && let Some(source) = self.sources.get(self.active_from)
+            {
+                source
+                    .semantic_reset(serde_json::json!({
+                        "type": "amux.claude_sdk.ready",
+                        "session_id": "daemon-memory-reset",
+                        "resumed": true,
+                    }))
+                    .await;
+            }
+            for (offset, source) in self.sources[self.active_from..].iter().enumerate() {
+                // Fill the provider's 8,192-row ring during the two-minute
+                // warm-up, then measure the bounded steady state.
+                for _ in 0..4 {
+                    self.sequence = self.sequence.saturating_add(1);
+                    source
+                        .write(serde_json::json!({
+                            "type": "user",
+                            "uuid": format!("{iteration:012x}-{offset:04x}-4000-8000-{:012x}", self.sequence),
+                            "message": {"content": format!("daemon corpus row {}", self.sequence)},
+                        }))
+                        .await;
+                }
+            }
+            self.drain_publications();
+        }
+
+        async fn seed_edge_cases(&self) {
+            let active = &self.sources[self.active_from..];
+            if let Some(source) = active.first() {
+                source
+                    .write(serde_json::json!({
+                        "type": "assistant",
+                        "uuid": "daemon-oversized",
+                        "message": {"content": "x".repeat(5 * 1024 * 1024)},
+                    }))
+                    .await;
+            }
+            for ask in 0..100 {
+                let source = &active[ask % active.len()];
+                source
+                    .write(serde_json::json!({
+                        "type": "amux.claude_sdk.permission_required",
+                        "request_id": format!("daemon-ask-{ask}"),
+                        "tool_name": "Write",
+                        "input": {"file_path": format!("/tmp/daemon-{ask}")},
+                        "suggestions": [],
+                    }))
+                    .await;
+            }
+        }
+
+        fn drain_publications(&mut self) {
+            while let Ok(mut publication) = self.publications.try_recv() {
+                if let Some(acknowledged) = publication.acknowledged.take() {
+                    let _ = acknowledged.send(());
+                }
+            }
+        }
+    }
 }
 
 pub use model::{

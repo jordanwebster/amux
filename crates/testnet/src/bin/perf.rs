@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use testnet::perf::{Baselines, Machine, Report, cold_child, run_fast};
+use testnet::perf::{Baselines, Machine, Report, cold_child, run_fast, run_soak, soak_child};
 
 fn main() -> Result<()> {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
@@ -9,8 +9,20 @@ fn main() -> Result<()> {
         }
         return cold_child(std::path::Path::new(&arguments[1]), arguments[2].parse()?);
     }
+    if arguments.first().map(String::as_str) == Some("--soak-child") {
+        if arguments.len() != 3 {
+            bail!("--soak-child requires KIND CONTROL_DIRECTORY");
+        }
+        return soak_child(&arguments[1], std::path::Path::new(&arguments[2]));
+    }
     if cfg!(debug_assertions) {
         bail!("performance qualification must run with the release profile");
+    }
+    if arguments.first().map(String::as_str) == Some("soak") {
+        if arguments.len() != 1 {
+            bail!("memory soak accepts no additional arguments");
+        }
+        return run_soak(Machine::detect()?);
     }
     let baseline = match arguments.first().map(String::as_str) {
         None => false,

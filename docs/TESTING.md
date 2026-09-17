@@ -145,6 +145,7 @@ fails the combined recipe.
 ```sh
 just perf
 just perf --baseline
+just perf soak
 ```
 
 Baselines live at `crates/testnet/perf/baselines/<hw.model>.json` and are
@@ -153,6 +154,15 @@ An unknown hardware model is refused. `--baseline` still enforces every
 absolute budget; it never turns a miss into the new expectation. Baseline
 recording is qualification work, so do it only on an otherwise idle reference
 machine and review the complete report before committing the file.
+
+The soak holds ten chat windows and the daemon state for 200 idle plus 20
+active structured agents for ten minutes. It samples the platform's named
+memory measure every five seconds, excludes the first two minutes from linear
+growth, and fails above 1 MiB/minute, 300 MiB client peak, 2 MiB per idle
+daemon agent, or 40 MiB per active daemon agent. Fresh identities, an
+oversized row, one hundred unresolved asks, a five-second persistence stall
+and a semantic reset prevent deduplication or a quiet happy path from hiding
+growth.
 
 ## Failure evidence
 
