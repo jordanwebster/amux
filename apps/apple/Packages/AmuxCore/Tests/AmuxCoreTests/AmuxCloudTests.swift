@@ -146,6 +146,11 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         let first = AmuxCloudService(endpoint: endpoint, transport: answers, savedSessions: saved)
         let account = try await first.signIn(.adding, presenting: Handed.returning(code: "first"))
+        // Signing in writes nothing down. Whoever came back is not always the
+        // account that was asked for, and a session kept for one nobody lists
+        // is one nobody can see or sign out of.
+        XCTAssertNil(saved.read(account.id))
+        try await first.keepSession(account.id)
         XCTAssertEqual(saved.read(account.id), "rt-1")
         answers.plus("/connect/token", status: 200, body: """
             {"access_token":"at-2","refresh_token":"rt-2","expires_in":3600}
@@ -168,14 +173,15 @@ final class AmuxCloudTests: XCTestCase {
         } catch { XCTAssertEqual(error, .unauthenticated) }
     }
 
-    func testKeychainFailureKeepsItsStatusThroughSignInAndRestore() async {
+    func testKeychainFailureKeepsItsStatusThroughKeepingASessionAndRestore() async throws {
         let failure = CloudError.keychain(
             "This phone could not remember the sign-in. Please try again.", status: -34018)
         let cloud = AmuxCloudService(
             endpoint: endpoint, transport: signedIn, savedSessions: RefusingSessions(failure: failure))
-        await assert(failure) {
-            try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
-        }
+        // The sign-in itself asks nothing of the Keychain; keeping the account
+        // that came back is what does, and that is where the refusal is.
+        let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
+        await assert(failure) { try await cloud.keepSession(account.id) }
         await assert(failure) {
             try await cloud.restore(AccountId("ada"), refresh: "secret-token")
         }

@@ -67,6 +67,10 @@ public final class SignInStore {
                 phase = .mismatched(wanted: wanted, got: account)
                 return nil
             }
+            // The account is being kept, so this is where its session is
+            // written down. A phone that cannot remember it says so rather
+            // than starting an account that is signed out again next launch.
+            try await cloud.keepSession(account.id)
             phase = .signedIn(account)
             // What the account is allowed to do decides which gate the home
             // screen draws, so it is asked for here rather than left for the
@@ -116,6 +120,12 @@ public final class SignInStore {
         -> SignedInAccount?
     {
         guard case .mismatched(_, let got) = phase else { return nil }
+        // Kept here, so its session is written down here, the same as a
+        // sign-in that returned the account it was asked for.
+        do { try await cloud.keepSession(got.id) } catch {
+            phase = Self.phase(after: error)
+            return nil
+        }
         phase = .signedIn(got)
         let entitlement = try? await cloud.entitlement(got.id)
         registry?.add(got, entitlement: entitlement ?? .none)
@@ -124,15 +134,22 @@ public final class SignInStore {
 
     /// Turns down the account that came back.
     ///
-    /// The sign-in still left a session behind for it, and a session this
-    /// phone keeps for an account it does not list is one nobody can see or
-    /// sign out of — so it is let go. Unless that account is already signed
-    /// in here: then the session is the one it was using, now fresher, and
-    /// letting go of it would sign somebody out who asked for nothing.
+    /// The sign-in left a session in memory for it, which is let go: nothing
+    /// was written down and nothing will be. Unless that account is already
+    /// signed in here — then this session is the one it was using, now
+    /// fresher, and it is the one worth keeping between launches.
+    ///
+    /// Leaving the page any other way needs no counterpart. What a back
+    /// press, a swipe or a second visit abandons is a session held in memory,
+    /// which dies with the process.
     public func discard(with cloud: any CloudService, from registry: AccountRegistry?) async {
         guard case .mismatched(_, let got) = phase else { return }
         phase = .ready
         let inUse = registry?.accounts.contains { $0.id == got.id && $0.signedIn } ?? false
-        if !inUse { try? await cloud.forgetSession(got.id) }
+        if inUse {
+            try? await cloud.keepSession(got.id)
+        } else {
+            try? await cloud.forgetSession(got.id)
+        }
     }
 }

@@ -15,6 +15,7 @@
       {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\"keepSession \\(id)\"", "context": "case .keepSession(let id): \"keepSession \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"forgetSession \\(id)\"", "context": "case .forgetSession(let id): \"forgetSession \\(id)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"signIn hint \\(account.email)\"", "context": "case .signIn(.returning(let account)): \"signIn hint \\(account.email)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"signIn select\"", "context": "case .signIn(.adding): \"signIn select\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

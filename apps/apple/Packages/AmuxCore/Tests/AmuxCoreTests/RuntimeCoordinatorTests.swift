@@ -13,6 +13,7 @@ private actor RelayCloud: CloudService {
         guard permitted else { throw .refused("A subscription is needed") }
         return ConnectToken(bearer: "token-\(id)", host: host, port: 443)
     }
+    func keepSession(_ id: AccountId) async throws(CloudError) {}
     func forgetSession(_ id: AccountId) async throws {}
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated

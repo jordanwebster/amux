@@ -79,6 +79,7 @@ private final class OneCloud: CloudService, @unchecked Sendable {
         if let recording { throw recording }
     }
 
+    func keepSession(_ id: AccountId) async throws(CloudError) {}
     func forgetSession(_ id: AccountId) async throws {}
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated

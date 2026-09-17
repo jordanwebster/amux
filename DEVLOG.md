@@ -22,6 +22,27 @@ there is none. The extra connection in the daemon's log was the dead link from
 the previous run ending. Direct dials now carry the profile that made them and a
 line when they go out, and an accepted link names the peer and incarnation
 behind it, which is what made that readable.
+2026-09-17 — **A sign-in writes its session down only when the account is
+kept.** Signing in wrote the refresh token to the Keychain the moment amux.sh
+answered, before the app knew which account had come back. Asked to sign back
+into one account and handed another, the page parks and offers Continue as or
+Cancel — but only Cancel released that session, so a back press, a swipe back,
+or simply opening the page again left a refresh token on the device for an
+account the person had declined, with nothing on any screen able to see or sign
+it out. The service now keeps the session in memory and writes it down through a
+new `keepSession`, the mirror of `forgetSession`, called at the three points
+where the account is actually kept: a sign-in that returned the account it was
+asked for, Continue as, and Cancel when that account is already signed in here
+(its session is the fresher token, which is today's behaviour). Leaving the page
+any other way needs no counterpart: what it abandons is held in memory and dies
+with the process. A Keychain that refuses is reported the same way it was
+before, as a sign-in this phone could not remember.
+
+Second of three fixes for one mistake: the phone recording something as true
+before the party that owns the fact has said so. Here the fact was which
+account had signed in, and the Keychain was written before amux.sh had
+answered that question.
+
 2026-09-17 — **A removed account stays pending until the runtime says it is
 gone.** Remove from This Phone took the account off the list and asked the next
 runtime start to delete its profile, its device key, the hosts it had paired

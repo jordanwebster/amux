@@ -578,6 +578,7 @@ final class DoorHost {
         switch call {
         case .signIn(.adding): "signIn select"
         case .signIn(.returning(let account)): "signIn hint \(account.email)"
+        case .keepSession(let id): "keepSession \(id)"
         case .forgetSession(let id): "forgetSession \(id)"
         case .account(let id): "account \(id)"
         case .entitlement(let id): "entitlement \(id)"

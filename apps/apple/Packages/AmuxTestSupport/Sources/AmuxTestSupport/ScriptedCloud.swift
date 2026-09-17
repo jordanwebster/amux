@@ -103,6 +103,8 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
 public enum CloudCall: Sendable, Equatable {
     /// A sign-in, with the account it asked amux.sh for.
     case signIn(SignInIntent)
+    /// An account kept, and with it the session this phone holds for it.
+    case keepSession(AccountId)
     case forgetSession(AccountId)
     case account(AccountId)
     case entitlement(AccountId)
@@ -184,6 +186,10 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         case .refused(let reason): throw CloudError.refused(reason)
         case .offline: throw CloudError.network("offline")
         }
+    }
+
+    public func keepSession(_ id: AccountId) async throws(CloudError) {
+        _ = record(.keepSession(id))
     }
 
     public func forgetSession(_ id: AccountId) async throws {

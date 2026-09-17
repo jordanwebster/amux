@@ -12,9 +12,11 @@ private struct OneAnswer: CloudService, @unchecked Sendable {
 
     final class Asked: @unchecked Sendable {
         var intents: [SignInIntent] = []
+        var kept: [AccountId] = []
         var forgotten: [AccountId] = []
     }
 
+    func keepSession(_ id: AccountId) async throws(CloudError) { asked.kept.append(id) }
     func forgetSession(_ id: AccountId) async throws { asked.forgotten.append(id) }
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         asked.intents.append(intent)
@@ -72,6 +74,8 @@ final class SignInStoreTests: XCTestCase {
         XCTAssertEqual(store.phase, .signedIn(ada))
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id])
         XCTAssertEqual(registry.gate, .ready)
+        // The account is kept, so its session is written down.
+        XCTAssertEqual(cloud.asked.kept, [ada.id])
     }
 
     func testASignInTheCloudRefusesSaysWhatTheCloudSaid() async {
@@ -97,6 +101,7 @@ final class SignInStoreTests: XCTestCase {
     func testAnAccountWhoseEntitlementCannotBeReadIsStillSignedIn() async {
         struct Quiet: CloudService {
             let account: SignedInAccount
+            func keepSession(_ id: AccountId) async throws(CloudError) {}
             func forgetSession(_ id: AccountId) async throws {}
             func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
                 account
@@ -171,13 +176,36 @@ final class SignInStoreTests: XCTestCase {
         store.begin(.returning(work))
         let stranger = SignedInAccount(id: AccountId("stranger"), email: "jw@example.com")
 
-        let account = await store.signIn(
-            with: OneAnswer(answer: .success(stranger)), presenting: Silent(), into: registry)
+        let cloud = OneAnswer(answer: .success(stranger))
+        let account = await store.signIn(with: cloud, presenting: Silent(), into: registry)
 
         XCTAssertNil(account)
         XCTAssertEqual(store.phase, .mismatched(wanted: work, got: stranger))
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id, work.id])
         XCTAssertEqual(registry.accounts.map(\.signedIn), [true, false])
+        XCTAssertEqual(cloud.asked.kept, [], "a session was kept for an account nobody asked for")
+    }
+
+    /// Walking away from the mismatch — back, a swipe, or opening the page
+    /// again — leaves nothing behind, because nothing was written down. The
+    /// session the sign-in made is held in memory and dies with the process.
+    func testAMismatchNobodyAnsweredKeepsNoSession() async {
+        let work = SignedInAccount(id: AccountId("work"), email: "team@acme.example")
+        let stranger = SignedInAccount(id: AccountId("stranger"), email: "jw@example.com")
+        let registry = AccountRegistry()
+        registry.add(work)
+        registry.signOut(work.id)
+        let store = SignInStore(intent: .returning(work))
+        let cloud = OneAnswer(answer: .success(stranger))
+
+        await store.signIn(with: cloud, presenting: Silent(), into: registry)
+        XCTAssertEqual(store.phase, .mismatched(wanted: work, got: stranger))
+
+        store.begin(.returning(work))
+
+        XCTAssertEqual(store.phase, .ready)
+        XCTAssertEqual(cloud.asked.kept, [])
+        XCTAssertEqual(registry.accounts.map(\.id), [work.id])
     }
 
     func testKeepingTheAccountThatCameBackAddsIt() async {
@@ -193,6 +221,7 @@ final class SignInStoreTests: XCTestCase {
 
         XCTAssertEqual(store.phase, .signedIn(stranger))
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id, stranger.id])
+        XCTAssertEqual(cloud.asked.kept, [stranger.id])
         XCTAssertEqual(cloud.asked.forgotten, [])
     }
 
@@ -210,12 +239,16 @@ final class SignInStoreTests: XCTestCase {
         await store.discard(with: cloud, from: registry)
         XCTAssertEqual(store.phase, .ready)
         XCTAssertEqual(cloud.asked.forgotten, [stranger.id])
+        XCTAssertEqual(cloud.asked.kept, [])
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id])
 
+        // That account is signed in here already, and this session is its
+        // fresher token, so it is the one this phone keeps.
         let signedInElsewhere = OneAnswer(answer: .success(ada))
         let again = SignInStore(phase: .mismatched(wanted: work, got: ada))
         await again.discard(with: signedInElsewhere, from: registry)
         XCTAssertEqual(signedInElsewhere.asked.forgotten, [])
+        XCTAssertEqual(signedInElsewhere.asked.kept, [ada.id])
         XCTAssertEqual(registry.accounts.first?.signedIn, true)
     }
 

@@ -124,6 +124,19 @@ public actor AmuxCloudService: CloudService {
         sessions[account]?.refresh
     }
 
+    /// Writes this phone's session for an account down, because the account
+    /// is being kept.
+    ///
+    /// Signing in leaves the session in memory only: what comes back from
+    /// amux.sh is not always the account that was asked for, and a refresh
+    /// token written for an account the person then turns down is one nobody
+    /// can see or sign out of. An account with no session here has nothing to
+    /// keep, which is not a failure.
+    public func keepSession(_ account: AccountId) throws(CloudError) {
+        guard let refresh = sessions[account]?.refresh else { return }
+        try save(refresh, for: account)
+    }
+
     public func forgetSession(_ account: AccountId) throws {
         sessions.removeValue(forKey: account)
         try savedSessions?.write(nil, for: account)
@@ -155,7 +168,9 @@ public actor AmuxCloudService: CloudService {
         ])
         let who = try await who(with: issued.access_token)
         let id = AccountId(who.sub)
-        try save(issued.refresh_token, for: id)
+        // In memory and nowhere else. Whoever signed in is not always the
+        // account that was asked for, and the token is written down only when
+        // somebody keeps the account it belongs to.
         sessions[id] = Session(
             access: issued.access_token, refresh: issued.refresh_token,
             expiresAt: now().addingTimeInterval(TimeInterval(issued.expires_in ?? 3600)))

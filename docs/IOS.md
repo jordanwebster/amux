@@ -54,7 +54,10 @@ password is needed. The browser session is not ephemeral, because the chooser
 is made of what it remembers. When signing back in returns a different account, the
 sign-in page names both and adds nothing until the person continues as the
 returned account or cancels; cancelling lets go of that session unless the
-account is already signed in on the phone.
+account is already signed in on the phone, whose token it then replaces. A
+sign-in leaves its session in memory only: the refresh token reaches the
+Keychain when the account is kept, so an account that came back and was turned
+down — or a page somebody simply left — writes nothing down.
 
 `LocalDiscovery` in `AmuxCore/Discovery.swift` is the app's only network
 browser. While the scene is active it browses `_amux._udp` with `NWBrowser`,
@@ -77,8 +80,8 @@ status stream as the desktop.
 
 One installation in Application Support holds the unbound or account-bound
 profiles; fleet files live under Caches, keyed by profile. Account names,
-grants and selection survive launch in the registry, while refresh tokens stay
-in the device Keychain. Switching accounts re-points the stores to the selected
+grants and selection survive launch in the registry, while the refresh tokens of
+accounts this phone keeps stay in the device Keychain. Switching accounts re-points the stores to the selected
 profile rather than moving its trust to another account.
 
 When an update or simulator reinstall moves the app’s data container, the mobile

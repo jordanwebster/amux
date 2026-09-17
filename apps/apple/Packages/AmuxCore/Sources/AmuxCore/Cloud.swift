@@ -12,6 +12,14 @@ public protocol CloudService: Sendable {
     func signIn(
         _ intent: SignInIntent, presenting: any WebAuthPresenter
     ) async throws(CloudError) -> SignedInAccount
+    /// Keeps the session this phone holds for an account in whatever keeps
+    /// sessions between launches, because the account is being kept.
+    ///
+    /// The mirror of ``forgetSession(_:)``, and the only thing that writes a
+    /// session down. Signing in does not: until somebody keeps the account
+    /// that came back, a session written anywhere is one nobody can see or
+    /// sign out of.
+    func keepSession(_ id: AccountId) async throws(CloudError)
     /// Lets go of the session this phone holds for an account, here and in
     /// whatever keeps it between launches. The account on amux.sh is untouched.
     func forgetSession(_ id: AccountId) async throws
