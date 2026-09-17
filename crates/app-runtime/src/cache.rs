@@ -62,35 +62,71 @@ pub async fn cached_fleet(store: &Store) -> Result<Event, StoreError> {
     let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
     let local = store
         .view_get(kind, key)
-        .await
-        .ok()
-        .flatten()
+        .await?
         .and_then(|value| value.parse().ok());
     Ok(remembered(fleet, generations, local))
 }
 
 /// Opens an account's store, reads its remembered fleet and closes it again.
-/// A store that is missing, unreadable or refused is a fleet with no rows:
-/// the store is disposable, and a launch without one still has to draw.
-pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Event {
+/// A missing store is a fleet with no rows because the cache is disposable.
+/// Any store that exists but cannot be used is an error with the same cause
+/// and remedy the running client reports.
+pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Result<Event, String> {
     let path = store_path(cache_dir, account);
-    let fleet = match path.exists() {
-        true => match Store::open(&path).await {
-            Ok(store) => {
-                let fleet = cached_fleet(&store).await.ok();
-                store.close().await;
-                fleet
-            }
-            Err(_) => None,
-        },
-        false => None,
+    match tokio::fs::metadata(cache_dir).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(ui_runtime::store_failure_message(&path, StoreError::Io));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_fleet());
+        }
+        Err(error) => return Err(open_failure_message(&path, &error)),
+    }
+    let store_dir = path.parent().expect("an account store has a directory");
+    match tokio::fs::metadata(store_dir).await {
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(ui_runtime::store_failure_message(&path, StoreError::Io));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_fleet());
+        }
+        Err(error) => return Err(open_failure_message(&path, &error)),
+    }
+    match tokio::fs::symlink_metadata(&path).await {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(empty_fleet());
+        }
+        Err(error) => return Err(open_failure_message(&path, &error)),
+    }
+    let store = Store::open(&path)
+        .await
+        .map_err(|error| ui_runtime::store_failure_message(&path, error))?;
+    let fleet = cached_fleet(&store)
+        .await
+        .map_err(|error| ui_runtime::store_failure_message(&path, error));
+    store.close().await;
+    fleet
+}
+
+fn open_failure_message(path: &Path, error: &std::io::Error) -> String {
+    let kind = if error.kind() == std::io::ErrorKind::PermissionDenied {
+        StoreError::Permission
+    } else {
+        StoreError::Io
     };
-    fleet.unwrap_or(Event::Fleet {
+    ui_runtime::store_failure_message(path, kind)
+}
+
+fn empty_fleet() -> Event {
+    Event::Fleet {
         epoch: 0,
         agents: vec![],
         hosts: vec![],
         reconciled: false,
-    })
+    }
 }
 
 /// Installs the stored fleet into a fresh reducer exactly as the running
@@ -246,7 +282,7 @@ mod tests {
             ],
         )
         .await;
-        let fleet = read_cached_fleet(root.path(), "owner").await;
+        let fleet = read_cached_fleet(root.path(), "owner").await.unwrap();
         let mut remembered = cards(&fleet);
         remembered.sort();
         assert_eq!(remembered, [(11, true), (12, true)]);
@@ -281,13 +317,13 @@ mod tests {
         )
         .await;
         assert_eq!(
-            cards(&read_cached_fleet(root.path(), "owner").await),
+            cards(&read_cached_fleet(root.path(), "owner").await.unwrap()),
             [(12, true)]
         );
     }
 
     #[tokio::test]
-    async fn each_account_reads_its_own_store_and_a_missing_or_corrupt_one_is_empty() {
+    async fn each_account_reads_its_own_store_and_only_a_missing_one_is_empty() {
         let root = tempfile::tempdir().unwrap();
         seeded(
             root.path(),
@@ -305,17 +341,43 @@ mod tests {
         )
         .await;
         assert_eq!(
-            cards(&read_cached_fleet(root.path(), "Personal@example.com").await),
+            cards(
+                &read_cached_fleet(root.path(), "Personal@example.com")
+                    .await
+                    .unwrap()
+            ),
             [(11, true)]
         );
         assert_ne!(
             store_path(root.path(), "Personal@example.com"),
             store_path(root.path(), "personal@example.com")
         );
-        assert!(cards(&read_cached_fleet(root.path(), "work").await).is_empty());
+        assert!(cards(&read_cached_fleet(root.path(), "work").await.unwrap()).is_empty());
 
         let corrupt = store_path(root.path(), "corrupt");
+        std::fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
         std::fs::write(&corrupt, b"not a database").unwrap();
-        assert!(cards(&read_cached_fleet(root.path(), "corrupt").await).is_empty());
+        let failure = read_cached_fleet(root.path(), "corrupt").await.unwrap_err();
+        assert!(failure.contains("it is corrupt"), "{failure}");
+        assert!(
+            failure.contains("close that process and relaunch"),
+            "{failure}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unusable_cache_root_is_not_mistaken_for_a_missing_store() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("not-a-directory");
+        std::fs::write(&file, "file").unwrap();
+        let failure = read_cached_fleet(&file, "owner").await.unwrap_err();
+        assert!(
+            failure.contains("reading or writing it failed"),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("delete the file to start with an empty cache"),
+            "{failure}"
+        );
     }
 }

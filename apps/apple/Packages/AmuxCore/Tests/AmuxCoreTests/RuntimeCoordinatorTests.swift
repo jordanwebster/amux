@@ -50,6 +50,74 @@ final class RuntimeCoordinatorTests: XCTestCase {
     private let bo = SignedInAccount(id: AccountId("bo"), email: "bo@example.com")
     private var root: URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    func testCachedStoreFailureStopsBeforeCreatingARuntimeAndRelaunchesFromTheStore() async throws {
+        let directory = root
+        let blockedCache = directory.appendingPathComponent("cache")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: blockedCache)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let registry = AccountRegistry()
+        registry.add(ada)
+        var clients: [ScriptedRuntime] = []
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: blockedCache,
+            deviceName: "Phone", factory: { _, _ in
+                let client = ScriptedRuntime()
+                clients.append(client)
+                return client
+            })
+        defer { coordinator.stop() }
+
+        coordinator.start()
+        let failure = try XCTUnwrap(coordinator.storeFailure)
+        XCTAssertTrue(failure.contains("reading or writing it failed"), failure)
+        XCTAssertTrue(failure.contains("delete the file to start with an empty cache"), failure)
+        XCTAssertNil(coordinator.runtime)
+        XCTAssertTrue(clients.isEmpty, "the store must fail before the relay runtime starts")
+
+        try FileManager.default.removeItem(at: blockedCache)
+        try FileManager.default.createDirectory(at: blockedCache, withIntermediateDirectories: true)
+        coordinator.relaunch()
+        for _ in 0..<1000 where clients.isEmpty { await Task.yield() }
+        XCTAssertNil(coordinator.storeFailure)
+        XCTAssertEqual(clients.count, 1)
+        XCTAssertTrue(coordinator.runtime === clients[0])
+    }
+
+    func testRunningStoreFailureIsTerminalAndItsOnlyActionStartsAFreshRuntime() async throws {
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        registry.add(ada)
+        var clients: [ScriptedRuntime] = []
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone", factory: { _, _ in
+                let client = ScriptedRuntime()
+                clients.append(client)
+                return client
+            })
+        defer { coordinator.stop() }
+
+        _ = await coordinator.reconnect()
+        let message = "store /cache/ada.sqlite: the disk is full; free space and relaunch"
+        clients[0].replies.yield([.storeFailure(message: message)])
+        for _ in 0..<1000 where coordinator.storeFailure == nil { await Task.yield() }
+        XCTAssertEqual(coordinator.storeFailure, message)
+        XCTAssertEqual(coordinator.failure, message)
+        XCTAssertNil(coordinator.runtime)
+        XCTAssertTrue(clients[0].stopped)
+        XCTAssertNil(registry.stores?.dispatch)
+        XCTAssertNil(registry.stores?.watch)
+
+        coordinator.relaunch()
+        for _ in 0..<1000 where clients.count < 2 { await Task.yield() }
+        XCTAssertNil(coordinator.storeFailure)
+        XCTAssertEqual(clients.count, 2)
+        XCTAssertTrue(coordinator.runtime === clients[1])
+    }
+
     func testStartupWorkerFailureReleasesTheHandleAndRetryStartsFromCredentials() async throws {
         let diagnostic = "installation profile path disagrees with its namespace"
         for terminal in [

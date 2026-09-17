@@ -218,7 +218,7 @@ just ios goldens-reference
 just ios goldens-perturb
 ```
 
-The unfiltered manifest covers 33 reference screens and 29 additional states,
+The unfiltered manifest covers 33 reference screens and 30 additional states,
 each in light and dark. The door waits for the app's view tree, then the Mac
 captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's
@@ -331,6 +331,21 @@ There is no amuxcloud server or container dependency here. The production-startu
 journey supplies only the scripted cloud at launch: sign-in starts the real
 runtime, and a relaunch must draw that connection’s saved fleet before the
 cloud answers again.
+
+### Store failures
+
+The phone has no live-only mode. A missing account store is an ordinary cold
+cache and opens as an empty fleet. If an existing store cannot be opened or a
+store operation fails after startup, the Rust runtime stops its connection and
+conversation work and emits one terminal `StoreFailure` carrying the same
+cause and remedy text as the desktop client. The app replaces the whole shell
+with that diagnosis and one Relaunch action; no fleet or conversation remains
+usable behind it. Relaunch repeats the store-first startup, which also lets a
+pending corruption quarantine complete before a cold cache opens.
+
+The `store-failure` golden is reviewed in both appearances. Any copy or layout
+change follows the baseline-update process above; an ordinary golden run must
+then prove every pre-existing screen is unchanged.
 
 For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
 Run `just ios replay /path/to/report` to rebuild stores from

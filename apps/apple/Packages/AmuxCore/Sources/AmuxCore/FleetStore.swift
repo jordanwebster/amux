@@ -108,8 +108,8 @@ public final class FleetStore {
             let wasConnected = connection.state == .connected
             connection = update
             if !wasConnected && update.state == .connected { Signposts.emit(.streamConnected) }
-        case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
-             .attention:
+        case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant,
+             .storeFailure, .devices, .attention:
             break
         }
     }

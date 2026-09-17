@@ -6024,6 +6024,66 @@
           }
         }
       }
+    },
+    "Store unavailable": {
+      "comment": "Heading on the terminal store-failure screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Store unavailable"
+          }
+        }
+      }
+    },
+    "The stored fleet could not be read.": {
+      "comment": "Fallback diagnosis when the cached-fleet bridge returns no answer.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The stored fleet could not be read."
+          }
+        }
+      }
+    },
+    "The stored fleet returned an unreadable answer.": {
+      "comment": "Fallback diagnosis when the cached-fleet bridge returns malformed data.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The stored fleet returned an unreadable answer."
+          }
+        }
+      }
+    },
+    "amux stopped because it can’t use this account’s store.": {
+      "comment": "Cause statement on the terminal store-failure screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "amux stopped because it can’t use this account’s store."
+          }
+        }
+      }
+    },
+    "Relaunch": {
+      "comment": "Only action on the terminal store-failure screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relaunch"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

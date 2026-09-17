@@ -450,9 +450,19 @@ pub async fn run(
         }
         projection.outcomes(sessions.ui.model(), &mut events);
     }
+    let store_failure = take_store_failure_event(&mut sessions.ui);
     drop(pending);
     drop(watchers);
+    if let Some(event) = store_failure {
+        sink.send(&[event]);
+    }
     Ok(())
+}
+
+fn take_store_failure_event(runtime: &mut ui_runtime::Runtime) -> Option<Event> {
+    runtime
+        .take_store_failure()
+        .map(|message| Event::StoreFailure { message })
 }
 
 /// Whether an agent's conversation has a structured transcript a store keeps.
@@ -696,5 +706,41 @@ fn began(op: OpId, result: Result<PendingPeer, String>) -> PairingDone {
             outcome: PairingOutcome::PairingRefused,
             hold: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unusable_store_becomes_one_terminal_projection_event() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("not-a-directory");
+        std::fs::write(&file, "file").unwrap();
+        let path = file.join("store.sqlite");
+        let mut runtime = ui_runtime::Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            ui_runtime::RuntimeOptions {
+                store_path: Some(path.clone()),
+                ..Default::default()
+            },
+        );
+
+        assert!(!runtime.next_message().await);
+        let event = take_store_failure_event(&mut runtime).expect("terminal store failure");
+        let Event::StoreFailure { message } = event else {
+            panic!("store failure event expected")
+        };
+        assert!(message.contains(&path.display().to_string()), "{message}");
+        assert!(
+            message.contains("reading or writing it failed"),
+            "{message}"
+        );
+        assert!(
+            message.contains("delete the file to start with an empty cache"),
+            "{message}"
+        );
+        assert!(take_store_failure_event(&mut runtime).is_none());
     }
 }

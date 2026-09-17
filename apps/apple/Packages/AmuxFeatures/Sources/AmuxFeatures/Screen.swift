@@ -54,6 +54,7 @@ public enum Screen: String, Sendable, CaseIterable, Codable {
     case paywall
 
     // 7 · When it goes wrong
+    case storeFailure = "store-failure"
     case shake
     case dump
 }

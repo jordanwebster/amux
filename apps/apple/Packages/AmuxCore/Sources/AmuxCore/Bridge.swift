@@ -40,13 +40,31 @@ extension Bridge {
     /// The account is part of the question: a remembered row is one account's
     /// machine and one account's agent, and a phone signed in to two of them
     /// keeps a fleet for each.
-    public static func cachedFleet(in directory: URL, for account: AccountId) -> [Event] {
+    public static func cachedFleet(in directory: URL, for account: AccountId) throws -> [Event] {
         Signposts.emit(.storeReadBegan)
         let json = amux_app_cached_fleet(directory.path, account.value)
         Signposts.emit(.storeReadEnded)
-        guard let json else { return [] }
+        guard let json else {
+            throw CachedFleetFailure("The stored fleet could not be read.")
+        }
         defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
-        return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []
+        if let events = try? AmuxJSON.decoder.decode([Event].self, from: data) {
+            return events
+        }
+        struct Failure: Decodable { var error: String }
+        if let failure = try? AmuxJSON.decoder.decode(Failure.self, from: data) {
+            throw CachedFleetFailure(failure.error)
+        }
+        throw CachedFleetFailure("The stored fleet returned an unreadable answer.")
+    }
+}
+
+/// A launch-time store diagnosis supplied by the shared runtime.
+public struct CachedFleetFailure: Error, CustomStringConvertible, Sendable, Equatable {
+    public let description: String
+
+    public init(_ description: String) {
+        self.description = description
     }
 }

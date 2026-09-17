@@ -24,6 +24,9 @@ public enum Event: Sendable, Equatable, Codable {
     /// somebody. The only thing an unselected account reports.
     case attention(account: String, waiting: Int)
     case invariant(detail: String)
+    /// The account's SQLite store cannot be used. This is the runtime's final
+    /// event and its message names both the cause and the remedy.
+    case storeFailure(message: String)
     /// This phone's own identity and every machine it trusts. Apart from the
     /// fleet because it answers a different question: the fleet says what is
     /// answering, this says whose key has been granted access — including a
@@ -41,6 +44,7 @@ public enum Event: Sendable, Equatable, Codable {
         case tokenRequest = "TokenRequest"
         case attention = "Attention"
         case invariant = "Invariant"
+        case storeFailure = "StoreFailure"
         case devices = "Devices"
     }
 
@@ -86,6 +90,9 @@ public enum Event: Sendable, Equatable, Codable {
             self = .attention(account: waiting.account, waiting: waiting.waiting)
         case .invariant:
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
+        case .storeFailure:
+            self = .storeFailure(
+                message: try container.decode(Message.self, forKey: key).message)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
         }
     }
@@ -107,8 +114,14 @@ public enum Event: Sendable, Equatable, Codable {
             try container.encode(Waiting(account: account, waiting: waiting), forKey: .attention)
         case .invariant(let detail):
             try container.encode(Detail(detail: detail), forKey: .invariant)
+        case .storeFailure(let message):
+            try container.encode(Message(message: message), forKey: .storeFailure)
         case .devices(let roster): try container.encode(roster, forKey: .devices)
         }
+    }
+
+    private struct Message: Codable, Sendable, Equatable {
+        var message: String
     }
 }
 

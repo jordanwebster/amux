@@ -83,8 +83,10 @@ be lost behind cached Rust metadata. The Swift smoke treats linker warnings
 as failures.
 
 Projection callbacks contain `Fleet`, `Feed`, `Session`, `OpResult`, `Diff`,
-`Connection`, `TokenRequest` and diagnostic `Invariant` events. Their JSON
-contract is pinned in `src/projection/schema.json`. Fleet cards contain only
+`Connection`, `TokenRequest`, diagnostic `Invariant`, and terminal
+`StoreFailure` events. A store failure is the runtime's final event and names
+both the cause and the remedy after network and chat work has stopped. Their
+JSON contract is pinned in `src/projection/schema.json`. Fleet cards contain only
 inventory and display facts, never retained transcripts. Session gates, phases,
 asks and facts come from the shared native provider layer. Claude PTY, Claude
 SDK and Codex rows retain their own typed vocabularies under `layer:
@@ -127,9 +129,11 @@ Swift rendering or presented frames on a simulator or phone.
 Each account has a SQLite store at
 `<cache_dir>/store/<escaped account>.sqlite`. Before starting a runtime,
 `amux_app_cached_fleet` reads that store and returns an owned JSON array
-containing one unreconciled Fleet event. A missing, corrupt or refused store
-returns that event with no rows; `NULL` is reserved for arguments that cannot
-be read as strings. Release the returned string with `amux_app_free`.
+containing one unreconciled Fleet event. A missing store returns that event
+with no rows because the cache is disposable. An existing store that cannot
+be opened or read returns `{"error":STRING}` with the same cause and remedy as
+the running runtime's `StoreFailure`; `NULL` is reserved for arguments that
+cannot be read as strings. Release the returned string with `amux_app_free`.
 
 The running library installs those remembered cards in the shared reducer,
 marked as awaiting their machine and with send gates closed. The event queue

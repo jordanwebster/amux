@@ -64,7 +64,9 @@ final class GoldenManifestTests: XCTestCase {
         // is nothing preserved to compare it against. The notification screen
         // is out of scope and is not a case at all.
         let catalogue = Set(Screen.allCases.map(\.rawValue))
-        XCTAssertEqual(catalogue.subtracting(references), ["probe", "drawer", "pair-confirm"])
+        XCTAssertEqual(
+            catalogue.subtracting(references),
+            ["probe", "drawer", "pair-confirm", "store-failure"])
         XCTAssertTrue(references.isSubset(of: catalogue))
     }
 

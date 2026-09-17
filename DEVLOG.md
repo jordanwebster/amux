@@ -1,3 +1,13 @@
+2026-09-17 — **The phone stops visibly when its store is unusable.**
+The cached-fleet bridge now distinguishes an absent disposable store from a
+store that exists but cannot be opened or read: the former is an empty cold
+cache, while the latter returns the desktop runtime's cause-and-remedy
+diagnosis. A store failure during a phone session closes the runtime and emits
+one terminal projection event. Swift replaces the whole shell with that
+diagnosis and one Relaunch action, so no fleet or conversation survives as a
+degraded live-only client. The failure page is pinned in light and dark, and
+the bridge and iOS documentation describe the shared failure contract.
+
 2026-09-17 — **A desktop session never falls back to live-only operation.**
 The reducer now has one drawable conversation source: canonical store-backed
 entries. Store-open failures and unrecoverable operation failures stop the

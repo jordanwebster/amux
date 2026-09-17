@@ -132,6 +132,7 @@ public enum Fixtures {
         Built(.pairConfirm, "pair-confirm"),
         Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
+        Built(.storeFailure, "store-failure"),
         Built(.shake, "shake"),
         Built(.dump, "dump"),
         Built(.dump, "upload-failed"),
@@ -449,6 +450,7 @@ public enum Fixtures {
                 accounts: [Fixture.unsubscribed]),
 
         // 7 · When it goes wrong
+        Fixture(id: "store-failure", screen: .storeFailure),
         Fixture(id: "shake", screen: .shake) { bundle in
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },

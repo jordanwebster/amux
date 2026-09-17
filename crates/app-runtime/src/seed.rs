@@ -320,7 +320,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         seed(root.path(), ACCOUNT, remembered()).await.unwrap();
 
-        let fleet = crate::cache::read_cached_fleet(root.path(), ACCOUNT).await;
+        let fleet = crate::cache::read_cached_fleet(root.path(), ACCOUNT)
+            .await
+            .unwrap();
         let fleet = serde_json::to_value(&fleet).unwrap();
         let agents = fleet["Fleet"]["agents"].as_array().unwrap();
         assert_eq!(agents.len(), 1, "{fleet}");

@@ -1663,6 +1663,19 @@ impl Runtime {
     }
 }
 
+/// The diagnosis a client shows when opening its store fails before a runtime
+/// owns a worker. It uses the same cause and remedy text as a running session;
+/// corruption is pending quarantine until a later open can take the exclusive
+/// lease.
+pub fn store_failure_message(path: &Path, error: DurableStoreError) -> String {
+    let quarantine = if error == DurableStoreError::Corrupt {
+        QuarantineOutcome::Pending
+    } else {
+        QuarantineOutcome::NotRequested
+    };
+    format_store_failure(path, error, quarantine)
+}
+
 fn format_store_failure(
     path: &Path,
     error: DurableStoreError,

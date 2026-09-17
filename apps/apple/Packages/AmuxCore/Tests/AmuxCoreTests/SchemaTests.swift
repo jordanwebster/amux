@@ -15,7 +15,7 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 19)
+        XCTAssertEqual(events.count, 20)
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a
@@ -122,8 +122,8 @@ final class SchemaTests: XCTestCase {
     /// A break in stored history arrives as a row of its own, drawn as a rule.
     func testABreakInStoredHistoryDecodesAsItsOwnRow() throws {
         let events = try pinnedEvents()
-        guard case .feed(let stored) = events[17] else {
-            return XCTFail("expected a stored feed with a break, got \(events[17])")
+        guard case .feed(let stored) = events[18] else {
+            return XCTFail("expected a stored feed with a break, got \(events[18])")
         }
         XCTAssertEqual(stored.append.count, 1)
         XCTAssertEqual(stored.append[0].layer, .history)
@@ -162,8 +162,12 @@ final class SchemaTests: XCTestCase {
 
         XCTAssertEqual(events[4], .tokenRequest(requestId: 7, account: "personal"))
         XCTAssertEqual(events[15], .invariant(detail: "example diagnostic"))
+        XCTAssertEqual(
+            events[16],
+            .storeFailure(
+                message: "store /cache/personal.sqlite: the disk is full; free space and relaunch"))
         // What an account nobody is looking at has waiting, named for itself.
-        XCTAssertEqual(events[16], .attention(account: "work", waiting: 2))
+        XCTAssertEqual(events[17], .attention(account: "work", waiting: 2))
     }
 
     func testTheLinkStatesWhyItIsDown() throws {

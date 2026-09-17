@@ -403,6 +403,12 @@ pub enum Event {
     Invariant {
         detail: String,
     },
+    /// The client store can no longer be used. This is the final event from
+    /// the runtime and carries the same cause and remedy a terminal client
+    /// prints after it has stopped.
+    StoreFailure {
+        message: String,
+    },
     /// This phone's own identity and every machine it trusts.
     ///
     /// Apart from the fleet because it answers a different question. The fleet

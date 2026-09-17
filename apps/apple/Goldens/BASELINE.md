@@ -15,7 +15,7 @@ the preserved designs.
 
 ## Nothing is quarantined
 
-Every one of the 124 captures gates. `strip.light`, `strip.dark` and
+Every one of the 126 captures gates. `strip.light`, `strip.dark` and
 `ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
 
 They varied for two reasons, both in the transcript rather than in the camera.
@@ -267,6 +267,14 @@ Reference-backed capture of `you` using the `you` fixture. No visual departure i
 ## you-granted
 
 Added state using the `you-granted` fixture. An account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription. It follows the same visual system as its parent screen.
+
+## store-failure
+
+Added state using the `store-failure` fixture. An unusable SQLite store stops
+the runtime and replaces the entire shell with the exact cause and remedy plus
+one Relaunch action. There is no fleet, conversation, navigation or alternate
+action behind it. The light and dark baselines were reviewed together on
+2026-09-17 before being established.
 
 ## dump
 

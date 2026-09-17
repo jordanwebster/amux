@@ -40,6 +40,9 @@ final class Composition {
     /// being read, so a report can carry two things no message ever does.
     /// Nothing in a build a person installs: there is no report to write.
     let conversations: ConversationRecording?
+    /// A store failure replaces the entire shell; no cached or live state is
+    /// left drawable behind it.
+    var storeFailure: String?
     /// The account service. Every screen sees it as `CloudService` and none of
     /// them knows there is HTTP behind it. A debug build's driving door is
     /// handed the same one, so a launch driven against the real service is
@@ -131,6 +134,8 @@ final class Composition {
         #else
         conversations = nil
         #endif
+        storeFailure = runtime.storeFailure
+        runtime.storeFailureChanged = { [weak self] in self?.storeFailure = $0 }
         router.loads(with: self)
         // Starting the runtime reads the account's remembered fleet off disk
         // before it dials, so the first frame has rows and needs no network.

@@ -139,7 +139,8 @@
       {"literal": "\"spec-suite\"", "context": "? Scenario.focus : Scenario.agentId(\"spec-suite\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
       {"literal": "\"refactor-auth\"", "context": "DiffPage(model: review, subject: \"refactor-auth\") { _ in }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"refactor-auth\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"spec/pairing.rs\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"spec/pairing.rs\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"store /Library/Caches/amux/store/personal.sqlite: the disk is full; free space and relaunch\"", "context": "message: \"store /Library/Caches/amux/store/personal.sqlite: the disk is full; free space and relaunch\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorServer.swift": [
       {"literal": "\"the driving door could not open: \\(error)\"", "context": "fatalError(\"the driving door could not open: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -514,6 +515,7 @@
       {"literal": "\"TokenRequest\"", "context": "case tokenRequest = \"TokenRequest\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Attention\"", "context": "case attention = \"Attention\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Invariant\"", "context": "case invariant = \"Invariant\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"StoreFailure\"", "context": "case storeFailure = \"StoreFailure\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Devices\"", "context": "case devices = \"Devices\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"an event is one tagged variant, got \\(container.allKeys)\"", "context": "debugDescription: \"an event is one tagged variant, got \\(container.allKeys)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
       {"literal": "\"display_name\"", "context": "case displayName = \"display_name\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1609,7 +1611,16 @@
       {"literal": "\"new-agent\"", "context": "case newAgent = \"new-agent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"first-run\"", "context": "case firstRun = \"first-run\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sign-in\"", "context": "case signIn = \"sign-in\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"first-run-paid\"", "context": "case firstRunPaid = \"first-run-paid\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"first-run-paid\"", "context": "case firstRunPaid = \"first-run-paid\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"store-failure\"", "context": "case storeFailure = \"store-failure\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/StoreFailure.swift": [
+      {"literal": "\"externaldrive.badge.exclamationmark\"", "context": "Image(systemName: \"externaldrive.badge.exclamationmark\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"store-failure.title\"", "context": ".identified(\"store-failure.title\", value: \"Store unavailable\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"store-failure.cause\"", "context": ".identified(\"store-failure.cause\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"store-failure.remedy\"", "context": ".identified(\"store-failure.remedy\", value: message)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"store-failure.relaunch\"", "context": ".identified(\"store-failure.relaunch\", label: \"Relaunch\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"store-failure\"", "context": ".identified(\"store-failure\", value: message)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift": [
       {"literal": "\"chevron.down\"", "context": "Image(systemName: \"chevron.down\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1911,6 +1922,8 @@
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"store-failure\"", "context": "Built(.storeFailure, \"store-failure\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"store-failure\"", "context": "Fixture(id: \"store-failure\", screen: .storeFailure),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"cached-chat-gap\"", "context": "Built(.run, \"cached-chat-gap\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"cached-chat-gap\"", "context": "Fixture(id: \"cached-chat-gap\", screen: .run) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"home-offline\"", "context": "Built(.home, \"home-offline\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},

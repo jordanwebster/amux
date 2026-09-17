@@ -989,6 +989,11 @@
     }
   },
   {
+    "StoreFailure": {
+      "message": "store /cache/personal.sqlite: the disk is full; free space and relaunch"
+    }
+  },
+  {
     "Attention": {
       "account": "work",
       "waiting": 2

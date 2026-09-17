@@ -23,6 +23,9 @@ public final class RuntimeCoordinator {
     public private(set) var lastBatch: [AccountId: [Event]] = [:]
     /// Diagnostic detail for the driving door and reports, never screen copy.
     public private(set) var failure: String?
+    /// The one fatal state the application replaces its whole shell with.
+    public private(set) var storeFailure: String?
+    public var storeFailureChanged: (@MainActor (String?) -> Void)?
     public let deviceName: String
     public var storesChanged: (@MainActor (StoreBundle) -> Void)?
     public var unsubscribed: (@MainActor (AgentId) -> Void)?
@@ -83,7 +86,13 @@ public final class RuntimeCoordinator {
         // read of what that account saw last time: every row arrives marked
         // as remembered and goes solid when its machine answers.
         if replaced, let stores = registry.stores {
-            stores.apply(Bridge.cachedFleet(in: cache, for: stores.account))
+            do {
+                stores.apply(try Bridge.cachedFleet(in: cache, for: stores.account))
+                setStoreFailure(nil)
+            } catch {
+                failStore(detail: String(describing: error))
+                return
+            }
             storesChanged?(stores)
         }
         guard registry.selectedAccount?.signedIn == true else {
@@ -195,6 +204,24 @@ public final class RuntimeCoordinator {
         }
     }
 
+    private func failStore(detail: String) {
+        stopRuntime()
+        failure = detail
+        setStoreFailure(detail)
+    }
+
+    private func setStoreFailure(_ detail: String?) {
+        guard storeFailure != detail else { return }
+        storeFailure = detail
+        storeFailureChanged?(detail)
+    }
+
+    /// Repeats the store-first launch after the person has applied the remedy.
+    public func relaunch() {
+        setStoreFailure(nil)
+        start()
+    }
+
     private func configuration(relay: URL, account: AccountId) throws -> BridgeConfiguration {
         guard let host = relay.host, relay.port != nil else { throw BridgeError.didNotStart }
         let octets = host.split(separator: ".", omittingEmptySubsequences: false)
@@ -266,6 +293,10 @@ public final class RuntimeCoordinator {
                 } else {
                     initialized = true
                 }
+            case .storeFailure(let message):
+                deliver()
+                failStore(detail: message)
+                return
             default: break
             }
             if case .opResult(let result) = event,

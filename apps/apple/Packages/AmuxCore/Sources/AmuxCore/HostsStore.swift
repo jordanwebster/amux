@@ -78,7 +78,8 @@ public final class HostsStore {
             connection = update
         case .devices(let roster):
             self.roster = roster
-        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .attention:
+        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .storeFailure,
+             .attention:
             break
         }
     }

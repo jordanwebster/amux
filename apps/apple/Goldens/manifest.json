@@ -670,6 +670,19 @@
       ]
     },
     {
+      "id": "store-failure",
+      "stage": 11,
+      "screen": "store-failure",
+      "fixture": "store-failure",
+      "origin": "added_state",
+      "reason": "an unusable SQLite store stops the runtime and replaces every cached or live screen with its cause, remedy and one relaunch action",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "dump",
       "stage": 11,
       "screen": "dump",

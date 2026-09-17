@@ -176,6 +176,10 @@ enum DoorScreens {
         // for all four.
         case .signIn:
             SignIn(model: host.signIn) { _ in }
+        case .storeFailure:
+            StoreFailureScreen(
+                message: "store /Library/Caches/amux/store/personal.sqlite: the disk is full; free space and relaunch"
+            ) { }
         // Subscribing. What is on offer, what is chosen and how a purchase
         // went are all facts of the one attempt this phone has in flight, so
         // the state decides the picture and this is the one arm for all of

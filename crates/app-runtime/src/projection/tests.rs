@@ -223,6 +223,9 @@ fn mobile_projection_schema_snapshot() {
     events.push(Event::Invariant {
         detail: "example diagnostic".into(),
     });
+    events.push(Event::StoreFailure {
+        message: "store /cache/personal.sqlite: the disk is full; free space and relaunch".into(),
+    });
     events.push(Event::Attention {
         account: "work".into(),
         waiting: 2,

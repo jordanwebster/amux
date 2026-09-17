@@ -49,7 +49,7 @@ enum ColdStartProbe {
     /// read no launch performs.
     private static let cachedRows: [AgentRow] = {
         let store = FleetStore(now: Workloads.now)
-        for event in Bridge.cachedFleet(in: storeCache, for: storeAccount) {
+        for event in try! Bridge.cachedFleet(in: storeCache, for: storeAccount) {
             store.apply(event)
         }
         return store.rows

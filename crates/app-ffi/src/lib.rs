@@ -70,9 +70,9 @@ pub extern "C" fn amux_app_build() -> *const c_char {
 }
 
 /// Returns the fleet one account's store on this device remembers, as an owned
-/// JSON array of one Fleet event; free it with amux_app_free. A missing,
-/// unreadable or refused store is a fleet with no rows. NULL means the
-/// arguments were not readable strings.
+/// JSON array of one Fleet event, or `{"error":STRING}` when an existing store
+/// cannot be used; free it with amux_app_free. A missing store is a fleet with
+/// no rows. NULL means the arguments were not readable strings.
 ///
 /// The application draws this before it has a connection, so the answer is the
 /// same one the running library delivers first: every card marked as awaiting
@@ -97,11 +97,14 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
     catch_unwind(AssertUnwindSafe(|| {
         let directory = unsafe { read_string(cache_dir) }?;
         let account = unsafe { read_string(account) }?;
-        let fleet = blocking(app_runtime::cache::read_cached_fleet(
+        let result = blocking(app_runtime::cache::read_cached_fleet(
             std::path::Path::new(directory),
             account,
         ))?;
-        owned(&[fleet])
+        match result {
+            Ok(fleet) => owned(&[fleet]),
+            Err(error) => owned(&serde_json::json!({"error": error})),
+        }
     }))
     .ok()
     .flatten()

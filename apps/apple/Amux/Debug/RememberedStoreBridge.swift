@@ -19,7 +19,7 @@ enum RememberedStoreBridge {
     static func read(_ remembered: Remembered, chat: AgentId?) -> [Event] {
         let account = RememberedStores.account
         guard seed(remembered, in: cache, for: account) else { return [] }
-        var events = Bridge.cachedFleet(in: cache, for: account)
+        guard var events = try? Bridge.cachedFleet(in: cache, for: account) else { return [] }
         if let chat,
            let opened = call({ amux_app_cached_chat(cache.path, account.value, chat.description) }) {
             // The fleet a launch draws is the cached one above; the

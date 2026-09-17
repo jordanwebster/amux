@@ -1120,23 +1120,32 @@ fn a_seeded_store_is_what_a_launch_and_a_cached_conversation_read() {
 }
 
 #[test]
-fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
+fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
     let root = test_root();
     let path = app_runtime::cache::store_path(root.path(), "personal");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for bytes in [None, Some("{"), Some("SQLite format 3\0 truncated")] {
-        if let Some(bytes) = bytes {
-            std::fs::write(&path, bytes).unwrap();
-        }
-        let fleet: Event = serde_json::from_value(cached_fleet(root.path(), "personal")).unwrap();
-        assert!(
-            matches!(fleet, Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
-        );
-    }
+    let fleet: Event = serde_json::from_value(cached_fleet(root.path(), "personal")).unwrap();
+    assert!(matches!(fleet, Event::Fleet { agents, reconciled: false, .. } if agents.is_empty()));
+
+    std::fs::write(&path, b"not a database").unwrap();
+    let corrupt = cached_fleet_result(root.path(), "personal");
+    assert!(
+        corrupt["error"].as_str().is_some_and(|message| {
+            message.contains("it is corrupt") && message.contains("close that process and relaunch")
+        }),
+        "{corrupt}"
+    );
+
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, "file").unwrap();
-    let fleet: Event = serde_json::from_value(cached_fleet(&file, "personal")).unwrap();
-    assert!(matches!(fleet, Event::Fleet { agents, .. } if agents.is_empty()));
+    let unusable = cached_fleet_result(&file, "personal");
+    assert!(
+        unusable["error"].as_str().is_some_and(|message| {
+            message.contains("reading or writing it failed")
+                && message.contains("delete the file to start with an empty cache")
+        }),
+        "{unusable}"
+    );
     unsafe {
         assert!(amux_app_cached_fleet(std::ptr::null(), std::ptr::null()).is_null());
     }
@@ -1145,6 +1154,12 @@ fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
         assert!(amux_app_report_snapshot(std::ptr::null_mut()).is_null());
         amux_app_free(std::ptr::null_mut());
     }
+}
+
+fn cached_fleet_result(cache_dir: &std::path::Path, account: &str) -> Value {
+    let directory = CString::new(cache_dir.to_str().unwrap()).unwrap();
+    let account = CString::new(account).unwrap();
+    owned_json(unsafe { amux_app_cached_fleet(directory.as_ptr(), account.as_ptr()) })
 }
 
 mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing {
