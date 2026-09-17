@@ -1271,11 +1271,13 @@ binary, appends passing versions to recording and keymap ledgers, re-records
 only broken claims, and writes additive drift for review.
 
 The SDK corpus derives through the real daemon adapter into
-`crates/amux/tests/fixtures/rows/claude-sdk/`. Client specs cover feed, agreement,
-commands, conversation and family messages. The redacted live conversation in
-`crates/claude-specs/fixtures/claude-sdk/converse.rows.jsonl` preserves all
-572 parent rows, including the final child acknowledgement before another
-assistant row arrives. Replay compares the client fold after every message.
+`crates/amux/tests/fixtures/rows/claude-sdk/`. Provider-fold tests cover row
+semantics and continuation, while TUI goldens cover behavior that is visible
+only after rendering. The redacted live conversation in
+`crates/ui-state/tests/spec/fixtures/claude_sdk/converse.rows.jsonl` preserves
+all 572 parent rows, including the final child acknowledgement before another
+assistant row arrives. Its fold test compares resumed and uninterrupted state
+at every row boundary and validates the adjacent provenance and privacy guard.
 
 The opt-in harnesses `sdk_chat_live.sh`, `remote_open_live.sh`,
 `claude_driver_config.sh` and `user_hooks_live.sh` under `e2e-tests/` capture

@@ -347,6 +347,30 @@ fn landed_edit() -> Model {
     fold(msgs)
 }
 
+fn failed_tool() -> Model {
+    let mut msgs = base();
+    msgs.push(batch(
+        100,
+        vec![
+            json!({
+                "type":"assistant", "uuid":"tool-row", "parent_tool_use_id":null,
+                "message":{"id":"message", "content":[{
+                    "type":"tool_use", "id":"tool-failed", "name":"Bash",
+                    "input":{"command":"false"}
+                }]}
+            }),
+            json!({
+                "type":"user", "uuid":"result-row", "parent_tool_use_id":null,
+                "message":{"content":[{
+                    "type":"tool_result", "tool_use_id":"tool-failed",
+                    "content":"exit 1", "is_error":true
+                }]}
+            }),
+        ],
+    ));
+    fold(msgs)
+}
+
 /// A session whose turn ended in an error, with the strings the session
 /// collected. Synthetic, because no recording in the corpus fails.
 fn errored_turn() -> Model {
@@ -628,6 +652,20 @@ fn sdk_chat_paints_a_landed_edit_as_a_file_change() {
         text.contains("+mod attachments;") && text.contains("-mod store;"),
         "and the patch preview shows the rows that moved: {text}"
     );
+}
+
+#[test]
+fn sdk_chat_paints_an_errored_tool_as_failed_with_its_text() {
+    let text = assert_surface("sdk_chat_failed_tool", &failed_tool());
+    assert!(
+        text.contains("Bash false"),
+        "the failed tool stays named: {text}"
+    );
+    assert!(
+        text.contains("exit 1"),
+        "the failure text stays visible: {text}"
+    );
+    assert!(text.contains('✗'), "the tool is visibly failed: {text}");
 }
 
 /// A turn that failed says what failed: the rule marks it errored and

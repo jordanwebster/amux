@@ -491,6 +491,70 @@ fn unescape(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn envelope(kind: model::envelope::EnvelopeKind) -> model::envelope::Envelope {
+        model::envelope::Envelope {
+            id: "00000000-0000-0000-0000-000000000a2a".parse().unwrap(),
+            context: Some("00000000-0000-0000-0000-0000000000c0".parse().unwrap()),
+            from: model::envelope::Sender::Agent(model::envelope::AgentSender {
+                agent_id: "00000000-0000-0000-0000-00000000beef".parse().unwrap(),
+                host_id: "00000000-0000-0000-0000-00000000cafe".parse().unwrap(),
+                name: "lead".into(),
+                kind: "claude".into(),
+            }),
+            to: model::AgentParent {
+                agent_id: "00000000-0000-0000-0000-00000000feed".parse().unwrap(),
+                host_id: "00000000-0000-0000-0000-00000000cafe".parse().unwrap(),
+            },
+            kind,
+            text: "review the <patch> & say if it's ok".into(),
+        }
+    }
+
+    #[test]
+    fn inbound_message_reads_both_daemon_carriers_without_losing_fields() {
+        let envelope = envelope(model::envelope::EnvelopeKind::Completed);
+        let carriers = [
+            model::envelope::format(&envelope),
+            model::envelope::format_cross_session(&envelope, "prompting")
+                .expect("agent sender has a socket carrier"),
+        ];
+        for carrier in carriers {
+            let message = inbound_message(&carrier).expect("formatted carrier parses");
+            assert_eq!(message.id, Some(envelope.id.to_string()));
+            assert_eq!(message.context, envelope.context.map(|id| id.to_string()));
+            assert_eq!(message.kind, AgentMessageKind::Completed);
+            assert_eq!(message.text, envelope.text);
+            assert!(message.from.starts_with("lead/"), "{}", message.from);
+        }
+    }
+
+    #[test]
+    fn inbound_message_rejects_quoted_and_foreign_carriers() {
+        let tag = model::envelope::format(&envelope(model::envelope::EnvelopeKind::Message));
+        assert!(inbound_message(&format!("why does {tag} not parse?")).is_none());
+
+        let wrapper = model::envelope::format_cross_session(
+            &envelope(model::envelope::EnvelopeKind::Message),
+            "prompting",
+        )
+        .unwrap();
+        assert!(inbound_message(&format!("why does {wrapper} not parse?")).is_none());
+        assert!(
+            inbound_message(
+                "<cross-session-message from=\"other-claude\">\nhello\n</cross-session-message>"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn inbound_message_without_kind_degrades_to_unstated() {
+        let message = inbound_message("<amux id=\"idle\" from=\"probe/host\">\nship it\n</amux>")
+            .expect("carrier parses");
+        assert_eq!(message.kind, AgentMessageKind::Unstated);
+        assert_eq!(message.text, "ship it");
+    }
+
     fn assert_json_round_trip(document: AskDocument, expected_keys: &[&str]) {
         let json = serde_json::to_string(&document).expect("ask document serializes");
         assert_eq!(

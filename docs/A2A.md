@@ -289,12 +289,12 @@ prints removed and unreachable descendants, marks active work, and requires
 
 The whole-daemon specification covers provenance, local and remote delivery,
 spawn, completion, work status, suspend/resume, and cascade deletion with
-credential-free test agents. Reducer specifications prove family and message
-folds after every input, and TUI goldens cover collapsed and expanded fleets,
-message rows, child asks, and deletion confirmation. Provider behavior is
-pinned by versioned Claude and Codex captures; the real-harness round trips
+credential-free test agents. Fold unit tests prove family and message
+semantics from provider rows, and TUI goldens cover collapsed and expanded
+fleets, message rows, child asks, and deletion confirmation. Provider behavior
+is pinned by versioned Claude and Codex captures; the real-harness round trips
 remain opt-in because they require the operator's authenticated installations.
 `e2e-tests/sdk_chat_live.sh` captures an SDK parent creating a child, answering
 its permission request and exchanging messages, including both chats and the
 family view. The redacted parent rows also replay through the client in
-`crates/claude-specs/fixtures/claude-sdk/converse.rows.jsonl`.
+`crates/ui-state/tests/spec/fixtures/claude_sdk/converse.rows.jsonl`.

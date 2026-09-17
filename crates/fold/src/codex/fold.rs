@@ -1571,6 +1571,24 @@ mod tests {
 
     use super::*;
 
+    fn observe_rows(rows: impl IntoIterator<Item = Value>) -> Observation<Vec<String>> {
+        let mut layer = Observation::default();
+        for (index, row) in rows.into_iter().enumerate() {
+            layer.observe(index as u64 + 1, &row, |text| vec![text.to_string()]);
+        }
+        layer
+    }
+
+    fn mcp_row(id: &str, server: &str, tool: &str, arguments: Value) -> Value {
+        json!({
+            "type":"item/completed",
+            "item":{
+                "id":id, "type":"mcpToolCall", "server":server, "tool":tool,
+                "arguments":arguments, "status":"completed"
+            }
+        })
+    }
+
     #[test]
     fn ask_ring_overflow_keeps_the_newest_obligations() {
         let mut layer = Observation::<Vec<String>> {
@@ -1622,5 +1640,116 @@ mod tests {
             layer.activity(),
             Activity::AwaitingApproval { .. }
         ));
+    }
+
+    #[test]
+    fn codex_provider_rows_classify_only_registered_amux_mcp_tools_as_amux_work() {
+        let registered = model::AGENT_TOOL_NAMES
+            .iter()
+            .enumerate()
+            .map(|(index, tool)| {
+                mcp_row(
+                    &format!("registered-{index}"),
+                    model::AGENT_TOOL_SERVER_NAME,
+                    tool,
+                    json!({}),
+                )
+            });
+        let layer = observe_rows(registered);
+        assert_eq!(layer.work().count(), model::AGENT_TOOL_NAMES.len());
+        assert!(
+            layer
+                .work()
+                .all(|work| matches!(work.kind, WorkKind::AmuxTool { .. }))
+        );
+
+        let layer = observe_rows([
+            mcp_row("foreign-send", "other", "send", json!({})),
+            mcp_row(
+                "unknown-amux-tool",
+                model::AGENT_TOOL_SERVER_NAME,
+                "teleport",
+                json!({}),
+            ),
+        ]);
+        assert!(
+            layer
+                .work()
+                .all(|work| matches!(work.kind, WorkKind::McpTool { .. }))
+        );
+    }
+
+    #[test]
+    fn codex_provider_rows_keep_dynamic_and_malformed_send_calls_raw() {
+        let layer = observe_rows([
+            json!({"type":"item/completed","item":{
+                "id":"dynamic-namespaced", "type":"dynamicToolCall", "namespace":"other",
+                "tool":"send", "arguments":{"to":"probe"}, "status":"completed", "success":true
+            }}),
+            json!({"type":"item/completed","item":{
+                "id":"dynamic-plain", "type":"dynamicToolCall", "namespace":null,
+                "tool":"send", "arguments":{"to":"probe"}, "status":"completed", "success":true
+            }}),
+            mcp_row(
+                "send-raw",
+                model::AGENT_TOOL_SERVER_NAME,
+                "send",
+                json!({"to":"reviewer","text":["not","a","string"]}),
+            ),
+        ]);
+        let work = layer.work().collect::<Vec<_>>();
+        assert_eq!(work.len(), 3);
+        assert!(matches!(work[0].kind, WorkKind::DynamicTool { .. }));
+        assert!(matches!(work[1].kind, WorkKind::DynamicTool { .. }));
+        assert!(matches!(
+            &work[2].kind,
+            WorkKind::AmuxTool { tool, arguments, .. }
+                if tool == "send" && arguments["text"].is_array()
+        ));
+    }
+
+    #[test]
+    fn codex_late_completion_does_not_clear_the_newer_turn() {
+        let layer = observe_rows([
+            json!({"type":"amux.codex_ready"}),
+            json!({"type":"turn/started","turn":{"id":"old"}}),
+            json!({"type":"turn/started","turn":{"id":"new"}}),
+            json!({"type":"turn/completed","turn":{"id":"old","status":"completed"}}),
+        ]);
+        assert_eq!(layer.active_turn_id(), Some("new"));
+        assert_eq!(layer.activity(), Activity::Working);
+    }
+
+    #[test]
+    fn codex_gap_and_ready_preserve_the_active_turn_target() {
+        let layer = observe_rows([
+            json!({"type":"amux.codex_ready"}),
+            json!({"type":"turn/started","turn":{"id":"turn-live"}}),
+            json!({"type":"amux.codex_gap","reason":"connection_lost"}),
+            json!({"type":"amux.codex_ready"}),
+        ]);
+        assert_eq!(layer.active_turn_id(), Some("turn-live"));
+        assert_eq!(layer.activity(), Activity::Working);
+    }
+
+    #[test]
+    fn codex_context_meter_uses_last_turn_usage_instead_of_thread_total() {
+        let layer = observe_rows([json!({
+            "type":"thread/tokenUsage/updated",
+            "tokenUsage":{
+                "last":{
+                    "inputTokens":14755, "cachedInputTokens":14080,
+                    "outputTokens":16, "totalTokens":14771
+                },
+                "total":{"inputTokens":29000,"outputTokens":212,"totalTokens":29212},
+                "modelContextWindow":258400
+            }
+        })]);
+        let usage = layer.token_usage().expect("usage row was folded");
+        assert_eq!(usage.input_tokens, Some(14_755));
+        assert_eq!(usage.cached_input_tokens, Some(14_080));
+        assert_eq!(usage.output_tokens, Some(16));
+        assert_eq!(usage.total_tokens, Some(14_771));
+        assert_eq!(usage.model_context_window, Some(258_400));
     }
 }

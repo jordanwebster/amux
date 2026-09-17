@@ -2455,6 +2455,8 @@ mod tests {
 
     const CONVERSE: &str =
         include_str!("../../../ui-state/tests/spec/fixtures/claude_sdk/converse.rows.jsonl");
+    const CONVERSE_PROVENANCE: &str =
+        include_str!("../../../ui-state/tests/spec/fixtures/claude_sdk/converse.provenance.json");
     const TASK_TOOL_CAPTURE: &str = include_str!("../../fixtures/claude-task-tools-2.1.273.jsonl");
 
     fn at(seq: u64) -> DateTime<Utc> {
@@ -2658,6 +2660,70 @@ unrecognized=000001070000010b066675747572650573686170650000000000000000000000000
                 "redirects at {cut}"
             );
         }
+    }
+
+    #[test]
+    fn claude_sdk_converse_fixture_keeps_its_provenance_and_redaction_guard() {
+        let provenance: Value = serde_json::from_str(CONVERSE_PROVENANCE).unwrap();
+        assert_eq!(
+            provenance["rows"].as_u64(),
+            Some(rows(CONVERSE).len() as u64)
+        );
+        for forbidden in ["/Users/", ".local", ".lan", "@openai.com"] {
+            assert!(
+                !CONVERSE.contains(forbidden),
+                "redacted fixture contains {forbidden}"
+            );
+        }
+        assert!(
+            provenance["privacy_check"]
+                .as_str()
+                .is_some_and(|text| text.contains("No home path"))
+        );
+    }
+
+    #[test]
+    fn claude_sdk_result_and_gap_interrupt_open_stream_blocks() {
+        let prefix = rows(
+            r#"
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"m"}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"unfinished"}}}
+"#,
+        );
+        for boundary in [
+            json!({"type":"result","uuid":"turn","subtype":"success"}),
+            json!({"type":"amux.claude_sdk.gap","reason":"reconnect"}),
+        ] {
+            let mut input = prefix.clone();
+            input.push(serde_json::to_vec(&boundary).unwrap());
+            let (_, oracle) = fold_rows(&input);
+            let message = oracle
+                .entries()
+                .into_iter()
+                .find(|stored| stored.entry.entry_kind() == Some(ClaudeSdkEntryKind::Message))
+                .expect("open stream block remains visible");
+            assert_eq!(message.entry.finality(), Some("interrupted"), "{boundary}");
+        }
+    }
+
+    #[test]
+    fn claude_sdk_subagent_prompt_never_becomes_the_persons_prompt() {
+        let input = vec![
+            serde_json::to_vec(&json!({
+                "type":"user",
+                "uuid":"child-prompt",
+                "parent_tool_use_id":"task-1",
+                "message":{"content":"inspect the repository"}
+            }))
+            .unwrap(),
+        ];
+        let (_, oracle) = fold_rows(&input);
+        assert!(
+            oracle
+                .entries()
+                .iter()
+                .all(|stored| stored.entry.entry_kind() != Some(ClaudeSdkEntryKind::Prompt))
+        );
     }
 
     #[test]

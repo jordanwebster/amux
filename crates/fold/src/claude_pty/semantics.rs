@@ -536,6 +536,17 @@ impl ClaudeFold {
                         revision,
                     ),
                 ));
+                // Socket deliveries are passive transcript facts, but the
+                // PTY paste carrier is input Claude immediately runs as a
+                // turn. Preserve that distinction after recognizing the
+                // envelope so it cannot masquerade as a human prompt.
+                if row.get("isMeta").and_then(Value::as_bool) != Some(true) {
+                    self.asks.clear();
+                    self.attention = Attention::Working;
+                    self.known_attention = true;
+                    self.prompt_at = activity_at;
+                    self.turn_closed_at = None;
+                }
                 return;
             }
             if row.get("isMeta").and_then(Value::as_bool) == Some(true)
@@ -2328,6 +2339,63 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
             entries[0].entry.entry_kind(),
             Some(ClaudeEntryKind::Interruption)
         );
+    }
+
+    #[test]
+    fn claude_pty_inbound_carrier_opens_only_the_pasted_turn() {
+        let envelope = model::envelope::Envelope {
+            id: "00000000-0000-0000-0000-000000000a2a".parse().unwrap(),
+            context: None,
+            from: model::envelope::Sender::Agent(model::envelope::AgentSender {
+                agent_id: "00000000-0000-0000-0000-00000000beef".parse().unwrap(),
+                host_id: "00000000-0000-0000-0000-00000000cafe".parse().unwrap(),
+                name: "lead".into(),
+                kind: "claude".into(),
+            }),
+            to: model::AgentParent {
+                agent_id: "00000000-0000-0000-0000-00000000feed".parse().unwrap(),
+                host_id: "00000000-0000-0000-0000-00000000cafe".parse().unwrap(),
+            },
+            kind: model::envelope::EnvelopeKind::Message,
+            text: "ship it".into(),
+        };
+        let pasted = serde_json::to_vec(&json!({
+            "type":"user", "uuid":"paste", "isMeta":false,
+            "message":{"content":model::envelope::format(&envelope)}
+        }))
+        .unwrap();
+        let (pasted, pasted_entries) = fold_rows(&[pasted]);
+        assert_eq!(pasted.summary().attention, Attention::Working);
+        let pasted_entry = &pasted_entries.entries()[0].entry;
+        assert_eq!(
+            pasted_entry.entry_kind(),
+            Some(ClaudeEntryKind::AgentMessage)
+        );
+        assert_eq!(pasted_entry.text(), Some("ship it"));
+        assert!(matches!(
+            pasted_entry.body(),
+            Some(ClaudeBody::AgentMessage { from, kind: AgentMessageKind::Message, .. })
+                if from.starts_with("lead/")
+        ));
+
+        let socket = serde_json::to_vec(&json!({
+            "type":"user", "uuid":"socket", "isMeta":true,
+            "message":{"content":model::envelope::format_cross_session(&envelope, "prompting").unwrap()}
+        }))
+        .unwrap();
+        let (socket, socket_entries) = fold_rows(&[socket]);
+        assert_ne!(socket.summary().attention, Attention::Working);
+        let socket_entry = &socket_entries.entries()[0].entry;
+        assert_eq!(
+            socket_entry.entry_kind(),
+            Some(ClaudeEntryKind::AgentMessage)
+        );
+        assert_eq!(socket_entry.text(), Some("ship it"));
+        assert!(matches!(
+            socket_entry.body(),
+            Some(ClaudeBody::AgentMessage { from, kind: AgentMessageKind::Message, .. })
+                if from.starts_with("lead/")
+        ));
     }
 
     #[test]

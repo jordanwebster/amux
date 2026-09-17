@@ -1350,6 +1350,86 @@ mod tests {
         model
     }
 
+    #[test]
+    fn keymap_and_input_result_rows_keep_a_fresh_session_out_of_replay() {
+        let agent = model::Agent {
+            id: agent_id(),
+            host_id: Uuid::from_u128(1),
+            name: Some("fix-auth-bug".to_string()),
+            command: "claude".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+            kind: model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
+            },
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
+            parent: None,
+            working_on: None,
+            summary: None,
+            progress: None,
+            inventory_revision: 0,
+        };
+        let host = model::HostEntry {
+            id: Uuid::from_u128(1),
+            name: "nova".to_string(),
+            online: true,
+            version: None,
+            capabilities: None,
+            trust_status: model::HostTrustStatus::Trusted,
+            last_dial_error: None,
+            platform: None,
+        };
+        let mut model = Model::default();
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(1)),
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host }),
+            Msg::Server(ServerMsg::AgentUpserted { agent }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::ReplayComplete,
+            },
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Batch {
+                    at: chrono::DateTime::from_timestamp(1_754_697_601, 0).expect("epoch"),
+                    entries: [
+                        json!({"type":"amux.claude.keymap"}),
+                        json!({"type":"amux.claude.input_result"}),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, payload)| {
+                        StreamEntry::observed(
+                            index as u64 + 1,
+                            chrono::DateTime::from_timestamp(1_754_697_601, 0).expect("epoch"),
+                            payload,
+                        )
+                    })
+                    .collect(),
+                },
+            },
+        ] {
+            update(&mut model, msg);
+        }
+        let layer = model.claude(agent_id()).expect("Claude layer");
+        assert!(!layer.transcript_ready());
+        assert_eq!(
+            phase(&model, agent_id()),
+            ChatPhase::Idle {
+                tag: PhaseTag::Inferred
+            }
+        );
+    }
+
     /// An exited agent is EXITED whether or not its structured stream ever
     /// produced layer evidence. Both gates check exit before layer presence,
     /// so the specific fact wins over the vaguer unavailable refusal. (P6

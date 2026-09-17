@@ -1,3 +1,13 @@
+2026-09-17 — **Provider folds retain their edge-case contracts.** Coverage
+formerly held only by the deleted `a2a_claude_inbound`, `claude_sdk_feed`,
+`a2a_codex_inbound`, `codex_feed`, and `feed_replay` client specifications now
+lives beside the shared folds. It pins both Claude message carriers and their
+turn distinction, SDK interruption and subagent-prompt behavior, Codex tool
+ownership and turn targeting, last-turn context usage, and inert Claude PTY
+control rows. A TUI golden proves failed SDK tools remain named, failed, and
+readable. The retained live-conversation fixture now has an active provenance
+and privacy guard, and documentation points to its actual location.
+
 2026-09-17 — **Stored chats preserve provider edge semantics.** Finished
 Claude SDK stream blocks stay complete when their trailing stop events arrive,
 subagent reads stay outside the session's exploration runs, and failed
