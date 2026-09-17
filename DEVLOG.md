@@ -1,3 +1,13 @@
+2026-09-17 — **Daemon performance qualification exercises live rings and
+summarizers.** The idle-agent memory sample now fills every one of its 200
+structured replay rings to the 1 MiB byte ceiling with valid provider rows,
+waits for each daemon summarizer to consume its cut, and lets the agents become
+idle before sampling. Summarizer idle cost now records process CPU across an
+actual ten-second wall-clock interval with 200 running tasks, while active cost
+writes rows through 20 shipping rings and waits for the live folds to consume
+them, accounting for ring delivery, payload serialization, and summary-cut
+replacement instead of timing pure folds or assuming a tick rate.
+
 2026-09-17 — **Provider folds retain their edge-case contracts.** Coverage
 formerly held only by the deleted `a2a_claude_inbound`, `claude_sdk_feed`,
 `a2a_codex_inbound`, `codex_feed`, and `feed_replay` client specifications now

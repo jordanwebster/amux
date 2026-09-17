@@ -43,10 +43,10 @@ const TIP_WORKLOAD: Workload = Workload {
 };
 
 const SUMMARIZER_WORKLOAD: Workload = Workload {
-    description: "200 idle and 20 active summary-only folds",
+    description: "shipping ring readers and summarizer tasks: 200 idle for at least 10 s, then 20 active consuming 1,000 rows each",
     seed: SEED,
     identity_growth: "fresh active row ids",
-    warm_up: "one row per active fold",
+    warm_up: "initial publications drained; one ring row per active summarizer",
 };
 
 pub fn run_fast() -> Result<Vec<MetricRun>> {
@@ -54,7 +54,7 @@ pub fn run_fast() -> Result<Vec<MetricRun>> {
     runs.push(steady_state_frame()?);
     runs.extend(frame_under_flood()?);
     runs.push(tip_bound());
-    runs.extend(summarizer_cost());
+    runs.extend(summarizer_cost()?);
     runs.extend(super::store_workloads::run_store()?);
     Ok(runs)
 }
@@ -372,58 +372,39 @@ fn tip_bound() -> MetricRun {
     )
 }
 
-fn summarizer_cost() -> [MetricRun; 2] {
-    let started_at = Utc::now();
-    let mut active = (0..20)
-        .map(|_| {
-            let mut fold = AgentFold::for_protocol(StructuredProtocol::ClaudeSdk);
-            fold.begin(1, Baseline::Start);
-            fold
-        })
-        .collect::<Vec<_>>();
-    let warm = br#"{"type":"user","uuid":"00000000-0000-4000-8000-000000000000","message":{"content":"warm"}}"#;
-    for fold in &mut active {
-        fold.apply_summary(Input::Row {
-            seq: 1,
-            published_at: Utc::now(),
-            activity_at: None,
-            historical: false,
-            payload: warm,
-        });
-    }
-    let began = cpu_time();
-    let rows = 20 * 1_000;
-    for sequence in 2..=1_001_u64 {
-        let payload = format!(
-            r#"{{"type":"user","uuid":"00000000-0000-4000-8000-{sequence:012}","message":{{"content":"active {sequence}"}}}}"#
-        );
-        for fold in &mut active {
-            fold.apply_summary(Input::Row {
-                seq: sequence,
-                published_at: Utc::now(),
-                activity_at: None,
-                historical: false,
-                payload: payload.as_bytes(),
-            });
-        }
-    }
-    let per_row_us = (cpu_time() - began).as_secs_f64() * 1_000_000.0 / rows as f64;
+fn summarizer_cost() -> Result<[MetricRun; 2]> {
+    const IDLE_WALL_TIME: Duration = Duration::from_secs(10);
+    const IDLE_SUMMARIZERS: usize = 200;
+    const ACTIVE_SUMMARIZERS: usize = 20;
+    const ACTIVE_ROWS_PER_SUMMARIZER: u64 = 1_000;
 
-    let mut idle = (0..200)
-        .map(|_| {
-            let mut fold = AgentFold::for_protocol(StructuredProtocol::ClaudeSdk);
-            fold.begin(1, Baseline::Start);
-            fold
-        })
-        .collect::<Vec<_>>();
-    let began = cpu_time();
-    for _ in 0..10 {
-        for fold in &mut idle {
-            fold.apply_summary(Input::Tick { now: Utc::now() });
-        }
-    }
-    let idle_percent = (cpu_time() - began).as_secs_f64() / 10.0 * 100.0;
-    [
+    let started_at = Utc::now();
+    let idle_runtime = summarizer_runtime()?;
+    let mut idle = agent_runtime::test_support::DaemonMemoryHarness::new();
+    idle_runtime.block_on(idle.add_idle_summarizers(IDLE_SUMMARIZERS));
+    let idle_wall_started = Instant::now();
+    let idle_cpu_started = cpu_time()?;
+    idle_runtime.block_on(tokio::time::sleep(IDLE_WALL_TIME));
+    let idle_cpu = cpu_time()?.saturating_sub(idle_cpu_started);
+    let idle_wall = idle_wall_started.elapsed();
+    anyhow::ensure!(
+        idle_wall >= IDLE_WALL_TIME,
+        "summarizer idle sample ended before its 10 second wall-clock floor"
+    );
+    let idle_percent = idle_cpu.as_secs_f64() / idle_wall.as_secs_f64() * 100.0;
+    drop(idle);
+    drop(idle_runtime);
+
+    let active_runtime = summarizer_runtime()?;
+    let mut active = agent_runtime::test_support::DaemonMemoryHarness::new();
+    active_runtime.block_on(active.add_active(ACTIVE_SUMMARIZERS));
+    active_runtime.block_on(active.consume_active_rows(1));
+    let active_cpu_started = cpu_time()?;
+    let rows = active_runtime.block_on(active.consume_active_rows(ACTIVE_ROWS_PER_SUMMARIZER));
+    let active_cpu = cpu_time()?.saturating_sub(active_cpu_started);
+    let per_row_us = active_cpu.as_secs_f64() * 1_000_000.0 / rows as f64;
+
+    Ok([
         run(
             "summarizer CPU per row",
             Statistic::Median,
@@ -446,7 +427,15 @@ fn summarizer_cost() -> [MetricRun; 2] {
             started_at,
             vec![sample("summarizer idle core", idle_percent, Unit::Percent)],
         ),
-    ]
+    ])
+}
+
+fn summarizer_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .context("build summarizer performance runtime")
 }
 
 fn protocols() -> [StructuredProtocol; 3] {
@@ -458,25 +447,25 @@ fn protocols() -> [StructuredProtocol; 3] {
 }
 
 #[cfg(unix)]
-fn cpu_time() -> Duration {
+fn cpu_time() -> Result<Duration> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
     // SAFETY: getrusage writes one initialized rusage on success.
     let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    assert_eq!(result, 0, "getrusage(RUSAGE_SELF) failed");
+    if result != 0 {
+        return Err(std::io::Error::last_os_error()).context("getrusage(RUSAGE_SELF)");
+    }
     // SAFETY: the successful call initialized the complete value.
     let usage = unsafe { usage.assume_init() };
     let timeval = |value: libc::timeval| {
         Duration::from_secs(value.tv_sec as u64)
             + Duration::from_micros(value.tv_usec.try_into().unwrap())
     };
-    timeval(usage.ru_utime) + timeval(usage.ru_stime)
+    Ok(timeval(usage.ru_utime) + timeval(usage.ru_stime))
 }
 
 #[cfg(not(unix))]
-fn cpu_time() -> Duration {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock is after the Unix epoch")
+fn cpu_time() -> Result<Duration> {
+    anyhow::bail!("summarizer process CPU measurement is supported only on Unix")
 }
 
 fn sample(metric: &'static str, value: f64, unit: Unit) -> Sample {

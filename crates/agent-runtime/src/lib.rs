@@ -339,6 +339,10 @@ pub mod test_support {
         sequence: u64,
     }
 
+    const PERFORMANCE_RING_BYTES: usize = 1024 * 1024;
+    const PERFORMANCE_RING_ROW_BYTES: usize = 64 * 1024;
+    const PERFORMANCE_WRITE_BATCH_ROWS: u64 = 200;
+
     impl Default for DaemonMemoryHarness {
         fn default() -> Self {
             Self::new()
@@ -360,8 +364,28 @@ pub mod test_support {
         }
 
         pub async fn add_idle(&mut self, count: usize) {
+            self.add_idle_agents(count).await;
+            let first = self.active_from - count;
+            self.fill_rings(first..self.active_from).await;
+
+            // The memory sample describes agents after their last input, with
+            // the same periodic fold and health work running as the daemon.
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            self.drain_publications();
+        }
+
+        /// Start idle summarizer tasks without populating their rings. This is
+        /// the production machinery used by the process-CPU qualification.
+        pub async fn add_idle_summarizers(&mut self, count: usize) {
+            self.add_idle_agents(count).await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            self.drain_publications();
+        }
+
+        async fn add_idle_agents(&mut self, count: usize) {
+            let first = self.sources.len();
             for offset in 0..count {
-                self.add_agent(offset).await;
+                self.add_agent(first + offset).await;
             }
             self.active_from = self.sources.len();
         }
@@ -390,6 +414,91 @@ pub mod test_support {
             self.sources.push(source);
             self.ptys.push(pty);
             self.summarizers.push(handle);
+        }
+
+        async fn fill_rings(&mut self, range: std::ops::Range<usize>) {
+            let target_rows = PERFORMANCE_RING_BYTES / PERFORMANCE_RING_ROW_BYTES;
+            assert_eq!(
+                target_rows * PERFORMANCE_RING_ROW_BYTES,
+                PERFORMANCE_RING_BYTES,
+                "performance rows exactly tile the structured ring"
+            );
+            for index in range.clone() {
+                for row in 0..target_rows {
+                    self.sources[index]
+                        .write(performance_row(index, row, PERFORMANCE_RING_ROW_BYTES))
+                        .await;
+                }
+            }
+            self.wait_until_folded(range.clone(), target_rows as u64)
+                .await;
+            for index in range {
+                let debug = self.sources[index].debug_snapshot().await;
+                assert_eq!(
+                    debug.buffer.bytes, PERFORMANCE_RING_BYTES,
+                    "idle performance ring {index} was not filled to its byte budget"
+                );
+            }
+        }
+
+        /// Write rows through every active daemon ring and wait until their
+        /// live summarizers have consumed the measured cut.
+        pub async fn consume_active_rows(&mut self, rows_per_agent: u64) -> u64 {
+            assert!(self.active_from < self.sources.len(), "no active agents");
+            let active_count = self.sources.len() - self.active_from;
+            let initial_through = self.summarizers[self.active_from].snapshot().through;
+            assert!(
+                self.summarizers[self.active_from..]
+                    .iter()
+                    .all(|summarizer| summarizer.snapshot().through == initial_through),
+                "active summarizers begin at one cut"
+            );
+            let mut first = 1;
+            while first <= rows_per_agent {
+                let through = (first + PERFORMANCE_WRITE_BATCH_ROWS - 1).min(rows_per_agent);
+                for sequence in first..=through {
+                    let source_sequence = initial_through + sequence;
+                    for (offset, source) in self.sources[self.active_from..].iter().enumerate() {
+                        source
+                            .write(serde_json::json!({
+                                "type": "user",
+                                "uuid": uuid::Uuid::from_u128(
+                                    ((offset as u128) << 64) | source_sequence as u128
+                                ),
+                                "message": {"content": format!("active {source_sequence}")},
+                            }))
+                            .await;
+                    }
+                }
+                self.wait_until_folded(
+                    self.active_from..self.sources.len(),
+                    initial_through + through,
+                )
+                .await;
+                self.drain_publications();
+                first = through + 1;
+            }
+            u64::try_from(active_count)
+                .expect("active agent count fits u64")
+                .checked_mul(rows_per_agent)
+                .expect("performance row count fits u64")
+        }
+
+        async fn wait_until_folded(&mut self, range: std::ops::Range<usize>, through: u64) {
+            tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                loop {
+                    if range
+                        .clone()
+                        .all(|index| self.summarizers[index].snapshot().through >= through)
+                    {
+                        return;
+                    }
+                    self.drain_publications();
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("summarizers reached the performance cut");
         }
 
         pub async fn pulse(&mut self, iteration: u64) {
@@ -464,6 +573,71 @@ pub mod test_support {
                     let _ = acknowledged.send(());
                 }
             }
+        }
+    }
+
+    fn performance_row(agent: usize, row: usize, encoded_bytes: usize) -> serde_json::Value {
+        let mut payload = serde_json::json!({
+            "type": "user",
+            "uuid": uuid::Uuid::from_u128(((agent as u128) << 64) | row as u128),
+            "message": {"content": ""},
+        });
+        let base = serde_json::to_vec(&payload)
+            .expect("performance row serializes")
+            .len();
+        assert!(
+            base <= encoded_bytes,
+            "performance row target is large enough"
+        );
+        payload["message"]["content"] = serde_json::Value::String("x".repeat(encoded_bytes - base));
+        assert_eq!(
+            serde_json::to_vec(&payload)
+                .expect("filled performance row serializes")
+                .len(),
+            encoded_bytes
+        );
+        payload
+    }
+
+    #[cfg(test)]
+    mod performance_harness_tests {
+        use super::*;
+
+        #[test]
+        fn daemon_memory_row_has_exact_encoded_size() {
+            let row = performance_row(7, 11, PERFORMANCE_RING_ROW_BYTES);
+            assert_eq!(
+                serde_json::to_vec(&row).unwrap().len(),
+                PERFORMANCE_RING_ROW_BYTES
+            );
+        }
+
+        #[tokio::test]
+        async fn daemon_memory_idle_agent_holds_a_full_ring_and_live_tip() {
+            let mut harness = DaemonMemoryHarness::new();
+            harness.add_idle(1).await;
+
+            let debug = harness.sources[0].debug_snapshot().await;
+            assert_eq!(debug.buffer.bytes, PERFORMANCE_RING_BYTES);
+            assert_eq!(harness.summarizers[0].snapshot().through, 16);
+            assert_eq!(
+                harness.summarizers[0].snapshot().summary.phase,
+                model::AgentPhase::Running
+            );
+        }
+
+        #[tokio::test]
+        async fn daemon_memory_active_rows_reach_every_summarizer() {
+            let mut harness = DaemonMemoryHarness::new();
+            harness.add_active(2).await;
+
+            assert_eq!(harness.consume_active_rows(257).await, 514);
+            assert!(
+                harness
+                    .summarizers
+                    .iter()
+                    .all(|summarizer| summarizer.snapshot().through == 257)
+            );
         }
     }
 }
