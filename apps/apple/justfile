@@ -143,10 +143,13 @@ visual-interactions: build
 # The measured run: the pinned workloads against the budgets in
 # docs/IOS_PERFORMANCE.md, on a machine that document has a row for. The
 # measured build links the driving slice; the release size it also records
-# links the shipping package, so both are inputs.
+# links the shipping package, so both are inputs. It waits for the machine to
+# go quiet first: cold launches and pick-up recovery measure the machine as
+# much as the app, so a run started while something else is still working
+# reports that instead.
 # Measure the pinned workloads against the performance budgets.
 perf *ARGS: rust package tools
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2700 {{python}} -B scripts/ios-perf.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/quiet; scripts/with iphone -- {{bounded}} 2700 {{python}} -B scripts/ios-perf.py "$@"
 
 # Link the driving bridge from a bare Swift executable, run it on the
 # simulator against a served test network and read the relay inventory back.

@@ -1,0 +1,45 @@
+#!/bin/sh
+# Wait for the machine to return to rest before a measurement runs.
+#
+# The phone suite measures cold launches and how fast the app comes back when
+# it is picked up again. Both are sensitive to what else the machine is doing:
+# measured on this Mac straight after the desktop perf suite, a cold store read
+# took 30.6 ms against its 10 ms budget and the worst cold first frame 974 ms
+# against 600 ms, while the same suite on an idle machine took 2.8 ms and
+# 462 ms. Under enough pressure the simulator kills the app outright, which
+# surfaces as a refused connection to its test door rather than a slow number.
+# So a run that begins while the machine is still busy does not measure the
+# product at all.
+#
+# Waiting is only about avoiding a wasted run: the budgets already catch a
+# loaded machine, which is how this was found. If the machine never settles the
+# run goes ahead and says so, so a report can never quietly claim a number it
+# took under load.
+set -eu
+
+threshold=${1:-2.0}
+timeout=${2:-600}
+
+load() {
+    # macOS: "{ 1.61 4.20 5.24 }". Linux: "0.50 0.40 0.30 1/234 5678".
+    if value=$(sysctl -n vm.loadavg 2>/dev/null); then
+        printf '%s' "$value" | tr -d '{}' | awk '{print $1}'
+    else
+        awk '{print $1}' /proc/loadavg 2>/dev/null || printf '0'
+    fi
+}
+
+waited=0
+while [ "$waited" -lt "$timeout" ]; do
+    now=$(load)
+    if awk -v n="$now" -v t="$threshold" 'BEGIN { exit !(n < t) }'; then
+        [ "$waited" -gt 0 ] && echo "the machine settled to a load of $now after ${waited}s" >&2
+        exit 0
+    fi
+    [ "$waited" -eq 0 ] && echo "waiting for the machine to go quiet before measuring (load $now, want under $threshold)" >&2
+    sleep 10
+    waited=$((waited + 10))
+done
+
+echo "the machine is still at a load of $(load) after ${timeout}s; measuring anyway, so treat a missed budget in this run as unexplained until it is repeated on a quiet machine" >&2
+exit 0

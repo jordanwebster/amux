@@ -1,3 +1,23 @@
+2026-09-17 — **The phone suite waits for the machine to go quiet.** `just perf`
+runs the desktop workloads and then the phone suite in one command, so every
+phone measurement was taken while the machine was still working through what
+the desktop run had just finished. Measured on the Mac14,6 reference machine:
+run straight after the desktop suite, the cold store read took 30.6 ms against
+its 10 ms budget and the worst cold first frame 974 ms against 600 ms; the same
+suite, same tree, on an idle machine took 2.5 ms and 455 ms. Pick-up recovery
+moved the same way, 331 ms against a recorded 242 ms under load and 208 ms
+idle. Under heavier pressure the simulator kills the app outright, which
+reaches the run as a refused connection to the app's test door rather than as a
+slow number, and that is what five `just perf` checks failed on today.
+
+Nothing measured here had regressed: desktop and phone each pass on their own,
+and the full command passes once the phone suite waits. `scripts/quiet` blocks
+until the one-minute load average falls below a threshold, and the phone recipe
+calls it before taking its simulator lease. A machine that never settles is
+measured anyway with a line saying so, because the budgets already catch a
+loaded machine — that is how this was found — so waiting only avoids a wasted
+run, while refusing would turn a busy machine into a hard failure.
+
 2026-09-17 — **Quiet-machine summarizer baselines are recorded.** On the
 Mac14,6 reference machine running macOS 26.5.2, the release `bundled,perf`
 `--only summarizer` workload records 5.350 microseconds of process CPU per row
