@@ -7,8 +7,8 @@ import SwiftUI
 /// It exists because the answer used to be spread across four places that
 /// nothing reconciled: the agent's attention, whether this build can read its
 /// provider, whether the machine that owns it has answered, and whether that
-/// machine is online at all. The list row, the drawer row and the sentence
-/// VoiceOver reads each recombined a different subset by hand, so no single
+/// machine is online at all. The list row and the sentence VoiceOver reads
+/// each recombined a different subset by hand, so no single
 /// place said what a row could be — which is how two marks in the vocabulary
 /// came to mean nothing without anybody noticing.
 ///

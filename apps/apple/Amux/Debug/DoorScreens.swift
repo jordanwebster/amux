@@ -78,24 +78,6 @@ enum DoorScreens {
                         Fingerprint.short($0.identity.fingerprint)
                     }) { _ in }
             }
-        // The drawer is drawn over the screen it was opened from, which is a
-        // conversation. It is the real one, filled from the same state, rather
-        // than a stand-in: what the panel dims, what its edge uncovers and how
-        // far its shadow reaches are all facts about the screen underneath, and
-        // a baseline photographed over bare ground would be a picture of none
-        // of them.
-        case .drawer:
-            DrawerOverlay(
-                open: .constant(true),
-                drawer: AgentsDrawer(
-                    model: host.stores.fleet, hosts: host.stores.hosts,
-                    current: Scenario.focus) { _ in }
-            ) {
-                Conversation(
-                    model: host.stores.conversation(Scenario.focus),
-                    subject: ConversationSubject(
-                        agent: Scenario.focus, in: host.stores.fleet)) { _ in }
-            }
         // One screen, eight names. Whether a turn is still running, who else
         // has spoken in it, whether a message is waiting to go, whether the
         // layer will take one and whether the run has ended are all facts the
@@ -121,9 +103,9 @@ enum DoorScreens {
                     agent: Scenario.focus, in: host.stores.fleet),
                 showing: host.overlay) { _ in }
         // The plus, opened. Which overlay a conversation is showing is a state
-        // of the conversation and is handed in, the way the drawer's own
-        // openness is, so what is photographed is the real screen with the
-        // real card over it rather than the card on bare ground.
+        // of the conversation and is handed in, so what is photographed is the
+        // real screen with the real card over it rather than the card on bare
+        // ground.
         // Typing a command raises rows over the box from the draft the
         // fixture wrote, so this is the ordinary conversation and nothing is
         // handed in: what is photographed is what somebody typing would see.

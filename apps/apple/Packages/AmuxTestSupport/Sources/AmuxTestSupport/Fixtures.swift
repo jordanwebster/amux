@@ -76,7 +76,6 @@ public enum Fixtures {
         Built(.home, "home-unreadable"),
         Built(.home, "home-offline"),
         Built(.homeQuiet, "home-quiet"),
-        Built(.drawer, "drawer"),
         Built(.run, "run"),
         Built(.run, "host-lost"),
         Built(.typing, "typing"),
@@ -161,9 +160,6 @@ public enum Fixtures {
             // Nothing blocked and nothing unread: the exceptions line appears
             // only because one machine is actually unreachable.
             States.open(bundle, agents: Scenario.settledAgents, unread: Scenario.allRead)
-        },
-        Fixture(id: "drawer", screen: .drawer) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
 
         // 2 · A conversation

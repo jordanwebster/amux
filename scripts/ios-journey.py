@@ -1105,7 +1105,7 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     the application rather than a state somebody set: pairing, remembering with
     the relay dead, reaching the machines, reaching them again after one of
     them has been made to say something, remembering nothing at all, and
-    opening a conversation and the drawer over it. The last one is a UI test
+    opening a conversation and coming back from it. The last one is a UI test
     rather than a door conversation, because it is the one made of taps.
     """
     daemons = {daemon["name"]: daemon["host_id"] for daemon in ready["daemons"]}
@@ -1383,19 +1383,19 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
                 f"to pair ahead of "
                 f"{(named(nothing, 'home.empty.signIn') or {}).get('label')!r}")
 
-    # MARK: Five — the drawer, and coming back to the fleet.
+    # MARK: Five — a conversation, and coming back to the fleet.
     seed()
-    drawer = journey.directory / "drawer.png"
-    perform(journey, udid, "AmuxUITests/DrawerTests", {"drawer.png": drawer})
-    journey.say(f"opened the row at the top, the drawer listed the whole remembered fleet over "
-                f"that conversation with Hosts and You at its foot, closing it came back to the "
-                f"same conversation, and going back came back to all {len(remembered)} rows")
+    opened = journey.directory / "opened.png"
+    perform(journey, udid, "AmuxUITests/FleetReturnTests", {"opened.png": opened})
+    journey.say(f"opened the row at the top into its conversation, with a way back on its chrome "
+                f"and no tab bar under the composer; its back chevron and the edge swipe each "
+                f"came back to all {len(remembered)} rows")
 
-    for capture in (cached, offline, reconciled_capture, empty, drawer):
+    for capture in (cached, offline, reconciled_capture, empty, opened):
         journey.expect(capture.is_file() and capture.stat().st_size > 0,
                        f"{capture} was not written")
     journey.say("photographed " + ", ".join(capture.name for capture in
-                                            (cached, offline, reconciled_capture, empty, drawer)))
+                                            (cached, offline, reconciled_capture, empty, opened)))
     forget_cache(udid)
 
 
@@ -2747,17 +2747,20 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
                        f"revoking desktop left the phone showing {seen.get('machinesAfterRevoking')}")
         watched = running["release-notes"]["agent_id"]
         journey.expect(watched in (seen.get("watchingBeforeRevoking") or []),
-                       f"the agent on desktop was not being read when its machine's key went: "
+                       f"the agent on desktop was not being read before its machine's key went: "
                        f"{seen.get('watchingBeforeRevoking')}")
+        journey.expect(watched not in (seen.get("watchingAfterLeaving") or []),
+                       f"leaving the conversation kept reading the agent on desktop: "
+                       f"{seen.get('watchingAfterLeaving')}")
         journey.expect(watched not in (seen.get("watchingAfterRevoking") or []),
                        f"the phone is still reading the revoked machine's agent: "
                        f"{seen.get('watchingAfterRevoking')}")
         journey.expect("release-notes" not in (seen.get("fleetAfterRevoking") or []),
                        f"an agent on the revoked machine is still readable: "
                        f"{seen.get('fleetAfterRevoking')}")
-        journey.say(f"the key desktop held was read whole on the phone and revoked while one of "
-                    f"desktop's agents was open: the stream that conversation was reading was let go "
-                    f"at once, and what desktop was running left the fleet with it. Desktop's own "
+        journey.say(f"one of desktop's agents was read and its stream let go when the conversation "
+                    f"was left; the key desktop held was then read whole on the phone and revoked, "
+                    f"and what desktop was running left the fleet with it. Desktop's own "
                     f"record of this phone is desktop's to remove and it still holds "
                     f"{seen.get('desktopDevicesAfterRevoking')}: withdrawing a key ends what this "
                     f"phone can reach, not what the far side has written down.")

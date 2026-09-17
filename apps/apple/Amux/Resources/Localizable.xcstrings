@@ -373,18 +373,6 @@
         }
       }
     },
-    "%@ online": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ online"
-          }
-        }
-      }
-    },
     "%@ permissions": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift.",
       "extractionState": "manual",
@@ -1225,6 +1213,18 @@
         }
       }
     },
+    "Back": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back"
+          }
+        }
+      }
+    },
     "Back to %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -1461,18 +1461,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Close"
-          }
-        }
-      }
-    },
-    "Close Drawer": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Close Drawer"
           }
         }
       }
@@ -2054,7 +2042,7 @@
       }
     },
     "Hosts": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift, ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift, ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2390,7 +2378,7 @@
       }
     },
     "Needs you": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/FleetOrder.swift, ios/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/FleetOrder.swift, ios/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2402,7 +2390,7 @@
       }
     },
     "New Agent": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5138,7 +5126,7 @@
       }
     },
     "You": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift, ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift, ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5474,7 +5462,7 @@
       }
     },
     "amux": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
+      "comment": "English app copy. Used in ios/Amux/Sources/Composition.swift, ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift, ios/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift, ios/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift, ios/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6170,7 +6158,7 @@
       }
     },
     "none": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6350,7 +6338,7 @@
       }
     },
     "open": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6717,18 +6705,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "the browser could not open"
-          }
-        }
-      }
-    },
-    "the conversation you are in": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the conversation you are in"
           }
         }
       }

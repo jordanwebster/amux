@@ -59,19 +59,6 @@
       ]
     },
     {
-      "id": "drawer",
-      "stage": 5,
-      "screen": "drawer",
-      "fixture": "drawer",
-      "origin": "added_state",
-      "reason": "the drawer is a state of the home screen the design has no capture of",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
       "id": "home",
       "stage": 5,
       "screen": "home",

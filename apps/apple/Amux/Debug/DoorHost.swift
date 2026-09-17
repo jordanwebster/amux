@@ -1231,8 +1231,7 @@ final class DoorHost {
                 trace.append(event)
                 return .ack
             }
-            if let name, ConversationOverlay(rawValue: name) == nil,
-               name != ConversationRecording.drawer {
+            if let name, ConversationOverlay(rawValue: name) == nil {
                 return .error("a conversation opens no \(name)")
             }
             replayed.recording.showing[agent] = name

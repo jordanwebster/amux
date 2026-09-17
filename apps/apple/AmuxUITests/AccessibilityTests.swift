@@ -142,7 +142,7 @@ final class AccessibilityTests: JourneyCase {
     private func aConversationAndThePatchItOffers() throws {
         try openTheConversation()
         record["conversation"] = try audited(
-            "conversation", reaching: ["conversation.drawer", "conversation.overflow",
+            "conversation", reaching: ["conversation.back", "conversation.overflow",
                                        "composer.attach"])
 
         // The patch, asked of the machine and taken hold of by dragging down

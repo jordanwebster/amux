@@ -1042,7 +1042,7 @@ mod tests {
                     },
                 ),
                 outcome(
-                    "drawer",
+                    "strip",
                     GoldenVerdict::Different {
                         pixels: 8_542,
                         first: (107, 893),
@@ -1052,7 +1052,7 @@ mod tests {
             false,
         );
         assert_eq!(report.rewritten, ["home.light"]);
-        assert_eq!(report.failed, ["drawer.light"]);
+        assert_eq!(report.failed, ["strip.light"]);
         assert_eq!(report.total, 3);
     }
 
@@ -1077,7 +1077,7 @@ mod tests {
                 "home",
                 GoldenVerdict::CaptureFailed("unimplemented: home".into()),
             ),
-            outcome("drawer", GoldenVerdict::MissingBaseline),
+            outcome("strip", GoldenVerdict::MissingBaseline),
             outcome(
                 "hosts",
                 GoldenVerdict::Different {
@@ -1092,7 +1092,7 @@ mod tests {
         ];
         let report = judge(&outcomes, true);
         assert_eq!(report.unimplemented, ["home.light"]);
-        assert_eq!(report.failed, ["drawer.light", "hosts.light", "you.light"]);
+        assert_eq!(report.failed, ["strip.light", "hosts.light", "you.light"]);
         assert_eq!(report.total, 5);
     }
 
@@ -1377,7 +1377,6 @@ mod tests {
         );
         for id in [
             "probe",
-            "drawer",
             "finished",
             "stale",
             "codex-approval",

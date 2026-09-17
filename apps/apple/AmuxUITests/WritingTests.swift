@@ -323,12 +323,8 @@ final class WritingTests: JourneyCase {
                        "a cancelled deletion left the conversation anyway")
 
         // MARK: The Codex agent, which offers what a terminal session cannot.
-        press(app, "conversation.drawer")
-        waitFor(app, "drawer.row.\(codex)", "the drawer does not hold the other agent")
-        press(app, "drawer.row.\(codex)")
-        try waitUntil(runner, "the drawer did not open the other agent's conversation") {
-            self.said($0, "conversation")?.value == codex
-        }
+        backToAgents(app)
+        openFromAgents(app, codex, "the Agents list did not open the other agent's conversation")
         waitFor(app, "composer", "the Codex conversation offered nowhere to write")
 
         // MARK: A command, raised by a slash and sent as a token.

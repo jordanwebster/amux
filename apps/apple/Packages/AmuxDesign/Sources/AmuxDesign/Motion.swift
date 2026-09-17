@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// A static namespace rather than a field on `Design`, for the same reason
 /// `Glass` is one: a skin decides colour, type and how a surface separates
-/// itself from the ground, and none of those answers how long a drawer takes
+/// itself from the ground, and none of those answers how long a card takes
 /// to open. Nothing about a palette implies a duration.
 ///
 /// Two curves and one tempo, because a design that moves at three unrelated

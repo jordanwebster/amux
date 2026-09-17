@@ -444,10 +444,10 @@ final class AccountsTests: JourneyCase {
         ])
         waitFor(app, "ask.allow", "the agent's question never reached the phone")
         record["waitingWhileOnScreen"] = try called("ask.allow")
-        // Out of the conversation the way the app offers: the fleet over it,
-        // and the foot of that leads everywhere else.
-        press(app, "conversation.drawer")
-        press(app, "drawer.you")
+        // Out of the conversation the way the app offers: back to the Agents
+        // list, whose tab bar leads everywhere else.
+        backToAgents(app)
+        pressTab(app, "You")
 
         // Now the other account is on screen, and the work one is not.
         try selectAccount(Who.personal)

@@ -1364,8 +1364,8 @@
       {"literal": "\"conversation\"", "context": ".identified(\"conversation\", value: model.agent.description)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"ellipsis\"", "context": "GlassIcon(glyph: \"ellipsis\", size: 36)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"conversation.overflow\"", "context": ".identified(\"conversation.overflow\", label: \"More\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"sidebar.left\"", "context": "Image(systemName: \"sidebar.left\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
-      {"literal": "\"conversation.drawer\"", "context": ".identified(\"conversation.drawer\", label: \"Agents\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
+      {"literal": "\"chevron.left\"", "context": "Image(systemName: \"chevron.left\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
+      {"literal": "\"conversation.back\"", "context": ".identified(\"conversation.back\", label: \"Back\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
       {"literal": "\"conversation.subject\"", "context": "\"conversation.subject\", label: \"\\(subject.name), \\(subject.place)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"+\\(changes.insertions)\"", "context": "private var insertions: String { \"+\\(changes.insertions)\" }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\u{2212}\\(changes.deletions)\"", "context": "private var deletions: String { \"\\u{2212}\\(changes.deletions)\" }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -1430,20 +1430,6 @@
       {"literal": "\"/\"", "context": "let parts = file.path.split(separator: \"/\")", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
       {"literal": "\"/\"", "context": "return parts.count >= 2 ? parts.suffix(2).joined(separator: \"/\") : name", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
       {"literal": "\"review.back\"", "context": "BackLink(subject, identifier: \"review.back\") { actions(.back) }", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1}
-    ],
-    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift": [
-      {"literal": "\"drawer\"", "context": ".identified(\"drawer\", value: current?.description ?? \"none\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.title\"", "context": ".identified(\"drawer.title\", value: \"amux\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true, size: 30)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.newAgent\"", "context": ".identified(\"drawer.newAgent\", label: \"New Agent\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.row.\\(row.id)\"", "context": "\"drawer.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
-      {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"externaldrive.connected.to.line.below\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"drawer.hosts\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"person.crop.circle\"", "context": "footLink(\"person.crop.circle\", \"You\", \"drawer.you\") { actions(.you) }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"drawer.you\"", "context": "footLink(\"person.crop.circle\", \"You\", \"drawer.you\") { actions(.you) }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"drawer.online\"", "context": ".identified(\"drawer.online\", value: online)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RemoveAccount.swift": [
       {"literal": "\"remove.confirm\"", "context": ".identified(\"remove.confirm\", label: \"Remove\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1773,9 +1759,6 @@
       {"literal": "\"provider-error\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"transcript.exploration\"", "context": "\"transcript.exploration\", label: \"\\(counts), \\(anchor)\",", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
-      {"literal": "\"drawer\"", "context": "public static let drawer = \"drawer\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
-    ],
     "apps/apple/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift": [
       {"literal": "\"amux\"", "context": "public static let scheme = \"amux\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pair\"", "context": "case \"pair\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -2017,7 +2000,6 @@
       {"literal": "\"composer-accessibility\"", "context": "Built(.typing, \"composer-accessibility\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home-unreadable\"", "context": "Built(.home, \"home-unreadable\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home-quiet\"", "context": "Built(.homeQuiet, \"home-quiet\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"drawer\"", "context": "Built(.drawer, \"drawer\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"run\"", "context": "Built(.run, \"run\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"host-lost\"", "context": "Built(.run, \"host-lost\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"typing\"", "context": "Built(.typing, \"typing\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2070,7 +2052,6 @@
       {"literal": "\"probe\"", "context": "Fixture(id: \"probe\", screen: .probe),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home\"", "context": "Fixture(id: \"home\", screen: .home) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home-quiet\"", "context": "Fixture(id: \"home-quiet\", screen: .homeQuiet) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"drawer\"", "context": "Fixture(id: \"drawer\", screen: .drawer) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"run\"", "context": "Fixture(id: \"run\", screen: .run) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"run-live\"", "context": "Fixture(id: \"run-live\", screen: .runLive) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"voices\"", "context": "Fixture(id: \"voices\", screen: .voices) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},

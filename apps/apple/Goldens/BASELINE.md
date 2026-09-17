@@ -84,10 +84,6 @@ approved presentation.
 
 Added state using the `probe` fixture. The harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists. It follows the same visual system as its parent screen.
 
-## drawer
-
-Added state using the `drawer` fixture. The drawer is a state of the home screen the design has no capture of. It follows the same visual system as its parent screen.
-
 ## home
 
 Reference-backed capture of `home` using the `home` fixture. No visual departure is accepted.

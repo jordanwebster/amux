@@ -44,8 +44,8 @@ final class ClaudeSessionsTests: JourneyCase {
         try prompt(app, runner, agent: createdID, text: "Created SDK prompt", reply: "The SDK session received your prompt.")
         record["createdConversation"] = try reading(runner, createdID, layer: "claude_sdk")
 
-        press(app, "conversation.drawer")
-        press(app, "drawer.row.\(runner.agent)")
+        backToAgents(app)
+        openFromAgents(app, runner.agent, "the existing SDK agent did not open")
         waitFor(app, "composer", "the existing SDK agent has no composer")
         try prompt(app, runner, agent: runner.agent, text: "Existing SDK prompt", reply: "The SDK session received your prompt.")
         record["sdkConversation"] = try reading(runner, runner.agent, layer: "claude_sdk")
@@ -60,8 +60,8 @@ final class ClaudeSessionsTests: JourneyCase {
         }, "the SDK model change was not reported back to the phone")
         record["sdkModel"] = said(try declared(runner), "composer.model")?.value ?? ""
 
-        press(app, "conversation.drawer")
-        press(app, "drawer.row.\(pty)")
+        backToAgents(app)
+        openFromAgents(app, pty, "the existing PTY agent did not open")
         waitFor(app, "composer", "the existing PTY agent has no composer")
         try prompt(app, runner, agent: pty, text: "Existing PTY prompt", reply: "The PTY session received your prompt.")
         record["ptyConversation"] = try reading(runner, pty, layer: "claude_pty")
@@ -82,8 +82,8 @@ final class ClaudeSessionsTests: JourneyCase {
         XCTAssertTrue(NSDictionary(dictionary: try observe(control, pty)).isEqual(to: ptyBefore))
 
         // A directory that does not exist is refused by normal host validation.
-        press(app, "conversation.drawer")
-        press(app, "drawer.newAgent")
+        backToAgents(app)
+        press(app, "home.newAgent")
         waitFor(app, "new-agent", "New Agent did not reopen")
         press(app, "new-agent.directory")
         waitFor(app, "new-agent.browse", "the directory chooser did not open")

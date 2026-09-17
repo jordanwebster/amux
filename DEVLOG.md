@@ -1,3 +1,17 @@
+2026-09-17 — **A conversation has a back arrow instead of a drawer.** The
+conversation's pill opened a drawer listing the fleet (and a rightward drag
+anywhere opened it too). The drawer is gone: the pill's leading control is now
+a back chevron (spoken "Back") that returns to where the conversation was
+opened from — the Agents list, or the parent for an agent opened from its
+parent — and the swipe from the left edge still does the same. Switching agents
+or reaching Hosts and You now goes through the Agents list and its tab bar. The
+drawer's views, gesture, shell state, recorded state, golden and unit tests are
+removed; UI tests that used it navigate back to Agents instead. The home
+journey's drawer step now opens a conversation and returns by the chevron and
+by the edge swipe. Since a conversation can no longer stay open behind the
+Hosts tab, the hosts journey now proves the stream is let go when the
+conversation is left, before the machine's key is revoked.
+
 2026-09-17 — **The top of a chat rests below the header.** The transcript
 ignores the top safe area so its soft edge fades behind the status bar, which
 also removed the scroll view's top inset: scrolled fully up, the first row sat

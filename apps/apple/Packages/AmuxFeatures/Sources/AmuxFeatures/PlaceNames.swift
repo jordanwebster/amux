@@ -2,8 +2,8 @@ import Foundation
 
 /// How a machine and a directory are written where there is one line for them.
 ///
-/// One formatter for every such line — the conversation's pill, the rows on
-/// the home and the rows in the drawer — so an agent is placed the same way
+/// One formatter for every such line — the conversation's pill and the rows on
+/// the home — so an agent is placed the same way
 /// wherever it is listed. The full names are never lost: VoiceOver reads them,
 /// and the conversation's place sheet shows them whole.
 public enum PlaceNames {

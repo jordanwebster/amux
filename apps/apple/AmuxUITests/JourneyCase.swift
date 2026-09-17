@@ -504,6 +504,25 @@ class JourneyCase: XCTestCase {
         XCTFail("\(complaint); \(identifier) is still on screen")
     }
 
+    /// Leaves the conversation on show by its back chevron, which is the way
+    /// out a conversation offers, and waits until the Agents list is the
+    /// screen with its tab bar back under it.
+    func backToAgents(_ app: XCUIApplication) {
+        press(app, "conversation.back")
+        waitForNo(app, "conversation", "the back chevron did not leave the conversation")
+        waitFor(app, "tab.agents", "leaving the conversation did not return to the Agents list")
+    }
+
+    /// Opens one agent's conversation from the Agents list and waits until it
+    /// is that agent's conversation on show.
+    func openFromAgents(_ app: XCUIApplication, _ agent: String, _ complaint: String) {
+        waitFor(app, "home.row.\(agent)", "\(complaint): the Agents list does not hold \(agent)")
+        press(app, "home.row.\(agent)")
+        XCTAssertTrue(
+            waitUntil { self.value(app, "conversation") == agent },
+            "\(complaint); the conversation on show is \(value(app, "conversation") ?? "none")")
+    }
+
     func pressTab(_ app: XCUIApplication, _ title: String) {
         let button = app.descendants(matching: .any)
             .matching(identifier: "tab.\(title.lowercased())").firstMatch

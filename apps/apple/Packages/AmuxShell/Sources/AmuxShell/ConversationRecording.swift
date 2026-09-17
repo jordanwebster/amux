@@ -38,10 +38,5 @@ public final class ConversationRecording {
     /// already set aside.
     public var aside: Set<AgentId> = []
 
-    /// What the drawer is called where a recording names what is open. It is
-    /// not one of the conversation's own overlays — it is the fleet borrowing
-    /// the screen — so it is named beside them rather than among them.
-    public static let drawer = "drawer"
-
     public init() {}
 }

@@ -6,8 +6,9 @@ import SwiftUI
 /// nothing and navigates nowhere: it says what the person did and whoever
 /// presented it takes them there.
 public enum ConversationAction: Equatable, Sendable {
-    /// The fleet, asked for from inside the conversation.
-    case openDrawer
+    /// Leave the conversation for wherever it was opened from, which is the
+    /// Agents list unless it is an agent reached from its parent.
+    case back
     /// The changes this turn made, asked for from the chip.
     case openChanges
     /// Everything a conversation can be done to rather than said to.
@@ -225,8 +226,9 @@ public struct ConversationSubject: Equatable, Sendable {
 /// the settings screen beside it; more to the point, a bar is a strip of screen
 /// permanently spent on a name that never changes. So the feed runs to the top
 /// of the display, the platform's own scroll edge effect frosts what passes
-/// under the chrome, and two glass controls float over it. The left one is the
-/// drawer, which is how you leave.
+/// under the chrome, and two glass controls float over it. The way out is the
+/// back chevron at the leading edge of the left one, or the platform's swipe
+/// from the edge.
 public struct Conversation: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.design) private var design
@@ -443,7 +445,7 @@ public struct Conversation: View {
     /// Goes somewhere else, keyboard first.
     ///
     /// The composer is often being written in when a person reaches for the
-    /// patch, a child or the fleet, and the keyboard it raised does not belong
+    /// patch, a child or the way back, and the keyboard it raised does not belong
     /// to any of those. Left standing it outlives this screen and covers the
     /// next one — including this one on the way back, which is rebuilt while
     /// the keys are already there and so is laid out as though the bottom of
@@ -508,24 +510,26 @@ public struct Conversation: View {
     /// The agent, its machine and its directory, on one floating surface with
     /// the way out on its leading edge.
     ///
-    /// The drawer control is inside the pill rather than beside it because the
+    /// The back chevron is inside the pill rather than beside it because the
     /// two belong together: the pill says which conversation you are in, and
-    /// the control is how you go to another one.
+    /// the chevron is how you leave it for the fleet. It is a bare chevron
+    /// without the name of where it goes, because the pill beside it already
+    /// spends the width on this agent's name.
     private var pill: some View {
         Group {
             if typeSize.isAccessibilitySize {
                 accessiblePill
             } else {
                 HStack(spacing: 8) {
-                    Button { leaving(.openDrawer) } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 14, weight: .semibold))
+                    Button { leaving(.back) } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(design.inkMuted.color)
                             .thumbTarget(x: 15, y: 15)
                     }
                     .buttonStyle(.amuxControl)
-                    .accessibilityLabel("Agents")
-                    .identified("conversation.drawer", label: "Agents")
+                    .accessibilityLabel("Back")
+                    .identified("conversation.back", label: "Back")
                     .reclaimingThumbTarget(x: 15, y: 15)
                     placeButton(grow: 8) { subjectLabel }
                 }
@@ -542,16 +546,16 @@ public struct Conversation: View {
 
     private var accessiblePill: some View {
         HStack(spacing: 10) {
-            Button { leaving(.openDrawer) } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 17, weight: .medium))
+            Button { leaving(.back) } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(design.inkMuted.color)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.amuxControl)
-            .accessibilityLabel("Agents")
-            .identified("conversation.drawer", label: "Agents")
+            .accessibilityLabel("Back")
+            .identified("conversation.back", label: "Back")
             placeButton(grow: 0) { subjectLabel }.padding(.trailing, 14)
         }
         .padding(.leading, 2)
@@ -576,7 +580,7 @@ public struct Conversation: View {
 
     /// The name and the short place, pressed for the long ones.
     /// `grow` reaches the pill's own edges, so the whole height of the pill
-    /// beside the drawer control answers the press without the pill growing.
+    /// beside the back chevron answers the press without the pill growing.
     private func placeButton<Label: View>(
         grow: CGFloat, @ViewBuilder label: () -> Label
     ) -> some View {

@@ -258,12 +258,7 @@ private struct ShellTabBar: View {
     }
 }
 
-/// One agent's conversation with the drawer over it.
-///
-/// The drawer is drawn here rather than inside the conversation because it is
-/// not part of the conversation: it is the fleet, borrowing the screen. Wrapped
-/// this way the page underneath is never torn down, so closing the drawer
-/// returns to the same conversation at the position it was left at.
+/// One agent's conversation, and everything it asks of the app around it.
 private struct ConversationPage: View {
     let agent: AgentId
     let router: Router
@@ -275,13 +270,6 @@ private struct ConversationPage: View {
     /// to the machine this conversation runs on, which is nothing a
     /// conversation or a router can do.
     let actions: @MainActor (ShellAction) -> Void
-    /// Whose screen this is while it is out: view state, because a drawer is
-    /// something this page is doing and not somewhere the app has gone.
-    ///
-    /// Seeded rather than always closed, because a replay of a report taken
-    /// with the fleet out has to come back with the fleet out — and a piece of
-    /// view state can only be decided from outside it as it is built.
-    @State private var open: Bool
     @Environment(\.scenePhase) private var scenePhase
     @State private var dictation = SpeechDictation()
     /// The system's own pickers, asked for from the plus. They are presented
@@ -301,128 +289,123 @@ private struct ConversationPage: View {
         self.stores = stores
         self.recording = recording
         self.actions = actions
-        _open = State(initialValue: recording?.showing[agent] == ConversationRecording.drawer)
     }
 
     var body: some View {
-        DrawerOverlay(open: $open, drawer: drawer) {
-            Conversation(
-                model: stores.conversation(agent),
-                subject: ConversationSubject(agent: agent, in: stores.fleet),
-                showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
-                resting: recording?.reading[agent],
-                opening: recording.map { recording in
-                    { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
-                },
-                reading: recording.map { recording in
-                    { @MainActor @Sendable in recording.read?(agent, $0) }
-                },
-                naming: { stores.fleet.name(of: $0) },
-            ) { action in
-                switch action {
-                case .openDrawer: open = true
-                case .openChanges: router.open(.changes(agent))
-                // The overflow opens over the conversation, which is the
-                // conversation's own doing; nothing is pushed.
-                case .overflow: break
-                // Asking again means asking this phone's own link to the
-                // relay, not the machine: nothing on the far side of a
-                // connection that is down can be asked anything. It shortens
-                // the wait the connection is already in and nothing more, so
-                // pressing it repeatedly is one attempt.
-                case .retry: stores.retryNow()
-                // Not a retry. The machine is answering the relay perfectly
-                // well and the relay will not carry anything to it on this
-                // account, so what is offered is the subscription and the
-                // page that sells it is the one every other offer opens.
-                case .subscribe: actions(.subscribe)
-                // Answering is the one thing on this screen that leaves the
-                // phone. The panel spells the command, because only it knows
-                // which ask this is and which layer raised it; the bundle
-                // sends it and keeps the operation, so the host's reply
-                // belongs to this conversation.
-                case .answer(let panel, let decision):
-                    stores.answer(panel, decision, of: agent)
-                // A child is pushed on top of its parent rather than replacing
-                // it, so answering the child and coming back finds the parent
-                // where it was left — the page underneath is never torn down.
-                case .openChild(let child):
-                    stores.fleet.opened(child)
-                    router.open(.conversation(child))
-                // Writing to an agent is the other thing on this screen that
-                // leaves the phone. The bundle decides whether the layer will
-                // take the message now or has to hold it, because the bundle
-                // has the gate; the screen only says that the person pressed.
-                case .send:
-                    dictation.stop()
-                    stores.send(to: agent)
-                case .interrupt: stores.interrupt(agent)
-                // Taking the held message back is a write too: the host is
-                // holding it and only the host can stop holding it. The
-                // bundle puts the text in the field before it dispatches, so
-                // a refusal leaves the paragraph in front of whoever wrote it.
-                case .unqueue: stores.unqueue(agent)
-                // Opening the plus is the conversation's own state; the two
-                // tiles inside it are the system's screens, raised from here.
-                // Permissions is neither: it opens as a card in the
-                // conversation, which the conversation has already done.
-                case .attaching(.photo): pickingPhoto = true
-                case .attaching(.file): pickingFile = true
-                case .attach, .attaching(.permissions): break
-                case .dictate: dictation.toggle(stores.conversation(agent))
-                case .dictationSettings:
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                // Picking a command is a change to the draft the conversation
-                // already made, and the draft is what a send carries: there is
-                // nothing here to do about it that sending will not do.
-                case .picking: break
-                // How this agent runs is the layer's to decide and the host's
-                // to keep. The bundle spells each change in the provider's own
-                // vocabulary — Claude has a mode, Codex has a pair of axes —
-                // and refuses one the layer said it would refuse, which is the
-                // same sentence the sheet is already printing.
-                case .setting(let change):
-                    switch change {
-                    case .model(let model): stores.setModel(model, of: agent)
-                    case .effort(let effort): stores.setEffort(effort, of: agent)
-                    case .permission(let choice): stores.setPermission(choice, of: agent)
-                    }
-                // Opening the sheet is the conversation's own state; there is
-                // nothing outside it that has to know.
-                case .openSettings: break
-                // Copying is the one thing on this screen that goes to the
-                // system rather than to a host. The address travels with the
-                // choice, so what lands on the clipboard is the string the row
-                // showed and not a second spelling made here.
-                case .overflowing(let choice):
-                    switch choice {
-                    case .copyAddress(let address): copy(address)
-                    case .rename, .delete: break
-                    }
-                case .renamed(let name): stores.rename(name, of: agent)
-                // Asking is not the same as it having happened. The write goes
-                // out and the screen stays; leaving is what the confirmation
-                // below does, when the host says the agent is gone.
-                case .deleteAgent: stores.delete(agent)
+        Conversation(
+            model: stores.conversation(agent),
+            subject: ConversationSubject(agent: agent, in: stores.fleet),
+            showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
+            resting: recording?.reading[agent],
+            opening: recording.map { recording in
+                { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
+            },
+            reading: recording.map { recording in
+                { @MainActor @Sendable in recording.read?(agent, $0) }
+            },
+            naming: { stores.fleet.name(of: $0) },
+        ) { action in
+            switch action {
+            // The same place the edge swipe goes: the page this one was
+            // pushed from, which is the Agents list for any conversation
+            // not reached from its parent.
+            case .back: router.pop()
+            case .openChanges: router.open(.changes(agent))
+            // The overflow opens over the conversation, which is the
+            // conversation's own doing; nothing is pushed.
+            case .overflow: break
+            // Asking again means asking this phone's own link to the
+            // relay, not the machine: nothing on the far side of a
+            // connection that is down can be asked anything. It shortens
+            // the wait the connection is already in and nothing more, so
+            // pressing it repeatedly is one attempt.
+            case .retry: stores.retryNow()
+            // Not a retry. The machine is answering the relay perfectly
+            // well and the relay will not carry anything to it on this
+            // account, so what is offered is the subscription and the
+            // page that sells it is the one every other offer opens.
+            case .subscribe: actions(.subscribe)
+            // Answering is the one thing on this screen that leaves the
+            // phone. The panel spells the command, because only it knows
+            // which ask this is and which layer raised it; the bundle
+            // sends it and keeps the operation, so the host's reply
+            // belongs to this conversation.
+            case .answer(let panel, let decision):
+                stores.answer(panel, decision, of: agent)
+            // A child is pushed on top of its parent rather than replacing
+            // it, so answering the child and coming back finds the parent
+            // where it was left — the page underneath is never torn down.
+            case .openChild(let child):
+                stores.fleet.opened(child)
+                router.open(.conversation(child))
+            // Writing to an agent is the other thing on this screen that
+            // leaves the phone. The bundle decides whether the layer will
+            // take the message now or has to hold it, because the bundle
+            // has the gate; the screen only says that the person pressed.
+            case .send:
+                dictation.stop()
+                stores.send(to: agent)
+            case .interrupt: stores.interrupt(agent)
+            // Taking the held message back is a write too: the host is
+            // holding it and only the host can stop holding it. The
+            // bundle puts the text in the field before it dispatches, so
+            // a refusal leaves the paragraph in front of whoever wrote it.
+            case .unqueue: stores.unqueue(agent)
+            // Opening the plus is the conversation's own state; the two
+            // tiles inside it are the system's screens, raised from here.
+            // Permissions is neither: it opens as a card in the
+            // conversation, which the conversation has already done.
+            case .attaching(.photo): pickingPhoto = true
+            case .attaching(.file): pickingFile = true
+            case .attach, .attaching(.permissions): break
+            case .dictate: dictation.toggle(stores.conversation(agent))
+            case .dictationSettings:
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
                 }
+            // Picking a command is a change to the draft the conversation
+            // already made, and the draft is what a send carries: there is
+            // nothing here to do about it that sending will not do.
+            case .picking: break
+            // How this agent runs is the layer's to decide and the host's
+            // to keep. The bundle spells each change in the provider's own
+            // vocabulary — Claude has a mode, Codex has a pair of axes —
+            // and refuses one the layer said it would refuse, which is the
+            // same sentence the sheet is already printing.
+            case .setting(let change):
+                switch change {
+                case .model(let model): stores.setModel(model, of: agent)
+                case .effort(let effort): stores.setEffort(effort, of: agent)
+                case .permission(let choice): stores.setPermission(choice, of: agent)
+                }
+            // Opening the sheet is the conversation's own state; there is
+            // nothing outside it that has to know.
+            case .openSettings: break
+            // Copying is the one thing on this screen that goes to the
+            // system rather than to a host. The address travels with the
+            // choice, so what lands on the clipboard is the string the row
+            // showed and not a second spelling made here.
+            case .overflowing(let choice):
+                switch choice {
+                case .copyAddress(let address): copy(address)
+                case .rename, .delete: break
+                }
+            case .renamed(let name): stores.rename(name, of: agent)
+            // Asking is not the same as it having happened. The write goes
+            // out and the screen stays; leaving is what the confirmation
+            // below does, when the host says the agent is gone.
+            case .deleteAgent: stores.delete(agent)
             }
-            // Replacing one conversation route with another keeps the same
-            // destination type. Key its ephemeral overlay and scroll state to
-            // the agent so a long transcript never inherits the position and
-            // geometry callbacks of the conversation it replaced. Drafts and
-            // transcript data live in their per-agent stores and survive.
-            .id(agent)
         }
+        // Replacing one conversation route with another keeps the same
+        // destination type. Key its ephemeral overlay and scroll state to
+        // the agent so a long transcript never inherits the position and
+        // geometry callbacks of the conversation it replaced. Drafts and
+        // transcript data live in their per-agent stores and survive.
+        .id(agent)
         // A conversation has no bar. The feed runs to the top of the display
-        // and the way out is the drawer control on its own chrome.
+        // and the way out is the back chevron on its own chrome.
         .toolbar(.hidden, for: .navigationBar)
-        // The fleet over the conversation is this page's state rather than the
-        // conversation's, so it says for itself that it is out.
-        .onChange(of: open) { _, out in
-            recording?.opened?(agent, out ? ConversationRecording.drawer : nil)
-        }
         .onDisappear { dictation.stop() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { dictation.stop() }
@@ -485,25 +468,6 @@ private struct ConversationPage: View {
                 agent: agent, kind: .file, name: url.lastPathComponent,
                 mime: type?.preferredMIMEType ?? "application/octet-stream"),
             bytes: bytes)
-    }
-
-    private var drawer: AgentsDrawer {
-        AgentsDrawer(model: stores.fleet, hosts: stores.hosts, current: agent) { action in
-            open = false
-            switch action {
-            case .open(let other):
-                stores.fleet.opened(other)
-                router.show(.conversation(other))
-            // The form says its way back is Agents, not the conversation it
-            // covered. Replace that conversation so a successful creation
-            // also leaves one conversation above the fleet rather than a
-            // hidden trail of every place creation was entered from.
-            case .newAgent: router.show(.newAgent)
-            case .hosts: router.select(.hosts)
-            case .you: router.select(.you)
-            case .dismiss: break
-            }
-        }
     }
 }
 

@@ -11,7 +11,6 @@ public enum Screen: String, Sendable, CaseIterable, Codable {
     // 1 · Opening the app
     case home
     case homeQuiet = "home-quiet"
-    case drawer
 
     // 2 · A conversation
     case run

@@ -206,17 +206,12 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(element(app, "review").waitForExistence(timeout: waiting),
                       "pressing the changes chip did not go to the changes")
         photograph(app, "conversation-changes")
-        // The page's own button and nothing else. A drag from the left edge is
-        // the system's way back, but it is also the drawer's way out, and the
-        // drawer wins: the fleet slides over the conversation and everything
-        // asked about it afterwards is asked of a screen nobody is looking at.
+        // The page's own button, which is the way back a person can see.
         XCTAssertTrue(element(app, "review.back").waitForExistence(timeout: waiting),
                       "the changes have no way back")
         press(app, "review.back")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "coming back from the changes did not come back to the conversation")
-        XCTAssertTrue(identifiers(app, startingWith: "drawer.row.").isEmpty,
-                      "coming back from the changes left the fleet over the conversation")
 
         // MARK: One message that goes, and one tried before it is answered.
         //
@@ -311,26 +306,18 @@ final class ConversationTests: XCTestCase {
                       + "goes it says \(footSays(app))")
         field.tap()
         field.typeText(Self.halfWritten)
-        // The keyboard down, by the app's own way of putting it down: reaching
-        // for the fleet from inside a conversation puts it down before it
-        // slides the drawer out. It has to go down before anything is
-        // photographed — it is the system's window and appears in no report's
-        // picture, but while it is up it takes a third of the display away
-        // from the feed, and a replay without one would lay the screen out
-        // differently.
-        press(app, "conversation.drawer")
-        XCTAssertTrue(element(app, "drawer").waitForExistence(timeout: waiting),
-                      "reaching for the fleet did not open the drawer")
-        press(app, "drawer.scrim")
-        XCTAssertTrue(waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
-                      "the drawer would not close again")
-        settleDrawer()
-        // Out to the other conversation and back through the source-designed
-        // drawer. What comes back has to be what was typed: a draft belongs to
-        // the conversation and not to the field it was typed into.
-        press(app, "conversation.drawer")
+        // Out to the other conversation and back, through the Agents list.
+        // Leaving by the back chevron puts the keyboard down first, which is
+        // the app's own way of putting it down; it has to be down before
+        // anything is photographed — it is the system's window and appears in
+        // no report's picture, but while it is up it takes a third of the
+        // display away from the feed, and a replay without one would lay the
+        // screen out differently. What comes back has to be what was typed: a
+        // draft belongs to the conversation and not to the field it was typed
+        // into.
+        backToAgents(app)
         chooseConversation(app, runner.ended, "leaving did not reach the other conversation")
-        press(app, "conversation.drawer")
+        backToAgents(app)
         chooseConversation(app, runner.agent, "coming back did not lead to the conversation")
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
                       "the half-written message did not survive leaving the conversation; the "
@@ -364,7 +351,7 @@ final class ConversationTests: XCTestCase {
                       "the overflow would not close")
 
         // MARK: A run that ended.
-        press(app, "conversation.drawer")
+        backToAgents(app)
         // Opened first and ended while it is open, which is how somebody would
         // see a run end: they are reading it when it stops.
         chooseConversation(
@@ -387,7 +374,7 @@ final class ConversationTests: XCTestCase {
         // Back to the conversation that is still running: the one that ended
         // has nothing to say about a machine going away, because it has
         // already said the only thing it has to say.
-        press(app, "conversation.drawer")
+        backToAgents(app)
         chooseConversation(
             app, runner.agent, "reopening the running agent did not lead to its conversation")
         // The turn's changes remain available from the compact header chip;
@@ -1045,7 +1032,7 @@ final class ConversationTests: XCTestCase {
         var top = page.minY
         var bottom = page.maxY
         // The pill and changes chip float over the top of the feed.
-        for name in ["conversation.drawer", "conversation.changes"] {
+        for name in ["conversation.back", "conversation.changes"] {
             let chrome = element(app, name)
             guard chrome.exists, chrome.frame.height > 0 else { continue }
             top = max(top, chrome.frame.maxY)
@@ -1160,19 +1147,29 @@ final class ConversationTests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(2))
     }
 
-    /// Selects a conversation from an already-open drawer and waits until the
-    /// sideways route replacement and the drawer's close animation both land.
+    /// Leaves the conversation on show by its back chevron and waits for the
+    /// Agents list to be the screen.
+    private func backToAgents(_ app: XCUIApplication) {
+        press(app, "conversation.back")
+        XCTAssertTrue(
+            waitUntil { self.element(app, "home").exists && !self.element(app, "conversation").exists },
+            "the back chevron did not return to the Agents list")
+        settleNavigation()
+    }
+
+    /// Opens a conversation from the Agents list and waits until the push has
+    /// landed on that agent.
     private func chooseConversation(
         _ app: XCUIApplication, _ agent: String, _ complaint: String
     ) {
-        press(app, "drawer.row.\(agent)")
+        press(app, "home.row.\(agent)")
         XCTAssertTrue(
-            waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
-            "\(complaint); the drawer remained open")
-        settleDrawer()
+            waitUntil { self.value(app, "conversation") == agent },
+            "\(complaint); the conversation on show is \(value(app, "conversation") ?? "none")")
+        settleNavigation()
     }
 
-    private func settleDrawer() {
+    private func settleNavigation() {
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
     }
 

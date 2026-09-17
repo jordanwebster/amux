@@ -134,8 +134,8 @@ budget is one frame, so the same slack would double the number and report two
 frames for work that took one.
 
 The streaming and idle numbers are taken over the page the app pushes when
-somebody opens an agent, whole: the fleet's drawer over the conversation, and
-inside it the chrome, the transcript, the facts strip and the composer, with a
+somebody opens an agent, whole: the conversation's chrome, the transcript, the
+facts strip and the composer, with a
 session in the store so the box is really there. Nothing is a stand-in and
 nothing is left out. The container is what makes the stream a stream — it rests
 at its tail and follows it while rows arrive, and a row appended below the fold
