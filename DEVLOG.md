@@ -1,3 +1,8 @@
+2026-09-17 — **Mobile profile tests wait for the boundary they prove.**
+The account-switch test waits for its injected inventory result instead of an
+unrelated retired store command, while the off-screen attention test observes
+the open conversation's needs-you gate before moving its account off screen.
+
 2026-09-17 — **End-to-end fixtures do not consult the live update feed.**
 Ordinary scenarios use an inert loopback manifest URL, including fixtures made
 from the worktree template; the dedicated update scenario still owns a local

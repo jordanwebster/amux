@@ -2963,7 +2963,10 @@ async fn mobile_profiles_switching_drops_every_late_result_from_the_previous_acc
     let dropped = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let ledger = owned_json(unsafe { amux_app_late_results(handle) });
-            if ledger["dropped"].as_u64().unwrap_or(0) > 0 {
+            if ledger["kinds"]
+                .as_array()
+                .is_some_and(|kinds| kinds.contains(&json!("Inventory")))
+            {
                 return ledger;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -3204,11 +3207,7 @@ async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_sc
     assert!(!reply.is_null());
     unsafe { amux_app_free(reply) };
     let waiting_on_screen = until(&mut receive, handle, "", |e| {
-        e["Fleet"]["agents"].as_array().is_some_and(|agents| {
-            agents
-                .iter()
-                .any(|agent| agent["attention"]["attention"] == "needs_you")
-        })
+        e["Session"]["agent"] == json!(agent.id) && e["Session"]["gate"]["value"] == "needs_you"
     })
     .await;
     println!("on screen: {waiting_on_screen}");
