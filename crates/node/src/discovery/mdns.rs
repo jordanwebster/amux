@@ -206,12 +206,7 @@ fn service_info(advert: &Advertisement) -> Result<ServiceInfo, DiscoveryError> {
         .map(SocketAddr::ip)
         .filter(|ip| !ip.is_unspecified())
         .collect::<Vec<IpAddr>>();
-    let properties = [
-        ("v", advert.version.to_string()),
-        // Hyphenated: the iPhone app parses this with Foundation's
-        // `UUID(uuidString:)`, which rejects the 32-digit simple form.
-        ("hid", advert.host_id.hyphenated().to_string()),
-    ];
+    let properties = super::txt_properties(advert);
     let hostname = format!("amux-{}.local.", advert.host_id.simple());
     let service = ServiceInfo::new(
         SERVICE_TYPE,

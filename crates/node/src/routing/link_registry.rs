@@ -18,9 +18,9 @@ use tokio::sync::{Notify, RwLock, mpsc};
 use wire::pb;
 
 use crate::link::LinkCarrier as NativeLinkCarrier;
-use crate::routing::ConnectRole;
 use crate::routing::types::LinkId;
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
+use crate::routing::{ConnectRole, Incarnation};
 use crate::{HostId, Tier, audit};
 
 pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
@@ -64,6 +64,8 @@ pub(crate) struct LinkProperties {
     pub(crate) role: LinkRole,
     pub(crate) admission: LinkAdmission,
     pub(crate) carrier: LinkCarrier,
+    /// The life of the peer's runtime this link was opened by.
+    pub(crate) incarnation: Incarnation,
     pub(crate) direct_order: Option<DirectLinkOrder>,
 }
 
@@ -96,6 +98,7 @@ struct LinkWriter {
     role: LinkRole,
     admission: LinkAdmission,
     carrier: LinkCarrier,
+    incarnation: Incarnation,
     direct_order: Option<DirectLinkOrder>,
     native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
 }
@@ -107,6 +110,17 @@ pub(crate) enum LinkCloseRequest {
     OutgoingQueueFull,
     TrustReplaced,
     Superseded,
+}
+
+/// A link the registry accepted.
+pub(crate) struct Registration {
+    /// Receives the registry's requests to close this link.
+    pub(crate) close_rx: mpsc::Receiver<LinkCloseRequest>,
+    /// Direct links to the same peer this one superseded. They are gone from
+    /// the registry already and are asked to close, but their own tasks take
+    /// time to finish; whoever routes over links has to forget them now, or a
+    /// call in that gap picks a link nothing can open a stream on.
+    pub(crate) displaced: Vec<LinkId>,
 }
 
 impl LinkRegistry {
@@ -153,6 +167,7 @@ impl LinkRegistry {
                 role,
                 admission: LinkAdmission::PinnedKey,
                 carrier: LinkCarrier::Direct,
+                incarnation: crate::routing::Incarnation::random(),
                 direct_order: None,
             },
             advertised_snapshot,
@@ -180,6 +195,7 @@ impl LinkRegistry {
                 role,
                 admission,
                 carrier: LinkCarrier::Direct,
+                incarnation: crate::routing::Incarnation::random(),
                 direct_order: None,
             },
             advertised_snapshot,
@@ -189,6 +205,7 @@ impl LinkRegistry {
         .expect("test registration has no ordered direct duplicate")
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_with_details(
         &self,
         link: LinkId,
@@ -198,10 +215,35 @@ impl LinkRegistry {
         advertised_snapshot: &[HostId],
         native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
     ) -> Option<mpsc::Receiver<LinkCloseRequest>> {
+        self.register_displacing(
+            link,
+            host,
+            outgoing_tx,
+            properties,
+            advertised_snapshot,
+            native_carrier,
+        )
+        .await
+        .map(|registration| registration.close_rx)
+    }
+
+    /// Registers a link and names the direct links it superseded, or refuses
+    /// it where the same incarnation of the peer already holds a direct link
+    /// that wins against it.
+    pub(crate) async fn register_displacing(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        properties: LinkProperties,
+        advertised_snapshot: &[HostId],
+        native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
+    ) -> Option<Registration> {
         let LinkProperties {
             role,
             admission,
             carrier,
+            incarnation,
             direct_order,
         } = properties;
         let (close_tx, close_rx) = mpsc::channel(1);
@@ -226,15 +268,19 @@ impl LinkRegistry {
                         && writer.carrier == LinkCarrier::Direct
                         && writer.direct_order.is_some()
                 })
-                .map(|(id, writer)| (*id, writer.direct_order.unwrap()))
+                .map(|(id, writer)| (*id, writer.direct_order.unwrap(), writer.incarnation))
                 .collect::<Vec<_>>();
-            if duplicates
-                .iter()
-                .any(|(_, existing)| *existing == DirectLinkOrder::Preferred || *existing == order)
-            {
+            // A duplicate from the same incarnation is the same live process:
+            // a crossed dial, settled by keeping the preferred link. One from
+            // another incarnation belongs to a process that has since died, so
+            // it is replaced whichever direction either link was dialled in.
+            if duplicates.iter().any(|(_, existing, from)| {
+                *from == incarnation
+                    && (*existing == DirectLinkOrder::Preferred || *existing == order)
+            }) {
                 return None;
             }
-            for (id, _) in duplicates {
+            for (id, _, _) in duplicates {
                 if let Some(writer) = state.writers.remove(&id) {
                     displaced.push((id, writer));
                 }
@@ -277,11 +323,13 @@ impl LinkRegistry {
                 role,
                 admission,
                 carrier,
+                incarnation,
                 direct_order,
                 native_carrier,
             },
         );
         drop(state);
+        let displaced_ids = displaced.iter().map(|(id, _)| *id).collect();
         for (id, writer) in displaced {
             let _ = writer.close_tx.try_send(LinkCloseRequest::Superseded);
             writer.closed.notify_waiters();
@@ -292,7 +340,10 @@ impl LinkRegistry {
             audit::link_down(old.host.id, &link, "replaced");
         }
         audit::link_up(host.id, &link, role);
-        Some(close_rx)
+        Some(Registration {
+            close_rx,
+            displaced: displaced_ids,
+        })
     }
 
     /// Removes a link; if it was the last link to its peer, other links
@@ -749,6 +800,7 @@ mod tests {
         let peer = host(2);
         let fallback = link(2, 1);
         let preferred = link(2, 2);
+        let life = crate::routing::Incarnation::random();
 
         let (fallback_tx, _) = mpsc::channel(8);
         let mut fallback_close = registry
@@ -760,6 +812,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: LinkCarrier::Direct,
+                    incarnation: life,
                     direct_order: Some(DirectLinkOrder::Fallback),
                 },
                 &[],
@@ -769,24 +822,24 @@ mod tests {
             .expect("a lone fallback link is usable");
 
         let (preferred_tx, _) = mpsc::channel(8);
-        assert!(
-            registry
-                .register_with_details(
-                    preferred,
-                    peer.clone(),
-                    preferred_tx,
-                    LinkProperties {
-                        role: LinkRole::Peer,
-                        admission: LinkAdmission::PinnedKey,
-                        carrier: LinkCarrier::Direct,
-                        direct_order: Some(DirectLinkOrder::Preferred),
-                    },
-                    &[],
-                    None,
-                )
-                .await
-                .is_some()
-        );
+        let registration = registry
+            .register_displacing(
+                preferred,
+                peer.clone(),
+                preferred_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: LinkCarrier::Direct,
+                    incarnation: life,
+                    direct_order: Some(DirectLinkOrder::Preferred),
+                },
+                &[],
+                None,
+            )
+            .await
+            .expect("a preferred link supersedes a fallback");
+        assert_eq!(registration.displaced, vec![fallback]);
         assert_eq!(
             fallback_close.recv().await,
             Some(LinkCloseRequest::Superseded)
@@ -804,6 +857,7 @@ mod tests {
                         role: LinkRole::Peer,
                         admission: LinkAdmission::PinnedKey,
                         carrier: LinkCarrier::Direct,
+                        incarnation: life,
                         direct_order: Some(DirectLinkOrder::Fallback),
                     },
                     &[],
@@ -816,6 +870,97 @@ mod tests {
             registry.links_per_peer().await,
             vec![(Uuid::from_u128(2), 1)]
         );
+    }
+
+    fn direct(order: DirectLinkOrder, incarnation: Incarnation) -> LinkProperties {
+        LinkProperties {
+            role: LinkRole::Peer,
+            admission: LinkAdmission::PinnedKey,
+            carrier: LinkCarrier::Direct,
+            incarnation,
+            direct_order: Some(order),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_link_from_a_new_incarnation_replaces_the_old_one_in_either_direction() {
+        use DirectLinkOrder::{Fallback, Preferred};
+        for (held, arriving) in [
+            (Fallback, Fallback),
+            (Fallback, Preferred),
+            (Preferred, Fallback),
+            (Preferred, Preferred),
+        ] {
+            let registry = LinkRegistry::default();
+            let peer = host(2);
+            let dead = link(2, 1);
+            let (dead_tx, _) = mpsc::channel(8);
+            let mut dead_close = registry
+                .register_with_details(
+                    dead,
+                    peer.clone(),
+                    dead_tx,
+                    direct(held, Incarnation::random()),
+                    &[],
+                    None,
+                )
+                .await
+                .expect("a lone link is usable");
+
+            let (restarted_tx, _) = mpsc::channel(8);
+            let registration = registry
+                .register_displacing(
+                    link(2, 2),
+                    peer.clone(),
+                    restarted_tx,
+                    direct(arriving, Incarnation::random()),
+                    &[],
+                    None,
+                )
+                .await
+                .unwrap_or_else(|| panic!("{arriving:?} from a restart was refused by {held:?}"));
+            assert_eq!(registration.displaced, vec![dead]);
+            assert_eq!(dead_close.recv().await, Some(LinkCloseRequest::Superseded));
+            assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn one_incarnation_keeps_its_first_link_in_each_direction() {
+        for order in [DirectLinkOrder::Fallback, DirectLinkOrder::Preferred] {
+            let registry = LinkRegistry::default();
+            let peer = host(2);
+            let life = Incarnation::random();
+            let (first_tx, _) = mpsc::channel(8);
+            registry
+                .register_with_details(
+                    link(2, 1),
+                    peer.clone(),
+                    first_tx,
+                    direct(order, life),
+                    &[],
+                    None,
+                )
+                .await
+                .expect("a lone link is usable");
+
+            let (second_tx, _) = mpsc::channel(8);
+            assert!(
+                registry
+                    .register_with_details(
+                        link(2, 2),
+                        peer.clone(),
+                        second_tx,
+                        direct(order, life),
+                        &[],
+                        None
+                    )
+                    .await
+                    .is_none(),
+                "a second {order:?} link from the same process was accepted"
+            );
+            assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+        }
     }
 
     #[tokio::test]

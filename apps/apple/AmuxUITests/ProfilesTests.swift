@@ -60,7 +60,7 @@ final class ProfilesTests: JourneyCase {
         app = launch(runner, signedIn: false)
         XCTAssertTrue(waitUntil { (try? self.started()) == true },
                       "a phone with no account started no runtime of its own")
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         try door(runner, .init(kind: "pairByCode", host: cast.workstation, pin: try code()))
         waitFor(app, "home.row.\(runner.agent)", "what the machine is running never arrived")
         record["accountsBeforeSigningIn"] = try accounts()
@@ -70,15 +70,11 @@ final class ProfilesTests: JourneyCase {
                        "the machine this phone paired with reads \(paired)")
     }
 
-    /// Puts the machine on this network and hands over what a browser would
-    /// have resolved there. Said through the door because only the system may
-    /// browse, and a simulator's browser looks at this Mac's network.
-    private func handOverWhatIsOnTheNetwork() throws {
+    /// Puts the machine on this Mac's network, where the phone's own browser
+    /// finds it.
+    private func announce() throws {
         let answer = try control.ask(["Announce": ["daemon": runner.host]])
-        let advertised = try XCTUnwrap(
-            (answer["Ack"] as? [String: Any])?["found"] as? [String: Any],
-            "the runner announced nothing")
-        try door(runner, .init(kind: "found", hosts: [advertised]))
+        XCTAssertNotNil((answer["Ack"] as? [String: Any])?["found"], "the runner announced nothing")
     }
 
     // MARK: - The first account
@@ -109,7 +105,7 @@ final class ProfilesTests: JourneyCase {
         try door(runner, .init(kind: "connect", relay: runner.relay, token: token, user: user))
         XCTAssertTrue(waitUntil { (try? self.selected()) == user },
                       "\(user) never came to be the account on screen")
-        try handOverWhatIsOnTheNetwork()
+        try announce()
     }
 
     // MARK: - Signing out

@@ -88,7 +88,7 @@ final class FreeTierTests: JourneyCase {
     private func launch(cloud: [String: Any]) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-amux-door-port", runner.doorPort, "-amux-scripted-cloud",
-                               "-amux-cloud-script", json(cloud)]
+                               "-amux-cloud-script", json(cloud)] + discoveryScope
         app.launch()
         return app
     }
@@ -121,7 +121,7 @@ final class FreeTierTests: JourneyCase {
     /// it needed an account: a machine on your own network is reached by
     /// finding it and typing what it printed.
     private func theMachinesOnThisNetwork() throws {
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         pressTab(app, "Hosts")
         // Waited for before a code is typed, because what a browser resolved
         // reaches the connection through the runtime rather than with the
@@ -142,7 +142,7 @@ final class FreeTierTests: JourneyCase {
         // first sighting was of a stranger and the pairing that followed
         // reached one of them over the relay. So the same sighting is repeated
         // here, which is what a real browser does every few seconds anyway.
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         let athome = waitUntil { (try? self.reach(of: self.cast.workstation)) == "on-this-network" }
         record["atHome"] = try reaches()
         let carriers = ((try? bridge())?["reach"] as? [String]) ?? []
@@ -163,22 +163,14 @@ final class FreeTierTests: JourneyCase {
         photograph(app, "at-home")
     }
 
-    /// Puts the two machines that belong on this network on it, and hands over
-    /// what a browser would have resolved.
-    ///
-    /// The browsing is said rather than done for the reason it is in every
-    /// journey about this network: only the system may browse, and a
-    /// simulator's browser looks at this Mac's network instead of at the one
-    /// the runner is running.
-    private func handOverWhatIsOnTheNetwork() throws {
-        var advertised: [[String: Any]] = []
+    /// Puts the two machines that belong on this network on it, where the
+    /// phone's own browser finds them.
+    private func announce() throws {
         for machine in ["workstation", "spare"] {
             let answer = try control.ask(["Announce": ["daemon": machine]])
-            advertised.append(try XCTUnwrap(
-                (answer["Ack"] as? [String: Any])?["found"] as? [String: Any],
-                "the runner announced nothing for \(machine)"))
+            XCTAssertNotNil((answer["Ack"] as? [String: Any])?["found"],
+                            "the runner announced nothing for \(machine)")
         }
-        try door(runner, .init(kind: "found", hosts: advertised))
     }
 
     // MARK: - Away from them
@@ -196,7 +188,6 @@ final class FreeTierTests: JourneyCase {
             try control.ask(["Withdraw": ["daemon": machine]])
             try control.ask(["UdpBlocked": ["daemon": machine, "blocked": true]])
         }
-        try door(runner, .init(kind: "found", hosts: []))
         pressTab(app, "Hosts")
         XCTAssertTrue(waitUntil(within: 120) {
             (try? self.reach(of: self.cast.workstation)) == "away"

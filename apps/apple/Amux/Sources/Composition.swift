@@ -96,7 +96,12 @@ final class Composition {
         // Only the system may look at the network a phone is on, so the browser
         // is the app's and the shared library is handed what it saw. Weak, or
         // the two would hold each other alive for the life of the process.
-        coordinator.discovery = LocalDiscovery { [weak coordinator] hosts in
+        #if AMUX_DEBUG_TOOLS
+        let only = Self.driven ? Self.discoverable : nil
+        #else
+        let only: Set<HostId>? = nil
+        #endif
+        coordinator.discovery = LocalDiscovery(only: only) { [weak coordinator] hosts in
             coordinator?.discovered(hosts)
         }
         // The stores this app draws with nobody signed in are the same ones
@@ -165,6 +170,20 @@ final class Composition {
     /// and the fleet may rename it before anybody reads the report. Anything
     /// else is named the way the report header names it, which is the name the
     /// screen catalogue uses where it has one.
+    /// Whether a driver opened the door on this launch.
+    private static var driven: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.string(forKey: Door.readyArgument) != nil
+            || defaults.string(forKey: Door.portArgument) != nil
+    }
+
+    /// The machines a driven launch may find on the network, which are the
+    /// ones its driver put there.
+    private static var discoverable: Set<HostId> {
+        let named = UserDefaults.standard.string(forKey: Door.discoverOnlyArgument) ?? ""
+        return Set(named.split(separator: ",").compactMap { HostId(String($0)) })
+    }
+
     private static func place(for router: Router) -> Place {
         switch router.top {
         case .conversation(let agent): return .conversation(agent)

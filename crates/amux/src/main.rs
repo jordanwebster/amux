@@ -151,6 +151,10 @@ enum Commands {
         /// Reset local setup preferences
         #[arg(long)]
         reset: bool,
+
+        /// Set the name shown to nearby devices
+        #[arg(long)]
+        name: Option<String>,
     },
 
     /// Pair this device with another amux daemon
@@ -397,7 +401,7 @@ async fn main() -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
         if cli.config.is_none() && !node::InstallationConfig::default_path().exists() {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         let config = profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?;
         config
@@ -429,7 +433,7 @@ async fn main() -> Result<ExitCode> {
 
     if let Commands::Login { name } = command {
         if cli.config.is_none() && !node::InstallationConfig::default_path().exists() {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         let installation = front_door::configuration(cli.config.as_deref())?;
         let cloud_url = match cli.config.as_deref() {
@@ -463,8 +467,8 @@ async fn main() -> Result<ExitCode> {
             .await?;
             return Ok(ExitCode::SUCCESS);
         }
-        Commands::Init { reset } => {
-            init::initialize(cli.config.as_deref(), *reset).await?;
+        Commands::Init { reset, name } => {
+            init::initialize(cli.config.as_deref(), *reset, name.as_deref()).await?;
             return Ok(ExitCode::SUCCESS);
         }
         Commands::Keymap { .. } | Commands::Update => {
@@ -545,7 +549,7 @@ async fn main() -> Result<ExitCode> {
             && cli.config.is_none()
             && !node::InstallationConfig::default_path().exists()
         {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?
     };
@@ -1369,6 +1373,18 @@ mod tests {
             .expect("--config arg");
         assert_eq!(arg.get_env(), Some(std::ffi::OsStr::new("AMUX_CONFIG")));
         assert!(arg.is_global_set());
+    }
+
+    #[test]
+    fn init_accepts_a_scripted_host_name() {
+        let cli = Cli::try_parse_from(["amux", "init", "--name", "Studio Mac"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Init {
+                reset: false,
+                name: Some(ref name),
+            }) if name == "Studio Mac"
+        ));
     }
 
     /// The managed Claude hook has no config flag; it reaches the right

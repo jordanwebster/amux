@@ -727,6 +727,12 @@ pub struct Hello {
     pub neighbors: ::prost::alloc::vec::Vec<Host>,
     #[prost(string, optional, tag = "4")]
     pub auth_token: ::core::option::Option<::prost::alloc::string::String>,
+    /// 16 random bytes drawn when the sender's runtime starts and kept for its
+    /// life. A link that arrives carrying a different incarnation than an
+    /// earlier link from the same host proves that earlier link belongs to a
+    /// process that no longer exists, however healthy it still looks.
+    #[prost(bytes = "vec", tag = "5")]
+    pub incarnation: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloAck {
@@ -751,6 +757,9 @@ pub struct HelloAccepted {
     pub host: ::core::option::Option<Host>,
     #[prost(message, repeated, tag = "3")]
     pub neighbors: ::prost::alloc::vec::Vec<Host>,
+    /// The acceptor's incarnation; see `Hello.incarnation`.
+    #[prost(bytes = "vec", tag = "4")]
+    pub incarnation: ::prost::alloc::vec::Vec<u8>,
 }
 /// "I have a direct link to this host." Strictly adjacency: a node never
 /// advertises anything it learned from someone else.

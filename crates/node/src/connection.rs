@@ -96,7 +96,19 @@ impl ConnectionManager {
             .route_to(peer)
             .await
             .ok_or(ChannelError::NoRoute { host_id: peer })?;
-        self.activate_route(peer, route, class).await
+        match self.activate_route(peer, route, class).await {
+            // When both hosts dial each other, the preferred link supersedes
+            // the other and closes it. A call that chose the losing link just
+            // before that fails while opening its stream, though routing by
+            // then names the link that replaced it: try that one, once.
+            Err(error @ ChannelError::LinkUnavailable { .. }) if route.is_direct() => {
+                match self.routing.route_to(peer).await {
+                    Some(next) if next != route => self.activate_route(peer, next, class).await,
+                    _ => Err(error),
+                }
+            }
+            result => result,
+        }
     }
 
     pub(crate) async fn cloud_pairing_channel_to(
@@ -376,4 +388,171 @@ fn host_is_cloud_relay(host: &Host) -> bool {
         .features
         .iter()
         .any(|feature| feature == FEATURE_CLOUD_RELAY)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use futures_util::future::{self, BoxFuture};
+    use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::link::{ByteStream, CarrierKind, ControlSink, ControlSource, OpenError};
+    use crate::routing::{
+        Capabilities, LinkAdmission, LinkCarrier as RoutingCarrier, LinkId, LinkProperties,
+        LinkRegistry, LinkRole,
+    };
+
+    fn peer() -> Host {
+        Host {
+            platform: None,
+            id: Uuid::from_u128(2),
+            name: "peer".to_string(),
+            version: "test".to_string(),
+            capabilities: Capabilities {
+                features: Vec::new(),
+                supported_agent_types: Vec::new(),
+            },
+            signed_in: Some(true),
+        }
+    }
+
+    /// A link that is superseded while a stream is being opened on it: the
+    /// replacement joins routing, this link leaves it, and the open fails the
+    /// way a closed QUIC connection fails it.
+    struct SupersededDuringOpen {
+        routing: Arc<RoutingCore>,
+        superseded: LinkId,
+        replacement: LinkId,
+    }
+
+    /// A link that answers every open with a refusal, recording that it was
+    /// asked.
+    #[derive(Default)]
+    struct Refusing {
+        asked: AtomicBool,
+    }
+
+    impl crate::link::LinkCarrier for SupersededDuringOpen {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::Quic
+        }
+
+        fn control(&self) -> (ControlSink, ControlSource) {
+            panic!("the test drives no control loop")
+        }
+
+        fn open_stream(
+            &self,
+            _preface: wire::pb::StreamPreface,
+        ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+            Box::pin(async move {
+                self.routing.apply_direct_up(peer(), self.replacement).await;
+                self.routing.apply_direct_down(self.superseded).await;
+                Err(OpenError::LinkClosed)
+            })
+        }
+
+        fn accept_stream(&self) -> BoxFuture<'_, Option<(wire::pb::StreamPreface, ByteStream)>> {
+            Box::pin(future::pending())
+        }
+
+        fn close(&self, _reason: wire::pb::LinkCloseReason) {}
+
+        fn closed(&self) -> BoxFuture<'_, wire::pb::LinkCloseReason> {
+            Box::pin(future::pending())
+        }
+    }
+
+    impl crate::link::LinkCarrier for Refusing {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::Quic
+        }
+
+        fn control(&self) -> (ControlSink, ControlSource) {
+            panic!("the test drives no control loop")
+        }
+
+        fn open_stream(
+            &self,
+            _preface: wire::pb::StreamPreface,
+        ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+            self.asked.store(true, Ordering::SeqCst);
+            Box::pin(async { Err(OpenError::Refused(wire::pb::StreamRefusal::ShuttingDown)) })
+        }
+
+        fn accept_stream(&self) -> BoxFuture<'_, Option<(wire::pb::StreamPreface, ByteStream)>> {
+            Box::pin(future::pending())
+        }
+
+        fn close(&self, _reason: wire::pb::LinkCloseReason) {}
+
+        fn closed(&self) -> BoxFuture<'_, wire::pb::LinkCloseReason> {
+            Box::pin(future::pending())
+        }
+    }
+
+    async fn register(
+        links: &LinkRegistry,
+        link: LinkId,
+        carrier: Arc<dyn crate::link::LinkCarrier>,
+    ) -> mpsc::Receiver<crate::routing::LinkCloseRequest> {
+        let (tx, _rx) = mpsc::channel(8);
+        links
+            .register_with_details(
+                link,
+                peer(),
+                tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: RoutingCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
+                    direct_order: None,
+                },
+                &[],
+                Some(carrier),
+            )
+            .await
+            .expect("a lone link registers")
+    }
+
+    #[tokio::test]
+    async fn a_call_on_a_link_superseded_while_opening_retries_on_its_replacement() {
+        let links = Arc::new(LinkRegistry::default());
+        let routing = Arc::new(RoutingCore::new());
+        let manager =
+            ConnectionManager::new(routing.clone(), Arc::new(ChannelPool::new(links.clone())));
+        let superseded = LinkId::new(peer().id);
+        let replacement = LinkId::new(peer().id);
+        let refusing = Arc::new(Refusing::default());
+        let _superseded_close = register(
+            &links,
+            superseded,
+            Arc::new(SupersededDuringOpen {
+                routing: routing.clone(),
+                superseded,
+                replacement,
+            }),
+        )
+        .await;
+        let _replacement_close = register(&links, replacement, refusing.clone()).await;
+        routing.apply_direct_up(peer(), superseded).await;
+
+        let error = manager.channel_to(peer().id).await.unwrap_err();
+
+        assert!(
+            refusing.asked.load(Ordering::SeqCst),
+            "the replacement link was never tried"
+        );
+        assert!(
+            matches!(
+                error,
+                ChannelError::Refused(wire::pb::StreamRefusal::ShuttingDown)
+            ),
+            "the call ended on the superseded link: {error}"
+        );
+    }
 }

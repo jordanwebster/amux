@@ -83,6 +83,13 @@ class JourneyCase: XCTestCase {
     ///     by pressing the button needs them: a browser at amux.sh has a
     ///     password in it and the App Store's sheet belongs to another
     ///     process, and neither can be driven from here.
+    /// The launch arguments that let an app find only the machines the runner
+    /// started. The simulator browses this Mac's network, where anything else
+    /// could be running, and a driven launch without them finds nothing.
+    var discoveryScope: [String] {
+        ["-amux-discover-only", ProcessInfo.processInfo.environment["AMUX_TESTNET_HOSTS"] ?? ""]
+    }
+
     func launch(
         _ runner: Runner, signedIn: Bool = true, link: String? = nil,
         as user: String? = nil, token: String? = nil, scripted: Bool = false,
@@ -95,6 +102,7 @@ class JourneyCase: XCTestCase {
             "-amux-user", user ?? runner.user,
         ] : []
         app.launchArguments = ["-amux-door-port", runner.doorPort]
+            + discoveryScope
             + credential
             + (scripted ? ["-amux-scripted-cloud"] : [])
             // Exact app-layout rectangles are expensive and normally duplicate
@@ -274,9 +282,6 @@ class JourneyCase: XCTestCase {
         /// under one says so here.
         var appearance: String?
         var size: String?
-        /// Every machine a browser would resolve on the network this phone is
-        /// on, in the door's own words.
-        var hosts: [[String: Any]]?
         /// What the system answered when this app asked to look at that
         /// network: `granted` or `denied`.
         var permission: String?
@@ -311,7 +316,6 @@ class JourneyCase: XCTestCase {
             if let account { fields["account"] = account }
             if let appearance { fields["appearance"] = appearance }
             if let size { fields["size"] = size }
-            if let hosts { fields["hosts"] = hosts }
             if let permission { fields["permission"] = permission }
             if let bytes { fields["bytes"] = bytes }
             return fields

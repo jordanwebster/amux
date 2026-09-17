@@ -203,6 +203,97 @@ decisions: accept, accept for session, decline and cancel. And the terminal's
 SDK chat said "plan approved" for any answered plan, including one whose tool
 came back with an error; only a successful answer says that now, and a failed
 plan shows the tool and its reason as the terminal Claude chat does.
+2026-09-17 — **Embedding tests stop browsing the real network.** The embedded
+installation tests left discovery unset, which means the platform default:
+real mDNS on the developer's network. The account isolation test failed on any
+Mac running an amux server or a worktree daemon, because those machines were
+offered as pairing candidates and it refuses any candidate from outside its
+accounts. Its machines find each other through the relay, so both embedding test
+files now use in-memory discovery. The phone journeys still exercise the app's
+real Bonjour browser against the test network's machines.
+
+2026-09-17 — **The TCP fallback is timed where it is decided.** The relay spec
+for a UDP-blocked network asserted that it finished within two seconds, but its
+clock started before the test network was built. The two seconds also covered
+starting the relay and two daemons and pairing them over the cloud, so busy
+Windows runners failed it even when the fallback took its usual 300ms. The spec
+now only checks the carriers it ends up on. A unit test races a QUIC dial that
+never answers against TCP on a paused clock and requires TCP to win at exactly
+the fallback delay, so a fallback that starts TCP too late or too early fails
+the test on any runner.
+
+2026-09-17 — **Links carry the incarnation that opened them.** The fix for a
+reopened phone replaced a held direct link with any new link in the same
+direction. It did not cover a crash in the other direction: two Macs keep the
+link the lower host id dialled, and when the other Mac crashed and came back
+its new link ran the opposite way, so the survivor refused it while holding the
+dead one until QUIC's idle timeout. A host id cannot tell a dead process from a
+live one. `Hello` and `HelloAccepted` now carry an incarnation, 16 random bytes
+drawn when a runtime starts. A link from a new incarnation replaces every direct
+link from the old one, in either direction. Links from the same incarnation
+follow the crossed-dial rule again, and a second same-direction link is refused,
+so the same-direction special case is gone. `PROTOCOL_VERSION` is now 3, so
+builds from before this change cannot link to builds after it. A dialler whose
+link closes within a second of coming up now waits out that second before
+asking the network for the peer again. That rediscovery is what redialled in a
+loop until the handshake rate limit. The pause holds back only rediscovery: an
+explicit dial straight after a deliberate close still goes out at once.
+Two specs kill a daemon without a close and relaunch it: one redials in the
+same direction, one against the dead link's direction. Both fail when
+incarnations are ignored.
+
+2026-09-17 — **A machine that comes back redials past its own dead link.**
+A phone swiped away and reopened reconnected to the laptop only about one launch
+in three. Killing the app sends no close, so the laptop keeps the old link
+registered until QUIC's idle timeout, 60 to 90 seconds later. The rule for
+crossed dials refused any second direct link whose direction matched the one
+already held, so every relaunch inside that window completed its handshake and
+was closed at once. The phone then redialled in a tight loop until the laptop's
+handshake rate limit stopped it. Ten cold launches of a simulator paired with a
+real laptop connected twice, each about three seconds after the laptop timed out
+the previous launch's link. Now only a fallback link is refused, and only while
+the preferred link from the other direction is held. A second link in the same
+direction means the peer is dialling because it has no link, so the new link
+replaces the old one. A spec kills a daemon with its datagrams dropped, relaunches
+it on a network whose idle timeout outlasts every assertion, and requires the
+reconnect. Without the fix it times out.
+A restarted machine whose new link is a fallback can still be refused while its
+peer holds a dead preferred link from the old process.
+
+2026-09-16 — **A call survives the direct link it chose being superseded.**
+Two paired daemons that start together dial each other, and the rule for
+crossed dials closes the losing link as soon as the preferred one registers. A
+call that had just started opening a stream on the losing link failed with "no
+live link", although a working link was already there. On Windows this happened
+in 13 of 20 isolated runs of `a2a_cascade_delete_reports_unreachable_children`
+and `a_paired_peer_cannot_shut_down_or_suspend_the_daemon`. A call on a direct
+route that fails that way now retries once if routing has meanwhile moved to a
+different route. To make that dependable, a registration that supersedes links
+now removes them from routing immediately, instead of waiting for their own
+tasks to finish closing. With both changes, the same Windows run passed 30 of
+30 while the race still occurred 156 times.
+
+2026-09-16 — **Phone journeys find machines with the app's own browser.** The
+onboarding, signed-out, profiles and free-tier journeys used to inject
+already-decoded found machines through the debug door, so no simulator ever read
+a real advertisement. That is how an unreadable host ID passed every journey
+and reached TestFlight. The served test network now also registers each
+announced machine with the Mac's own mDNS responder, using the TXT properties
+the daemon's publisher builds. A simulator browses through that responder and
+ignores services seen only on loopback, which is all a daemon advertising
+`127.0.0.1` would reach. The door command that injected found machines is gone.
+Because a simulator browses the Mac's real network, a driven debug launch now
+finds only the machines named by `-amux-discover-only`. Journeys pass the
+runner's own machines, so a developer's amux server no longer appears in test
+runs. A machine declared `lan` reaches the phone only once a test announces it,
+so a story can still begin with nothing found.
+2026-09-16 — **A fresh host gets a name a person recognizes.** `amux init`
+now asks what the host should be called before it prints the pairing on-ramp,
+using the Mac's friendly Computer Name instead of an mDNS-style `.local`
+hostname. Non-interactive setup receives the same improved default, scripts
+can choose explicitly with `--name`, invalid names are rejected using the
+settings rules, and changing a running host explains that its server must be
+restarted before the new name is advertised.
 
 2026-09-16 — **The Mac and the phone test against the same advertisement.**
 The Mac's advertisement and the phone's reading of it were each tested only

@@ -63,6 +63,11 @@ public final class LocalDiscovery {
     public var permissionChanged: (@MainActor (LocalNetworkPermission) -> Void)?
 
     private let handOver: HandOver
+    /// The only machines this browser may report, or nothing where it reports
+    /// every amux machine it resolves. Set by a driven debug launch, whose
+    /// simulator browses the Mac's real network and would otherwise report
+    /// whatever else is running on it.
+    private let only: Set<HostId>?
     private var browser: NWBrowser?
     /// One in-flight address resolution per advertisement.
     private var resolving: [NWEndpoint: NWConnection] = [:]
@@ -71,7 +76,8 @@ public final class LocalDiscovery {
     /// The advertisements whose addresses are known, which is what is handed over.
     private var found: [NWEndpoint: FoundHost] = [:]
 
-    public init(handOver: @escaping HandOver) {
+    public init(only: Set<HostId>? = nil, handOver: @escaping HandOver) {
+        self.only = only
         self.handOver = handOver
     }
 
@@ -123,6 +129,7 @@ public final class LocalDiscovery {
             guard claims[result.endpoint] == nil,
                   case .bonjour(let record) = result.metadata,
                   let claimed = Self.claim(from: record),
+                  only?.contains(claimed.host) ?? true,
                   let name = Self.serviceName(of: result.endpoint)
             else { continue }
             claims[result.endpoint] = (claimed.host, name, claimed.version)

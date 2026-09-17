@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::FutureExt;
+use node::discovery::Advertisement;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -183,10 +184,21 @@ pub enum Control {
     /// Puts a machine on this network, as an advertisement a device browsing
     /// would resolve. Nothing is trusted by it: what it offers a browser is a
     /// name, an identity claim and addresses to try.
+    ///
+    /// Published twice: to the daemons of this network, and over real mDNS on
+    /// this Mac, where a simulator's own browser resolves it the way a phone's
+    /// resolves a real machine. A device test that handed the app a decoded
+    /// advertisement instead would never read the record the daemon writes.
+    ///
+    /// Only this verb reaches the Mac's network. A daemon declared `lan` is
+    /// announced to the other daemons when the topology starts, but a phone
+    /// finds it only once a test puts it there, so a story can begin with a
+    /// phone that has found nothing.
     Announce {
         daemon: String,
     },
-    /// Takes it off again, the way a machine going away says goodbye.
+    /// Takes it off again, the way a machine going away says goodbye, on both
+    /// of the networks it was announced on.
     Withdraw {
         daemon: String,
     },
@@ -532,6 +544,74 @@ impl AgentProvider {
 
 type Agents = HashMap<String, ScriptedAgent>;
 
+/// The advertisement each daemon announced so far has on this machine's own
+/// network, by name. Dropping one withdraws it.
+type Advertised = HashMap<String, Published>;
+
+/// One advertisement registered with macOS's own mDNS responder, which
+/// answers for it on every interface for as long as the registering process
+/// lives.
+///
+/// The system responder rather than the daemon's own mDNS publisher, because a
+/// simulator browses through the Mac's responder and does not report services
+/// seen only on the loopback interface — which is the only interface a
+/// publisher advertising a loopback address answers on. The system responder
+/// advertises the loopback address on every interface. The record it carries
+/// is built by `node::discovery::txt_properties`, the function the daemon's
+/// own publisher uses.
+struct Published {
+    #[cfg(target_os = "macos")]
+    _registration: tokio::process::Child,
+}
+
+impl Published {
+    #[cfg(target_os = "macos")]
+    fn register(advertisement: &Advertisement) -> Result<Self> {
+        let addr = advertisement
+            .addrs
+            .first()
+            .context("an advertisement needs a listener address")?;
+        let mut command = tokio::process::Command::new("/usr/bin/dns-sd");
+        command
+            .arg("-P")
+            .arg(&advertisement.name)
+            .arg("_amux._udp")
+            .arg("local")
+            .arg(addr.port().to_string())
+            .arg(format!("amux-{}.local", advertisement.host_id.simple()))
+            .arg(addr.ip().to_string());
+        for (key, value) in node::discovery::txt_properties(advertisement) {
+            command.arg(format!("{key}={value}"));
+        }
+        let registration = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("cannot register with this Mac's mDNS responder")?;
+        Ok(Self {
+            _registration: registration,
+        })
+    }
+
+    /// Only a Mac runs a simulator, so nowhere else has a browser to reach.
+    #[cfg(not(target_os = "macos"))]
+    fn register(_advertisement: &Advertisement) -> Result<Self> {
+        Ok(Self {})
+    }
+}
+
+/// Publishes one daemon's advertisement on this machine's network, replacing
+/// whatever that daemon published before.
+fn publish(advertised: &mut Advertised, name: String, advertisement: Advertisement) -> Result<()> {
+    // The old registration goes first: the responder would otherwise rename
+    // the new one to avoid a clash with a record that is about to disappear.
+    advertised.remove(&name);
+    advertised.insert(name, Published::register(&advertisement)?);
+    Ok(())
+}
+
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
     let mut builder = TestNet::builder().cloud_url(&topology.cloud_url).identity();
     for daemon in &topology.daemons {
@@ -694,6 +774,7 @@ async fn apply(
     names: &HashSet<String>,
     users: &HashSet<String>,
     agents: &mut Agents,
+    advertised: &mut Advertised,
     control: Control,
 ) -> Result<Reply> {
     let daemon = |name: &str| -> Result<Daemon> {
@@ -755,17 +836,25 @@ async fn apply(
             net.relay_latency(millis);
         }
         Control::Announce { daemon: name } => {
-            let advertised = net.announce(&daemon(&name)?);
+            let advertisement = net.announce(&daemon(&name)?);
+            publish(advertised, name, advertisement.clone())?;
             if let Reply::Ack { found, .. } = &mut reply {
                 *found = Some(Box::new(FoundHost {
-                    host: advertised.host_id,
-                    name: advertised.name,
-                    version: advertised.version,
-                    addrs: advertised.addrs.iter().map(ToString::to_string).collect(),
+                    host: advertisement.host_id,
+                    name: advertisement.name,
+                    version: advertisement.version,
+                    addrs: advertisement
+                        .addrs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
                 }));
             }
         }
-        Control::Withdraw { daemon: name } => net.withdraw(&daemon(&name)?),
+        Control::Withdraw { daemon: name } => {
+            net.withdraw(&daemon(&name)?);
+            advertised.remove(&name);
+        }
         Control::Tier { user, tier } => {
             // An account the topology never declared would otherwise be
             // invented here and bought a tier no device ever asks about, so a
@@ -989,6 +1078,7 @@ async fn serve_net(
     users: HashSet<String>,
     mut agents: Agents,
 ) -> Result<()> {
+    let mut advertised = Advertised::new();
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let termination = async {
@@ -1016,7 +1106,7 @@ async fn serve_net(
                 control => {
                     // TestNet's assertion verbs panic with topology diagnostics.
                     // Preserve those diagnostics as a control failure for the caller.
-                    let operation = AssertUnwindSafe(apply(&net, &names, &users, &mut agents, control)).catch_unwind();
+                    let operation = AssertUnwindSafe(apply(&net, &names, &users, &mut agents, &mut advertised, control)).catch_unwind();
                     let reply = match tokio::time::timeout(Duration::from_secs(30), operation).await {
                         Ok(Ok(Ok(reply))) => reply,
                         Ok(Ok(Err(error))) => Reply::Error { message: error.to_string() },
@@ -1031,6 +1121,7 @@ async fn serve_net(
         }
     };
     drop(listener);
+    drop(advertised);
     net.shutdown().await;
     for agent in agents.values_mut() {
         agent.provider.close().await;

@@ -10,12 +10,20 @@ use node::HostId;
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
+/// How long a testnet QUIC connection goes unanswered before it is declared
+/// dead. Short, so a dead link is noticed within an assertion's patience.
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub(crate) fn transport_config() -> Arc<quinn::TransportConfig> {
+    transport_config_with_idle_timeout(DEFAULT_IDLE_TIMEOUT)
+}
+
+fn transport_config_with_idle_timeout(idle_timeout: Duration) -> Arc<quinn::TransportConfig> {
     let mut transport = quinn::TransportConfig::default();
     transport
         .keep_alive_interval(Some(Duration::from_millis(250)))
         .max_idle_timeout(Some(
-            Duration::from_secs(2)
+            idle_timeout
                 .try_into()
                 .expect("testnet QUIC idle timeout fits"),
         ))
@@ -30,6 +38,7 @@ pub(crate) struct UdpProxy {
 }
 
 struct UdpProxyInner {
+    idle_timeout: Duration,
     peers: Arc<RwLock<PeerTable>>,
     controls: Arc<Controls>,
     cancel: CancellationToken,
@@ -61,13 +70,23 @@ pub(crate) struct UdpProxyBinding {
 
 impl UdpProxy {
     pub(crate) fn new() -> Self {
+        Self::with_idle_timeout(DEFAULT_IDLE_TIMEOUT)
+    }
+
+    pub(crate) fn with_idle_timeout(idle_timeout: Duration) -> Self {
         Self {
             inner: Arc::new(UdpProxyInner {
+                idle_timeout,
                 peers: Arc::new(RwLock::new(PeerTable::default())),
                 controls: Arc::new(Controls::default()),
                 cancel: CancellationToken::new(),
             }),
         }
+    }
+
+    /// The QUIC transport every daemon on this network runs with.
+    pub(crate) fn transport_config(&self) -> Arc<quinn::TransportConfig> {
+        transport_config_with_idle_timeout(self.inner.idle_timeout)
     }
 
     pub(crate) fn register(&self, id: HostId) -> UdpProxyBinding {

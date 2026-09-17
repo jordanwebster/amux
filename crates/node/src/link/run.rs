@@ -17,10 +17,10 @@ use wire::{self, PROTOCOL_VERSION, protocol_error_from_status_details, protocol_
 
 use super::{LinkCarrier as Carrier, read_message, write_message};
 use crate::routing::{
-    ConnectHandshake, ConnectHandshakeEvent, DirectLinkOrder, Host, LinkAdmission,
+    ConnectHandshake, ConnectHandshakeEvent, DirectLinkOrder, Host, Incarnation, LinkAdmission,
     LinkCarrier as RoutingCarrier, LinkCloseRequest, LinkId, LinkProperties, LinkRegistry,
-    LinkRole, LiveLocalHost, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
-    inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
+    LinkRole, LiveLocalHost, Registration, RouteUpdateOutcome, RoutingCore, host_from_wire,
+    host_to_wire, inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
     protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
 use crate::{HostId, audit};
@@ -343,7 +343,7 @@ pub async fn run_link(
 ) -> Result<(), LinkError> {
     let (mut sink, mut source) = carrier.control();
     let mut handshake = ConnectHandshake::new(role);
-    let (peer_host, peer_neighbors, snapshot) = match role {
+    let ((peer_host, peer_incarnation), peer_neighbors, snapshot) = match role {
         crate::routing::ConnectRole::Connector => {
             let snapshot = ctx.links.neighbor_snapshot().await;
             write_message(&mut sink, &connector_hello(&ctx, &snapshot)).await?;
@@ -356,9 +356,9 @@ pub async fn run_link(
             }
             match handshake.receive(first) {
                 Ok(ConnectHandshakeEvent::Accepted(accepted)) => {
-                    let (peer, neighbors) = accept_peer_hello_ack(&ctx, accepted)
+                    let (peer, neighbors, incarnation) = accept_peer_hello_ack(&ctx, accepted)
                         .map_err(|error| protocol_status(wire::decode_protocol_error(error)))?;
-                    (peer, neighbors, snapshot)
+                    ((peer, incarnation), neighbors, snapshot)
                 }
                 Ok(ConnectHandshakeEvent::Rejected(error)) => {
                     return Err(protocol_status(wire::decode_protocol_error(error)).into());
@@ -439,7 +439,7 @@ pub async fn run_link(
                 .acceptor_ack_sent()
                 .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
             ctx.acceptor_session = session;
-            (peer.0, peer.1, snapshot)
+            ((peer.0, peer.2), peer.1, snapshot)
         }
     };
 
@@ -449,7 +449,7 @@ pub async fn run_link(
         sink,
         source,
         handshake,
-        (peer_host, peer_neighbors, role),
+        (peer_host, peer_incarnation, peer_neighbors, role),
         snapshot.into_iter().map(|host| host.id).collect(),
     )
     .await
@@ -491,11 +491,11 @@ async fn run_established(
     mut sink: super::ControlSink,
     mut source: super::ControlSource,
     mut handshake: ConnectHandshake,
-    peer: (Host, Vec<Host>, crate::routing::ConnectRole),
+    peer: (Host, Incarnation, Vec<Host>, crate::routing::ConnectRole),
     sent_snapshot: Vec<HostId>,
 ) -> Result<(), LinkError> {
     debug_assert!(handshake.is_established());
-    let (peer_host, peer_neighbors, connect_role) = peer;
+    let (peer_host, peer_incarnation, peer_neighbors, connect_role) = peer;
     if ctx
         .shutdown_rx
         .as_ref()
@@ -524,9 +524,9 @@ async fn run_established(
         _ => ctx.routing_carrier,
     };
     let (out_tx, mut out_rx) = mpsc::channel(256);
-    let link_close_rx = ctx
+    let registration = ctx
         .links
-        .register_with_details(
+        .register_displacing(
             link,
             peer_host.clone(),
             out_tx.clone(),
@@ -534,6 +534,7 @@ async fn run_established(
                 role: link_role,
                 admission,
                 carrier: carrier_tag,
+                incarnation: peer_incarnation,
                 direct_order: (link_role == LinkRole::Peer
                     && carrier_tag == RoutingCarrier::Direct)
                     .then(|| {
@@ -544,7 +545,11 @@ async fn run_established(
             Some(carrier.clone()),
         )
         .await;
-    let Some(mut link_close_rx) = link_close_rx else {
+    let Some(Registration {
+        close_rx: mut link_close_rx,
+        displaced,
+    }) = registration
+    else {
         signal_establishment(ctx.take_established_tx(), Ok(peer_host));
         carrier.close(wire::pb::LinkCloseReason::UserShutdown);
         return Ok(());
@@ -571,6 +576,13 @@ async fn run_established(
                 return Err(status.into());
             }
         }
+    }
+    // The links this one superseded leave routing now, after this link has
+    // joined it, so the peer never looks absent. Their tasks remove them again
+    // when they finish closing, which by then is a no-op; until then a route
+    // chosen from routing would be a link the registry no longer holds.
+    for superseded in displaced {
+        ctx.routing.apply_direct_down(superseded).await;
     }
     signal_establishment(ctx.take_established_tx(), Ok(peer_host.clone()));
 
@@ -839,7 +851,7 @@ fn accept_peer_hello(
     ctx: &LinkCtx,
     hello: wire::pb::Hello,
     auth_session: Option<&LinkAuthSession>,
-) -> Result<(Host, Vec<Host>), wire::pb::Error> {
+) -> Result<(Host, Vec<Host>, Incarnation), wire::pb::Error> {
     if !hello
         .supported_protocol_versions
         .contains(&PROTOCOL_VERSION)
@@ -874,13 +886,14 @@ fn accept_peer_hello(
             host.id
         )));
     }
-    Ok((host, neighbors_from_wire(hello.neighbors)?))
+    let incarnation = Incarnation::from_wire(&hello.incarnation).map_err(invalid_argument_error)?;
+    Ok((host, neighbors_from_wire(hello.neighbors)?, incarnation))
 }
 
 fn accept_peer_hello_ack(
     ctx: &LinkCtx,
     accepted: wire::pb::HelloAccepted,
-) -> Result<(Host, Vec<Host>), wire::pb::Error> {
+) -> Result<(Host, Vec<Host>, Incarnation), wire::pb::Error> {
     if accepted.protocol_version != PROTOCOL_VERSION {
         return Err(wire::encode_protocol_error(
             &ProtocolError::ProtocolMismatch {
@@ -908,7 +921,9 @@ fn accept_peer_hello_ack(
             "peer host_id matches local host_id",
         ));
     }
-    Ok((host, neighbors_from_wire(accepted.neighbors)?))
+    let incarnation =
+        Incarnation::from_wire(&accepted.incarnation).map_err(invalid_argument_error)?;
+    Ok((host, neighbors_from_wire(accepted.neighbors)?, incarnation))
 }
 
 fn validate_minimum_client_version(
@@ -946,6 +961,7 @@ fn connector_hello(ctx: &LinkCtx, snapshot: &[Host]) -> wire::pb::Message {
                 .connector_auth
                 .as_ref()
                 .map(|auth| auth.token.token.clone()),
+            incarnation: ctx.local_host.incarnation().to_wire(),
         })),
     }
 }
@@ -962,6 +978,7 @@ fn accepted_hello_ack(ctx: &LinkCtx, snapshot: &[Host], peer: HostId) -> wire::p
                         .filter(|host| host.id != peer)
                         .map(host_to_wire)
                         .collect(),
+                    incarnation: ctx.local_host.incarnation().to_wire(),
                 },
             )),
         })),
@@ -1373,6 +1390,7 @@ mod tests {
                     host: Some(host_to_wire(peer)),
                     neighbors: Vec::new(),
                     auth_token: auth_token.map(str::to_string),
+                    incarnation: crate::routing::Incarnation::random().to_wire(),
                 })),
             },
         )
@@ -1593,6 +1611,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: RoutingCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
                     direct_order: None,
                 },
                 &[],
@@ -1627,6 +1646,7 @@ mod tests {
                     host: Some(host_to_wire(&origin)),
                     neighbors: Vec::new(),
                     auth_token: None,
+                    incarnation: crate::routing::Incarnation::random().to_wire(),
                 })),
             },
         )

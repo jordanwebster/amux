@@ -527,6 +527,14 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(text.contains("Created unbound profile"));
     assert!(!text.contains("Waiting for authentication"));
+    assert!(!text.contains("What should this host be called?"));
+    let installation_path = root.join("c/amux/config.yaml");
+    assert_eq!(
+        InstallationConfig::from_file(&installation_path)
+            .unwrap()
+            .host_name,
+        settings::suggested_host_name()
+    );
     let run = |args: &[&str]| {
         let output = command(args).output().unwrap();
         println!(
@@ -539,6 +547,17 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
         String::from_utf8(output.stdout).unwrap()
     };
     run(&["list"]);
+    let renamed = run(&["init", "--name", "Scripted Mac"]);
+    assert!(renamed.contains(
+        "Restart the server to advertise the new host name, then run `amux pair` to pair a phone."
+    ));
+    assert!(!renamed.contains("Pairing code:"), "{renamed}");
+    assert_eq!(
+        InstallationConfig::from_file(&installation_path)
+            .unwrap()
+            .host_name,
+        "Scripted Mac"
+    );
     let second = run(&["profile", "create", "Work"]);
     let id = second.split_whitespace().next().unwrap();
     run(&["list", "--profile", "Work"]);

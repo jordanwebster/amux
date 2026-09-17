@@ -119,7 +119,7 @@ async fn hello_neighbor_snapshot_and_later_deltas_drive_presence() {
 
     wire.send_hello_with_neighbors(
         wire.host_id(),
-        vec![2],
+        vec![node::PROTOCOL_VERSION],
         &[(snapshot.host_id(), snapshot.name())],
     )
     .await;

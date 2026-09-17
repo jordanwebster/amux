@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use node::discovery::ScriptedDiscovery;
 use node::installation::{
     CredentialSource, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
     Listeners, OperationId, ProfilePaths,
@@ -466,7 +467,7 @@ async fn hosted_installation(config: &Config) -> (Installation, node::installati
 
 fn installation_options(config: &Config, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
-        discovery: None,
+        discovery: Some(Arc::new(ScriptedDiscovery::new())),
         relocation: Default::default(),
         root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
         settings: InstallationSettings {

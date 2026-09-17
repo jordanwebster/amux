@@ -221,6 +221,7 @@ mod tests {
             host: None,
             neighbors: Vec::new(),
             auth_token: None,
+            incarnation: Vec::new(),
         }))
     }
 
@@ -230,6 +231,7 @@ mod tests {
                 protocol_version: 1,
                 host: None,
                 neighbors: Vec::new(),
+                incarnation: Vec::new(),
             })),
         }))
     }
@@ -278,6 +280,7 @@ mod tests {
                 host: None,
                 neighbors: Vec::new(),
                 auth_token: None,
+                incarnation: Vec::new(),
             })
         );
         assert!(!handshake.is_established());

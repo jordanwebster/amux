@@ -255,7 +255,7 @@ pub(crate) async fn start_daemon_runtime(
         listener,
         quic_client_socket,
         advertised_addr: inner.direct_addr,
-        quic_transport: Some(super::udp_proxy::transport_config()),
+        quic_transport: Some(inner.udp_proxy.transport_config()),
         discovery: None,
         host_factory: Some(Arc::new(
             agent_runtime::test_support::Factory::new(inner.artifact_clock.clone())
@@ -1159,6 +1159,27 @@ impl Daemon {
         self.stop().await;
         let discovery = self.net.upgrade().unwrap().discovery.clone();
         let mut runtime = start_daemon_runtime(&self.inner, None, None, discovery).await;
+        if self.inner.cloud.is_some() {
+            wait_for_stored_direct_peers(&runtime).await;
+            runtime.spawn_cloud_connector(&self.inner).await;
+        }
+        *self.inner.runtime.lock().await = Some(runtime);
+    }
+
+    /// Ends this daemon the way a killed process ends, then starts it again on
+    /// the same data dir straight away.
+    ///
+    /// Its datagrams are dropped while it stops, so no close reaches a peer:
+    /// each peer still holds a link to the old process and learns it is dead
+    /// only when that link idles out. Nothing waits for that here — whatever
+    /// the relaunched daemon dials meets a peer that has not noticed yet.
+    pub async fn kill_and_relaunch(&self) {
+        let net = self.net.upgrade().unwrap();
+        net.udp_proxy.blocked(self.inner.proxy_id, true);
+        self.stop_runtime().await;
+        net.udp_proxy.blocked(self.inner.proxy_id, false);
+        let mut runtime =
+            start_daemon_runtime(&self.inner, None, None, net.discovery.clone()).await;
         if self.inner.cloud.is_some() {
             wait_for_stored_direct_peers(&runtime).await;
             runtime.spawn_cloud_connector(&self.inner).await;

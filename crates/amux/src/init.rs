@@ -6,7 +6,7 @@
 //! user (or performs work), persists to disk, updates the in-memory `Config`,
 //! and returns — then the loop re-evaluates.
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use amux::connections::{INSTALL_LINK, onramp_lines};
 use amux::setup::{self, SetupError};
@@ -116,15 +116,21 @@ pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Res
 
 /// Create the installation preferences and its first unbound profile. The
 /// supervisor owns identity creation; setup only asks about a shared preference.
-pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> anyhow::Result<()> {
+pub async fn initialize(
+    profile_path: Option<&std::path::Path>,
+    reset: bool,
+    requested_name: Option<&str>,
+) -> anyhow::Result<()> {
     use node::InstallationConfig;
     use node::installation::rpc;
 
+    let mut created = false;
     let mut installation = match profile_path {
         Some(_) => crate::front_door::configuration(profile_path)?,
         None => {
             let path = InstallationConfig::default_path();
             if !path.exists() {
+                created = true;
                 let config = InstallationConfig::default();
                 std::fs::create_dir_all(path.parent().unwrap())?;
                 let mut file = std::fs::OpenOptions::new()
@@ -140,14 +146,37 @@ pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> 
     let was_running = crate::front_door::existing(&installation).await?.is_some();
     let mut preferences = Config {
         path: installation.path.clone(),
+        host_name: installation.host_name.clone(),
         prevent_idle_sleep: installation.prevent_idle_sleep,
         ..Config::default()
     };
+    let choose_name = created || reset || requested_name.is_some();
+    let mut host_name_changed = false;
+    if choose_name {
+        let default = settings::suggested_host_name();
+        let stdin = io::stdin();
+        let mut input = stdin.lock();
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        let selected = select_host_name(
+            &default,
+            requested_name,
+            stdin.is_terminal(),
+            &mut input,
+            &mut output,
+        )?;
+        host_name_changed = selected != installation.host_name;
+        setup::set_host_name(&mut preferences, selected)?;
+        installation.host_name.clone_from(&preferences.host_name);
+    }
+    let mut preferences_changed = false;
     if reset {
         setup::clear_prevent_idle_sleep(&mut preferences)?;
+        preferences_changed = true;
     }
     if setup::prevent_idle_sleep_supported() && preferences.prevent_idle_sleep.is_none() {
         prompt_idle_sleep(&mut preferences)?;
+        preferences_changed = true;
     }
     installation.prevent_idle_sleep = preferences.prevent_idle_sleep;
     let mut front = crate::front_door::connect(&installation, true).await?;
@@ -165,7 +194,16 @@ pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> 
         directory.push(profile);
     }
     println!("Installation ready. Run `amux login` to connect a cloud account.");
-    if let Some(profile_id) = onramp_profile_id(profile_path, &installation, &directory)? {
+    // A running server keeps advertising its old name until it restarts, and
+    // the restart discards any pairing code issued now. Offering one here would
+    // send a phone looking for a name nobody advertises, with a code that dies.
+    let awaiting_restart = was_running && host_name_changed;
+    let onramp = if awaiting_restart {
+        None
+    } else {
+        onramp_profile_id(profile_path, &installation, &directory)?
+    };
+    if let Some(profile_id) = onramp {
         let admin = front.admin(node::installation::ProfileId(profile_id));
         if admin.list_peers().await?.is_empty() {
             if admin.pairing_is_active().await? {
@@ -188,10 +226,48 @@ pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> 
             }
         }
     }
-    if was_running {
+    if awaiting_restart && preferences_changed {
+        println!(
+            "Restart the server to advertise the new host name and apply changed keep-awake preferences, then run `amux pair` to pair a phone."
+        );
+    } else if awaiting_restart {
+        println!(
+            "Restart the server to advertise the new host name, then run `amux pair` to pair a phone."
+        );
+    } else if was_running && preferences_changed {
         println!("Restart the server to apply changed keep-awake preferences.");
     }
     Ok(())
+}
+
+fn select_host_name<R: BufRead, W: Write>(
+    default: &str,
+    requested: Option<&str>,
+    interactive: bool,
+    input: &mut R,
+    output: &mut W,
+) -> anyhow::Result<String> {
+    if let Some(name) = requested {
+        settings::validate_host_name(name)?;
+        return Ok(name.to_string());
+    }
+    if !interactive {
+        settings::validate_host_name(default)?;
+        return Ok(default.to_string());
+    }
+
+    loop {
+        write!(output, "What should this host be called? [{default}]: ")?;
+        output.flush()?;
+        let mut line = String::new();
+        input.read_line(&mut line)?;
+        let entered = line.trim_end_matches(['\r', '\n']);
+        let name = if entered.is_empty() { default } else { entered };
+        match settings::validate_host_name(name) {
+            Ok(()) => return Ok(name.to_string()),
+            Err(error) => writeln!(output, "{error}")?,
+        }
+    }
 }
 
 fn onramp_profile_id(
@@ -264,7 +340,10 @@ mod tests {
     use node::Config;
     use tempfile::tempdir;
 
-    use super::{InitContext, InitStep, needs_init_inner, next_step, parse_idle_sleep_choice};
+    use super::{
+        InitContext, InitStep, needs_init_inner, next_step, parse_idle_sleep_choice,
+        select_host_name,
+    };
 
     fn test_config(dir: &tempfile::TempDir) -> Config {
         Config {
@@ -344,5 +423,70 @@ mod tests {
         assert_eq!(parse_idle_sleep_choice("n"), Some(false));
         assert_eq!(parse_idle_sleep_choice("2"), Some(false));
         assert_eq!(parse_idle_sleep_choice("maybe"), None);
+    }
+
+    #[test]
+    fn interactive_host_name_accepts_the_default() {
+        let mut input = "\n".as_bytes();
+        let mut output = Vec::new();
+        let selected =
+            select_host_name("Jordan's Mac", None, true, &mut input, &mut output).unwrap();
+        assert_eq!(selected, "Jordan's Mac");
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "What should this host be called? [Jordan's Mac]: "
+        );
+    }
+
+    #[test]
+    fn interactive_host_name_accepts_a_custom_name() {
+        let mut input = "Studio Mac\n".as_bytes();
+        let mut output = Vec::new();
+        let selected =
+            select_host_name("Jordan's Mac", None, true, &mut input, &mut output).unwrap();
+        assert_eq!(selected, "Studio Mac");
+    }
+
+    #[test]
+    fn interactive_host_name_reprompts_after_invalid_input() {
+        let invalid = "x".repeat(257);
+        let answers = format!("{invalid}\nKitchen Mac\n");
+        let mut input = answers.as_bytes();
+        let mut output = Vec::new();
+        let selected =
+            select_host_name("Jordan's Mac", None, true, &mut input, &mut output).unwrap();
+        assert_eq!(selected, "Kitchen Mac");
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output.matches("What should this host be called?").count(),
+            2
+        );
+        assert!(output.contains("host_name must be at most 256 bytes"));
+    }
+
+    #[test]
+    fn requested_host_name_skips_the_prompt() {
+        let mut input = "ignored\n".as_bytes();
+        let mut output = Vec::new();
+        let selected = select_host_name(
+            "Jordan's Mac",
+            Some("Scripted Mac"),
+            true,
+            &mut input,
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(selected, "Scripted Mac");
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn non_terminal_host_name_uses_the_default_without_prompting() {
+        let mut input = "ignored\n".as_bytes();
+        let mut output = Vec::new();
+        let selected =
+            select_host_name("Jordan's Mac", None, false, &mut input, &mut output).unwrap();
+        assert_eq!(selected, "Jordan's Mac");
+        assert!(output.is_empty());
     }
 }

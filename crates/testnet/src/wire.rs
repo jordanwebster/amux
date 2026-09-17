@@ -350,6 +350,7 @@ impl WirePeer {
                     })
                     .collect(),
                 auth_token: self.hello_auth_token.clone(),
+                incarnation: uuid::Uuid::new_v4().as_bytes().to_vec(),
             })),
         })
         .await;

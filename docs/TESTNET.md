@@ -58,8 +58,10 @@ Omitting `cloud_url` uses the installation default, `https://amux.sh`. For examp
 
 A daemon may declare `"lan": true`, which puts it on the network when the
 topology starts, so a device that browses before sending any control verb
-finds it there. `e2e-tests/topologies/onramp.json` is the smallest such
-network: one machine on this network, nobody signed in anywhere.
+finds it there. A simulator browses the Mac's own network instead, where a
+machine appears only once `Announce` puts it there.
+`e2e-tests/topologies/onramp.json` is the smallest such network: one machine
+on this network, nobody signed in anywhere.
 
 ```json
 {
@@ -162,8 +164,8 @@ sentence, and adding a verb means adding the method first.
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
 | `{"Latency":{"millis":100}}` | Delay relay traffic on its QUIC and TCP carriers by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
-| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves, and return that advertisement in `found` as `{"host","name","version","addrs"}`. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. A device that cannot browse this network itself — a simulator, whose browser looks at the machine's real network — is told what is on it from `found`. |
-| `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye. |
+| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves, and return that advertisement in `found` as `{"host","name","version","addrs"}`. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. The advertisement goes to the topology's daemons and is also published over real mDNS on the host machine, where a simulator's own browser resolves it from the record the daemon writes. |
+| `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye, on the topology and on the host machine's network. |
 | `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
 | `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. Routed RPCs are not additional links. |
