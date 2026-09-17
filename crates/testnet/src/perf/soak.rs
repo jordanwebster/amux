@@ -841,6 +841,312 @@ fn ensure_running(child: &mut ChildGuard, name: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    const RETENTION_FIRST_ROWS_PER_CHAT: u64 = 400;
+    const RETENTION_SECOND_ROWS_PER_CHAT: u64 = 900;
+
+    async fn emit_retention_rows(providers: &[Provider], from: u64, through: u64) -> Result<()> {
+        for (chat, provider) in providers.iter().enumerate() {
+            provider
+                .emit(
+                    (from..through)
+                        .map(|iteration| corpus_row(chat, iteration))
+                        .collect(),
+                )
+                .await
+                .with_context(|| format!("emit retention rows for chat {chat}"))?;
+        }
+        Ok(())
+    }
+
+    async fn wait_for_retention_cut(
+        runtime: &mut Runtime,
+        agents: &[Uuid],
+        base: &[u64],
+        rows_per_chat: u64,
+    ) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(120), async {
+            while !agents.iter().zip(base).all(|(agent, base)| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .and_then(|chat| chat.head_through())
+                    .is_some_and(|through| through >= base + rows_per_chat)
+            }) {
+                ensure!(
+                    runtime.next().await,
+                    "client runtime closed waiting for retention measurement cut"
+                );
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("timed out waiting for retention measurement cut")??;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let report = runtime.retention_report();
+                if report.store_queued_ops == 0
+                    && report.chats.iter().all(|chat| chat.pending_commits == 0)
+                {
+                    return Ok::<(), anyhow::Error>(());
+                }
+                let _ = tokio::time::timeout(PULSE_INTERVAL, runtime.next()).await;
+            }
+        })
+        .await
+        .context("timed out draining retention measurement cut")??;
+        Ok(())
+    }
+
+    fn component_delta(after: usize, before: usize, rows: usize) -> f64 {
+        (after as f64 - before as f64) / rows as f64
+    }
+
+    fn print_retention_delta(
+        label: &str,
+        delivered_rows: usize,
+        before: &ui_runtime::RuntimeRetentionReport,
+        after: &ui_runtime::RuntimeRetentionReport,
+    ) {
+        println!("\n{label}: {delivered_rows} delivered rows\n{after}");
+        println!(
+            "per delivered row: visible={:.1} B, canonical={:.1} B, pending mutations={:.1} B, store queue={:.1} B, SQLite={:.1} B, reducer effects={:.1} B, reducer subscriptions={:.1} B, runtime subscriptions={:.1} B, provider state={:.1} B, ask registry={:.1} B, recorder messages={:.1} B, recorder checkpoint={:.1} B, accounted={:.1} B",
+            component_delta(
+                after.visible_entry_bytes(),
+                before.visible_entry_bytes(),
+                delivered_rows,
+            ),
+            component_delta(
+                after.canonical_entry_bytes(),
+                before.canonical_entry_bytes(),
+                delivered_rows,
+            ),
+            component_delta(
+                after.pending_mutation_bytes(),
+                before.pending_mutation_bytes(),
+                delivered_rows,
+            ),
+            component_delta(
+                after.store_queued_bytes,
+                before.store_queued_bytes,
+                delivered_rows,
+            ),
+            component_delta(after.sqlite_bytes, before.sqlite_bytes, delivered_rows),
+            component_delta(
+                after.reducer_effect_bytes,
+                before.reducer_effect_bytes,
+                delivered_rows,
+            ),
+            component_delta(
+                after.reducer_subscription_bytes,
+                before.reducer_subscription_bytes,
+                delivered_rows,
+            ),
+            component_delta(
+                after.runtime_subscription_bytes,
+                before.runtime_subscription_bytes,
+                delivered_rows,
+            ),
+            component_delta(
+                after.provider_state_bytes,
+                before.provider_state_bytes,
+                delivered_rows,
+            ),
+            component_delta(after.ask_bytes, before.ask_bytes, delivered_rows),
+            component_delta(
+                after.recorder_entry_bytes,
+                before.recorder_entry_bytes,
+                delivered_rows,
+            ),
+            component_delta(
+                after.recorder_checkpoint_bytes,
+                before.recorder_checkpoint_bytes,
+                delivered_rows,
+            ),
+            component_delta(
+                after.accounted_bytes(),
+                before.accounted_bytes(),
+                delivered_rows,
+            ),
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn client_retention_per_delivered_row() {
+        const USER: &str = "retention-user";
+        const DAEMON: &str = "retention-daemon";
+        let root = tempfile::tempdir().unwrap();
+        let store_path = root.path().join("store.sqlite");
+        let net = TestNet::builder()
+            .cloud_url("https://retention.testnet.example")
+            .daemon(DAEMON)
+            .cloud_user(USER)
+            .start()
+            .await;
+        let daemon = net.daemon(DAEMON);
+        let mut agents = Vec::with_capacity(10);
+        let mut providers = Vec::with_capacity(10);
+        for chat in 0..10 {
+            let (agent, provider) = daemon
+                .spawn_scripted_agent(
+                    &format!("retention-{chat:02}"),
+                    root.path(),
+                    Script::default(),
+                    None,
+                )
+                .await
+                .unwrap();
+            agents.push(agent.id);
+            providers.push(provider);
+        }
+
+        let (_, token) = net.user_credentials(USER);
+        let client = connect_user(net.cloud_url(), net.relay_addr(), token)
+            .await
+            .unwrap();
+        let qr = daemon.try_start_qr_pairing().await.unwrap();
+        let qr = node::parse_qr_pairing_payload(&qr.encoded()).unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if client
+                    .admin()
+                    .list_pairing_hosts()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|host| host.id == qr.host_id && host.online)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        client
+            .admin()
+            .pair_qr_cloud_peer(qr.host_id, qr.secret)
+            .await
+            .unwrap();
+
+        let mut runtime = Runtime::start_with_client(
+            (*client).clone(),
+            RuntimeOptions {
+                store_path: Some(store_path.clone()),
+                ..RuntimeOptions::default()
+            },
+        );
+        wait_for_client(&mut runtime, "ten retention agents", |runtime| {
+            runtime.model().is_synchronized()
+                && agents
+                    .iter()
+                    .all(|agent| runtime.model().agent(*agent).is_some())
+        })
+        .await
+        .unwrap();
+        for agent in &agents {
+            runtime.open_chat(*agent);
+        }
+        wait_for_client(&mut runtime, "ten retained chats", |runtime| {
+            agents.iter().all(|agent| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .is_some_and(|chat| chat.state == ChatState::Live && !chat.live_only)
+            })
+        })
+        .await
+        .unwrap();
+        assert!(store_path.is_file());
+
+        let before_seed = agents
+            .iter()
+            .map(|agent| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .and_then(|chat| chat.head_through())
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        seed_client_workload(&providers).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !agents
+                .iter()
+                .zip(&before_seed)
+                .enumerate()
+                .all(|(chat, (agent, base))| {
+                    runtime
+                        .model()
+                        .chat(*agent)
+                        .and_then(|window| window.head_through())
+                        .is_some_and(|through| through >= base + if chat == 0 { 11 } else { 10 })
+                })
+            {
+                assert!(runtime.next().await);
+            }
+        })
+        .await
+        .unwrap();
+        wait_for_retention_cut(&mut runtime, &agents, &before_seed, 10)
+            .await
+            .unwrap();
+        assert_eq!(runtime.retention_report().ask_count, 100);
+        let base = agents
+            .iter()
+            .map(|agent| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .and_then(|chat| chat.head_through())
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        let baseline = runtime.retention_report();
+
+        emit_retention_rows(&providers, 0, RETENTION_FIRST_ROWS_PER_CHAT)
+            .await
+            .unwrap();
+        wait_for_retention_cut(&mut runtime, &agents, &base, RETENTION_FIRST_ROWS_PER_CHAT)
+            .await
+            .unwrap();
+        let first = runtime.retention_report();
+        let first_rows = RETENTION_FIRST_ROWS_PER_CHAT as usize * agents.len();
+        print_retention_delta("before window cap", first_rows, &baseline, &first);
+
+        emit_retention_rows(
+            &providers,
+            RETENTION_FIRST_ROWS_PER_CHAT,
+            RETENTION_SECOND_ROWS_PER_CHAT,
+        )
+        .await
+        .unwrap();
+        wait_for_retention_cut(&mut runtime, &agents, &base, RETENTION_SECOND_ROWS_PER_CHAT)
+            .await
+            .unwrap();
+        let second = runtime.retention_report();
+        let second_rows = (RETENTION_SECOND_ROWS_PER_CHAT - RETENTION_FIRST_ROWS_PER_CHAT) as usize
+            * agents.len();
+        print_retention_delta("across window cap", second_rows, &first, &second);
+        println!(
+            "window plateau: visible and canonical vectors cap at {} entries per chat ({} s at the soak's 2 rows/s per chat); legacy provider feed caps at 1,000 entries (500 s)",
+            ui_state::WINDOW_MAX_ENTRIES,
+            ui_state::WINDOW_MAX_ENTRIES / 2,
+        );
+
+        assert_eq!(second.chats.len(), agents.len());
+        assert!(second.chats.iter().all(|chat| {
+            chat.visible_entries <= ui_state::WINDOW_MAX_ENTRIES
+                && chat.canonical_entries <= ui_state::WINDOW_MAX_ENTRIES
+        }));
+        assert_eq!(second.runtime_subscription_tasks, agents.len());
+        assert_eq!(second.store_page_cache_bytes, 0);
+        assert_eq!(second.store_write_cache_bytes, 0);
+
+        drop(runtime);
+        drop(client);
+        net.shutdown().await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn client_soak_uses_runtime_store_and_provider_reset() {
         let root = tempfile::tempdir().unwrap();

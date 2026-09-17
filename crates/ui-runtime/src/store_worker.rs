@@ -6,9 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -33,6 +31,7 @@ const MAINTENANCE_DEADLINE: Duration = Duration::from_millis(100);
 pub(crate) struct StoreWorker {
     handle: StoreWorkerHandle,
     thread: Option<JoinHandle<()>>,
+    retention: Arc<StoreWorkerRetentionCounters>,
     #[cfg(test)]
     maintenance_runs: Arc<AtomicUsize>,
     #[cfg(test)]
@@ -43,14 +42,29 @@ pub(crate) struct StoreWorker {
 pub(crate) struct StoreWorkerHandle {
     sender: Sender<Command>,
     retired: Arc<AtomicBool>,
+    retention: Arc<StoreWorkerRetentionCounters>,
 }
 
 enum Command {
-    Execute(Box<StoreOp>),
+    Execute { op: Box<StoreOp>, bytes: usize },
     RecordChatOpened(model::AgentId),
     AfterFirstFrame,
     MaintenanceFinished(Result<store::MaintenanceReport, store::StoreError>),
     Shutdown,
+}
+
+#[derive(Default)]
+struct StoreWorkerRetentionCounters {
+    ops: AtomicUsize,
+    bytes: AtomicUsize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StoreWorkerRetention {
+    pub queued_ops: usize,
+    pub queued_bytes: usize,
+    pub page_cache_bytes: usize,
+    pub write_cache_bytes: usize,
 }
 
 impl StoreWorker {
@@ -64,6 +78,8 @@ impl StoreWorker {
         let worker_sender = sender.clone();
         let retired = Arc::new(AtomicBool::new(false));
         let worker_retired = Arc::clone(&retired);
+        let retention = Arc::new(StoreWorkerRetentionCounters::default());
+        let worker_retention = Arc::clone(&retention);
         #[cfg(test)]
         let maintenance_runs = Arc::new(AtomicUsize::new(0));
         #[cfg(test)]
@@ -100,7 +116,14 @@ impl StoreWorker {
                                 break;
                             };
                             match command {
-                                Command::Execute(_) | Command::RecordChatOpened(_) => {
+                                Command::Execute { bytes, .. } => {
+                                    release_queued_op(&worker_retention, bytes);
+                                    let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
+                                        profile,
+                                        error,
+                                    }));
+                                }
+                                Command::RecordChatOpened(_) => {
                                     let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
                                         profile,
                                         error,
@@ -135,8 +158,9 @@ impl StoreWorker {
                 while !worker_retired.load(Ordering::Acquire) {
                     let wait = next_poll.saturating_duration_since(Instant::now());
                     match receiver.recv_timeout(wait) {
-                        Ok(Command::Execute(op)) => {
+                        Ok(Command::Execute { op, bytes }) => {
                             let message = runtime.block_on(execute(&store, *op));
+                            release_queued_op(&worker_retention, bytes);
                             let _ = sink.blocking_send(Msg::Store(message));
                         }
                         Ok(Command::RecordChatOpened(agent)) => {
@@ -220,8 +244,13 @@ impl StoreWorker {
             })
             .expect("spawn profile store executor");
         Self {
-            handle: StoreWorkerHandle { sender, retired },
+            handle: StoreWorkerHandle {
+                sender,
+                retired,
+                retention: Arc::clone(&retention),
+            },
             thread: Some(thread),
+            retention,
             #[cfg(test)]
             maintenance_runs,
             #[cfg(test)]
@@ -245,6 +274,17 @@ impl StoreWorker {
         let _ = self.handle.sender.send(Command::RecordChatOpened(agent));
     }
 
+    pub(crate) fn retention(&self) -> StoreWorkerRetention {
+        StoreWorkerRetention {
+            queued_ops: self.retention.ops.load(Ordering::Acquire),
+            queued_bytes: self.retention.bytes.load(Ordering::Acquire),
+            // The worker streams pages and writes directly through Store; it
+            // deliberately owns no page or write cache above SQLite.
+            page_cache_bytes: 0,
+            write_cache_bytes: 0,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn maintenance_runs(&self) -> usize {
         self.maintenance_runs.load(Ordering::Acquire)
@@ -259,9 +299,26 @@ impl StoreWorker {
 impl StoreWorkerHandle {
     pub(crate) fn execute(&self, op: StoreOp) {
         if !self.retired.load(Ordering::Acquire) {
-            let _ = self.sender.send(Command::Execute(Box::new(op)));
+            let bytes = serde_json::to_vec(&op).map_or(0, |bytes| bytes.len());
+            self.retention.ops.fetch_add(1, Ordering::AcqRel);
+            self.retention.bytes.fetch_add(bytes, Ordering::AcqRel);
+            if self
+                .sender
+                .send(Command::Execute {
+                    op: Box::new(op),
+                    bytes,
+                })
+                .is_err()
+            {
+                release_queued_op(&self.retention, bytes);
+            }
         }
     }
+}
+
+fn release_queued_op(retention: &StoreWorkerRetentionCounters, bytes: usize) {
+    retention.ops.fetch_sub(1, Ordering::AcqRel);
+    retention.bytes.fetch_sub(bytes, Ordering::AcqRel);
 }
 
 impl Drop for StoreWorker {

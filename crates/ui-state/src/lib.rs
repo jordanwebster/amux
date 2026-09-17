@@ -66,10 +66,10 @@ pub use msg::{
 pub use provider::ProviderFacts;
 pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage};
 pub use store::{
-    AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, FLUSH_DEADLINE, HeadDto,
-    LoadedDto, MutationBatchDto, PageDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
-    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, WINDOW_MAX_BYTES,
-    WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, WindowItem, behind,
+    AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, ChatWindowRetention,
+    FLUSH_DEADLINE, HeadDto, LoadedDto, MutationBatchDto, PageDto, ProfileGeneration,
+    ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto,
+    WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, WindowItem, behind,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
 
@@ -81,7 +81,7 @@ pub fn summary_producer_version(protocol: StructuredProtocol) -> u32 {
 pub use self::model::{
     AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation, AgentMessageSender,
     AgentPhase, Attention, ClaudeSdkLayer, Connection, FamilyMember, FamilyNeed, FinishedOp,
-    FleetItem, HostState, MessageDigest, Model, PendingOp, StreamPhase, StreamState,
-    StructuredProtocol, Violation, Why, agent_type_label, display_name_fallback,
+    FleetItem, HostState, MessageDigest, Model, ModelRetention, PendingOp, StreamPhase,
+    StreamState, StructuredProtocol, Violation, Why, agent_type_label, display_name_fallback,
     format_relative_age, message_digest,
 };

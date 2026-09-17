@@ -10,10 +10,10 @@ pub use recorder::{
     RecorderSnapshot, ReplayError, replay_msgs,
 };
 pub use runtime::{
-    AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
-    ConnectFuture, Connector, Generation, HostEventStream, HostEventStreamFuture, HostInventory,
-    LateResult, MAX_STREAM_BATCH, MsgTap, ProfileDirectory, ProfileEntry, ReportExtras,
-    ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions, ShellEdge, execute_put,
-    execute_put_then_send, write_panic_report,
+    AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ChatRetentionReport,
+    ConnectFailure, ConnectFuture, Connector, Generation, HostEventStream, HostEventStreamFuture,
+    HostInventory, LateResult, MAX_STREAM_BATCH, MsgTap, ProfileDirectory, ProfileEntry,
+    ReportExtras, ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions,
+    RuntimeRetentionReport, ShellEdge, execute_put, execute_put_then_send, write_panic_report,
 };
 pub use store_worker::LOCAL_HOST_VIEW;

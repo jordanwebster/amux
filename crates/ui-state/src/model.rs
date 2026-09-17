@@ -602,6 +602,70 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Serialized sizes of reducer-owned state used by runtime retention
+    /// diagnostics. Store-backed chat windows are reported separately.
+    pub fn retention(&self) -> ModelRetention {
+        fn json_bytes<T: Serialize + ?Sized>(value: &T) -> usize {
+            serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
+        }
+
+        let effect_state_bytes = json_bytes(&(&self.queues, &self.pending_ops, &self.finished_ops));
+        let subscription_state_bytes = json_bytes(&(&self.streams, &self.attached));
+        let mut provider_state_count = 0;
+        let mut provider_state_bytes = 0usize;
+        let mut ask_count = 0usize;
+        let mut ask_bytes = 0usize;
+        for card in self.agents.values() {
+            let Some(layer) = card.layer.as_ref() else {
+                continue;
+            };
+            provider_state_count += 1;
+            provider_state_bytes = provider_state_bytes.saturating_add(json_bytes(layer));
+            match layer {
+                AgentLayer::Claude(layer) => {
+                    ask_count += layer.ask_count();
+                    ask_bytes = ask_bytes.saturating_add(
+                        layer
+                            .asks()
+                            .map(json_bytes)
+                            .fold(0usize, usize::saturating_add),
+                    );
+                }
+                AgentLayer::ClaudeSdk(layer) => {
+                    ask_count += layer.ask_count();
+                    ask_bytes = ask_bytes.saturating_add(
+                        layer
+                            .asks()
+                            .map(json_bytes)
+                            .fold(0usize, usize::saturating_add),
+                    );
+                }
+                AgentLayer::Codex(layer) => {
+                    ask_count += layer.ask_count();
+                    ask_bytes = ask_bytes.saturating_add(
+                        layer
+                            .asks()
+                            .map(json_bytes)
+                            .fold(0usize, usize::saturating_add),
+                    );
+                }
+            }
+        }
+
+        ModelRetention {
+            effect_state_count: self.queues.len()
+                + self.pending_ops.len()
+                + self.finished_ops.len(),
+            effect_state_bytes,
+            subscription_state_count: self.streams.len() + self.attached.len(),
+            subscription_state_bytes,
+            provider_state_count,
+            provider_state_bytes,
+            ask_count,
+            ask_bytes,
+        }
+    }
+
     pub fn queued(&self, agent: AgentId) -> Option<&crate::QueuedMessage> {
         self.queues.get(&agent)
     }
@@ -1142,6 +1206,20 @@ impl Model {
         }
         items
     }
+}
+
+/// Encoded reducer ownership excluding the store-backed chat windows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModelRetention {
+    pub effect_state_count: usize,
+    pub effect_state_bytes: usize,
+    pub subscription_state_count: usize,
+    pub subscription_state_bytes: usize,
+    /// Full live provider layers; `ask_bytes` is a named subset of this value.
+    pub provider_state_count: usize,
+    pub provider_state_bytes: usize,
+    pub ask_count: usize,
+    pub ask_bytes: usize,
 }
 
 /// A broken Model invariant, typed and entity-addressed so a release-mode

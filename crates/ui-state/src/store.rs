@@ -179,6 +179,14 @@ impl MutationBatchDto {
         postcard::to_allocvec(self).map_or(PENDING_COMMIT_MAX_BYTES + 1, |bytes| bytes.len())
     }
 
+    fn len(&self) -> usize {
+        match self {
+            Self::Claude(values) => values.len(),
+            Self::ClaudeSdk(values) => values.len(),
+            Self::Codex(values) => values.len(),
+        }
+    }
+
     fn append(&mut self, source: Self) {
         match (self, source) {
             (Self::Claude(left), Self::Claude(mut right)) => left.append(&mut right),
@@ -646,6 +654,31 @@ impl ChatWindow {
             + self.in_flight.as_ref().map_or(0, |batch| batch.bytes)
     }
 
+    /// Encoded ownership inside this store-backed window. This deliberately
+    /// reports the visible and canonical vectors separately: they are two
+    /// allocations containing the same logical entries.
+    pub fn retention(&self) -> ChatWindowRetention {
+        let encoded =
+            |entries: &[StoredDto]| postcard::to_allocvec(entries).map_or(0, |bytes| bytes.len());
+        ChatWindowRetention {
+            visible_entries: self.entries.len(),
+            visible_entry_bytes: encoded(&self.entries),
+            canonical_entries: self.canonical_entries.len(),
+            canonical_entry_bytes: encoded(&self.canonical_entries),
+            pending_commits: self.pending.len() + usize::from(self.in_flight.is_some()),
+            pending_mutations: self
+                .pending
+                .iter()
+                .map(|commit| commit.mutations.len())
+                .sum::<usize>()
+                + self
+                    .in_flight
+                    .as_ref()
+                    .map_or(0, |commit| commit.mutations.len()),
+            pending_mutation_bytes: self.pending_bytes(),
+        }
+    }
+
     pub fn is_painted(&self) -> bool {
         matches!(
             self.state,
@@ -656,6 +689,18 @@ impl ChatWindow {
     pub fn head_through(&self) -> Option<Seq> {
         self.head.as_ref().map(HeadDto::through)
     }
+}
+
+/// Serialized ownership inside one open store-backed chat window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChatWindowRetention {
+    pub visible_entries: usize,
+    pub visible_entry_bytes: usize,
+    pub canonical_entries: usize,
+    pub canonical_entry_bytes: usize,
+    pub pending_commits: usize,
+    pub pending_mutations: usize,
+    pub pending_mutation_bytes: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

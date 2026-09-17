@@ -40,6 +40,13 @@ pub struct RecorderSnapshot {
     pub msgs: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RecorderRetention {
+    pub entries: usize,
+    pub entry_bytes: usize,
+    pub checkpoint_bytes: usize,
+}
+
 #[derive(Serialize)]
 pub(crate) struct RecorderSnapshotHeader<'a> {
     pub format_version: u32,
@@ -111,6 +118,14 @@ impl Recorder {
         RecorderSnapshot {
             checkpoint: self.checkpoint.clone(),
             msgs: self.entries.iter().cloned().collect(),
+        }
+    }
+
+    pub(crate) fn retention(&self) -> RecorderRetention {
+        RecorderRetention {
+            entries: self.entries.len(),
+            entry_bytes: self.retained_bytes,
+            checkpoint_bytes: serde_json::to_vec(&self.checkpoint).map_or(0, |bytes| bytes.len()),
         }
     }
 }

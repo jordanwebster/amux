@@ -460,6 +460,149 @@ pub struct Runtime {
     reported_violations: HashSet<&'static str>,
 }
 
+/// One open chat's retained store-backed state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatRetentionReport {
+    pub agent: AgentId,
+    pub visible_entries: usize,
+    pub visible_entry_bytes: usize,
+    pub canonical_entries: usize,
+    pub canonical_entry_bytes: usize,
+    pub pending_commits: usize,
+    pub pending_mutations: usize,
+    pub pending_mutation_bytes: usize,
+}
+
+/// In-process ownership accounting for the shipping client runtime.
+///
+/// Sizes are serialized payload bytes for model values and exact retained
+/// string capacities for recorder messages. They intentionally exclude stack
+/// frames and allocator overhead, making deltas stable enough to attribute
+/// per-row growth without replacing the process-footprint soak.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeRetentionReport {
+    pub chats: Vec<ChatRetentionReport>,
+    pub store_queued_ops: usize,
+    pub store_queued_bytes: usize,
+    pub store_page_cache_bytes: usize,
+    pub store_write_cache_bytes: usize,
+    pub sqlite_bytes: usize,
+    pub reducer_effect_count: usize,
+    pub reducer_effect_bytes: usize,
+    pub reducer_subscription_count: usize,
+    pub reducer_subscription_bytes: usize,
+    pub provider_state_count: usize,
+    pub provider_state_bytes: usize,
+    /// A named subset of `provider_state_bytes`.
+    pub ask_count: usize,
+    pub ask_bytes: usize,
+    pub runtime_subscription_tasks: usize,
+    pub runtime_subscription_bytes: usize,
+    pub recorder_entries: usize,
+    pub recorder_entry_bytes: usize,
+    pub recorder_checkpoint_bytes: usize,
+}
+
+impl RuntimeRetentionReport {
+    pub fn visible_entry_bytes(&self) -> usize {
+        self.chats.iter().map(|chat| chat.visible_entry_bytes).sum()
+    }
+
+    pub fn canonical_entry_bytes(&self) -> usize {
+        self.chats
+            .iter()
+            .map(|chat| chat.canonical_entry_bytes)
+            .sum()
+    }
+
+    pub fn pending_mutation_bytes(&self) -> usize {
+        self.chats
+            .iter()
+            .map(|chat| chat.pending_mutation_bytes)
+            .sum()
+    }
+
+    pub fn recorder_bytes(&self) -> usize {
+        self.recorder_entry_bytes
+            .saturating_add(self.recorder_checkpoint_bytes)
+    }
+
+    pub fn accounted_bytes(&self) -> usize {
+        self.visible_entry_bytes()
+            .saturating_add(self.canonical_entry_bytes())
+            .saturating_add(self.pending_mutation_bytes())
+            .saturating_add(self.store_queued_bytes)
+            .saturating_add(self.store_page_cache_bytes)
+            .saturating_add(self.store_write_cache_bytes)
+            .saturating_add(self.sqlite_bytes)
+            .saturating_add(self.reducer_effect_bytes)
+            .saturating_add(self.reducer_subscription_bytes)
+            .saturating_add(self.runtime_subscription_bytes)
+            .saturating_add(self.provider_state_bytes)
+            .saturating_add(self.recorder_bytes())
+    }
+}
+
+impl std::fmt::Display for RuntimeRetentionReport {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            output,
+            "runtime retention: accounted={} bytes, chats={}, sqlite={} bytes",
+            self.accounted_bytes(),
+            self.chats.len(),
+            self.sqlite_bytes
+        )?;
+        for chat in &self.chats {
+            writeln!(
+                output,
+                "  chat {}: visible={} entries/{} bytes, canonical={} entries/{} bytes, pending={} commits/{} mutations/{} bytes",
+                chat.agent,
+                chat.visible_entries,
+                chat.visible_entry_bytes,
+                chat.canonical_entries,
+                chat.canonical_entry_bytes,
+                chat.pending_commits,
+                chat.pending_mutations,
+                chat.pending_mutation_bytes,
+            )?;
+        }
+        writeln!(
+            output,
+            "  store: queued={} ops/{} bytes, page cache={} bytes, write cache={} bytes",
+            self.store_queued_ops,
+            self.store_queued_bytes,
+            self.store_page_cache_bytes,
+            self.store_write_cache_bytes,
+        )?;
+        writeln!(
+            output,
+            "  reducer: effects={} items/{} bytes, subscriptions={} items/{} bytes, provider state={} layers/{} bytes",
+            self.reducer_effect_count,
+            self.reducer_effect_bytes,
+            self.reducer_subscription_count,
+            self.reducer_subscription_bytes,
+            self.provider_state_count,
+            self.provider_state_bytes,
+        )?;
+        writeln!(
+            output,
+            "  asks: {} items/{} bytes (subset of provider state); runtime subscriptions={} tasks/{} bytes",
+            self.ask_count,
+            self.ask_bytes,
+            self.runtime_subscription_tasks,
+            self.runtime_subscription_bytes,
+        )?;
+        write!(
+            output,
+            "  recorder: {} entries/{} bytes, checkpoint={} bytes, total={} bytes",
+            self.recorder_entries,
+            self.recorder_entry_bytes,
+            self.recorder_checkpoint_bytes,
+            self.recorder_bytes(),
+        )
+    }
+}
+
 struct StoreStreamTask {
     task: JoinHandle<()>,
     paused: watch::Sender<bool>,
@@ -730,6 +873,66 @@ impl Runtime {
 
     pub fn model(&self) -> &Model {
         &self.model
+    }
+
+    /// Attribute bytes retained by each long-lived runtime component.
+    pub fn retention_report(&self) -> RuntimeRetentionReport {
+        let model = self.model.retention();
+        let chats = self
+            .model
+            .chats()
+            .map(|(agent, chat)| {
+                let retained = chat.retention();
+                ChatRetentionReport {
+                    agent: *agent,
+                    visible_entries: retained.visible_entries,
+                    visible_entry_bytes: retained.visible_entry_bytes,
+                    canonical_entries: retained.canonical_entries,
+                    canonical_entry_bytes: retained.canonical_entry_bytes,
+                    pending_commits: retained.pending_commits,
+                    pending_mutations: retained.pending_mutations,
+                    pending_mutation_bytes: retained.pending_mutation_bytes,
+                }
+            })
+            .collect();
+        let store = self
+            .store_worker
+            .as_ref()
+            .map(StoreWorker::retention)
+            .unwrap_or_default();
+        let recorder = lock_recorder(&self.recorder).retention();
+        RuntimeRetentionReport {
+            chats,
+            store_queued_ops: store.queued_ops,
+            store_queued_bytes: store.queued_bytes,
+            store_page_cache_bytes: store.page_cache_bytes,
+            store_write_cache_bytes: store.write_cache_bytes,
+            sqlite_bytes: self
+                .store_worker
+                .as_ref()
+                .map_or(0, |_| sqlite_memory_used()),
+            reducer_effect_count: model.effect_state_count,
+            reducer_effect_bytes: model.effect_state_bytes,
+            reducer_subscription_count: model.subscription_state_count,
+            reducer_subscription_bytes: model.subscription_state_bytes,
+            provider_state_count: model.provider_state_count,
+            provider_state_bytes: model.provider_state_bytes,
+            ask_count: model.ask_count,
+            ask_bytes: model.ask_bytes,
+            runtime_subscription_tasks: self.streams.len() + self.store_streams.len(),
+            runtime_subscription_bytes: self
+                .streams
+                .capacity()
+                .saturating_mul(std::mem::size_of::<(AgentId, JoinHandle<()>)>())
+                .saturating_add(
+                    self.store_streams
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<(AgentId, StoreStreamTask)>()),
+                ),
+            recorder_entries: recorder.entries,
+            recorder_entry_bytes: recorder.entry_bytes,
+            recorder_checkpoint_bytes: recorder.checkpoint_bytes,
+        }
     }
 
     /// Dispatch a command; the outcome returns as state (a finished op).
@@ -1310,6 +1513,13 @@ impl Runtime {
             }
         }
     }
+}
+
+fn sqlite_memory_used() -> usize {
+    // SAFETY: sqlite3_memory_used takes no pointers and is safe to call while
+    // SQLite is active when the library is threadsafe. Store qualification
+    // refuses libraries without that property before the runtime opens them.
+    usize::try_from(unsafe { rusqlite::ffi::sqlite3_memory_used() }).unwrap_or(0)
 }
 
 impl Drop for Runtime {

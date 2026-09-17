@@ -1,3 +1,18 @@
+2026-09-17 — **Client retention is attributed inside the runtime.** Three real
+shipping-client soaks retained about 4.3 KiB per delivered row: 4.010 MiB/min
+over ten minutes, then 5.309 and 5.162 MiB/min before reset in the four-minute
+diagnostics, with ten chats receiving 20 rows/s in aggregate. A runtime-owned
+report now separates the visible and canonical store-backed entry vectors,
+pending commit mutations, store work and caches, SQLite allocations, reducer
+effects and subscriptions, provider state and asks, and the recorder's recent
+messages from its full-model checkpoint. The focused on-disk loopback prints
+per delivered row figures before and across the window cap; its authorized
+driver run supplies the component numbers. Visible and canonical vectors each
+cap at 800 entries or 16 MiB per chat (about 400 s at 2 rows/s), the legacy
+provider feed caps at 1,000 entries (500 s), its row-dedupe set at 4,096
+(2,048 s), asks at 32 per chat, recent recorder messages at 2 MiB, and the
+store worker owns no page or write cache above SQLite.
+
 2026-09-17 — **Memory repair runs keep the real soak workload.** The original
 ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the
 diagnostic recorder retained serialized stream and store messages up to its

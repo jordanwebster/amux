@@ -15,6 +15,7 @@ artifacts = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }
 model = { workspace = true }
+rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 store = { workspace = true }
@@ -27,6 +28,5 @@ uuid = { workspace = true }
 [dev-dependencies]
 agent-runtime = { workspace = true }
 node = { workspace = true }
-rusqlite = { workspace = true }
 testnet = { workspace = true }
 tempfile = { workspace = true }
