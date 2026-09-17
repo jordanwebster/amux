@@ -1,3 +1,11 @@
+2026-09-17 — **The repaired harness has a complete reference baseline.** On
+the quiet Mac14,6 reference machine running macOS 26.5.2, the release
+`bundled,perf` qualification records every desktop metric after the store-window
+flood and live-summarizer repairs. The four real-exec cold-start rows are numeric
+again: 22.266 ms for 40 agents and 23.369 ms for 200 agents, with their worst
+samples also inside the unchanged budgets. The same run's measured iOS suite
+passed with a 2.6 ms median store read and 449.5 ms median first frame.
+
 2026-09-17 — **The phone suite waits for the machine to go quiet.** `just perf`
 runs the desktop workloads and then the phone suite in one command, so every
 phone measurement was taken while the machine was still working through what
