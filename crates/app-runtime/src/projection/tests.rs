@@ -217,6 +217,16 @@ fn mobile_projection_schema_snapshot() {
         .unwrap();
     row(&mut sdk, 1, facts);
     events.extend(collect(&mut subscribed(), &sdk));
+    events.push(Event::connection(&RelayConnection::Disconnected {
+        reason: model::DisconnectReason::Unreachable,
+    }));
+    events.push(Event::Invariant {
+        detail: "example diagnostic".into(),
+    });
+    events.push(Event::Attention {
+        account: "work".into(),
+        waiting: 2,
+    });
     events.push(Event::Feed {
         agent: AGENT,
         base: 2,
@@ -227,16 +237,6 @@ fn mobile_projection_schema_snapshot() {
         })],
         replace: vec![],
         evicted: 0,
-    });
-    events.push(Event::connection(&RelayConnection::Disconnected {
-        reason: model::DisconnectReason::Unreachable,
-    }));
-    events.push(Event::Invariant {
-        detail: "example diagnostic".into(),
-    });
-    events.push(Event::Attention {
-        account: "work".into(),
-        waiting: 2,
     });
     events.push(Event::Devices {
         identity: DeviceIdentityDto {

@@ -978,6 +978,23 @@
     }
   },
   {
+    "Connection": {
+      "state": "disconnected",
+      "reason": "unreachable"
+    }
+  },
+  {
+    "Invariant": {
+      "detail": "example diagnostic"
+    }
+  },
+  {
+    "Attention": {
+      "account": "work",
+      "waiting": 2
+    }
+  },
+  {
     "Feed": {
       "agent": "00000000-0000-0000-0000-000000000001",
       "base": 2,
@@ -993,23 +1010,6 @@
       ],
       "replace": [],
       "evicted": 0
-    }
-  },
-  {
-    "Connection": {
-      "state": "disconnected",
-      "reason": "unreachable"
-    }
-  },
-  {
-    "Invariant": {
-      "detail": "example diagnostic"
-    }
-  },
-  {
-    "Attention": {
-      "account": "work",
-      "waiting": 2
     }
   },
   {

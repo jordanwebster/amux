@@ -15,7 +15,7 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 18)
+        XCTAssertEqual(events.count, 19)
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a
@@ -117,6 +117,18 @@ final class SchemaTests: XCTestCase {
 
         XCTAssertEqual(codex.append[0].layer, .codex)
         XCTAssertEqual(codex.append[0].seq, 2)
+    }
+
+    /// A break in stored history arrives as a row of its own, drawn as a rule.
+    func testABreakInStoredHistoryDecodesAsItsOwnRow() throws {
+        let events = try pinnedEvents()
+        guard case .feed(let stored) = events[17] else {
+            return XCTFail("expected a stored feed with a break, got \(events[17])")
+        }
+        XCTAssertEqual(stored.append.count, 1)
+        XCTAssertEqual(stored.append[0].layer, .history)
+        XCTAssertEqual(stored.append[0].rowId, 2)
+        XCTAssertEqual(stored.append[0].kind, .historyBreak(label: "missing history"))
     }
 
     func testOutcomesDiffsTokensAndInvariants() throws {
