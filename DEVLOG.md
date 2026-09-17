@@ -1,3 +1,8 @@
+2026-09-17 — **A stopped testnet releases its scripted providers.** The
+terminal shutdown path clears the harness-only provider registry after every
+daemon has stopped, so an executor that outlives a topology cannot retain its
+Claude or SDK fixtures. Restart paths keep their sources for resume coverage.
+
 2026-09-17 — **Embedded integration tests wait for command readiness.**
 The attached-daemon and multi-account tests now wait for both inventory
 snapshots, matching the reducer's write gate. A transport connection alone can

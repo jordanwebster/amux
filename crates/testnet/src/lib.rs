@@ -240,6 +240,9 @@ impl TestNet {
     pub async fn shutdown(self) {
         for daemon in &self.inner.daemons {
             daemon.stop().await;
+            // The executor can outlive this topology. Release its fixture
+            // providers once no backend can call them again.
+            daemon.inner.sources.clear();
         }
         if let Some(cloud) = &self.inner.cloud {
             cloud.relay.go_offline().await;

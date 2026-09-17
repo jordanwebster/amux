@@ -26,6 +26,14 @@ pub(crate) struct DaemonSources {
 }
 
 impl DaemonSources {
+    pub(crate) fn clear(&self) {
+        self.claude
+            .lock()
+            .expect("scripted Claude providers poisoned")
+            .clear();
+        *self.sdk.lock().expect("scripted SDK provider poisoned") = None;
+    }
+
     pub(crate) fn attach_claude(&self, agent: Uuid, provider: super::script::Provider) {
         self.claude
             .lock()
