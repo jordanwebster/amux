@@ -81,6 +81,9 @@ pub enum ClaudeBody {
         from: String,
         kind: AgentMessageKind,
     },
+    ApiError {
+        error: Option<String>,
+    },
     Unrecognized {
         row_type: Option<String>,
         detail: Option<String>,
@@ -711,7 +714,14 @@ impl ClaudeFold {
                 seq,
                 0,
                 revision,
-                partial(ClaudeEntryKind::ApiError, ClaudeBody::None, text, revision),
+                partial(
+                    ClaudeEntryKind::ApiError,
+                    ClaudeBody::ApiError {
+                        error: string(row, "error"),
+                    },
+                    text,
+                    revision,
+                ),
             ));
             return;
         }
@@ -1048,6 +1058,15 @@ impl ClaudeFold {
             }
         }
         let key = namespaced_or_delivery("tool", Some(&id), seq, slot);
+        let mut stored_outcome = block.clone();
+        if let Some(object) = stored_outcome.as_object_mut() {
+            if let Some(sidecar) = row.get("toolUseResult") {
+                object.insert("amux_tool_use_result".into(), sidecar.clone());
+            }
+            if let Some(denial) = row.get("toolDenialKind") {
+                object.insert("amux_tool_denial_kind".into(), denial.clone());
+            }
+        }
         let patch = ClaudePartial {
             kind: Patch::set(ClaudeEntryKind::Tool, revision),
             body: Patch::set(
@@ -1056,7 +1075,10 @@ impl ClaudeFold {
                 },
                 revision,
             ),
-            tool_outcome: Patch::set(JsonBytes(bounded_json(block, OUTPUT_HEAD_BYTES)), revision),
+            tool_outcome: Patch::set(
+                JsonBytes(bounded_json(&stored_outcome, OUTPUT_HEAD_BYTES)),
+                revision,
+            ),
             ..ClaudePartial::default()
         };
         mutations.push(upsert(key, seq, slot, revision, patch));
@@ -1686,6 +1708,7 @@ impl crate::private::Sealed for ClaudeBody {
                 crate::assert_value_safe(&from);
                 crate::assert_value_safe(&kind);
             }
+            ClaudeBody::ApiError { error } => crate::assert_value_safe(&error),
             ClaudeBody::Unrecognized { row_type, detail } => {
                 crate::assert_value_safe(&row_type);
                 crate::assert_value_safe(&detail);

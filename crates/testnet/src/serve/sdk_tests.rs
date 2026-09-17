@@ -2,7 +2,7 @@ use serde_json::json;
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::{Command as UiCommand, Draft, claude_sdk};
 
-use super::agents_tests::{succeeded, wait_for};
+use super::agents_tests::{stored_has_text, succeeded, wait_for};
 use super::*;
 
 #[test]
@@ -151,12 +151,7 @@ async fn exercise() {
             )
             .await;
             wait_for(&mut runtime, "SDK response", |model| {
-                model.claude_sdk(agent).is_some_and(|layer| {
-                    layer.entries().any(|row| {
-                        matches!(&row.kind, claude_sdk::FeedEntryKind::Message(message)
-                    if message.text == "The SDK session received your prompt.")
-                    })
-                })
+                stored_has_text(model, agent, "The SDK session received your prompt.")
             })
             .await;
             wait_for(&mut runtime, "SDK turn ended", |model| {
@@ -230,10 +225,7 @@ async fn exercise() {
         )
         .await;
         wait_for(&mut runtime, "PTY response", |model| {
-            model.claude(pty).unwrap().entries().any(|row| {
-                matches!(&row.kind, ui_state::claude::FeedEntryKind::Message(message)
-                if message.segments.iter().any(|s| s == "The PTY session received your prompt."))
-            })
+            stored_has_text(model, pty, "The PTY session received your prompt.")
         })
         .await;
         let pty_before = control

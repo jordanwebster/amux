@@ -71,9 +71,8 @@ fn before_transcript_ready_the_phase_is_replaying() {
 /// so a late attacher's truncated tail no longer CONTAINS the marker.
 /// `StreamMsg::ReplayComplete` is the out-of-band unlock — after it, the
 /// window is LIVE with truncated history: phase derives from the tail's
-/// facts, live prompts and permission hooks surface, and the honest
-/// missing-history boundary (B9) stays. Liveness is never suppressed by
-/// truncation.
+/// facts and live prompts and permission hooks surface. The store owns the
+/// missing-history boundary. Liveness is never suppressed by truncation.
 #[test]
 fn a_truncated_live_window_unlocks_after_replay_complete() {
     // The replayed tail contains a prompt after the evicted ready marker.
@@ -109,10 +108,6 @@ fn a_truncated_live_window_unlocks_after_replay_complete() {
         phase_of(&unlocked),
         ChatPhase::Working,
         "the tail's open turn surfaces — never Replaying forever"
-    );
-    assert!(
-        claude_layer(&unlocked, "fix-auth-bug").history_truncated(),
-        "missing-history honesty stays"
     );
 
     // A live permission hook after the unlock surfaces immediately, on the

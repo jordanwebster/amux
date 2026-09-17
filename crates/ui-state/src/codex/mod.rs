@@ -22,8 +22,7 @@ use serde_json::Value;
 
 use crate::attachments::{AttachmentIndex, Segment};
 use crate::model::{
-    AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase, Violation, Why,
-    message_digest,
+    AgentPhase, Attention, Model, StreamPhase, Violation, Why,
 };
 use crate::msg::OpId;
 
@@ -34,7 +33,7 @@ pub type MessageEntry = ::fold::codex::MessageEntry<Vec<Segment>>;
 pub type Observation = ::fold::codex::Observation<Vec<Segment>>;
 
 pub const PROTOCOL: &str = ::fold::codex::PROTOCOL;
-pub use ::fold::codex::{ASKS_RETAINED, FEED_RETAINED, OUTPUT_HEAD_MAX};
+pub use ::fold::codex::{ASKS_RETAINED, OUTPUT_HEAD_MAX};
 
 pub(crate) const INPUTS_RETAINED: usize = 64;
 
@@ -150,15 +149,6 @@ pub enum CodexViolation {
         len: usize,
         cap: usize,
     },
-    FeedOrder {
-        agent: model::AgentId,
-    },
-    IndexAhead {
-        agent: model::AgentId,
-        index: &'static str,
-        entry: u64,
-        next: u64,
-    },
     DuplicateAsk {
         agent: model::AgentId,
     },
@@ -178,8 +168,6 @@ impl CodexViolation {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::RetentionOverflow { .. } => "codex-retention-overflow",
-            Self::FeedOrder { .. } => "codex-feed-order",
-            Self::IndexAhead { .. } => "codex-index-ahead",
             Self::DuplicateAsk { .. } => "codex-duplicate-ask",
             Self::DuplicateInput { .. } => "codex-duplicate-input",
             Self::ProjectionDisagreement { .. } => "codex-projection-disagreement",
@@ -198,18 +186,6 @@ impl std::fmt::Display for CodexViolation {
             } => write!(
                 f,
                 "agent {agent} codex {store} holds {len} entries over the bound of {cap}"
-            ),
-            Self::FeedOrder { agent } => {
-                write!(f, "agent {agent} codex feed id arithmetic is incoherent")
-            }
-            Self::IndexAhead {
-                agent,
-                index,
-                entry,
-                next,
-            } => write!(
-                f,
-                "agent {agent} codex {index} references entry {entry} past next id {next}"
             ),
             Self::DuplicateAsk { agent } => {
                 write!(f, "agent {agent} codex asks share a request id")
@@ -243,6 +219,10 @@ pub struct CodexLayer {
 }
 
 impl CodexLayer {
+    pub fn cursor(&self) -> u64 {
+        self.observation.cursor()
+    }
+
     pub fn provider_facts(&self) -> &crate::ProviderFacts {
         &self.provider
     }
@@ -374,15 +354,12 @@ impl CodexLayer {
         self.exited = true;
     }
 
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
-        self.observation.entries()
-    }
-    pub(crate) fn discard_feed(&mut self) {
-        self.observation.discard_entries();
-    }
-
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.observation.token_usage()
+    }
+
+    pub fn work(&self) -> impl Iterator<Item = &WorkEntry> {
+        self.observation.work()
     }
 
     pub fn attachments(&self) -> &AttachmentIndex {
@@ -391,28 +368,6 @@ impl CodexLayer {
 
     pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
         &mut self.attachments
-    }
-
-    pub fn has_foldable_completion(&self) -> bool {
-        self.entries().any(|entry| match &entry.kind {
-            FeedEntryKind::AgentMessage(message) => {
-                message.kind.presentation() == AgentMessagePresentation::Finished
-                    && message_digest(&message.text).hidden_lines > 0
-            }
-            _ => false,
-        })
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.observation.entry_count()
-    }
-
-    pub fn history_truncated(&self) -> bool {
-        self.observation.history_truncated()
-    }
-
-    pub fn evicted_entries(&self) -> u64 {
-        self.observation.evicted_entries()
     }
 
     pub fn asks(&self) -> impl Iterator<Item = &Ask> {
@@ -465,13 +420,6 @@ impl CodexLayer {
                         cap,
                     }
                 }
-                Invariant::FeedOrder => CodexViolation::FeedOrder { agent },
-                Invariant::IndexAhead { index, entry, next } => CodexViolation::IndexAhead {
-                    agent,
-                    index,
-                    entry,
-                    next,
-                },
                 Invariant::DuplicateAsk => CodexViolation::DuplicateAsk { agent },
             };
             out.push(Violation::Codex(violation));

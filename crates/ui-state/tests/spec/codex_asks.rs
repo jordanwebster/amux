@@ -7,7 +7,7 @@
 
 use serde_json::{Value, json};
 use ui_state::codex::{
-    ApprovalResolution, AskActionMeaning, AskContext, CodexDecision, CodexPhase, FeedEntryKind,
+    ApprovalResolution, AskActionMeaning, AskContext, CodexDecision, CodexPhase,
     NetworkPolicyAction, NetworkPolicyAmendment, WorkState,
 };
 use ui_state::{Attention, Why};
@@ -102,8 +102,7 @@ fn an_approval_without_immediately_preceding_context_is_not_rendered_as_an_ask()
     ]);
     let layer = codex_layer(&model, AGENT);
     assert_eq!(layer.ask_count(), 0);
-    assert!(layer.entries().any(|entry| matches!(&entry.kind,
-        FeedEntryKind::Error(error) if error.message.contains("without its preceding request context"))));
+    assert!(model.check_invariants().is_empty());
 }
 
 #[test]
@@ -289,11 +288,9 @@ fn only_satisfied_resolutions_continue_work_and_five_death_reasons_abandon_it() 
         let layer = codex_layer(&model, AGENT);
         assert_eq!(layer.ask_count(), 0, "{reason} closes the obligation");
         let state = layer
-            .entries()
-            .find_map(|entry| match &entry.kind {
-                FeedEntryKind::Work(work) if work.item_id == "exec-1" => Some(work.state.clone()),
-                _ => None,
-            })
+            .work()
+            .find(|work| work.item_id == "exec-1")
+            .map(|work| work.state.clone())
             .unwrap();
         assert_eq!(state, expected, "resolution semantics for {reason}");
     }
@@ -310,8 +307,9 @@ fn unsupported_user_input_blocks_without_creating_an_answerable_ask() {
     ]);
     let layer = codex_layer(&model, AGENT);
     assert_eq!(layer.ask_count(), 0);
-    assert!(layer.entries().any(|entry| matches!(&entry.kind,
-        FeedEntryKind::Work(work) if work.state == WorkState::BlockedUnsupported)));
+    assert!(layer
+        .work()
+        .any(|work| work.state == WorkState::BlockedUnsupported));
     assert!(matches!(
         ui_state::codex::phase(&model, agent_id(AGENT)),
         CodexPhase::BlockedUnsupported { .. }

@@ -5,10 +5,7 @@
 //! The reducer-minted operation UUID is forwarded as the input correlation id.
 
 use serde_json::json;
-use ui_state::codex::{
-    CodexCommand, CodexDecision, CodexInput, CodexPhase, FeedEntryKind, InFlightKind, PromptPart,
-    PromptSource, SendGate,
-};
+use ui_state::codex::{CodexCommand, CodexDecision, CodexInput, CodexPhase, InFlightKind, SendGate};
 use ui_state::{
     Attention, Command, Effect, InputPayload, Msg, OpOutcome, StreamCloseReason, StreamMsg,
 };
@@ -129,12 +126,6 @@ fn idle_prompt_encodes_native_input_and_tracks_only_the_correlated_in_flight_op(
     let in_flight: Vec<_> = codex_layer(&model, AGENT).in_flight_inputs().collect();
     assert_eq!(in_flight.len(), 1);
     assert!(matches!(in_flight[0].kind, InFlightKind::Prompt));
-    assert!(
-        !codex_layer(&model, AGENT)
-            .entries()
-            .any(|entry| matches!(entry.kind, ui_state::codex::FeedEntryKind::Prompt(_))),
-        "prompt entries come from protocol userMessage items, never a local echo"
-    );
 }
 
 #[test]
@@ -262,47 +253,6 @@ fn input_result_not_rpc_success_closes_the_layer_in_flight_marker() {
     );
 }
 
-#[test]
-fn successful_steer_result_promotes_the_correlated_text_to_an_honest_echo() {
-    let mut msgs = seq([codex_base(AGENT), vec![batch(AGENT, 10, live_rows())]]);
-    msgs.push(command_msg(
-        1,
-        CodexCommand::Steer {
-            agent: agent_id(AGENT),
-            text: "also check tests".into(),
-        },
-    ));
-    assert!(
-        !codex_layer(&fold(msgs.clone()), AGENT)
-            .entries()
-            .any(|entry| matches!(entry.kind, FeedEntryKind::Prompt(_))),
-        "an unacknowledged steer is not yet durable feed history"
-    );
-
-    msgs.push(batch(
-        AGENT,
-        20,
-        vec![json!({
-            "type":"amux.input_result", "input_id":op(1).0.as_bytes(), "ok":{}
-        })],
-    ));
-    let model = fold(msgs);
-    let prompts: Vec<_> = codex_layer(&model, AGENT)
-        .entries()
-        .filter_map(|entry| match &entry.kind {
-            FeedEntryKind::Prompt(prompt) => Some(prompt),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(prompts.len(), 1);
-    assert_eq!(prompts[0].source, PromptSource::SteerEcho);
-    assert_eq!(
-        prompts[0].parts,
-        vec![PromptPart::Text {
-            text: "also check tests".into()
-        }]
-    );
-}
 
 #[test]
 fn active_steer_and_interrupt_carry_the_authoritative_turn_id() {

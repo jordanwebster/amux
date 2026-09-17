@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use tui::fixtures::{NamedState, fixture};
 use tui::view::{UiAction, ViewState};
 use tui::{ChatView, ColorMode, FrameContext, Theme, render};
-use ui_state::claude_sdk::{ClaudeSdkCommand, FeedEntryKind, Finality};
+use fold::Entry as _;
+use ui_state::claude_sdk::ClaudeSdkCommand;
 use ui_state::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
     update,
@@ -143,9 +144,23 @@ fn batch(seq: u64, rows: Vec<Value>) -> Msg {
 
 fn fold(msgs: Vec<Msg>) -> Model {
     let mut model = Model::default();
+    let mut rows = Vec::new();
     for msg in msgs {
+        if let Msg::Stream {
+            event: StreamMsg::Batch { entries, .. },
+            ..
+        } = &msg
+        {
+            rows.extend(entries.iter().map(|entry| entry.payload.clone()));
+        }
         update(&mut model, msg);
     }
+    tui::fixtures::install_store_rows_for(
+        &mut model,
+        agent_id(),
+        ui_state::StructuredProtocol::ClaudeSdk,
+        rows,
+    );
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");
     model
@@ -170,18 +185,19 @@ fn mid_reply() -> Model {
         let msg = batch(index as u64, vec![row]);
         msgs.push(msg.clone());
         update(&mut model, msg);
-        let streaming = model
-            .claude_sdk(agent_id())
-            .expect("the session layer")
-            .entries()
-            .any(|entry| match &entry.kind {
-                FeedEntryKind::Message(message) => {
-                    !message.text.is_empty() && message.finality == Finality::Streaming
+        let candidate = fold(msgs.clone());
+        let streaming = candidate.chat(agent_id()).is_some_and(|chat| {
+            chat.entries.iter().any(|stored| match stored {
+                ui_state::StoredDto::ClaudeSdk(stored) => {
+                    stored.entry.kind() == "message"
+                        && stored.entry.is_incomplete()
+                        && stored.entry.text().is_some_and(|text| !text.is_empty())
                 }
                 _ => false,
-            });
+            })
+        });
         if streaming {
-            return fold(msgs);
+            return candidate;
         }
     }
     panic!("the recording never streamed a reply");

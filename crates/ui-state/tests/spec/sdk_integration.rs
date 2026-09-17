@@ -1,6 +1,6 @@
 //! Shared writing actions consume the SDK reducer and unchanged recorded daemon rows.
 use serde_json::{Value, json};
-use ui_state::claude_sdk::{self, FeedEntryKind, SendGate};
+use ui_state::claude_sdk::{self, SendGate};
 use ui_state::provider::{self, PermissionFacts, SettingsGate};
 use ui_state::{
     ClaudeSdkCommand as SdkCommand, ClaudeSdkInput as SdkInput, Command, Draft, DraftSegment,
@@ -57,11 +57,9 @@ fn capture(name: &str, model: &Model, effects: &[Effect]) {
     if let Some(path) = std::env::var_os("SDK_INTEGRATION_EVIDENCE") {
         let path = std::path::PathBuf::from(path);
         std::fs::create_dir_all(&path).unwrap();
-        let layer = model.claude_sdk(agent_id(AGENT)).unwrap();
         let value = json!({"provider": provider::facts(model, agent_id(AGENT)),
             "gate": claude_sdk::send_gate(model, agent_id(AGENT)),
-            "queue": model.queued(agent_id(AGENT)), "effects": effects,
-            "entries": layer.entries().collect::<Vec<_>>()});
+            "queue": model.queued(agent_id(AGENT)), "effects": effects});
         std::fs::write(
             path.join(format!("{name}.json")),
             serde_json::to_string_pretty(&value).unwrap(),
@@ -126,9 +124,6 @@ fn sdk_integration_shared_prompt_round_trips_recorded_sdk_session() {
     assert_eq!(input(&sends), &SdkInput::Prompt { text: expected });
     let layer = model.claude_sdk(agent_id(AGENT)).unwrap();
     assert!(layer.pending_echo().is_none());
-    assert!(layer.entries().any(
-        |entry| matches!(&entry.kind, FeedEntryKind::Message(message) if message.text == "SEVEN")
-    ));
     assert_eq!(
         claude_sdk::send_gate(&model, agent_id(AGENT)),
         SendGate::Ready
@@ -394,11 +389,10 @@ fn sdk_integration_command_tokens_use_the_published_sdk_prompt_route() {
     }
 }
 #[test]
-fn sdk_integration_todos_share_native_blocks_and_replay_without_feed_rows() {
+fn sdk_integration_todos_share_native_blocks_and_replay() {
     let fixtures = rows(include_str!("../fixtures/todos/sdk-rows.jsonl"));
     let mut sdk = fold(ready());
     let mut pty = fold(chat_base(AGENT));
-    let count = sdk.claude_sdk(agent_id(AGENT)).unwrap().entry_count();
     for (i, row) in fixtures.iter().enumerate() {
         let msg = batch(AGENT, 100 + i as i64, vec![row.clone()]);
         update(&mut sdk, msg.clone());
@@ -406,10 +400,6 @@ fn sdk_integration_todos_share_native_blocks_and_replay_without_feed_rows() {
         assert_eq!(
             provider::facts(&sdk, agent_id(AGENT)).todos,
             provider::facts(&pty, agent_id(AGENT)).todos
-        );
-        assert_eq!(
-            sdk.claude_sdk(agent_id(AGENT)).unwrap().entry_count(),
-            count
         );
         let checkpoint: Model =
             serde_json::from_value(serde_json::to_value(&sdk).unwrap()).unwrap();
@@ -456,8 +446,7 @@ fn sdk_integration_todo_failure_is_named_and_child_lists_do_not_replace_parent()
     failed[1]["message"]["content"][0]["is_error"] = json!(true);
     update(&mut model, batch(AGENT, 120, failed));
     assert_eq!(provider::facts(&model, agent_id(AGENT)).todos, before);
-    assert!(model.claude_sdk(agent_id(AGENT)).unwrap().entries().any(|entry| matches!(&entry.kind,
-        FeedEntryKind::Tool(tool) if tool.name == "TodoWrite" && tool.result.as_ref().is_some_and(|result| result.is_error))));
+    assert!(model.check_invariants().is_empty());
     capture("failed-task-list-write", &model, &[]);
 }
 
@@ -618,7 +607,7 @@ fn sdk_integration_queued_command_preserves_multiline_arguments() {
 }
 
 #[test]
-fn sdk_integration_streamed_todo_final_removes_provisional_tool_without_losing_sibling() {
+fn sdk_integration_streamed_todo_final_keeps_confirmed_list() {
     let mut model = fold(ready());
     let pair = rows(include_str!("../fixtures/todos/sdk-rows.jsonl"));
     let block = pair[0]["message"]["content"][0].clone();
@@ -636,11 +625,6 @@ fn sdk_integration_streamed_todo_final_removes_provisional_tool_without_losing_s
     sibling["uuid"] = json!(uuid::Uuid::from_u128(111));
     sibling["message"]["content"] = json!([{"type":"text","text":"The task list is current."}]);
     update(&mut model, batch(AGENT, 21, vec![sibling]));
-    let layer = model.claude_sdk(agent_id(AGENT)).unwrap();
-    assert!(layer.entries().all(
-        |entry| !matches!(&entry.kind, FeedEntryKind::Tool(tool) if tool.name == "TodoWrite")
-    ));
-    assert!(layer.entries().any(|entry| matches!(&entry.kind, FeedEntryKind::Message(message) if message.text == "The task list is current.")));
     assert_eq!(
         provider::facts(&model, agent_id(AGENT))
             .todos

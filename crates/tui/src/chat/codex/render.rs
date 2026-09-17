@@ -13,24 +13,22 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 use ui_state::codex::{
     ApprovalResolution, Ask, AskActionMeaning, AskContext, BoundaryEntry, CodexPhase,
-    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus,
+    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpServerStartup, McpStartupEntry, McpStartupStatus,
     MessagePhase, NetworkPolicyAction, PromptEntry, PromptPart, PromptSource, TokenUsage,
     TurnStatus, WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
 use ui_state::{AgentId, Model};
 
 use super::View;
-use crate::chat::attachments::{attachment_key, described, prose, words};
+use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
-    self, Carrier, fmt_thousands, fmt_tokens, paint_agent_message, paint_ask_fact, paint_ask_panel,
-    paint_assistant, paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
+    self, fmt_thousands, fmt_tokens, paint_agent_message, paint_ask_fact, paint_ask_panel,
+    paint_assistant, paint_compaction_rule, paint_composer_block, paint_error,
     paint_header, paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule,
     paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_shared::reader;
-use crate::chat::frame::{
-    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
-};
+use crate::chat::frame::{BlockKey, BlockKind, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
 use crate::markdown;
@@ -54,7 +52,7 @@ pub(crate) fn codex_frame_parts(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
-    cache: &mut PaintCache,
+    _cache: &mut PaintCache,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -76,14 +74,8 @@ pub(crate) fn codex_frame_parts(
         header: header_row(model, chat, &phase, theme, width),
         banner,
         feed: FeedBlocks {
-            blocks: if loading {
-                Vec::new()
-            } else {
-                feed_blocks(model, chat, cache, theme, width)
-            },
-            history_truncated: model
-                .codex(chat.agent)
-                .is_some_and(|layer| layer.history_truncated()),
+            blocks: Vec::new(),
+            history_truncated: false,
             loading,
         },
         activity: crate::chat::queue::strip(
@@ -857,78 +849,6 @@ fn armed_quit_line(theme: Theme) -> Line<'static> {
     line
 }
 
-/// Every feed block, in file order. Codex has no read-only exploration
-/// kind to fold: every command and every file change is consequential,
-/// so each one keeps a block of its own.
-fn feed_blocks(
-    model: &Model,
-    chat: &View,
-    cache: &mut PaintCache,
-    theme: Theme,
-    width: usize,
-) -> Vec<PaintedBlock> {
-    let Some(layer) = model.codex(chat.agent) else {
-        return Vec::new();
-    };
-    let reports = MessageView::new(model, chat.agent, chat.reports_open, chat.leader);
-    let mut blocks: Vec<PaintedBlock> = Vec::new();
-    for entry in layer.entries() {
-        blocks.push(
-            cache
-                .get_or_paint(
-                    BlockKey(entry.id),
-                    entry,
-                    PaintInputs {
-                        width,
-                        theme,
-                        expanded: chat.reports_open,
-                    },
-                    || entry_block(entry, layer.attachments(), theme, width, reports),
-                )
-                .clone(),
-        );
-        // One focusable row per attachment, under the message that
-        // carries it, so the feed can open exactly one of them.
-        for (index, attachment) in entry_attachments(layer, entry).iter().enumerate() {
-            let key = attachment_key(entry.id, index);
-            blocks.push(
-                cache
-                    .get_or_paint(
-                        key,
-                        attachment,
-                        PaintInputs {
-                            width,
-                            theme,
-                            expanded: false,
-                        },
-                        || {
-                            let carrier = match &entry.kind {
-                                FeedEntryKind::Prompt(_) => Carrier::Person,
-                                _ => Carrier::Agent,
-                            };
-                            paint_attachment(key, attachment, carrier, theme, width)
-                        },
-                    )
-                    .clone(),
-            );
-        }
-    }
-    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
-    blocks
-}
-
-/// The attachments one entry carries, described from the layer's index.
-fn entry_attachments(
-    layer: &ui_state::codex::CodexLayer,
-    entry: &FeedEntry,
-) -> Vec<ui_state::attachments::AttachmentLine> {
-    match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => described(layer.attachments(), &prompt.content),
-        FeedEntryKind::Message(message) => described(layer.attachments(), &message.content),
-        _ => Vec::new(),
-    }
-}
-
 /// Join a second painted block onto the first: some entries say one
 /// thing in two shapes — a patch under its file list, a streaming marker
 /// under a message — and they are still one block to focus and copy.
@@ -1093,18 +1013,51 @@ fn entry_block(
 pub(crate) fn stored_entry_block(
     key: BlockKey,
     entry: &ui_state::StoredCodexEntry,
+    index: &ui_state::attachments::AttachmentIndex,
     message_view: MessageView<'_>,
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    let presentation = ui_state::restored::codex::feed_entry(key.0, entry);
+    use ui_state::DurableEntry as _;
+
+    let mut presentation = ui_state::restored::codex::feed_entry(key.0, entry);
+    match &mut presentation.kind {
+        FeedEntryKind::Prompt(prompt) => prompt.content = index.segments(entry.text().unwrap_or_default()),
+        FeedEntryKind::Message(message) => message.content = index.segments(entry.text().unwrap_or_default()),
+        _ => {}
+    }
     entry_block(
         &presentation,
-        &ui_state::attachments::AttachmentIndex::default(),
+        index,
         theme,
         width,
         message_view,
     )
+}
+
+pub(crate) fn stored_mcp_block(
+    key: BlockKey,
+    servers: std::collections::BTreeMap<String, McpServerStartup>,
+    theme: Theme,
+    width: usize,
+) -> PaintedBlock {
+    mcp_startup_rows(&McpStartupEntry { servers }, theme, width)
+        .into_iter()
+        .fold(
+            PaintedBlock {
+                key,
+                kind: BlockKind::Activity,
+                lines: Vec::new(),
+                copy_text: String::new(),
+                run: None,
+            },
+            |mut block, line| {
+                block.copy_text.push_str(&line.to_string());
+                block.copy_text.push('\n');
+                block.lines.push(line);
+                block
+            },
+        )
 }
 
 fn mcp_startup_rows(startup: &McpStartupEntry, theme: Theme, width: usize) -> Vec<Line<'static>> {

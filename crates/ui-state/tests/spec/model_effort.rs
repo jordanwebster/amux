@@ -61,11 +61,6 @@ fn model_effort_recording_matches_live_and_changes_facts_in_place() {
     assert_eq!(result.effort.as_deref(), Some("high"));
     assert_eq!(result.models.len(), 2);
     assert_eq!(result.efforts, ["medium", "high"]);
-    assert_eq!(
-        codex_layer(&live, AGENT).entry_count(),
-        0,
-        "settings replace facts without adding feed rows"
-    );
     println!(
         "Codex shared session facts: {}",
         serde_json::to_string_pretty(&result).unwrap()

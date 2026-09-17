@@ -2,7 +2,7 @@ use model::{AskAnswer, PermissionAnswer};
 use serde_json::json;
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::attachments::DraftAttachment;
-use ui_state::claude::{ClaudeCommand, FeedEntryKind, SendGate};
+use ui_state::claude::{ClaudeCommand, SendGate};
 use ui_state::{Command as UiCommand, Model};
 
 use super::*;
@@ -36,9 +36,32 @@ pub(super) async fn wait_for(
 }
 
 fn has_text(model: &Model, agent: Uuid, text: &str) -> bool {
-    model.claude(agent).is_some_and(|layer| layer.entries().any(|entry| {
-        matches!(&entry.kind, FeedEntryKind::Message(message) if message.segments.iter().any(|s| s == text))
-    }))
+    stored_has_text(model, agent, text)
+}
+
+pub(super) fn stored_has_text(model: &Model, agent: Uuid, text: &str) -> bool {
+    use fold::Entry as _;
+    model.chat(agent).is_some_and(|chat| {
+        chat.entries.iter().any(|stored| match stored {
+            ui_state::StoredDto::Claude(stored) => stored.entry.text() == Some(text),
+            ui_state::StoredDto::ClaudeSdk(stored) => stored.entry.text() == Some(text),
+            ui_state::StoredDto::Codex(stored) => stored.entry.text() == Some(text),
+        })
+    })
+}
+
+fn stored_kind_count(model: &Model, agent: Uuid, kind: &str) -> usize {
+    use fold::Entry as _;
+    model.chat(agent).map_or(0, |chat| {
+        chat.entries
+            .iter()
+            .filter(|stored| match stored {
+                ui_state::StoredDto::Claude(stored) => stored.entry.kind() == kind,
+                ui_state::StoredDto::ClaudeSdk(stored) => stored.entry.kind() == kind,
+                ui_state::StoredDto::Codex(stored) => stored.entry.kind() == kind,
+            })
+            .count()
+    })
 }
 
 pub(super) async fn succeeded(runtime: &mut Runtime, command: UiCommand) {
@@ -236,11 +259,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             .ack(json!({"AgentEndTurn":{"agent":"helper"}}))
             .await;
         wait_for(&mut runtime, "turn end", |model| {
-            model
-                .claude(agent)
-                .unwrap()
-                .entries()
-                .any(|e| matches!(e.kind, FeedEntryKind::Turn(_)))
+            stored_kind_count(model, agent, "turn") > 0
         })
         .await;
         let mut expected = json!([
@@ -292,13 +311,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             )
             .await;
             wait_for(&mut runtime, "attachment prompt turn end", |model| {
-                model
-                    .claude(agent)
-                    .unwrap()
-                    .entries()
-                    .filter(|entry| matches!(entry.kind, FeedEntryKind::Turn(_)))
-                    .count()
-                    == index + 2
+                stored_kind_count(model, agent, "turn") == index + 2
             })
             .await;
             // Numbered by what the host has already been told, not by this
@@ -375,18 +388,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         ] {
             assert!(control.request(request).await.get("Error").is_some());
         }
-        eprintln!(
-            "projected transcript {}",
-            serde_json::to_string(
-                &runtime
-                    .model()
-                    .claude(agent)
-                    .unwrap()
-                    .entries()
-                    .collect::<Vec<_>>()
-            )
-            .unwrap()
-        );
+        eprintln!("projected stored transcript: {:?}", runtime.model().chat(agent));
         control
             .ack(json!({"AgentExit":{"agent":"helper","code":7}}))
             .await;

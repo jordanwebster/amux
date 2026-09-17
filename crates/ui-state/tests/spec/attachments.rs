@@ -5,8 +5,6 @@
 use model::id_of;
 use serde_json::{Value, json};
 use ui_state::attachments::{AttachmentIndex, AttachmentKind, Mention, MentionKind, Segment};
-use ui_state::claude::FeedEntryKind as ClaudeEntry;
-use ui_state::codex::FeedEntryKind as CodexEntry;
 use ui_state::{
     ArtifactKind, ArtifactRef, Command, Effect, InputPayload, Msg, OpError, OpOutcome, StreamMsg,
     format_mention,
@@ -193,16 +191,9 @@ fn attachments_claude_prompt_review_and_reply_fold_from_stream_rows() {
     let model = fold(seq([chat_base(CLAUDE), vec![batch(CLAUDE, 10, rows)]]));
     let layer = claude_layer(&model, CLAUDE);
 
-    let prompt = layer
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            ClaudeEntry::Prompt(prompt) => Some(prompt),
-            _ => None,
-        })
-        .expect("prompt entry");
-    assert_image_segment(layer.attachments(), &prompt.content);
+    let prompt = layer.attachments().segments(&prompt_text);
+    assert_image_segment(layer.attachments(), &prompt);
     let review = prompt
-        .content
         .iter()
         .find_map(|segment| match segment {
             Segment::Mention(
@@ -216,42 +207,26 @@ fn attachments_claude_prompt_review_and_reply_fold_from_stream_rows() {
         .expect("review segment");
     assert_eq!(layer.attachments().describe(review).comments, Some(2));
 
-    let reply = layer
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            ClaudeEntry::Message(message) => Some(message),
-            _ => None,
-        })
-        .expect("reply entry");
-    assert_image_segment(layer.attachments(), &reply.content);
+    let reply = layer.attachments().segments(&reply_text);
+    assert_image_segment(layer.attachments(), &reply);
 }
 
 #[test]
 fn attachments_codex_prompt_and_reply_use_the_same_segments() {
+    let prompt_text = format!("Inspect {}", image_element());
+    let reply_text = format!("Here it is: {}", image_element());
     let rows = vec![
         attachment_row(),
-        codex_prompt(&format!("Inspect {}", image_element())),
-        codex_reply(&format!("Here it is: {}", image_element())),
+        codex_prompt(&prompt_text),
+        codex_reply(&reply_text),
     ];
     let model = fold(seq([codex_base(CODEX), vec![batch(CODEX, 10, rows)]]));
     let layer = codex_layer(&model, CODEX);
 
-    let prompt = layer
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            CodexEntry::Prompt(prompt) => Some(prompt),
-            _ => None,
-        })
-        .expect("prompt entry");
-    assert_image_segment(layer.attachments(), &prompt.content);
-    let reply = layer
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            CodexEntry::Message(message) => Some(message),
-            _ => None,
-        })
-        .expect("reply entry");
-    assert_image_segment(layer.attachments(), &reply.content);
+    let prompt = layer.attachments().segments(&prompt_text);
+    assert_image_segment(layer.attachments(), &prompt);
+    let reply = layer.attachments().segments(&reply_text);
+    assert_image_segment(layer.attachments(), &reply);
 }
 
 #[test]
@@ -292,20 +267,8 @@ fn attachments_duplicate_rows_are_noops_and_relinks_refold_identically() {
         claude_layer(&relinked, CLAUDE).attachments(),
         claude_layer(&direct, CLAUDE).attachments()
     );
-    let relinked_prompt = claude_layer(&relinked, CLAUDE)
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            ClaudeEntry::Prompt(prompt) => Some(&prompt.content),
-            _ => None,
-        })
-        .expect("relinked prompt");
-    let direct_prompt = claude_layer(&direct, CLAUDE)
-        .entries()
-        .find_map(|entry| match &entry.kind {
-            ClaudeEntry::Prompt(prompt) => Some(&prompt.content),
-            _ => None,
-        })
-        .expect("direct prompt");
+    let relinked_prompt = claude_layer(&relinked, CLAUDE).attachments().segments(&text);
+    let direct_prompt = claude_layer(&direct, CLAUDE).attachments().segments(&text);
     assert_eq!(relinked_prompt, direct_prompt);
 
     let reopened = fold(seq([

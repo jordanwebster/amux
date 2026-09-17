@@ -537,17 +537,18 @@ impl StoredFeed {
         let mut converted = BTreeMap::new();
         for entry in &window.entries {
             let key = entry.key().clone();
+            let seq = entry.position().1.seq();
             let restored = match self.converted.remove(&key) {
                 Some((held, restored)) if held == *entry => restored,
                 _ => match entry {
                     ui_state::StoredDto::Claude(stored) => {
-                        Restored::Claude(ui_state::restored::claude::feed_entry(0, &stored.entry))
+                        Restored::Claude(ui_state::restored::claude::feed_entry(seq, &stored.entry))
                     }
                     ui_state::StoredDto::ClaudeSdk(stored) => Restored::ClaudeSdk(
-                        ui_state::restored::claude_sdk::feed_entry(0, &stored.entry),
+                        ui_state::restored::claude_sdk::feed_entry(seq, &stored.entry),
                     ),
                     ui_state::StoredDto::Codex(stored) => {
-                        Restored::Codex(ui_state::restored::codex::feed_entry(0, &stored.entry))
+                        Restored::Codex(ui_state::restored::codex::feed_entry(seq, &stored.entry))
                     }
                 },
             };
@@ -828,8 +829,7 @@ impl Projection {
             if let Some(card) = model.agent(*agent) {
                 state.host = Some(card.agent.host_id);
             }
-            let stored = model.chat(*agent).filter(|chat| !chat.entries.is_empty());
-            let feed = if let Some(chat) = stored {
+            let feed = if let Some(chat) = model.chat(*agent) {
                 // The chat's store window is what this device knows of the
                 // conversation, remembered rows and live ones alike, so it is
                 // what the reader sees whenever it holds anything.
@@ -869,52 +869,6 @@ impl Projection {
                     evicted,
                     rows.iter().map(RowRef::of),
                 )
-            } else if let Some(layer) = model.claude(*agent) {
-                // A fold that has not begun replaces nothing: an agent whose
-                // machine has just come back holds an empty layer until its
-                // replay arrives, and a transcript that emptied itself for
-                // those seconds would be reporting the reconnection rather
-                // than the conversation. A session that was really cleared
-                // names a new session and evicts through the window rule
-                // below.
-                if layer.entry_count() == 0
-                    && layer.session_id().is_none()
-                    && !state.rows.is_empty()
-                {
-                    None
-                } else {
-                    state.project(
-                        *agent,
-                        (
-                            StructuredProtocol::ClaudePtyTranscript,
-                            layer.session_id().map(str::to_owned),
-                        ),
-                        layer.evicted_entries(),
-                        layer.entries().map(RowRef::Claude),
-                    )
-                }
-            } else if let Some(layer) = model.claude_sdk(*agent) {
-                if layer.entry_count() == 0 && !state.rows.is_empty() {
-                    None
-                } else {
-                    state.project(
-                        *agent,
-                        (StructuredProtocol::ClaudeSdk, None),
-                        layer.evicted_entries(),
-                        layer.entries().map(RowRef::ClaudeSdk),
-                    )
-                }
-            } else if let Some(layer) = model.codex(*agent) {
-                if layer.entry_count() == 0 && !state.rows.is_empty() {
-                    None
-                } else {
-                    state.project(
-                        *agent,
-                        (StructuredProtocol::Codex, None),
-                        layer.evicted_entries(),
-                        layer.entries().map(RowRef::Codex),
-                    )
-                }
             } else if keeps_its_rows(model, *agent, state.host) {
                 None
             } else {

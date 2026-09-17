@@ -53,9 +53,8 @@ pub fn read_snapshot(path: &Path) -> Result<RecorderSnapshot> {
 pub fn script_from_report(snapshot: &RecorderSnapshot) -> Result<Script, ConversionRefusal> {
     let rows = snapshot
         .checkpoint
-        .agents()
-        .filter_map(|card| card.claude())
-        .map(|layer| layer.evicted_entries() + layer.entry_count() as u64)
+        .chats()
+        .map(|(_, chat)| (chat.entries.len() + chat.boundaries.len()) as u64)
         .sum();
     if rows > 0 {
         return Err(ConversionRefusal::EvictedHistory { rows });

@@ -15,8 +15,6 @@ use serde_json::Value;
 /// The native structured protocol owned by this layer.
 pub const PROTOCOL: &str = "codex_sdk_v1";
 
-/// The source tail and the layer retain the same number of entries.
-pub const FEED_RETAINED: usize = 1000;
 /// Pending obligations live outside the feed window.  This cap matches the
 /// backend's complete Codex row ring rather than the smaller UI tail.
 pub const ASKS_RETAINED: usize = 8192;
@@ -677,71 +675,6 @@ struct Accumulators {
     unsupported: VecDeque<String>,
 }
 
-/// The reducer-owned, bounded visible feed.
-///
-/// This is deliberately part of the serializable model rather than renderer
-/// state. Recorder replay, terminal paint watermarks, and mobile projection
-/// all read the same entries and eviction offset.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VisibleWindow<E, const MAX: usize> {
-    entries: VecDeque<E>,
-    evicted: u64,
-}
-
-impl<E, const MAX: usize> Default for VisibleWindow<E, MAX> {
-    fn default() -> Self {
-        Self {
-            entries: VecDeque::new(),
-            evicted: 0,
-        }
-    }
-}
-
-impl<E, const MAX: usize> VisibleWindow<E, MAX> {
-    pub fn iter(&self) -> impl Iterator<Item = &E> {
-        self.entries.iter()
-    }
-
-    fn iter_mut(&mut self) -> impl Iterator<Item = &mut E> {
-        self.entries.iter_mut()
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn evicted(&self) -> u64 {
-        self.evicted
-    }
-
-    fn front(&self) -> Option<&E> {
-        self.entries.front()
-    }
-
-    fn back(&self) -> Option<&E> {
-        self.entries.back()
-    }
-
-    fn push(&mut self, entry: E) -> Option<E> {
-        self.entries.push_back(entry);
-        if self.entries.len() > MAX {
-            self.evicted = self.evicted.saturating_add(1);
-            self.entries.pop_front()
-        } else {
-            None
-        }
-    }
-
-    fn discard_all(&mut self) {
-        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
-        self.entries = VecDeque::new();
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Activity {
     Closed,
@@ -764,12 +697,6 @@ pub enum Invariant {
         len: usize,
         cap: usize,
     },
-    FeedOrder,
-    IndexAhead {
-        index: &'static str,
-        entry: u64,
-        next: u64,
-    },
     DuplicateAsk,
 }
 
@@ -782,47 +709,53 @@ pub enum Invariant {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Observation<C> {
     truncated_start: bool,
-    history_loss: bool,
     ready_count: u64,
     replay_complete: bool,
     gap: bool,
     read_only: bool,
     thread_closed: bool,
-    window: VisibleWindow<FeedEntry<C>, FEED_RETAINED>,
-    next_entry_id: u64,
-    item_entries: BTreeMap<String, u64>,
-    turn_entries: BTreeMap<String, u64>,
+    /// Newest source sequence, retained for write and queue guards only.
+    cursor: u64,
+    /// Only mutable facts needed by later rows are retained. Drawable item
+    /// bodies live in the store window.
+    work_entries: BTreeMap<String, WorkEntry>,
+    message_phases: BTreeMap<String, MessagePhase>,
     asks: VecDeque<Ask>,
     pending_approval_context: Option<AskContext>,
     turn: TurnState,
     accumulators: Accumulators,
     latest_usage: Option<TokenUsage>,
+    #[serde(skip)]
+    marker: std::marker::PhantomData<C>,
 }
 
 impl<C> Default for Observation<C> {
     fn default() -> Self {
         Self {
             truncated_start: false,
-            history_loss: false,
             ready_count: 0,
             replay_complete: false,
             gap: false,
             read_only: false,
             thread_closed: false,
-            window: VisibleWindow::default(),
-            next_entry_id: 0,
-            item_entries: BTreeMap::new(),
-            turn_entries: BTreeMap::new(),
+            cursor: 0,
+            work_entries: BTreeMap::new(),
+            message_phases: BTreeMap::new(),
             asks: VecDeque::new(),
             pending_approval_context: None,
             turn: TurnState::default(),
             accumulators: Accumulators::default(),
             latest_usage: None,
+            marker: std::marker::PhantomData,
         }
     }
 }
 
 impl<C> Observation<C> {
+    pub fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
     pub fn begin_window(&mut self, truncated: bool) {
         *self = Self {
             truncated_start: truncated,
@@ -864,6 +797,7 @@ impl<C> Observation<C> {
         *self = Self {
             truncated_start,
             ready_count: u64::from(attention.is_some()),
+            cursor: restored.cursor,
             asks,
             turn,
             ..Self::default()
@@ -871,6 +805,7 @@ impl<C> Observation<C> {
     }
 
     pub fn observe(&mut self, seq: u64, row: &Value, content: impl Fn(&str) -> C) {
+        self.cursor = self.cursor.max(seq);
         fold::observe(self, seq, row, &content);
     }
 
@@ -881,33 +816,17 @@ impl<C> Observation<C> {
     pub fn observe_exit(&mut self) {
         self.asks.clear();
         self.accumulators = Accumulators::default();
+        self.work_entries.clear();
+        self.message_phases.clear();
         self.turn.active_id = None;
-    }
-
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry<C>> {
-        self.window.iter()
-    }
-
-    pub fn discard_entries(&mut self) {
-        self.window.discard_all();
-        self.item_entries.clear();
-        self.turn_entries.clear();
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.window.len()
-    }
-
-    pub fn evicted_entries(&self) -> u64 {
-        self.window.evicted()
-    }
-
-    pub fn history_truncated(&self) -> bool {
-        self.truncated_start || self.window.evicted() > 0 || self.history_loss
     }
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.latest_usage.as_ref()
+    }
+
+    pub fn work(&self) -> impl Iterator<Item = &WorkEntry> {
+        self.work_entries.values()
     }
 
     pub fn asks(&self) -> impl Iterator<Item = &Ask> {
@@ -980,38 +899,9 @@ impl<C> Observation<C> {
 
     pub fn invariants(&self) -> Vec<Invariant> {
         let mut out = Vec::new();
-        for (store, len, cap) in [
-            ("feed", self.window.len(), FEED_RETAINED),
-            ("asks", self.asks.len(), ASKS_RETAINED),
-        ] {
+        for (store, len, cap) in [("asks", self.asks.len(), ASKS_RETAINED)] {
             if len > cap {
                 out.push(Invariant::RetentionOverflow { store, len, cap });
-            }
-        }
-        let coherent = self.window.evicted() + self.window.len() as u64 == self.next_entry_id
-            && self
-                .window
-                .front()
-                .is_none_or(|entry| entry.id == self.window.evicted())
-            && self
-                .window
-                .back()
-                .is_none_or(|entry| entry.id + 1 == self.next_entry_id);
-        if !coherent {
-            out.push(Invariant::FeedOrder);
-        }
-        for (index, entry) in self
-            .item_entries
-            .values()
-            .map(|entry| ("items", *entry))
-            .chain(self.turn_entries.values().map(|entry| ("turns", *entry)))
-        {
-            if entry >= self.next_entry_id {
-                out.push(Invariant::IndexAhead {
-                    index,
-                    entry,
-                    next: self.next_entry_id,
-                });
             }
         }
         if self.asks.iter().enumerate().any(|(i, ask)| {
@@ -1033,19 +923,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn visible_window_keeps_a_bounded_model_feed_and_monotone_offset() {
-        let mut window = VisibleWindow::<u64, 3>::default();
-        assert_eq!(window.push(10), None);
-        assert_eq!(window.push(11), None);
-        assert_eq!(window.push(12), None);
-        assert_eq!(window.push(13), Some(10));
-        assert_eq!(window.push(14), Some(11));
-        assert_eq!(window.iter().copied().collect::<Vec<_>>(), [12, 13, 14]);
-        assert_eq!(window.evicted(), 2);
-    }
-
-    #[test]
-    fn observation_owns_codex_feed_and_activity_without_ui_state() {
+    fn observation_owns_codex_activity_without_ui_state() {
         let mut observation = Observation::<String>::default();
         observation.observe(1, &json!({"type":"amux.codex_ready"}), str::to_owned);
         observation.observe(
@@ -1063,60 +941,12 @@ mod tests {
             str::to_owned,
         );
 
-        assert_eq!(observation.entry_count(), 1);
-        assert!(matches!(
-            observation.entries().next().map(|entry| &entry.kind),
-            Some(FeedEntryKind::Message(MessageEntry { text, .. })) if text == "hello"
-        ));
         assert_eq!(
             observation.activity(),
             Activity::Responding {
                 item_id: "message-1".to_string()
             }
         );
-    }
-
-    #[test]
-    fn detects_retention_and_feed_arithmetic_failures() {
-        let mut observation = Observation::<String>::default();
-        for id in 0..=FEED_RETAINED as u64 {
-            observation.window.entries.push_back(FeedEntry {
-                id,
-                seq: id,
-                kind: FeedEntryKind::Unrecognized(UnrecognizedEntry {
-                    method: "test".to_string(),
-                    detail: None,
-                }),
-            });
-        }
-        observation.next_entry_id = FEED_RETAINED as u64 + 1;
-        assert!(matches!(
-            observation.invariants().as_slice(),
-            [Invariant::RetentionOverflow { store: "feed", .. }]
-        ));
-
-        observation.next_entry_id += 1;
-        let invariants = observation.invariants();
-        assert!(
-            invariants
-                .iter()
-                .any(|invariant| matches!(invariant, Invariant::FeedOrder))
-        );
-    }
-
-    #[test]
-    fn detects_an_index_ahead_of_the_feed() {
-        let mut observation = Observation::<String>::default();
-        observation.item_entries.insert("ghost".to_string(), 9);
-
-        assert!(observation.invariants().iter().any(|invariant| matches!(
-            invariant,
-            Invariant::IndexAhead {
-                index: "items",
-                entry: 9,
-                next: 0,
-            }
-        )));
     }
 
     #[test]

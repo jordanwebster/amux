@@ -577,21 +577,12 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::ops::sequences());
     sequences.extend(crate::sessions::sequences());
     sequences.extend(crate::attention::sequences());
-    sequences.extend(crate::feed_replay::sequences());
-    sequences.extend(crate::feed_turns::sequences());
-    sequences.extend(crate::feed_tools::sequences());
-    sequences.extend(crate::claude_runs::sequences());
-    sequences.extend(crate::feed_edges::sequences());
     sequences.extend(crate::asks::sequences());
     sequences.extend(crate::phase::sequences());
     sequences.extend(crate::write::sequences());
-    sequences.extend(crate::codex_feed::sequences());
-    sequences.extend(crate::claude_sdk_feed::sequences());
     sequences.extend(crate::claude_sdk_agreement::sequences());
     sequences.extend(crate::claude_sdk_write::sequences());
     sequences.extend(crate::claude_sdk_runtime::sequences());
-    sequences.extend(crate::a2a_claude_sdk_inbound::sequences());
-    sequences.extend(crate::claude_sdk_converse::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
     sequences.extend(crate::model_effort::sequences());
@@ -602,10 +593,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::a2a_fleet::sequences());
     sequences.extend(crate::fleet_mixed::sequences());
     sequences.extend(crate::store_lifecycle::sequences());
-    sequences.extend(crate::a2a_claude_inbound::sequences());
-    sequences.extend(crate::a2a_claude_send_row::sequences());
-    sequences.extend(crate::a2a_codex_inbound::sequences());
     sequences.extend(crate::a2a_family_needs::sequences());
-    sequences.extend(crate::a2a_completed_row::sequences());
     sequences
 }

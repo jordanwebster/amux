@@ -33,34 +33,8 @@ use serde_json::Value;
 pub use session::{ContextMeter, ContextMeterSource, ContextUsage, McpServerFact, SessionFacts};
 pub use update::{InFlightInput, InputFailure, PromptEcho};
 
-use crate::claude::facts::ToolInvocation;
-use crate::claude::runs;
-
 pub const PROTOCOL: &str = "claude_sdk_v1";
-pub use ::fold::claude_sdk::{CONTENT_BYTES_RETAINED, FEED_RETAINED};
-
-pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
-pub type FeedItems<'a> = runs::FeedItems<'a, FeedEntry>;
-
-impl runs::RunEntry for FeedEntry {
-    fn run_id(&self) -> u64 {
-        self.id
-    }
-
-    fn exploration(&self) -> Option<&ToolInvocation> {
-        if self.parent_tool_use_id().is_some() {
-            return None;
-        }
-        let FeedEntryKind::Tool(tool) = &self.kind else {
-            return None;
-        };
-        runs::groupable(&tool.invocation).then_some(&tool.invocation)
-    }
-
-    fn groups_with_previous(&self) -> bool {
-        matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
-    }
-}
+pub use ::fold::claude_sdk::CONTENT_BYTES_RETAINED;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClaudeSdkLayer {
@@ -103,26 +77,8 @@ impl ClaudeSdkLayer {
     pub fn ask_count(&self) -> usize {
         self.asks.len()
     }
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
-        self.observation.entries()
-    }
-    pub(crate) fn discard_feed(&mut self) {
-        self.observation.discard_entries();
-    }
-    pub fn feed_items(&self) -> FeedItems<'_> {
-        FeedItems::new(self.observation.entries_deque())
-    }
-    pub fn entry_count(&self) -> usize {
-        self.observation.entry_count()
-    }
     pub fn tasks(&self) -> impl Iterator<Item = &TaskEntry> {
         self.observation.tasks()
-    }
-    pub fn history_truncated(&self) -> bool {
-        self.observation.history_truncated()
-    }
-    pub fn evicted_entries(&self) -> u64 {
-        self.observation.evicted_entries()
     }
 
     pub(crate) fn observe_exit(&mut self) {

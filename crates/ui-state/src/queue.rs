@@ -124,31 +124,7 @@ fn cursor(model: &Model, agent: AgentId) -> u64 {
     match model.agent(agent).and_then(|card| card.layer.as_ref()) {
         Some(AgentLayer::Claude(layer)) => layer.cursor(),
         Some(AgentLayer::ClaudeSdk(layer)) => layer.cursor(),
-        Some(AgentLayer::Codex(layer)) => layer.entries().map(|entry| entry.seq).max().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-fn turn_end(model: &Model, agent: AgentId) -> u64 {
-    match model.agent(agent).and_then(|card| card.layer.as_ref()) {
-        Some(AgentLayer::Claude(layer)) => layer
-            .entries()
-            .filter(|entry| matches!(entry.kind, crate::claude::FeedEntryKind::Turn(_)))
-            .map(|entry| entry.seq)
-            .max()
-            .unwrap_or(0),
-        Some(AgentLayer::ClaudeSdk(layer)) => layer
-            .entries()
-            .filter(|entry| matches!(entry.kind, crate::claude_sdk::FeedEntryKind::Turn(_)))
-            .map(|entry| entry.seq)
-            .max()
-            .unwrap_or(0),
-        Some(AgentLayer::Codex(layer)) => layer
-            .entries()
-            .filter(|entry| matches!(entry.kind, crate::codex::FeedEntryKind::Turn(_)))
-            .map(|entry| entry.seq)
-            .max()
-            .unwrap_or(0),
+        Some(AgentLayer::Codex(layer)) => layer.cursor(),
         _ => 0,
     }
 }
@@ -285,10 +261,10 @@ pub(crate) fn deliver_ready(model: &mut Model) -> Vec<Effect> {
     let agents: Vec<_> = model.queues.keys().copied().collect();
     let mut effects = Vec::new();
     for agent in agents {
-        let end = turn_end(model, agent);
+        let position = cursor(model, agent);
         let is_ready = ready(model, agent);
         let queue = model.queues.get_mut(&agent).expect("collected queue");
-        queue.eligible |= end > queue.after_seq;
+        queue.eligible |= is_ready && position > queue.after_seq;
         if !queue.eligible
             || !is_ready
             || matches!(queue.delivery, QueueDelivery::Sending { .. })

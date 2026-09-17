@@ -25,10 +25,16 @@ pub use semantics::{
     DELIVERY_KEYED_VARIANTS,
 };
 
-pub const FEED_RETAINED: usize = 1000;
 /// A single streaming block cannot grow without bound while the feed is idle.
 pub const CONTENT_BYTES_RETAINED: usize = 64 * 1024;
 const ID_BYTES_RETAINED: usize = 512;
+/// Message cursors correlate final assistant rows with their stream without
+/// retaining the presentation rows themselves.
+const MESSAGE_CURSORS_RETAINED: usize = 1000;
+/// Task lifecycle state is independently bounded because it remains useful to
+/// the activity line after presentation moved to the store window.
+const TASKS_RETAINED: usize = 1000;
+const TASK_LAUNCHES_RETAINED: usize = 1000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FeedEntry {
@@ -255,7 +261,13 @@ struct MessageCursor {
     parent_tool_use_id: Option<String>,
     next_final_index: u64,
     streaming: bool,
-    placeholder_entry_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TaskLaunch {
+    tool_use_id: String,
+    description: Option<String>,
+    subagent_type: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -627,11 +639,13 @@ pub struct SessionFacts {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Observation {
-    entries: VecDeque<FeedEntry>,
-    next_entry_id: u64,
-    evicted: u64,
-    truncated_start: bool,
+    /// Per-row workspace used by the legacy tolerant parser. It is cleared
+    /// before `observe` returns and is never a drawable or serialized feed.
+    #[serde(skip)]
+    scratch: VecDeque<FeedEntry>,
     cursors: VecDeque<MessageCursor>,
+    tasks: VecDeque<TaskEntry>,
+    task_launches: VecDeque<TaskLaunch>,
     todos: ClaudeTodos,
     cursor: u64,
     session: SessionFacts,
@@ -646,25 +660,8 @@ pub struct Observation {
 type ClaudeSdkLayer = Observation;
 
 impl Observation {
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
-        self.entries.iter()
-    }
-    pub fn entries_deque(&self) -> &VecDeque<FeedEntry> {
-        &self.entries
-    }
-    pub fn discard_entries(&mut self) {
-        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
-        self.entries = VecDeque::new();
-        self.cursors = VecDeque::new();
-    }
     pub fn tasks(&self) -> impl Iterator<Item = &TaskEntry> {
-        self.entries.iter().filter_map(|entry| match &entry.kind {
-            FeedEntryKind::Task(task) => Some(task),
-            _ => None,
-        })
-    }
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
+        self.tasks.iter()
     }
     pub fn cursor(&self) -> u64 {
         self.cursor
@@ -678,12 +675,6 @@ impl Observation {
     pub fn todos(&self) -> Option<&crate::claude_pty::TaskList> {
         self.todos.current()
     }
-    pub fn history_truncated(&self) -> bool {
-        self.truncated_start || self.evicted > 0
-    }
-    pub fn evicted_entries(&self) -> u64 {
-        self.evicted
-    }
     pub fn turn(&self) -> TurnState {
         self.turn
     }
@@ -691,11 +682,8 @@ impl Observation {
         self.gap
     }
 
-    pub fn begin_window(&mut self, truncated: bool) {
-        *self = Self {
-            truncated_start: truncated,
-            ..Self::default()
-        };
+    pub fn begin_window(&mut self, _truncated: bool) {
+        *self = Self::default();
     }
 
     /// Restore only the cursor-relative condition carried by a durable tip.
@@ -713,17 +701,12 @@ impl Observation {
         }
         observe_session(self, row);
         observe_turn(self, row);
+        self.scratch.clear();
         observe(self, seq, row);
+        self.scratch.clear();
     }
 
     pub fn interrupt_streams(&mut self) {
-        for entry in &mut self.entries {
-            if let Some(finality) = finality_mut(&mut entry.kind)
-                && matches!(finality, Finality::Streaming | Finality::Stopped)
-            {
-                *finality = Finality::Interrupted;
-            }
-        }
         for cursor in &mut self.cursors {
             cursor.streaming = false;
         }
@@ -907,7 +890,6 @@ fn observe(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
         "amux.claude_sdk.gap" => {
             layer.interrupt_streams();
             layer.cursors.clear();
-            layer.truncated_start = true;
             push(
                 layer,
                 seq,
@@ -964,7 +946,7 @@ fn assistant(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
         return;
     };
     let row_id = id(row, "uuid");
-    if row_id.is_some() && layer.entries.iter().any(|e| e.final_row_id == row_id) {
+    if row_id.is_some() && layer.scratch.iter().any(|e| e.final_row_id == row_id) {
         return;
     }
     let parent = id(row, "parent_tool_use_id");
@@ -982,7 +964,7 @@ fn assistant(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
             // A replay tail may start at block 1 or later. Match the retained
             // stream block instead of assigning the absent block 0 to it.
             layer
-                .entries
+                .scratch
                 .iter()
                 .filter(|e| e.final_row_id.is_none())
                 .filter(|e| block_matches(&e.kind, block))
@@ -1029,7 +1011,7 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
             parent_tool_use_id: parent,
             index: 0,
         };
-        if !layer.entries.iter().any(|e| e.block.as_ref() == Some(&key)) {
+        if !layer.scratch.iter().any(|e| e.block.as_ref() == Some(&key)) {
             upsert_block(
                 layer,
                 seq,
@@ -1038,7 +1020,6 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
                 Finality::Streaming,
                 None,
             );
-            layer.cursors[index].placeholder_entry_id = layer.entries.back().map(|e| e.id);
         }
         return;
     }
@@ -1057,15 +1038,6 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
                 unknown(layer, seq, kind, "missing block index");
                 return;
             };
-            if let Some(placeholder) = layer.cursors[cursor].placeholder_entry_id.take()
-                && let Some(entry) = layer
-                    .entries
-                    .iter_mut()
-                    .find(|e| e.id == placeholder && e.final_row_id.is_none())
-                && let Some(block) = &mut entry.block
-            {
-                block.index = index;
-            }
             upsert_block(
                 layer,
                 seq,
@@ -1090,7 +1062,7 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
                 index,
             };
             let Some(entry) = layer
-                .entries
+                .scratch
                 .iter_mut()
                 .find(|e| e.block.as_ref() == Some(&key))
             else {
@@ -1127,7 +1099,7 @@ fn stream(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
             }
         }
         "message_stop" => {
-            for entry in &mut layer.entries {
+            for entry in &mut layer.scratch {
                 if entry
                     .block
                     .as_ref()
@@ -1157,9 +1129,9 @@ fn predecessor<'a>(
 ) -> Option<&'a FeedEntry> {
     let index = match existing {
         Some(index) => index.checked_sub(1)?,
-        None => layer.entries.len().checked_sub(1)?,
+        None => layer.scratch.len().checked_sub(1)?,
     };
-    let entry = layer.entries.get(index)?;
+    let entry = layer.scratch.get(index)?;
     (entry.parent_tool_use_id() == parent.as_deref()).then_some(entry)
 }
 
@@ -1186,7 +1158,7 @@ fn upsert_block(
     row_id: Option<String>,
 ) {
     let mut existing = layer
-        .entries
+        .scratch
         .iter()
         .position(|e| e.block.as_ref() == Some(&key));
     // A replay tail can start at the task rows, so the task may stand
@@ -1195,19 +1167,19 @@ fn upsert_block(
     if existing.is_none()
         && block["type"] == "tool_use"
         && let Some(tool_use_id) = block["id"].as_str()
-        && let Some(index) = layer.entries.iter().position(|e| {
+        && let Some(index) = layer.scratch.iter().position(|e| {
             e.block.is_none()
                 && matches!(&e.kind, FeedEntryKind::Task(t) if t.tool_use_id.as_deref() == Some(tool_use_id))
         })
     {
-        layer.entries[index].block = Some(key.clone());
-        layer.entries[index].parent_tool_use_id = key.parent_tool_use_id.clone();
+        layer.scratch[index].block = Some(key.clone());
+        layer.scratch[index].parent_tool_use_id = key.parent_tool_use_id.clone();
         existing = Some(index);
     }
     if finality != Finality::Complete
         && existing.is_some_and(|i| {
             matches!(
-                &layer.entries[i].kind,
+                &layer.scratch[i].kind,
                 FeedEntryKind::Message(MessageEntry {
                     finality: Finality::Complete,
                     ..
@@ -1228,7 +1200,7 @@ fn upsert_block(
         && matches!(layer.todos.observe(block), TodoDisposition::Absorbed)
     {
         if let Some(index) = existing {
-            layer.entries.remove(index);
+            layer.scratch.remove(index);
         }
         return;
     }
@@ -1249,6 +1221,24 @@ fn upsert_block(
             };
             let input = bounded_value(&block["input"]);
             let invocation = invocation(&name, input.as_ref().unwrap_or(&Value::Null));
+            if let ToolInvocation::Task {
+                description,
+                subagent_type,
+                ..
+            } = &invocation
+            {
+                layer
+                    .task_launches
+                    .retain(|launch| launch.tool_use_id != tool_use_id);
+                layer.task_launches.push_back(TaskLaunch {
+                    tool_use_id: tool_use_id.clone(),
+                    description: description.clone(),
+                    subagent_type: subagent_type.clone(),
+                });
+                if layer.task_launches.len() > TASK_LAUNCHES_RETAINED {
+                    layer.task_launches.pop_front();
+                }
+            }
             // A tool's classification comes from its name, so a block
             // still streaming its input already knows whether it explores.
             // Recomputed on every upsert: the entry ahead of this one may
@@ -1265,7 +1255,7 @@ fn upsert_block(
                 input,
                 input_json: String::new(),
                 finality,
-                result: existing.and_then(|i| match &layer.entries[i].kind {
+                result: existing.and_then(|i| match &layer.scratch[i].kind {
                     FeedEntryKind::Tool(t) => t.result.clone(),
                     _ => None,
                 }),
@@ -1283,7 +1273,7 @@ fn upsert_block(
         }
     };
     if let Some(index) = existing {
-        let entry = &mut layer.entries[index];
+        let entry = &mut layer.scratch[index];
         // A launch row that has already become its task stays the task:
         // the lifecycle rows own it from the first one onward, and a late
         // final row for the tool block adds nothing they do not state.
@@ -1298,7 +1288,7 @@ fn upsert_block(
         entry.final_row_id = row_id;
     } else {
         push(layer, seq, kind, oversized(block));
-        let entry = layer.entries.back_mut().expect("just pushed");
+        let entry = layer.scratch.back_mut().expect("just pushed");
         entry.parent_tool_use_id = key.parent_tool_use_id.clone();
         entry.block = Some(key);
         entry.final_row_id = row_id;
@@ -1313,7 +1303,7 @@ fn cursor(layer: &mut ClaudeSdkLayer, message_id: &str, parent: &Option<String>)
     {
         return index;
     }
-    if layer.cursors.len() == FEED_RETAINED {
+    if layer.cursors.len() == MESSAGE_CURSORS_RETAINED {
         layer.cursors.pop_front();
     }
     layer.cursors.push_back(MessageCursor {
@@ -1321,14 +1311,13 @@ fn cursor(layer: &mut ClaudeSdkLayer, message_id: &str, parent: &Option<String>)
         parent_tool_use_id: parent.clone(),
         next_final_index: 0,
         streaming: false,
-        placeholder_entry_id: None,
     });
     layer.cursors.len() - 1
 }
 
 fn user(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
     let uuid = id(row, "uuid");
-    if uuid.is_some() && layer.entries.iter().any(|e| e.final_row_id == uuid) {
+    if uuid.is_some() && layer.scratch.iter().any(|e| e.final_row_id == uuid) {
         return;
     }
     let content = &row["message"]["content"];
@@ -1391,7 +1380,7 @@ fn user(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
         })
     };
     push(layer, seq, kind, truncated);
-    layer.entries.back_mut().expect("just pushed").final_row_id = uuid;
+    layer.scratch.back_mut().expect("just pushed").final_row_id = uuid;
 }
 
 fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value) {
@@ -1432,7 +1421,7 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
         edit: landed_edit(&row["tool_use_result"]),
     };
     if let Some(entry) = layer
-        .entries
+        .scratch
         .iter_mut()
         .rev()
         .find(|entry| match &entry.kind {
@@ -1477,7 +1466,7 @@ fn tool_result(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value, block: &Value)
             truncated,
         );
         layer
-            .entries
+            .scratch
             .back_mut()
             .expect("just pushed")
             .parent_tool_use_id = parent;
@@ -1533,62 +1522,35 @@ fn task(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
         return;
     };
     let tool_use_id = id(row, "tool_use_id");
-    let existing = layer
-        .entries
-        .iter()
-        .position(|e| matches!(&e.kind, FeedEntryKind::Task(t) if t.task_id == task_id));
-    // The `Task`/`Agent` tool use that launched this task is the same
-    // subagent: the lifecycle rows take that row over where it sits,
-    // starting from what the launch already said, so the feed shows one
-    // entry per subagent rather than a launch and a task. The task list
-    // row can name a task before any row carries its launch id, so a task
-    // that already stands on its own moves into the launch row when the
-    // id arrives.
-    let launch = tool_use_id.as_ref().and_then(|tool_use_id| {
-        layer.entries.iter().position(
-            |e| matches!(&e.kind, FeedEntryKind::Tool(t) if &t.tool_use_id == tool_use_id),
-        )
-    });
-    let index = match (existing, launch) {
-        (Some(existing), None) => existing,
-        (Some(existing), Some(launch)) => {
-            let standalone = layer.entries.remove(existing).expect("indexed entry");
-            let launch = if launch > existing {
-                launch - 1
-            } else {
-                launch
-            };
-            let FeedEntryKind::Task(mut task) = standalone.kind else {
-                unreachable!("existing task entry")
-            };
-            adopt_launch(&mut task, &layer.entries[launch].kind);
-            layer.entries[launch].kind = FeedEntryKind::Task(task);
-            layer.entries[launch].content_truncated |= standalone.content_truncated;
-            launch
+    let index = layer.tasks.iter().position(|task| task.task_id == task_id);
+    if index.is_none() {
+        layer
+            .tasks
+            .push_back(new_task(task_id.clone(), tool_use_id.clone()));
+        if layer.tasks.len() > TASKS_RETAINED {
+            layer.tasks.pop_front();
         }
-        (None, Some(launch)) => {
-            let mut task = new_task(task_id, tool_use_id.clone());
-            adopt_launch(&mut task, &layer.entries[launch].kind);
-            layer.entries[launch].kind = FeedEntryKind::Task(task);
-            launch
-        }
-        (None, None) => {
-            push(
-                layer,
-                seq,
-                FeedEntryKind::Task(new_task(task_id, tool_use_id.clone())),
-                false,
-            );
-            layer.entries.len() - 1
-        }
-    };
-    let entry = &mut layer.entries[index];
-    entry.content_truncated |= oversized(row);
-    let FeedEntryKind::Task(task) = &mut entry.kind else {
-        unreachable!()
+    }
+    let Some(task) = layer.tasks.iter_mut().find(|task| task.task_id == task_id) else {
+        return;
     };
     if task.tool_use_id.is_none() {
-        task.tool_use_id = tool_use_id;
+        task.tool_use_id = tool_use_id.clone();
+    }
+    if let Some(launch) = tool_use_id.as_ref().and_then(|tool_use_id| {
+        layer
+            .task_launches
+            .iter()
+            .find(|launch| &launch.tool_use_id == tool_use_id)
+    }) {
+        if task.description.is_empty()
+            && let Some(description) = &launch.description
+        {
+            task.description = description.clone();
+        }
+        if task.subagent_type.is_none() {
+            task.subagent_type = launch.subagent_type.clone();
+        }
     }
     let fields = if row["subtype"] == "task_updated" {
         &row["patch"]
@@ -1638,27 +1600,6 @@ fn new_task(task_id: String, tool_use_id: Option<String>) -> TaskEntry {
     }
 }
 
-/// What the launch already said about the subagent, where the task rows
-/// have not said it yet.
-fn adopt_launch(task: &mut TaskEntry, launch: &FeedEntryKind) {
-    if let FeedEntryKind::Tool(tool) = launch
-        && let ToolInvocation::Task {
-            description,
-            subagent_type,
-            ..
-        } = &tool.invocation
-    {
-        if task.description.is_empty()
-            && let Some(description) = description
-        {
-            task.description = description.clone();
-        }
-        if task.subagent_type.is_none() {
-            task.subagent_type = subagent_type.clone();
-        }
-    }
-}
-
 fn agent_message(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
     let envelope = &row["envelope"];
     let Some(text) = string(envelope, "text") else {
@@ -1672,7 +1613,7 @@ fn agent_message(layer: &mut ClaudeSdkLayer, seq: u64, row: &Value) {
     };
     let message_id = id(envelope, "id");
     if message_id.is_some()
-        && layer.entries.iter().any(|entry| {
+        && layer.scratch.iter().any(|entry| {
             matches!(&entry.kind,
         FeedEntryKind::AgentMessage(m) if m.id == message_id)
         })
@@ -1729,12 +1670,9 @@ fn unknown(layer: &mut ClaudeSdkLayer, seq: u64, kind: &str, detail: &str) {
 }
 
 fn push(layer: &mut ClaudeSdkLayer, seq: u64, kind: FeedEntryKind, content_truncated: bool) {
-    if layer.entries.len() == FEED_RETAINED {
-        layer.entries.pop_front();
-        layer.evicted += 1;
-    }
-    layer.entries.push_back(FeedEntry {
-        id: layer.next_entry_id,
+    let id = layer.scratch.len() as u64;
+    layer.scratch.push_back(FeedEntry {
+        id,
         seq,
         kind,
         block: None,
@@ -1742,7 +1680,6 @@ fn push(layer: &mut ClaudeSdkLayer, seq: u64, kind: FeedEntryKind, content_trunc
         content_truncated,
         final_row_id: None,
     });
-    layer.next_entry_id += 1;
 }
 
 fn id(value: &Value, field: &str) -> Option<String> {
@@ -1887,10 +1824,6 @@ mod tests {
 
         assert_eq!(observation.cursor(), 9);
         assert_eq!(observation.session().model.as_deref(), Some("claude-test"));
-        assert!(observation.entries().any(|entry| matches!(
-            &entry.kind,
-            FeedEntryKind::Message(MessageEntry { text, finality: Finality::Complete }) if text == "hello"
-        )));
         assert_eq!(observation.tasks().next().unwrap().task_id, "task-1");
         assert_eq!(
             observation.todos().unwrap().current.as_deref(),

@@ -3982,12 +3982,6 @@ mod tests {
             "client retained {:.1} B/delivered row, above the 874 B/row budget",
             per_row(retained),
         );
-        assert!(agents.iter().all(|agent| {
-            runtime
-                .model()
-                .claude(*agent)
-                .is_some_and(|layer| layer.entry_count() == 0)
-        }));
         assert_eq!(
             agents
                 .iter()
@@ -5559,10 +5553,7 @@ mod tests {
         }
 
         let layer = runtime.model().codex(agent).expect("folded Codex layer");
-        assert!(
-            layer.entry_count() > 0,
-            "resumed replay must carry folded rows"
-        );
+        assert!(layer.cursor() > 0, "resumed replay must advance provider state");
         assert_eq!(
             layer.attention(),
             ui_state::Attention::NeedsYou {

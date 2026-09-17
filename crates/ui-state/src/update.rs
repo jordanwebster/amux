@@ -707,7 +707,6 @@ fn mirror_chat_stream(
     agent: model::AgentId,
     event: crate::store::ChatStreamMsg,
 ) -> Vec<Effect> {
-    let discard_feed = matches!(event, crate::store::ChatStreamMsg::Batch { .. });
     let event = match event {
         crate::store::ChatStreamMsg::Opened { facts, .. } => StreamMsg::Opened {
             truncated: !matches!(facts.outcome, crate::store::ReplayOutcomeDto::Continuous),
@@ -716,17 +715,7 @@ fn mirror_chat_stream(
         crate::store::ChatStreamMsg::ReplayComplete { .. } => StreamMsg::ReplayComplete,
         crate::store::ChatStreamMsg::Closed { reason, .. } => StreamMsg::Closed { reason },
     };
-    let effects = update_stream(model, agent, event);
-    if discard_feed
-        && model.chat(agent).is_some()
-        && let Some(layer) = model
-            .agents
-            .get_mut(&agent)
-            .and_then(|card| card.layer.as_mut())
-    {
-        layer.discard_feed();
-    }
-    effects
+    update_stream(model, agent, event)
 }
 
 fn sync_chat_summary(model: &mut Model, agent: model::AgentId) {

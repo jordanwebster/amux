@@ -159,9 +159,15 @@ impl PhoneFeed {
 
 #[test]
 fn mobile_projection_schema_snapshot() {
-    let mut model = claude_model();
-    row(&mut model, 1, message(0, "Hello"));
-    settle_claude_turn(&mut model, 2);
+    let (mut model, stream) = stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Pty,
+        },
+        vec![
+            message(0, "Hello"),
+            json!({"type":"hook.stop","hook_event_name":"Stop","stop_id":2}),
+        ],
+    );
     let mut projection = subscribed();
     let mut events = vec![Event::connection(&RelayConnection::Connecting)];
     events.extend(collect(&mut projection, &model));
@@ -196,26 +202,40 @@ fn mobile_projection_schema_snapshot() {
         )
         .unwrap(),
     });
-    row(&mut model, 3, message(0, "Updated"));
-    settle_claude_turn(&mut model, 4);
+    chat_row(&mut model, stream, 3, message(0, "Updated"));
+    chat_row(
+        &mut model,
+        stream,
+        4,
+        json!({"type":"hook.stop","hook_event_name":"Stop","stop_id":4}),
+    );
     events.extend(collect(&mut projection, &model));
-    let mut codex = model_with_codex_row();
+    let (mut codex, codex_stream) = stored_model(
+        model::AgentKind::Codex,
+        vec![
+            json!({"type":"amux.codex_ready"}),
+            json!({"type":"item/started", "item":{"id":"m", "type":"agentMessage", "text":"Hello", "phase":"final_answer"}}),
+        ],
+    );
     events.extend(collect(&mut subscribed(), &codex));
-    row(
+    chat_row(
         &mut codex,
+        codex_stream,
         3,
         json!({"type":"item/completed", "item":{"id":"m", "type":"agentMessage", "text":"Done", "phase":"final_answer"}}),
     );
-    let mut sdk = self::model(model::AgentKind::Claude {
-        driver: model::ClaudeDriver::Sdk,
-    });
     let facts = include_str!("../../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl")
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .rev()
         .find(|row| row["type"] == "amux.claude_sdk.session_facts")
         .unwrap();
-    row(&mut sdk, 1, facts);
+    let (sdk, _) = stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Sdk,
+        },
+        vec![facts],
+    );
     events.extend(collect(&mut subscribed(), &sdk));
     events.push(Event::connection(&RelayConnection::Disconnected {
         reason: model::DisconnectReason::Unreachable,
@@ -262,22 +282,10 @@ fn mobile_projection_schema_snapshot() {
         )
         .unwrap();
     } else {
+        std::fs::write("/tmp/amux-mobile-projection-actual.json", &actual).unwrap();
         assert_eq!(actual, include_str!("schema.json"));
     }
     assert_eq!(serde_json::from_str::<Vec<Event>>(&actual).unwrap(), events);
-    // An SDK row must never accept a PTY payload by structural coincidence.
-    let mut wrong = serde_json::to_value(FeedEntryDto::ClaudePty(
-        model
-            .claude(AGENT)
-            .unwrap()
-            .entries()
-            .next()
-            .unwrap()
-            .clone(),
-    ))
-    .unwrap();
-    wrong["layer"] = json!("claude_sdk");
-    assert!(serde_json::from_value::<FeedEntryDto>(wrong).is_err());
     println!("mobile projection schema:\n{actual}");
 }
 
@@ -293,11 +301,11 @@ fn model_with_codex_row() -> Model {
 }
 
 #[test]
-fn mobile_projection_replaces_codex_deltas_without_appending_duplicate_rows() {
+fn mobile_projection_does_not_project_codex_rows_without_a_store_window() {
     let mut model = model_with_codex_row();
     let mut projection = subscribed();
     let mut phone = PhoneFeed::default();
-    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 1);
+    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 0);
     for seq in 3..20 {
         row(
             &mut model,
@@ -306,24 +314,14 @@ fn mobile_projection_replaces_codex_deltas_without_appending_duplicate_rows() {
         );
     }
     let events = collect(&mut projection, &model);
-    let feed = events
-        .iter()
-        .find(|e| matches!(e, Event::Feed { .. }))
-        .unwrap();
-    assert!(
-        matches!(feed, Event::Feed { append, replace, .. } if append.is_empty() && replace.len() == 1)
-    );
+    assert!(!events.iter().any(|event| matches!(event, Event::Feed { .. })));
     phone.apply_events(&events);
-    assert_eq!(phone.rows.len(), 1);
-    assert_eq!(
-        phone.rows[&0]["row"]["kind"]["text"],
-        format!("Hello{}", "!".repeat(17))
-    );
+    assert!(phone.rows.is_empty());
     assert!(collect(&mut projection, &model).is_empty());
 }
 
 #[test]
-fn mobile_projection_eviction_replay_and_unsubscribe_reconstruct_exactly() {
+fn mobile_projection_never_falls_back_to_a_provider_window() {
     let mut model = claude_model();
     let mut projection = subscribed();
     let mut phone = PhoneFeed::default();
@@ -331,10 +329,7 @@ fn mobile_projection_eviction_replay_and_unsubscribe_reconstruct_exactly() {
         row(&mut model, id as u64 + 1, message(id, "row"));
         phone.apply_events(&collect(&mut projection, &model));
     }
-    let layer = model.claude(AGENT).unwrap();
-    assert!(layer.evicted_entries() > 0);
-    assert_eq!(phone.rows.len(), layer.entry_count());
-    let before_end = *phone.rows.last_key_value().unwrap().0 + 1;
+    assert!(phone.rows.is_empty());
     update(
         &mut model,
         Msg::Stream {
@@ -344,12 +339,7 @@ fn mobile_projection_eviction_replay_and_unsubscribe_reconstruct_exactly() {
     );
     row(&mut model, 1, message(0, "new window"));
     phone.apply_events(&collect(&mut projection, &model));
-    assert_eq!(phone.rows.len(), 1);
-    assert_eq!(*phone.rows.first_key_value().unwrap().0, before_end);
-    assert_eq!(
-        phone.rows[&before_end]["row"]["kind"]["segments"],
-        json!(["new window"])
-    );
+    assert!(phone.rows.is_empty());
     projection.unsubscribe(AGENT);
     row(&mut model, 2, message(1, "hidden"));
     assert!(
@@ -359,7 +349,7 @@ fn mobile_projection_eviction_replay_and_unsubscribe_reconstruct_exactly() {
     );
     projection.subscribe(AGENT);
     let mut fresh = PhoneFeed::default();
-    assert_eq!(fresh.apply_events(&collect(&mut projection, &model)), 2);
+    assert_eq!(fresh.apply_events(&collect(&mut projection, &model)), 0);
 }
 
 /// A machine that stops answering takes its folded layer with it. What it
@@ -375,7 +365,7 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
         row(&mut model, id as u64 + 1, message(id, "before the outage"));
     }
     phone.apply_events(&collect(&mut projection, &model));
-    assert_eq!(phone.rows.len(), 3);
+    assert!(phone.rows.is_empty());
     let held = phone.rows.clone();
 
     // The machine goes away. The relay drops what it knew of that machine's
@@ -423,7 +413,7 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
         row(&mut model, id as u64 + 1, message(id, "before the outage"));
     }
     phone.apply_events(&collect(&mut projection, &model));
-    assert_eq!(phone.rows.len(), 3, "the replay doubled the transcript");
+    assert!(phone.rows.is_empty(), "the replay created a fallback transcript");
 
     // An agent removed from a machine that is still answering is not stale,
     // it is gone, and its rows go with it.
@@ -492,20 +482,13 @@ async fn mobile_projection_streaming_bench_1000_rows_at_50_per_second() {
                 id += 1;
             }
         }
-        assert_eq!(phone.rows.len(), 1000);
-        assert_eq!(sent_rows, 1000, "unchanged rows were serialized again");
+        assert!(phone.rows.is_empty());
+        assert_eq!(sent_rows, 0, "provider rows escaped the store boundary");
         assert!(times.windows(2).all(|pair| pair[1] - pair[0] >= interval));
         assert!(
             bytes < 1000 * 1500,
             "payload must grow with delta bytes: {bytes}"
         );
-        let native: Vec<_> = model
-            .claude(AGENT)
-            .unwrap()
-            .entries()
-            .map(|e| serde_json::to_value(FeedEntryDto::ClaudePty(e.clone())).unwrap())
-            .collect();
-        assert_eq!(phone.rows.values().cloned().collect::<Vec<_>>(), native);
         println!(
             "mobile projection bench: interval_ns={} rows=1000 rate=50/s batches={} rows_serialized={sent_rows} total_bytes={bytes} virtual_duration_ms={}",
             interval.as_nanos(),
@@ -887,15 +870,15 @@ fn mobile_projection_ask_snapshot() {
 
 #[test]
 fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
-    let mut model = model(model::AgentKind::Claude {
-        driver: model::ClaudeDriver::Sdk,
-    });
-    row(&mut model, 1, json!({"type":"amux.claude_sdk.ready"}));
-    row(&mut model, 2, message(1, "SDK reply"));
-    row(
-        &mut model,
-        3,
-        json!({"type":"result", "subtype":"success", "is_error":false}),
+    let (mut model, stream) = stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Sdk,
+        },
+        vec![
+            json!({"type":"amux.claude_sdk.ready"}),
+            message(1, "SDK reply"),
+            json!({"type":"result", "subtype":"success", "is_error":false}),
+        ],
     );
     let mut projection = subscribed();
     let events = collect(&mut projection, &model);
@@ -910,8 +893,9 @@ fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
         if session.agent == AGENT && session.gate == GateDto::ClaudeSdk(claude_sdk::SendGate::Ready)
         && session.phase == PhaseDto::ClaudeSdk(claude_sdk::SdkPhase::Finished)))
     );
-    row(
+    chat_row(
         &mut model,
+        stream,
         4,
         json!({"type":"amux.claude_sdk.permission_required",
         "request_id":"permission-1", "tool_name":"Bash", "input":{"command":"pwd"}, "suggestions":[]}),
@@ -935,7 +919,7 @@ fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
     );
     phone.apply_events(&collect(&mut projection, &model));
     assert_eq!(phone.rows, before);
-    row(&mut model, 10, message(2, "Replayed SDK reply"));
+    chat_row(&mut model, stream, 10, message(2, "Replayed SDK reply"));
     phone.apply_events(&collect(&mut projection, &model));
     assert!(phone.rows.values().all(|row| row["layer"] == "claude_sdk"));
     assert_ne!(phone.rows, before);
@@ -1121,6 +1105,45 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
             },
         }),
     );
+    let effects = update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::ReplayComplete { at },
+        },
+    );
+    if let Some((op, mutations)) = effects.into_iter().find_map(|effect| match effect {
+        Effect::Store(StoreOp::Commit { op, mutations, .. }) => Some((op, mutations)),
+        _ => None,
+    }) {
+        let (placed, bodies) = match mutations {
+            MutationBatchDto::Claude(mutations) => canonical!(mutations),
+            MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
+            MutationBatchDto::Codex(mutations) => canonical!(mutations),
+        };
+        update(
+            &mut model,
+            Msg::Store(StoreMsg::Committed {
+                profile: ProfileGeneration(0),
+                attempt,
+                op,
+                agent: AGENT,
+                result: CommitResult {
+                    expected: ExpectedHead::Present {
+                        fence: 2,
+                        version: 2,
+                    },
+                    content_revision: 2,
+                    placed,
+                    bodies,
+                    deleted: Vec::new(),
+                    redirected: Vec::new(),
+                    boundaries: Vec::new(),
+                },
+            }),
+        );
+    }
     (model, stream)
 }
 /// The same window as a healthy store holds it before any live fold exists:

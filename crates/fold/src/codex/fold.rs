@@ -204,23 +204,7 @@ fn fold_mcp_startup<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
         failure_reason,
     };
 
-    if let Some(entry) = layer
-        .window
-        .iter_mut()
-        .find(|entry| matches!(&entry.kind, FeedEntryKind::McpStartup(_)))
-        && let FeedEntryKind::McpStartup(startup) = &mut entry.kind
-    {
-        startup.servers.insert(name.to_string(), server);
-        return;
-    }
-
-    push(
-        layer,
-        seq,
-        FeedEntryKind::McpStartup(McpStartupEntry {
-            servers: BTreeMap::from([(name.to_string(), server)]),
-        }),
-    );
+    let _ = (seq, name, server);
 }
 
 fn fold_ready<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
@@ -231,6 +215,8 @@ fn fold_ready<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     layer.read_only = false;
     layer.thread_closed = false;
     layer.accumulators = Accumulators::default();
+    layer.work_entries.clear();
+    layer.message_phases.clear();
     if resumed {
         push(layer, seq, FeedEntryKind::Boundary(BoundaryEntry::Resumed));
     } else if repeated {
@@ -241,8 +227,9 @@ fn fold_ready<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
 fn fold_gap<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let reason = str_or(row, "reason", "unknown").to_string();
     layer.gap = true;
-    layer.history_loss = true;
     layer.accumulators = Accumulators::default();
+    layer.work_entries.clear();
+    layer.message_phases.clear();
     push(
         layer,
         seq,
@@ -332,6 +319,8 @@ fn fold_turn_completed<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
         layer.turn.status = ThreadStatus::Idle;
         layer.turn.last = Some(last);
         layer.accumulators = Accumulators::default();
+        layer.work_entries.clear();
+        layer.message_phases.clear();
     }
 }
 
@@ -1130,7 +1119,6 @@ fn fold_approval_required<C>(layer: &mut Observation<C>, seq: u64, row: &Value) 
     });
     if layer.asks.len() > ASKS_RETAINED {
         layer.asks.pop_front();
-        layer.history_loss = true;
     }
     set_work_state(
         layer,
@@ -1441,19 +1429,11 @@ fn strings(value: Option<&Value>) -> Vec<String> {
 }
 
 fn existing_work<C>(layer: &Observation<C>, item_id: &str) -> Option<WorkEntry> {
-    let id = *layer.item_entries.get(item_id)?;
-    match entry_kind(layer, id)? {
-        FeedEntryKind::Work(entry) => Some(entry.clone()),
-        _ => None,
-    }
+    layer.work_entries.get(item_id).cloned()
 }
 
 fn existing_message_phase<C>(layer: &Observation<C>, item_id: &str) -> Option<MessagePhase> {
-    let id = *layer.item_entries.get(item_id)?;
-    match entry_kind(layer, id)? {
-        FeedEntryKind::Message(entry) => Some(entry.phase),
-        _ => None,
-    }
+    layer.message_phases.get(item_id).copied()
 }
 
 fn plan_text<C>(layer: &Observation<C>, item_id: &str) -> Option<String> {
@@ -1465,10 +1445,7 @@ fn plan_text<C>(layer: &Observation<C>, item_id: &str) -> Option<String> {
 }
 
 pub(super) fn set_work_state<C>(layer: &mut Observation<C>, item_id: &str, state: WorkState) {
-    let Some(id) = layer.item_entries.get(item_id).copied() else {
-        return;
-    };
-    if let Some(FeedEntryKind::Work(entry)) = entry_kind_mut(layer, id) {
+    if let Some(entry) = layer.work_entries.get_mut(item_id) {
         entry.state = state;
     }
 }
@@ -1511,19 +1488,20 @@ fn append_bounded(target: &mut String, delta: &str, truncated: &mut bool) {
 
 fn upsert_item<C>(
     layer: &mut Observation<C>,
-    seq: u64,
+    _seq: u64,
     item_id: &str,
     kind: FeedEntryKind<C>,
 ) -> u64 {
-    if let Some(id) = layer.item_entries.get(item_id).copied()
-        && let Some(entry) = layer.window.iter_mut().find(|entry| entry.id == id)
-    {
-        entry.kind = kind;
-        return id;
+    match kind {
+        FeedEntryKind::Work(entry) => {
+            layer.work_entries.insert(item_id.to_string(), entry);
+        }
+        FeedEntryKind::Message(entry) => {
+            layer.message_phases.insert(item_id.to_string(), entry.phase);
+        }
+        _ => {}
     }
-    let id = push(layer, seq, kind);
-    layer.item_entries.insert(item_id.to_string(), id);
-    id
+    0
 }
 
 /// Upsert a work entry and record whether that item is still open.  Turn-level
@@ -1541,30 +1519,16 @@ fn upsert_work<C>(
 }
 
 fn upsert_turn<C>(
-    layer: &mut Observation<C>,
-    seq: u64,
-    turn_id: &str,
-    kind: FeedEntryKind<C>,
+    _layer: &mut Observation<C>,
+    _seq: u64,
+    _turn_id: &str,
+    _kind: FeedEntryKind<C>,
 ) -> u64 {
-    if let Some(id) = layer.turn_entries.get(turn_id).copied()
-        && let Some(entry) = layer.window.iter_mut().find(|entry| entry.id == id)
-    {
-        entry.kind = kind;
-        return id;
-    }
-    let id = push(layer, seq, kind);
-    layer.turn_entries.insert(turn_id.to_string(), id);
-    id
+    0
 }
 
-fn push<C>(layer: &mut Observation<C>, seq: u64, kind: FeedEntryKind<C>) -> u64 {
-    let id = layer.next_entry_id;
-    layer.next_entry_id += 1;
-    if let Some(evicted) = layer.window.push(FeedEntry { id, seq, kind }) {
-        layer.item_entries.retain(|_, entry| *entry != evicted.id);
-        layer.turn_entries.retain(|_, entry| *entry != evicted.id);
-    }
-    id
+fn push<C>(_layer: &mut Observation<C>, _seq: u64, _kind: FeedEntryKind<C>) -> u64 {
+    0
 }
 
 fn push_unrecognized<C>(layer: &mut Observation<C>, seq: u64, method: &str, detail: Option<&str>) {
@@ -1576,22 +1540,6 @@ fn push_unrecognized<C>(layer: &mut Observation<C>, seq: u64, method: &str, deta
             detail: detail.map(str::to_owned),
         }),
     );
-}
-
-fn entry_kind<C>(layer: &Observation<C>, id: u64) -> Option<&FeedEntryKind<C>> {
-    layer
-        .window
-        .iter()
-        .find(|entry| entry.id == id)
-        .map(|entry| &entry.kind)
-}
-
-fn entry_kind_mut<C>(layer: &mut Observation<C>, id: u64) -> Option<&mut FeedEntryKind<C>> {
-    layer
-        .window
-        .iter_mut()
-        .find(|entry| entry.id == id)
-        .map(|entry| &mut entry.kind)
 }
 
 fn string(value: &Value, key: &str) -> Option<String> {
@@ -1622,7 +1570,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ask_ring_overflow_is_history_loss_not_a_truncated_replay_fact() {
+    fn ask_ring_overflow_keeps_the_newest_obligations() {
         let mut layer = Observation::<Vec<String>> {
             ready_count: 1,
             ..Observation::default()
@@ -1667,7 +1615,6 @@ mod tests {
         );
 
         assert_eq!(layer.asks.len(), ASKS_RETAINED);
-        assert!(layer.history_loss);
         assert!(!layer.truncated_start);
         assert!(matches!(
             layer.activity(),

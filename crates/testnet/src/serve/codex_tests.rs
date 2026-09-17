@@ -1,9 +1,9 @@
 use serde_json::json;
 use ui_runtime::{Runtime, RuntimeOptions};
-use ui_state::codex::{AskContext, FeedEntryKind};
+use ui_state::codex::AskContext;
 use ui_state::{CodexCommand, CodexDecision, Command as UiCommand};
 
-use super::agents_tests::{succeeded, wait_for};
+use super::agents_tests::{stored_has_text, succeeded, wait_for};
 use super::*;
 
 const PROMPT: &str =
@@ -175,11 +175,10 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
             }
             println!("Unrecorded interaction rejected: {failure}");
         } else {
-            wait_for(&mut runtime, "recorded DONE and turn completion", |model| model.codex(agent).is_some_and(|layer| {
-                layer.entries().any(|entry| matches!(&entry.kind, FeedEntryKind::Message(message) if message.text == "DONE"))
-                    && layer.entries().any(|entry| matches!(entry.kind, FeedEntryKind::Turn(_)))
-                    && layer.ask_count() == 0
-            })).await;
+            wait_for(&mut runtime, "recorded DONE and turn completion", |model| {
+                stored_has_text(model, agent, "DONE")
+                    && model.codex(agent).is_some_and(|layer| layer.ask_count() == 0)
+            }).await;
             println!(
                 "Projected Codex transcript: {}",
                 serde_json::to_string(runtime.model().codex(agent).unwrap()).unwrap()
@@ -339,12 +338,7 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             &mut runtime,
             "the recorded answer to the command",
             |model| {
-                model.codex(agent).is_some_and(|layer| {
-                    layer.entries().any(|entry| {
-                        matches!(&entry.kind, FeedEntryKind::Message(message)
-                        if message.text == "Planning the parser before the wire format.")
-                    })
-                })
+                stored_has_text(model, agent, "Planning the parser before the wire format.")
             },
         )
         .await;

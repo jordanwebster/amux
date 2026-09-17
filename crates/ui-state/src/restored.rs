@@ -7,7 +7,7 @@ pub mod claude {
 
     use crate::attachments::Segment;
     use crate::claude::{
-        FeedEntry, FeedEntryKind, SuccessFacts, ToolEntry, ToolOutcome, TurnDuration,
+        FeedEntry, FeedEntryKind, ToolEntry, ToolOutcome, TurnDuration,
     };
 
     /// The Claude PTY entry a stored canonical entry paints as.
@@ -84,18 +84,7 @@ pub mod claude {
                     .unwrap_or(crate::claude::facts::ToolInvocation::Other);
                 let outcome = entry.tool_outcome().map_or(ToolOutcome::Pending, |bytes| {
                     let block = serde_json::from_slice::<Value>(&bytes.0).unwrap_or(Value::Null);
-                    if block.get("is_error").and_then(Value::as_bool) == Some(true) {
-                        ToolOutcome::Failed {
-                            message: stored_result_text(&block),
-                        }
-                    } else {
-                        ToolOutcome::Success {
-                            facts: SuccessFacts::Output {
-                                head: stored_result_text(&block).unwrap_or_default(),
-                                truncated: false,
-                            },
-                        }
-                    }
+                    crate::claude::fold::tool_outcome(&Value::Null, &block)
                 });
                 FeedEntryKind::Tool(ToolEntry {
                     tool_use_id,
@@ -183,10 +172,16 @@ pub mod claude {
                     text,
                 })
             }
-            ClaudeEntryKind::ApiError => FeedEntryKind::ApiError(crate::claude::ApiErrorEntry {
-                error: None,
-                text: (!text.is_empty()).then_some(text),
-            }),
+            ClaudeEntryKind::ApiError => {
+                let error = match body {
+                    ClaudeBody::ApiError { error } => error,
+                    _ => None,
+                };
+                FeedEntryKind::ApiError(crate::claude::ApiErrorEntry {
+                    error,
+                    text: (!text.is_empty()).then_some(text),
+                })
+            }
             ClaudeEntryKind::Unrecognized => {
                 let (row_type, detail) = match body {
                     ClaudeBody::Unrecognized { row_type, detail } => (row_type, detail),
@@ -198,16 +193,6 @@ pub mod claude {
         FeedEntry { id, seq: 0, kind }
     }
 
-    fn stored_result_text(block: &Value) -> Option<String> {
-        match block.get("content") {
-            Some(Value::String(text)) => Some(text.clone()),
-            Some(Value::Array(parts)) => parts
-                .iter()
-                .find_map(|part| part.get("text").and_then(Value::as_str))
-                .map(str::to_string),
-            _ => None,
-        }
-    }
 }
 
 pub mod claude_sdk {
@@ -476,6 +461,8 @@ pub mod claude_sdk {
 }
 
 pub mod codex {
+    use serde_json::Value;
+
     use crate::codex::{
         BoundaryEntry, ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpStartupEntry,
         McpStartupStatus, MessagePhase, PromptEntry, PromptPart, PromptSource, TurnStatus,
@@ -528,10 +515,16 @@ pub mod codex {
                     CodexBody::Item { item_id, .. } => item_id,
                     _ => String::new(),
                 };
+                let summary = entry
+                    .details()
+                    .and_then(|details| serde_json::from_slice::<Value>(&details.0).ok())
+                    .and_then(|details| details.get("summary").cloned())
+                    .and_then(|summary| serde_json::from_value(summary).ok())
+                    .unwrap_or_default();
                 FeedEntryKind::Reasoning(crate::codex::ReasoningEntry {
                     item_id,
                     text,
-                    summary: Vec::new(),
+                    summary,
                     finality,
                 })
             }
@@ -619,7 +612,9 @@ pub mod codex {
                     CodexBody::Boundary { kind } if kind == "resumed" => BoundaryEntry::Resumed,
                     CodexBody::Boundary { kind } if kind == "ready" => BoundaryEntry::Ready,
                     CodexBody::Boundary { kind } if kind == "compacted" => {
-                        BoundaryEntry::Compacted { turn_id: None }
+                        BoundaryEntry::Compacted {
+                            turn_id: (!text.is_empty()).then_some(text),
+                        }
                     }
                     CodexBody::Boundary { .. } => BoundaryEntry::Gap { reason: text },
                     _ => BoundaryEntry::Gap { reason: text },
@@ -662,6 +657,8 @@ pub mod codex {
     }
 
     fn restored_codex_work(entry: &crate::StoredCodexEntry) -> Option<FeedEntry> {
+        use crate::DurableEntry as _;
+
         let details = entry.details()?;
         let value: serde_json::Value = serde_json::from_slice(&details.0).ok()?;
         let event = if value
@@ -686,9 +683,17 @@ pub mod codex {
         observation.observe(1, &event, |text| {
             vec![crate::attachments::Segment::Prose(text.to_string())]
         });
-        let mut restored = observation.entries().last().cloned()?;
-        if let FeedEntryKind::Work(work) = &mut restored.kind {
-            work.state = match entry.state() {
+        let mut work = observation.work().last().cloned()?;
+        if let WorkKind::FileChange {
+            patch_head,
+            patch_truncated,
+            ..
+        } = &mut work.kind
+        {
+            *patch_head = entry.text().unwrap_or_default().to_string();
+            *patch_truncated = entry.is_clipped();
+        }
+        work.state = match entry.state() {
                 Some("awaiting_approval") => WorkState::AwaitingApproval {
                     request_id: serde_json::Value::Null,
                 },
@@ -698,7 +703,10 @@ pub mod codex {
                 Some("proposed") => WorkState::Proposed,
                 _ => work.state.clone(),
             };
-        }
-        Some(restored)
+        Some(FeedEntry {
+            id: 0,
+            seq: 0,
+            kind: FeedEntryKind::Work(work),
+        })
     }
 }

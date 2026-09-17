@@ -495,16 +495,6 @@ impl View {
     }
 }
 
-/// The current entry watermark for an agent's feed: `evicted + retained`,
-/// which equals the layer's next entry id (invariant-checked in ui-state).
-/// The paused rule's `N new entries` derives from the difference.
-pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
-    model
-        .claude(agent)
-        .map(|layer| layer.evicted_entries() + layer.entry_count() as u64)
-        .unwrap_or(0)
-}
-
 /// The one line a Claude ask reduces to when it is being reported in
 /// somebody else's chat (U1): the act that is blocked, in this layer's
 /// own words. A command says what would run, a question says what is

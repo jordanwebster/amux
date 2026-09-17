@@ -19,8 +19,7 @@
 
 pub mod answer;
 pub mod facts;
-mod fold;
-pub mod runs;
+pub(crate) mod fold;
 pub mod todos;
 pub(crate) mod update;
 
@@ -52,8 +51,7 @@ use uuid::Uuid;
 use crate::attachments::{AttachmentIndex, Segment};
 use crate::claude::answer::AskAnswer;
 use crate::model::{
-    AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase, Violation, Why,
-    message_digest,
+    AgentPhase, Attention, Model, StreamPhase, Violation, Why,
 };
 use crate::msg::OpId;
 
@@ -86,11 +84,6 @@ pub enum ClaudeCommand {
         agent: model::AgentId,
     },
 }
-
-/// Feed retention bound (B9): matches the source's bounded tail, so the fold
-/// never retains more than one window of history. Eviction is from the
-/// front, counted, and honest (`history_truncated`).
-pub(crate) const FEED_RETAINED: usize = 1000;
 
 /// Message upsert index bound (B2). Main-session files burst-write whole
 /// messages, so only recent message ids ever receive late rows.
@@ -133,28 +126,6 @@ const OUTPUT_HEAD_MAX: usize = 400;
 /// roughly a hundred ordinary terminal rows, enough for useful transcript
 /// inspection beyond the eight-row feed preview without letting 1,000
 /// retained entries turn wide patches into an unbounded per-agent cost.
-/// This feed's exploration runs, projected over its native entries.
-pub type FeedItem<'a> = runs::FeedItem<'a, FeedEntry>;
-/// The lazy walk that yields them.
-pub type FeedItems<'a> = runs::FeedItems<'a, FeedEntry>;
-
-impl runs::RunEntry for FeedEntry {
-    fn run_id(&self) -> u64 {
-        self.id
-    }
-
-    fn exploration(&self) -> Option<&ToolInvocation> {
-        let FeedEntryKind::Tool(tool) = &self.kind else {
-            return None;
-        };
-        runs::groupable(&tool.invocation).then_some(&tool.invocation)
-    }
-
-    fn groups_with_previous(&self) -> bool {
-        matches!(&self.kind, FeedEntryKind::Tool(tool) if tool.group_with_previous)
-    }
-}
-
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
 /// chat-layer surface of a live obligation. Queued in arrival order; the
 /// head renders with an honest `(1 of N)` count.
@@ -496,15 +467,6 @@ pub enum ClaudeViolation {
         len: usize,
         cap: usize,
     },
-    FeedOrder {
-        agent: model::AgentId,
-    },
-    IndexAhead {
-        agent: model::AgentId,
-        index: &'static str,
-        entry: u64,
-        next: u64,
-    },
     AskOrder {
         agent: model::AgentId,
     },
@@ -527,8 +489,6 @@ impl ClaudeViolation {
     pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::RetentionOverflow { .. } => "claude-retention-overflow",
-            Self::FeedOrder { .. } => "claude-feed-order",
-            Self::IndexAhead { .. } => "claude-index-ahead",
             Self::AskOrder { .. } => "claude-ask-order",
             Self::EchoDuplicate { .. } => "claude-echo-duplicate",
             Self::ProjectionDisagreement { .. } => "claude-projection-disagreement",
@@ -547,18 +507,6 @@ impl std::fmt::Display for ClaudeViolation {
             } => write!(
                 f,
                 "agent {agent} claude {store} holds {len} entries over the bound of {cap}"
-            ),
-            Self::FeedOrder { agent } => {
-                write!(f, "agent {agent} claude feed id arithmetic is incoherent")
-            }
-            Self::IndexAhead {
-                agent,
-                index,
-                entry,
-                next,
-            } => write!(
-                f,
-                "agent {agent} claude {index} index references entry {entry} past next id {next}"
             ),
             Self::AskOrder { agent } => {
                 write!(f, "agent {agent} claude ask id arithmetic is incoherent")
@@ -619,9 +567,6 @@ struct TurnState {
     /// An arrival-ordered `hook.stop` said the turn ended; awaiting the
     /// in-transcript `turn_duration` authority.
     stop_presignal: bool,
-    /// Entry id of an inferred (elapsed) turn marker awaiting
-    /// reconciliation should the authority land after an interrupt.
-    inferred_turn_entry: Option<u64>,
     /// Timestamp of the previous uuid row in file order — the thinking
     /// duration chain. Cleared across interrupts and compaction.
     last_row_at: Option<DateTime<Utc>>,
@@ -644,8 +589,6 @@ struct TurnState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct MessageSlot {
     id: String,
-    /// The text entry for this message, if any text block arrived.
-    entry: Option<u64>,
     state: SlotState,
 }
 
@@ -664,7 +607,6 @@ enum SlotState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct OpenTool {
     tool_use_id: String,
-    entry: Option<u64>,
     message_id: Option<String>,
     plan: Option<String>,
 }
@@ -674,11 +616,9 @@ struct OpenTool {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClaudeLayer {
     attachments: AttachmentIndex,
-    /// Replay began past the start of the source buffer (subscription
-    /// fact): the feed's first state is the honest boundary (B9).
+    /// Replay began after the source start. This remains a condition input;
+    /// drawable history boundaries come from the store window.
     truncated_start: bool,
-    /// Entries evicted from the front of the bounded feed this epoch.
-    evicted: u64,
     /// The `amux.transcript_ready` marker was seen for the current link:
     /// everything before it was replay (B10).
     transcript_ready: bool,
@@ -696,8 +636,6 @@ pub struct ClaudeLayer {
     session_id: Option<String>,
     session: SessionFacts,
     todos: todos::ClaudeTodos,
-    entries: VecDeque<FeedEntry>,
-    next_entry_id: u64,
     turn: TurnState,
     messages: VecDeque<MessageSlot>,
     open_tools: VecDeque<OpenTool>,
@@ -816,24 +754,6 @@ impl ClaudeLayer {
         self.transcript_ready || self.replay_complete
     }
 
-    /// The feed, in file order.
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
-        self.entries.iter()
-    }
-
-    /// Release the legacy presentation feed after a store-backed batch.
-    /// SQLite's canonical window owns every drawable entry; the provider
-    /// layer keeps only running session facts and obligations.
-    pub(crate) fn discard_feed(&mut self) {
-        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
-        self.entries = VecDeque::new();
-        self.messages = VecDeque::new();
-        self.turn.inferred_turn_entry = None;
-        for tool in &mut self.open_tools {
-            tool.entry = None;
-        }
-    }
-
     /// Attachment facts observed from this agent's structured stream.
     pub fn attachments(&self) -> &AttachmentIndex {
         &self.attachments
@@ -841,39 +761,6 @@ impl ClaudeLayer {
 
     pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
         &mut self.attachments
-    }
-
-    /// The feed in file order with consecutive exploration entries grouped
-    /// under their first entry id. A lone read or search remains an entry.
-    pub fn feed_items(&self) -> FeedItems<'_> {
-        FeedItems::new(&self.entries)
-    }
-
-    /// Whether closing completion reports would hide any retained content.
-    pub fn has_foldable_completion(&self) -> bool {
-        self.entries.iter().any(|entry| match &entry.kind {
-            FeedEntryKind::AgentMessage(message) => {
-                message.kind.presentation() == AgentMessagePresentation::Finished
-                    && message_digest(&message.text).hidden_lines > 0
-            }
-            _ => false,
-        })
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// The feed does not start at the beginning of history: replay began
-    /// past the source start, or bounded retention has evicted entries.
-    /// Renderers state it (`─ earlier history unavailable ─`), the Model
-    /// decides it (B9).
-    pub fn history_truncated(&self) -> bool {
-        self.truncated_start || self.evicted > 0
-    }
-
-    pub fn evicted_entries(&self) -> u64 {
-        self.evicted
     }
 
     /// Everything before this is replay; a fresh session has no transcript
@@ -1010,7 +897,6 @@ impl ClaudeLayer {
     /// counts, and arithmetic — never content.
     pub(crate) fn check_invariants(&self, agent: model::AgentId, out: &mut Vec<Violation>) {
         for (store, len, cap) in [
-            ("feed", self.entries.len(), FEED_RETAINED),
             ("messages", self.messages.len(), MESSAGES_RETAINED),
             ("open-tools", self.open_tools.len(), OPEN_TOOLS_RETAINED),
             ("plans", self.plans.len(), PLANS_RETAINED),
@@ -1025,22 +911,6 @@ impl ClaudeLayer {
                     cap,
                 }));
             }
-        }
-
-        // Feed arithmetic: ids are assigned sequentially from 0 and evicted
-        // only from the front, so evicted + retained == next id, and the
-        // retained ids are exactly the contiguous tail.
-        let coherent = self.evicted + self.entries.len() as u64 == self.next_entry_id
-            && self
-                .entries
-                .front()
-                .is_none_or(|front| front.id == self.evicted)
-            && self
-                .entries
-                .back()
-                .is_none_or(|back| back.id + 1 == self.next_entry_id);
-        if !coherent {
-            out.push(Violation::Claude(ClaudeViolation::FeedOrder { agent }));
         }
 
         // Ask arithmetic: ids are assigned monotonically and the queue is
@@ -1067,30 +937,6 @@ impl ClaudeLayer {
             out.push(Violation::Claude(ClaudeViolation::EchoDuplicate { agent }));
         }
 
-        let index_refs = self
-            .messages
-            .iter()
-            .filter_map(|slot| slot.entry.map(|entry| ("messages", entry)))
-            .chain(
-                self.open_tools
-                    .iter()
-                    .filter_map(|tool| tool.entry.map(|entry| ("open-tools", entry))),
-            )
-            .chain(
-                self.turn
-                    .inferred_turn_entry
-                    .map(|entry| ("inferred-turn", entry)),
-            );
-        for (index, entry) in index_refs {
-            if entry >= self.next_entry_id {
-                out.push(Violation::Claude(ClaudeViolation::IndexAhead {
-                    agent,
-                    index,
-                    entry,
-                    next: self.next_entry_id,
-                }));
-            }
-        }
     }
 }
 
@@ -1502,7 +1348,7 @@ mod tests {
         assert!(
             model
                 .claude(agent_id())
-                .is_some_and(|layer| layer.entry_count() == 1),
+                .is_some_and(|layer| layer.cursor() == 1),
             "fixture must carry a folded claude layer"
         );
         model
@@ -1539,45 +1385,6 @@ mod tests {
             .check_invariants()
             .iter()
             .any(|violation| violation.kind() == kind)
-    }
-
-    #[test]
-    fn detects_retention_overflow() {
-        let mut model = a_model_with_a_folded_layer();
-        let layer = layer_mut(&mut model);
-        for _ in 0..=FEED_RETAINED {
-            let id = layer.next_entry_id;
-            layer.entries.push_back(FeedEntry {
-                id,
-                seq: id,
-                kind: FeedEntryKind::CompactSummary(CompactSummaryEntry {
-                    text: String::new(),
-                }),
-            });
-            layer.next_entry_id += 1;
-        }
-        assert!(fires(&model, "claude-retention-overflow"));
-    }
-
-    #[test]
-    fn detects_broken_feed_arithmetic() {
-        let mut model = a_model_with_a_folded_layer();
-        layer_mut(&mut model).next_entry_id += 1;
-        assert!(fires(&model, "claude-feed-order"));
-    }
-
-    #[test]
-    fn detects_an_index_pointing_past_the_feed() {
-        let mut model = a_model_with_a_folded_layer();
-        let layer = layer_mut(&mut model);
-        let ahead = layer.next_entry_id + 5;
-        layer.open_tools.push_back(OpenTool {
-            tool_use_id: "toolu_ghost".to_string(),
-            entry: Some(ahead),
-            message_id: None,
-            plan: None,
-        });
-        assert!(fires(&model, "claude-index-ahead"));
     }
 
     #[test]

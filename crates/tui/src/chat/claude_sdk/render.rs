@@ -7,30 +7,25 @@
 //! Every fact rendered here comes from the Model; the code below formats
 //! and never recovers meaning the fold did not keep.
 
-use std::collections::HashMap;
-
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Model;
 use ui_state::attachments::Segment;
 use ui_state::claude::ToolInvocation;
 use ui_state::claude_sdk::{
-    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, FeedItem, Finality, McpServerFact,
+    BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact,
     SdkPhase, TaskEntry, TaskState, ToolEntry,
 };
 
-use crate::chat::attachments::{attachment_key, described, echo_owner, prose, words};
+use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
-    self, Carrier, fmt_thousands, fmt_tokens, paint_agent_message, paint_assistant,
-    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error, paint_file_change,
-    paint_header, paint_plan, paint_subagent_activity, paint_thinking, paint_tool_line,
-    paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, fmt_thousands, fmt_tokens, paint_agent_message, paint_assistant, paint_compaction_rule,
+    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan, paint_thinking,
+    paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
-use crate::chat::frame::{
-    BlockKey, CacheView, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
-};
+use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
@@ -48,11 +43,6 @@ const PLAN_PREVIEW_LINES: usize = 6;
 /// the reader is where a whole patch belongs.
 const DIFF_PREVIEW_BUDGET: usize = 8;
 
-/// Synthetic keys for the block no entry owns. The optimistic echo counts
-/// down from the top of the space so it can never collide with an entry
-/// id, which counts up from zero.
-const ECHO_KEY_BASE: u64 = u64::MAX;
-
 // --- the frame --------------------------------------------------------------
 
 /// Everything the shared shell needs to draw this chat: one header, the
@@ -63,7 +53,7 @@ pub(crate) fn claude_sdk_frame_parts(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
-    cache: &mut PaintCache,
+    _cache: &mut PaintCache,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -111,14 +101,8 @@ pub(crate) fn claude_sdk_frame_parts(
         // did not come up: the banner is about somebody being blocked.
         banner: banner.or_else(|| mcp_status_line(model, chat, theme)),
         feed: FeedBlocks {
-            blocks: if loading {
-                Vec::new()
-            } else {
-                feed_blocks(model, chat, viewport, cache, theme, width)
-            },
-            history_truncated: model
-                .claude_sdk(chat.agent)
-                .is_some_and(|layer| layer.history_truncated()),
+            blocks: Vec::new(),
+            history_truncated: false,
             loading,
         },
         activity: crate::chat::queue::strip(
@@ -680,366 +664,6 @@ fn footer_line(
 
 // --- the feed ---------------------------------------------------------------
 
-/// Every feed block, in file order, the optimistic echo last.
-fn feed_blocks(
-    model: &Model,
-    chat: &View,
-    viewport: &FeedViewport,
-    cache: &mut PaintCache,
-    theme: Theme,
-    width: usize,
-) -> Vec<PaintedBlock> {
-    let agent = chat.agent;
-    let Some(layer) = model.claude_sdk(agent) else {
-        return Vec::new();
-    };
-    let entries: HashMap<u64, &FeedEntry> =
-        layer.entries().map(|entry| (entry.id, entry)).collect();
-    // The plan reader affordance is a write-side binding; read-only chats
-    // never advertise it.
-    let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
-    let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
-    let eff = effective(chat);
-
-    let mut blocks = Vec::new();
-    for item in layer.feed_items() {
-        match item {
-            FeedItem::Entry(entry) if entry.parent_tool_use_id().is_some() => {
-                if let Some(block) = subagent_block(layer, entry, cache, theme, width) {
-                    blocks.push(block);
-                }
-            }
-            FeedItem::Entry(entry) => {
-                let content = entry_content(layer, entry);
-                let Some(block) = entry_block_cached(
-                    entry,
-                    &content,
-                    layer.attachments(),
-                    cache,
-                    theme,
-                    width,
-                    plan_hint,
-                    chat.reports_open,
-                    reports,
-                ) else {
-                    continue;
-                };
-                blocks.push(block);
-                push_attachment_blocks(
-                    &mut blocks,
-                    cache,
-                    entry.id,
-                    &described(layer.attachments(), &content),
-                    carrier_of(entry),
-                    theme,
-                    width,
-                );
-            }
-            FeedItem::ExplorationRun {
-                id,
-                member_ids,
-                reads,
-                searches,
-                read_paths,
-            } => {
-                let key = blocks::RunKey(id);
-                let summary = blocks::run_summary(reads, searches, &read_paths);
-                // A run's members carry no attachment rows: every member
-                // is a read or a search, and only prompts and messages
-                // say words an attachment can hide behind.
-                let members: Vec<FeedEntry> = member_ids
-                    .iter()
-                    .filter_map(|id| entries.get(id))
-                    .map(|entry| (*entry).clone())
-                    .collect();
-                // An open run offers to shut again, not to open twice.
-                let expanded = viewport.expanded.contains(&key);
-                let hint = eff.fold_hint(expanded);
-                let content = (
-                    summary.clone(),
-                    members.clone(),
-                    plan_hint,
-                    chat.reports_open,
-                    chat.leader,
-                    hint.clone(),
-                );
-                blocks.push(
-                    cache
-                        .get_or_paint(
-                            BlockKey(key.0),
-                            &content,
-                            PaintInputs {
-                                width,
-                                theme,
-                                expanded,
-                            },
-                            || {
-                                let painted: Vec<PaintedBlock> = members
-                                    .iter()
-                                    .map(|entry| {
-                                        entry_block(
-                                            entry,
-                                            &[],
-                                            layer.attachments(),
-                                            theme,
-                                            width,
-                                            plan_hint,
-                                            reports,
-                                        )
-                                    })
-                                    .collect();
-                                blocks::paint_exploration_run(
-                                    BlockKey(key.0),
-                                    key,
-                                    &summary,
-                                    &painted,
-                                    expanded,
-                                    &hint,
-                                    theme,
-                                    width,
-                                )
-                            },
-                        )
-                        .clone(),
-                );
-            }
-        }
-    }
-    if let Some(echo) = layer.pending_echo() {
-        let key = BlockKey(ECHO_KEY_BASE);
-        // An echo is painted from the same segments a landed prompt is,
-        // so its attachment rows appear the moment Enter is pressed and
-        // simply survive reconciliation rather than arriving with it.
-        let content = layer.attachments().segments(&echo.text);
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    echo,
-                    PaintInputs {
-                        width,
-                        theme,
-                        expanded: false,
-                    },
-                    || {
-                        paint_user_prompt(
-                            key,
-                            &words(layer.attachments(), &content),
-                            true,
-                            theme,
-                            width,
-                        )
-                    },
-                )
-                .clone(),
-        );
-        push_attachment_blocks(
-            &mut blocks,
-            cache,
-            echo_owner(0),
-            &described(layer.attachments(), &content),
-            Carrier::Person,
-            theme,
-            width,
-        );
-    }
-    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
-    blocks
-}
-
-/// What a painted entry is cached against: everything that changes how
-/// it reads — the entry itself and the attachment elements resolved out
-/// of its words.
-#[derive(PartialEq)]
-struct EntryKey {
-    entry: FeedEntry,
-    content: Vec<Segment>,
-}
-
-/// The same key while it is only being compared, borrowing what the
-/// layer already holds so a frame that repaints nothing copies nothing.
-#[derive(Clone, Copy)]
-struct EntryKeyView<'a> {
-    entry: &'a FeedEntry,
-    content: &'a [Segment],
-}
-
-impl PartialEq<EntryKeyView<'_>> for EntryKey {
-    fn eq(&self, other: &EntryKeyView<'_>) -> bool {
-        &self.entry == other.entry && self.content == other.content
-    }
-}
-
-impl CacheView for EntryKeyView<'_> {
-    type Owned = EntryKey;
-
-    fn to_owned_key(self) -> EntryKey {
-        EntryKey {
-            entry: self.entry.clone(),
-            content: self.content.to_vec(),
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn entry_block_cached(
-    entry: &FeedEntry,
-    content: &[Segment],
-    index: &ui_state::attachments::AttachmentIndex,
-    cache: &mut PaintCache,
-    theme: Theme,
-    width: usize,
-    plan_hint: bool,
-    reports_open: bool,
-    reports: MessageView<'_>,
-) -> Option<PaintedBlock> {
-    if !paints(entry) {
-        return None;
-    }
-    Some(
-        cache
-            .get_or_paint_view(
-                BlockKey(entry.id),
-                EntryKeyView { entry, content },
-                PaintInputs {
-                    width,
-                    theme,
-                    expanded: reports_open,
-                },
-                || entry_block(entry, content, index, theme, width, plan_hint, reports),
-            )
-            .clone(),
-    )
-}
-
-/// One line for a row a subagent produced, attributed to its task. The
-/// session's own rows paint in full; a subagent's are its own timeline,
-/// and what a person needs from them here is that they happened and
-/// whose they were.
-fn subagent_block(
-    layer: &ui_state::claude_sdk::ClaudeSdkLayer,
-    entry: &FeedEntry,
-    cache: &mut PaintCache,
-    theme: Theme,
-    width: usize,
-) -> Option<PaintedBlock> {
-    let parent = entry.parent_tool_use_id()?;
-    let what = subagent_activity(entry)?;
-    let owner = layer
-        .tasks()
-        .find(|task| task.tool_use_id.as_deref() == Some(parent))
-        .map(task_owner)
-        .unwrap_or_else(|| "subagent".to_string());
-    let key = BlockKey(entry.id);
-    let content = (owner.clone(), what.clone());
-    Some(
-        cache
-            .get_or_paint(
-                key,
-                &content,
-                PaintInputs {
-                    width,
-                    theme,
-                    expanded: false,
-                },
-                || paint_subagent_activity(key, &owner, &what, theme, width),
-            )
-            .clone(),
-    )
-}
-
-/// How a task is named where its rows are attributed: what it was asked
-/// to do, or failing that what kind of subagent it is.
-fn task_owner(task: &TaskEntry) -> String {
-    let description = task.description.trim();
-    if !description.is_empty() {
-        return description.to_string();
-    }
-    task.subagent_type
-        .clone()
-        .unwrap_or_else(|| "subagent".to_string())
-}
-
-/// What one subagent row did, in a phrase. Thinking and bookkeeping rows
-/// say nothing a person is waiting on from a child, so they paint nothing.
-fn subagent_activity(entry: &FeedEntry) -> Option<String> {
-    Some(match &entry.kind {
-        FeedEntryKind::Message(message) => {
-            let mut head = first_line(&message.text);
-            if message.text.lines().count() > 1 {
-                head.push_str(" …");
-            }
-            head
-        }
-        FeedEntryKind::Tool(tool) => {
-            let mut text = tool_main_text(tool);
-            if tool.result.as_ref().is_some_and(|result| result.is_error) {
-                text.push_str(" ✗");
-            }
-            text
-        }
-        _ => return None,
-    })
-}
-
-/// Whether this row says anything to a person.
-///
-/// A session that just started needs no rule announcing itself; every
-/// other row the fold kept has something to show, so this is the one
-/// exception rather than a filter the painter has to agree with.
-fn paints(entry: &FeedEntry) -> bool {
-    !matches!(
-        &entry.kind,
-        FeedEntryKind::Boundary(BoundaryEntry::Ready { resumed: false, .. })
-    )
-}
-
-/// The words one entry carries, as segments, so its attachment elements
-/// become rows rather than markup in the message body.
-fn entry_content(layer: &ui_state::claude_sdk::ClaudeSdkLayer, entry: &FeedEntry) -> Vec<Segment> {
-    match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => layer.attachments().segments(&prompt.text),
-        FeedEntryKind::Message(message) => layer.attachments().segments(&message.text),
-        _ => Vec::new(),
-    }
-}
-
-/// Whose message this is, for the surface its attachment rows take.
-fn carrier_of(entry: &FeedEntry) -> Carrier {
-    match &entry.kind {
-        FeedEntryKind::Prompt(_) => Carrier::Person,
-        _ => Carrier::Agent,
-    }
-}
-
-fn push_attachment_blocks(
-    blocks: &mut Vec<PaintedBlock>,
-    cache: &mut PaintCache,
-    owner: u64,
-    attachments: &[ui_state::attachments::AttachmentLine],
-    carrier: Carrier,
-    theme: Theme,
-    width: usize,
-) {
-    for (index, attachment) in attachments.iter().enumerate() {
-        let key = attachment_key(owner, index);
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    attachment,
-                    PaintInputs {
-                        width,
-                        theme,
-                        expanded: false,
-                    },
-                    || paint_attachment(key, attachment, carrier, theme, width),
-                )
-                .clone(),
-        );
-    }
-}
-
 /// This chat's effective binding table — the one source every hint that
 /// names a leader chord reads, so a hint cannot drift from the `?`
 /// overlay.
@@ -1184,6 +808,7 @@ fn entry_block(
 pub(crate) fn stored_entry_block(
     key: BlockKey,
     entry: &ui_state::StoredClaudeSdkEntry,
+    index: &ui_state::attachments::AttachmentIndex,
     message_view: MessageView<'_>,
     theme: Theme,
     width: usize,
@@ -1195,17 +820,25 @@ pub(crate) fn stored_entry_block(
         return Some(paint_error(key, &text, false, theme, width));
     }
     let presentation = ui_state::restored::claude_sdk::feed_entry(key.0, entry);
+    let content = index.segments(entry.text().unwrap_or_default());
     paints(&presentation).then(|| {
         entry_block(
             &presentation,
-            &[Segment::Prose(entry.text().unwrap_or_default().to_string())],
-            &ui_state::attachments::AttachmentIndex::default(),
+            &content,
+            index,
             theme,
             width,
             true,
             message_view,
         )
     })
+}
+
+fn paints(entry: &FeedEntry) -> bool {
+    !matches!(
+        &entry.kind,
+        FeedEntryKind::Boundary(BoundaryEntry::Ready { resumed: false, .. })
+    )
 }
 
 /// What an errored turn said: the error strings the session collected,

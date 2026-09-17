@@ -285,7 +285,8 @@ pub(crate) mod tests {
     use ui_runtime::report::{
         FrameCapture, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
     };
-    use ui_state::{AgentId, Msg, StreamEntry, StreamMsg};
+    use fold::ExpectedHead;
+    use ui_state::{AgentId, ChatCommand, ChatStreamMsg, Effect, Msg, StreamEntry};
 
     use super::*;
     use crate::chrome::{InputEvent, KeyRecord};
@@ -363,13 +364,16 @@ pub(crate) mod tests {
         /// One runtime message, folded the way the live loop folds one:
         /// into the Model first, then through the chrome, which only
         /// learns that the screen is stale.
-        pub(crate) fn fold(&mut self, msg: Msg) {
+        pub(crate) fn fold(&mut self, msg: Msg) -> Vec<Effect> {
             let event = TraceEvent::Msg(msg);
             self.ring.record(&event);
-            if let TraceEvent::Msg(msg) = &event {
-                let _ = update(&mut self.model, msg.clone());
-            }
+            let effects = if let TraceEvent::Msg(msg) = &event {
+                update(&mut self.model, msg.clone())
+            } else {
+                Vec::new()
+            };
             self.chrome.step(&self.model, &event);
+            effects
         }
 
         /// The end of a batch of folded messages: the chat reconciles
@@ -467,10 +471,11 @@ pub(crate) mod tests {
 
     /// A feed entry that arrived from the runtime between two draws, in
     /// the wording the test can look for.
-    fn assistant_entry(seq: u64, text: &str) -> Msg {
-        Msg::Stream {
+    fn assistant_entry(model: &Model, seq: u64, text: &str) -> Msg {
+        Msg::ChatStream {
             agent: CLAUDE_AGENT,
-            event: StreamMsg::Batch {
+            attempt: model.chat(CLAUDE_AGENT).expect("fixture chat").stream_attempt,
+            event: ChatStreamMsg::Batch {
                 at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
                 entries: vec![StreamEntry::observed(
                     seq,
@@ -500,10 +505,54 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut session = Session::open(NamedState::ClaudeIdle);
         session.draw();
-        session.fold(assistant_entry(6, "the retry budget is now configurable"));
+        let expected = next_store_head(&session.model);
+        let revision = session.model.chat(CLAUDE_AGENT).unwrap().content_revision + 1;
+        let message = assistant_entry(
+            &session.model,
+            6,
+            "the retry budget is now configurable",
+        );
+        let effects = session.fold(message);
+        let effects = if effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Store(ui_state::StoreOp::Commit { .. })))
+        {
+            effects
+        } else {
+            session.fold(Msg::Chat(ChatCommand::FlushDeadline {
+                agent: CLAUDE_AGENT,
+                now: "2026-08-12T09:14:00Z".parse().unwrap(),
+            }))
+        };
+        session.fold(crate::fixtures::canonical_commit_msg(
+            CLAUDE_AGENT,
+            effects,
+            expected,
+            revision,
+        ));
         session.drained();
         session.draw();
-        session.fold(assistant_entry(7, "and the backoff ceiling is capped"));
+        let expected = next_store_head(&session.model);
+        let revision = session.model.chat(CLAUDE_AGENT).unwrap().content_revision + 1;
+        let message = assistant_entry(&session.model, 7, "and the backoff ceiling is capped");
+        let effects = session.fold(message);
+        let effects = if effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Store(ui_state::StoreOp::Commit { .. })))
+        {
+            effects
+        } else {
+            session.fold(Msg::Chat(ChatCommand::FlushDeadline {
+                agent: CLAUDE_AGENT,
+                now: "2026-08-12T09:14:00Z".parse().unwrap(),
+            }))
+        };
+        session.fold(crate::fixtures::canonical_commit_msg(
+            CLAUDE_AGENT,
+            effects,
+            expected,
+            revision,
+        ));
         session.drained();
         session.draw();
         let captured = session.capture();
@@ -524,6 +573,19 @@ pub(crate) mod tests {
             verify(&report).expect("verify runs"),
             ReplayVerdict::Reproduces
         );
+    }
+
+    fn next_store_head(model: &Model) -> ExpectedHead {
+        match model.chat(CLAUDE_AGENT).expect("fixture chat").expected {
+            ExpectedHead::Absent { fence } => ExpectedHead::Present {
+                fence: fence + 1,
+                version: 1,
+            },
+            ExpectedHead::Present { fence, version } => ExpectedHead::Present {
+                fence: fence + 1,
+                version: version + 1,
+            },
+        }
     }
 
     /// The status line belongs to the trace even when the shell, not a

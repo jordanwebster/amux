@@ -166,14 +166,24 @@ pub(crate) fn focused_mention(model: &Model, agent: AgentId, focus: BlockKey) ->
 }
 
 fn owner_content(model: &Model, agent: AgentId, owner: u64) -> Option<Vec<Segment>> {
-    if let Some(layer) = model.claude(agent) {
-        if let Some(entry) = layer.entries().find(|entry| entry.id == owner) {
-            return match &entry.kind {
-                ui_state::claude::FeedEntryKind::Prompt(prompt) => Some(prompt.content.clone()),
-                ui_state::claude::FeedEntryKind::Message(message) => Some(message.content.clone()),
-                _ => None,
-            };
+    if let Some(entry) = model.chat(agent).and_then(|chat| {
+        chat.entries.iter().find(|entry| {
+            let (_, _, key) = entry.position();
+            super::stable_block_key(0xd000_0000_0000_0000, key.as_ref()).0 & OWNER_MASK == owner
+        })
+    }) {
+        let text = entry.text()?;
+        if let Some(layer) = model.claude(agent) {
+            return Some(layer.attachments().segments(text));
         }
+        if let Some(layer) = model.claude_sdk(agent) {
+            return Some(layer.attachments().segments(text));
+        }
+        if let Some(layer) = model.codex(agent) {
+            return Some(layer.attachments().segments(text));
+        }
+    }
+    if let Some(layer) = model.claude(agent) {
         let echo = layer
             .pending_echoes()
             .iter()
@@ -182,25 +192,8 @@ fn owner_content(model: &Model, agent: AgentId, owner: u64) -> Option<Vec<Segmen
         return Some(layer.attachments().segments(&echo.1.text));
     }
     if let Some(layer) = model.claude_sdk(agent) {
-        if let Some(entry) = layer.entries().find(|entry| entry.id == owner) {
-            return match &entry.kind {
-                ui_state::claude_sdk::FeedEntryKind::Prompt(prompt) => {
-                    Some(layer.attachments().segments(&prompt.text))
-                }
-                ui_state::claude_sdk::FeedEntryKind::Message(message) => {
-                    Some(layer.attachments().segments(&message.text))
-                }
-                _ => None,
-            };
-        }
         let echo = layer.pending_echo().filter(|_| echo_owner(0) == owner)?;
         return Some(layer.attachments().segments(&echo.text));
     }
-    let layer = model.codex(agent)?;
-    let entry = layer.entries().find(|entry| entry.id == owner)?;
-    match &entry.kind {
-        ui_state::codex::FeedEntryKind::Prompt(prompt) => Some(prompt.content.clone()),
-        ui_state::codex::FeedEntryKind::Message(message) => Some(message.content.clone()),
-        _ => None,
-    }
+    None
 }

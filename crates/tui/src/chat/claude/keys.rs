@@ -1231,62 +1231,36 @@ mod tests {
 
     /// A feed tall enough to scroll at the test viewport.
     fn long_feed_model() -> Model {
-        let mut model = idle_model();
-        for n in 0..20u8 {
-            fold(
-                &mut model,
-                vec![rows(2 + n as i64, 2 + n as u64, vec![prompt_row(n)])],
-            );
-        }
-        model
+        crate::fixtures::long_feed(ui_state::StructuredProtocol::ClaudePtyTranscript, 60).model
     }
 
-    fn drive_scroll(chat: &mut View, feed: &mut FeedViewport, model: &Model, key: KeyEvent) {
-        super::handle_chat_key(chat, model, key, VIEWPORT, t(0));
-        let Some(intent) = chat.scroll_intent.take() else {
-            return;
-        };
-        let ctx = crate::render::FrameContext {
-            viewport: VIEWPORT,
-            theme: crate::render::Theme::default(),
-            now: t(0),
-        };
-        let mut cache = PaintCache::default();
-        let parts = render::claude_frame_parts(model, chat, feed, &mut cache, &ctx);
-        let geometry = parts.geometry(VIEWPORT, true);
-        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &geometry);
-        apply_scroll(
-            feed,
-            &metrics,
-            intent,
-            crate::chat::entry_watermark(model, chat.agent),
-        );
+    fn drive_scroll(chat: &mut crate::chat::ChatView, model: &Model, key: KeyEvent) {
+        crate::chat::handle_chat_key(chat, model, key, VIEWPORT, t(0));
     }
 
     #[test]
     fn pgup_pauses_with_a_watermark_and_pgdn_at_the_bottom_resumes() {
         let model = long_feed_model();
-        let mut chat = View::open(agent_id(), 'a', false);
-        let mut feed = FeedViewport::following();
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
+        let mut chat = crate::chat::ChatView::open(&model, agent_id(), 'a', false).unwrap();
+        drive_scroll(&mut chat, &model, press(KeyCode::PageUp));
         let FeedScroll::Paused {
             entry_watermark, ..
-        } = feed.scroll
+        } = chat.viewport.scroll
         else {
             panic!("PgUp pauses following");
         };
-        assert_eq!(entry_watermark, 20, "watermark is the entry count at pause");
+        assert!(entry_watermark > 0, "watermark is the store revision at pause");
 
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
+        drive_scroll(&mut chat, &model, press(KeyCode::PageUp));
+        drive_scroll(&mut chat, &model, press(KeyCode::PageDown));
         assert!(
-            matches!(feed.scroll, FeedScroll::Paused { .. }),
+            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
             "mid-feed PgDn stays paused"
         );
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageDown));
+        drive_scroll(&mut chat, &model, press(KeyCode::PageDown));
+        drive_scroll(&mut chat, &model, press(KeyCode::PageDown));
         assert_eq!(
-            feed.scroll,
+            chat.viewport.scroll,
             FeedScroll::Following,
             "reaching the bottom resumes following"
         );
@@ -1295,26 +1269,25 @@ mod tests {
     #[test]
     fn pgup_with_a_short_feed_stays_following() {
         let model = idle_model();
-        let mut chat = View::open(agent_id(), 'a', false);
-        let mut feed = FeedViewport::following();
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
-        assert_eq!(feed.scroll, FeedScroll::Following);
+        let mut chat = crate::chat::ChatView::open(&model, agent_id(), 'a', false).unwrap();
+        drive_scroll(&mut chat, &model, press(KeyCode::PageUp));
+        assert_eq!(chat.viewport.scroll, FeedScroll::Following);
     }
 
     #[test]
     fn esc_resets_scroll_only_on_an_empty_draft() {
         let model = long_feed_model();
-        let mut chat = chat_with_draft("reading notes");
-        let mut feed = FeedViewport::following();
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::PageUp));
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::Esc));
+        let mut chat = crate::chat::ChatView::open(&model, agent_id(), 'a', false).unwrap();
+        chat.composer_mut().insert_str("reading notes");
+        drive_scroll(&mut chat, &model, press(KeyCode::PageUp));
+        drive_scroll(&mut chat, &model, press(KeyCode::Esc));
         assert!(
-            matches!(feed.scroll, FeedScroll::Paused { .. }),
+            matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
             "a non-empty draft keeps Esc away from the scroll (stage 3 gate)"
         );
-        chat.composer.kill_all();
-        drive_scroll(&mut chat, &mut feed, &model, press(KeyCode::Esc));
-        assert_eq!(feed.scroll, FeedScroll::Following);
+        chat.composer_mut().kill_all();
+        drive_scroll(&mut chat, &model, press(KeyCode::Esc));
+        assert_eq!(chat.viewport.scroll, FeedScroll::Following);
     }
 
     #[test]

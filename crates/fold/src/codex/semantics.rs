@@ -440,13 +440,17 @@ impl CodexFold {
                 self.snapshot(seq, revision, method, row, &mut out)
             }
             "thread/tokenUsage/updated" => self.usage(row),
-            "mcpServer/startupStatus/updated" => out.push(simple_delivery(
-                seq,
-                revision,
-                CodexEntryKind::McpStartup,
-                CodexBody::None,
-                string(row, "name"),
-            )),
+            "mcpServer/startupStatus/updated" => {
+                let mut patch = partial(
+                    CodexEntryKind::McpStartup,
+                    CodexBody::None,
+                    string(row, "name"),
+                    revision,
+                    None,
+                );
+                patch.details = Patch::set(JsonBytes(bounded_json(row)), revision);
+                out.push(upsert(delivery(seq, 0), seq, 0, revision, patch));
+            }
             "item/commandExecution/requestApproval"
             | "item/fileChange/requestApproval"
             | "item/permissions/requestApproval"
@@ -461,7 +465,18 @@ impl CodexFold {
                 self.row_addressed_work(seq, revision, method, row, &mut out)
             }
             "amux.codex_approval_required" => {
-                let item_id = id(row, "item_id").or_else(|| id(row, "itemId"));
+                let item_id = id(row, "item_id")
+                    .or_else(|| id(row, "itemId"))
+                    .or_else(|| {
+                        self.pending_approval_context
+                            .as_ref()
+                            .and_then(|context| serde_json::from_slice::<Value>(&context.payload.0).ok())
+                            .and_then(|context| {
+                                id(&context, "item_id")
+                                    .or_else(|| id(&context, "itemId"))
+                                    .or_else(|| id(&context, "callId"))
+                            })
+                    });
                 let Some(item_id) = item_id else {
                     out.push(unrecognized(
                         seq,
@@ -563,10 +578,15 @@ impl CodexFold {
                 }
             }
             "amux.codex_message" => self.agent_message(seq, revision, row, &mut out),
-            // Native compaction entries are item-scoped contextCompaction
-            // rows. This legacy notification has no native identity, so it
-            // remains visible through the ordinary unrecognized category.
-            "thread/compacted" => out.push(unrecognized(seq, revision, method)),
+            "thread/compacted" => out.push(simple_delivery(
+                seq,
+                revision,
+                CodexEntryKind::Boundary,
+                CodexBody::Boundary {
+                    kind: "compacted".into(),
+                },
+                string(row, "turnId"),
+            )),
             _ => out.push(simple_delivery(
                 seq,
                 revision,
@@ -628,7 +648,7 @@ impl CodexFold {
             Some(if complete { "complete" } else { "open" }.into()),
         );
         patch.details = Patch::set(JsonBytes(bounded_json(item)), revision);
-        if complete {
+        if complete && !text.is_empty() {
             patch.final_text = Some(FinalText {
                 through: seq,
                 revision,
@@ -1083,17 +1103,6 @@ fn item_text(item: &Value, item_type: &str) -> String {
             .get("text")
             .and_then(Value::as_str)
             .map(|v| clipped(v, TEXT_MAX))
-            .or_else(|| {
-                item.get("summary").and_then(Value::as_array).map(|parts| {
-                    parts
-                        .iter()
-                        .filter_map(|p| {
-                            p.as_str().or_else(|| p.get("text").and_then(Value::as_str))
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-            })
             .unwrap_or_default(),
         "userMessage" => item
             .get("content")

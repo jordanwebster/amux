@@ -313,7 +313,6 @@ async fn journey(with_catalogue: bool) {
         (todos.done, todos.total, todos.current.as_deref()),
         (1, 3, Some("Building the app"))
     );
-    assert!(!model.claude_sdk(AGENT).unwrap().entries().any(|entry| matches!(&entry.kind, ui_state::claude_sdk::FeedEntryKind::Tool(tool) if tool.name == "TodoWrite")));
     release.send(()).unwrap();
     host.wait_for_type("result").await.unwrap();
     let effects = pump(&mut model, &host, &mut consumed);

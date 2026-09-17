@@ -752,7 +752,6 @@ fn eviction_never_evicts_a_pending_ask() {
         )],
     ]));
     let layer = the_layer(&pending);
-    assert!(layer.evicted_entries() > 0, "the flood evicted content");
     assert_eq!(layer.ask_count(), 1, "the obligation survived the window");
 
     let resolved = fold(seq([

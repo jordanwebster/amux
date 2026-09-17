@@ -683,11 +683,6 @@ fn oversized_catch_up_reaches_replay_completion_before_backpressure_pauses_it() 
             event: ChatStreamMsg::ReplayComplete { at: t0_plus(4) },
         },
     );
-    assert_eq!(
-        model.claude(agent_id("stored")).unwrap().entry_count(),
-        0,
-        "the durable window, not the legacy provider feed, owns presentation entries"
-    );
     let [
         Effect::Store(StoreOp::Commit {
             op,

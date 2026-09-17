@@ -8,28 +8,24 @@
 //! rendered here comes from the Model; the code below formats and never
 //! recovers provider meaning.
 
-use std::collections::HashMap;
-
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_state::Model;
 use ui_state::claude::{
-    ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind, SuccessFacts, ToolEntry,
-    ToolInvocation, ToolOutcome, TurnDuration,
+    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, SuccessFacts, ToolEntry, ToolInvocation,
+    ToolOutcome, TurnDuration,
 };
 
-use crate::chat::attachments::{attachment_key, described, echo_owner, prose, words};
+use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
-    self, Carrier, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant,
-    paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
-    paint_exploration_run, paint_file_change, paint_header, paint_plan, paint_subagent,
-    paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    self, fmt_tokens, paint_agent_message, paint_ask_fact, paint_assistant,
+    paint_compaction_rule, paint_composer_block, paint_error, paint_file_change, paint_header,
+    paint_plan, paint_subagent, paint_thinking, paint_tool_line, paint_turn_rule,
+    paint_unrecognized, paint_user_prompt,
 };
 use crate::chat::claude::{View, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
-use crate::chat::frame::{
-    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
-};
+use crate::chat::frame::{BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintedBlock};
 use crate::chat::viewport::FeedViewport;
 use crate::chat::{
     FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph, subagent_marker,
@@ -47,11 +43,6 @@ const PLAN_PREVIEW_LINES: usize = 6;
 /// Screen rows a diff preview may occupy, including its remainder row.
 const DIFF_PREVIEW_BUDGET: usize = 8;
 
-/// Synthetic keys for the blocks no entry owns. Pending echoes count
-/// down from the top of the space so they can never collide with an
-/// entry id, which counts up from zero.
-const ECHO_KEY_BASE: u64 = u64::MAX;
-
 // --- the frame --------------------------------------------------------------
 
 /// Everything the shared shell needs to draw this chat: one header, the
@@ -61,7 +52,7 @@ pub(crate) fn claude_frame_parts(
     model: &Model,
     chat: &View,
     viewport: &FeedViewport,
-    cache: &mut PaintCache,
+    _cache: &mut PaintCache,
     ctx: &FrameContext,
 ) -> ChatFrameParts {
     let width = ctx.viewport.0 as usize;
@@ -107,14 +98,8 @@ pub(crate) fn claude_frame_parts(
         header: header_row(model, chat, theme, phase, width, readonly),
         banner,
         feed: FeedBlocks {
-            blocks: if loading {
-                Vec::new()
-            } else {
-                feed_blocks(model, chat, viewport, cache, theme, width)
-            },
-            history_truncated: model
-                .claude(chat.agent)
-                .is_some_and(|layer| layer.history_truncated()),
+            blocks: Vec::new(),
+            history_truncated: false,
             loading,
         },
         activity: crate::chat::queue::strip(
@@ -521,226 +506,6 @@ fn footer_line(
 
 // --- the feed ---------------------------------------------------------------
 
-/// Every feed block, in file order, echoes last (B1). Consecutive
-/// read/search entries fold into one exploration run first, so the feed
-/// shows what the agent did rather than every step it took to do it.
-fn feed_blocks(
-    model: &Model,
-    chat: &View,
-    viewport: &FeedViewport,
-    cache: &mut PaintCache,
-    theme: Theme,
-    width: usize,
-) -> Vec<PaintedBlock> {
-    let agent = chat.agent;
-    let Some(layer) = model.claude(agent) else {
-        return Vec::new();
-    };
-    let entries: HashMap<u64, &FeedEntry> =
-        layer.entries().map(|entry| (entry.id, entry)).collect();
-    // The plan reader affordance is a write-side binding; read-only chats
-    // never advertise it (hints tell the truth, F1).
-    let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
-    let reports = MessageView::new(model, agent, chat.reports_open, chat.leader);
-    let eff = effective(chat);
-
-    let mut blocks = Vec::new();
-    for item in layer.feed_items() {
-        match item {
-            FeedItem::Entry(entry) => {
-                blocks.push(
-                    cache
-                        .get_or_paint(
-                            BlockKey(entry.id),
-                            entry,
-                            PaintInputs {
-                                width,
-                                theme,
-                                expanded: chat.reports_open,
-                            },
-                            || {
-                                entry_block(
-                                    entry,
-                                    layer.attachments(),
-                                    theme,
-                                    width,
-                                    plan_hint,
-                                    reports,
-                                )
-                            },
-                        )
-                        .clone(),
-                );
-                push_attachment_blocks(
-                    &mut blocks,
-                    cache,
-                    entry.id,
-                    &entry_attachments(layer, entry),
-                    carrier_of(entry),
-                    theme,
-                    width,
-                );
-            }
-            FeedItem::ExplorationRun {
-                id,
-                member_ids,
-                reads,
-                searches,
-                read_paths,
-            } => {
-                let key = blocks::RunKey(id);
-                let summary = blocks::run_summary(reads, searches, &read_paths);
-                let member_entries: Vec<FeedEntry> = member_ids
-                    .iter()
-                    .filter_map(|id| entries.get(id))
-                    .map(|entry| (*entry).clone())
-                    .collect();
-                // An open run offers to shut again, not to open twice.
-                let expanded = viewport.expanded.contains(&key);
-                let hint = eff.fold_hint(expanded);
-                let content = (
-                    summary.clone(),
-                    member_entries.clone(),
-                    plan_hint,
-                    chat.reports_open,
-                    chat.leader,
-                    hint.clone(),
-                );
-                blocks.push(
-                    cache
-                        .get_or_paint(
-                            BlockKey(key.0),
-                            &content,
-                            PaintInputs {
-                                width,
-                                theme,
-                                expanded,
-                            },
-                            || {
-                                let painted: Vec<PaintedBlock> = member_entries
-                                    .iter()
-                                    .map(|entry| {
-                                        entry_block(
-                                            entry,
-                                            layer.attachments(),
-                                            theme,
-                                            width,
-                                            plan_hint,
-                                            reports,
-                                        )
-                                    })
-                                    .collect();
-                                paint_exploration_run(
-                                    BlockKey(key.0),
-                                    key,
-                                    &summary,
-                                    &painted,
-                                    expanded,
-                                    &hint,
-                                    theme,
-                                    width,
-                                )
-                            },
-                        )
-                        .clone(),
-                );
-            }
-        }
-    }
-    for (index, echo) in layer.pending_echoes().iter().enumerate() {
-        let key = BlockKey(ECHO_KEY_BASE - index as u64);
-        // An echo is painted from the same segments a landed prompt is:
-        // what was sent already carries its elements, so the attachment
-        // rows appear the moment Enter is pressed and simply survive
-        // reconciliation rather than arriving with it.
-        let content = layer.attachments().segments(&echo.text);
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    echo,
-                    PaintInputs {
-                        width,
-                        theme,
-                        expanded: false,
-                    },
-                    || {
-                        paint_user_prompt(
-                            key,
-                            &words(layer.attachments(), &content),
-                            true,
-                            theme,
-                            width,
-                        )
-                    },
-                )
-                .clone(),
-        );
-        push_attachment_blocks(
-            &mut blocks,
-            cache,
-            echo_owner(index),
-            &described(layer.attachments(), &content),
-            Carrier::Person,
-            theme,
-            width,
-        );
-    }
-    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
-    blocks
-}
-
-/// The attachments one entry carries, described from the layer's index.
-fn entry_attachments(
-    layer: &ui_state::claude::ClaudeLayer,
-    entry: &FeedEntry,
-) -> Vec<ui_state::attachments::AttachmentLine> {
-    match &entry.kind {
-        FeedEntryKind::Prompt(prompt) => described(layer.attachments(), &prompt.content),
-        FeedEntryKind::Message(message) => described(layer.attachments(), &message.content),
-        _ => Vec::new(),
-    }
-}
-
-/// Whose message this is, for the surface its attachment rows take.
-fn carrier_of(entry: &FeedEntry) -> Carrier {
-    match &entry.kind {
-        FeedEntryKind::Prompt(_) => Carrier::Person,
-        _ => Carrier::Agent,
-    }
-}
-
-/// Append one focusable row per attachment under the block that carries
-/// them, so the feed can put the focus on a single attachment and open
-/// exactly that one.
-fn push_attachment_blocks(
-    blocks: &mut Vec<PaintedBlock>,
-    cache: &mut PaintCache,
-    owner: u64,
-    attachments: &[ui_state::attachments::AttachmentLine],
-    carrier: Carrier,
-    theme: Theme,
-    width: usize,
-) {
-    for (index, attachment) in attachments.iter().enumerate() {
-        let key = attachment_key(owner, index);
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    attachment,
-                    PaintInputs {
-                        width,
-                        theme,
-                        expanded: false,
-                    },
-                    || paint_attachment(key, attachment, carrier, theme, width),
-                )
-                .clone(),
-        );
-    }
-}
-
 /// This chat's effective binding table — the one source every hint that
 /// names a leader chord reads, so a hint cannot drift from the `?`
 /// overlay.
@@ -863,14 +628,22 @@ fn entry_block(
 pub(crate) fn stored_entry_block(
     key: BlockKey,
     entry: &ui_state::StoredClaudeEntry,
+    index: &ui_state::attachments::AttachmentIndex,
     message_view: MessageView<'_>,
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    let presentation = ui_state::restored::claude::feed_entry(key.0, entry);
+    use ui_state::DurableEntry as _;
+
+    let mut presentation = ui_state::restored::claude::feed_entry(key.0, entry);
+    match &mut presentation.kind {
+        FeedEntryKind::Prompt(prompt) => prompt.content = index.segments(entry.text().unwrap_or_default()),
+        FeedEntryKind::Message(message) => message.content = index.segments(entry.text().unwrap_or_default()),
+        _ => {}
+    }
     entry_block(
         &presentation,
-        &ui_state::attachments::AttachmentIndex::default(),
+        index,
         theme,
         width,
         true,

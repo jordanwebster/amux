@@ -13,10 +13,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
+use fold::{
+    CommitResult, ExpectedHead, Generations, HeadState, JsonBytes, Loaded, MutationOracle,
+    Placement, Stored,
+};
 use ui_runtime::ProfileEntry;
 use ui_state::{
-    Agent, AgentId, Command, HostEntry, HostId, HostTrustStatus, Model, Msg, OpId, OpOutcome,
-    ProfileId, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
+    Agent, AgentId, ChatCommand, ChatStreamMsg, Command, Effect, HostEntry, HostId,
+    HostTrustStatus, LoadedDto, Model, Msg, MutationBatchDto, OpId, OpOutcome, ProfileGeneration,
+    ProfileId, ReplayFactsDto, ReplayOutcomeDto, ServerMsg, StoreMsg, StoreOp, StreamEntry,
+    StreamMsg, StructuredProtocol, update,
 };
 use uuid::Uuid;
 
@@ -85,15 +91,7 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ClaudeSdkExplorationExpanded => {
             let mut fixture = sdk_fixture(sdk_exploration_rows());
             let chat = fixture.view.chat.as_mut().expect("session chat open");
-            let run = fixture
-                .model
-                .claude_sdk(chat.agent)
-                .expect("session fixture has a layer")
-                .feed_items()
-                .find_map(|item| match item {
-                    ui_state::claude_sdk::FeedItem::ExplorationRun { id, .. } => Some(id),
-                    ui_state::claude_sdk::FeedItem::Entry(_) => None,
-                })
+            let run = first_exploration_run(&fixture.model, chat.agent)
                 .expect("session fixture has a folded run");
             chat.set_exploration_run_expanded(run, true);
             fixture
@@ -146,16 +144,7 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::ExplorationExpanded => {
             let mut fixture = claude_fixture(gallery::exploration_rows());
             let chat = fixture.view.chat.as_mut().expect("Claude chat open");
-            let run = fixture
-                .model
-                .claude(chat.agent)
-                .expect("Claude fixture has a layer")
-                .feed_items()
-                .into_iter()
-                .find_map(|item| match item {
-                    ui_state::claude::FeedItem::ExplorationRun { id, .. } => Some(id),
-                    ui_state::claude::FeedItem::Entry(_) => None,
-                })
+            let run = first_exploration_run(&fixture.model, chat.agent)
                 .expect("exploration fixture has a folded run");
             chat.set_exploration_run_expanded(run, true);
             fixture
@@ -800,33 +789,252 @@ fn base_messages(protocol: StructuredProtocol, name: &str) -> Vec<Msg> {
         }),
         Msg::Server(ServerMsg::HostsSynchronized),
         Msg::Server(ServerMsg::AgentsSynchronized),
-        Msg::Stream {
-            agent: agent_id(protocol),
-            event: StreamMsg::Opened { truncated: false },
-        },
-        Msg::Stream {
-            agent: agent_id(protocol),
-            event: StreamMsg::ReplayComplete,
-        },
     ]
 }
 
 fn model(protocol: StructuredProtocol, name: &str, rows: Vec<Value>) -> Model {
-    let mut messages = base_messages(protocol, name);
-    messages.push(Msg::Stream {
-        agent: agent_id(protocol),
-        event: StreamMsg::Batch {
-            at: at("2026-08-12T09:12:20Z"),
-            entries: rows
-                .into_iter()
-                .enumerate()
-                .map(|(offset, payload)| {
-                    StreamEntry::observed(offset as u64 + 1, at("2026-08-12T09:12:20Z"), payload)
-                })
-                .collect(),
+    let mut model = fold(base_messages(protocol, name));
+    install_store_rows(&mut model, protocol, rows);
+    let violations = model.check_invariants();
+    assert!(violations.is_empty(), "fixture coherent: {violations:?}");
+    model
+}
+
+fn empty_loaded(protocol: StructuredProtocol) -> LoadedDto {
+    const GENERATIONS: Generations = Generations {
+        fleet: 1,
+        chat: 1,
+        provider: 1,
+    };
+    macro_rules! empty {
+        ($fold:ty, $variant:ident) => {
+            LoadedDto::$variant(Loaded::<$fold> {
+                generations: GENERATIONS,
+                fence: 0,
+                content_revision: 0,
+                segment_high_water: 0,
+                head: HeadState::None,
+                window: Vec::new(),
+                boundaries: Vec::new(),
+                first_page: None,
+                aliases: Vec::new(),
+                host: None,
+                progress: None,
+            })
+        };
+    }
+    match protocol {
+        StructuredProtocol::ClaudePtyTranscript => empty!(fold::claude_pty::ClaudeFold, Claude),
+        StructuredProtocol::ClaudeSdk => empty!(fold::claude_sdk::ClaudeSdkFold, ClaudeSdk),
+        StructuredProtocol::Codex => empty!(fold::codex::CodexFold, Codex),
+    }
+}
+
+fn install_store_rows(model: &mut Model, protocol: StructuredProtocol, rows: Vec<Value>) {
+    install_store_rows_for(model, agent_id(protocol), protocol, rows);
+}
+
+#[doc(hidden)]
+pub fn install_store_rows_for(
+    model: &mut Model,
+    agent: AgentId,
+    protocol: StructuredProtocol,
+    rows: Vec<Value>,
+) {
+    let effects = update(model, Msg::Chat(ChatCommand::Open { agent }));
+    let (attempt, load_op) = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
+            _ => None,
+        })
+        .expect("fixture chat loads the store");
+    let effects = update(
+        model,
+        Msg::Store(StoreMsg::Loaded {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: load_op,
+            agent,
+            loaded: Box::new(empty_loaded(protocol)),
+        }),
+    );
+    let stream = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .expect("fixture chat opens its store stream");
+    let through = rows.len() as u64;
+    let effects = update(
+        model,
+        Msg::ChatStream {
+            agent,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: u64::from(through > 0),
+                    through,
+                    selected_from: u64::from(through > 0),
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at("2026-08-12T09:12:20Z"),
+            },
         },
-    });
-    fold(messages)
+    );
+    let effects = update(
+        model,
+        Msg::ChatStream {
+            agent,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at("2026-08-12T09:12:20Z"),
+                entries: rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, payload)| {
+                        StreamEntry::observed(
+                            offset as u64 + 1,
+                            at("2026-08-12T09:12:20Z"),
+                            payload,
+                        )
+                    })
+                    .collect(),
+            },
+        },
+    );
+    install_commit_result(model, agent, effects);
+    let effects = update(
+        model,
+        Msg::ChatStream {
+            agent,
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete {
+                at: at("2026-08-12T09:12:20Z"),
+            },
+        },
+    );
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::Store(StoreOp::Commit { .. })))
+    {
+        let message = canonical_commit_msg(
+            agent,
+            effects,
+            ExpectedHead::Present {
+                fence: 2,
+                version: 2,
+            },
+            2,
+        );
+        update(model, message);
+    }
+}
+
+fn install_commit_result(model: &mut Model, agent: AgentId, effects: Vec<Effect>) {
+    let message = canonical_commit_msg(
+        agent,
+        effects,
+        ExpectedHead::Present {
+            fence: 1,
+            version: 1,
+        },
+        1,
+    );
+    update(model, message);
+}
+
+pub(crate) fn canonical_commit_msg(
+    agent: AgentId,
+    effects: Vec<Effect>,
+    expected: ExpectedHead,
+    content_revision: u64,
+) -> Msg {
+    let effects_debug = format!("{effects:?}");
+    let (attempt, op, mutations) = effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Commit {
+                attempt,
+                op,
+                mutations,
+                ..
+            }) => Some((attempt, op, mutations)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("fixture stream batch commits canonical rows: {effects_debug}"));
+    macro_rules! canonical {
+        ($mutations:expr) => {{
+            let mut oracle = MutationOracle::default();
+            let placed = oracle.apply(&$mutations).expect("valid fixture mutations");
+            let bodies = oracle
+                .entries()
+                .into_iter()
+                .map(|entry| Stored {
+                    key: entry.key,
+                    segment: entry.segment,
+                    order: entry.order,
+                    revision: entry.revision,
+                    entry: JsonBytes(
+                        postcard::to_allocvec(&entry.entry).expect("fixture entry serializes"),
+                    ),
+                })
+                .collect();
+            (placed, bodies)
+        }};
+    }
+    let (placed, bodies): (Vec<Placement>, Vec<Stored<JsonBytes>>) = match mutations {
+        MutationBatchDto::Claude(mutations) => canonical!(mutations),
+        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
+        MutationBatchDto::Codex(mutations) => canonical!(mutations),
+    };
+    Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op,
+            agent,
+            result: CommitResult {
+                expected,
+                content_revision,
+                placed,
+                bodies,
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        })
+}
+
+fn first_exploration_run(model: &Model, agent: AgentId) -> Option<u64> {
+    model.chat(agent)?.entries.windows(2).find_map(|pair| {
+        restored_exploration(&pair[0])?;
+        restored_exploration(&pair[1])?;
+        let (_, _, key) = pair[0].position();
+        Some(crate::chat::stable_block_key(0xd000_0000_0000_0000, key.as_ref()).0)
+    })
+}
+
+fn restored_exploration(entry: &ui_state::StoredDto) -> Option<()> {
+    let invocation = match entry {
+        ui_state::StoredDto::Claude(stored) => {
+            let entry = ui_state::restored::claude::feed_entry(0, &stored.entry);
+            match entry.kind {
+                ui_state::claude::FeedEntryKind::Tool(tool) => tool.invocation,
+                _ => return None,
+            }
+        }
+        ui_state::StoredDto::ClaudeSdk(stored) => {
+            let entry = ui_state::restored::claude_sdk::feed_entry(0, &stored.entry);
+            match entry.kind {
+                ui_state::claude_sdk::FeedEntryKind::Tool(tool) => tool.invocation,
+                _ => return None,
+            }
+        }
+        ui_state::StoredDto::Codex(_) => return None,
+    };
+    invocation.is_exploration().then_some(())
 }
 
 fn fold(messages: Vec<Msg>) -> Model {
@@ -2002,7 +2210,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ui_state::StructuredProtocol;
 
-    use super::{NamedState, all_states, fixture, long_feed};
+    use super::{NamedState, agent_id, all_states, fixture, long_feed};
     use crate::{FrameContext, Theme, render};
 
     #[test]
@@ -2144,59 +2352,56 @@ mod tests {
     }
 
     #[test]
-    fn long_feeds_retain_exactly_the_requested_entries() {
+    fn long_feeds_fill_the_bounded_store_window() {
         let claude = long_feed(StructuredProtocol::ClaudePtyTranscript, 1_000);
-        let claude_layer = claude
+        let claude_chat = claude
             .model
-            .agents()
-            .find_map(|card| claude.model.claude(card.agent.id))
-            .expect("Claude layer");
-        assert_eq!(claude_layer.entries().count(), 1_000);
+            .chat(agent_id(StructuredProtocol::ClaudePtyTranscript))
+            .expect("Claude store window");
+        assert_eq!(claude_chat.entries.len(), ui_state::WINDOW_MAX_ENTRIES);
         assert!(
-            claude_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::claude::FeedEntryKind::Prompt(_)))
+            claude_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "prompt")
         );
         assert!(
-            claude_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::claude::FeedEntryKind::Message(_)))
+            claude_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "message")
         );
         assert!(
-            claude_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::claude::FeedEntryKind::Tool(_)))
+            claude_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "tool")
         );
 
         let sdk = long_feed(StructuredProtocol::ClaudeSdk, 1_000);
-        let sdk_layer = sdk
+        let sdk_chat = sdk
             .model
-            .agents()
-            .find_map(|card| sdk.model.claude_sdk(card.agent.id))
-            .expect("session layer");
-        assert_eq!(sdk_layer.entries().count(), 1_000);
+            .chat(agent_id(StructuredProtocol::ClaudeSdk))
+            .expect("session store window");
+        assert_eq!(sdk_chat.entries.len(), ui_state::WINDOW_MAX_ENTRIES);
 
         let codex = long_feed(StructuredProtocol::Codex, 1_000);
-        let codex_layer = codex
+        let codex_chat = codex
             .model
-            .agents()
-            .find_map(|card| codex.model.codex(card.agent.id))
-            .expect("Codex layer");
-        assert_eq!(codex_layer.entries().count(), 1_000);
+            .chat(agent_id(StructuredProtocol::Codex))
+            .expect("Codex store window");
+        assert_eq!(codex_chat.entries.len(), ui_state::WINDOW_MAX_ENTRIES);
         assert!(
-            codex_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::codex::FeedEntryKind::Prompt(_)))
+            codex_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "prompt")
         );
         assert!(
-            codex_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::codex::FeedEntryKind::Message(_)))
+            codex_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "message")
         );
         assert!(
-            codex_layer
-                .entries()
-                .any(|entry| matches!(&entry.kind, ui_state::codex::FeedEntryKind::Work(_)))
+            codex_chat
+                .entries.iter()
+                .any(|entry| entry.kind() == "work")
         );
     }
 }

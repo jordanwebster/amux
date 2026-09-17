@@ -21,11 +21,11 @@ use serde_json::Value;
 use super::facts::{self, AskDocument, InboundMessage};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, Ask, AskKind, AskState, ClaudeLayer,
-    FEED_RETAINED, FeedEntry, FeedEntryKind, InterruptionKind, MESSAGES_RETAINED, MessageEntry,
+    FeedEntryKind, InterruptionKind, MESSAGES_RETAINED,
     MessageFinality, MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED,
     PromptEntry, PromptSource, QuestionAnswer, SlotState, SuccessFacts, SuggestionDestination,
     SuggestionFact, SuggestionKind, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
-    TurnDuration, TurnEntry, UnrecognizedEntry, runs,
+    TurnDuration, TurnEntry, UnrecognizedEntry,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -563,7 +563,6 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
 fn begin_turn(layer: &mut ClaudeLayer, at: Option<DateTime<Utc>>) {
     layer.turn.prompt_at = at;
     layer.turn.stop_presignal = false;
-    layer.turn.inferred_turn_entry = None;
     layer.turn.open = true;
     layer.turn.closed_by = None;
     layer.turn.closed_at = None;
@@ -606,7 +605,7 @@ fn fold_interrupt(
     // the authority lands after all (observed on tool-use denials).
     if let (Some(prompt_at), Some(at)) = (layer.turn.prompt_at, timestamp_of(row)) {
         let ms = (at - prompt_at).num_milliseconds().max(0);
-        let entry = push(
+        push(
             layer,
             seq,
             FeedEntryKind::Turn(TurnEntry {
@@ -615,7 +614,6 @@ fn fold_interrupt(
                 pending_background_agents: None,
             }),
         );
-        layer.turn.inferred_turn_entry = Some(entry);
     }
 
     // Durations are never computed across an interrupt (B3), and the turn
@@ -644,23 +642,13 @@ fn close_messages(
     closure: MessageFinality,
     selects: impl Fn(&MessageSlot) -> bool,
 ) {
-    let mut closed_entries: Vec<u64> = Vec::new();
     for slot in &mut layer.messages {
         if slot.state == SlotState::FinalFact || !selects(slot) {
             continue;
         }
         slot.state = SlotState::ClosedInferred;
-        if let Some(entry) = slot.entry {
-            closed_entries.push(entry);
-        }
     }
-    for entry in closed_entries {
-        if let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry)
-            && message.finality == MessageFinality::Open
-        {
-            message.finality = closure.clone();
-        }
-    }
+    let _ = closure;
 }
 
 // --- tool results -----------------------------------------------------------
@@ -729,15 +717,7 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
                 .open_tools
                 .remove(index)
                 .expect("position came from the same deque");
-            if let Some(FeedEntryKind::Tool(tool)) =
-                open.entry.and_then(|entry| entry_kind_mut(layer, entry))
-            {
-                tool.outcome = outcome;
-                tool.message_final = true;
-            }
-            // else: the entry was evicted; the pairing fact resolved an
-            // obligation that outlived the bytes, which is exactly the
-            // retention rule (B9).
+            let _ = (open, outcome);
         }
         None => {
             // An orphan result: its tool_use fell outside the window.
@@ -759,11 +739,13 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
     }
 }
 
-fn tool_outcome(row: &Value, block: &Value) -> ToolOutcome {
+pub(crate) fn tool_outcome(row: &Value, block: &Value) -> ToolOutcome {
     if bool_of(block, "is_error") {
         // Denial is a typed fact (`toolDenialKind`), never an error-string
         // sniff (B5/G2).
-        return match string_of(row, "toolDenialKind") {
+        return match string_of(row, "toolDenialKind")
+            .or_else(|| string_of(block, "amux_tool_denial_kind"))
+        {
             Some(kind) => ToolOutcome::Denied { kind: Some(kind) },
             None => ToolOutcome::Failed {
                 message: result_text(block).map(|(head, _)| head),
@@ -778,7 +760,9 @@ fn tool_outcome(row: &Value, block: &Value) -> ToolOutcome {
 /// Typed result facts where the sidecar shape is named (§12); bounded
 /// generic output otherwise.
 fn success_facts(row: &Value, block: &Value) -> SuccessFacts {
-    let sidecar = row.get("toolUseResult");
+    let sidecar = row
+        .get("toolUseResult")
+        .or_else(|| block.get("amux_tool_use_result"));
     if let Some(sidecar) = sidecar.filter(|sidecar| sidecar.is_object()) {
         if let Some(edit) = facts::landed_edit(sidecar) {
             return SuccessFacts::Edit {
@@ -925,7 +909,6 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     if !layer.messages.iter().any(|slot| slot.id == message_id) {
         layer.messages.push_back(MessageSlot {
             id: message_id.clone(),
-            entry: None,
             state: SlotState::Open,
         });
         if layer.messages.len() > MESSAGES_RETAINED {
@@ -993,39 +976,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
 }
 
 fn append_message_text(layer: &mut ClaudeLayer, seq: u64, message_id: &str, text: String) {
-    let existing = layer
-        .messages
-        .iter()
-        .find(|slot| slot.id == message_id)
-        .and_then(|slot| slot.entry);
-    if let Some(entry) = existing {
-        let joined = if let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry) {
-            message.segments.push(text);
-            Some(message.segments.join("\n\n"))
-        } else {
-            None
-        };
-        let content = joined.map(|text| layer.attachments().segments(&text));
-        if let (Some(content), Some(FeedEntryKind::Message(message))) =
-            (content, entry_kind_mut(layer, entry))
-        {
-            message.content = content;
-        }
-        return;
-    }
-    let entry = push(
-        layer,
-        seq,
-        FeedEntryKind::Message(MessageEntry {
-            message_id: message_id.to_string(),
-            content: layer.attachments().segments(&text),
-            segments: vec![text],
-            finality: MessageFinality::Open,
-        }),
-    );
-    if let Some(slot) = layer.messages.iter_mut().find(|slot| slot.id == message_id) {
-        slot.entry = Some(entry);
-    }
+    let _ = (layer, seq, message_id, text);
 }
 
 fn fold_tool_use(
@@ -1051,33 +1002,11 @@ fn fold_tool_use(
         _ => None,
     };
 
-    // Grouping fact (B4): strictly consecutive read/search one-liners.
-    let group_with_previous = runs::groupable(&invocation)
-        && matches!(
-            layer.entries.back().map(|entry| &entry.kind),
-            Some(FeedEntryKind::Tool(previous)) if runs::groupable(&previous.invocation)
-        );
-
-    let entry = push(
-        layer,
-        seq,
-        FeedEntryKind::Tool(ToolEntry {
-            tool_use_id: tool_use_id.clone(),
-            name: Some(name.clone()),
-            invocation,
-            outcome: ToolOutcome::Pending,
-            message_final: stop_reason.is_some(),
-            group_with_previous,
-            message_id: Some(message_id.to_string()),
-        }),
-    );
-
     if tool_use_id.is_empty() {
         return;
     }
     layer.open_tools.push_back(OpenTool {
         tool_use_id: tool_use_id.clone(),
-        entry: Some(entry),
         message_id: Some(message_id.to_string()),
         plan,
     });
@@ -1152,30 +1081,10 @@ fn correlate_ask(
 }
 
 fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: String) {
-    let entry = layer.messages.iter_mut().find_map(|slot| {
-        if slot.id != message_id {
-            return None;
-        }
+    if let Some(slot) = layer.messages.iter_mut().find(|slot| slot.id == message_id) {
         slot.state = SlotState::FinalFact;
-        slot.entry
-    });
-    if let Some(entry) = entry
-        && let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry)
-    {
-        message.finality = MessageFinality::Final { stop_reason };
     }
-    // Unpaired tools of a now-final message render as running (B4).
-    let tool_entries: Vec<u64> = layer
-        .open_tools
-        .iter()
-        .filter(|tool| tool.message_id.as_deref() == Some(message_id))
-        .filter_map(|tool| tool.entry)
-        .collect();
-    for entry in tool_entries {
-        if let Some(FeedEntryKind::Tool(tool)) = entry_kind_mut(layer, entry) {
-            tool.message_final = true;
-        }
-    }
+    let _ = stop_reason;
 }
 
 // --- system rows ------------------------------------------------------------
@@ -1202,18 +1111,7 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
             // The authority reconciles an inferred marker in place when the
             // turn already closed by interrupt (observed: tool-use denials
             // still emit `turn_duration`).
-            let reconciled = layer.turn.inferred_turn_entry.take().is_some_and(|entry| {
-                match entry_kind_mut(layer, entry) {
-                    Some(FeedEntryKind::Turn(existing)) => {
-                        *existing = turn.clone();
-                        true
-                    }
-                    _ => false,
-                }
-            });
-            if !reconciled {
-                push(layer, seq, FeedEntryKind::Turn(turn));
-            }
+            push(layer, seq, FeedEntryKind::Turn(turn));
             layer.turn.stop_presignal = false;
             layer.turn.prompt_at = None;
             // The turn-end authority (§14 FACT): the turn is over, and an
@@ -1237,7 +1135,6 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
             // marker reconciliation all end at the boundary.
             layer.turn.last_row_at = None;
             layer.turn.prompt_at = None;
-            layer.turn.inferred_turn_entry = None;
         }
         // Idle-return summaries and local-command records (§8): known, not
         // feed entries in V1.
@@ -1258,26 +1155,8 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &
 
 // --- entry plumbing ---------------------------------------------------------
 
-/// Append one entry, evicting from the front past the retention bound
-/// (B9). Eviction never touches `open_tools` or `plans` — bytes are
-/// evicted, obligations and keyed session state are not. Returns the new
-/// entry's id.
-fn push(layer: &mut ClaudeLayer, seq: u64, kind: FeedEntryKind) -> u64 {
-    let id = layer.next_entry_id;
-    layer.next_entry_id += 1;
-    layer.entries.push_back(FeedEntry { id, seq, kind });
-    if layer.entries.len() > FEED_RETAINED {
-        layer.entries.pop_front();
-        layer.evicted += 1;
-    }
-    id
-}
-
-/// Mutable access to a retained entry's kind by id; `None` when it was
-/// evicted (ids below the front are gone, and that is tolerated
-/// everywhere).
-fn entry_kind_mut(layer: &mut ClaudeLayer, id: u64) -> Option<&mut FeedEntryKind> {
-    let front = layer.entries.front()?.id;
-    let index = id.checked_sub(front)? as usize;
-    layer.entries.get_mut(index).map(|entry| &mut entry.kind)
+/// Provider rows still drive condition and obligation state here. Their
+/// presentation is emitted independently by the durable fold and retained
+/// only in the store window, so this facade deliberately drops row bodies.
+fn push(_layer: &mut ClaudeLayer, _seq: u64, _kind: FeedEntryKind) {
 }

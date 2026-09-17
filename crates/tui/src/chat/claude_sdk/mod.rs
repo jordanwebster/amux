@@ -602,11 +602,11 @@ pub(crate) fn reader_actionable(model: &Model, chat: &View) -> bool {
 /// use that succeeded, and the tool row already carries both the text and
 /// the outcome, so a second copy could only disagree with the first.
 pub(crate) fn accepted_plans(model: &Model, agent: AgentId) -> Vec<AcceptedPlan> {
-    if let Some(chat) = model.chat(agent) {
-        return chat
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
+    model
+        .chat(agent)
+        .into_iter()
+        .flat_map(|chat| &chat.entries)
+        .filter_map(|entry| match entry {
                 ui_state::StoredDto::ClaudeSdk(stored) => {
                     Some(ui_state::restored::claude_sdk::feed_entry(0, &stored.entry))
                 }
@@ -626,54 +626,7 @@ pub(crate) fn accepted_plans(model: &Model, agent: AgentId) -> Vec<AcceptedPlan>
                 }),
                 _ => None,
             })
-            .collect();
-    }
-    let Some(layer) = model.claude_sdk(agent) else {
-        return Vec::new();
-    };
-    layer
-        .entries()
-        .filter_map(|entry| match &entry.kind {
-            FeedEntryKind::Tool(tool) => Some(tool),
-            _ => None,
-        })
-        .filter(|tool| tool.result.as_ref().is_some_and(|result| !result.is_error))
-        .filter_map(|tool| match &tool.invocation {
-            ToolInvocation::Plan {
-                plan: Some(plan), ..
-            } => Some(AcceptedPlan {
-                tool_use_id: tool.tool_use_id.clone(),
-                plan: plan.clone(),
-            }),
-            _ => None,
-        })
         .collect()
-}
-
-/// The current entry watermark for this session's feed: `evicted +
-/// retained`. The paused rule's `N new entries` derives from the
-/// difference.
-pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
-    model
-        .claude_sdk(agent)
-        .map(|layer| layer.evicted_entries() + layer.entry_count() as u64)
-        .unwrap_or(0)
-}
-
-/// Whether any completion in this chat has a body behind its first line
-/// — the exact condition under which `<leader> m` changes the screen.
-pub(crate) fn has_foldable_completion(model: &Model, agent: AgentId) -> bool {
-    model.claude_sdk(agent).is_some_and(|layer| {
-        layer.entries().any(|entry| match &entry.kind {
-            FeedEntryKind::AgentMessage(message) => {
-                matches!(
-                    message.kind.presentation(),
-                    ui_state::AgentMessagePresentation::Finished
-                ) && ui_state::message_digest(&message.text).hidden_lines > 0
-            }
-            _ => false,
-        })
-    })
 }
 
 /// Whether a streaming block is still open — the finality states a

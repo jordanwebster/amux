@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use ui_state::claude_sdk::{
-    self, AskKind, AskWhy, ElicitationFieldKind, ElicitationForm, FEED_RETAINED, SdkPhase, SendGate,
+    self, AskKind, AskWhy, ElicitationFieldKind, ElicitationForm, SdkPhase, SendGate,
 };
 use ui_state::{Attention, Model, Msg, StreamCloseReason, StreamMsg, Why, update};
 
@@ -340,7 +340,6 @@ fn exited_claude_backends_share_badge_rank_and_clear_family_needs() {
 fn five_asks_keep_typed_payloads_and_fifo_order_without_feed_entries() {
     let model = fold(sequence(asks()));
     let layer = claude_sdk_layer(&model, AGENT);
-    assert_eq!(layer.entry_count(), 0);
     assert_eq!(
         layer.asks().map(|a| a.why()).collect::<Vec<_>>(),
         [
@@ -366,7 +365,7 @@ fn five_asks_keep_typed_payloads_and_fifo_order_without_feed_entries() {
 }
 
 #[test]
-fn content_eviction_and_large_requests_never_drop_or_clip_pending_obligations() {
+fn large_content_batches_and_requests_never_drop_or_clip_pending_obligations() {
     let mut model = fold(sequence(asks()));
     let long_id = "x".repeat(600);
     let long_plan = "plan ".repeat(20_000);
@@ -376,13 +375,12 @@ fn content_eviction_and_large_requests_never_drop_or_clip_pending_obligations() 
         json!({"plan":long_plan}),
     )];
     rows.extend(
-        (0..FEED_RETAINED + 5).map(
+        (0..1_005).map(
             |i| json!({"type":"user","uuid":i.to_string(),"message":{"content":"more content"}}),
         ),
     );
     update(&mut model, batch(AGENT, 100, rows));
     let layer = claude_sdk_layer(&model, AGENT);
-    assert_eq!(layer.entry_count(), FEED_RETAINED);
     assert_eq!(layer.ask_count(), 6);
     let ask = layer.asks().last().unwrap();
     assert_eq!(ask.request_id, long_id);

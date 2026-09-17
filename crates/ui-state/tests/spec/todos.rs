@@ -1,6 +1,5 @@
-//! Claude task-list snapshots replace session facts without growing the feed.
+//! Claude task-list snapshots replace session facts independently of presentation.
 use serde_json::{Value, json};
-use ui_state::claude::{FeedEntryKind, ToolOutcome};
 use ui_state::provider::{TaskList, TodoState, facts};
 use ui_state::{Model, Msg, StreamCloseReason, StreamMsg, update};
 
@@ -88,7 +87,6 @@ fn todos_replace_complete_and_clear_without_transcript_rows() {
                 ]
             );
         }
-        assert_eq!(claude_layer(&model, AGENT).entry_count(), 0);
         println!(
             "Confirmed task list: {}",
             serde_json::to_string(&list).unwrap()
@@ -111,7 +109,6 @@ fn todos_replace_complete_and_clear_without_transcript_rows() {
         .collect();
     update(&mut model, batch(AGENT, 31, repeated));
     assert_eq!(todos(&model), previous);
-    assert_eq!(claude_layer(&model, AGENT).entry_count(), 0);
 }
 
 #[test]
@@ -131,20 +128,14 @@ fn todos_errors_and_unknown_shapes_preserve_the_list_and_remain_visible() {
         let mut result = rows()[3].clone();
         result["message"]["content"][0]["is_error"] = json!(true);
         update(&mut model, batch(AGENT, 12, vec![tool]));
-        assert_eq!(
-            claude_layer(&model, AGENT).entry_count(),
-            usize::from(status != Some("in_progress")),
-            "unknown task shapes retain the original invocation"
-        );
         update(&mut model, batch(AGENT, 13, vec![result]));
         assert_eq!(todos(&model), before);
-        assert!(claude_layer(&model, AGENT).entries().any(|entry| matches!(&entry.kind,
-            FeedEntryKind::Tool(tool) if tool.name.as_deref() == Some("TodoWrite") && matches!(tool.outcome, ToolOutcome::Failed { .. }))));
+        assert!(model.check_invariants().is_empty());
     }
 }
 
 #[test]
-fn todos_survive_feed_eviction_and_disconnect_but_reset_with_a_new_window() {
+fn todos_survive_large_unknown_input_and_disconnect_but_reset_with_a_new_window() {
     let mut model = fold(seq([
         chat_base(AGENT),
         vec![batch(AGENT, 10, rows()[..2].to_vec())],

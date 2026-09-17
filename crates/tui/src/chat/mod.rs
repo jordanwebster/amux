@@ -747,7 +747,7 @@ pub(crate) fn build_chat_lines(
     lines
 }
 
-fn stable_block_key(prefix: u64, value: &str) -> frame::BlockKey {
+pub(crate) fn stable_block_key(prefix: u64, value: &str) -> frame::BlockKey {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in value.as_bytes() {
         hash ^= u64::from(*byte);
@@ -779,14 +779,17 @@ fn install_store_feed(
         return;
     }
 
-    let (reports_open, leader) = match &view.inner {
-        AgentChatView::Claude(provider) => (provider.reports_open, provider.leader),
-        AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader),
-        AgentChatView::Codex(provider) => (provider.reports_open, provider.leader),
+    let (reports_open, leader, kitty) = match &view.inner {
+        AgentChatView::Claude(provider) => (provider.reports_open, provider.leader, provider.kitty),
+        AgentChatView::ClaudeSdk(provider) => (provider.reports_open, provider.leader, provider.kitty),
+        AgentChatView::Codex(provider) => (provider.reports_open, provider.leader, provider.kitty),
     };
-    let mut durable = Vec::with_capacity(chat.entries.len() + chat.boundaries.len());
-    for item in chat.history() {
-        let entry = match item {
+    let history = chat.history();
+    let starts_at_boundary = matches!(history.first(), Some(WindowItem::Boundary(_)));
+    let mut durable = Vec::with_capacity(history.len());
+    let mut cursor = 0;
+    while cursor < history.len() {
+        let entry = match history[cursor] {
             WindowItem::Boundary(boundary) => {
                 let identity = format!(
                     "{}:{:?}:{:?}",
@@ -798,43 +801,235 @@ fn install_store_feed(
                     ctx.theme,
                     ctx.viewport.0 as usize,
                 ));
+                cursor += 1;
                 continue;
             }
             WindowItem::Entry(entry) => entry,
         };
-        let (_, _, key) = entry.position();
-        let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-        let message_view = MessageView::new(model, agent, reports_open, leader);
-        let painted = match entry {
-            ui_state::StoredDto::Claude(stored) => Some(claude::stored_entry_block(
+        if let Some((name, server)) = stored_mcp_server(entry) {
+            let mut servers = std::collections::BTreeMap::from([(name, server)]);
+            let mut next = cursor + 1;
+            while let Some(WindowItem::Entry(candidate)) = history.get(next).copied() {
+                let Some((name, server)) = stored_mcp_server(candidate) else {
+                    break;
+                };
+                servers.insert(name, server);
+                next += 1;
+            }
+            let (_, _, key) = entry.position();
+            let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
+            durable.push(codex::render::stored_mcp_block(
                 block_key,
-                &stored.entry,
-                message_view,
+                servers,
                 ctx.theme,
                 ctx.viewport.0 as usize,
-            )),
-            ui_state::StoredDto::ClaudeSdk(stored) => claude_sdk::stored_entry_block(
-                block_key,
-                &stored.entry,
-                message_view,
-                ctx.theme,
-                ctx.viewport.0 as usize,
-            ),
-            ui_state::StoredDto::Codex(stored) => Some(codex::render::stored_entry_block(
-                block_key,
-                &stored.entry,
-                message_view,
-                ctx.theme,
-                ctx.viewport.0 as usize,
-            )),
-        };
-        if let Some(painted) = painted {
+            ));
+            cursor = next;
+            continue;
+        }
+        if let Some(first) = stored_exploration(entry) {
+            let mut members = vec![entry];
+            let mut explorations = vec![first];
+            let mut next = cursor + 1;
+            while let Some(WindowItem::Entry(candidate)) = history.get(next).copied() {
+                let Some(exploration) = stored_exploration(candidate) else {
+                    break;
+                };
+                members.push(candidate);
+                explorations.push(exploration);
+                next += 1;
+            }
+            if members.len() > 1 {
+                let (_, _, key) = entry.position();
+                let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
+                let run = blocks::RunKey(block_key.0);
+                let mut reads = 0;
+                let mut searches = 0;
+                let mut paths = Vec::new();
+                for exploration in &explorations {
+                    match &exploration.invocation {
+                        ui_state::claude::facts::ToolInvocation::Read { file_path } => {
+                            reads += 1;
+                            if let Some(path) = file_path.as_deref() {
+                                paths.push(path);
+                            }
+                        }
+                        ui_state::claude::facts::ToolInvocation::Query { .. } => searches += 1,
+                        _ => {}
+                    }
+                }
+                let summary = blocks::run_summary(reads, searches, &paths);
+                let member_blocks = members
+                    .iter()
+                    .filter_map(|entry| paint_stored_entry(model, agent, entry, reports_open, leader, ctx))
+                    .collect::<Vec<_>>();
+                let expanded = view.viewport.expanded.contains(&run);
+                let hint = crate::bindings::Effective::new(kitty, leader).fold_hint(expanded);
+                durable.push(blocks::paint_exploration_run(
+                    block_key,
+                    run,
+                    &summary,
+                    &member_blocks,
+                    expanded,
+                    &hint,
+                    ctx.theme,
+                    ctx.viewport.0 as usize,
+                ));
+                cursor = next;
+                continue;
+            }
+        }
+        if let Some(painted) = paint_stored_entry(model, agent, entry, reports_open, leader, ctx) {
             durable.push(painted);
         }
+        push_stored_attachments(model, agent, entry, &mut durable, ctx);
+        cursor += 1;
     }
     parts.feed.blocks = durable;
-    parts.feed.history_truncated = false;
+    parts.feed.history_truncated = starts_at_boundary;
     parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
+}
+
+struct StoredExploration {
+    invocation: ui_state::claude::facts::ToolInvocation,
+}
+
+fn stored_mcp_server(
+    entry: &ui_state::StoredDto,
+) -> Option<(String, ui_state::codex::McpServerStartup)> {
+    let ui_state::StoredDto::Codex(stored) = entry else {
+        return None;
+    };
+    if stored.entry.entry_kind() != Some(ui_state::StoredCodexEntryKind::McpStartup) {
+        return None;
+    }
+    let raw = stored
+        .entry
+        .details()
+        .and_then(|details| serde_json::from_slice::<serde_json::Value>(&details.0).ok())?;
+    let name = raw.get("name")?.as_str()?.to_string();
+    let status = match raw.get("status").and_then(serde_json::Value::as_str) {
+        Some("starting") => ui_state::codex::McpStartupStatus::Starting,
+        Some("failed") => ui_state::codex::McpStartupStatus::Failed,
+        Some("cancelled") => ui_state::codex::McpStartupStatus::Cancelled,
+        _ => ui_state::codex::McpStartupStatus::Ready,
+    };
+    Some((
+        name,
+        ui_state::codex::McpServerStartup {
+            status,
+            error: raw.get("error").and_then(serde_json::Value::as_str).map(str::to_string),
+            failure_reason: raw
+                .get("failureReason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        },
+    ))
+}
+
+fn stored_exploration(entry: &ui_state::StoredDto) -> Option<StoredExploration> {
+    let invocation = match entry {
+        ui_state::StoredDto::Claude(stored) => {
+            let entry = ui_state::restored::claude::feed_entry(0, &stored.entry);
+            let ui_state::claude::FeedEntryKind::Tool(tool) = entry.kind else {
+                return None;
+            };
+            tool.invocation
+        }
+        ui_state::StoredDto::ClaudeSdk(stored) => {
+            let entry = ui_state::restored::claude_sdk::feed_entry(0, &stored.entry);
+            let ui_state::claude_sdk::FeedEntryKind::Tool(tool) = entry.kind else {
+                return None;
+            };
+            tool.invocation
+        }
+        ui_state::StoredDto::Codex(_) => return None,
+    };
+    invocation
+        .is_exploration()
+        .then_some(StoredExploration { invocation })
+}
+
+fn attachment_index(model: &Model, agent: AgentId) -> Option<&ui_state::AttachmentIndex> {
+    model
+        .claude(agent)
+        .map(|layer| layer.attachments())
+        .or_else(|| model.claude_sdk(agent).map(|layer| layer.attachments()))
+        .or_else(|| model.codex(agent).map(|layer| layer.attachments()))
+}
+
+fn paint_stored_entry(
+    model: &Model,
+    agent: AgentId,
+    entry: &ui_state::StoredDto,
+    reports_open: bool,
+    leader: char,
+    ctx: &FrameContext,
+) -> Option<PaintedBlock> {
+    let (_, _, key) = entry.position();
+    let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
+    let message_view = MessageView::new(model, agent, reports_open, leader);
+    let empty = ui_state::AttachmentIndex::default();
+    let index = attachment_index(model, agent).unwrap_or(&empty);
+    match entry {
+        ui_state::StoredDto::Claude(stored) => Some(claude::stored_entry_block(
+            block_key,
+            &stored.entry,
+            index,
+            message_view,
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        )),
+        ui_state::StoredDto::ClaudeSdk(stored) => claude_sdk::stored_entry_block(
+            block_key,
+            &stored.entry,
+            index,
+            message_view,
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        ),
+        ui_state::StoredDto::Codex(stored) => Some(codex::render::stored_entry_block(
+            block_key,
+            &stored.entry,
+            index,
+            message_view,
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        )),
+    }
+}
+
+fn push_stored_attachments(
+    model: &Model,
+    agent: AgentId,
+    entry: &ui_state::StoredDto,
+    blocks: &mut Vec<PaintedBlock>,
+    ctx: &FrameContext,
+) {
+    if !matches!(entry.kind(), "prompt" | "message") {
+        return;
+    }
+    let Some(index) = attachment_index(model, agent) else {
+        return;
+    };
+    let content = index.segments(entry.text().unwrap_or_default());
+    let (_, _, key) = entry.position();
+    let owner = stable_block_key(0xd000_0000_0000_0000, key.as_ref()).0;
+    let carrier = if entry.kind() == "prompt" {
+        blocks::Carrier::Person
+    } else {
+        blocks::Carrier::Agent
+    };
+    for (position, attachment) in attachments::described(index, &content).iter().enumerate() {
+        let key = attachments::attachment_key(owner, position);
+        blocks.push(blocks::paint_attachment(
+            key,
+            attachment,
+            carrier,
+            ctx.theme,
+            ctx.viewport.0 as usize,
+        ));
+    }
 }
 
 fn store_status(model: &Model, agent: AgentId, ctx: &FrameContext) -> Option<Line<'static>> {
@@ -1098,19 +1293,9 @@ pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::Fam
 /// screen. A completion that said one thing is already showing all of
 /// it, and a chat of those has nothing to open.
 fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
-    if let Some(chat) = model.chat(agent) {
-        return chat
-            .entries
-            .iter()
-            .any(ui_state::StoredDto::has_foldable_completion);
-    }
     model
-        .claude(agent)
-        .is_some_and(ui_state::claude::ClaudeLayer::has_foldable_completion)
-        || model
-            .codex(agent)
-            .is_some_and(ui_state::codex::CodexLayer::has_foldable_completion)
-        || claude_sdk::has_foldable_completion(model, agent)
+        .chat(agent)
+        .is_some_and(|chat| chat.entries.iter().any(ui_state::StoredDto::has_foldable_completion))
 }
 
 /// The header's family marker (U3): how many agents this one has spawned,
@@ -1137,17 +1322,7 @@ pub(crate) fn format_amux_send(to: Option<&str>, text: Option<&str>) -> String {
 }
 
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
-    match model
-        .agent(agent)
-        .and_then(ui_state::AgentCard::structured_protocol)
-    {
-        Some(StructuredProtocol::ClaudePtyTranscript) => claude::entry_watermark(model, agent),
-        Some(StructuredProtocol::Codex) => model.codex(agent).map_or(0, |layer| {
-            layer.evicted_entries() + layer.entry_count() as u64
-        }),
-        Some(StructuredProtocol::ClaudeSdk) => claude_sdk::entry_watermark(model, agent),
-        None => 0,
-    }
+    model.chat(agent).map_or(0, |chat| chat.content_revision)
 }
 
 #[cfg(test)]
@@ -1309,55 +1484,33 @@ mod tests {
             size: Some(image.size),
             path: None,
         });
-        update(
+        crate::fixtures::install_store_rows_for(
             &mut model,
-            Msg::Stream {
-                agent,
-                event: StreamMsg::Batch {
-                    at: at(3),
-                    entries: vec![
-                        StreamEntry {
-                            seq: 1,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({"type": "amux.transcript_ready"}),
-                        },
-                        StreamEntry {
-                            seq: 2,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({
-                                "type": "amux.attachments",
-                                "input_id": null,
-                                "refs": [{
-                                    "id": image.id,
-                                    "kind": "image",
-                                    "name": image.name,
-                                    "mime": image.mime,
-                                    "size": image.size,
-                                }],
-                            }),
-                        },
-                        StreamEntry {
-                            seq: 3,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({
-                                "type": "user",
-                                "uuid": "dddddddd-0000-4000-8000-000000000001",
-                                "sessionId": "22222222-2222-4222-8222-222222222222",
-                                "timestamp": "2026-08-12T09:00:00.000Z",
-                                "message": {"role": "user", "content": format!("look\n{element}")},
-                                "origin": {"kind": "human"},
-                                "promptSource": "typed"
-                            }),
-                        },
-                    ],
-                },
-            },
+            agent,
+            StructuredProtocol::ClaudePtyTranscript,
+            vec![
+                json!({"type": "amux.transcript_ready"}),
+                json!({
+                    "type": "amux.attachments",
+                    "input_id": null,
+                    "refs": [{
+                        "id": image.id,
+                        "kind": "image",
+                        "name": image.name,
+                        "mime": image.mime,
+                        "size": image.size,
+                    }],
+                }),
+                json!({
+                    "type": "user",
+                    "uuid": "dddddddd-0000-4000-8000-000000000001",
+                    "sessionId": "22222222-2222-4222-8222-222222222222",
+                    "timestamp": "2026-08-12T09:00:00.000Z",
+                    "message": {"role": "user", "content": format!("look\n{element}")},
+                    "origin": {"kind": "human"},
+                    "promptSource": "typed"
+                }),
+            ],
         );
         (model, agent, image)
     }

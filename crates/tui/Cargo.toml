@@ -14,6 +14,7 @@ fixtures = []
 [dependencies]
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
+fold = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }
 tokio = { workspace = true }
@@ -24,6 +25,7 @@ tracing = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
+postcard = { workspace = true }
 thiserror = { workspace = true }
 base64 = "0.22"
 arboard = { workspace = true }
@@ -39,9 +41,7 @@ libc = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
-fold = { workspace = true }
 gethostname = { workspace = true }
-postcard = { workspace = true }
 tempfile = { workspace = true }
 unicode-width = "0.2"
 vt100 = "0.15"

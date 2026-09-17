@@ -38,16 +38,6 @@ mod sessions; // Chapter 4 — Session streams: lifecycle facts
 
 mod attention; // Chapter 5 — Attention: summarizer folds, subscription policy
 
-mod feed_replay; // Chapter 6 — Chat feed: replay, epochs, retention
-
-mod feed_turns; // Chapter 7 — Chat feed: prompts, messages, markers
-
-mod feed_tools; // Chapter 8 — Chat feed: tool pairing, result facts
-
-mod claude_runs; // Claude feed projection: exploration runs beside raw entries
-
-mod feed_edges; // Chapter 9 — Chat feed: status, subagents, unknown rows
-
 mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde
 
 mod asks; // Chapter 11 — Asks: extraction, correlation, lifecycle
@@ -55,8 +45,6 @@ mod asks; // Chapter 11 — Asks: extraction, correlation, lifecycle
 mod phase; // Chapter 12 — Phase: the E1 derivation table
 
 mod write; // Chapter 13 — The write path: intents, programs, optimism
-
-mod codex_feed; // Chapter 14 — Codex rows: native items, turns, boundaries
 
 mod codex_asks; // Chapter 15 — Codex asks: raw/synth correlation and blocking
 
@@ -74,26 +62,10 @@ mod fleet_summary; // Host/local summary selection and visible freshness
 
 mod store_lifecycle; // Store effects, chat fencing, and recorded lifecycle rows
 
-mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent
-
-mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent
-
-mod a2a_codex_inbound; // Chapter 22 — Codex inbound: agent messages and amux tools
-
 mod a2a_family_needs; // Chapter 23 — Family needs: a child's ask, composed into its parent
-
-mod a2a_completed_row; // Chapter 24 — Completions and exits: what each kind makes of itself
-
-mod claude_sdk_feed; // Claude stream-JSON messages, tools, tasks and boundaries
-
-mod claude_sdk_runs; // Session feed projection: exploration runs beside raw entries
 
 mod claude_sdk_agreement; // Claude session classification and public projection agreement
 
 mod claude_sdk_write; // Typed SDK commands and authoritative write reconciliation
 
 mod claude_sdk_runtime; // Subscription, attachments and session facts
-
-mod a2a_claude_sdk_inbound; // SDK agent-message carriers and outbound send
-
-mod claude_sdk_converse; // Recorded conversations from prompt through work and interruption
