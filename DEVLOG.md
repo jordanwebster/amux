@@ -17,6 +17,14 @@ one run in five, which is what made them findable at all; twenty-five runs
 after the change produced none. The test network's cross-host attach now prints
 the failure dump when it cannot route, which is what made the cause visible.
 
+The harness had a part in this too. The suite's own rule is that every verb
+retries within a bounded wait, so a test states an outcome rather than the
+moment it asked — but the three verbs that call across machines demanded a
+route on the first try and failed the test when they did not get one. They now
+wait like everything else, which is what a person opening a session on another
+machine does. Routing offering a link that cannot carry anything was still a
+real defect; this is what kept a test from depending on the instant it asked.
+
 The same runs turned up a second Windows failure with a different cause. The
 test cloud relay took a loopback port for TCP and then bound its QUIC endpoint
 on that same number, assuming a free TCP port means a free UDP one. It does

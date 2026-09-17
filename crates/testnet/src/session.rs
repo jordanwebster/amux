@@ -443,6 +443,13 @@ impl Daemon {
     /// model-facing spawn.
     pub async fn spawn_echo_child_on(&self, owner: &Daemon, parent: &Agent, name: &str) -> Agent {
         assert_eq!(parent.host_id, self.host_id());
+        if owner.host_id() != self.host_id() {
+            // The daemon dispatches this create over its own link to the
+            // owner, and answers with whatever that dispatch met. Waiting for
+            // a route here keeps the failure about the spawn.
+            self.channel_once_routed(owner, &format!("a spawn on '{}'", owner.name()))
+                .await;
+        }
         self.admin_client()
             .await
             .create_agent(CreateAgentRequest {
@@ -1120,6 +1127,31 @@ impl Daemon {
     /// a routed `ClientService.SubscribeSession` against `other` for the agent
     /// named `agent_name`. The returned [`EchoSession`] sends input and reads
     /// echoed output across the tunnel.
+    /// A channel to `other`, waited for rather than demanded.
+    ///
+    /// When both machines dial each other at once they keep one of the two
+    /// links and drop the other, and a call made in the moment between is
+    /// refused for want of a link. A settled network reaches that state on its
+    /// own, so a verb that gives up on the first refusal is asserting when the
+    /// call was made rather than whether it can be made — which is why these
+    /// were the suite's flakiest tests on a loaded machine.
+    async fn channel_once_routed(&self, other: &Daemon, description: &str) -> tonic::transport::Channel {
+        let mut routed = None;
+        eventually(
+            &format!("'{}' can route {description}", self.name()),
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                routed = parts.connections.channel_to(other.host_id()).await.ok();
+                routed.is_some()
+            },
+            self.failure_dump(),
+        )
+        .await;
+        routed.expect("a routed channel once routing offers one")
+    }
+
     pub async fn attach(&self, other: &Daemon, agent_name: &str) -> EchoSession {
         let description = format!(
             "echo session from '{}' to agent '{agent_name}' on '{}'",
@@ -1129,18 +1161,7 @@ impl Daemon {
         let client = if self.host_id() == other.host_id() {
             self.admin_client().await
         } else {
-            let parts = self
-                .try_parts()
-                .await
-                .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-            let channel = match parts.connections.channel_to(other.host_id()).await {
-                Ok(channel) => channel,
-                Err(error) => {
-                    let dump = self.failure_dump().await;
-                    panic!("failed to route {description}: {error}\n{dump}")
-                }
-            };
-            Client::from_channel(channel)
+            Client::from_channel(self.channel_once_routed(other, &description).await)
         };
         let stream = client
             .subscribe_session(node::SubscribeSessionRequest {
@@ -1187,12 +1208,7 @@ impl Daemon {
 
     /// Lifecycle, pairing and trust administration are absent from a peer's ClientService.
     pub async fn rejects_remote_admin_from(&self, peer: &Daemon) {
-        let parts = peer.try_parts().await.expect("peer is running");
-        let channel = parts
-            .connections
-            .channel_to(self.host_id())
-            .await
-            .expect("peer route");
+        let channel = peer.channel_once_routed(self, "an administration call").await;
         assert_admin_absent(channel, "peer tunnel").await;
         peer.can_call(self).await;
     }
@@ -1223,21 +1239,9 @@ impl Daemon {
     /// mTLS caller, not the local Unix socket. Used to assert what a paired
     /// remote peer may and may not invoke.
     pub(crate) async fn routed_admin_client_to(&self, peer: &Daemon) -> Client {
-        let parts = self
-            .try_parts()
-            .await
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = parts
-            .connections
-            .channel_to(peer.host_id())
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' could not route to '{}': {error}",
-                    self.name(),
-                    peer.name()
-                )
-            });
+        let channel = self
+            .channel_once_routed(peer, &format!("an administration call to '{}'", peer.name()))
+            .await;
         Client::from_channel(channel)
     }
 }
