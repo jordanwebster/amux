@@ -130,6 +130,30 @@ journey and a Rust spec describe the same behaviour. [TESTNET.md](TESTNET.md)
 owns the topology format and the control protocol; [IOS.md](IOS.md) owns the
 journey manifest, goldens and simulator pins.
 
+## 6. Performance qualification
+
+`just perf` builds the qualified harness in release mode and measures the
+desktop frame loop, store-backed cold start and chat attachment, fold bounds,
+SQLite commit and maintenance work, summarizer cost, and reconnect wire size.
+The report names the enrolled hardware and OS, profile and features, workload
+seed, identity-growth mode, warm-up, sample count, timestamps, statistic,
+budget, committed baseline and drift. It fails on an absolute budget miss, on
+time drift above 15%, or on memory drift above 10%. On a Mac with a simulator
+already booted, the same invocation also runs `just ios perf`; a failure there
+fails the combined recipe.
+
+```sh
+just perf
+just perf --baseline
+```
+
+Baselines live at `crates/testnet/perf/baselines/<hw.model>.json` and are
+valid only for the recorded machine model, release profile and feature set.
+An unknown hardware model is refused. `--baseline` still enforces every
+absolute budget; it never turns a miss into the new expectation. Baseline
+recording is qualification work, so do it only on an otherwise idle reference
+machine and review the complete report before committing the file.
+
 ## Failure evidence
 
 Rust reports captured output for a failed test, but an outer timeout may kill a

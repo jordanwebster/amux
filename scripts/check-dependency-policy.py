@@ -33,7 +33,8 @@ TEST_SUPPORT = {"testnet", "claude-specs", "codex-specs", "test-agent", "shot"}
 SUPPORT_ALLOWED_LOCAL = {
     # The harness drives scripted Claude and Codex sessions through the
     # provider crates' own source seams, replays recordings, and folds the
-    # served door's report conversion through the client layer.
+    # served door's report conversion through the client layer. Its optional
+    # perf feature also measures the shipping renderer at the TUI boundary.
     "testnet": {
         "agent-runtime",
         "artifacts",
@@ -47,6 +48,7 @@ SUPPORT_ALLOWED_LOCAL = {
         "pty-host",
         "replay-support",
         "store",
+        "tui",
         "ui-runtime",
         "ui-state",
         "wire",

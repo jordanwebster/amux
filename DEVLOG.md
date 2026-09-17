@@ -1,3 +1,11 @@
+2026-09-17 — **Desktop performance is qualified at product boundaries.** A
+release-only harness now reports machine, configuration, workload contract,
+budget, baseline and drift for steady and flooded frames, stored cold starts,
+attach and catch-up, provider tip bounds, 50,000-row paging, competing-reader
+commits, maintenance, summarizers and exact-cursor wire deltas. It refuses
+unknown hardware, keeps baselines keyed by hardware model, and runs the phone
+performance suite too when a simulator is already booted.
+
 2026-09-17 — **Performance measurements use the product's real boundaries.**
 The terminal trace now records input arrival and the time spent rendering,
 drawing changed cells and flushing them. The test harness can sample a

@@ -615,13 +615,16 @@ where
 /// over: the capture above cannot produce one, and this says so in the
 /// type rather than in a second copy of the event loop.
 #[cfg(not(any(debug_assertions, test)))]
-async fn report_flow(
-    _terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+async fn report_flow<B>(
+    _terminal: &mut Terminal<B>,
     _events: &mut EventStream,
     frozen: std::convert::Infallible,
     _theme: Theme,
     _config: &TuiConfig,
-) -> Result<Option<Notice>> {
+) -> Result<Option<Notice>>
+where
+    B: Backend,
+{
     match frozen {}
 }
 

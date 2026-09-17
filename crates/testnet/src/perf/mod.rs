@@ -2,6 +2,20 @@
 
 use std::io;
 
+mod report;
+#[cfg(feature = "perf")]
+mod store_workloads;
+#[cfg(feature = "perf")]
+mod workloads;
+pub use report::{
+    Baselines, Machine, Metric, MetricRun, PerfError, Report, Sample, Statistic, Unit, Verdict,
+    Workload,
+};
+#[cfg(feature = "perf")]
+pub use store_workloads::cold_child;
+#[cfg(feature = "perf")]
+pub use workloads::run_fast;
+
 /// The platform's process-residency measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemoryMetric {

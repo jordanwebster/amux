@@ -662,6 +662,36 @@ pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
     }
 }
 
+/// Build one production stream batch of provider-native long-feed rows.
+/// Performance workloads use this to drive the reducer and chrome with the
+/// same messages as the live event loop, without exposing fixture internals.
+pub fn long_feed_batch(protocol: StructuredProtocol, start: usize, entries: usize) -> Msg {
+    let payloads = match protocol {
+        StructuredProtocol::ClaudePtyTranscript => (start..start + entries)
+            .map(claude_long_row)
+            .collect::<Vec<_>>(),
+        StructuredProtocol::Codex => (start..start + entries)
+            .map(codex_long_row)
+            .collect::<Vec<_>>(),
+        StructuredProtocol::ClaudeSdk => (start..start + entries)
+            .map(sdk_long_row)
+            .collect::<Vec<_>>(),
+    };
+    Msg::Stream {
+        agent: agent_id(protocol),
+        event: StreamMsg::Batch {
+            at: fixed_now(),
+            entries: payloads
+                .into_iter()
+                .enumerate()
+                .map(|(offset, payload)| {
+                    StreamEntry::observed((start + offset + 2) as u64, fixed_now(), payload)
+                })
+                .collect(),
+        },
+    }
+}
+
 fn scrolled_back(protocol: StructuredProtocol) -> Fixture {
     let mut fixture = long_feed(protocol, 1_000);
     let backend = TestBackend::new(120, 40);

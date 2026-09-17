@@ -161,3 +161,9 @@ warm: build test-build
 
 # Run the same task sequence exercised across continuous-integration jobs.
 ci: check lint fmt-check codegen-check dependency-policy test doctest release-check e2e embedded-check embedded-test mobile-check
+
+# Qualify desktop performance on an enrolled machine and include the phone
+# suite whenever a simulator is already booted. Pass --baseline to record the
+# current release medians after every absolute budget passes.
+perf *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p testnet --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if command -v xcrun >/dev/null 2>&1 && xcrun simctl list devices booted 2>/dev/null | grep -q '(Booted)'; then {{bounded}} 3600 just ios perf; fi
