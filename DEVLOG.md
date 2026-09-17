@@ -1,3 +1,10 @@
+2026-09-18 — **Commit drift uses the established reference value.** The final
+baseline-completion run replaced commit latency's existing 5.068 ms reference
+with a 4.007 ms fast-mode sample even though the measured workload was
+unchanged. Repeated qualification receipts put its other filesystem timing mode
+at 5.0–5.3 ms, so the Mac14,6 baseline again uses the earlier reviewed value.
+The 20 ms p99 budget and the 15% time-drift limit remain unchanged.
+
 2026-09-18 — **Served journeys exercise the store-backed client path.** The
 agent, SDK and Codex relay journeys now open their conversations through a
 temporary SQLite store, so their transcript assertions observe the same

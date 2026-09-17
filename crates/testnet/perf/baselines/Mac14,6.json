@@ -10,7 +10,7 @@
     "TUI cold start (40 agents) worst": 22.266125000000002,
     "attach caught up": 1012.3095,
     "attach first painted window": 1.570667,
-    "commit latency": 4.006625,
+    "commit latency": 5.068375,
     "frame under flood": 1.860792,
     "growth after sweep": 87.1538319976599,
     "growth longest statement upper bound": 77.486417,
