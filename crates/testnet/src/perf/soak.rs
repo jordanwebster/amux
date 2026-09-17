@@ -311,11 +311,42 @@ async fn client_runtime(directory: &Path, timing: ClientSoakTiming) -> Result<()
     });
     let started = Instant::now();
     let mut reset_observed = false;
+    let mut reopening = false;
+    let mut reopened = false;
     while !directory.join("stop").is_file() {
         let _ = tokio::time::timeout(PULSE_INTERVAL, runtime.next()).await;
         if !reset_observed && resets.load(Ordering::Relaxed) >= connection.agents.len() {
             std::fs::write(directory.join("reset-observed"), b"reset\n")?;
             reset_observed = true;
+            reopening = true;
+            for agent in &connection.agents {
+                runtime.close_chat(*agent);
+            }
+        }
+        if reopening
+            && connection.agents.iter().all(|agent| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .is_some_and(|chat| chat.state == ChatState::Absent)
+            })
+        {
+            for agent in &connection.agents {
+                runtime.open_chat(*agent);
+            }
+            reopening = false;
+        }
+        if reset_observed
+            && !reopening
+            && !reopened
+            && connection.agents.iter().all(|agent| {
+                runtime.model().chat(*agent).is_some_and(|chat| {
+                    chat.state == ChatState::Live && !chat.live_only && !chat.boundaries.is_empty()
+                })
+            })
+        {
+            std::fs::write(directory.join("reset-reopened"), b"live\n")?;
+            reopened = true;
         }
         if started.elapsed() > SOAK_DURATION + Duration::from_secs(120) {
             bail!("client soak parent did not stop the child");
@@ -330,6 +361,7 @@ async fn client_runtime(directory: &Path, timing: ClientSoakTiming) -> Result<()
         resets.load(Ordering::Relaxed) >= connection.agents.len(),
         "client runtime did not observe every daemon-side reset"
     );
+    ensure!(reopened, "client runtime did not reopen every reset chat");
     drop(runtime);
     drop(client);
     Ok(())
@@ -436,12 +468,11 @@ async fn client_daemon_runtime(directory: &Path, timing: ClientSoakTiming) -> Re
     let mut iteration = 0;
     while !directory.join("stop").is_file() {
         let pulse = Instant::now();
-        for (chat, provider) in providers.iter().enumerate() {
-            provider
-                .emit(vec![corpus_row(chat, iteration)])
-                .await
-                .with_context(|| format!("replay client corpus for chat {chat}"))?;
-        }
+        let chat = iteration as usize % providers.len();
+        providers[chat]
+            .emit(vec![corpus_row(chat, iteration / providers.len() as u64)])
+            .await
+            .with_context(|| format!("replay client corpus for chat {chat}"))?;
         if iteration == timing.reset_iteration {
             for provider in &providers {
                 provider
@@ -741,6 +772,9 @@ mod tests {
             .await
             .unwrap();
         wait_path(&client_dir, "reset-observed", Duration::from_secs(30))
+            .await
+            .unwrap();
+        wait_path(&client_dir, "reset-reopened", Duration::from_secs(30))
             .await
             .unwrap();
         std::fs::write(client_dir.join("stop"), b"stop\n").unwrap();
