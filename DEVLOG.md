@@ -1,3 +1,10 @@
+2026-09-17 — **The app bridge documentation follows the per-account store.**
+The bridge README no longer promises a JSON fleet cache or treats remembered
+cards as display-only data. It documents the per-account SQLite path, the
+cached-fleet fallback and ownership contract, startup ordering and inventory
+confirmation, plus the debug entry points that seed a store and open one of
+its remembered conversations.
+
 2026-09-17 — **The phone's performance run starts its test relay again.** The
 test relay's machines listen on Unix sockets inside a temporary root, and under
 the per-user temporary directory the machine called `desktop` put its socket

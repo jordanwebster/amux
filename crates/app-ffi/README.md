@@ -1,7 +1,7 @@
 # Native runtime bridge
 
 `app-ffi` is the C ABI over two crates any rich client reuses: `app-runtime`
-(account sessions, the presentation projection, the fleet cache and the
+(account sessions, the presentation projection, the per-account store and the
 frame-coalesced event queue; it never links the node) and `app-embedded` (the
 owner of a provider-free embedded node installation and its relay link).
 Nothing outside `app-ffi` knows a C type exists. `amux_app_start` returns an opaque handle immediately; a dedicated
@@ -124,26 +124,38 @@ C callback, and streams 1,000 rows at 50 per second under deterministic virtual
 time. That bench proves cadence and delta payload size; it does not measure
 Swift rendering or presented frames on a simulator or phone.
 
-The first callback is a Fleet from `cache_dir/fleet.json` with `reconciled:
-false`, emitted before the embedded runtime starts connecting. Missing or
-incompatible cache files give an empty initial fleet. Each projected fleet
-change atomically replaces that file before its callback; write failures emit
-an Invariant diagnostic and leave the live connection running. Cache files are
-private (0600 on Unix). Give each account its own data and cache directories.
-Cached cards remain display data only: they never enter the live reducer or
-permit a send. Cached row order survives reconciliation; new rows append.
-Untrusted pairing candidates are excluded from the fleet. A remote host's completed inventory
-removes cached agents deleted while the phone was offline, including when no
-agents remain. Unpairing removes that host's cached rows after the local host
-list completes. Local agent-list completion and relay connectivity never prove
-remote inventory membership; unreachable paired hosts keep their cached rows.
+Each account has a SQLite store at
+`<cache_dir>/store/<escaped account>.sqlite`. Before starting a runtime,
+`amux_app_cached_fleet` reads that store and returns an owned JSON array
+containing one unreconciled Fleet event. A missing, corrupt or refused store
+returns that event with no rows; `NULL` is reserved for arguments that cannot
+be read as strings. Release the returned string with `amux_app_free`.
+
+The running library installs those remembered cards in the shared reducer,
+marked as awaiting their machine and with send gates closed. The event queue
+withholds its first fleet callback until the store rows have been installed, so
+the runtime cannot blank the fleet the application already drew while it
+connects. A remote machine's completed inventory confirms or removes its
+remembered cards, including removing all of them. Unpairing removes that
+machine's rows after the local machine list completes. Local agent-list
+completion and relay connectivity never prove remote inventory membership;
+unreachable paired machines keep their remembered rows. Untrusted pairing
+candidates are excluded from the fleet.
 
 `amux_app_snapshot` returns the shared reducer Model as owned JSON.
 Its hosts map includes online unpaired hosts advertised through this account's
 relay. The embedded runtime subscribes through its owner administration handle;
 profile sockets and peer tunnels expose only trusted hosts. Pairing candidates
-stay outside Fleet callbacks and the fleet cache until trust is confirmed.
-In `debug-tools` builds, `amux_app_report_snapshot` returns
+stay outside Fleet callbacks and the stored fleet until trust is confirmed.
+In `debug-tools` builds, `amux_app_seed_store` replaces one account's store
+with the hosts, agents, removals and conversation rows described by its JSON
+argument, using the same store and runtime paths as the phone. It returns
+owned JSON `{"ok":true}` or `{"error":"…"}`. `amux_app_cached_chat` opens one
+stored conversation before any connection and returns the projected
+`{"events":[…]}` or `{"error":"…"}`. Both results must be released with
+`amux_app_free`.
+
+Also in `debug-tools` builds, `amux_app_report_snapshot` returns
 `{"msgs":{"format_version":1,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
 "daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
 The recorder freezes before the embedded daemon dump request. To form
@@ -155,7 +167,7 @@ with an explicit absence reason. These calls wait up to five seconds for the
 worker; call them outside the event callback, finish before stop, check for
 null and release returned strings with `amux_app_free`.
 
-Also in `debug-tools` builds, `amux_app_replay_report` takes the path of a
+`amux_app_replay_report` takes the path of a
 `msgs.jsonl` written that way and returns `{"events":[EVENT,...]}` — the same
 projected events a live connection delivers — or `{"error":STRING}` when the
 file cannot be read or folded. It needs no handle and starts nothing: the
