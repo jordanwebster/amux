@@ -372,8 +372,11 @@ public struct Conversation: View {
         // own inset for it, which left the first row of a transcript scrolled
         // to its top under the clock and the pill. The space is given back to
         // the content instead: it rests just below the chrome and still
-        // travels under the glass as it scrolls.
-        .contentMargins(.top, max(0, chromeBottom - feedTop), for: .scrollContent)
+        // travels under the glass as it scrolls. A little more than the
+        // chrome itself, so the first row does not sit against the pill.
+        .contentMargins(
+            .top, chromeBottom > 0 ? max(0, chromeBottom - feedTop) + 16 : 0,
+            for: .scrollContent)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
@@ -695,6 +698,13 @@ private struct ConversationComposerStanding: View {
     /// which carries every layout it causes and nothing else — a row arriving
     /// in the same instant is not dragged along on the curve.
     @State private var shown: ComposerState
+    /// When the working line last appeared, so a turn that ends almost as
+    /// soon as it began still shows its line long enough to be seen.
+    @State private var lineSince: Date?
+    /// The pending removal of the working line, which waits a moment in case
+    /// the next turn starts straight away — a held message going out as the
+    /// last turn ends — so the box does not shrink and grow back.
+    @State private var ending: Task<Void, Never>?
 
     init(
         model: ConversationStore, subject: ConversationSubject, state: ComposerState,
@@ -722,23 +732,61 @@ private struct ConversationComposerStanding: View {
                 model: model, state: drawn, agent: subject.name,
                 showing: $showing, actions: actions)
         }
-        .onChange(of: state) { before, now in
-            guard before.busy != now.busy else {
+        .onChange(of: state) { _, now in
+            let had = shown.line != nil
+            let has = now.line != nil
+            if has {
+                ending?.cancel()
+                ending = nil
+                if had {
+                    shown = now
+                } else {
+                    lineSince = .now
+                    settle(now)
+                }
+                return
+            }
+            guard had else {
                 shown = now
                 return
             }
-            let curve = photographed || reduceMotion ? nil : Motion.standard
-            follow.reserving(on: curve)
-            withAnimation(curve) { shown = now }
+            guard !photographed else {
+                settle(now)
+                return
+            }
+            // Already on its way out: the removal that is waiting settles on
+            // the latest state, which the drawn state reads anyway.
+            guard ending == nil else { return }
+            let shownFor = lineSince.map { Date.now.timeIntervalSince($0) } ?? .infinity
+            let wait = max(Self.endingGrace, Self.leastShown - shownFor)
+            ending = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(wait))
+                guard !Task.isCancelled else { return }
+                ending = nil
+                settle(now)
+            }
         }
+        .onDisappear { ending?.cancel() }
     }
 
-    /// Whatever the gate says, except that whether a turn is running changes
-    /// only in the animated transaction above. Until that lands this keeps the
-    /// box the shape it was drawn at; the name of what is running and how long
-    /// it has run still change the moment they arrive.
+    /// How long the line waits after a turn ends before it leaves.
+    private static let endingGrace: TimeInterval = 0.5
+    /// The least time a line is on screen, however short the turn.
+    private static let leastShown: TimeInterval = 1.0
+
+    /// Moves the box to a new shape as one animated transaction.
+    private func settle(_ now: ComposerState) {
+        let curve = photographed || reduceMotion ? nil : Motion.standard
+        follow.reserving(on: curve)
+        withAnimation(curve) { shown = now }
+    }
+
+    /// Whatever the gate says, except that whether the working line is up
+    /// changes only in the animated transaction above. Until that lands this
+    /// keeps the box the shape it was drawn at; the name of what is running
+    /// and how long it has run still change the moment they arrive.
     private var drawn: ComposerState {
-        shown.busy == state.busy ? state : shown
+        (shown.line != nil) == (state.line != nil) ? state : shown
     }
 
     @ViewBuilder

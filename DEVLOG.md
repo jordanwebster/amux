@@ -1,3 +1,14 @@
+2026-09-17 — **The working line names the turn, and stays for all of it.**
+The composer's working line took its word from the transcript's last row, so
+an SDK status report drawn as a tool row read "requesting" and a streaming
+answer read "Writing". It now says only Thinking, Running or Working. It also
+appears the moment a message is sent rather than when the host acknowledges
+it, waits half a second after a turn ends before leaving (so a held message
+starting the next turn keeps it up) and stays at least a second however short
+the turn. The first row of a chat now rests a little further below the header.
+Conversation goldens were not regenerated for these two changes; the chat
+presentation work that follows regenerates them.
+
 2026-09-17 — **Conversation baselines regenerated.** The glass composer and
 strip, the back chevron in the pill, the transcript's top margin and the
 top alignment of short chats change every conversation golden; the drawer

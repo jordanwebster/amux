@@ -30,7 +30,7 @@ struct ComposerBox: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let activity = state.activity {
+            if let activity = state.line {
                 VStack(alignment: .leading, spacing: 0) {
                     WorkingLine(activity: activity)
                         .padding(.horizontal, 14)

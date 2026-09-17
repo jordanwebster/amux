@@ -118,6 +118,33 @@ final class ComposerTests: XCTestCase {
 
     /// The elapsed time is the fleet's arithmetic. A machine that has not said
     /// when the work started gets a name and no number rather than a zero.
+    /// The line describes the turn, not the row being drawn: a status report
+    /// that reached the feed as a tool row, or an answer still streaming, is
+    /// the agent working.
+    func testOnlyThinkingAndRunningAreNamedEverythingElseIsWorking() {
+        let tails: [TranscriptRow.Kind] = [
+            .tool(name: "requesting", detail: nil, meta: nil),
+            .prose(markdown: "Hey", open: true),
+            .wrote(path: "a.rs", meta: nil),
+            .edit(path: "a.rs", added: 1, removed: 0),
+        ]
+        for kind in tails {
+            let tail = TranscriptRow(id: "t", layer: .claudeSdk, kind: kind)
+            XCTAssertEqual(
+                ComposerState(gate: .claudeSdk(.working), tail: tail, elapsed: nil)?
+                    .activity?.name,
+                "Working", "\(kind)")
+        }
+    }
+
+    /// A message on its way already shows the line, so it does not appear a
+    /// beat after the tap.
+    func testASendOnItsWayShowsTheWorkingLineButNotTheStopButton() {
+        XCTAssertEqual(ComposerState.sending.line?.name, "Working")
+        XCTAssertFalse(ComposerState.sending.busy)
+        XCTAssertNil(ComposerState.writing.line)
+    }
+
     func testAnActivityWithNoStartingTimeCarriesNoNumber() {
         let state = ComposerState(gate: .claudePty(.working), tail: nil, elapsed: nil)
         XCTAssertEqual(state?.activity?.elapsed, nil)
