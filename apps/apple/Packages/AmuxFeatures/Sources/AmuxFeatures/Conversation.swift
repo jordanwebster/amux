@@ -381,10 +381,13 @@ public struct Conversation: View {
         // feed behind it. Extending the scroll view to the physical top lets
         // its soft edge effect fade continuously behind the status region
         // instead of starting at the chrome's lower boundary.
-        .ignoresSafeArea(edges: .top)
+        // Measured inside the modifier that extends it: outside, the frame
+        // answered is the one laid out before the extension, which begins
+        // exactly where the chrome ends.
         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: {
             feedTop = $0
         }
+        .ignoresSafeArea(edges: .top)
         .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
