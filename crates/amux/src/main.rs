@@ -1260,13 +1260,8 @@ fn init_tracing() -> WorkerGuard {
         }
     };
 
-    let default_level = if cfg!(debug_assertions) {
-        "amux=debug"
-    } else {
-        "amux=info"
-    };
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_log_filter(cfg!(debug_assertions))));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(writer).with_ansi(false))
@@ -1274,6 +1269,31 @@ fn init_tracing() -> WorkerGuard {
         .init();
 
     guard
+}
+
+/// The log filter used when `RUST_LOG` does not name one: this workspace's
+/// crates at debug in a debug build and at info otherwise, and every
+/// dependency at warn. Transport and TLS libraries log per packet and per
+/// handshake step at debug, which would bury the daemon's own account of what
+/// it did. A workspace crate that starts logging has to be added here.
+fn default_log_filter(debug_build: bool) -> String {
+    const WORKSPACE_TARGETS: [&str; 6] = [
+        "amux",
+        "node",
+        "agent_runtime",
+        "codex",
+        "tui",
+        "ui_runtime",
+    ];
+    let level = if debug_build { "debug" } else { "info" };
+    std::iter::once("warn".to_string())
+        .chain(
+            WORKSPACE_TARGETS
+                .iter()
+                .map(|target| format!("{target}={level}")),
+        )
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Show a blocking warning if the cloud server requires a newer version.
@@ -1326,6 +1346,65 @@ fn normalize_config_path(path: &std::path::Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_log_filter_keeps_the_connection_code_and_quiets_dependencies() {
+        #[derive(Clone, Default)]
+        struct Recorded(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Recorded {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                let metadata = event.metadata();
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} {}", metadata.level(), metadata.target()));
+            }
+        }
+
+        for (debug_build, expected) in [
+            (
+                true,
+                vec![
+                    "DEBUG node::services::reachability",
+                    "DEBUG amux::audit",
+                    "DEBUG agent_runtime::host",
+                    "INFO node::services::reachability",
+                    "WARN quinn::connection",
+                ],
+            ),
+            (
+                false,
+                vec![
+                    "INFO node::services::reachability",
+                    "WARN quinn::connection",
+                ],
+            ),
+        ] {
+            let recorded = Recorded::default();
+            let subscriber = tracing_subscriber::registry()
+                .with(recorded.clone())
+                .with(EnvFilter::new(default_log_filter(debug_build)));
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::debug!(target: "node::services::reachability", "dial");
+                tracing::debug!(target: "amux::audit", "link");
+                tracing::debug!(target: "agent_runtime::host", "spawn");
+                tracing::trace!(target: "node::services::reachability", "packet");
+                tracing::info!(target: "node::services::reachability", "established");
+                tracing::debug!(target: "quinn::connection", "packet");
+                tracing::info!(target: "rustls::client", "handshake");
+                tracing::warn!(target: "quinn::connection", "lost");
+            });
+            assert_eq!(
+                *recorded.0.lock().unwrap(),
+                expected,
+                "debug_build={debug_build}"
+            );
+        }
+    }
 
     #[test]
     fn profile_selector_is_global_for_ui_relay_and_administration() {

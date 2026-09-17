@@ -58,20 +58,23 @@ def main() -> None:
             f"{linked} is missing. The debug configuration of the app links this "
             "exact path (apps/apple/project.yml), so a change in how xcodebuild names "
             "the slice has to fail here rather than at link time.")
-    # The Swift package names the shipping framework as a binary target, so
-    # the project cannot resolve until something is there. A development tree
-    # that has never packaged for shipping gets this same slice as a stand-in;
-    # the debug configurations force-load the driving library first, so which
-    # archive sits here does not change what they link. `ios package` replaces
-    # it with the real one, and the shipping recipes depend on that.
-    # Whether it is there at all, and whether what is there holds a library:
-    # a restored build cache can leave the second false while the first is
-    # true, and a shape with no archive in it resolves no better than nothing.
+    # The Swift packages name the shipping framework as a binary target, so
+    # their unit tests link whatever sits there, not the driving library the
+    # app force-loads. A shipping build from before a Rust change would have
+    # them test old Rust, so this slice replaces whatever sits there unless it
+    # already is this slice. `ios package` records a digest over its own
+    # slices in the same stamp, which never matches one development slice, so
+    # a real shipping build is replaced by the next rebuild here, and
+    # `ios package` rebuilds it over this stand-in before any shipping recipe
+    # uses it. A restored build cache that left the framework's shape without
+    # its archives is replaced the same way.
     if not packaged(shipping):
-        bridge.package(shipping, [staging / bridge.SIMULATOR_TRIPLE])
         (bridge.OUTPUT / "framework.sha256").unlink(missing_ok=True)
-        print(f"{shipping.name} held no library; staged the development slice as a stand-in "
-              "until `just ios package` builds the shipping library", flush=True)
+    if bridge.package_if_changed(shipping, [staging / bridge.SIMULATOR_TRIPLE],
+                                 bridge.OUTPUT / "framework.sha256"):
+        print(f"{shipping.name} now holds this development slice, so the package unit "
+              "tests link the current Rust; `just ios package` builds the shipping library",
+              flush=True)
 
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get("dev", {})
     text = bridge.write_size_report(

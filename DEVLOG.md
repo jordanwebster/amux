@@ -1,3 +1,21 @@
+2026-09-17 — **The daemon logs its own crates at debug, and `ios unit` tests
+current Rust.** The server's default log filter named only the `amux` crate, so
+nothing below warn from `node`, where connections are made, reached the log
+unless `RUST_LOG` asked for it. The default now keeps every workspace crate that
+logs at debug in a debug build and at info in a release build, and holds
+dependencies at warn, since the QUIC and TLS libraries log individual packets and
+handshake steps at debug. A unit test pins what reaches the log in each build.
+
+The Swift packages' unit tests link the shipping framework, not the driving
+library the app loads. `ios rust` put its development slice there only when
+nothing was there, so after one `ios package` the package tests kept linking
+that build's Rust however much Rust changed afterwards. `ios rust` now replaces
+the shipping framework with the slice it just built unless it already holds that
+slice. `ios package` records a digest of its own slices in the same stamp, so it
+rebuilds the real framework over the stand-in before any shipping recipe uses
+it. A script test packages a stale shipping build, rebuilds, and requires it
+replaced, then requires a rebuild that produced the same slice to leave it alone.
+
 2026-09-17 — **The working line names the turn, and stays for all of it.**
 The composer's working line took its word from the transcript's last row, so
 an SDK status report drawn as a tool row read "requesting" and a streaming

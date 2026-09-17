@@ -114,7 +114,6 @@ class DevelopmentBuildTests(unittest.TestCase):
                     mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
                     mock.patch.object(bridge, "source_fingerprint", return_value="same"), \
                     mock.patch.object(bridge, "cargo_build", return_value=built) as cargo, \
-                    mock.patch.object(bridge, "package_if_changed"), \
                     mock.patch.object(bridge, "package") as package, \
                     mock.patch.object(ios_rust.Path, "read_text", return_value="[profile.dev]\ndebug = 1\n"), \
                     mock.patch("builtins.print"):
@@ -151,6 +150,48 @@ class DevelopmentBuildTests(unittest.TestCase):
             self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
             self.assertEqual(stamp.read_text().strip(), "v1")
             self.assertIn("dev, debug tools", (output / "size.txt").read_text())
+
+    def test_a_shipping_build_from_older_rust_is_replaced_by_the_new_slice(self):
+        """The Swift packages' unit tests link the shipping framework. One
+        packaged before a Rust change must not survive the rebuild, or those
+        tests run against the old Rust and pass or fail for the wrong reason."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ios"
+            for name in (bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK):
+                (output / name / bridge.DRIVING_SLICE).mkdir(parents=True)
+                (output / name / bridge.DRIVING_SLICE / bridge.LIBRARY).write_bytes(b"old")
+            (output / "framework.sha256").write_text("digest of the shipping slices\n")
+            stamp = output / "rust-stamp.json"
+            stamp.write_text("before the change\n")
+            built = bridge.Slice("t", output / "lib.a", output / "h.h")
+            built.library.write_bytes(b"new")
+            built.header.write_text("h")
+            packaged = []
+            fingerprint = mock.Mock(return_value="after the change")
+            real_read_text = Path.read_text
+
+            def read_text(path, *args, **kwargs):
+                if path == Path("Cargo.toml"):
+                    return "[profile.dev]\ndebug = 1\n"
+                return real_read_text(path, *args, **kwargs)
+
+            with mock.patch.object(bridge, "OUTPUT", output), \
+                    mock.patch.object(ios_rust, "STAMP", stamp), \
+                    mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
+                    mock.patch.object(bridge, "source_fingerprint", fingerprint), \
+                    mock.patch.object(bridge, "cargo_build", return_value=built), \
+                    mock.patch.object(bridge, "package",
+                                      side_effect=lambda framework, _: packaged.append(framework.name)), \
+                    mock.patch.object(ios_rust.Path, "read_text", read_text), \
+                    mock.patch("builtins.print"):
+                ios_rust.main()
+                self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
+
+                # A Rust input that moved without changing what cargo built
+                # leaves both frameworks alone, so Xcode rebuilds nothing.
+                fingerprint.return_value = "touched, not changed"
+                ios_rust.main()
+                self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
 
 
 if __name__ == "__main__":
