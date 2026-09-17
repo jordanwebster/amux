@@ -73,10 +73,10 @@ pub struct CloudRelay {
 /// belong to [`CloudRelay`], which supplies this relay's address to devices.
 pub(crate) struct Relay {
     pub(crate) addr: SocketAddr,
-    /// Held for as long as the relay exists, so its QUIC port cannot be taken
-    /// by anything else while the relay is offline. Each endpoint it serves on
-    /// is built from a duplicate of this socket.
-    quic_socket: std::net::UdpSocket,
+    /// The UDP socket taken alongside the TCP listener, handed to the first
+    /// endpoint served on it. Holding it until then is what keeps the port
+    /// this relay proved usable from being taken in between.
+    quic_socket: Mutex<Option<std::net::UdpSocket>>,
     pub(crate) host_id: HostId,
     tokens: TokenRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
@@ -163,7 +163,7 @@ impl CloudRelay {
         let failures = Arc::default();
         let relay = Relay {
             addr,
-            quic_socket,
+            quic_socket: Mutex::new(Some(quic_socket)),
             host_id: Uuid::new_v4(),
             tokens: tokens.clone(),
             failures: Arc::clone(&failures),
@@ -325,15 +325,19 @@ impl Relay {
             connections.clone(),
             self.latency_millis.clone(),
         ));
-        let quic_endpoint = quinn::Endpoint::new(
-            quinn::EndpointConfig::default(),
-            Some(self.quic_server_config.clone()),
-            self.quic_socket
-                .try_clone()
-                .expect("duplicate the relay's QUIC socket"),
-            Arc::new(quinn::TokioRuntime),
-        )
-        .expect("serve QUIC on the relay's socket");
+        // A relay that went offline released its port along with its endpoint,
+        // exactly as a relay that is not running should: a QUIC dial to it is
+        // refused rather than left unanswered.
+        let quic_endpoint = match self.quic_socket.lock().await.take() {
+            Some(socket) => quinn::Endpoint::new(
+                quinn::EndpointConfig::default(),
+                Some(self.quic_server_config.clone()),
+                socket,
+                Arc::new(quinn::TokioRuntime),
+            )
+            .expect("serve QUIC on the relay's socket"),
+            None => bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await,
+        };
         let quic_task =
             service.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
         *self.server.lock().await = Some(RunningCloud {
@@ -490,6 +494,24 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
             Err(error) => {
                 if tokio::time::Instant::now() >= deadline {
                     panic!("failed to rebind {addr}: {error}");
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+        }
+    }
+}
+
+async fn bind_quic_addr_with_retries(
+    config: quinn::ServerConfig,
+    addr: SocketAddr,
+) -> quinn::Endpoint {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match quinn::Endpoint::server(config.clone(), addr) {
+            Ok(endpoint) => return endpoint,
+            Err(error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("failed to rebind QUIC {addr}: {error}");
                 }
                 tokio::time::sleep(POLL_INTERVAL).await;
             }

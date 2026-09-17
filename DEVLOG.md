@@ -46,8 +46,9 @@ on that same number, assuming a free TCP port means a free UDP one. It does
 not: another test's ephemeral socket can already hold it, and Windows reserves
 whole UDP ranges that no process may bind, which is what "socket rebind os
 error 10013" was. The relay now takes both carriers together and abandons a
-number that fails on either, and it keeps its UDP socket for as long as it
-lives, so going offline and back online cannot lose the port to anyone else.
+number that fails on either, holding the UDP socket until the endpoint that
+serves on it is built. A relay taken offline still gives its port up, so a QUIC
+dial to a relay that is not running is refused rather than left unanswered.
 2026-09-17 — **A reconnect is no longer reported as an authentication
 failure.** Every phone reconnect wrote `auth.mtls_handshake_failure` to the
 daemon's audit log, the entry meant for a peer that could not prove who it is.
