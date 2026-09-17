@@ -7,7 +7,7 @@ publish = false
 [features]
 default = []
 bundled = ["store/bundled"]
-perf = ["dep:crossterm", "dep:prost", "dep:ratatui", "dep:rusqlite", "dep:tui", "tui/fixtures"]
+perf = ["dep:crossterm", "dep:portable-pty", "dep:prost", "dep:ratatui", "dep:rusqlite", "dep:tui", "tui/fixtures"]
 
 [[bin]]
 name = "testnet"
@@ -36,6 +36,7 @@ hyper-util = { workspace = true }
 node = { workspace = true }
 model = { workspace = true }
 prost = { workspace = true, optional = true }
+portable-pty = { workspace = true, optional = true }
 pty-host = { workspace = true }
 replay-support = { path = "../replay-support" }
 reqwest = { workspace = true }

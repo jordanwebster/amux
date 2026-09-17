@@ -4275,6 +4275,7 @@ dependencies = [
  "model",
  "nix 0.31.3",
  "node",
+ "portable-pty",
  "prost",
  "pty-host",
  "ratatui",

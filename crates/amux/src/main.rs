@@ -559,8 +559,7 @@ async fn main() -> Result<ExitCode> {
     {
         profiles::load(cli.config.as_deref().unwrap())?
     } else if matches!(command, Commands::Ui | Commands::Store { .. })
-        && cfg!(debug_assertions)
-        && std::env::var_os("AMUX_TUI_DIRECT_PROFILE").is_some()
+        && ui::direct_profile_enabled()
     {
         let path = cli
             .config

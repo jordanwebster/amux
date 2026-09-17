@@ -1,14 +1,8 @@
 use anyhow::{Result, bail};
-use testnet::perf::{Baselines, Machine, Report, cold_child, run_fast, run_soak, soak_child};
+use testnet::perf::{Baselines, Machine, Report, run_fast, run_soak, soak_child};
 
 fn main() -> Result<()> {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().map(String::as_str) == Some("--cold-child") {
-        if arguments.len() != 3 {
-            bail!("--cold-child requires STORE_PATH AGENT_COUNT");
-        }
-        return cold_child(std::path::Path::new(&arguments[1]), arguments[2].parse()?);
-    }
     if arguments.first().map(String::as_str) == Some("--soak-child") {
         if arguments.len() != 3 {
             bail!("--soak-child requires KIND CONTROL_DIRECTORY");

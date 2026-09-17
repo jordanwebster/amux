@@ -1,6 +1,7 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -14,23 +15,22 @@ use model::{
     Agent, AgentIdentifier, AgentKind, ClaudeDriver, HostEntry, HostTrustStatus, ReplayOutcome,
     ReplayQuery, SessionArgs, SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest,
 };
+use node::{ColorSetting, Config, ThemeSetting, UiSettings};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use store::Store;
 use tempfile::TempDir;
 use tui::{ChatView, FrameContext, Theme, ViewState, render};
 use ui_runtime::{Runtime, RuntimeOptions};
-use ui_state::store::{
-    ChatState, ProfileGeneration, StoreMsg, StoreOp, WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES,
-};
-use ui_state::{Effect, Model, Msg, update};
+use ui_state::Model;
+use ui_state::store::{ChatState, WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES};
 use uuid::Uuid;
 
 use super::{Metric, MetricRun, Sample, Statistic, Unit, Workload};
 use crate::TestNet;
 
 const SEED: u64 = 0xA6_2026_0917;
-const PROFILE: ProfileGeneration = ProfileGeneration(0);
 const VIEWPORT: (u16, u16) = (120, 40);
 
 const COLD_WORKLOAD: Workload = Workload {
@@ -94,7 +94,9 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
     let mut runs = Vec::new();
     for agents in [40_usize, 200] {
         let temp = TempDir::new().context("cold-start store directory")?;
-        let path = temp.path().join("store.sqlite");
+        let data_dir = temp.path().join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let path = data_dir.join("store.sqlite");
         let store = Store::open(&path).await?;
         seed_fleet(&store, agents).await?;
         seed_chat(&store, agent_id(0), 5_000, 2_100).await?;
@@ -104,14 +106,38 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
             bail!("cold-start fixture is only {database_bytes} bytes; expected at least 10 MiB");
         }
 
-        let executable = std::env::current_exe().context("resolve performance executable")?;
-        run_cold_child(&executable, &path, agents)?;
+        node::ensure_device_files_in(&data_dir)?;
+        let config_path = temp.path().join("config.yaml");
+        let config = Config {
+            host_name: "perf-mac".to_owned(),
+            socket_path: temp.path().join("daemon-unreachable.sock"),
+            state_path: temp.path().join("state.yaml"),
+            data_dir,
+            prevent_idle_sleep: Some(false),
+            ui: UiSettings {
+                theme: ThemeSetting::Dark,
+                color: ColorSetting::Ansi,
+                ..UiSettings::default()
+            },
+            ..Config::default()
+        };
+        std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+
+        let executable = std::env::current_exe()
+            .context("resolve performance executable")?
+            .parent()
+            .context("performance executable has no parent")?
+            .join(if cfg!(windows) { "amux.exe" } else { "amux" });
+        ensure!(
+            executable.is_file(),
+            "release amux binary is missing at {}; run through `just perf`",
+            executable.display()
+        );
+        run_release_tui(&executable, &config_path)?;
         let started_at = Utc::now();
         let mut samples = Vec::with_capacity(7);
         for _ in 0..7 {
-            let began = Instant::now();
-            run_cold_child(&executable, &path, agents)?;
-            samples.push(began.elapsed().as_secs_f64() * 1_000.0);
+            samples.push(run_release_tui(&executable, &config_path)?);
         }
         let median_name = if agents == 40 {
             "TUI cold start (40 agents) median"
@@ -145,17 +171,81 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
     Ok(runs)
 }
 
-fn run_cold_child(executable: &Path, path: &Path, agents: usize) -> Result<()> {
-    let status = std::process::Command::new(executable)
-        .arg("--cold-child")
-        .arg(path)
-        .arg(agents.to_string())
-        .status()
-        .context("run cold-start child")?;
-    if !status.success() {
-        bail!("cold-start child exited with {status}");
-    }
-    Ok(())
+fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: VIEWPORT.1,
+            cols: VIEWPORT.0,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("open cold-start pseudo-terminal")?;
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .context("clone cold-start pseudo-terminal reader")?;
+    let (sender, receiver) = mpsc::channel();
+    let reader_thread = std::thread::spawn(move || {
+        let mut buffer = [0_u8; 4_096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(length) if sender.send(buffer[..length].to_vec()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+
+    let mut command = CommandBuilder::new(executable);
+    command.arg("--config");
+    command.arg(config_path);
+    command.arg("ui");
+    command.env("AMUX_TUI_DIRECT_PROFILE", "1");
+    command.env("TERM", "xterm-256color");
+    command.env_remove("AMUX_CONFIG");
+
+    let began = Instant::now();
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .context("exec release amux for cold-start measurement")?;
+    drop(pair.slave);
+
+    let deadline = began + Duration::from_secs(5);
+    let mut output = Vec::new();
+    let observed = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break Err(anyhow::anyhow!(
+                "release amux did not paint a seeded fleet row within five seconds; output: {}",
+                String::from_utf8_lossy(&output)
+            ));
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok(bytes) => {
+                output.extend_from_slice(&bytes);
+                if output
+                    .windows(b"perf-agent-".len())
+                    .any(|window| window == b"perf-agent-")
+                {
+                    break Ok(began.elapsed());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break Err(anyhow::anyhow!(
+                    "release amux exited before painting a seeded fleet row; output: {}",
+                    String::from_utf8_lossy(&output)
+                ));
+            }
+        }
+    };
+
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(pair.master);
+    let _ = reader_thread.join();
+    Ok(observed?.as_secs_f64() * 1_000.0)
 }
 
 async fn reconnect_delta() -> Result<Vec<MetricRun>> {
@@ -353,57 +443,6 @@ fn ensure_retains_5k(facts: &model::ReplayFacts) -> Result<()> {
         "daemon ring retains {retained} rows, expected at least 5,000"
     );
     Ok(())
-}
-
-pub fn cold_child(path: &Path, expected_agents: usize) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("build cold-start child runtime")?;
-    runtime.block_on(async {
-        let store = Store::open(path).await?;
-        let generations = generations(&store);
-        let fleet = store.fleet(generations).await?;
-        if fleet.agents.len() != expected_agents {
-            bail!(
-                "cold-start fleet has {} agents, expected {expected_agents}",
-                fleet.agents.len()
-            );
-        }
-        let mut model = Model::default();
-        let effects = update(
-            &mut model,
-            Msg::StoreStartup {
-                profile: PROFILE,
-                generations,
-            },
-        );
-        let fleet_op = effects
-            .iter()
-            .find_map(|effect| match effect {
-                Effect::Store(StoreOp::FleetLoad { op, .. }) => Some(*op),
-                _ => None,
-            })
-            .context("store startup emitted no fleet load")?;
-        update(
-            &mut model,
-            Msg::Store(StoreMsg::FleetLoaded {
-                profile: PROFILE,
-                op: fleet_op,
-                fleet,
-            }),
-        );
-        let view = ViewState::default();
-        let context = FrameContext {
-            viewport: VIEWPORT,
-            theme: Theme::default(),
-            now: Utc::now(),
-        };
-        let mut terminal = Terminal::new(TestBackend::new(VIEWPORT.0, VIEWPORT.1))?;
-        terminal.draw(|frame| render(&model, &view, &context, frame))?;
-        store.close().await;
-        Ok(())
-    })
 }
 
 async fn attach_during_flood() -> Result<Vec<MetricRun>> {

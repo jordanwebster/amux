@@ -47,9 +47,8 @@ async fn run_inner(
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
-    let direct_debug_profile =
-        cfg!(debug_assertions) && std::env::var_os("AMUX_TUI_DIRECT_PROFILE").is_some();
-    if !direct_debug_profile {
+    let direct_profile = direct_profile_enabled();
+    if !direct_profile {
         crate::profiles::remember_selection(&config)?;
     }
 
@@ -81,9 +80,9 @@ async fn run_inner(
             let config = config.clone();
             Box::pin(async move {
                 // Production goes through the installation front door and
-                // starts the daemon when absent. The debug test route opens
-                // the fixture's already-running profile socket directly.
-                let result = if direct_debug_profile {
+                // starts the daemon when absent. Test and performance builds
+                // can instead open an explicitly selected fixture profile.
+                let result = if direct_profile {
                     open_daemon(&config).await.map_err(anyhow::Error::new)
                 } else {
                     get_client(&config).await
@@ -120,7 +119,7 @@ async fn run_inner(
     // profile's own configuration: its reports, its artifact cache, its
     // device identity. Reusing this profile's would file a report about the
     // account the person had just left.
-    let profiles = if direct_debug_profile {
+    let profiles = if direct_profile {
         None
     } else {
         let installation = crate::front_door::configuration(config.path.as_deref())?;
@@ -177,6 +176,11 @@ async fn run_inner(
         async move { crate::session_client::attach_for_ui(&config, agent).await }
     })
     .await
+}
+
+pub(crate) fn direct_profile_enabled() -> bool {
+    (cfg!(debug_assertions) || cfg!(feature = "perf"))
+        && std::env::var_os("AMUX_TUI_DIRECT_PROFILE").is_some()
 }
 
 fn default_agent_type(config: &Config) -> node::AgentType {
