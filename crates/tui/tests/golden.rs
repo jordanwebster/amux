@@ -1526,7 +1526,11 @@ async fn sqlite_chat_pages_past_the_loaded_window_and_returns_to_the_tip() {
     let mut view = chat_view(runtime.model());
     assert!(render_frame_at(runtime.model(), &view, 120, 40).contains("stored row 2400"));
 
-    for _ in 0..5 {
+    while runtime
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.first_page.is_some())
+    {
         let action = tui::chat::handle_chat_key(
             view.chat.as_mut().expect("chat open"),
             runtime.model(),

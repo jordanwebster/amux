@@ -5,8 +5,7 @@
 //! first turn, so an empty feed is an empty chat, not a loading one.
 //! Retention is bounded and honest — a window that does not start at the
 //! beginning of history says so, evicting content never evicts the
-//! pairing index, and a re-replay after source-shrink recovery folds
-//! idempotently by row uuid.
+//! pairing index.
 
 use serde_json::json;
 use ui_state::claude::{ChatPhase, FeedEntryKind, PhaseTag, ToolOutcome};
@@ -127,59 +126,6 @@ fn a_truncated_window_states_the_boundary() {
 /// pending, because the resolving transcript rows dedupe away by uuid.
 /// (Both folds observe the same arrival time: re-delivery advances the
 /// liveness clock by design — arrival is knowledge, not content.)
-#[test]
-fn re_replay_is_idempotent_by_row_uuid() {
-    for fixture in ["tools", "permission"] {
-        let once = fold(chat_feed("fix-auth-bug", fixture));
-        let twice = fold(seq([
-            chat_feed("fix-auth-bug", fixture),
-            vec![batch("fix-auth-bug", 10, chat_rows(fixture))],
-        ]));
-        assert_eq!(
-            claude_layer(&once, "fix-auth-bug"),
-            claude_layer(&twice, "fix-auth-bug"),
-            "{fixture}: a repeated prefix is re-replay, not new content"
-        );
-        assert_eq!(
-            claude_layer(&twice, "fix-auth-bug").ask_count(),
-            0,
-            "{fixture}: re-replay resurrects no resolved ask"
-        );
-    }
-}
-
-/// B10's idempotency covers rows WITHOUT uuids too: an unknown retained
-/// shape (the vanished `progress`/`summary` generations) dedupes by
-/// content hash within the same bounded window, so a source-shrink
-/// re-replay cannot append duplicate unrecognized entries and evict real
-/// content. Distinct unknown rows still all fold.
-#[test]
-fn re_replay_deduplicates_unknown_rows_without_uuids() {
-    let unknown_a = json!({"type": "progress", "data": {"step": 1}});
-    let unknown_b = json!({"type": "progress", "data": {"step": 2}});
-    let model = fold(seq([
-        chat_base("fix-auth-bug"),
-        vec![
-            batch(
-                "fix-auth-bug",
-                10,
-                vec![unknown_a.clone(), unknown_b.clone()],
-            ),
-            // The re-replayed prefix delivers the same rows again.
-            batch("fix-auth-bug", 20, vec![unknown_a, unknown_b]),
-        ],
-    ]));
-    let layer = claude_layer(&model, "fix-auth-bug");
-    assert_eq!(
-        layer
-            .entries()
-            .filter(|entry| matches!(entry.kind, FeedEntryKind::Unrecognized(_)))
-            .count(),
-        2,
-        "each distinct unknown row folds exactly once"
-    );
-}
-
 /// A row from a different `sessionId` IS the relink (`/clear`, resume,
 /// fork): the buffer was cleared and a new file replays. The layer opens a
 /// fresh epoch — feed, session facts, and the ready marker all belong to

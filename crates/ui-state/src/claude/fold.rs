@@ -17,16 +17,15 @@ use fold::claude_pty::{
     interruption_entry, measured_turn, prompt_source, task_notification_entry, thinking_entry,
 };
 use serde_json::Value;
-use uuid::Uuid;
 
 use super::facts::{self, AskDocument, InboundMessage};
 use super::{
     ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, Ask, AskKind, AskState, ClaudeLayer,
     FEED_RETAINED, FeedEntry, FeedEntryKind, InterruptionKind, MESSAGES_RETAINED, MessageEntry,
     MessageFinality, MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED,
-    PromptEntry, PromptSource, QuestionAnswer, SEEN_ROWS_RETAINED, SlotState, SuccessFacts,
-    SuggestionDestination, SuggestionFact, SuggestionKind, ToolEntry, ToolInvocation, ToolOutcome,
-    TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry, runs,
+    PromptEntry, PromptSource, QuestionAnswer, SlotState, SuccessFacts, SuggestionDestination,
+    SuggestionFact, SuggestionKind, ToolEntry, ToolInvocation, ToolOutcome, TurnCloseSource,
+    TurnDuration, TurnEntry, UnrecognizedEntry, runs,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -73,8 +72,7 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     // clock (a crashed claude delivers nothing).
     layer.last_arrival = Some(arrived);
     // The seq-guard cursor tracks the SOURCE: every delivered row advances
-    // it, deduped or not (the guard asks "has the client seen the newest
-    // row", not "did the fold keep it").
+    // it whether or not its presentation entry remains in memory.
     layer.cursor = layer.cursor.max(seq);
 
     let kind = str_of(row, "type");
@@ -95,18 +93,6 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
             return;
         }
         RowKind::HookStop | RowKind::HookPermissionRequest => {
-            // Hook rows carry no uuid, historical streams carry duplicate
-            // deliveries (§18b — two hook registrations each delivered
-            // every event), and a shrink re-replay repeats them all: the
-            // bounded content-hash dedupe makes hook folds idempotent per
-            // window, so a re-replay can never resurrect a resolved ask as
-            // pending. Trade-off (bounded, recorded): a byte-identical
-            // genuine re-request within the dedupe window folds once —
-            // payloads carry `prompt_id` and `tool_input`, so distinct
-            // events collide only when truly identical.
-            if !remember(layer, content_key(row)) {
-                return;
-            }
             // The effective permission mode rides hook payloads — the D4
             // live source: a mid-session Shift+Tab cycle emits NO
             // `permission-mode` row (§18d), so the row alone goes stale.
@@ -173,14 +159,6 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     // discriminator (B10 — a fresh session has no transcript file yet).
     layer.transcript_rows_seen = true;
 
-    // Row-uuid dedupe: a source-shrink re-replay repeats the file prefix;
-    // the fold must be idempotent by row uuid (B10).
-    if let Some(uuid) = str_of(row, "uuid").and_then(|text| Uuid::parse_str(text).ok())
-        && !remember(layer, uuid)
-    {
-        return;
-    }
-
     match row_kind {
         RowKind::User => fold_user(layer, seq, arrived, row),
         RowKind::Assistant => fold_assistant(layer, seq, row),
@@ -204,13 +182,6 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
         // in V1 (queueing is a reserved door).
         RowKind::LastPrompt | RowKind::QueueOperation => {}
         RowKind::Unknown => {
-            // Unknown shapes may carry no uuid at all (the vanished
-            // `progress`/`summary` generations) — B10's re-replay
-            // idempotency still applies to the entries they produce, so
-            // they dedupe by content hash within the same bounded window.
-            if str_of(row, "uuid").is_none() && !remember(layer, content_key(row)) {
-                return;
-            }
             push(
                 layer,
                 seq,
@@ -236,22 +207,6 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     }
 }
 
-/// Record one row identity in the bounded dedupe window; `false` when the
-/// row was already folded this window (a re-replay).
-fn remember(layer: &mut ClaudeLayer, key: Uuid) -> bool {
-    if layer.seen_set.contains(&key) {
-        return false;
-    }
-    layer.seen_set.insert(key);
-    layer.seen_rows.push_back(key);
-    if layer.seen_rows.len() > SEEN_ROWS_RETAINED
-        && let Some(evicted) = layer.seen_rows.pop_front()
-    {
-        layer.seen_set.remove(&evicted);
-    }
-    true
-}
-
 /// FNV-1a over concatenated byte parts: the one content hash every no-uuid
 /// identity in this fold rides. Explicit (not std's hasher) because the
 /// values land in serialized model state and must be stable across builds.
@@ -262,14 +217,6 @@ fn fnv1a(parts: &[&[u8]]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
-}
-
-/// Deterministic identity for a row without a uuid: FNV-1a over its
-/// canonical JSON (serde_json maps are key-sorted), domain-tagged so it
-/// cannot collide with a genuine row uuid's random bits.
-fn content_key(row: &Value) -> Uuid {
-    let hash = fnv1a(&[row.to_string().as_bytes()]);
-    Uuid::from_u128((0xc0deu128 << 64) | u128::from(hash))
 }
 
 /// Every uuid row advances the thinking-duration chain (§15: previous uuid
@@ -782,7 +729,9 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
                 .open_tools
                 .remove(index)
                 .expect("position came from the same deque");
-            if let Some(FeedEntryKind::Tool(tool)) = entry_kind_mut(layer, open.entry) {
+            if let Some(FeedEntryKind::Tool(tool)) =
+                open.entry.and_then(|entry| entry_kind_mut(layer, entry))
+            {
                 tool.outcome = outcome;
                 tool.message_final = true;
             }
@@ -906,18 +855,14 @@ fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
         .and_then(|sidecar| str_of(sidecar, "plan"))
         .map(str::to_string)
         .or_else(|| {
-            // Fall back to the tool_use input payload retained on the entry.
-            let tool = layer
+            // Store-backed layers discard presentation entries, so the open
+            // obligation keeps only the plan text needed after approval.
+            layer
                 .open_tools
                 .iter()
-                .find(|tool| tool.tool_use_id == tool_use_id)?;
-            match entry_kind(layer, tool.entry) {
-                Some(FeedEntryKind::Tool(ToolEntry {
-                    invocation: ToolInvocation::Plan { plan, .. },
-                    ..
-                })) => plan.clone(),
-                _ => None,
-            }
+                .find(|tool| tool.tool_use_id == tool_use_id)?
+                .plan
+                .clone()
         });
     let Some(plan) = plan else { return };
     layer.plans.push(AcceptedPlan {
@@ -1101,6 +1046,10 @@ fn fold_tool_use(
         return;
     }
     let invocation = facts::invocation(&name, input);
+    let plan = match &invocation {
+        ToolInvocation::Plan { plan, .. } => plan.clone(),
+        _ => None,
+    };
 
     // Grouping fact (B4): strictly consecutive read/search one-liners.
     let group_with_previous = runs::groupable(&invocation)
@@ -1128,8 +1077,9 @@ fn fold_tool_use(
     }
     layer.open_tools.push_back(OpenTool {
         tool_use_id: tool_use_id.clone(),
-        entry,
+        entry: Some(entry),
         message_id: Some(message_id.to_string()),
+        plan,
     });
     if layer.open_tools.len() > OPEN_TOOLS_RETAINED {
         layer.open_tools.pop_front();
@@ -1219,7 +1169,7 @@ fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: Stri
         .open_tools
         .iter()
         .filter(|tool| tool.message_id.as_deref() == Some(message_id))
-        .map(|tool| tool.entry)
+        .filter_map(|tool| tool.entry)
         .collect();
     for entry in tool_entries {
         if let Some(FeedEntryKind::Tool(tool)) = entry_kind_mut(layer, entry) {
@@ -1330,10 +1280,4 @@ fn entry_kind_mut(layer: &mut ClaudeLayer, id: u64) -> Option<&mut FeedEntryKind
     let front = layer.entries.front()?.id;
     let index = id.checked_sub(front)? as usize;
     layer.entries.get_mut(index).map(|entry| &mut entry.kind)
-}
-
-fn entry_kind(layer: &ClaudeLayer, id: u64) -> Option<&FeedEntryKind> {
-    let front = layer.entries.front()?.id;
-    let index = id.checked_sub(front)? as usize;
-    layer.entries.get(index).map(|entry| &entry.kind)
 }

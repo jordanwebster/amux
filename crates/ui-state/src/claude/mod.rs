@@ -24,7 +24,7 @@ pub mod runs;
 pub mod todos;
 pub(crate) mod update;
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
 pub use ::fold::claude_pty::{
     AgentMessageEntry, ApiErrorEntry, CompactSummaryEntry, CompactionEntry, InterruptionEntry,
@@ -46,6 +46,7 @@ pub use facts::{
     SuggestionDestination, SuggestionFact, SuggestionKind, ToolInvocation,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use uuid::Uuid;
 
 use crate::attachments::{AttachmentIndex, Segment};
@@ -90,12 +91,6 @@ pub enum ClaudeCommand {
 /// never retains more than one window of history. Eviction is from the
 /// front, counted, and honest (`history_truncated`).
 pub(crate) const FEED_RETAINED: usize = 1000;
-
-/// Row-uuid dedupe memory (B10): a source-shrink re-replay must fold
-/// idempotently. Sized with headroom over the feed window; a re-replay
-/// reaching past this memory would re-append only rows already evicted from
-/// the feed — degradation is bounded and recorded, never unbounded growth.
-pub(crate) const SEEN_ROWS_RETAINED: usize = 4096;
 
 /// Message upsert index bound (B2). Main-session files burst-write whole
 /// messages, so only recent message ids ever receive late rows.
@@ -510,11 +505,6 @@ pub enum ClaudeViolation {
         entry: u64,
         next: u64,
     },
-    DedupeIncoherent {
-        agent: model::AgentId,
-        rows: usize,
-        set: usize,
-    },
     AskOrder {
         agent: model::AgentId,
     },
@@ -539,7 +529,6 @@ impl ClaudeViolation {
             Self::RetentionOverflow { .. } => "claude-retention-overflow",
             Self::FeedOrder { .. } => "claude-feed-order",
             Self::IndexAhead { .. } => "claude-index-ahead",
-            Self::DedupeIncoherent { .. } => "claude-dedupe-incoherent",
             Self::AskOrder { .. } => "claude-ask-order",
             Self::EchoDuplicate { .. } => "claude-echo-duplicate",
             Self::ProjectionDisagreement { .. } => "claude-projection-disagreement",
@@ -570,10 +559,6 @@ impl std::fmt::Display for ClaudeViolation {
             } => write!(
                 f,
                 "agent {agent} claude {index} index references entry {entry} past next id {next}"
-            ),
-            Self::DedupeIncoherent { agent, rows, set } => write!(
-                f,
-                "agent {agent} claude dedupe queue ({rows}) and set ({set}) disagree"
             ),
             Self::AskOrder { agent } => {
                 write!(f, "agent {agent} claude ask id arithmetic is incoherent")
@@ -679,8 +664,9 @@ enum SlotState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct OpenTool {
     tool_use_id: String,
-    entry: u64,
+    entry: Option<u64>,
     message_id: Option<String>,
+    plan: Option<String>,
 }
 
 /// The Claude layer state for one agent. Everything a chat renderer may
@@ -716,10 +702,6 @@ pub struct ClaudeLayer {
     messages: VecDeque<MessageSlot>,
     open_tools: VecDeque<OpenTool>,
     plans: Vec<AcceptedPlan>,
-    /// Row-uuid dedupe memory, FIFO-bounded; `seen_set` mirrors it for
-    /// lookup.
-    seen_rows: VecDeque<Uuid>,
-    seen_set: BTreeSet<Uuid>,
     /// Pending asks in arrival order (C). Outside the feed window: feed
     /// eviction never touches this queue (B9).
     asks: VecDeque<Ask>,
@@ -837,6 +819,19 @@ impl ClaudeLayer {
     /// The feed, in file order.
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.entries.iter()
+    }
+
+    /// Release the legacy presentation feed after a store-backed batch.
+    /// SQLite's canonical window owns every drawable entry; the provider
+    /// layer keeps only running session facts and obligations.
+    pub(crate) fn discard_feed(&mut self) {
+        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
+        self.entries = VecDeque::new();
+        self.messages = VecDeque::new();
+        self.turn.inferred_turn_entry = None;
+        for tool in &mut self.open_tools {
+            tool.entry = None;
+        }
     }
 
     /// Attachment facts observed from this agent's structured stream.
@@ -1016,7 +1011,6 @@ impl ClaudeLayer {
     pub(crate) fn check_invariants(&self, agent: model::AgentId, out: &mut Vec<Violation>) {
         for (store, len, cap) in [
             ("feed", self.entries.len(), FEED_RETAINED),
-            ("seen-rows", self.seen_rows.len(), SEEN_ROWS_RETAINED),
             ("messages", self.messages.len(), MESSAGES_RETAINED),
             ("open-tools", self.open_tools.len(), OPEN_TOOLS_RETAINED),
             ("plans", self.plans.len(), PLANS_RETAINED),
@@ -1047,14 +1041,6 @@ impl ClaudeLayer {
                 .is_none_or(|back| back.id + 1 == self.next_entry_id);
         if !coherent {
             out.push(Violation::Claude(ClaudeViolation::FeedOrder { agent }));
-        }
-
-        if self.seen_rows.len() != self.seen_set.len() {
-            out.push(Violation::Claude(ClaudeViolation::DedupeIncoherent {
-                agent,
-                rows: self.seen_rows.len(),
-                set: self.seen_set.len(),
-            }));
         }
 
         // Ask arithmetic: ids are assigned monotonically and the queue is
@@ -1088,7 +1074,7 @@ impl ClaudeLayer {
             .chain(
                 self.open_tools
                     .iter()
-                    .map(|tool| ("open-tools", tool.entry)),
+                    .filter_map(|tool| tool.entry.map(|entry| ("open-tools", entry))),
             )
             .chain(
                 self.turn
@@ -1587,19 +1573,11 @@ mod tests {
         let ahead = layer.next_entry_id + 5;
         layer.open_tools.push_back(OpenTool {
             tool_use_id: "toolu_ghost".to_string(),
-            entry: ahead,
+            entry: Some(ahead),
             message_id: None,
+            plan: None,
         });
         assert!(fires(&model, "claude-index-ahead"));
-    }
-
-    #[test]
-    fn detects_dedupe_incoherence() {
-        let mut model = a_model_with_a_folded_layer();
-        layer_mut(&mut model)
-            .seen_rows
-            .push_back(Uuid::from_u128(99));
-        assert!(fires(&model, "claude-dedupe-incoherent"));
     }
 
     #[test]

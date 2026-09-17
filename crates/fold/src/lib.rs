@@ -689,7 +689,7 @@ pub struct WindowBudget {
 impl WindowBudget {
     pub const fn desktop(view_epoch: u64) -> Self {
         Self {
-            max_entries: 400,
+            max_entries: 96,
             max_bytes: 16 * 1024 * 1024,
             view_epoch,
         }

@@ -73,6 +73,7 @@ impl StoreWorker {
         path: PathBuf,
         profile: ProfileGeneration,
         local_host: Option<model::HostId>,
+        window_max_entries: usize,
         sink: MsgSink,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -109,6 +110,7 @@ impl StoreWorker {
                                 chat: 0,
                                 provider: 0,
                             },
+                            window_max_entries,
                         });
                         let _ = sink
                             .blocking_send(Msg::Store(StoreMsg::Unavailable { profile, error }));
@@ -146,6 +148,7 @@ impl StoreWorker {
                 let _ = sink.blocking_send(Msg::StoreStartup {
                     profile,
                     generations,
+                    window_max_entries,
                 });
                 if let Some(host) = local_host {
                     record_local_host(&runtime, &store, host);

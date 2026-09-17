@@ -147,6 +147,14 @@ impl AgentLayer {
         }
     }
 
+    pub(crate) fn discard_feed(&mut self) {
+        match self {
+            Self::Claude(layer) => layer.discard_feed(),
+            Self::ClaudeSdk(layer) => layer.discard_feed(),
+            Self::Codex(layer) => layer.discard_feed(),
+        }
+    }
+
     pub(crate) fn observe_replay_complete(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_replay_complete(),

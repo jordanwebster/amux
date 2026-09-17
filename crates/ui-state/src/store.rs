@@ -18,15 +18,21 @@ use fold::{
     OpId, Page, PageToken, Placement, ProviderFold, RedirectState, Revision, SegmentId,
     SegmentTransition, StoreError, Stored, StreamAttempt, WindowBudget, WindowInterest,
 };
-use model::{AgentId, ReplayFacts, ReplayOutcome, Seq, StructuredProtocol};
+use model::{
+    AgentId, AgentMessagePresentation, ReplayFacts, ReplayOutcome, Seq, StructuredProtocol,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{Effect, StreamCloseReason, StreamEntry};
 
 pub const PENDING_COMMIT_MAX_BYTES: usize = 8 * 1024 * 1024;
-pub const WINDOW_MAX_ENTRIES: usize = 800;
+/// Desktop scroll cache: roughly two to five dense terminal viewports.
+pub const WINDOW_MAX_ENTRIES: usize = 96;
+/// The phone does not page yet, so its existing visible-history bound stays
+/// separate from the desktop cache dial.
+pub const PHONE_WINDOW_MAX_ENTRIES: usize = 800;
 pub const WINDOW_MAX_BYTES: usize = 16 * 1024 * 1024;
-pub const WINDOW_PAGE_ENTRIES: usize = 400;
+pub const WINDOW_PAGE_ENTRIES: usize = 96;
 pub const COMMIT_RESULT_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const FLUSH_DEADLINE: TimeDelta = TimeDelta::seconds(5);
 
@@ -156,6 +162,32 @@ impl StoredDto {
             Self::ClaudeSdk(value) => value.entry.text(),
             Self::Codex(value) => value.entry.text(),
         }
+    }
+
+    /// Whether this durable entry is a completed agent report whose body can
+    /// be collapsed beyond its first line.
+    pub fn has_foldable_completion(&self) -> bool {
+        let completed = match self {
+            Self::Claude(value) => matches!(
+                value.entry.body(),
+                Some(fold::claude_pty::ClaudeBody::AgentMessage { kind, .. })
+                    if kind.presentation() == AgentMessagePresentation::Finished
+            ),
+            Self::ClaudeSdk(value) => matches!(
+                value.entry.body(),
+                Some(fold::claude_sdk::ClaudeSdkBody::AgentMessage { kind, .. })
+                    if kind.presentation() == AgentMessagePresentation::Finished
+            ),
+            Self::Codex(value) => matches!(
+                value.entry.body(),
+                Some(fold::codex::CodexBody::AgentMessage { kind, .. })
+                    if kind.presentation() == AgentMessagePresentation::Finished
+            ),
+        };
+        completed
+            && self
+                .text()
+                .is_some_and(|text| crate::message_digest(text).hidden_lines > 0)
     }
 }
 
@@ -582,6 +614,8 @@ pub struct ChatWindow {
     retain_oldest: bool,
     #[serde(default)]
     newest_evicted: bool,
+    #[serde(default = "desktop_window_entries")]
+    max_entries: usize,
 }
 
 /// One item of a chat window in reading order.
@@ -625,7 +659,7 @@ impl ChatWindow {
         postcard::to_allocvec(self.entries.as_slice()).map_or(usize::MAX, |bytes| bytes.len())
     }
 
-    fn loading(protocol: StructuredProtocol, attempt: AttemptId) -> Self {
+    fn loading(protocol: StructuredProtocol, attempt: AttemptId, max_entries: usize) -> Self {
         Self {
             state: ChatState::Loading,
             protocol,
@@ -661,12 +695,17 @@ impl ChatWindow {
             flush_deadline: None,
             retain_oldest: false,
             newest_evicted: false,
+            max_entries: max_entries.max(1),
         }
     }
 
     pub fn pending_bytes(&self) -> usize {
         self.pending.iter().map(|batch| batch.bytes).sum::<usize>()
             + self.in_flight.as_ref().map_or(0, |batch| batch.bytes)
+    }
+
+    pub fn max_entries(&self) -> usize {
+        self.max_entries
     }
 
     /// Encoded ownership inside this store-backed window.
@@ -716,7 +755,7 @@ pub struct ChatWindowRetention {
     pub pending_mutation_bytes: usize,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StoreState {
     pub profile: ProfileGeneration,
     pub generations: Option<Generations>,
@@ -730,6 +769,38 @@ pub(crate) struct StoreState {
     /// The startup fleet read has answered, either with rows or with a failure.
     #[serde(default)]
     pub(crate) fleet_settled: bool,
+    #[serde(default = "desktop_window_entries")]
+    window_max_entries: usize,
+}
+
+impl Default for StoreState {
+    fn default() -> Self {
+        Self {
+            profile: ProfileGeneration::default(),
+            generations: None,
+            chats: BTreeMap::new(),
+            remembered_chat: None,
+            unavailable: None,
+            next_attempt: 0,
+            next_op: 0,
+            startup_fleet_op: None,
+            startup_view_op: None,
+            fleet_settled: false,
+            window_max_entries: WINDOW_MAX_ENTRIES,
+        }
+    }
+}
+
+const fn desktop_window_entries() -> usize {
+    WINDOW_MAX_ENTRIES
+}
+
+fn window_budget(max_entries: usize, view_epoch: u64) -> WindowBudget {
+    WindowBudget {
+        max_entries,
+        max_bytes: WINDOW_MAX_BYTES,
+        view_epoch,
+    }
 }
 
 impl StoreState {
@@ -754,10 +825,12 @@ pub(crate) fn startup(
     state: &mut StoreState,
     profile: ProfileGeneration,
     generations: Generations,
+    window_max_entries: usize,
 ) -> Vec<Effect> {
     state.profile = profile;
     state.generations = Some(generations);
     state.unavailable = None;
+    state.window_max_entries = window_max_entries.max(1);
     let fleet = state.op();
     let view = state.op();
     state.startup_fleet_op = Some(fleet);
@@ -785,7 +858,7 @@ pub(crate) fn open_chat(
     let attempt = state.attempt();
     let load_op = state.op();
     let view_op = state.op();
-    let mut chat = ChatWindow::loading(protocol, attempt);
+    let mut chat = ChatWindow::loading(protocol, attempt, state.window_max_entries);
     chat.active_load = Some(load_op);
     state.chats.insert(agent, chat);
     state.remembered_chat = Some(agent);
@@ -796,7 +869,7 @@ pub(crate) fn open_chat(
             op: load_op,
             agent,
             protocol,
-            window: WindowBudget::desktop(0),
+            window: window_budget(state.window_max_entries, 0),
         }),
         Effect::Store(StoreOp::ViewSet {
             profile: state.profile,
@@ -1271,7 +1344,7 @@ pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(
     } else {
         WindowEnd::Newest
     };
-    let evicted = trim_window(&mut chat.entries, retained);
+    let evicted = trim_window(&mut chat.entries, retained, chat.max_entries);
     chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     for pending in &chat.pending {
         pending.mutations.apply_to(
@@ -1281,7 +1354,7 @@ pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(
             false,
         )?;
     }
-    let evicted = trim_window(&mut chat.entries, retained);
+    let evicted = trim_window(&mut chat.entries, retained, chat.max_entries);
     chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     chat.view_epoch = chat.view_epoch.saturating_add(1);
     Ok(())
@@ -1352,7 +1425,8 @@ fn paged_result(
             sort_entries(&mut chat.entries);
             chat.entries
                 .dedup_by(|left, right| left.key() == right.key());
-            chat.newest_evicted |= trim_window(&mut chat.entries, WindowEnd::Oldest);
+            chat.newest_evicted |=
+                trim_window(&mut chat.entries, WindowEnd::Oldest, chat.max_entries);
             for pending in &chat.pending {
                 if pending
                     .mutations
@@ -1370,7 +1444,8 @@ fn paged_result(
             sort_entries(&mut chat.entries);
             chat.entries
                 .dedup_by(|left, right| left.key() == right.key());
-            chat.newest_evicted |= trim_window(&mut chat.entries, WindowEnd::Oldest);
+            chat.newest_evicted |=
+                trim_window(&mut chat.entries, WindowEnd::Oldest, chat.max_entries);
             chat.boundaries = merge_boundaries(&chat.boundaries, &$page.boundaries);
             chat.first_page = $page.next;
             chat.view_epoch = chat.view_epoch.saturating_add(1);
@@ -1442,7 +1517,7 @@ fn failed_result(
                     op,
                     agent,
                     protocol: chat.protocol,
-                    window: WindowBudget::desktop(chat.view_epoch),
+                    window: window_budget(chat.max_entries, chat.view_epoch),
                 })),
             }])
         }
@@ -1764,7 +1839,7 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
     } else {
         WindowEnd::Newest
     };
-    let evicted = trim_window(&mut chat.entries, retained);
+    let evicted = trim_window(&mut chat.entries, retained, chat.max_entries);
     chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     if chat.live_only {
         return Vec::new();
@@ -2072,7 +2147,7 @@ fn reload(state: &mut StoreState, agent: AgentId) -> StoreUpdate {
             op,
             agent,
             protocol: chat.protocol,
-            window: WindowBudget::desktop(chat.view_epoch.saturating_add(1)),
+            window: window_budget(chat.max_entries, chat.view_epoch.saturating_add(1)),
         }),
     ])
 }
@@ -2132,12 +2207,12 @@ enum WindowEnd {
 }
 
 /// Retain the end nearest the viewport and report whether the opposite end moved.
-fn trim_window(entries: &mut Vec<StoredDto>, retained: WindowEnd) -> bool {
+fn trim_window(entries: &mut Vec<StoredDto>, retained: WindowEnd, max_entries: usize) -> bool {
     let mut trimmed = false;
-    if entries.len() > WINDOW_MAX_ENTRIES {
-        let excess = entries.len() - WINDOW_MAX_ENTRIES;
+    if entries.len() > max_entries {
+        let excess = entries.len() - max_entries;
         match retained {
-            WindowEnd::Oldest => entries.truncate(WINDOW_MAX_ENTRIES),
+            WindowEnd::Oldest => entries.truncate(max_entries),
             WindowEnd::Newest => {
                 entries.drain(..excess);
             }
@@ -2196,8 +2271,38 @@ mod tests {
         }
     }
 
+    fn completed_report(text: &str) -> StoredDto {
+        let revision = Revision::row(1);
+        let entry = ClaudeEntry::from_partial(&ClaudePartial {
+            kind: Patch::set(fold::claude_pty::ClaudeEntryKind::AgentMessage, revision),
+            body: Patch::set(
+                fold::claude_pty::ClaudeBody::AgentMessage {
+                    id: Some("report".to_owned()),
+                    context: None,
+                    from: "worker/host".to_owned(),
+                    kind: model::AgentMessageKind::Completed,
+                },
+                revision,
+            ),
+            text: Patch::set(text.to_owned(), revision),
+            ..ClaudePartial::default()
+        })
+        .unwrap();
+        StoredDto::Claude(Box::new(Stored {
+            key: EntryKey::new("agent-message:report").unwrap(),
+            segment: 1,
+            order: Order::new(1, 0).unwrap(),
+            revision,
+            entry,
+        }))
+    }
+
     fn chat() -> ChatWindow {
-        let mut chat = ChatWindow::loading(StructuredProtocol::ClaudePtyTranscript, AttemptId(1));
+        let mut chat = ChatWindow::loading(
+            StructuredProtocol::ClaudePtyTranscript,
+            AttemptId(1),
+            WINDOW_MAX_ENTRIES,
+        );
         chat.state = ChatState::Live;
         chat.generations = Some(Generations {
             fleet: 1,
@@ -2369,6 +2474,31 @@ mod tests {
         );
         assert!(matches!(effects.effects.as_slice(), [Effect::ResumeStream(id)] if *id == agent()));
         assert!(!state.chats.get(&agent()).unwrap().paused);
+    }
+
+    #[test]
+    fn startup_selects_the_platform_window_policy() {
+        for max_entries in [WINDOW_MAX_ENTRIES, PHONE_WINDOW_MAX_ENTRIES] {
+            let mut state = StoreState::default();
+            startup(
+                &mut state,
+                ProfileGeneration(1),
+                Generations {
+                    fleet: 1,
+                    chat: 1,
+                    provider: 1,
+                },
+                max_entries,
+            );
+            open_chat(&mut state, agent(), StructuredProtocol::ClaudePtyTranscript);
+            assert_eq!(state.chats.get(&agent()).unwrap().max_entries, max_entries);
+        }
+    }
+
+    #[test]
+    fn durable_window_reports_when_a_completed_body_can_fold() {
+        assert!(completed_report("summary\ndetail").has_foldable_completion());
+        assert!(!completed_report("summary").has_foldable_completion());
     }
 
     #[test]

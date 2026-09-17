@@ -602,6 +602,34 @@ pub(crate) fn reader_actionable(model: &Model, chat: &View) -> bool {
 /// use that succeeded, and the tool row already carries both the text and
 /// the outcome, so a second copy could only disagree with the first.
 pub(crate) fn accepted_plans(model: &Model, agent: AgentId) -> Vec<AcceptedPlan> {
+    if let Some(chat) = model.chat(agent)
+        && !chat.live_only
+    {
+        return chat
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ui_state::StoredDto::ClaudeSdk(stored) => {
+                    Some(ui_state::restored::claude_sdk::feed_entry(0, &stored.entry))
+                }
+                _ => None,
+            })
+            .filter_map(|entry| match entry.kind {
+                FeedEntryKind::Tool(tool) => Some(tool),
+                _ => None,
+            })
+            .filter(|tool| tool.result.as_ref().is_some_and(|result| !result.is_error))
+            .filter_map(|tool| match tool.invocation {
+                ToolInvocation::Plan {
+                    plan: Some(plan), ..
+                } => Some(AcceptedPlan {
+                    tool_use_id: tool.tool_use_id,
+                    plan,
+                }),
+                _ => None,
+            })
+            .collect();
+    }
     let Some(layer) = model.claude_sdk(agent) else {
         return Vec::new();
     };

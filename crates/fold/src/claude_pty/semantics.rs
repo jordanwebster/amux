@@ -23,7 +23,6 @@ use crate::{
     Revision, SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
 };
 
-const SEEN_ROWS_MAX: usize = 4096;
 const OUTPUT_HEAD_BYTES: usize = 4096;
 
 /// PTY forms whose creating row cannot always carry a provider-native key.
@@ -290,7 +289,6 @@ pub struct ClaudeFold {
     segment: SegmentId,
     baseline: Baseline,
     through: u64,
-    seen_rows: Vec<String>,
     messages: Vec<OpenMessage>,
     open_tools: Vec<(String, EntryKey, Option<String>)>,
     pending_todos: Vec<PendingTodo>,
@@ -322,7 +320,6 @@ impl Default for ClaudeFold {
             segment: 0,
             baseline: Baseline::Start,
             through: 0,
-            seen_rows: Vec::new(),
             messages: Vec::new(),
             open_tools: Vec::new(),
             pending_todos: Vec::new(),
@@ -390,17 +387,6 @@ impl ClaudeFold {
         }
 
         let kind = classify_row(row);
-        if matches!(kind, RowKind::HookStop | RowKind::HookPermissionRequest) {
-            let dedupe = format!("hook:{:016x}", stable_hash(row.to_string().as_bytes()));
-            if !self.remember(dedupe) {
-                return Vec::new();
-            }
-        } else if let Some(uuid) = string(row, "uuid")
-            && !self.remember(format!("uuid:{uuid}"))
-        {
-            return Vec::new();
-        }
-
         let revision = Revision::row(seq);
         let mut mutations = Vec::new();
         match kind {
@@ -1192,17 +1178,6 @@ impl ClaudeFold {
         }
     }
 
-    fn remember(&mut self, identity: String) -> bool {
-        if self.seen_rows.iter().any(|seen| seen == &identity) {
-            return false;
-        }
-        self.seen_rows.push(identity);
-        if self.seen_rows.len() > SEEN_ROWS_MAX {
-            self.seen_rows.remove(0);
-        }
-        true
-    }
-
     fn remember_message_component(&mut self, id: &str, key: EntryKey, source: ComponentSource) {
         if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
             message.key = key;
@@ -1238,8 +1213,6 @@ impl ClaudeFold {
             } else if !self.asks.is_empty() {
                 self.asks.remove(0);
                 self.known_outstanding = false;
-            } else if !self.seen_rows.is_empty() {
-                self.seen_rows.remove(0);
             } else {
                 self.overflowed = true;
                 self.known_outstanding = false;
@@ -1254,13 +1227,12 @@ impl ProviderFold for ClaudeFold {
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudePtyTranscript;
     const ENTRY_VERSION: u32 = 1;
-    const TIP_VERSION: u32 = 3;
+    const TIP_VERSION: u32 = 4;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
         self.segment = segment;
         self.baseline = baseline;
-        self.seen_rows.clear();
         self.messages.clear();
         self.open_tools.clear();
         self.pending_todos.clear();
@@ -1407,19 +1379,18 @@ impl ProviderFold for ClaudeFold {
     }
 
     fn tip_bytes(&self) -> usize {
-        let strings = self.seen_rows.iter().map(String::capacity).sum::<usize>()
-            + self
-                .messages
-                .iter()
-                .map(|message| {
-                    message.id.capacity()
-                        + message.key.as_str().len()
-                        + message
-                            .last_component
-                            .as_ref()
-                            .map_or(0, component_source_bytes)
-                })
-                .sum::<usize>()
+        let strings = self
+            .messages
+            .iter()
+            .map(|message| {
+                message.id.capacity()
+                    + message.key.as_str().len()
+                    + message
+                        .last_component
+                        .as_ref()
+                        .map_or(0, component_source_bytes)
+            })
+            .sum::<usize>()
             + self
                 .open_tools
                 .iter()
@@ -1439,7 +1410,6 @@ impl ProviderFold for ClaudeFold {
                 .sum::<usize>()
             + self.model.as_ref().map_or(0, String::capacity);
         size_of::<Self>()
-            + self.seen_rows.capacity() * size_of::<String>()
             + self.messages.capacity() * size_of::<OpenMessage>()
             + self.open_tools.capacity() * size_of::<(String, EntryKey, Option<String>)>()
             + self.pending_todos.capacity() * size_of::<PendingTodo>()
@@ -1816,7 +1786,6 @@ impl crate::private::Sealed for ClaudeFold {
                      segment,
                      baseline,
                      through,
-                     seen_rows,
                      messages,
                      open_tools,
                      pending_todos,
@@ -1844,7 +1813,6 @@ impl crate::private::Sealed for ClaudeFold {
             crate::assert_value_safe(&segment);
             crate::assert_value_safe(&baseline);
             crate::assert_value_safe(&through);
-            crate::assert_value_safe(&seen_rows);
             crate::assert_value_safe(&messages);
             crate::assert_value_safe(&open_tools);
             crate::assert_value_safe(&pending_todos);

@@ -170,8 +170,9 @@ The Claude layer folds native transcript rows into typed entries.
 Render order is file order; `parentUuid` is used only for pairing and
 attribution, never for ordering (rows form a DAG under parallel tool
 use — each tool_result parents to the assistant row carrying its
-tool_use). Row `uuid` is the idempotency key: a re-replay after source
-truncation recovery must fold to the identical Model.
+tool_use). Row `uuid` contributes stable entry identity. Source relinks are
+semantic resets at the daemon boundary, so a repeated prefix never enters the
+same client sequence epoch.
 
 ### Entry kinds
 
@@ -188,8 +189,9 @@ truncation recovery must fold to the identical Model.
   emphasis/code; markdown tables render as preformatted blocks in V1;
   URL-aware wrapping never splits a link. Identity and upsert: one
   content block per row, all rows of an API message share `message.id`
-  — key on it, append blocks in file order, dedupe rows by `uuid`
-  (FACT). A message is final when any of its rows carries a non-null
+  — key on it and append blocks in file order (FACT). Canonical store
+  mutations merge a re-delivered key rather than appending a second entry. A
+  message is final when any of its rows carries a non-null
   `stop_reason` (FACT). Main-session files burst-write: every row of a
   message lands at completion, so **"streaming" is not a main-feed
   state** and must not be promised — the working indicator carries
@@ -357,9 +359,10 @@ from an empty chat, which renders the composer with a placeholder and
 no band. A fresh session has no transcript file until its first turn —
 creation is lazy (Phase 0, observed) — so a new agent renders the
 empty-chat state, not the loading band, and `transcript_ready` arrives
-with the first turn. On source-shrink recovery the tailer re-replays from the
-start; the fold treats a repeated prefix as re-replay (idempotent by
-row `uuid`), not new content.
+with the first turn. A source shrink relinks the transcript. The daemon emits a
+semantic reset, closes existing subscriptions and starts a new sequence epoch;
+clients never accept the old prefix as higher-sequence content in the prior
+epoch.
 
 ## Asks (C)
 

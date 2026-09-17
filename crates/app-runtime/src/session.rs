@@ -113,6 +113,7 @@ impl Places {
                     .join("artifacts")
                     .join(session.profile.to_string())
             }),
+            chat_window_max_entries: ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
             ..Default::default()
         }
     }

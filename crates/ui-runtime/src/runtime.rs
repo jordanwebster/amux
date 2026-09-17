@@ -399,6 +399,10 @@ pub struct RuntimeOptions {
     pub artifact_cache_bound: u64,
     /// Platform opener override. Embedders normally leave this at its default.
     pub attachment_opener: AttachmentOpener,
+    /// Entries retained in each store-backed chat window. Desktop callers
+    /// use a small paging cache; clients without paging opt into their own
+    /// larger visible-history bound.
+    pub chat_window_max_entries: usize,
 }
 
 impl Default for RuntimeOptions {
@@ -417,6 +421,7 @@ impl Default for RuntimeOptions {
             artifact_cache: None,
             artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
             attachment_opener: Arc::new(open_with_platform_viewer),
+            chat_window_max_entries: ui_state::WINDOW_MAX_ENTRIES,
         }
     }
 }
@@ -811,9 +816,15 @@ impl Runtime {
 
         let startup_gate = Arc::new(StartupGate::default());
         let profile = ProfileGeneration(generation.0);
-        let store_worker = options
-            .store_path
-            .map(|path| StoreWorker::spawn(path, profile, options.local_host_id, msg_sink.clone()));
+        let store_worker = options.store_path.map(|path| {
+            StoreWorker::spawn(
+                path,
+                profile,
+                options.local_host_id,
+                options.chat_window_max_entries,
+                msg_sink.clone(),
+            )
+        });
         if store_worker.is_none() {
             startup_gate.finish_all();
         }
@@ -1211,7 +1222,7 @@ impl Runtime {
                 %agent,
                 entries = chat.entries.len(),
                 encoded_bytes = chat.encoded_window_bytes(),
-                max_entries = ui_state::WINDOW_MAX_ENTRIES,
+                max_entries = chat.max_entries(),
                 max_bytes = ui_state::WINDOW_MAX_BYTES,
                 "store page installed in bounded chat window"
             );
@@ -3370,6 +3381,7 @@ mod tests {
                     path.clone(),
                     ProfileGeneration(0),
                     None,
+                    ui_state::WINDOW_MAX_ENTRIES,
                     runtime.msg_sink.clone(),
                 ));
                 for _ in 0..3 {
@@ -3455,6 +3467,352 @@ mod tests {
             next_store_runtime_message(runtime).await;
         }
         panic!("store runtime did not reach the expected state");
+    }
+
+    fn soak_corpus_row(chat: usize, iteration: u64) -> serde_json::Value {
+        let id = format!("{chat:02}-{iteration:010}");
+        match iteration % 3 {
+            0 => serde_json::json!({
+                "type": "user",
+                "uuid": format!("user-{id}"),
+                "message": {"content": format!("Investigate memory case {id}")},
+            }),
+            1 => serde_json::json!({
+                "type": "assistant",
+                "uuid": format!("assistant-{id}"),
+                "message": {
+                    "id": format!("message-{id}"),
+                    "content": [{"type": "text", "text": format!("Memory case {id} is bounded.")}],
+                },
+            }),
+            _ => serde_json::json!({
+                "type": "assistant",
+                "uuid": format!("tool-{id}"),
+                "message": {
+                    "id": format!("message-tool-{id}"),
+                    "content": [{
+                        "type": "tool_use",
+                        "id": format!("toolu-{id}"),
+                        "name": "Read",
+                        "input": {"file_path": format!("/tmp/{id}")},
+                    }],
+                },
+            }),
+        }
+    }
+
+    fn cloned_heap_bytes<T: Clone>(value: &T) -> usize {
+        let before = crate::test_allocator::live_bytes();
+        let clone = std::hint::black_box(value.clone());
+        let after = crate::test_allocator::live_bytes();
+        let bytes = after.saturating_sub(before);
+        drop(clone);
+        bytes
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct HeapOwners {
+        windows: usize,
+        providers: usize,
+        model: usize,
+        recorder: usize,
+        sqlite: usize,
+    }
+
+    fn heap_owners(runtime: &Runtime, agents: &[AgentId]) -> HeapOwners {
+        let windows = agents
+            .iter()
+            .filter_map(|agent| runtime.model().chat(*agent))
+            .map(cloned_heap_bytes)
+            .sum();
+        let providers = agents
+            .iter()
+            .filter_map(|agent| runtime.model().claude(*agent))
+            .map(cloned_heap_bytes)
+            .sum();
+        let recorder = cloned_heap_bytes(&*lock_recorder(&runtime.recorder));
+        HeapOwners {
+            windows,
+            providers,
+            model: cloned_heap_bytes(runtime.model()),
+            recorder,
+            sqlite: sqlite_memory_used(),
+        }
+    }
+
+    fn heap_delta(after: usize, before: usize) -> usize {
+        after.saturating_sub(before)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn client_heap_retention_per_delivered_row() {
+        const CHILD_ENV: &str = "AMUX_HEAP_RETENTION_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("current ui-runtime test executable"),
+            )
+            .args([
+                "--exact",
+                "runtime::tests::client_heap_retention_per_delivered_row",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run isolated allocator child");
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "isolated allocator child failed with {}",
+                output.status
+            );
+            return;
+        }
+
+        const CHAT_COUNT: usize = 10;
+        const ROWS_PER_CHAT: u64 = 480;
+        const DELIVERED_ROWS: usize = CHAT_COUNT * ROWS_PER_CHAT as usize;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store_path = directory.path().join("store.sqlite");
+        let host = HostId::from_u128(8_300);
+        let agents = (0..CHAT_COUNT)
+            .map(|index| AgentId::from_u128(8_301 + index as u128))
+            .collect::<Vec<_>>();
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(store_path.clone()),
+                local_host_id: Some(host),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+        runtime.process(Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host),
+        }));
+        for message in host_messages(model::HostEvent::HostUpdated {
+            host: model::HostEntry {
+                id: host,
+                name: "retention-host".to_owned(),
+                online: true,
+                version: Some("test".to_owned()),
+                capabilities: Some(model::Capabilities::default()),
+                trust_status: model::HostTrustStatus::Trusted,
+                last_dial_error: None,
+                platform: None,
+            },
+        }) {
+            runtime.process(message);
+        }
+        runtime.process(Msg::Server(ServerMsg::HostsSynchronized));
+        let mut snapshot = HashMap::new();
+        for (index, agent) in agents.iter().enumerate() {
+            let mut body = claude_agent(*agent, host);
+            body.name = Some(format!("retention-{index:02}"));
+            body.inventory_revision = index as u64 + 1;
+            for message in agent_messages(&mut snapshot, model::AgentEvent::AgentUp { agent: body })
+            {
+                runtime.process(message);
+            }
+        }
+        for message in agent_messages(
+            &mut snapshot,
+            model::AgentEvent::SnapshotComplete {
+                host_id: host,
+                through_revision: CHAT_COUNT as u64,
+            },
+        ) {
+            runtime.process(message);
+        }
+
+        for agent in &agents {
+            runtime.open_chat(*agent);
+        }
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !agents.iter().all(|agent| {
+                runtime
+                    .model()
+                    .chat(*agent)
+                    .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+            }) {
+                assert!(runtime.next_message().await);
+            }
+        })
+        .await
+        .expect("store-backed chats did not paint");
+
+        let now = Utc::now();
+        for agent in &agents {
+            let attempt = runtime.model().chat(*agent).expect("chat").stream_attempt;
+            runtime.process(Msg::ChatStream {
+                agent: *agent,
+                attempt,
+                event: ChatStreamMsg::Opened {
+                    facts: ReplayFactsDto {
+                        retained_from: 1,
+                        through: ROWS_PER_CHAT,
+                        selected_from: 1,
+                        reset_at: 0,
+                        outcome: ui_state::ReplayOutcomeDto::Continuous,
+                    },
+                    at: now,
+                },
+            });
+        }
+        let before_total = crate::test_allocator::live_bytes();
+        let before = heap_owners(&runtime, &agents);
+
+        for (chat, agent) in agents.iter().enumerate() {
+            let attempt = runtime.model().chat(*agent).expect("chat").stream_attempt;
+            for from in (0..ROWS_PER_CHAT).step_by(MAX_STREAM_BATCH) {
+                let through = (from + MAX_STREAM_BATCH as u64).min(ROWS_PER_CHAT);
+                let entries = (from..through)
+                    .map(|iteration| {
+                        StreamEntry::observed(iteration + 1, now, soak_corpus_row(chat, iteration))
+                    })
+                    .collect();
+                runtime.process(Msg::ChatStream {
+                    agent: *agent,
+                    attempt,
+                    event: ChatStreamMsg::Batch { at: now, entries },
+                });
+            }
+            runtime.process(Msg::ChatStream {
+                agent: *agent,
+                attempt,
+                event: ChatStreamMsg::ReplayComplete { at: now },
+            });
+        }
+        tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let ready = agents.iter().all(|agent| {
+                    runtime.model().chat(*agent).is_some_and(|chat| {
+                        chat.head_through() == Some(ROWS_PER_CHAT) && chat.pending_bytes() == 0
+                    })
+                });
+                let report = runtime.retention_report();
+                if ready && report.store_queued_ops == 0 {
+                    break;
+                }
+                assert!(runtime.next_message().await);
+            }
+        })
+        .await
+        .expect("retention workload did not drain");
+
+        tokio::task::yield_now().await;
+        let after = heap_owners(&runtime, &agents);
+        let after_total = crate::test_allocator::live_bytes();
+        let allocator = heap_delta(after_total, before_total);
+        let windows = heap_delta(after.windows, before.windows);
+        let providers = heap_delta(after.providers, before.providers);
+        let recorder = heap_delta(after.recorder, before.recorder);
+        let sqlite = heap_delta(after.sqlite, before.sqlite);
+        let other_model = heap_delta(after.model, before.model)
+            .saturating_sub(windows)
+            .saturating_sub(providers);
+        let other_runtime = allocator
+            .saturating_sub(windows)
+            .saturating_sub(providers)
+            .saturating_sub(recorder);
+        let per_row = |bytes: usize| bytes as f64 / DELIVERED_ROWS as f64;
+        println!(
+            "heap retention: delivered={DELIVERED_ROWS}, allocator={allocator} ({:.1} B/row), windows={windows} ({:.1} B/row), providers={providers} ({:.1} B/row), recorder={recorder} ({:.1} B/row), other-model={other_model} ({:.1} B/row), other-runtime={other_runtime} ({:.1} B/row), sqlite={sqlite} ({:.1} B/row)",
+            per_row(allocator),
+            per_row(windows),
+            per_row(providers),
+            per_row(recorder),
+            per_row(other_model),
+            per_row(other_runtime),
+            per_row(sqlite),
+        );
+        let retained = allocator.saturating_add(sqlite);
+        assert!(
+            retained <= 874 * DELIVERED_ROWS,
+            "client retained {:.1} B/delivered row, above the 874 B/row budget",
+            per_row(retained),
+        );
+        assert!(agents.iter().all(|agent| {
+            runtime
+                .model()
+                .claude(*agent)
+                .is_some_and(|layer| layer.entry_count() == 0)
+        }));
+        assert_eq!(
+            agents
+                .iter()
+                .map(|agent| runtime.model().chat(*agent).expect("chat").entries.len())
+                .sum::<usize>(),
+            CHAT_COUNT * ui_state::WINDOW_MAX_ENTRIES,
+        );
+
+        drop(runtime);
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(store_path),
+                local_host_id: Some(host),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+        let agent = agents[0];
+        assert!(runtime.model().agent(agent).is_some());
+        runtime.open_chat(agent);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+            {
+                assert!(runtime.next_message().await);
+            }
+        })
+        .await
+        .expect("persisted chat did not paint");
+        assert_eq!(
+            runtime.model().chat(agent).expect("chat").entries.len(),
+            ui_state::WINDOW_MAX_ENTRIES,
+        );
+
+        let mut page_latencies = Vec::new();
+        for _ in 0..4 {
+            let chat = runtime.model().chat(agent).expect("chat");
+            assert!(chat.first_page.is_some());
+            let prior_epoch = chat.view_epoch;
+            let started = std::time::Instant::now();
+            runtime.page_chat_older(agent);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while runtime
+                    .model()
+                    .chat(agent)
+                    .is_some_and(|chat| chat.view_epoch == prior_epoch)
+                {
+                    assert!(runtime.next_message().await);
+                }
+            })
+            .await
+            .expect("older page did not arrive");
+            page_latencies.push(started.elapsed());
+        }
+        page_latencies.sort_unstable();
+        let median = page_latencies[page_latencies.len() / 2];
+        println!(
+            "desktop page-in: cache={} entries, page={} entries, samples_us={:?}, median_us={}",
+            ui_state::WINDOW_MAX_ENTRIES,
+            ui_state::WINDOW_PAGE_ENTRIES,
+            page_latencies
+                .iter()
+                .map(std::time::Duration::as_micros)
+                .collect::<Vec<_>>(),
+            median.as_micros(),
+        );
     }
 
     async fn seed_recovery_fleet(path: &Path, agent: AgentId, host: HostId) {

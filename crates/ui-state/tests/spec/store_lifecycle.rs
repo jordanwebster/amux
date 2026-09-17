@@ -683,6 +683,11 @@ fn oversized_catch_up_reaches_replay_completion_before_backpressure_pauses_it() 
             event: ChatStreamMsg::ReplayComplete { at: t0_plus(4) },
         },
     );
+    assert_eq!(
+        model.claude(agent_id("stored")).unwrap().entry_count(),
+        0,
+        "the durable window, not the legacy provider feed, owns presentation entries"
+    );
     let [
         Effect::Store(StoreOp::Commit {
             op,
@@ -1737,6 +1742,7 @@ fn startup_loads_fleet_and_places_the_remembered_cursor_without_opening_a_chat()
         Msg::StoreStartup {
             profile: PROFILE,
             generations: GENERATIONS,
+            window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
         },
     );
     assert!(matches!(
@@ -1793,6 +1799,7 @@ fn remembered_model_after_local_sync(agents: &[&str]) -> Model {
         Msg::StoreStartup {
             profile: PROFILE,
             generations: GENERATIONS,
+            window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
         },
     );
     let mut fleet = remembered_fleet();
@@ -1883,6 +1890,7 @@ fn unpairing_or_an_unpaired_snapshot_forgets_remembered_rows() {
         Msg::StoreStartup {
             profile: PROFILE,
             generations: GENERATIONS,
+            window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
         },
     );
     update(
@@ -1936,6 +1944,7 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             Msg::StoreStartup {
                 profile: PROFILE,
                 generations: GENERATIONS,
+                window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
             },
             Msg::Store(StoreMsg::ViewLoaded {
                 profile: PROFILE,

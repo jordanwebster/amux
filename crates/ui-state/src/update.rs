@@ -31,7 +31,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         Msg::StoreStartup {
             profile,
             generations,
-        } => crate::store::startup(&mut model.store, profile, generations),
+            window_max_entries,
+        } => crate::store::startup(&mut model.store, profile, generations, window_max_entries),
         Msg::Store(message) => update_store_message(model, message),
         Msg::FleetDelta(delta) => crate::store::fleet_apply(&mut model.store, delta),
         Msg::Chat(command) => update_chat_command(model, command),
@@ -706,6 +707,7 @@ fn mirror_chat_stream(
     agent: model::AgentId,
     event: crate::store::ChatStreamMsg,
 ) -> Vec<Effect> {
+    let discard_feed = matches!(event, crate::store::ChatStreamMsg::Batch { .. });
     let event = match event {
         crate::store::ChatStreamMsg::Opened { facts, .. } => StreamMsg::Opened {
             truncated: !matches!(facts.outcome, crate::store::ReplayOutcomeDto::Continuous),
@@ -714,7 +716,17 @@ fn mirror_chat_stream(
         crate::store::ChatStreamMsg::ReplayComplete { .. } => StreamMsg::ReplayComplete,
         crate::store::ChatStreamMsg::Closed { reason, .. } => StreamMsg::Closed { reason },
     };
-    update_stream(model, agent, event)
+    let effects = update_stream(model, agent, event);
+    if discard_feed
+        && model.chat(agent).is_some_and(|chat| !chat.live_only)
+        && let Some(layer) = model
+            .agents
+            .get_mut(&agent)
+            .and_then(|card| card.layer.as_mut())
+    {
+        layer.discard_feed();
+    }
+    effects
 }
 
 fn sync_chat_summary(model: &mut Model, agent: model::AgentId) {

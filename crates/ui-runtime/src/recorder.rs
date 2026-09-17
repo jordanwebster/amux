@@ -27,6 +27,7 @@ pub const DEFAULT_RECORDER_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Bumped whenever the recorder snapshot framing changes.
 pub const MSGS_SCHEMA_VERSION: u32 = 2;
 
+#[derive(Clone)]
 pub struct Recorder {
     capacity: usize,
     max_bytes: usize,

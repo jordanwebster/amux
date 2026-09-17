@@ -106,6 +106,9 @@ impl ClaudeSdkLayer {
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.observation.entries()
     }
+    pub(crate) fn discard_feed(&mut self) {
+        self.observation.discard_entries();
+    }
     pub fn feed_items(&self) -> FeedItems<'_> {
         FeedItems::new(self.observation.entries_deque())
     }

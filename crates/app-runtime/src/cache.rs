@@ -103,6 +103,7 @@ fn remembered(fleet: Fleet, generations: store::Generations, local: Option<HostI
         Msg::StoreStartup {
             profile,
             generations,
+            window_max_entries: ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
         },
     )
     .into_iter()

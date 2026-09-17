@@ -81,10 +81,10 @@ Consequences:
 - Catch-up replays the whole file; the bounded buffer (1000 entries)
   means long sessions replay only a tail → B9's explicit "earlier
   history unavailable" boundary.
-- The tailer only recovers from file *shrinkage* (seek to 0 → full
-  re-replay). Clients must treat a repeated prefix after
-  `amux.transcript_ready` as a re-replay, not new content (idempotent
-  fold by row `uuid`).
+- The tailer recovers from file *shrinkage* by relinking and reading the new
+  file from its beginning. The daemon turns that relink into a semantic reset
+  before publishing those rows, so clients start a new sequence epoch rather
+  than retaining a row-UUID replay set.
 
 ### amux hook row shapes
 
@@ -248,8 +248,9 @@ timestamps remain valid even where arrival is bursty.
 
 **Upsert rule (B2):**
 
-1. Key on `message.id`. Append each row's single block in file order.
-   Row `uuid` dedupes re-replays.
+1. Key on `message.id`. Append each row's single block in file order. The
+   canonical store merges repeated entry keys; transcript relinks start a new
+   sequence epoch instead of re-delivering an old prefix into the current one.
 2. A message is **final** (FACT) when any of its rows carries a non-null
    `stop_reason` (`end_turn`, `tool_use`, `stop_sequence`, `refusal`…).
 3. A message is **abandoned** if a new `message.id`, a user row, or an
@@ -677,12 +678,12 @@ a 2.1.251 provider recording reproducing the same boundary claim.
   elapsed-from-prompt marker that is reconciled in place if the authority
   lands after all. Also: the deny turn had **no `stop_hook_summary` and no
   `hook.stop`** — `turn_duration` alone closed it.
-- **Every amux hook row arrives TWICE** (all 9 fixtures: `hook.stop`,
-  `hook.permission_request`, `hook.notification` each appear as adjacent
-  duplicate rows with identical payloads). Hook rows carry no uuid, so
-  folds over them must be idempotent by construction. Root cause (amux
-  double-registration vs Claude Code double-fire) not yet identified —
-  flagged to the orchestrator.
+- **Every captured amux hook row arrived twice** (all 9 fixtures:
+  `hook.stop`, `hook.permission_request`, `hook.notification` appeared as
+  adjacent duplicate rows with identical payloads). The cause was two distinct
+  hook registrations. The daemon now fingerprints adjacent deliveries at
+  ingress, before they enter the structured buffer; client obligations still
+  merge by semantic ask identity.
 - **`hook.stop` payloads are richer than the hooks doc**: observed fields
   include `background_tasks[]`, `last_assistant_message`,
   `permission_mode`, `prompt_id`, `session_crons[]`, `stop_hook_active`.
@@ -724,9 +725,8 @@ evidence is the Phase 0 fixtures plus the live machine's own records.
   construction** (user settings, project settings, and plugins may all
   carry a registration). Fixed at the daemon seam: `ClaudeSession`
   fingerprints emitted hook payloads and drops a byte-identical
-  re-delivery within 2 s. Client folds still tolerate duplicates
-  (bounded content-hash dedupe) — historical streams and replays carry
-  them.
+  re-delivery within 2 s. Client obligations also merge by their semantic
+  ask identity; clients do not retain a second content-hash replay set.
 - **`hook.permission_request` carries NO tool_use id.** Payload fields
   (fixtures): `tool_name`, `tool_input`, `permission_mode`, `prompt_id`,
   `session_id`, `transcript_path`, `cwd`, opt `permission_suggestions`.

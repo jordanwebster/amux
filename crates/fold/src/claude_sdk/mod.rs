@@ -652,6 +652,11 @@ impl Observation {
     pub fn entries_deque(&self) -> &VecDeque<FeedEntry> {
         &self.entries
     }
+    pub fn discard_entries(&mut self) {
+        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
+        self.entries = VecDeque::new();
+        self.cursors = VecDeque::new();
+    }
     pub fn tasks(&self) -> impl Iterator<Item = &TaskEntry> {
         self.entries.iter().filter_map(|entry| match &entry.kind {
             FeedEntryKind::Task(task) => Some(task),

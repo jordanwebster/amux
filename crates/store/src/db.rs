@@ -13,6 +13,7 @@ use crate::quarantine::PendingQuarantine;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const JOURNAL_SIZE_LIMIT: i64 = 16 * 1024 * 1024;
+const CACHE_SIZE_KIB: i64 = 128;
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 pub(crate) const STORE_TARGET_BYTES: u64 = 200 * 1024 * 1024;
@@ -143,7 +144,9 @@ fn configure(connection: &Connection, new_file: bool) -> Result<(), StoreError> 
     }
 
     connection
-        .execute_batch("PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-{CACHE_SIZE_KIB};"
+        ))
         .map_err(map_sqlite_error)?;
     let foreign_keys: i64 = connection
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
@@ -153,6 +156,9 @@ fn configure(connection: &Connection, new_file: bool) -> Result<(), StoreError> 
         .map_err(map_sqlite_error)?;
     let temp_store: i64 = connection
         .query_row("PRAGMA temp_store", [], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    let cache_size: i64 = connection
+        .query_row("PRAGMA cache_size", [], |row| row.get(0))
         .map_err(map_sqlite_error)?;
     let journal_limit: i64 = connection
         .query_row(
@@ -167,6 +173,7 @@ fn configure(connection: &Connection, new_file: bool) -> Result<(), StoreError> 
     if foreign_keys != 1
         || busy_timeout != BUSY_TIMEOUT.as_millis() as i64
         || temp_store != 2
+        || cache_size != -CACHE_SIZE_KIB
         || journal_limit != JOURNAL_SIZE_LIMIT
         || auto_vacuum != 2
     {
@@ -643,6 +650,9 @@ mod tests {
         let temp_store: i64 = connection
             .query_row("PRAGMA temp_store", [], |row| row.get(0))
             .expect("temp store");
+        let cache_size: i64 = connection
+            .query_row("PRAGMA cache_size", [], |row| row.get(0))
+            .expect("cache size");
         let journal_limit: i64 = connection
             .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))
             .expect("journal limit");
@@ -652,6 +662,7 @@ mod tests {
         assert_eq!(foreign_keys, 1);
         assert_eq!(busy_timeout, 5_000);
         assert_eq!(temp_store, 2);
+        assert_eq!(cache_size, -CACHE_SIZE_KIB);
         assert_eq!(journal_limit, JOURNAL_SIZE_LIMIT);
         assert_eq!(auto_vacuum, 2);
     }

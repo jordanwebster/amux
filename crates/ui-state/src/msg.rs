@@ -53,6 +53,7 @@ pub enum Msg {
     StoreStartup {
         profile: crate::store::ProfileGeneration,
         generations: fold::Generations,
+        window_max_entries: usize,
     },
     /// Result of a store effect. All variants carry freshness envelopes.
     Store(crate::store::StoreMsg),

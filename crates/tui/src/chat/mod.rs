@@ -1112,6 +1112,14 @@ pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::Fam
 /// screen. A completion that said one thing is already showing all of
 /// it, and a chat of those has nothing to open.
 fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
+    if let Some(chat) = model.chat(agent)
+        && !chat.live_only
+    {
+        return chat
+            .entries
+            .iter()
+            .any(ui_state::StoredDto::has_foldable_completion);
+    }
     model
         .claude(agent)
         .is_some_and(ui_state::claude::ClaudeLayer::has_foldable_completion)

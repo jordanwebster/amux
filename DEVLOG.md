@@ -1,35 +1,36 @@
-2026-09-17 — **The recorder no longer retains a second live model.** Three real
-shipping-client soaks retained about 4.3 KiB per delivered row: 4.010 MiB/min
-over ten minutes, then 5.309 and 5.162 MiB/min before reset in the four-minute
-diagnostics, with ten chats receiving 20 rows/s in aggregate. The in-process
-attribution found the recorder's folded checkpoint was the dominant duplicate:
-it grew by 2,127.6 serialized B per delivered row across the window cap, beside
-135.7 B in each of the visible and canonical store-backed vectors and 272.7 B
-in provider state. Pending commits, the store queue, SQLite, reducer effects,
-subscriptions and asks were flat; the bounded recent-message ring added 52.4 B
-per row while reaching its 2 MiB ceiling. The recorder now keeps that bounded
-ring alone in steady state and captures the authoritative Model only when a
-report is requested. Short recordings remain checkpoint-plus-message replays;
-long reports carry an exact captured Model with recent inputs marked as context,
-and panic-only captures with evicted history refuse replay instead of claiming
-completeness. Its first driver-owned four-minute diagnostic reduced the client
-slope to 2.009 MiB/min with a 26.750 MiB peak, proving the recorder was the
-largest owner but leaving the 1.000 MiB/min slope budget unmet. The store-backed
-window therefore no longer retains a second canonical copy of the same
-scrollback, and mutation folding moves the visible window through the merge
-oracle instead of deep-cloning the growing window for every batch. That change
-lowered the peak to 22.985 MiB, but the next driver run still measured 3.120
-MiB/min: the retained window was smaller while growing per-commit scratch
-allocations still raised the allocator's high-water mark. Store-backed fresh
-upserts now wait for their canonical SQLite body without rebuilding an
-unchanged visible materialiser; followed-tip commits describe their contiguous
-window by its lower bound instead of cloning every held key; and store-worker
-queue accounting counts serialized bytes without allocating a second encoded
-operation. The next driver-owned four-minute diagnostic supplies the final
-after slope and peak.
-The visible window still caps at 800 entries or 16 MiB per chat (about 400 s at
-2 rows/s), and the legacy provider feed caps at 1,000 entries (500 s); no
-window, warm-up, rate or workload bound changed.
+2026-09-17 — **A store-backed session retains one small chat cache.** The
+client's rising footprint was bounded fill, not an unbounded leak: before the
+two-minute diagnostic regression ended, each chat was still filling an
+800-entry store window, a duplicate 1,000-entry provider feed and 4,096 row
+identities. The ten-minute gate likewise remained a ramp until the window filled
+at about 400 seconds. Under the real allocator, ten chats and the soak's exact
+4,800-row corpus retained 11,614,080 Rust bytes plus 2,152,560 SQLite bytes,
+or 2,868.1 B per delivered row. The 1.000 MiB/min budget at 1,200 rows/min is
+873.8 B per row.
+
+Store-backed provider layers now discard their presentation feed after updating
+running attention, summary, facts and obligations; SQLite's canonical window is
+the only drawable owner. The obsolete UUID/content dedupe sets are gone from
+both the provider layer and durable Claude fold, whose version advances so an
+old checkpoint reloads rather than being misread. The desktop window is now a
+96-entry scroll cache—about two to five dense 20–40-row terminal viewports—and
+pages 96 older entries at a time. Four release-mode page-ins through the
+shipping store worker took 0.511, 0.521, 0.523 and 0.608 ms, a 0.523 ms median.
+The phone still explicitly retains 800 entries because it does not page.
+SQLite's per-connection cache is 128 KiB, enough for these sub-millisecond page
+reads without growing once per delivered row.
+
+The same allocator test now retains 3,692,912 Rust bytes plus 112 SQLite bytes,
+or 769.4 B per row. Store windows including their fold heads fell from 980.9 to
+247.5 B/row, provider state from 492.5 to 44.3, other model state from 125.5 to
+76.8, and SQLite from 448.4 to 0.0; the bounded recorder is 185.8 and remaining
+runtime/store-worker ownership is 291.7 B/row. The recorder still keeps only its
+2 MiB recent-message ring during steady state and captures the authoritative
+Model when a report is requested. Earlier real-client diagnostics measured
+5.162 MiB/min before these repairs and, at commit 6c525e1f, 2.271 MiB/min with a
+22.204 MiB peak and a zero slope after reset. The next driver-owned four-minute
+diagnostic supplies the final after slope and peak; the unchanged ten-minute
+soak remains the qualification gate.
 
 2026-09-17 — **Memory repair runs keep the real soak workload.** The original
 ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the

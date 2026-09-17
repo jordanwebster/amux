@@ -735,6 +735,11 @@ impl<E, const MAX: usize> VisibleWindow<E, MAX> {
             None
         }
     }
+
+    fn discard_all(&mut self) {
+        self.evicted = self.evicted.saturating_add(self.entries.len() as u64);
+        self.entries = VecDeque::new();
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -881,6 +886,12 @@ impl<C> Observation<C> {
 
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry<C>> {
         self.window.iter()
+    }
+
+    pub fn discard_entries(&mut self) {
+        self.window.discard_all();
+        self.item_entries.clear();
+        self.turn_entries.clear();
     }
 
     pub fn entry_count(&self) -> usize {

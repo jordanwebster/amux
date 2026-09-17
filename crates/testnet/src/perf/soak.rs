@@ -1111,7 +1111,7 @@ mod tests {
             .unwrap();
         let first = runtime.retention_report();
         let first_rows = RETENTION_FIRST_ROWS_PER_CHAT as usize * agents.len();
-        print_retention_delta("before window cap", first_rows, &baseline, &first);
+        print_retention_delta("first retained interval", first_rows, &baseline, &first);
 
         emit_retention_rows(
             &providers,
@@ -1126,17 +1126,16 @@ mod tests {
         let second = runtime.retention_report();
         let second_rows = (RETENTION_SECOND_ROWS_PER_CHAT - RETENTION_FIRST_ROWS_PER_CHAT) as usize
             * agents.len();
-        print_retention_delta("across window cap", second_rows, &first, &second);
+        print_retention_delta("second retained interval", second_rows, &first, &second);
         println!(
-            "window plateau: visible and canonical vectors cap at {} entries per chat ({} s at the soak's 2 rows/s per chat); legacy provider feed caps at 1,000 entries (500 s)",
+            "window plateau: one drawable store window caps at {} entries per chat ({} s at the soak's 2 rows/s per chat); store-backed provider feeds and row-identity sets retain no entries",
             ui_state::WINDOW_MAX_ENTRIES,
             ui_state::WINDOW_MAX_ENTRIES / 2,
         );
 
         assert_eq!(second.chats.len(), agents.len());
         assert!(second.chats.iter().all(|chat| {
-            chat.visible_entries <= ui_state::WINDOW_MAX_ENTRIES
-                && chat.canonical_entries <= ui_state::WINDOW_MAX_ENTRIES
+            chat.visible_entries <= ui_state::WINDOW_MAX_ENTRIES && chat.canonical_entries == 0
         }));
         assert_eq!(second.runtime_subscription_tasks, agents.len());
         assert_eq!(second.store_page_cache_bytes, 0);

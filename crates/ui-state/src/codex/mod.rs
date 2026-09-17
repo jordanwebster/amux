@@ -377,6 +377,9 @@ impl CodexLayer {
     pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
         self.observation.entries()
     }
+    pub(crate) fn discard_feed(&mut self) {
+        self.observation.discard_entries();
+    }
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.observation.token_usage()
