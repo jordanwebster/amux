@@ -9,19 +9,20 @@
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ui_state::Model;
 use ui_state::attachments::Segment;
 use ui_state::claude::ToolInvocation;
 use ui_state::claude_sdk::{
     BoundaryEntry, ContextMeter, FeedEntry, FeedEntryKind, Finality, McpServerFact, SdkPhase,
     TaskEntry, TaskState, ToolEntry,
 };
+use ui_state::{AgentId, Model};
 
 use crate::chat::attachments::{prose, words};
 use crate::chat::blocks::{
     self, fmt_thousands, fmt_tokens, paint_agent_message, paint_assistant, paint_compaction_rule,
-    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan, paint_thinking,
-    paint_tool_line, paint_turn_rule, paint_unrecognized, paint_user_prompt,
+    paint_composer_block, paint_error, paint_file_change, paint_header, paint_plan,
+    paint_subagent_activity, paint_thinking, paint_tool_line, paint_turn_rule, paint_unrecognized,
+    paint_user_prompt,
 };
 use crate::chat::claude_sdk::{View, is_open, reader_context, shared_ask};
 use crate::chat::claude_shared::{armed_quit_line, panel, reader};
@@ -700,7 +701,9 @@ fn entry_block(
             block
         }
         FeedEntryKind::Thinking(thinking) => {
-            let mut label = if is_open(thinking.finality) {
+            // A stopped thinking content block is complete even while a
+            // later answer block in the same message is still arriving.
+            let mut label = if matches!(thinking.finality, Finality::Streaming) {
                 "~ thinking".to_string()
             } else {
                 "~ thought".to_string()
@@ -808,6 +811,7 @@ fn entry_block(
 pub(crate) fn stored_entry_block(
     key: BlockKey,
     entry: &ui_state::StoredClaudeSdkEntry,
+    owner: Option<&str>,
     index: &ui_state::attachments::AttachmentIndex,
     message_view: MessageView<'_>,
     theme: Theme,
@@ -820,6 +824,11 @@ pub(crate) fn stored_entry_block(
         return Some(paint_error(key, &text, false, theme, width));
     }
     let presentation = ui_state::restored::claude_sdk::feed_entry(key.0, entry);
+    if entry.parent_tool_use_id().is_some() {
+        return subagent_activity(&presentation).map(|what| {
+            paint_subagent_activity(key, owner.unwrap_or("subagent"), &what, theme, width)
+        });
+    }
     let content = index.segments(entry.text().unwrap_or_default());
     paints(&presentation).then(|| {
         entry_block(
@@ -837,8 +846,29 @@ pub(crate) fn stored_entry_block(
 pub(crate) fn stored_entry_paints(entry: &ui_state::StoredClaudeSdkEntry) -> bool {
     use ui_state::StoredClaudeSdkEntryKind as ClaudeSdkEntryKind;
 
-    entry.entry_kind() == Some(ClaudeSdkEntryKind::ApiError)
-        || paints(&ui_state::restored::claude_sdk::feed_entry(0, entry))
+    if entry.entry_kind() == Some(ClaudeSdkEntryKind::ApiError) {
+        return true;
+    }
+    let presentation = ui_state::restored::claude_sdk::feed_entry(0, entry);
+    if entry.parent_tool_use_id().is_some() {
+        return subagent_activity(&presentation).is_some();
+    }
+    paints(&presentation)
+}
+
+/// How a parented stored row is attributed. Task state remains in the
+/// provider fold even though presentation rows come solely from the store.
+pub(crate) fn stored_entry_owner(
+    model: &Model,
+    agent: AgentId,
+    entry: &ui_state::StoredClaudeSdkEntry,
+) -> Option<String> {
+    let parent = entry.parent_tool_use_id()?;
+    model
+        .claude_sdk(agent)?
+        .tasks()
+        .find(|task| task.tool_use_id.as_deref() == Some(parent))
+        .map(task_owner)
 }
 
 fn paints(entry: &FeedEntry) -> bool {
@@ -846,6 +876,40 @@ fn paints(entry: &FeedEntry) -> bool {
         &entry.kind,
         FeedEntryKind::Boundary(BoundaryEntry::Ready { resumed: false, .. })
     )
+}
+
+/// How a task is named where its rows are attributed: what it was asked
+/// to do, or failing that what kind of subagent it is.
+fn task_owner(task: &TaskEntry) -> String {
+    let description = task.description.trim();
+    if !description.is_empty() {
+        return description.to_string();
+    }
+    task.subagent_type
+        .clone()
+        .unwrap_or_else(|| "subagent".to_string())
+}
+
+/// What one subagent row did, in a phrase. Thinking and bookkeeping rows
+/// say nothing a person is waiting on from a child, so they paint nothing.
+fn subagent_activity(entry: &FeedEntry) -> Option<String> {
+    Some(match &entry.kind {
+        FeedEntryKind::Message(message) => {
+            let mut head = first_line(&message.text);
+            if message.text.lines().count() > 1 {
+                head.push_str(" …");
+            }
+            head
+        }
+        FeedEntryKind::Tool(tool) => {
+            let mut text = tool_main_text(tool);
+            if tool.result.as_ref().is_some_and(|result| result.is_error) {
+                text.push_str(" ✗");
+            }
+            text
+        }
+        _ => return None,
+    })
 }
 
 /// What an errored turn said: the error strings the session collected,

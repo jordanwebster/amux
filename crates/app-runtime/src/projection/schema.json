@@ -393,7 +393,7 @@
                 }
               ],
               "phase": "final_answer",
-              "finality": "complete"
+              "finality": "open"
             }
           }
         }

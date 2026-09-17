@@ -6,6 +6,12 @@ canonical SQLite entries, and only store boundary markers can report truncated
 history. The terminal's store-entry adapter uses the existing block cache, so
 steady redraws still repaint no transcript blocks.
 
+Stored SDK entries now carry the finality, error detail and parent-task
+attribution needed to reproduce the existing chat frames directly from the
+canonical window. Historical terminal reports recorded before store-backed
+chat are migrated during replay into an isolated in-memory mutation oracle;
+production rendering still has no provider-window fallback.
+
 The daemon summarizer was audited independently: production code owns the
 closed `AgentFold` and calls only its baseline, summary, version, and row-fold
 operations; it never constructed or read the deleted client observation

@@ -19,7 +19,9 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::{claude_sdk_frame_parts, stored_entry_block, stored_entry_paints};
+pub(crate) use render::{
+    claude_sdk_frame_parts, stored_entry_block, stored_entry_owner, stored_entry_paints,
+};
 use serde::{Deserialize, Serialize};
 use ui_state::claude::facts::ask_document;
 use ui_state::claude::{AcceptedPlan, ToolInvocation};

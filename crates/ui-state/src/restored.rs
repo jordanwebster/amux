@@ -329,6 +329,7 @@ pub mod claude_sdk {
                             values
                                 .iter()
                                 .filter_map(serde_json::Value::as_str)
+                                .filter(|error| !fold::claude_sdk::is_internal_diagnostic(error))
                                 .map(str::to_string)
                                 .collect()
                         })
@@ -389,6 +390,11 @@ pub mod claude_sdk {
             }
             ClaudeSdkEntryKind::Status => {
                 let status = match body {
+                    ClaudeSdkBody::Status { status }
+                        if status == "interrupted" && !text.is_empty() =>
+                    {
+                        text
+                    }
                     ClaudeSdkBody::Status { status } => status,
                     _ => text,
                 };
@@ -438,12 +444,16 @@ pub mod claude_sdk {
                 })
             }
         };
-        let parent_tool_use_id = match entry.body() {
-            Some(ClaudeSdkBody::Tool {
-                parent_tool_use_id, ..
-            }) => parent_tool_use_id.clone(),
-            _ => None,
-        };
+        let parent_tool_use_id =
+            entry
+                .parent_tool_use_id()
+                .map(str::to_string)
+                .or_else(|| match entry.body() {
+                    Some(ClaudeSdkBody::Tool {
+                        parent_tool_use_id, ..
+                    }) => parent_tool_use_id.clone(),
+                    _ => None,
+                });
         FeedEntry::restored(id, kind, parent_tool_use_id, false)
     }
 

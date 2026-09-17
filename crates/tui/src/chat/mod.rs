@@ -1135,6 +1135,7 @@ fn paint_stored_entry(
         ui_state::StoredDto::ClaudeSdk(stored) => claude_sdk::stored_entry_block(
             block_key,
             &stored.entry,
+            claude_sdk::stored_entry_owner(model, agent, &stored.entry).as_deref(),
             index,
             message_view,
             ctx.theme,
@@ -1155,17 +1156,21 @@ fn paint_stored_entry(
 struct StoredPaintKey {
     entry: ui_state::StoredDto,
     content: Vec<ui_state::attachments::Segment>,
+    attribution: Option<String>,
 }
 
 #[derive(Clone, Copy)]
 struct StoredPaintKeyView<'a> {
     entry: &'a ui_state::StoredDto,
     content: &'a [ui_state::attachments::Segment],
+    attribution: Option<&'a str>,
 }
 
 impl PartialEq<StoredPaintKeyView<'_>> for StoredPaintKey {
     fn eq(&self, other: &StoredPaintKeyView<'_>) -> bool {
-        &self.entry == other.entry && self.content == other.content
+        &self.entry == other.entry
+            && self.content == other.content
+            && self.attribution.as_deref() == other.attribution
     }
 }
 
@@ -1176,6 +1181,7 @@ impl CacheView for StoredPaintKeyView<'_> {
         StoredPaintKey {
             entry: self.entry.clone(),
             content: self.content.to_vec(),
+            attribution: self.attribution.map(str::to_string),
         }
     }
 }
@@ -1199,6 +1205,12 @@ fn paint_stored_entry_cached(
     let empty = ui_state::AttachmentIndex::default();
     let index = attachment_index(model, agent).unwrap_or(&empty);
     let content = index.segments(entry.text().unwrap_or_default());
+    let attribution = match entry {
+        ui_state::StoredDto::ClaudeSdk(stored) => {
+            claude_sdk::stored_entry_owner(model, agent, &stored.entry)
+        }
+        _ => None,
+    };
     Some(
         cache
             .get_or_paint_view(
@@ -1206,6 +1218,7 @@ fn paint_stored_entry_cached(
                 StoredPaintKeyView {
                     entry,
                     content: &content,
+                    attribution: attribution.as_deref(),
                 },
                 PaintInputs {
                     width: ctx.viewport.0 as usize,

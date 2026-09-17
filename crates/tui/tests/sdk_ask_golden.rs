@@ -20,7 +20,7 @@ use ui_state::claude_sdk::{
 };
 use ui_state::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
-    update,
+    StructuredProtocol, update,
 };
 use uuid::Uuid;
 
@@ -124,9 +124,26 @@ fn batch(seq: u64, row: Value) -> Msg {
 
 fn fold(msgs: Vec<Msg>) -> Model {
     let mut model = Model::default();
+    let rows = msgs
+        .iter()
+        .filter_map(|msg| match msg {
+            Msg::Stream {
+                event: StreamMsg::Batch { entries, .. },
+                ..
+            } => Some(entries.iter().map(|entry| entry.payload.clone())),
+            _ => None,
+        })
+        .flatten()
+        .collect();
     for msg in msgs {
         update(&mut model, msg);
     }
+    tui::fixtures::install_static_store_rows_for(
+        &mut model,
+        agent_id(),
+        StructuredProtocol::ClaudeSdk,
+        rows,
+    );
     let violations = model.check_invariants();
     assert!(violations.is_empty(), "fixture coherent: {violations:?}");
     model
@@ -405,7 +422,11 @@ fn claude_sdk_ask_esc_steps_back_and_never_answers() {
         "Esc is back at the action row: {text}"
     );
     let mut chat = open_chat(&model);
-    assert!(press(&mut chat, &model, KeyCode::Esc).is_none());
+    assert_eq!(
+        press(&mut chat, &model, KeyCode::Esc),
+        Some(UiAction::FollowChatTip(agent_id())),
+        "Esc returns the store window to its tip without answering"
+    );
     let text = buffer_text(&render_buffer(&model, chat, Theme::default()));
     assert!(
         text.contains("permission — Write"),

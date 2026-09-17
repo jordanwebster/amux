@@ -15,8 +15,14 @@
 //! does not, the diff names the cells, which is usually the fix's first
 //! clue rather than a failure.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
+use fold::{
+    CommitResult, ExpectedHead, Generations, HeadState, JsonBytes, Mutation, MutationOracle,
+    ProviderFold, Stored,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -25,7 +31,10 @@ use thiserror::Error;
 use ui_runtime::report::{
     FrameCapture, Mark, ReplayVerdict, ReportError, ReportHeader, TerminalFrame, read_frame,
 };
-use ui_state::{Model, update};
+use ui_state::{
+    AgentId, ChatCommand, ChatStreamMsg, Effect, LoadedDto, Model, Msg, ProfileGeneration,
+    ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp, StreamMsg, StructuredProtocol, update,
+};
 
 use crate::chrome::{Chrome, ChromeConfig, TraceEvent};
 use crate::render::Theme;
@@ -79,6 +88,17 @@ pub struct Replay {
     theme: Theme,
     last_frame: Option<Buffer>,
     position: usize,
+    legacy_stores: BTreeMap<AgentId, LegacyStore>,
+}
+
+/// Reports recorded before chats became store-backed contain the provider
+/// stream events but no store acknowledgements. Replaying one materialises
+/// those recorded rows into an in-memory oracle so the current renderer sees
+/// the same durable window a live runtime would have committed.
+enum LegacyStore {
+    Claude(MutationOracle<fold::claude_pty::ClaudeEntry>),
+    ClaudeSdk(MutationOracle<fold::claude_sdk::ClaudeSdkEntry>),
+    Codex(MutationOracle<fold::codex::CodexEntry>),
 }
 
 impl Replay {
@@ -104,6 +124,7 @@ impl Replay {
             theme,
             last_frame: None,
             position: 0,
+            legacy_stores: BTreeMap::new(),
         }
     }
 
@@ -166,6 +187,7 @@ impl Replay {
         self.model = restored.model;
         self.last_frame = None;
         self.position = 0;
+        self.legacy_stores = restored.legacy_stores;
     }
 
     fn apply(&mut self, event: &TraceEvent) -> Result<(), ReplayError> {
@@ -173,7 +195,11 @@ impl Replay {
         // loop folds it before stepping. Effects are the shell's; a replay
         // has no shell.
         if let TraceEvent::Msg(msg) = event {
-            let _ = update(&mut self.model, msg.clone());
+            if let Msg::Stream { agent, event } = msg {
+                self.apply_legacy_stream(*agent, event.clone())?;
+            } else {
+                let _ = update(&mut self.model, msg.clone());
+            }
         }
         // Effects are dropped: what they produced is already recorded as
         // its own event.
@@ -190,12 +216,242 @@ impl Replay {
         Ok(())
     }
 
+    fn apply_legacy_stream(&mut self, agent: AgentId, event: StreamMsg) -> Result<(), ReplayError> {
+        self.open_legacy_store(agent)?;
+        let at = self
+            .model
+            .now()
+            .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("Unix epoch"));
+        let event = match event {
+            StreamMsg::Opened { truncated } => ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: if truncated { 2 } else { 1 },
+                    through: 0,
+                    selected_from: if truncated { 2 } else { 1 },
+                    reset_at: 0,
+                    outcome: if truncated {
+                        ReplayOutcomeDto::Truncated { missing_after: 0 }
+                    } else {
+                        ReplayOutcomeDto::Continuous
+                    },
+                },
+                at,
+            },
+            StreamMsg::Batch { at, entries } => ChatStreamMsg::Batch { at, entries },
+            StreamMsg::ReplayComplete => ChatStreamMsg::ReplayComplete { at },
+            StreamMsg::Closed { reason } => ChatStreamMsg::Closed { at, reason },
+        };
+        let attempt = self
+            .model
+            .chat(agent)
+            .expect("legacy replay opened its store window")
+            .stream_attempt;
+        let effects = update(
+            &mut self.model,
+            Msg::ChatStream {
+                agent,
+                attempt,
+                event,
+            },
+        );
+        self.accept_legacy_commits(effects)
+    }
+
+    fn open_legacy_store(&mut self, agent: AgentId) -> Result<(), ReplayError> {
+        if self.model.chat(agent).is_some() {
+            return Ok(());
+        }
+        let protocol = self
+            .model
+            .agent(agent)
+            .and_then(|card| card.structured_protocol())
+            .ok_or_else(|| ReplayError::Render("legacy report stream has no provider".into()))?;
+        let effects = update(&mut self.model, Msg::Chat(ChatCommand::Open { agent }));
+        let (attempt, op) = effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((attempt, op)),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ReplayError::Render("legacy report did not open a store window".into())
+            })?;
+        let loaded = match protocol {
+            StructuredProtocol::ClaudePtyTranscript => {
+                LoadedDto::Claude(empty_loaded::<fold::claude_pty::ClaudeFold>())
+            }
+            StructuredProtocol::ClaudeSdk => {
+                LoadedDto::ClaudeSdk(empty_loaded::<fold::claude_sdk::ClaudeSdkFold>())
+            }
+            StructuredProtocol::Codex => LoadedDto::Codex(empty_loaded::<fold::codex::CodexFold>()),
+        };
+        let _ = update(
+            &mut self.model,
+            Msg::Store(StoreMsg::Loaded {
+                profile: ProfileGeneration(0),
+                attempt,
+                op,
+                agent,
+                loaded: Box::new(loaded),
+            }),
+        );
+        self.legacy_stores.insert(
+            agent,
+            match protocol {
+                StructuredProtocol::ClaudePtyTranscript => {
+                    LegacyStore::Claude(MutationOracle::default())
+                }
+                StructuredProtocol::ClaudeSdk => LegacyStore::ClaudeSdk(MutationOracle::default()),
+                StructuredProtocol::Codex => LegacyStore::Codex(MutationOracle::default()),
+            },
+        );
+        Ok(())
+    }
+
+    fn accept_legacy_commits(&mut self, mut effects: Vec<Effect>) -> Result<(), ReplayError> {
+        while let Some((agent, attempt, op, expected, mutations)) =
+            effects.into_iter().find_map(|effect| match effect {
+                Effect::Store(StoreOp::Commit {
+                    agent,
+                    attempt,
+                    op,
+                    expected,
+                    mutations,
+                    ..
+                }) => Some((agent, attempt, op, expected, mutations)),
+                _ => None,
+            })
+        {
+            let store = self.legacy_stores.get_mut(&agent).ok_or_else(|| {
+                ReplayError::Render("legacy report commit has no materialiser".into())
+            })?;
+            let (placed, bodies, deleted, redirected) = store.apply(mutations)?;
+            let next_expected = match expected {
+                ExpectedHead::Absent { fence } => ExpectedHead::Present {
+                    fence: fence.saturating_add(1),
+                    version: 1,
+                },
+                ExpectedHead::Present { fence, version } => ExpectedHead::Present {
+                    fence: fence.saturating_add(1),
+                    version: version.saturating_add(1),
+                },
+            };
+            let content_revision = self
+                .model
+                .chat(agent)
+                .map_or(1, |chat| chat.content_revision.saturating_add(1));
+            effects = update(
+                &mut self.model,
+                Msg::Store(StoreMsg::Committed {
+                    profile: ProfileGeneration(0),
+                    attempt,
+                    op,
+                    agent,
+                    result: CommitResult {
+                        expected: next_expected,
+                        content_revision,
+                        placed,
+                        bodies,
+                        deleted,
+                        redirected,
+                        boundaries: Vec::new(),
+                    },
+                }),
+            );
+        }
+        Ok(())
+    }
+
     /// The frame as last drawn at the current position.
     pub fn frame(&self) -> Result<TerminalFrame, ReplayError> {
         let buffer = self.last_frame.as_ref().ok_or(ReplayError::NoFrame)?;
         Ok(capture_frame(buffer, self.theme))
     }
 }
+
+fn empty_loaded<F: ProviderFold>() -> fold::Loaded<F> {
+    fold::Loaded {
+        generations: Generations {
+            fleet: 1,
+            chat: 1,
+            provider: 1,
+        },
+        fence: 0,
+        content_revision: 0,
+        segment_high_water: 0,
+        head: HeadState::None,
+        window: Vec::new(),
+        boundaries: Vec::new(),
+        first_page: None,
+        aliases: Vec::new(),
+        host: None,
+        progress: None,
+    }
+}
+
+impl LegacyStore {
+    fn apply(
+        &mut self,
+        mutations: ui_state::MutationBatchDto,
+    ) -> Result<LegacyCommit, ReplayError> {
+        macro_rules! apply {
+            ($oracle:expr, $mutations:expr) => {{
+                let deleted = $mutations
+                    .iter()
+                    .filter_map(|mutation| match mutation {
+                        Mutation::Delete { key, .. } => Some(key.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let redirected = $mutations
+                    .iter()
+                    .filter_map(|mutation| match mutation {
+                        Mutation::Alias { from, to, .. } => Some((from.clone(), to.clone())),
+                        _ => None,
+                    })
+                    .collect();
+                let placed = $oracle
+                    .apply(&$mutations)
+                    .map_err(|error| ReplayError::Render(error.to_string()))?;
+                let bodies = $oracle
+                    .entries()
+                    .into_iter()
+                    .filter(|entry| placed.iter().any(|placement| placement.key == entry.key))
+                    .map(|entry| Stored {
+                        key: entry.key,
+                        segment: entry.segment,
+                        order: entry.order,
+                        revision: entry.revision,
+                        entry: JsonBytes(
+                            postcard::to_allocvec(&entry.entry)
+                                .expect("fold entries are postcard-safe"),
+                        ),
+                    })
+                    .collect();
+                (placed, bodies, deleted, redirected)
+            }};
+        }
+        Ok(match (self, mutations) {
+            (Self::Claude(oracle), ui_state::MutationBatchDto::Claude(mutations)) => {
+                apply!(oracle, mutations)
+            }
+            (Self::ClaudeSdk(oracle), ui_state::MutationBatchDto::ClaudeSdk(mutations)) => {
+                apply!(oracle, mutations)
+            }
+            (Self::Codex(oracle), ui_state::MutationBatchDto::Codex(mutations)) => {
+                apply!(oracle, mutations)
+            }
+            _ => return Err(ReplayError::Render("legacy report provider changed".into())),
+        })
+    }
+}
+
+type LegacyCommit = (
+    Vec<fold::Placement>,
+    Vec<Stored<JsonBytes>>,
+    Vec<fold::EntryKey>,
+    Vec<(fold::EntryKey, fold::EntryKey)>,
+);
 
 /// Replay a report to its end and compare the frame it produces with the
 /// one it captured.

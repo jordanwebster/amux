@@ -116,6 +116,7 @@ pub struct ClaudeSdkPartial {
     pub components: Vec<Component<String>>,
     pub final_components: Option<FinalComponents>,
     pub finality: FieldPatch<String>,
+    pub parent_tool_use_id: FieldPatch<String>,
     pub tool_name: FieldPatch<String>,
     pub tool_input: FieldPatch<JsonBytes>,
     pub tool_outcome: FieldPatch<JsonBytes>,
@@ -137,6 +138,7 @@ pub struct ClaudeSdkEntry {
     text: VersionedField<String>,
     components: Components<String>,
     finality: VersionedField<String>,
+    parent_tool_use_id: VersionedField<String>,
     tool_name: VersionedField<String>,
     tool_input: VersionedField<JsonBytes>,
     tool_outcome: VersionedField<JsonBytes>,
@@ -167,6 +169,10 @@ impl ClaudeSdkEntry {
 
     pub fn finality(&self) -> Option<&str> {
         self.finality.value().map(String::as_str)
+    }
+
+    pub fn parent_tool_use_id(&self) -> Option<&str> {
+        self.parent_tool_use_id.value().map(String::as_str)
     }
 
     pub fn tool_name(&self) -> Option<&str> {
@@ -237,6 +243,8 @@ impl ClaudeSdkEntry {
         self.body.fill_unknown_from(&source.body);
         self.text.fill_unknown_from(&source.text);
         self.finality.fill_unknown_from(&source.finality);
+        self.parent_tool_use_id
+            .fill_unknown_from(&source.parent_tool_use_id);
         self.tool_name.fill_unknown_from(&source.tool_name);
         self.tool_input.fill_unknown_from(&source.tool_input);
         self.tool_outcome.fill_unknown_from(&source.tool_outcome);
@@ -298,6 +306,8 @@ impl Entry for ClaudeSdkEntry {
         }
         self.text.merge("text", &patch.text)?;
         self.finality.merge("finality", &patch.finality)?;
+        self.parent_tool_use_id
+            .merge("parent_tool_use_id", &patch.parent_tool_use_id)?;
         self.tool_name.merge("tool_name", &patch.tool_name)?;
         self.tool_input.merge("tool_input", &patch.tool_input)?;
         self.tool_outcome
@@ -361,6 +371,7 @@ impl Entry for ClaudeSdkEntry {
             component.value.len() + component.after.capacity() * size_of::<ComponentSource>()
         });
         truncate_versioned_string(&mut self.text, TEXT_MAX_BYTES);
+        truncate_versioned_string(&mut self.parent_tool_use_id, 512);
         truncate_versioned_bytes(&mut self.tool_input, VALUE_MAX_BYTES);
         truncate_versioned_bytes(&mut self.tool_outcome, VALUE_MAX_BYTES);
         truncate_versioned_string(&mut self.task_description, TEXT_MAX_BYTES);
@@ -788,6 +799,9 @@ impl ClaudeSdkFold {
                     };
                     let mut patch = partial(kind, body, None, revision);
                     patch.finality = Patch::set("complete".into(), revision);
+                    if let Some(parent) = parent.clone() {
+                        patch.parent_tool_use_id = Patch::set(bounded_id(parent), revision);
+                    }
                     patch.incomplete = Patch::set(false, revision);
                     patch.final_components = Some(FinalComponents {
                         through: seq,
@@ -1063,6 +1077,9 @@ impl ClaudeSdkFold {
                 };
                 let mut patch = partial(kind, body, None, revision);
                 patch.finality = Patch::set("streaming".into(), revision);
+                if let Some(parent) = parent {
+                    patch.parent_tool_use_id = Patch::set(bounded_id(parent), revision);
+                }
                 patch.incomplete = Patch::set(incomplete, revision);
                 if !text.is_empty() {
                     patch.components.push(Component {
@@ -1132,7 +1149,7 @@ impl ClaudeSdkFold {
             ClaudeSdkEntryKind::Tool,
             ClaudeSdkBody::Tool {
                 tool_use_id: bounded_id(tool_id),
-                parent_tool_use_id: parent.map(bounded_id),
+                parent_tool_use_id: parent.clone().map(bounded_id),
             },
             None,
             revision,
@@ -1143,6 +1160,9 @@ impl ClaudeSdkFold {
             revision,
         );
         patch.finality = Patch::set(finality.into(), revision);
+        if let Some(parent) = parent {
+            patch.parent_tool_use_id = Patch::set(bounded_id(parent), revision);
+        }
         mutations.push(upsert(key, seq, slot, revision, patch));
     }
 
@@ -1702,7 +1722,7 @@ impl ProviderFold for ClaudeSdkFold {
     type Entry = ClaudeSdkEntry;
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudeSdk;
-    const ENTRY_VERSION: u32 = 1;
+    const ENTRY_VERSION: u32 = 2;
     const TIP_VERSION: u32 = 3;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
@@ -2207,6 +2227,7 @@ impl crate::private::Sealed for ClaudeSdkPartial {
                      components,
                      final_components,
                      finality,
+                     parent_tool_use_id,
                      tool_name,
                      tool_input,
                      tool_outcome,
@@ -2226,6 +2247,7 @@ impl crate::private::Sealed for ClaudeSdkPartial {
             crate::assert_value_safe(&components);
             crate::assert_value_safe(&final_components);
             crate::assert_value_safe(&finality);
+            crate::assert_value_safe(&parent_tool_use_id);
             crate::assert_value_safe(&tool_name);
             crate::assert_value_safe(&tool_input);
             crate::assert_value_safe(&tool_outcome);
@@ -2251,6 +2273,7 @@ impl crate::private::Sealed for ClaudeSdkEntry {
                      text,
                      components,
                      finality,
+                     parent_tool_use_id,
                      tool_name,
                      tool_input,
                      tool_outcome,
@@ -2270,6 +2293,7 @@ impl crate::private::Sealed for ClaudeSdkEntry {
             crate::assert_value_safe(&text);
             crate::assert_value_safe(&components);
             crate::assert_value_safe(&finality);
+            crate::assert_value_safe(&parent_tool_use_id);
             crate::assert_value_safe(&tool_name);
             crate::assert_value_safe(&tool_input);
             crate::assert_value_safe(&tool_outcome);

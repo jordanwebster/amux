@@ -147,15 +147,16 @@ fn fold(msgs: Vec<Msg>) -> Model {
     let mut rows = Vec::new();
     for msg in msgs {
         if let Msg::Stream {
+            agent,
             event: StreamMsg::Batch { entries, .. },
-            ..
         } = &msg
+            && *agent == agent_id()
         {
             rows.extend(entries.iter().map(|entry| entry.payload.clone()));
         }
         update(&mut model, msg);
     }
-    tui::fixtures::install_store_rows_for(
+    tui::fixtures::install_static_store_rows_for(
         &mut model,
         agent_id(),
         ui_state::StructuredProtocol::ClaudeSdk,
@@ -190,7 +191,7 @@ fn mid_reply() -> Model {
             chat.entries.iter().any(|stored| match stored {
                 ui_state::StoredDto::ClaudeSdk(stored) => {
                     stored.entry.kind() == "message"
-                        && stored.entry.is_incomplete()
+                        && stored.entry.finality() == Some("streaming")
                         && stored.entry.text().is_some_and(|text| !text.is_empty())
                 }
                 _ => false,
@@ -216,6 +217,7 @@ fn approved_plan() -> Model {
         vec![
             json!({
                 "type": "assistant",
+                "uuid": "row-plan",
                 "parent_tool_use_id": null,
                 "message": {
                     "id": "msg_plan",
@@ -230,6 +232,7 @@ fn approved_plan() -> Model {
             }),
             json!({
                 "type": "user",
+                "uuid": "row-plan-result",
                 "parent_tool_use_id": null,
                 "message": {
                     "role": "user",
@@ -257,6 +260,7 @@ fn landed_edit() -> Model {
         vec![
             json!({
                 "type": "assistant",
+                "uuid": "row-edit",
                 "parent_tool_use_id": null,
                 "message": {
                     "id": "msg_edit",
@@ -275,6 +279,7 @@ fn landed_edit() -> Model {
             }),
             json!({
                 "type": "user",
+                "uuid": "row-edit-result",
                 "parent_tool_use_id": null,
                 "tool_use_result": {
                     "filePath": "src/lib.rs",

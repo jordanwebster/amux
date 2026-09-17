@@ -1703,7 +1703,7 @@ fn string(value: &Value, field: &str) -> Option<String> {
 /// key/value pairs and tells a reader nothing about their own turn. The
 /// shape is the tell — every token after an optional bracketed tag is a
 /// `key=value` pair with no spaces — so prose is never mistaken for one.
-fn is_internal_diagnostic(error: &str) -> bool {
+pub fn is_internal_diagnostic(error: &str) -> bool {
     let rest = match error.trim().strip_prefix('[') {
         Some(tagged) => match tagged.split_once(']') {
             Some((_, rest)) => rest,
