@@ -31,8 +31,8 @@ use ui_state::codex::CodexInput;
 use ui_state::{
     ChatCommand, ChatStreamMsg, Command, DisconnectReason, DumpReason, Effect, InputPayload, Model,
     Msg, NOT_CONNECTED_ERROR, OpError, OpId, OpOutcome, ProfileGeneration, ReplayFactsDto,
-    ServerMsg, StoreMsg, StoreStreamQuery, StreamCloseReason, StreamEntry, StreamMsg,
-    StructuredProtocol, update,
+    ServerMsg, StoreError as DurableStoreError, StoreMsg, StoreStreamQuery, StreamCloseReason,
+    StreamEntry, StreamMsg, StructuredProtocol, update,
 };
 use uuid::Uuid;
 
@@ -41,7 +41,7 @@ use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
     ReportWriter, TraceKind, log_tail, read_model_checkpoint, write_model_checkpoint,
 };
-use crate::store_worker::StoreWorker;
+use crate::store_worker::{QuarantineOutcome, StoreWorker, StoreWorkerFailure};
 
 /// Reducer build identity, stamped into reports.
 pub const BUILD: &str = concat!("ui-runtime/", env!("CARGO_PKG_VERSION"));
@@ -447,6 +447,11 @@ pub struct Runtime {
     streams: HashMap<AgentId, JoinHandle<()>>,
     store_streams: HashMap<AgentId, StoreStreamTask>,
     store_worker: Option<StoreWorker>,
+    store_path: Option<PathBuf>,
+    store_failure_rx: mpsc::UnboundedReceiver<StoreWorkerFailure>,
+    store_failure_channel_open: bool,
+    store_terminated: bool,
+    store_failure: Option<String>,
     store_first_frame_seen: bool,
     startup_gate: Arc<StartupGate>,
     report_dir: Option<PathBuf>,
@@ -644,10 +649,6 @@ impl StartupGate {
                 kind: ui_state::StoreOpKind::ViewGet,
                 ..
             }) => Self::VIEW,
-            Msg::Store(StoreMsg::Unavailable { .. }) => {
-                self.finish_all();
-                return;
-            }
             _ => return,
         };
         let previous = self.completed.fetch_or(bit, Ordering::AcqRel);
@@ -827,6 +828,8 @@ impl Runtime {
 
         let startup_gate = Arc::new(StartupGate::default());
         let profile = ProfileGeneration(generation.0);
+        let store_path = options.store_path.clone();
+        let (store_failure_tx, store_failure_rx) = mpsc::unbounded_channel();
         let store_worker = options.store_path.map(|path| {
             StoreWorker::spawn(
                 path,
@@ -834,6 +837,7 @@ impl Runtime {
                 options.local_host_id,
                 options.chat_window_max_entries,
                 msg_sink.clone(),
+                store_failure_tx,
             )
         });
         if store_worker.is_none() {
@@ -852,6 +856,7 @@ impl Runtime {
             connection_gate,
         ));
 
+        let store_failure_channel_open = store_worker.is_some();
         Self {
             model,
             recorder,
@@ -863,6 +868,11 @@ impl Runtime {
             streams: HashMap::new(),
             store_streams: HashMap::new(),
             store_worker,
+            store_path,
+            store_failure_rx,
+            store_failure_channel_open,
+            store_terminated: false,
+            store_failure: None,
             store_first_frame_seen: false,
             startup_gate,
             report_dir: options.report_dir,
@@ -896,6 +906,12 @@ impl Runtime {
 
     pub fn model(&self) -> &Model {
         &self.model
+    }
+
+    /// The fatal store diagnosis after the runtime has stopped all session
+    /// resources. A terminal shell prints this only after restoring its UI.
+    pub fn take_store_failure(&mut self) -> Option<String> {
+        self.store_failure.take()
     }
 
     /// Attribute bytes retained by each long-lived runtime component.
@@ -1042,6 +1058,9 @@ impl Runtime {
             return false;
         }
         self.drain();
+        if self.store_terminated {
+            return false;
+        }
         // Interactive callers draw before they await the next input. The
         // first completed wait is therefore the store worker's safe signal
         // that launch-critical reads no longer share the first-frame path.
@@ -1057,8 +1076,27 @@ impl Runtime {
     /// Fold one input so embedders can observe every resolved operation before
     /// bounded outcome retention evicts it. Callers own their batching cadence.
     pub async fn next_message(&mut self) -> bool {
+        if self.store_terminated {
+            return false;
+        }
         loop {
-            let Some((generation, msg)) = self.msg_rx.recv().await else {
+            let received = tokio::select! {
+                biased;
+                failure = self.store_failure_rx.recv(), if self.store_failure_channel_open => {
+                    match failure {
+                        Some(failure) => {
+                            self.fail_store(failure.error);
+                            return false;
+                        }
+                        None => {
+                            self.store_failure_channel_open = false;
+                            continue;
+                        }
+                    }
+                }
+                message = self.msg_rx.recv() => message,
+            };
+            let Some((generation, msg)) = received else {
                 return false;
             };
             if generation != self.msg_sink.generation {
@@ -1066,7 +1104,7 @@ impl Runtime {
                 continue;
             }
             self.process(msg);
-            return true;
+            return !self.store_terminated;
         }
     }
 
@@ -1084,6 +1122,9 @@ impl Runtime {
                 Ok((_, msg)) => {
                     self.process(msg);
                     folded = true;
+                    if self.store_terminated {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
@@ -1241,7 +1282,6 @@ impl Runtime {
             &msg,
             Msg::Store(StoreMsg::FleetLoaded { .. })
                 | Msg::Store(StoreMsg::ViewLoaded { .. })
-                | Msg::Store(StoreMsg::Unavailable { .. })
                 | Msg::Store(StoreMsg::Failed {
                     kind: ui_state::StoreOpKind::FleetLoad | ui_state::StoreOpKind::ViewGet,
                     ..
@@ -1569,6 +1609,7 @@ impl Runtime {
                     worker.execute(op);
                 }
             }
+            Effect::StoreFailed { error, .. } => self.fail_store(error),
             Effect::RetryStore { after_ms, op } => {
                 if let (Some(worker), Effect::Store(op)) = (&self.store_worker, *op) {
                     let worker = worker.handle();
@@ -1593,6 +1634,83 @@ impl Runtime {
             }
         }
     }
+
+    fn fail_store(&mut self, error: DurableStoreError) {
+        if self.store_terminated {
+            return;
+        }
+        self.store_terminated = true;
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+        for (_, task) in self.streams.drain() {
+            task.abort();
+        }
+        for (_, stream) in self.store_streams.drain() {
+            stream.task.abort();
+        }
+        *self.client.lock().expect("client mutex poisoned") = None;
+        let quarantine = self
+            .store_worker
+            .take()
+            .map(StoreWorker::shutdown)
+            .unwrap_or(QuarantineOutcome::NotRequested);
+        let path = self
+            .store_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new("<unconfigured store>"));
+        self.store_failure = Some(format_store_failure(path, error, quarantine));
+    }
+}
+
+fn format_store_failure(
+    path: &Path,
+    error: DurableStoreError,
+    quarantine: QuarantineOutcome,
+) -> String {
+    let remedy = match error {
+        DurableStoreError::Permission => {
+            let directory = path.parent().unwrap_or(path);
+            format!(
+                "the data directory {} is not writable; make it writable or set data_dir elsewhere",
+                directory.display()
+            )
+        }
+        DurableStoreError::DiskFull => "the disk is full; free space and relaunch".to_owned(),
+        DurableStoreError::Io => "reading or writing it failed; check the disk and relaunch, or delete the file to start with an empty cache".to_owned(),
+        DurableStoreError::UnsupportedFormat => match store::linked_library_report() {
+            Ok((library, false)) => format!(
+                "this build links an unqualified SQLite {}, {}; this is a build defect, report it",
+                library.version, library.source_id
+            ),
+            _ => "it was written by a newer amux; update amux".to_owned(),
+        },
+        DurableStoreError::Corrupt => {
+            let state = if quarantine == QuarantineOutcome::Completed {
+                "it is corrupt and has been quarantined"
+            } else {
+                "it is corrupt and will be quarantined when the other amux process using it exits; close that process and relaunch"
+            };
+            format!("{state}; nothing the daemon still retains is lost")
+        }
+        DurableStoreError::Busy => {
+            "it stayed busy; close other amux processes using it and relaunch".to_owned()
+        }
+        DurableStoreError::Invalid => {
+            "the requested store operation was invalid; report this amux defect".to_owned()
+        }
+        DurableStoreError::RecoveryRequired => {
+            "durable recovery is required; run `amux store dump` and then `amux store resolve`"
+                .to_owned()
+        }
+        DurableStoreError::GenerationMoved => {
+            "its generation changed unexpectedly; relaunch amux".to_owned()
+        }
+        DurableStoreError::OverBudget => {
+            "its size budget was exceeded; delete the file to start with an empty cache".to_owned()
+        }
+    };
+    format!("store {}: {remedy}", path.display())
 }
 
 fn sqlite_memory_used() -> usize {
@@ -3227,6 +3345,7 @@ mod tests {
         ));
         write_model_checkpoint(&recorder_checkpoint, &model).expect("write initial checkpoint");
         let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
+        let (_store_failure_tx, store_failure_rx) = mpsc::unbounded_channel();
         Runtime {
             model,
             recorder,
@@ -3241,6 +3360,11 @@ mod tests {
             streams: HashMap::new(),
             store_streams: HashMap::new(),
             store_worker: None,
+            store_path: None,
+            store_failure_rx,
+            store_failure_channel_open: false,
+            store_terminated: false,
+            store_failure: None,
             store_first_frame_seen: false,
             startup_gate: Arc::new(StartupGate::default()),
             report_dir: Some(report_dir),
@@ -3461,12 +3585,17 @@ mod tests {
                 let directory = tempfile::tempdir().expect("tempdir");
                 let path = directory.path().join("store.sqlite");
                 let mut runtime = a_runtime(directory.path().to_path_buf());
+                let (failure_tx, failure_rx) = mpsc::unbounded_channel();
+                runtime.store_failure_rx = failure_rx;
+                runtime.store_failure_channel_open = true;
+                runtime.store_path = Some(path.clone());
                 runtime.store_worker = Some(StoreWorker::spawn(
                     path.clone(),
                     ProfileGeneration(0),
                     None,
                     ui_state::WINDOW_MAX_ENTRIES,
                     runtime.msg_sink.clone(),
+                    failure_tx,
                 ));
                 for _ in 0..3 {
                     next_store_runtime_message(&mut runtime).await;
@@ -4070,7 +4199,10 @@ mod tests {
                 .is_some_and(|chat| chat.pending_bytes() == 0)
         })
         .await;
-        assert!(!runtime.model().chat(agent).expect("seed chat").live_only);
+        assert_eq!(
+            runtime.model().chat(agent).expect("seed chat").state,
+            ui_state::ChatState::Live
+        );
     }
 
     fn stored_last_opened_at(path: &Path, agent: AgentId) -> Option<i64> {
@@ -4349,7 +4481,6 @@ mod tests {
             .await;
 
             let before = runtime.model().chat(agent).expect("recovered chat");
-            assert!(!before.live_only, "{case} invalidation became live-only");
             assert!(
                 !before.entries.is_empty(),
                 "{case} discarded the old segment"
@@ -4372,7 +4503,6 @@ mod tests {
             });
             let catching_up = runtime.model().chat(agent).expect("successor chat");
             assert_eq!(catching_up.state, ui_state::ChatState::CatchingUp);
-            assert!(!catching_up.live_only);
             assert!(
                 !catching_up.entries.is_empty(),
                 "{case} did not keep the old segment behind the boundary"
@@ -4426,19 +4556,20 @@ mod tests {
                     );
                 }
             }
-            assert!(
-                !runtime
+            assert_eq!(
+                runtime
                     .model()
                     .chat(agent)
                     .expect("committed successor")
-                    .live_only,
+                    .state,
+                ui_state::ChatState::Live,
                 "{case} successor commit was refused"
             );
         }
     }
 
     #[tokio::test]
-    async fn unresolved_durable_quarantine_does_not_make_derived_chats_live_only() {
+    async fn unresolved_durable_quarantine_leaves_the_derived_chat_available() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("store.sqlite");
         store::Store::open(&path)
@@ -4482,46 +4613,156 @@ mod tests {
         })
         .await;
 
-        let chat = runtime.model().chat(agent).expect("derived chat opens");
-        assert!(!chat.live_only);
-        assert_eq!(chat.persistence_error, None);
+        assert_eq!(
+            runtime
+                .model()
+                .chat(agent)
+                .expect("derived chat opens")
+                .state,
+            ui_state::ChatState::Painted
+        );
     }
 
     #[tokio::test]
-    async fn unavailable_store_keeps_a_chat_live_only() {
+    async fn store_open_permission_failure_ends_before_connecting() {
+        use std::os::unix::fs::PermissionsExt;
+
         let directory = tempfile::tempdir().expect("tempdir");
-        let obstruction = directory.path().join("not-a-directory");
-        std::fs::write(&obstruction, b"file").expect("write obstruction");
+        let data = directory.path().join("data");
+        std::fs::create_dir(&data).expect("create data directory");
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o500))
+            .expect("make data directory read-only");
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
         let mut runtime = Runtime::start(
-            Box::new(|| Box::pin(std::future::pending())),
+            Box::new(move || {
+                observed.fetch_add(1, Ordering::AcqRel);
+                Box::pin(std::future::pending())
+            }),
             RuntimeOptions {
-                store_path: Some(obstruction.join("store.sqlite")),
+                store_path: Some(data.join("store.sqlite")),
                 ..RuntimeOptions::default()
             },
         );
-        for _ in 0..2 {
-            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
                 .await
-                .expect("unavailable startup timed out");
+                .expect("permission failure timed out")
+        );
+        let message = runtime.take_store_failure().expect("fatal store message");
+        assert!(message.contains("is not writable"), "{message}");
+        assert!(message.contains(&data.display().to_string()), "{message}");
+        assert_eq!(attempts.load(Ordering::Acquire), 0);
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700))
+            .expect("restore data directory permissions");
+    }
+
+    #[tokio::test]
+    async fn corrupt_store_result_ends_after_quarantine_and_delivers_no_more_frames() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        let agent = AgentId::from_u128(811);
+        let host = HostId::from_u128(812);
+        seed_recovery_chat(&path, agent, host).await;
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(path.clone()),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
         }
-
-        let agent = Uuid::from_u128(801);
-        let host = Uuid::from_u128(802);
-        runtime.process(Msg::Server(ServerMsg::Connected {
-            local_host_id: Some(host),
-        }));
-        runtime.process(Msg::Server(ServerMsg::AgentUpserted {
-            agent: claude_agent(agent, host),
-        }));
         runtime.open_chat(agent);
-        tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
-            .await
-            .expect("load unavailability timed out");
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+        })
+        .await;
+        let stream = runtime
+            .model()
+            .chat(agent)
+            .expect("loaded chat")
+            .stream_attempt;
 
-        let chat = runtime.model().chat(agent).expect("chat remains visible");
-        assert!(chat.live_only);
-        assert_eq!(chat.state, ui_state::ChatState::Painted);
-        assert_eq!(chat.persistence_error, Some(store::StoreError::Io));
+        let connection = rusqlite::Connection::open(&path).expect("open live store");
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema=ON;
+                 UPDATE sqlite_schema SET rootpage=2147483647 WHERE name='chat_state';
+                 PRAGMA schema_version=999;",
+            )
+            .expect("damage chat table");
+        drop(connection);
+
+        let now = Utc::now();
+        runtime.process(Msg::ChatStream {
+            agent,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 3,
+                    selected_from: 3,
+                    reset_at: 0,
+                    outcome: ui_state::ReplayOutcomeDto::Continuous,
+                },
+                at: now,
+            },
+        });
+        runtime.process(Msg::ChatStream {
+            agent,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: now,
+                entries: vec![StreamEntry::observed(
+                    3,
+                    now,
+                    serde_json::json!({
+                        "type": "user",
+                        "uuid": "dddddddd-0000-4000-8000-000000000081",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-11T22:00:01.000Z",
+                        "message": {"role": "user", "content": "trigger corrupt commit"},
+                        "origin": {"kind": "human"},
+                        "promptSource": "typed"
+                    }),
+                )],
+            },
+        });
+        let mut ended = false;
+        for _ in 0..5 {
+            if !tokio::time::timeout(Duration::from_secs(10), runtime.next_message())
+                .await
+                .expect("corrupt result timed out")
+            {
+                ended = true;
+                break;
+            }
+        }
+        assert!(ended, "corrupt store result did not terminate the runtime");
+        let message = runtime.take_store_failure().expect("fatal store message");
+        assert!(
+            message.contains("is corrupt and has been quarantined"),
+            "{message}"
+        );
+        assert!(
+            message.contains("nothing the daemon still retains is lost"),
+            "{message}"
+        );
+
+        runtime
+            .shell_edge()
+            .report(Msg::Tick { now: Utc::now() })
+            .await
+            .expect("runtime channel remains allocated");
+        assert!(
+            !runtime.next_message().await,
+            "a fatal store must end the frame stream"
+        );
     }
 
     #[tokio::test]

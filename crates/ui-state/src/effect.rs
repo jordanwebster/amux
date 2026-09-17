@@ -3,13 +3,14 @@
 //! shell executes them against `model::Client` and feeds results back as Msgs.
 //! Replay folds Msgs but never executes Effects.
 
+use fold::StoreError;
 use model::{AgentId, ArtifactId, ClaudePtyIntent, DiffBase};
 use serde::{Deserialize, Serialize};
 
 use crate::codex::CodexInput;
 use crate::model::StructuredProtocol;
 use crate::msg::{Command, OpId};
-use crate::store::{StoreOp, StoreStreamQuery};
+use crate::store::{StoreOp, StoreOpKind, StoreStreamQuery};
 
 /// Native input for one typed agent layer. Adding a layer adds an enum arm;
 /// payloads are never normalized across agents.
@@ -69,6 +70,12 @@ pub enum Effect {
     ResumeStream(AgentId),
     /// Execute one operation on the profile's store worker.
     Store(StoreOp),
+    /// Stop the session because a store operation cannot be recovered in
+    /// place. The runtime owns the store path and the operator-facing remedy.
+    StoreFailed {
+        kind: StoreOpKind,
+        error: StoreError,
+    },
     /// Schedule exactly one retry of a failed store commit.
     RetryStore { after_ms: u64, op: Box<Effect> },
     /// Send one layer-native input and MUST answer with a `Msg::OpResult`

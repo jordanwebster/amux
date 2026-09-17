@@ -590,9 +590,6 @@ fn store_scroll_action(
     was_following: bool,
 ) -> Option<UiAction> {
     let window = model.chat(chat.agent)?;
-    if window.live_only {
-        return None;
-    }
     let at_oldest = match chat.viewport.scroll {
         FeedScroll::Paused { top_line, .. } => top_line == 0,
         FeedScroll::Following => metrics.max_top == 0,
@@ -836,24 +833,13 @@ fn install_store_feed(
         }
     }
     parts.feed.blocks = durable;
-    if !chat.live_only {
-        parts.feed.history_truncated = false;
-    }
+    parts.feed.history_truncated = false;
     parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
 }
 
 fn store_status(model: &Model, agent: AgentId, ctx: &FrameContext) -> Option<Line<'static>> {
     let chat = model.chat(agent)?;
     let width = ctx.viewport.0 as usize;
-    if chat.live_only {
-        return Some(blocks::store_status_row(
-            "✗",
-            "persistence unavailable · live only",
-            ctx.theme.error(),
-            width,
-            ctx.theme,
-        ));
-    }
     const CATCH_UP_DELAY_MS: i64 = 500;
     if chat.state == ChatState::CatchingUp
         && chat.catching_up_since.is_some_and(|since| {
@@ -1112,9 +1098,7 @@ pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::Fam
 /// screen. A completion that said one thing is already showing all of
 /// it, and a chat of those has nothing to open.
 fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
-    if let Some(chat) = model.chat(agent)
-        && !chat.live_only
-    {
+    if let Some(chat) = model.chat(agent) {
         return chat
             .entries
             .iter()

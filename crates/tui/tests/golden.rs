@@ -10,6 +10,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use fold::{
+    CommitResult, ExpectedHead, Generations, HeadState, JsonBytes, Loaded, MutationOracle,
+    Placement, Stored,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tui::chat::FeedScroll;
@@ -20,9 +24,9 @@ use tui::{ColorMode, FrameContext, Theme, render};
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::{
     Agent, AgentId, AgentParent, Boundary, BoundaryAt, ChatCommand, ChatStreamMsg, Command,
-    DisconnectReason, Effect, FleetDelta, HostEntry, HostId, Model, Msg, OpId, ProfileGeneration,
-    ReplayFactsDto, ReplayOutcomeDto, ServerMsg, StoreError, StoreMsg, StoreOp, StoreOpKind,
-    StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
+    DisconnectReason, Effect, FleetDelta, HostEntry, HostId, LoadedDto, Model, Msg,
+    MutationBatchDto, OpId, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, ServerMsg,
+    StoreMsg, StoreOp, StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
 };
 use uuid::Uuid;
 
@@ -529,8 +533,117 @@ fn fleet_rows_draw_daemon_summary_freshness_and_incompatible_age() {
     assert!(text.contains("unknown"));
 }
 
+fn fixture_protocol(agent: &Agent) -> ui_state::StructuredProtocol {
+    match agent.kind {
+        ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Pty,
+        } => ui_state::StructuredProtocol::ClaudePtyTranscript,
+        ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Sdk,
+        } => ui_state::StructuredProtocol::ClaudeSdk,
+        ui_state::AgentKind::Codex => ui_state::StructuredProtocol::Codex,
+        _ => panic!("fixture agent has no structured protocol"),
+    }
+}
+
+fn empty_loaded_for(protocol: ui_state::StructuredProtocol) -> LoadedDto {
+    const GENERATIONS: Generations = Generations {
+        fleet: 1,
+        chat: 1,
+        provider: 1,
+    };
+    macro_rules! empty {
+        ($fold:ty, $variant:ident) => {
+            LoadedDto::$variant(Loaded::<$fold> {
+                generations: GENERATIONS,
+                fence: 0,
+                content_revision: 0,
+                segment_high_water: 0,
+                head: HeadState::None,
+                window: Vec::new(),
+                boundaries: Vec::new(),
+                first_page: None,
+                aliases: Vec::new(),
+                host: None,
+                progress: None,
+            })
+        };
+    }
+    match protocol {
+        ui_state::StructuredProtocol::ClaudePtyTranscript => {
+            empty!(fold::claude_pty::ClaudeFold, Claude)
+        }
+        ui_state::StructuredProtocol::ClaudeSdk => {
+            empty!(fold::claude_sdk::ClaudeSdkFold, ClaudeSdk)
+        }
+        ui_state::StructuredProtocol::Codex => empty!(fold::codex::CodexFold, Codex),
+    }
+}
+
+fn install_commit_result(model: &mut Model, agent: AgentId, effects: Vec<Effect>) {
+    let (attempt, op, mutations) = effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Commit {
+                attempt,
+                op,
+                mutations,
+                ..
+            }) => Some((attempt, op, mutations)),
+            _ => None,
+        })
+        .expect("stream batch commits canonical rows");
+    macro_rules! canonical {
+        ($mutations:expr) => {{
+            let mut oracle = MutationOracle::default();
+            let placed = oracle.apply(&$mutations).expect("valid fixture mutations");
+            let bodies = oracle
+                .entries()
+                .into_iter()
+                .map(|entry| Stored {
+                    key: entry.key,
+                    segment: entry.segment,
+                    order: entry.order,
+                    revision: entry.revision,
+                    entry: JsonBytes(
+                        postcard::to_allocvec(&entry.entry).expect("fixture entry serializes"),
+                    ),
+                })
+                .collect();
+            (placed, bodies)
+        }};
+    }
+    let (placed, bodies): (Vec<Placement>, Vec<Stored<JsonBytes>>) = match mutations {
+        MutationBatchDto::Claude(mutations) => canonical!(mutations),
+        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
+        MutationBatchDto::Codex(mutations) => canonical!(mutations),
+    };
+    update(
+        model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op,
+            agent,
+            result: CommitResult {
+                expected: ExpectedHead::Present {
+                    fence: 1,
+                    version: 1,
+                },
+                content_revision: 1,
+                placed,
+                bodies,
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        }),
+    );
+}
+
 fn stored_chat_model(replay_complete: bool) -> Model {
     let agent = an_agent("stored-chat", "claude", "nova");
+    let protocol = fixture_protocol(&agent);
     let mut model = fold(vec![
         server(ServerMsg::Connected {
             local_host_id: Some(host_id("nova")),
@@ -552,13 +665,12 @@ fn stored_chat_model(replay_complete: bool) -> Model {
         .expect("chat open loads the store");
     let effects = update(
         &mut model,
-        Msg::Store(StoreMsg::Failed {
+        Msg::Store(StoreMsg::Loaded {
             profile: ProfileGeneration(0),
             attempt,
             op: load_op,
-            agent: Some(agent.id),
-            kind: StoreOpKind::Load,
-            error: StoreError::UnsupportedFormat,
+            agent: agent.id,
+            loaded: Box::new(empty_loaded_for(protocol)),
         }),
     );
     let stream = effects
@@ -567,7 +679,7 @@ fn stored_chat_model(replay_complete: bool) -> Model {
             Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
             _ => None,
         })
-        .expect("live-only chat opens a stream");
+        .expect("stored chat opens a stream");
     update(
         &mut model,
         Msg::ChatStream {
@@ -585,7 +697,7 @@ fn stored_chat_model(replay_complete: bool) -> Model {
             },
         },
     );
-    update(
+    let effects = update(
         &mut model,
         Msg::ChatStream {
             agent: agent.id,
@@ -599,6 +711,7 @@ fn stored_chat_model(replay_complete: bool) -> Model {
             },
         },
     );
+    install_commit_result(&mut model, agent.id, effects);
     if replay_complete {
         update(
             &mut model,
@@ -671,20 +784,16 @@ fn durable_boundaries_model() -> Model {
         },
     ];
     patch_chat(model, |chat| {
-        chat["live_only"] = serde_json::Value::Bool(false);
-        chat["persistence_error"] = serde_json::Value::Null;
         chat["boundaries"] = serde_json::to_value(boundaries).expect("boundaries serialize");
     })
 }
 
 fn healthy_stored_chat_model(replay_complete: bool) -> Model {
-    patch_chat(stored_chat_model(replay_complete), |chat| {
-        chat["live_only"] = serde_json::Value::Bool(false);
-        chat["persistence_error"] = serde_json::Value::Null;
-    })
+    stored_chat_model(replay_complete)
 }
 
 fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
+    let protocol = fixture_protocol(&agent);
     let mut model = fold(vec![
         server(ServerMsg::Connected {
             local_host_id: Some(host_id("nova")),
@@ -706,13 +815,12 @@ fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
         .expect("chat open loads the store");
     let effects = update(
         &mut model,
-        Msg::Store(StoreMsg::Failed {
+        Msg::Store(StoreMsg::Loaded {
             profile: ProfileGeneration(0),
             attempt,
             op: load_op,
-            agent: Some(agent.id),
-            kind: StoreOpKind::Load,
-            error: StoreError::UnsupportedFormat,
+            agent: agent.id,
+            loaded: Box::new(empty_loaded_for(protocol)),
         }),
     );
     let stream = effects
@@ -721,7 +829,7 @@ fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
             Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
             _ => None,
         })
-        .expect("live-only chat opens a stream");
+        .expect("stored chat opens a stream");
     update(
         &mut model,
         Msg::ChatStream {
@@ -739,7 +847,7 @@ fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
             },
         },
     );
-    update(
+    let effects = update(
         &mut model,
         Msg::ChatStream {
             agent: agent.id,
@@ -756,6 +864,7 @@ fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
             },
         },
     );
+    install_commit_result(&mut model, agent.id, effects);
     update(
         &mut model,
         Msg::ChatStream {
@@ -764,26 +873,7 @@ fn provider_store_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
             event: ChatStreamMsg::ReplayComplete { at: at(NOW - 8) },
         },
     );
-    patch_chat_for(model, agent.id, |chat| {
-        chat["live_only"] = serde_json::Value::Bool(false);
-        chat["persistence_error"] = serde_json::Value::Null;
-    })
-}
-
-fn patch_chat_for(
-    model: Model,
-    agent: AgentId,
-    patch: impl FnOnce(&mut serde_json::Value),
-) -> Model {
-    let mut value = serde_json::to_value(model).expect("model serializes");
-    let chat = value
-        .pointer_mut(&format!(
-            "/store/chats/{}",
-            agent.to_string().replace('~', "~0").replace('/', "~1")
-        ))
-        .expect("stored chat in serialized model");
-    patch(chat);
-    serde_json::from_value(value).expect("patched model deserializes")
+    model
 }
 
 fn provider_store_rows(protocol: ui_state::StructuredProtocol) -> Vec<serde_json::Value> {
@@ -814,6 +904,43 @@ fn provider_store_rows(protocol: ui_state::StructuredProtocol) -> Vec<serde_json
     }
 }
 
+fn provider_live_model(agent: Agent, rows: Vec<serde_json::Value>) -> Model {
+    let id = agent.id;
+    let mut messages = vec![
+        server(ServerMsg::Connected {
+            local_host_id: Some(host_id("nova")),
+        }),
+        server(ServerMsg::HostUpserted {
+            host: a_host("nova"),
+        }),
+        agent_up(&agent),
+        server(ServerMsg::HostsSynchronized),
+        server(ServerMsg::AgentsSynchronized),
+        Msg::Stream {
+            agent: id,
+            event: StreamMsg::Opened { truncated: false },
+        },
+        Msg::Stream {
+            agent: id,
+            event: StreamMsg::Batch {
+                at: at(NOW - 9),
+                entries: rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, payload)| {
+                        StreamEntry::observed(index as u64 + 1, at(NOW - 9), payload)
+                    })
+                    .collect(),
+            },
+        },
+    ];
+    messages.push(Msg::Stream {
+        agent: id,
+        event: StreamMsg::ReplayComplete,
+    });
+    fold(messages)
+}
+
 #[test]
 fn stored_provider_entries_match_live_provider_rendering_in_both_themes() {
     for (name, agent, protocol) in [
@@ -834,11 +961,9 @@ fn stored_provider_entries_match_live_provider_rendering_in_both_themes() {
         ),
     ] {
         let agent_id = agent.id;
-        let stored = provider_store_model(agent, provider_store_rows(protocol));
-        let live = patch_chat_for(stored.clone(), agent_id, |chat| {
-            chat["entries"] = serde_json::json!([]);
-            chat["boundaries"] = serde_json::json!([]);
-        });
+        let rows = provider_store_rows(protocol);
+        let stored = provider_store_model(agent.clone(), rows.clone());
+        let live = provider_live_model(agent, rows);
         for (theme_name, theme) in [
             ("dark", Theme::default()),
             ("light", Theme::light(ColorMode::TrueColor)),
@@ -1012,7 +1137,6 @@ fn assert_store_state_goldens(theme: Theme, theme_name: &str) {
     let catching = healthy_stored_chat_model(false);
     let boundaries = durable_boundaries_model();
     let behind = behind_model();
-    let failed = stored_chat_model(true);
     let states = [
         (
             "remembered_stale",
@@ -1027,7 +1151,6 @@ fn assert_store_state_goldens(theme: Theme, theme_name: &str) {
             boundary_chat_view(&boundaries),
         ),
         ("behind", behind.clone(), chat_view(&behind)),
-        ("live_only", failed.clone(), chat_view(&failed)),
     ];
     for (label, model, view) in states {
         assert_golden(
@@ -1367,10 +1490,8 @@ async fn seeded_sqlite_warm_start_and_gap_reconnect_paint_at_the_tui_boundary() 
         chat.boundaries
             .iter()
             .any(|item| item.boundary == Boundary::Gap),
-        "gap commit did not install its boundary: state={:?} live_only={} error={:?} boundaries={:?} pending={}",
+        "gap commit did not install its boundary: state={:?} boundaries={:?} pending={}",
         chat.state,
-        chat.live_only,
-        chat.persistence_error,
         chat.boundaries,
         chat.pending_bytes()
     );

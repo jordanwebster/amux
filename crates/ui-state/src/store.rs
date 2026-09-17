@@ -461,10 +461,6 @@ pub enum StoreMsg {
         profile: ProfileGeneration,
         op: OpId,
     },
-    Unavailable {
-        profile: ProfileGeneration,
-        error: StoreError,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,8 +587,6 @@ pub struct ChatWindow {
     pub host: Option<model::SummaryEnvelope>,
     pub progress: Option<model::Progress>,
     pub view_epoch: u64,
-    pub live_only: bool,
-    pub persistence_error: Option<StoreError>,
     /// The stream's opening time while a replay is still being consumed.
     /// Renderers use it to suppress a distracting catch-up flash.
     #[serde(default)]
@@ -607,7 +601,6 @@ pub struct ChatWindow {
     invalidation_previous_through: Option<Seq>,
     invalidation_op: Option<OpId>,
     active_load: Option<OpId>,
-    load_retries: u8,
     replay_through: Seq,
     flush_deadline: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -677,8 +670,6 @@ impl ChatWindow {
             host: None,
             progress: None,
             view_epoch: 0,
-            live_only: false,
-            persistence_error: None,
             catching_up_since: None,
             paused: false,
             abandoned_flush: false,
@@ -690,7 +681,6 @@ impl ChatWindow {
             invalidation_previous_through: None,
             invalidation_op: None,
             active_load: None,
-            load_retries: 0,
             replay_through: 0,
             flush_deadline: None,
             retain_oldest: false,
@@ -761,7 +751,6 @@ pub(crate) struct StoreState {
     pub generations: Option<Generations>,
     pub chats: BTreeMap<AgentId, ChatWindow>,
     pub remembered_chat: Option<AgentId>,
-    pub unavailable: Option<StoreError>,
     next_attempt: u64,
     next_op: u64,
     startup_fleet_op: Option<OpId>,
@@ -780,7 +769,6 @@ impl Default for StoreState {
             generations: None,
             chats: BTreeMap::new(),
             remembered_chat: None,
-            unavailable: None,
             next_attempt: 0,
             next_op: 0,
             startup_fleet_op: None,
@@ -829,7 +817,6 @@ pub(crate) fn startup(
 ) -> Vec<Effect> {
     state.profile = profile;
     state.generations = Some(generations);
-    state.unavailable = None;
     state.window_max_entries = window_max_entries.max(1);
     let fleet = state.op();
     let view = state.op();
@@ -962,35 +949,6 @@ pub(crate) fn update_store(state: &mut StoreState, msg: StoreMsg) -> StoreUpdate
             StoreUpdate::default()
         }
         StoreMsg::ViewLoaded { .. } | StoreMsg::ViewSet { .. } => StoreUpdate::default(),
-        StoreMsg::Unavailable { error, .. } => {
-            state.unavailable = Some(error);
-            let mut effects = Vec::new();
-            for (agent, chat) in &mut state.chats {
-                let needs_open = matches!(
-                    chat.state,
-                    ChatState::Loading | ChatState::Reloading | ChatState::Invalidating
-                );
-                let was_paused = make_live_only(chat, error);
-                if was_paused {
-                    effects.push(Effect::ResumeStream(*agent));
-                }
-                if needs_open {
-                    chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
-                    chat.state = ChatState::Painted;
-                    effects.push(open_effect(
-                        *agent,
-                        chat.protocol,
-                        chat.stream_attempt,
-                        StoreStreamQuery::TailCount {
-                            count: crate::REPLAY_TAIL,
-                            tail_bound: Some(crate::REPLAY_TAIL),
-                        },
-                        chat.paused,
-                    ));
-                }
-            }
-            StoreUpdate::effects(effects)
-        }
         StoreMsg::FleetLoaded { .. } => StoreUpdate::default(),
     }
 }
@@ -1021,8 +979,7 @@ fn msg_profile(msg: &StoreMsg) -> ProfileGeneration {
         | StoreMsg::FleetApplied { profile, .. }
         | StoreMsg::FleetChanged { profile }
         | StoreMsg::ViewLoaded { profile, .. }
-        | StoreMsg::ViewSet { profile, .. }
-        | StoreMsg::Unavailable { profile, .. } => *profile,
+        | StoreMsg::ViewSet { profile, .. } => *profile,
     }
 }
 
@@ -1047,7 +1004,6 @@ fn loaded_result(
         return StoreUpdate::default();
     };
     chat.active_load = None;
-    chat.load_retries = 0;
     if reloading {
         chat.state = ChatState::Reloading;
     }
@@ -1158,8 +1114,6 @@ fn install_loaded(chat: &mut ChatWindow, loaded: LoadedDto) -> LoadedBranch {
             chat.invalidation_previous_through = None;
             chat.page_request = None;
             chat.paused = false;
-            chat.live_only = false;
-            chat.persistence_error = None;
             chat.catching_up_since = None;
             chat.retain_oldest = false;
             chat.newest_evicted = false;
@@ -1472,10 +1426,15 @@ fn failed_result(
             state.startup_fleet_op = None;
             state.fleet_settled = true;
         }
-        if error == StoreError::Corrupt {
-            state.unavailable = Some(error);
+        if matches!(kind, StoreOpKind::ViewGet | StoreOpKind::ViewSet)
+            && error == StoreError::RecoveryRequired
+        {
+            if kind == StoreOpKind::ViewGet && state.startup_view_op == Some(op) {
+                state.startup_view_op = None;
+            }
+            return StoreUpdate::default();
         }
-        return StoreUpdate::default();
+        return StoreUpdate::effects(vec![Effect::StoreFailed { kind, error }]);
     };
     let Some(chat) = state.chats.get_mut(&agent) else {
         return StoreUpdate::default();
@@ -1499,68 +1458,14 @@ fn failed_result(
     if !active_op {
         return StoreUpdate::default();
     }
-    if chat.state == ChatState::Flushing {
-        abandon_flush(state, agent);
-        return StoreUpdate::default();
-    }
     if error == StoreError::GenerationMoved {
+        if chat.state == ChatState::Flushing {
+            abandon_flush(state, agent);
+            return StoreUpdate::default();
+        }
         return reload(state, agent);
     }
     match (kind, error) {
-        (StoreOpKind::Load, StoreError::Busy | StoreError::Io) if chat.load_retries == 0 => {
-            chat.load_retries = 1;
-            StoreUpdate::effects(vec![Effect::RetryStore {
-                after_ms: 1_000,
-                op: Box::new(Effect::Store(StoreOp::Load {
-                    profile: state.profile,
-                    attempt,
-                    op,
-                    agent,
-                    protocol: chat.protocol,
-                    window: window_budget(chat.max_entries, chat.view_epoch),
-                })),
-            }])
-        }
-        (StoreOpKind::Load, error) => {
-            let was_paused = make_live_only(chat, error);
-            chat.state = ChatState::Painted;
-            chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
-            let mut effects = Vec::new();
-            if was_paused {
-                effects.push(Effect::ResumeStream(agent));
-            }
-            effects.push(open_effect(
-                agent,
-                chat.protocol,
-                chat.stream_attempt,
-                StoreStreamQuery::TailCount {
-                    count: crate::REPLAY_TAIL,
-                    tail_bound: Some(crate::REPLAY_TAIL),
-                },
-                chat.paused,
-            ));
-            StoreUpdate::effects(effects)
-        }
-        (StoreOpKind::Invalidate, error) => {
-            let was_paused = make_live_only(chat, error);
-            chat.state = ChatState::Painted;
-            chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
-            let mut effects = Vec::new();
-            if was_paused {
-                effects.push(Effect::ResumeStream(agent));
-            }
-            effects.push(open_effect(
-                agent,
-                chat.protocol,
-                chat.stream_attempt,
-                StoreStreamQuery::TailCount {
-                    count: crate::REPLAY_TAIL,
-                    tail_bound: Some(crate::REPLAY_TAIL),
-                },
-                chat.paused,
-            ));
-            StoreUpdate::effects(effects)
-        }
         (StoreOpKind::Commit, StoreError::Busy | StoreError::Io) => {
             let Some(mut in_flight) = chat.in_flight.take() else {
                 return StoreUpdate::default();
@@ -1578,37 +1483,14 @@ fn failed_result(
                     op: Box::new(retry),
                 }])
             } else {
-                let was_paused = make_live_only(chat, error);
-                StoreUpdate::effects(
-                    was_paused
-                        .then_some(Effect::ResumeStream(agent))
-                        .into_iter()
-                        .collect(),
-                )
+                StoreUpdate::effects(vec![Effect::StoreFailed { kind, error }])
             }
         }
-        (_, StoreError::UnsupportedFormat) => {
-            let was_paused = make_live_only(chat, error);
-            StoreUpdate::effects(
-                was_paused
-                    .then_some(Effect::ResumeStream(agent))
-                    .into_iter()
-                    .collect(),
-            )
-        }
-        (StoreOpKind::Page, _) => {
+        (StoreOpKind::Page, StoreError::Busy) => {
             chat.page_request = None;
             StoreUpdate::default()
         }
-        (_, error) => {
-            let was_paused = make_live_only(chat, error);
-            StoreUpdate::effects(
-                was_paused
-                    .then_some(Effect::ResumeStream(agent))
-                    .into_iter()
-                    .collect(),
-            )
-        }
+        (_, error) => StoreUpdate::effects(vec![Effect::StoreFailed { kind, error }]),
     }
 }
 
@@ -1824,12 +1706,7 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
     };
     chat.view_epoch = chat.view_epoch.saturating_add(1);
     if mutations
-        .apply_to(
-            &mut chat.entries,
-            &mut chat.aliases,
-            head.segment(),
-            chat.live_only,
-        )
+        .apply_to(&mut chat.entries, &mut chat.aliases, head.segment(), false)
         .is_err()
     {
         return reload(state, agent).effects;
@@ -1841,9 +1718,6 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
     };
     let evicted = trim_window(&mut chat.entries, retained, chat.max_entries);
     chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
-    if chat.live_only {
-        return Vec::new();
-    }
     let (mutations, transition) = if let Some(transition) = chat.transition.as_ref() {
         let replay_ready = head.through() >= transition.replay_through;
         let mut combined = None;
@@ -1901,7 +1775,7 @@ fn dispatch_next(state: &mut StoreState, agent: AgentId) -> Vec<Effect> {
     let Some(chat) = state.chats.get_mut(&agent) else {
         return Vec::new();
     };
-    if chat.live_only || chat.in_flight.is_some() || chat.pending.is_empty() {
+    if chat.in_flight.is_some() || chat.pending.is_empty() {
         return Vec::new();
     }
     let pending = chat.pending.remove(0);
@@ -2019,7 +1893,7 @@ pub(crate) fn page_older(state: &mut StoreState, agent: AgentId, n: usize) -> Ve
     let Some(mut token) = chat.first_page.clone() else {
         return Vec::new();
     };
-    if chat.page_request.is_some() || chat.live_only {
+    if chat.page_request.is_some() {
         return Vec::new();
     }
     chat.retain_oldest = true;
@@ -2150,19 +2024,6 @@ fn reload(state: &mut StoreState, agent: AgentId) -> StoreUpdate {
             window: window_budget(chat.max_entries, chat.view_epoch.saturating_add(1)),
         }),
     ])
-}
-
-fn make_live_only(chat: &mut ChatWindow, error: StoreError) -> bool {
-    let was_paused = chat.paused;
-    chat.live_only = true;
-    chat.persistence_error = Some(error);
-    chat.pending.clear();
-    chat.in_flight = None;
-    chat.page_request = None;
-    chat.active_load = None;
-    chat.invalidation_op = None;
-    chat.paused = false;
-    was_paused
 }
 
 fn open_effect(

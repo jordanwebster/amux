@@ -722,7 +722,7 @@ fn oversized_catch_up_reaches_replay_completion_before_backpressure_pauses_it() 
 }
 
 #[test]
-fn an_oversized_canonical_commit_result_reloads_instead_of_going_live_only() {
+fn an_oversized_canonical_commit_result_reloads() {
     let mut model = inventory_model();
     let (attempt, stream) = live_empty(&mut model);
     let effects = update(&mut model, recorded_batch(stream, 1));
@@ -758,7 +758,6 @@ fn an_oversized_canonical_commit_result_reloads_instead_of_going_live_only() {
     );
     let chat = model.chat(agent_id("stored")).unwrap();
     assert_eq!(chat.state, ChatState::Reloading);
-    assert!(!chat.live_only);
     assert!(matches!(
         effects.as_slice(),
         [
@@ -923,7 +922,7 @@ fn stream_batches_coalesce_behind_the_in_flight_commit() {
 }
 
 #[test]
-fn loading_usable_none_and_failure_each_paint_before_opening_the_stream() {
+fn loading_usable_and_none_paint_before_opening_the_stream_but_failure_is_fatal() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
     let effects = load(&mut model, attempt, op, empty_loaded(usable_head(40)));
@@ -963,13 +962,12 @@ fn loading_usable_none_and_failure_each_paint_before_opening_the_stream() {
             error: StoreError::UnsupportedFormat,
         }),
     );
-    let chat = model.chat(agent_id("stored")).unwrap();
-    assert_eq!(chat.state, ChatState::Painted);
-    assert!(chat.live_only);
-    assert_eq!(chat.persistence_error, Some(StoreError::UnsupportedFormat));
     assert!(matches!(
         effects.as_slice(),
-        [Effect::OpenStoreStream { .. }]
+        [Effect::StoreFailed {
+            kind: StoreOpKind::Load,
+            error: StoreError::UnsupportedFormat,
+        }]
     ));
 }
 
@@ -1068,7 +1066,7 @@ fn a_needs_baseline_head_invalidates_once_then_opens_from_the_previous_cut() {
 }
 
 #[test]
-fn every_invalidation_storage_failure_falls_back_to_a_live_tail() {
+fn every_invalidation_storage_failure_is_fatal() {
     for error in [
         StoreError::Busy,
         StoreError::Io,
@@ -1101,17 +1099,12 @@ fn every_invalidation_storage_failure_falls_back_to_a_live_tail() {
                 error,
             }),
         );
-        let chat = model.chat(agent_id("stored")).unwrap();
-        assert_eq!(chat.state, ChatState::Painted, "{error:?}");
-        assert!(chat.live_only, "{error:?}");
-        assert_eq!(chat.persistence_error, Some(error));
         assert!(matches!(
             effects.as_slice(),
-            [Effect::OpenStoreStream {
-                query: StoreStreamQuery::TailCount { .. },
-                paused: false,
-                ..
-            }]
+            [Effect::StoreFailed {
+                kind: StoreOpKind::Invalidate,
+                error: observed,
+            }] if *observed == error
         ));
     }
 }
@@ -1227,7 +1220,7 @@ fn painted_catching_up_live_loss_and_exit_follow_the_stream_rows() {
 }
 
 #[test]
-fn truncated_fresh_open_store_unavailability_and_reconnect_remain_visible_states() {
+fn truncated_fresh_open_and_reconnect_remain_visible_states() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
     let effects = load(&mut model, attempt, op, empty_loaded(HeadState::None));
@@ -1278,23 +1271,6 @@ fn truncated_fresh_open_store_unavailability_and_reconnect_remain_visible_states
             query: StoreStreamQuery::After { after: 0, .. },
             ..
         }]
-    ));
-
-    let mut unavailable = inventory_model();
-    begin_open(&mut unavailable);
-    let effects = update(
-        &mut unavailable,
-        Msg::Store(StoreMsg::Unavailable {
-            profile: ProfileGeneration(0),
-            error: StoreError::Corrupt,
-        }),
-    );
-    let chat = unavailable.chat(agent_id("stored")).unwrap();
-    assert_eq!(chat.state, ChatState::Painted);
-    assert!(chat.live_only);
-    assert!(matches!(
-        effects.as_slice(),
-        [Effect::OpenStoreStream { .. }]
     ));
 }
 
@@ -1364,7 +1340,7 @@ fn batches_commit_optimistically_then_conflict_replaces_the_window_and_attempt()
 }
 
 #[test]
-fn busy_retries_the_same_commit_once_then_degrades_only_that_chat() {
+fn busy_retries_the_same_commit_once_then_is_fatal() {
     let mut model = inventory_model();
     let (attempt, stream) = live_empty(&mut model);
     let effects = update(&mut model, recorded_batch(stream, 1));
@@ -1393,7 +1369,7 @@ fn busy_retries_the_same_commit_once_then_degrades_only_that_chat() {
             ..
         }]
     ));
-    update(
+    let effects = update(
         &mut model,
         Msg::Store(StoreMsg::Failed {
             profile: ProfileGeneration(0),
@@ -1404,9 +1380,13 @@ fn busy_retries_the_same_commit_once_then_degrades_only_that_chat() {
             error: StoreError::Busy,
         }),
     );
-    let chat = model.chat(agent_id("stored")).unwrap();
-    assert!(chat.live_only);
-    assert_eq!(chat.persistence_error, Some(StoreError::Busy));
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::StoreFailed {
+            kind: StoreOpKind::Commit,
+            error: StoreError::Busy,
+        }]
+    ));
 }
 
 #[test]
@@ -1479,7 +1459,7 @@ fn a_page_is_retried_when_local_content_moves_after_the_request() {
 }
 
 #[test]
-fn a_failed_page_is_dropped_without_retrying_an_unrelated_operation() {
+fn a_busy_page_is_dropped_without_retrying_an_unrelated_operation() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
     load(&mut model, attempt, op, loaded_with_page(usable_head(0)));
@@ -1502,7 +1482,7 @@ fn a_failed_page_is_dropped_without_retrying_an_unrelated_operation() {
             op: page_op,
             agent: Some(agent_id("stored")),
             kind: StoreOpKind::Page,
-            error: StoreError::Io,
+            error: StoreError::Busy,
         }),
     );
     assert!(effects.is_empty());
@@ -1516,6 +1496,41 @@ fn a_failed_page_is_dropped_without_retrying_an_unrelated_operation() {
     assert!(matches!(
         effects.as_slice(),
         [Effect::Store(StoreOp::Page { .. })]
+    ));
+}
+
+#[test]
+fn an_io_failure_while_paging_is_fatal() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    load(&mut model, attempt, op, loaded_with_page(usable_head(0)));
+    let effects = update(
+        &mut model,
+        Msg::Chat(ChatCommand::PageOlder {
+            agent: agent_id("stored"),
+            n: 25,
+        }),
+    );
+    let [Effect::Store(StoreOp::Page { op, .. })] = effects.as_slice() else {
+        panic!("page request missing: {effects:?}");
+    };
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: *op,
+            agent: Some(agent_id("stored")),
+            kind: StoreOpKind::Page,
+            error: StoreError::Io,
+        }),
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::StoreFailed {
+            kind: StoreOpKind::Page,
+            error: StoreError::Io,
+        }]
     ));
 }
 
@@ -1639,39 +1654,81 @@ fn store_conflicts_and_failures_while_flushing_never_reopen_the_chat() {
         ChatState::Absent
     );
 
-    for error in [StoreError::GenerationMoved, StoreError::Io] {
-        let mut failed = inventory_model();
-        let (attempt, stream) = live_empty(&mut failed);
-        let effects = update(&mut failed, recorded_batch(stream, 1));
-        let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
-            panic!("the stream batch must begin a commit: {effects:?}");
-        };
-        let commit_op = *op;
-        update(
-            &mut failed,
-            Msg::Chat(ChatCommand::Close {
-                agent: agent_id("stored"),
-                now: t0_plus(10),
-            }),
-        );
-        let effects = update(
-            &mut failed,
-            Msg::Store(StoreMsg::Failed {
-                profile: ProfileGeneration(0),
-                attempt,
-                op: commit_op,
-                agent: Some(agent_id("stored")),
-                kind: StoreOpKind::Commit,
-                error,
-            }),
-        );
-        assert!(effects.is_empty(), "{error:?} must not reopen a stream");
-        assert_eq!(
-            failed.chat(agent_id("stored")).unwrap().state,
-            ChatState::Absent,
-            "{error:?}"
-        );
-    }
+    let mut moved = inventory_model();
+    let (attempt, stream) = live_empty(&mut moved);
+    let effects = update(&mut moved, recorded_batch(stream, 1));
+    let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
+        panic!("the stream batch must begin a commit: {effects:?}");
+    };
+    let commit_op = *op;
+    update(
+        &mut moved,
+        Msg::Chat(ChatCommand::Close {
+            agent: agent_id("stored"),
+            now: t0_plus(10),
+        }),
+    );
+    let effects = update(
+        &mut moved,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: commit_op,
+            agent: Some(agent_id("stored")),
+            kind: StoreOpKind::Commit,
+            error: StoreError::GenerationMoved,
+        }),
+    );
+    assert!(effects.is_empty());
+    assert_eq!(
+        moved.chat(agent_id("stored")).unwrap().state,
+        ChatState::Absent
+    );
+
+    let mut failed = inventory_model();
+    let (attempt, stream) = live_empty(&mut failed);
+    let effects = update(&mut failed, recorded_batch(stream, 1));
+    let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
+        panic!("the stream batch must begin a commit: {effects:?}");
+    };
+    let commit_op = *op;
+    update(
+        &mut failed,
+        Msg::Chat(ChatCommand::Close {
+            agent: agent_id("stored"),
+            now: t0_plus(10),
+        }),
+    );
+    let retry = update(
+        &mut failed,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: commit_op,
+            agent: Some(agent_id("stored")),
+            kind: StoreOpKind::Commit,
+            error: StoreError::Io,
+        }),
+    );
+    assert!(matches!(retry.as_slice(), [Effect::RetryStore { .. }]));
+    let fatal = update(
+        &mut failed,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: commit_op,
+            agent: Some(agent_id("stored")),
+            kind: StoreOpKind::Commit,
+            error: StoreError::Io,
+        }),
+    );
+    assert!(matches!(
+        fatal.as_slice(),
+        [Effect::StoreFailed {
+            kind: StoreOpKind::Commit,
+            error: StoreError::Io,
+        }]
+    ));
 }
 
 #[test]

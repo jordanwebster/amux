@@ -7,7 +7,7 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -19,6 +19,18 @@ use ui_state::{
 };
 
 use crate::runtime::MsgSink;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StoreWorkerFailure {
+    pub error: store::StoreError,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QuarantineOutcome {
+    NotRequested,
+    Completed,
+    Pending,
+}
 
 /// The durable view row naming which host is this device, so a reader of
 /// the store without a connection can tell the device from the machines it
@@ -33,6 +45,7 @@ pub(crate) struct StoreWorker {
     handle: StoreWorkerHandle,
     thread: Option<JoinHandle<()>>,
     retention: Arc<StoreWorkerRetentionCounters>,
+    quarantine_outcome: Arc<AtomicU8>,
     #[cfg(test)]
     maintenance_runs: Arc<AtomicUsize>,
     #[cfg(test)]
@@ -75,6 +88,7 @@ impl StoreWorker {
         local_host: Option<model::HostId>,
         window_max_entries: usize,
         sink: MsgSink,
+        failure: tokio::sync::mpsc::UnboundedSender<StoreWorkerFailure>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let worker_sender = sender.clone();
@@ -82,6 +96,8 @@ impl StoreWorker {
         let worker_retired = Arc::clone(&retired);
         let retention = Arc::new(StoreWorkerRetentionCounters::default());
         let worker_retention = Arc::clone(&retention);
+        let quarantine_outcome = Arc::new(AtomicU8::new(0));
+        let worker_quarantine_outcome = Arc::clone(&quarantine_outcome);
         #[cfg(test)]
         let maintenance_runs = Arc::new(AtomicUsize::new(0));
         #[cfg(test)]
@@ -100,42 +116,18 @@ impl StoreWorker {
                 let store = match runtime.block_on(Store::open(&path)) {
                     Ok(store) => store,
                     Err(error) => {
-                        // Establish the reducer's profile generation even when
-                        // SQLite cannot open, then enter its explicit live-only
-                        // state before the network is allowed to start.
-                        let _ = sink.blocking_send(Msg::StoreStartup {
-                            profile,
-                            generations: store::Generations {
-                                fleet: 0,
-                                chat: 0,
-                                provider: 0,
-                            },
-                            window_max_entries,
-                        });
-                        let _ = sink
-                            .blocking_send(Msg::Store(StoreMsg::Unavailable { profile, error }));
-                        while !worker_retired.load(Ordering::Acquire) {
-                            let Ok(command) = receiver.recv() else {
-                                break;
+                        if error == store::StoreError::Corrupt {
+                            let completed = match runtime.block_on(Store::open(&path)) {
+                                Ok(store) => {
+                                    runtime.block_on(store.close());
+                                    true
+                                }
+                                Err(_) => false,
                             };
-                            match command {
-                                Command::Execute { bytes, .. } => {
-                                    release_queued_op(&worker_retention, bytes);
-                                    let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
-                                        profile,
-                                        error,
-                                    }));
-                                }
-                                Command::RecordChatOpened(_) => {
-                                    let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
-                                        profile,
-                                        error,
-                                    }));
-                                }
-                                Command::AfterFirstFrame | Command::MaintenanceFinished(_) => {}
-                                Command::Shutdown => break,
-                            }
+                            worker_quarantine_outcome
+                                .store(if completed { 1 } else { 2 }, Ordering::Release);
                         }
+                        let _ = failure.send(StoreWorkerFailure { error });
                         return;
                     }
                 };
@@ -158,6 +150,7 @@ impl StoreWorker {
                 let mut last_maintenance = None;
                 let mut maintenance_thread: Option<JoinHandle<()>> = None;
                 let mut next_poll = Instant::now() + DATA_VERSION_POLL;
+                let mut corrupt = false;
 
                 while !worker_retired.load(Ordering::Acquire) {
                     let wait = next_poll.saturating_duration_since(Instant::now());
@@ -165,16 +158,25 @@ impl StoreWorker {
                         Ok(Command::Execute { op, bytes }) => {
                             let message = runtime.block_on(execute(&store, *op));
                             release_queued_op(&worker_retention, bytes);
+                            corrupt = matches!(
+                                message,
+                                StoreMsg::Failed {
+                                    error: store::StoreError::Corrupt,
+                                    ..
+                                }
+                            );
                             let _ = sink.blocking_send(Msg::Store(message));
+                            if corrupt {
+                                break;
+                            }
                         }
                         Ok(Command::RecordChatOpened(agent)) => {
                             if let Err(error) = runtime.block_on(store.record_chat_opened(agent))
                                 && error == store::StoreError::Corrupt
                             {
-                                let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
-                                    profile,
-                                    error,
-                                }));
+                                corrupt = true;
+                                let _ = failure.send(StoreWorkerFailure { error });
+                                break;
                             }
                         }
                         Ok(Command::AfterFirstFrame) => maintenance_enabled = true,
@@ -185,10 +187,11 @@ impl StoreWorker {
                             #[cfg(test)]
                             worker_maintenance_runs.fetch_add(1, Ordering::Release);
                             if result == Err(store::StoreError::Corrupt) {
-                                let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
-                                    profile,
+                                corrupt = true;
+                                let _ = failure.send(StoreWorkerFailure {
                                     error: store::StoreError::Corrupt,
-                                }));
+                                });
+                                break;
                             }
                         }
                         Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
@@ -245,6 +248,17 @@ impl StoreWorker {
                 if let Ok(store) = Arc::try_unwrap(store) {
                     runtime.block_on(store.close());
                 }
+                if corrupt {
+                    let completed = match runtime.block_on(Store::open(&path)) {
+                        Ok(store) => {
+                            runtime.block_on(store.close());
+                            true
+                        }
+                        Err(_) => false,
+                    };
+                    worker_quarantine_outcome
+                        .store(if completed { 1 } else { 2 }, Ordering::Release);
+                }
             })
             .expect("spawn profile store executor");
         Self {
@@ -255,6 +269,7 @@ impl StoreWorker {
             },
             thread: Some(thread),
             retention,
+            quarantine_outcome,
             #[cfg(test)]
             maintenance_runs,
             #[cfg(test)]
@@ -286,6 +301,19 @@ impl StoreWorker {
             // deliberately owns no page or write cache above SQLite.
             page_cache_bytes: 0,
             write_cache_bytes: 0,
+        }
+    }
+
+    pub(crate) fn shutdown(mut self) -> QuarantineOutcome {
+        self.handle.retired.store(true, Ordering::Release);
+        let _ = self.handle.sender.send(Command::Shutdown);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        match self.quarantine_outcome.load(Ordering::Acquire) {
+            1 => QuarantineOutcome::Completed,
+            2 => QuarantineOutcome::Pending,
+            _ => QuarantineOutcome::NotRequested,
         }
     }
 
@@ -625,9 +653,6 @@ fn failed(
     kind: StoreOpKind,
     error: store::StoreError,
 ) -> StoreMsg {
-    if error == store::StoreError::Corrupt {
-        return StoreMsg::Unavailable { profile, error };
-    }
     StoreMsg::Failed {
         profile,
         attempt,

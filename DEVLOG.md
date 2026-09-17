@@ -1,3 +1,22 @@
+2026-09-17 — **A desktop session never falls back to live-only operation.**
+The reducer now has one drawable conversation source: canonical store-backed
+entries. Store-open failures and unrecoverable operation failures stop the
+runtime, close its network and chat streams, and synchronously retire the store
+worker; corruption still requests quarantine, and shutdown waits long enough
+to distinguish a completed quarantine from one held up by another client.
+After the terminal leaves its alternate screen, the process reports one line
+that names the store, the cause and a concrete remedy. Permission, disk-full,
+I/O, newer-format, unqualified-SQLite and corruption cases each retain their
+own diagnosis, including the fact that daemon-retained rows survive a corrupt
+cache. Holding a dead session behind an error banner was rejected because it
+would preserve the same degraded mode under a different presentation.
+
+Generation moves and conflicts still reload, one failed commit still retries
+after one second, a busy history page is dropped, and unresolved quarantined
+durable views remain unrestored until the operator runs the explicit resolution
+command. Startup cannot dial the daemon until both store reads have settled, so
+an unusable store exits without making a network connection.
+
 2026-09-17 — **Quarantine recovery is an explicit, atomic operator action.**
 `amux store resolve` first reports each unresolved manifest, the durable
 families known to have existed (or that they could not be determined), and the

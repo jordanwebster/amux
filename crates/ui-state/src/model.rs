@@ -822,10 +822,6 @@ impl Model {
         self.store.remembered_chat
     }
 
-    pub fn store_unavailable(&self) -> Option<fold::StoreError> {
-        self.store.unavailable
-    }
-
     /// A remembered row of a paired remote host that has not answered this
     /// connection. The connection's own snapshot cannot disprove it: only that
     /// host's inventory, or the host leaving the paired set (removed, or no
@@ -841,10 +837,10 @@ impl Model {
             && !self.remote_inventories.contains_key(&host)
     }
 
-    /// Whether the store's remembered fleet has been installed, or can no
-    /// longer be. Until then an empty fleet means "not read yet", not "none".
+    /// Whether the store's remembered fleet has answered. Until then an empty
+    /// fleet means "not read yet", not "none".
     pub fn remembered_fleet_settled(&self) -> bool {
-        self.store.fleet_settled || self.store.unavailable.is_some()
+        self.store.fleet_settled
     }
 
     /// The Claude chat layer for an agent (the chat view's read surface).

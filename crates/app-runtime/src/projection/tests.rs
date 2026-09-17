@@ -958,7 +958,23 @@ fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
 /// A conversation with any provider opened through the store, holding the
 /// entries its chat stream folded from `rows`.
 fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::StreamAttempt) {
-    use ui_state::{ChatCommand, Effect, ProfileGeneration, StoreMsg, StoreOp, StoreOpKind};
+    use fold::{
+        CommitResult, ExpectedHead, Generations, HeadState, JsonBytes, Loaded, MutationOracle,
+        Stored,
+    };
+    use ui_state::{
+        ChatCommand, Effect, LoadedDto, MutationBatchDto, ProfileGeneration, StoreMsg, StoreOp,
+    };
+    let protocol = match kind {
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Pty,
+        } => ui_state::StructuredProtocol::ClaudePtyTranscript,
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Sdk,
+        } => ui_state::StructuredProtocol::ClaudeSdk,
+        model::AgentKind::Codex => ui_state::StructuredProtocol::Codex,
+        model::AgentKind::TestAgent => panic!("test agent has no stored structured chat"),
+    };
     let mut model = model(kind);
     let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: AGENT }));
     let (attempt, op) = effects
@@ -968,15 +984,47 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
             _ => None,
         })
         .expect("opening a chat loads it from the store");
+    const GENERATIONS: Generations = Generations {
+        fleet: 1,
+        chat: 1,
+        provider: 1,
+    };
+    macro_rules! empty_loaded {
+        ($fold:ty, $variant:ident) => {
+            LoadedDto::$variant(Loaded::<$fold> {
+                generations: GENERATIONS,
+                fence: 0,
+                content_revision: 0,
+                segment_high_water: 0,
+                head: HeadState::None,
+                window: Vec::new(),
+                boundaries: Vec::new(),
+                first_page: None,
+                aliases: Vec::new(),
+                host: None,
+                progress: None,
+            })
+        };
+    }
+    let loaded = match protocol {
+        ui_state::StructuredProtocol::ClaudePtyTranscript => {
+            empty_loaded!(fold::claude_pty::ClaudeFold, Claude)
+        }
+        ui_state::StructuredProtocol::ClaudeSdk => {
+            empty_loaded!(fold::claude_sdk::ClaudeSdkFold, ClaudeSdk)
+        }
+        ui_state::StructuredProtocol::Codex => {
+            empty_loaded!(fold::codex::CodexFold, Codex)
+        }
+    };
     let effects = update(
         &mut model,
-        Msg::Store(StoreMsg::Failed {
+        Msg::Store(StoreMsg::Loaded {
             profile: ProfileGeneration(0),
             attempt,
             op,
-            agent: Some(AGENT),
-            kind: StoreOpKind::Load,
-            error: ui_state::StoreError::UnsupportedFormat,
+            agent: AGENT,
+            loaded: Box::new(loaded),
         }),
     );
     let stream = effects
@@ -1003,9 +1051,73 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
             },
         },
     );
-    for (seq, row) in rows.into_iter().enumerate() {
-        chat_row(&mut model, stream, seq as u64 + 1, row);
+    let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let effects = update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::Batch {
+                at,
+                entries: rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(seq, row)| StreamEntry::observed(seq as u64 + 1, at, row))
+                    .collect(),
+            },
+        },
+    );
+    let (op, mutations) = effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Commit { op, mutations, .. }) => Some((op, mutations)),
+            _ => None,
+        })
+        .expect("stored rows commit");
+    macro_rules! canonical {
+        ($mutations:expr) => {{
+            let mut oracle = MutationOracle::default();
+            let placed = oracle.apply(&$mutations).expect("valid fixture mutations");
+            let bodies = oracle
+                .entries()
+                .into_iter()
+                .map(|entry| Stored {
+                    key: entry.key,
+                    segment: entry.segment,
+                    order: entry.order,
+                    revision: entry.revision,
+                    entry: JsonBytes(postcard::to_allocvec(&entry.entry).unwrap()),
+                })
+                .collect();
+            (placed, bodies)
+        }};
     }
+    let (placed, bodies) = match mutations {
+        MutationBatchDto::Claude(mutations) => canonical!(mutations),
+        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
+        MutationBatchDto::Codex(mutations) => canonical!(mutations),
+    };
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op,
+            agent: AGENT,
+            result: CommitResult {
+                expected: ExpectedHead::Present {
+                    fence: 1,
+                    version: 1,
+                },
+                content_revision: 1,
+                placed,
+                bodies,
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        }),
+    );
     (model, stream)
 }
 /// The same window as a healthy store holds it before any live fold exists:
@@ -1013,13 +1125,15 @@ fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::S
 /// only avoids building a durable load by hand.
 fn persisted(model: &Model) -> Model {
     let mut value = serde_json::to_value(model).unwrap();
-    value["store"]["chats"][AGENT.to_string()]["live_only"] = Value::Bool(false);
     value["agents"][AGENT.to_string()]["layer"] = Value::Null;
     serde_json::from_value(value).unwrap()
 }
 fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payload: Value) {
+    use fold::{CommitResult, ExpectedHead, JsonBytes, MutationOracle, Stored};
+    use ui_state::{Effect, MutationBatchDto, ProfileGeneration, StoreMsg, StoreOp};
+
     let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
-    update(
+    let effects = update(
         model,
         Msg::ChatStream {
             agent: AGENT,
@@ -1029,6 +1143,61 @@ fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payloa
                 entries: vec![StreamEntry::observed(seq, at, payload)],
             },
         },
+    );
+    let Some((attempt, op, mutations)) = effects.into_iter().find_map(|effect| match effect {
+        Effect::Store(StoreOp::Commit {
+            attempt,
+            op,
+            mutations,
+            ..
+        }) => Some((attempt, op, mutations)),
+        _ => None,
+    }) else {
+        return;
+    };
+    macro_rules! canonical {
+        ($mutations:expr) => {{
+            let mut oracle = MutationOracle::default();
+            let placed = oracle.apply(&$mutations).expect("valid fixture mutations");
+            let bodies = oracle
+                .entries()
+                .into_iter()
+                .map(|entry| Stored {
+                    key: entry.key,
+                    segment: entry.segment,
+                    order: entry.order,
+                    revision: entry.revision,
+                    entry: JsonBytes(postcard::to_allocvec(&entry.entry).unwrap()),
+                })
+                .collect();
+            (placed, bodies)
+        }};
+    }
+    let (placed, bodies) = match mutations {
+        MutationBatchDto::Claude(mutations) => canonical!(mutations),
+        MutationBatchDto::ClaudeSdk(mutations) => canonical!(mutations),
+        MutationBatchDto::Codex(mutations) => canonical!(mutations),
+    };
+    update(
+        model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op,
+            agent: AGENT,
+            result: CommitResult {
+                expected: ExpectedHead::Present {
+                    fence: 2,
+                    version: seq + 1,
+                },
+                content_revision: seq + 1,
+                placed,
+                bodies,
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        }),
     );
 }
 
@@ -1040,7 +1209,6 @@ fn mobile_projection_paints_a_stored_chat_window_and_appends_to_it() {
     let (mut live, stream) = stored_claude_model(3);
     let model = persisted(&live);
     let chat = model.chat(AGENT).expect("the chat is open");
-    assert!(!chat.live_only);
     assert_eq!(chat.entries.len(), 3);
     assert!(model.claude(AGENT).is_none());
     let mut projection = subscribed();

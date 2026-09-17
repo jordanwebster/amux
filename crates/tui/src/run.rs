@@ -226,7 +226,13 @@ where
         )
         .await?
         {
-            ChromeExit::Quit | ChromeExit::RuntimeGone => return Ok(()),
+            ChromeExit::Quit => return Ok(()),
+            ChromeExit::RuntimeGone => {
+                if let Some(message) = runtime.take_store_failure() {
+                    return Err(anyhow::anyhow!(message));
+                }
+                return Ok(());
+            }
             ChromeExit::Attach(agent) => {
                 // Terminal is restored (the chrome session's guard dropped
                 // before we got here); widen the subscription policy, then
@@ -699,7 +705,17 @@ fn record(_config: &TuiConfig, _event: &TraceEvent) {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::fs::File;
+    #[cfg(unix)]
+    use std::io::Read;
+    #[cfg(unix)]
+    use std::os::fd::FromRawFd;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    #[cfg(unix)]
+    use std::process::{Command as ProcessCommand, Stdio};
     use std::sync::Arc;
 
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -707,6 +723,145 @@ mod tests {
     use ui_runtime::report::{ReplayVerdict, read_header};
 
     use super::*;
+
+    #[cfg(unix)]
+    fn failure_test_config(root: &Path) -> TuiConfig {
+        TuiConfig {
+            working_dir: root.to_path_buf(),
+            leader: 'a',
+            theme: Theme::default(),
+            default_open_mode: crate::view::OpenMode::RawAttach,
+            default_agent_type: ui_state::AgentType::TestAgent {
+                command: "unused".into(),
+            },
+            initial_chat: None,
+            initial_chat_configuration: None,
+            trace: None,
+            profiles: None,
+            diagnostics: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "spawned by store_failure_restores_terminal_before_stderr"]
+    async fn store_failure_helper() {
+        let data = std::path::PathBuf::from(
+            std::env::var_os("AMUX_TUI_STORE_FAILURE_DIR").expect("failure directory"),
+        );
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(data.join("store.sqlite")),
+                ..RuntimeOptions::default()
+            },
+        );
+        let error = run_fleet(&mut runtime, failure_test_config(&data), |_| async {
+            Ok(AttachReturn::Exit)
+        })
+        .await
+        .expect_err("store failure must leave the TUI through its error path");
+        eprintln!("{error:#}");
+        std::process::exit(1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_failure_restores_terminal_before_stderr() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let data = root.path().join("data");
+        std::fs::create_dir(&data).expect("create data directory");
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o500))
+            .expect("make data directory read-only");
+
+        let mut master_fd = -1;
+        let mut slave_fd = -1;
+        // SAFETY: openpty initializes both owned descriptors; the null name,
+        // termios and window pointers request the platform defaults.
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0
+        );
+        // SAFETY: openpty returned fresh descriptors owned by these Files.
+        let mut master = unsafe { File::from_raw_fd(master_fd) };
+        // SAFETY: as above, with the independent slave descriptor.
+        let slave = unsafe { File::from_raw_fd(slave_fd) };
+        let mut child = ProcessCommand::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "run::tests::store_failure_helper",
+                "--nocapture",
+            ])
+            .env("AMUX_TUI_STORE_FAILURE_DIR", &data)
+            .env("TERM", "xterm-256color")
+            .stdin(Stdio::from(slave.try_clone().expect("clone pty slave")))
+            .stdout(Stdio::from(slave))
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn helper");
+
+        let terminal_reader = std::thread::spawn(move || {
+            let mut terminal_bytes = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match master.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => terminal_bytes.extend_from_slice(&buffer[..count]),
+                    Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                    Err(error) => panic!("read pty output: {error}"),
+                }
+            }
+            terminal_bytes
+        });
+        let status = child.wait().expect("wait for helper");
+        let terminal_bytes = terminal_reader.join().expect("join terminal reader");
+        let mut stderr = String::new();
+        child
+            .stderr
+            .take()
+            .expect("helper stderr")
+            .read_to_string(&mut stderr)
+            .expect("read helper stderr");
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700))
+            .expect("restore data directory permissions");
+
+        assert!(!status.success());
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        let enter = terminal_bytes
+            .windows(b"\x1b[?1049h".len())
+            .position(|bytes| bytes == b"\x1b[?1049h")
+            .unwrap_or_else(|| {
+                panic!(
+                    "entered alternate screen; terminal={:?}; stderr={stderr:?}",
+                    String::from_utf8_lossy(&terminal_bytes)
+                )
+            });
+        let restore = terminal_bytes
+            .windows(b"\x1b[?1049l".len())
+            .position(|bytes| bytes == b"\x1b[?1049l")
+            .expect("restored terminal");
+        assert!(
+            restore > enter,
+            "restore must follow alternate-screen entry"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "store {}: the data directory {} is not writable; make it writable or set data_dir elsewhere",
+                data.join("store.sqlite").display(),
+                data.display()
+            )),
+            "{stderr}"
+        );
+    }
 
     #[test]
     fn trace_backend_separates_terminal_draw_and_flush_durations() {
@@ -741,9 +896,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let personal = diagnostics(root.path(), "Personal");
         let work = diagnostics(root.path(), "Work");
+        let switched_checkpoint = root.path().to_path_buf();
         let mut runtime = Runtime::start(
             Box::new(|| Box::pin(std::future::pending())),
-            RuntimeOptions::default(),
+            RuntimeOptions {
+                report_dir: Some(root.path().to_path_buf()),
+                ..RuntimeOptions::default()
+            },
         );
         let mut config = TuiConfig {
             working_dir: root.path().to_path_buf(),
@@ -761,7 +920,10 @@ mod tests {
                 current: root.path().join("personal.sock"),
                 options: Box::new(move |_| {
                     Ok(ProfileOptions {
-                        runtime: RuntimeOptions::default(),
+                        runtime: RuntimeOptions {
+                            report_dir: Some(switched_checkpoint.clone()),
+                            ..RuntimeOptions::default()
+                        },
                         diagnostics: Some(work.clone()),
                     })
                 }),

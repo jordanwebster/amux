@@ -602,9 +602,7 @@ pub(crate) fn reader_actionable(model: &Model, chat: &View) -> bool {
 /// use that succeeded, and the tool row already carries both the text and
 /// the outcome, so a second copy could only disagree with the first.
 pub(crate) fn accepted_plans(model: &Model, agent: AgentId) -> Vec<AcceptedPlan> {
-    if let Some(chat) = model.chat(agent)
-        && !chat.live_only
-    {
+    if let Some(chat) = model.chat(agent) {
         return chat
             .entries
             .iter()

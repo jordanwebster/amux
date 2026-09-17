@@ -405,7 +405,7 @@ async fn client_runtime(
             runtime
                 .model()
                 .chat(*agent)
-                .is_some_and(|chat| chat.state == ChatState::Live && !chat.live_only)
+                .is_some_and(|chat| chat.state == ChatState::Live)
         })
     })
     .await?;
@@ -452,7 +452,7 @@ async fn client_runtime(
             && !reopened
             && connection.agents.iter().all(|agent| {
                 runtime.model().chat(*agent).is_some_and(|chat| {
-                    chat.state == ChatState::Live && !chat.live_only && !chat.boundaries.is_empty()
+                    chat.state == ChatState::Live && !chat.boundaries.is_empty()
                 })
             })
         {
@@ -1051,7 +1051,7 @@ mod tests {
                 runtime
                     .model()
                     .chat(*agent)
-                    .is_some_and(|chat| chat.state == ChatState::Live && !chat.live_only)
+                    .is_some_and(|chat| chat.state == ChatState::Live)
             })
         })
         .await

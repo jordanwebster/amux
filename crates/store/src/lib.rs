@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-pub use db::{LibraryReport, OpenReport, StoreGenerations, qualify_library};
+pub use db::{LibraryReport, OpenReport, StoreGenerations, linked_library_report, qualify_library};
 pub use families::{
     CHAT, CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET, FLEET_SHAPE, Family, META, Migration,
     REGISTRY, Regime, Registry, VIEW,

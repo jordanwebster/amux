@@ -822,9 +822,7 @@ impl Projection {
             if let Some(card) = model.agent(*agent) {
                 state.host = Some(card.agent.host_id);
             }
-            let stored = model
-                .chat(*agent)
-                .filter(|chat| !chat.live_only && !chat.entries.is_empty());
+            let stored = model.chat(*agent).filter(|chat| !chat.entries.is_empty());
             let feed = if let Some(chat) = stored {
                 // The chat's store window is what this device knows of the
                 // conversation, remembered rows and live ones alike, so it is

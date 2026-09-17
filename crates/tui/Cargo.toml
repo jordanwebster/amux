@@ -39,7 +39,9 @@ libc = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
+fold = { workspace = true }
 gethostname = { workspace = true }
+postcard = { workspace = true }
 tempfile = { workspace = true }
 unicode-width = "0.2"
 vt100 = "0.15"

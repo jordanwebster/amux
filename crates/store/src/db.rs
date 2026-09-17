@@ -183,6 +183,19 @@ fn configure(connection: &Connection, new_file: bool) -> Result<(), StoreError> 
 }
 
 pub fn qualify_library(connection: &Connection) -> Result<LibraryReport, StoreError> {
+    let (report, qualified) = inspect_library(connection)?;
+    if !qualified {
+        return Err(StoreError::UnsupportedFormat);
+    }
+    Ok(report)
+}
+
+pub fn linked_library_report() -> Result<(LibraryReport, bool), StoreError> {
+    let connection = Connection::open_in_memory().map_err(map_sqlite_error)?;
+    inspect_library(&connection)
+}
+
+fn inspect_library(connection: &Connection) -> Result<(LibraryReport, bool), StoreError> {
     let version: String = connection
         .query_row("SELECT sqlite_version()", [], |row| row.get(0))
         .map_err(map_sqlite_error)?;
@@ -210,15 +223,15 @@ pub fn qualify_library(connection: &Connection) -> Result<LibraryReport, StoreEr
             row.get(0)
         })
         .map_err(map_sqlite_error)?;
-    if !library_is_qualified(&version, &compile_options, json_works == 1) {
-        return Err(StoreError::UnsupportedFormat);
-    }
-
-    Ok(LibraryReport {
-        version,
-        source_id,
-        compile_options,
-    })
+    let qualified = library_is_qualified(&version, &compile_options, json_works == 1);
+    Ok((
+        LibraryReport {
+            version,
+            source_id,
+            compile_options,
+        },
+        qualified,
+    ))
 }
 
 fn library_is_qualified(version: &str, compile_options: &[String], json_works: bool) -> bool {

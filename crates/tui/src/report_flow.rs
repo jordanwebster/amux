@@ -646,7 +646,15 @@ mod frozen {
                 })
             })
         });
-        Runtime::start(connector, RuntimeOptions::default())
+        Runtime::start(
+            connector,
+            RuntimeOptions {
+                // Explicit report capture requires the runtime's rolling
+                // checkpoint. Runtime removes its unique file on drop.
+                report_dir: Some(std::env::temp_dir()),
+                ..RuntimeOptions::default()
+            },
+        )
     }
 
     pub(super) fn diagnostics(log_path: Option<PathBuf>, dump: &'static str) -> DiagnosticsSource {

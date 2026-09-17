@@ -205,7 +205,6 @@ async fn deliver(
     until(&mut runtime, |runtime| {
         runtime.model().chat(agent).is_some_and(|chat| {
             chat.pending_bytes() == 0
-                && !chat.live_only
                 && chat
                     .head
                     .as_ref()

@@ -718,7 +718,7 @@ fn mirror_chat_stream(
     };
     let effects = update_stream(model, agent, event);
     if discard_feed
-        && model.chat(agent).is_some_and(|chat| !chat.live_only)
+        && model.chat(agent).is_some()
         && let Some(layer) = model
             .agents
             .get_mut(&agent)
@@ -755,8 +755,7 @@ fn update_store_message(model: &mut Model, message: crate::store::StoreMsg) -> V
         | crate::store::StoreMsg::FleetApplied { .. }
         | crate::store::StoreMsg::FleetChanged { .. }
         | crate::store::StoreMsg::ViewLoaded { .. }
-        | crate::store::StoreMsg::ViewSet { .. }
-        | crate::store::StoreMsg::Unavailable { .. } => None,
+        | crate::store::StoreMsg::ViewSet { .. } => None,
     };
     let StoreUpdate { effects, fleet } = crate::store::update_store(&mut model.store, message);
     if let Some(fleet) = fleet {
