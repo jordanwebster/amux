@@ -125,7 +125,7 @@ pub struct Baselines {
     pub machine_model: String,
     profile: String,
     features: String,
-    pub medians: BTreeMap<String, f64>,
+    pub medians: BTreeMap<String, Option<f64>>,
 }
 
 impl Baselines {
@@ -259,8 +259,10 @@ impl Report {
             values.sort_by(f64::total_cmp);
             let median = Statistic::Median.value(&values);
             let measured = run.metric.statistic.value(&values);
-            let baseline =
-                baselines.and_then(|values| values.medians.get(run.metric.name).copied());
+            let baseline = baselines
+                .and_then(|values| values.medians.get(run.metric.name))
+                .copied()
+                .flatten();
             let drift = baseline.map(|baseline| median / baseline - 1.0);
             let within_drift =
                 recording || drift.is_none_or(|drift| drift <= run.metric.unit.drift_limit());
@@ -296,12 +298,14 @@ impl Report {
         println!("metric | median | measured | budget | baseline | drift | verdict");
         for (run, verdict) in self.runs.iter().zip(&self.verdicts) {
             let unit = run.metric.unit.name();
-            let baseline = verdict
-                .baseline
-                .map_or_else(|| "—".to_owned(), |value| format!("{value:.3} {unit}"));
-            let drift = verdict
-                .drift
-                .map_or_else(|| "—".to_owned(), |value| format!("{:+.1}%", value * 100.0));
+            let baseline = verdict.baseline.map_or_else(
+                || "unavailable".to_owned(),
+                |value| format!("{value:.3} {unit}"),
+            );
+            let drift = verdict.drift.map_or_else(
+                || "unavailable".to_owned(),
+                |value| format!("{:+.1}%", value * 100.0),
+            );
             println!(
                 "{} | {:.3} {} | {} {:.3} {} | {:.3} {} | {} | {} | {}",
                 verdict.metric,
@@ -326,6 +330,9 @@ impl Report {
                 run.started_at.to_rfc3339(),
                 run.ended_at.to_rfc3339(),
             );
+            if verdict.baseline.is_none() {
+                println!("  no committed baseline for this workload");
+            }
         }
     }
 
@@ -347,7 +354,7 @@ impl Report {
             medians: self
                 .verdicts
                 .iter()
-                .map(|verdict| (verdict.metric.to_owned(), verdict.median))
+                .map(|verdict| (verdict.metric.to_owned(), Some(verdict.median)))
                 .collect(),
         };
         if let Some(parent) = path.parent() {
@@ -507,7 +514,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
-            medians: BTreeMap::from([("fixture".to_owned(), 10.0)]),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(10.0))]),
         };
         let report = Report::evaluate(
             machine(),
@@ -529,7 +536,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
-            medians: BTreeMap::from([("fixture".to_owned(), 10.0)]),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(10.0))]),
         };
         let report = Report::evaluate(
             machine(),
@@ -554,7 +561,7 @@ mod tests {
         let path = directory.path().join("Mac14,6.json");
         report.write_baseline(&path).unwrap();
         let read = Baselines::read(&path, &machine()).unwrap().unwrap();
-        assert_eq!(read.medians["fixture"], 2.0);
+        assert_eq!(read.medians["fixture"], Some(2.0));
     }
 
     #[test]
@@ -593,6 +600,39 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, PerfError::Baseline(_)));
+    }
+
+    #[test]
+    fn perf_report_accepts_a_null_baseline_without_disabling_the_budget() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            medians: BTreeMap::from([("fixture".to_owned(), None)]),
+        };
+        let passing = Report::evaluate(
+            machine(),
+            vec![run(Unit::Milliseconds, Statistic::Median, &[19.0])],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
+        assert!(passing.passed());
+        assert_eq!(passing.verdicts[0].baseline, None);
+        assert_eq!(passing.verdicts[0].drift, None);
+
+        let failing = Report::evaluate(
+            machine(),
+            vec![run(Unit::Milliseconds, Statistic::Median, &[21.0])],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
+        assert!(
+            !failing.passed(),
+            "the absolute budget remains authoritative"
+        );
     }
 
     #[test]

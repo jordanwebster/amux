@@ -18,7 +18,11 @@ xterm device-attributes probe because a pseudo-terminal supplies transport but
 no terminal emulator; without that answer, crossterm's synthetic two-second
 probe timeout dominated every launch. A cold-only diagnostic measured 12.0 ms
 and 13.8 ms medians with 17.0 ms and 16.3 ms worst samples. Both rows enforce a
-median below 100 ms and a worst sample below 200 ms.
+median below 100 ms and a worst sample below 200 ms. The four previous
+cold-start baselines measured the removed in-process stand-in, so they are
+explicitly unavailable until the next deliberate reference recording; their
+metric keys and absolute budgets remain enforced, while every unchanged row
+continues to enforce its committed drift limit.
 
 2026-09-17 — **Scroll-back qualification walks the client window.** The
 50,000-entry workload now opens through the offline UI runtime, executes every
