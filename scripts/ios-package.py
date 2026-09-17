@@ -38,6 +38,9 @@ def main() -> None:
         # A fresh framework has not been linked yet; the previous result says
         # nothing about it.
         linkage.unlink(missing_ok=True)
+    # A successful shipping assembly owns this path now, even when its digest
+    # was already current. Only the development recipe creates this marker.
+    bridge.stand_in_marker(framework).unlink(missing_ok=True)
 
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"]["mobile"]
     text = bridge.write_size_report(lines, {"name": "mobile", **profile})

@@ -26,6 +26,7 @@ bridge = load("ios_bridge", "ios_bridge.py")
 # patching one patches what the script runs.
 sys.modules["ios_bridge"] = bridge
 ios_rust = load("ios_rust", "ios-rust.py")
+ios_package = load("ios_package", "ios-package.py")
 
 
 class BridgeEnvironmentTests(unittest.TestCase):
@@ -123,7 +124,120 @@ class DevelopmentBuildTests(unittest.TestCase):
                 ios_rust.main()
             self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK, bridge.FRAMEWORK])
             self.assertEqual(stamp.read_text().strip(), "v1:release:debug-tools")
+            self.assertEqual(
+                bridge.stand_in_marker(output / bridge.FRAMEWORK).read_text().strip(),
+                "v1:release:debug-tools",
+            )
             self.assertIn("release, debug tools", (output / "size.txt").read_text())
+
+    def test_a_changed_bridge_restages_a_shipping_stand_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ios"
+            output.mkdir()
+            shipping = output / bridge.FRAMEWORK
+            shipping_slice = shipping / bridge.DRIVING_SLICE
+            shipping_slice.mkdir(parents=True)
+            (shipping_slice / bridge.LIBRARY).write_bytes(b"old")
+            marker = bridge.stand_in_marker(shipping)
+            marker.write_text("old:release:debug-tools\n")
+            stamp = output / "rust-stamp.json"
+            stamp.write_text("old:release:debug-tools\n")
+            built = bridge.Slice("t", output / "lib.a", output / "h.h")
+            built.library.write_bytes(b"new")
+            built.header.write_text("void new_symbol(void);")
+            packaged = []
+
+            def package(framework, slices):
+                header = (slices[0] / "include" / bridge.HEADER).read_text()
+                packaged.append((framework.name, header))
+                if framework.name == bridge.DRIVING_FRAMEWORK:
+                    (framework / bridge.DRIVING_SLICE).mkdir(parents=True)
+                    (framework / bridge.DRIVING_SLICE / bridge.LIBRARY).write_bytes(b"new")
+
+            with mock.patch.object(bridge, "OUTPUT", output), \
+                    mock.patch.object(ios_rust, "STAMP", stamp), \
+                    mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
+                    mock.patch.object(bridge, "source_fingerprint", return_value="new"), \
+                    mock.patch.object(bridge, "cargo_build", return_value=built), \
+                    mock.patch.object(bridge, "package", side_effect=package), \
+                    mock.patch("builtins.print"):
+                ios_rust.main()
+
+            self.assertEqual(
+                packaged,
+                [
+                    (bridge.DRIVING_FRAMEWORK, "void new_symbol(void);"),
+                    (bridge.FRAMEWORK, "void new_symbol(void);"),
+                ],
+            )
+            self.assertEqual(marker.read_text().strip(), "new:release:debug-tools")
+
+    def test_a_changed_bridge_leaves_a_real_shipping_framework_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ios"
+            output.mkdir()
+            shipping = output / bridge.FRAMEWORK
+            shipping_slice = shipping / bridge.DRIVING_SLICE
+            shipping_slice.mkdir(parents=True)
+            library = shipping_slice / bridge.LIBRARY
+            library.write_bytes(b"shipping")
+            stamp = output / "rust-stamp.json"
+            stamp.write_text("old:release:debug-tools\n")
+            built = bridge.Slice("t", output / "lib.a", output / "h.h")
+            built.library.write_bytes(b"new")
+            built.header.write_text("void new_symbol(void);")
+            packaged = []
+
+            def package(framework, _slices):
+                packaged.append(framework.name)
+                (framework / bridge.DRIVING_SLICE).mkdir(parents=True)
+                (framework / bridge.DRIVING_SLICE / bridge.LIBRARY).write_bytes(b"new")
+
+            with mock.patch.object(bridge, "OUTPUT", output), \
+                    mock.patch.object(ios_rust, "STAMP", stamp), \
+                    mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
+                    mock.patch.object(bridge, "source_fingerprint", return_value="new"), \
+                    mock.patch.object(bridge, "cargo_build", return_value=built), \
+                    mock.patch.object(bridge, "package", side_effect=package), \
+                    mock.patch("builtins.print"):
+                ios_rust.main()
+
+            self.assertEqual(packaged, [bridge.DRIVING_FRAMEWORK])
+            self.assertEqual(library.read_bytes(), b"shipping")
+            self.assertFalse(bridge.stand_in_marker(shipping).exists())
+
+
+class ShippingBuildTests(unittest.TestCase):
+    def test_shipping_output_removes_the_development_stand_in_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ios"
+            output.mkdir()
+            framework = output / bridge.FRAMEWORK
+            marker = bridge.stand_in_marker(framework)
+            marker.write_text("old:release:debug-tools\n")
+            built = bridge.Slice("t", output / "lib.a", output / "h.h")
+            built.library.write_bytes(b"shipping")
+            built.header.write_text("void shipping_symbol(void);")
+
+            def stage(_built, destination):
+                (destination / "include").mkdir(parents=True)
+                (destination / bridge.LIBRARY).write_bytes(b"shipping")
+                (destination / "include" / bridge.HEADER).write_text(
+                    "void shipping_symbol(void);"
+                )
+                return destination / bridge.LIBRARY
+
+            with mock.patch.object(bridge, "OUTPUT", output), \
+                    mock.patch.object(bridge, "SIZE_REPORT", output / "size.txt"), \
+                    mock.patch.object(bridge, "cargo_build", return_value=built), \
+                    mock.patch.object(bridge, "stage", side_effect=stage), \
+                    mock.patch.object(bridge, "package_if_changed", return_value=False), \
+                    mock.patch.object(bridge, "write_size_report", return_value=""), \
+                    mock.patch.object(ios_package.subprocess, "run"), \
+                    mock.patch("builtins.print"):
+                ios_package.main()
+
+            self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":

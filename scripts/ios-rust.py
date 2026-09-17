@@ -45,6 +45,7 @@ def main() -> None:
     bridge.OUTPUT.mkdir(parents=True, exist_ok=True)
     driving = bridge.OUTPUT / bridge.DRIVING_FRAMEWORK
     shipping = bridge.OUTPUT / bridge.FRAMEWORK
+    stand_in = bridge.stand_in_marker(shipping)
     linked = driving / bridge.DRIVING_SLICE / bridge.LIBRARY
     fingerprint = build_fingerprint()
     # Both frameworks are asked for a library, not for a directory. A build
@@ -53,8 +54,11 @@ def main() -> None:
     # bridge current and leave xcodebuild to report `does not contain a binary
     # artifact` two stages later, which names neither the cache nor this
     # check. What was actually built is the only thing worth trusting.
+    stand_in_current = (
+        not stand_in.is_file() or stand_in.read_text().strip() == fingerprint
+    )
     if (STAMP.is_file() and STAMP.read_text().strip() == fingerprint
-            and linked.is_file() and packaged(shipping)):
+            and linked.is_file() and packaged(shipping) and stand_in_current):
         print("Rust sources unchanged; the bridge is current and cargo was not run", flush=True)
         return
     STAMP.unlink(missing_ok=True)
@@ -80,10 +84,11 @@ def main() -> None:
     # Whether it is there at all, and whether what is there holds a library:
     # a restored build cache can leave the second false while the first is
     # true, and a shape with no archive in it resolves no better than nothing.
-    if not packaged(shipping):
+    if not packaged(shipping) or stand_in.is_file():
         bridge.package(shipping, [staging / bridge.SIMULATOR_TRIPLE])
         (bridge.OUTPUT / "framework.sha256").unlink(missing_ok=True)
-        print(f"{shipping.name} held no library; staged the development slice as a stand-in "
+        stand_in.write_text(fingerprint + "\n")
+        print(f"Staged the development slice as the {shipping.name} stand-in "
               "until `just ios package` builds the shipping library", flush=True)
 
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get(PROFILE, {})

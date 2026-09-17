@@ -26,6 +26,10 @@ and fills from remembered state while the host reconciles. See the
 [bridge contract](../crates/app-ffi/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
+When `just ios rust` supplies its development slice at the shipping framework
+path as a stand-in, it marks and refreshes that stand-in after Rust changes;
+it never replaces a real framework produced by `just ios package`.
+
 Every app build carries the workspace's pinned SQLite library, including both
 device and simulator builds. Store open still qualifies its SQLite version,
 the WAL-reset fix and required capabilities, so an accidental fallback to the

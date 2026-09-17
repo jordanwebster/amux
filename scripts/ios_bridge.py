@@ -137,6 +137,11 @@ def package(framework: Path, slices: list[Path]) -> None:
     subprocess.run(command, check=True, timeout=180)
 
 
+def stand_in_marker(framework: Path) -> Path:
+    """Marker owned by the development recipe for a shipping-path stand-in."""
+    return framework.with_name(f"{framework.name}.stand-in")
+
+
 def digest(paths: list[Path]) -> str:
     """One hash over the archives and headers a framework is assembled from."""
     summary = hashlib.sha256()

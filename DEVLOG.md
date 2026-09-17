@@ -1,3 +1,10 @@
+2026-09-18 — **Development iOS builds refresh their shipping-path stand-in.**
+`just ios rust` marks the shipping framework only when it supplies the
+development slice as a placeholder, and restages that placeholder whenever
+the Rust fingerprint changes. This keeps the generated C header current while
+leaving a real `just ios package` framework untouched; the shipping recipe
+removes the marker after it owns the path.
+
 2026-09-18 — **Inventory revision I/O failures no longer stop lifecycle
 processing.** Clearing an agent's task, withdrawing it, and committing server
 suspend now apply the local lifecycle change even when the durable revision
