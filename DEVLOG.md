@@ -25,6 +25,21 @@ wait like everything else, which is what a person opening a session on another
 machine does. Routing offering a link that cannot carry anything was still a
 real defect; this is what kept a test from depending on the instant it asked.
 
+A third failure was the harness promising more than it did. The verb that
+severs a daemon's links closed the links the registry held at that instant, and
+a link still completing its handshake joined the registry just after the sweep,
+unclosed. The test that signs a profile out relies on that sweep to make its
+peer greet it again and learn the new state, so the surviving link left the
+peer reporting a profile as signed in when it had signed out. The sweep now
+repeats until one finds nothing left to close.
+
+That test rests on something worth naming: signing out tells nobody. A profile
+that logs out changes a flag of its own, and the machines already connected to
+it go on believing what its last greeting said until something makes them greet
+it again. In a test that is a sweep away; on a real desk it could be hours.
+Left as it is for now, deliberately — telling a live peer is a protocol
+question, not a test one.
+
 The same runs turned up a second Windows failure with a different cause. The
 test cloud relay took a loopback port for TCP and then bound its QUIC endpoint
 on that same number, assuming a free TCP port means a free UDP one. It does

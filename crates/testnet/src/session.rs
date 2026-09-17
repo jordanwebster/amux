@@ -1135,7 +1135,11 @@ impl Daemon {
     /// own, so a verb that gives up on the first refusal is asserting when the
     /// call was made rather than whether it can be made — which is why these
     /// were the suite's flakiest tests on a loaded machine.
-    async fn channel_once_routed(&self, other: &Daemon, description: &str) -> tonic::transport::Channel {
+    async fn channel_once_routed(
+        &self,
+        other: &Daemon,
+        description: &str,
+    ) -> tonic::transport::Channel {
         let mut routed = None;
         eventually(
             &format!("'{}' can route {description}", self.name()),
@@ -1208,7 +1212,9 @@ impl Daemon {
 
     /// Lifecycle, pairing and trust administration are absent from a peer's ClientService.
     pub async fn rejects_remote_admin_from(&self, peer: &Daemon) {
-        let channel = peer.channel_once_routed(self, "an administration call").await;
+        let channel = peer
+            .channel_once_routed(self, "an administration call")
+            .await;
         assert_admin_absent(channel, "peer tunnel").await;
         peer.can_call(self).await;
     }
@@ -1240,7 +1246,10 @@ impl Daemon {
     /// remote peer may and may not invoke.
     pub(crate) async fn routed_admin_client_to(&self, peer: &Daemon) -> Client {
         let channel = self
-            .channel_once_routed(peer, &format!("an administration call to '{}'", peer.name()))
+            .channel_once_routed(
+                peer,
+                &format!("an administration call to '{}'", peer.name()),
+            )
             .await;
         Client::from_channel(channel)
     }

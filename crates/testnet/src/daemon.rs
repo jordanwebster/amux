@@ -1144,9 +1144,24 @@ impl Daemon {
     /// Abrupt direct-transport outage coverage lives in the `udp_blocked`
     /// chapter, where datagrams disappear without a graceful link close.
     pub async fn sever_direct_connections(&self) {
-        if let Some(parts) = self.try_parts().await {
-            parts.channels.link_registry().close_peer_links().await;
-        }
+        // One sweep closes the links the registry holds at that instant, and a
+        // link still handshaking joins it just afterwards, unclosed. The verb
+        // promises no link survives it, so it sweeps until a sweep finds
+        // nothing left to close.
+        eventually(
+            &format!("'{}' is left holding no link to a peer", self.name()),
+            async || match self.try_parts().await {
+                Some(parts) => parts
+                    .channels
+                    .link_registry()
+                    .close_peer_links()
+                    .await
+                    .is_empty(),
+                None => true,
+            },
+            self.failure_dump(),
+        )
+        .await;
     }
 
     /// Stop and restart with the same data dir; identity, trust, and the
