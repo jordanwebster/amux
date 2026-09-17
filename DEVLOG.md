@@ -1,3 +1,13 @@
+2026-09-17 — **The TCP fallback is timed where it is decided.** The relay spec
+for a UDP-blocked network asserted that it finished within two seconds, but its
+clock started before the test network was built. The two seconds also covered
+starting the relay and two daemons and pairing them over the cloud, so busy
+Windows runners failed it even when the fallback took its usual 300ms. The spec
+now only checks the carriers it ends up on. A unit test races a QUIC dial that
+never answers against TCP on a paused clock and requires TCP to win at exactly
+the fallback delay, so a fallback that starts TCP too late or too early fails
+the test on any runner.
+
 2026-09-17 — **Links carry the incarnation that opened them.** The fix for a
 reopened phone replaced a held direct link with any new link in the same
 direction. It did not cover a crash in the other direction: two Macs keep the

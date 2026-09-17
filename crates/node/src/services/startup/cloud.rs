@@ -1028,6 +1028,32 @@ mod tests {
         assert!(!memory.holds("relay.test"));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_quic_dial_that_never_answers_loses_to_tcp_after_the_fallback_delay() {
+        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let (tcp_io, _tcp_peer) = tokio::io::duplex(64);
+        let tcp: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+            tcp_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+
+        let started = tokio::time::Instant::now();
+        let (_, carrier) = select_cloud_carrier(
+            "relay.test",
+            memory.clone(),
+            TCP_FALLBACK_DELAY,
+            std::future::pending(),
+            std::future::ready(Ok(tcp)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(carrier, RelayCarrier::Tcp);
+        assert_eq!(started.elapsed(), TCP_FALLBACK_DELAY);
+        assert!(!memory.holds("relay.test"));
+    }
+
     #[tokio::test]
     async fn tcp_winner_is_not_remembered_until_the_complete_quic_probe_fails() {
         let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
