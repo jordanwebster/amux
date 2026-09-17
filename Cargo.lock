@@ -4281,6 +4281,7 @@ dependencies = [
  "redaction",
  "replay-support",
  "reqwest",
+ "rusqlite",
  "rustls",
  "semver",
  "serde",

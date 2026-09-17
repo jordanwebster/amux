@@ -1,3 +1,9 @@
+2026-09-17 — **The client memory soak runs the shipping client stack.**
+Ten chats now open through the UI runtime over a real testnet daemon and an
+on-disk store in the sampled process. Scripted providers publish the corpus,
+oversized message, unresolved asks and reset from another process, while a
+real SQLite writer lock stalls the client's store worker as rows continue.
+
 2026-09-17 — **Performance qualification fails closed across platforms.**
 The combined recipe now stops on a release-build or desktop-measurement
 failure, and a phone failure remains the recipe's failure. On Macs with Xcode,

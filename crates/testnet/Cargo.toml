@@ -7,7 +7,7 @@ publish = false
 [features]
 default = []
 bundled = ["store/bundled"]
-perf = ["dep:crossterm", "dep:prost", "dep:ratatui", "dep:tui", "tui/fixtures"]
+perf = ["dep:crossterm", "dep:prost", "dep:ratatui", "dep:rusqlite", "dep:tui", "tui/fixtures"]
 
 [[bin]]
 name = "testnet"
@@ -40,6 +40,7 @@ pty-host = { workspace = true }
 replay-support = { path = "../replay-support" }
 reqwest = { workspace = true }
 ratatui = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
 rustls = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
