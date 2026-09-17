@@ -177,16 +177,24 @@ pub fn run_soak(machine: Machine) -> Result<()> {
     let started = Instant::now();
     let sample_count = config.duration.as_secs() / SAMPLE_INTERVAL.as_secs() + 1;
     let mut client_samples = Vec::with_capacity(sample_count as usize);
+    let mut client_samples_before_reset = Vec::with_capacity(sample_count as usize);
+    let mut client_samples_after_reset = Vec::with_capacity(sample_count as usize);
     let mut daemon_samples = Vec::with_capacity(sample_count as usize);
     for index in 0..sample_count {
         ensure_running(&mut client, "client")?;
         ensure_running(&mut client_daemon, "client daemon")?;
         ensure_running(&mut daemon, "daemon")?;
         let at = started.elapsed().as_secs_f64();
-        client_samples.push(TimedSample {
+        let client_sample = TimedSample {
             seconds: at,
             bytes: super::sample_memory(client.id())?.bytes,
-        });
+        };
+        if !client_daemon_dir.join("reset-started").is_file() {
+            client_samples_before_reset.push(client_sample);
+        } else if client_dir.join("reset-reopened").is_file() {
+            client_samples_after_reset.push(client_sample);
+        }
+        client_samples.push(client_sample);
         daemon_samples.push(TimedSample {
             seconds: at,
             bytes: super::sample_memory(daemon.id())?.bytes,
@@ -204,13 +212,23 @@ pub fn run_soak(machine: Machine) -> Result<()> {
     daemon.wait_success()?;
     let ended_at = Utc::now();
     let observation_count = client_samples.len();
+    let client_slope = if config.diagnostic {
+        let before = slope_mib_per_minute(&client_samples_before_reset);
+        let after = slope_mib_per_minute(&client_samples_after_reset);
+        println!(
+            "diagnostic client slope: max steady-state trend around the planned reset/reopen discontinuity (before {before:.3} MiB/min; after {after:.3} MiB/min); the one-time allocator plateau change remains included in peak"
+        );
+        before.max(after)
+    } else {
+        slope_mib_per_minute(&client_samples)
+    };
 
     let memory_name = daemon_active.name();
     println!("memory measure: {memory_name} (sampled every 5 s)");
     let runs = vec![
         memory_run(
             "bounded client memory slope",
-            slope_mib_per_minute(&client_samples),
+            client_slope,
             1.0,
             Unit::MegabytesPerMinute,
             client_workload,
@@ -576,6 +594,7 @@ async fn client_daemon_runtime(
             .await
             .with_context(|| format!("replay client corpus for chat {chat}"))?;
         if !reset && started.elapsed() >= timing.reset_after {
+            std::fs::write(directory.join("reset-started"), b"reset\n")?;
             for provider in &providers {
                 provider
                     .play(vec![Step::Compaction])
@@ -694,6 +713,9 @@ fn slope_mib_per_minute(samples: &[TimedSample]) -> f64 {
         .iter()
         .filter(|sample| sample.seconds >= WARM_UP.as_secs_f64())
         .collect::<Vec<_>>();
+    if samples.len() < 2 {
+        return f64::INFINITY;
+    }
     let mean_x = samples.iter().map(|sample| sample.seconds).sum::<f64>() / samples.len() as f64;
     let mean_y = samples
         .iter()
@@ -909,6 +931,44 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!((slope_mib_per_minute(&samples) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn diagnostic_slope_separates_the_planned_reset_plateau() {
+        let before = (0..=36)
+            .map(|sample| TimedSample {
+                seconds: sample as f64 * 5.0,
+                bytes: (20.0 * MIB + sample as f64 * 5.0 / 60.0 * 0.25 * MIB) as u64,
+            })
+            .collect::<Vec<_>>();
+        let after = (37..=48)
+            .map(|sample| TimedSample {
+                seconds: sample as f64 * 5.0,
+                bytes: (27.0 * MIB + (sample as f64 * 5.0 - 185.0) / 60.0 * 0.25 * MIB) as u64,
+            })
+            .collect::<Vec<_>>();
+        let combined = before.iter().chain(&after).copied().collect::<Vec<_>>();
+
+        assert!(slope_mib_per_minute(&combined) > 4.0);
+        let diagnostic = slope_mib_per_minute(&before).max(slope_mib_per_minute(&after));
+        assert!((diagnostic - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn diagnostic_slope_still_reports_growth_on_each_side_of_reset() {
+        let growing = |start: u64, end: u64, plateau_mib: f64| {
+            (start..=end)
+                .map(|sample| TimedSample {
+                    seconds: sample as f64 * 5.0,
+                    bytes: (plateau_mib * MIB + sample as f64 * 5.0 / 60.0 * 4.0 * MIB) as u64,
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = growing(0, 36, 20.0);
+        let after = growing(37, 48, 27.0);
+
+        let diagnostic = slope_mib_per_minute(&before).max(slope_mib_per_minute(&after));
+        assert!((diagnostic - 4.0).abs() < 0.001);
     }
 
     #[test]

@@ -3,7 +3,13 @@ ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the
 diagnostic recorder retained serialized stream and store messages up to its
 10,000-message count ceiling—about 3.5 KiB per delivered row. The recorder's
 shipping 2 MiB byte ceiling now advances those messages into its exact replay
-checkpoint instead. `AMUX_PERF_SOAK_SECONDS=240` runs the same on-disk client,
+checkpoint instead. The first shortened run then reported 5.309 MiB/min with
+a 35.016 MiB peak: the planned minute-three reset and reopen moved the
+allocator to a new plateau in the middle of the two-minute regression, so a
+one-time roughly 7 MiB step looked like continuing growth. Diagnostic runs now
+report the worse steady-state slope on either side of that known discontinuity
+while still counting the step in the peak; the ten-minute qualification keeps
+its original after-warm-up regression. `AMUX_PERF_SOAK_SECONDS=240` runs the same on-disk client,
 ten chats, row rate and two-minute warm-up for repair diagnosis, moves reset
 and reopen to minute three, and labels itself as shortened diagnostic evidence.
 The reset trigger follows elapsed wall time, so real provider I/O cannot defer
