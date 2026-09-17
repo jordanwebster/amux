@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "machine_model": "Mac14,6",
+  "profile": "release",
+  "features": "bundled,perf",
+  "medians": {
+    "TUI cold start (200 agents) median": 5.601041,
+    "TUI cold start (200 agents) worst": 5.601041,
+    "TUI cold start (40 agents) median": 5.302958,
+    "TUI cold start (40 agents) worst": 5.302958,
+    "attach caught up": 25.784833,
+    "attach first painted window": 1.459042,
+    "commit latency": 5.002999999999999,
+    "frame under flood": 3.1854999999999998,
+    "growth after sweep": 87.1538319976599,
+    "growth longest statement upper bound": 76.696083,
+    "growth sweep duration": 181.695083,
+    "reconnect delta (1,000 rows)": 285766.0,
+    "reconnect delta (10 rows)": 2831.0,
+    "reconnect delta (100 rows)": 28392.0,
+    "scroll-back memory return": 1.021205010468448,
+    "steady-state frame": 1.782166,
+    "summarizer CPU per row": 1.6202999999999999,
+    "summarizer idle core": 0.00176,
+    "tip bound": 4000.0
+  }
+}

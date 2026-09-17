@@ -1,3 +1,10 @@
+2026-09-17 — **The Mac14,6 release performance baseline is recorded.**
+The enrolled reference Mac now has a committed baseline for the complete
+desktop qualification under the `release` profile with `bundled,perf`
+features. A second run kept every metric inside its absolute budget and drift
+limit, the phone suite passed on the pinned simulator, and the ten-minute
+memory soak kept both client and daemon growth within their ceilings.
+
 2026-09-17 — **Client and daemon memory stay bounded under sustained structured work.**
 The release soak keeps ten chat windows active while fresh provider identities stream for
 ten minutes, including oversized and unresolved work, a stalled persistence interval and
