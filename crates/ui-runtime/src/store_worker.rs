@@ -4,6 +4,7 @@
 //! worker only opens the store, executes operations in order, and returns the
 //! corresponding recorded message with the original freshness envelope.
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -299,7 +300,7 @@ impl StoreWorker {
 impl StoreWorkerHandle {
     pub(crate) fn execute(&self, op: StoreOp) {
         if !self.retired.load(Ordering::Acquire) {
-            let bytes = serde_json::to_vec(&op).map_or(0, |bytes| bytes.len());
+            let bytes = serialized_bytes(&op);
             self.retention.ops.fetch_add(1, Ordering::AcqRel);
             self.retention.bytes.fetch_add(bytes, Ordering::AcqRel);
             if self
@@ -314,6 +315,25 @@ impl StoreWorkerHandle {
             }
         }
     }
+}
+
+#[derive(Default)]
+struct ByteCounter(usize);
+
+impl Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_bytes(value: &impl serde::Serialize) -> usize {
+    let mut counter = ByteCounter::default();
+    serde_json::to_writer(&mut counter, value).map_or(0, |()| counter.0)
 }
 
 fn release_queued_op(retention: &StoreWorkerRetentionCounters, bytes: usize) {
@@ -627,5 +647,19 @@ fn record_local_host(runtime: &tokio::runtime::Runtime, store: &Store, host: mod
         != Some(&value)
     {
         let _ = runtime.block_on(store.view_set(kind, key, &value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serialized_bytes;
+
+    #[test]
+    fn queue_byte_count_does_not_need_an_output_buffer() {
+        let value = vec!["escaped\nvalue"; 32];
+        assert_eq!(
+            serialized_bytes(&value),
+            serde_json::to_vec(&value).unwrap().len()
+        );
     }
 }

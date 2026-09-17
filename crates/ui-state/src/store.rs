@@ -205,10 +205,41 @@ impl MutationBatchDto {
     ) -> Result<(), ReloadRequired> {
         macro_rules! apply {
             ($mutations:expr, $entry_variant:ident, $entry_ty:ty) => {{
-                let held = entries
-                    .iter()
-                    .map(|entry| entry.key().clone())
-                    .collect::<std::collections::BTreeSet<_>>();
+                let filtered = if admit_new {
+                    std::borrow::Cow::Borrowed($mutations.as_slice())
+                } else {
+                    std::borrow::Cow::Owned(
+                        $mutations
+                            .iter()
+                            .filter(|mutation| match mutation {
+                                Mutation::Upsert { key, .. } => {
+                                    let mut current = key;
+                                    for _ in 0..=aliases.len() {
+                                        if entries.iter().any(|entry| entry.key() == current) {
+                                            return true;
+                                        }
+                                        let Some((_, to)) =
+                                            aliases.iter().find(|(from, _)| from == current)
+                                        else {
+                                            return false;
+                                        };
+                                        current = to;
+                                    }
+                                    // Preserve the oracle's fail-closed cycle detection.
+                                    true
+                                }
+                                Mutation::Delete { .. } | Mutation::Alias { .. } => true,
+                            })
+                            .cloned()
+                            .collect(),
+                    )
+                };
+                // A store-backed window admits a fresh key only after SQLite
+                // returns its canonical body. Most stream rows take this path;
+                // avoid rebuilding the whole materialiser for a known no-op.
+                if filtered.is_empty() {
+                    return Ok(());
+                }
                 let concrete = std::mem::take(entries)
                     .into_iter()
                     .map(|stored| match stored {
@@ -238,20 +269,8 @@ impl MutationBatchDto {
                     redirects,
                 )
                 .map_err(|_| ReloadRequired::MergeDefect)?;
-                let filtered = if admit_new {
-                    $mutations.clone()
-                } else {
-                    $mutations
-                        .iter()
-                        .filter(|mutation| match mutation {
-                            Mutation::Upsert { key, .. } => held.contains(key),
-                            Mutation::Delete { .. } | Mutation::Alias { .. } => true,
-                        })
-                        .cloned()
-                        .collect()
-                };
                 oracle
-                    .apply(&filtered)
+                    .apply(filtered.as_ref())
                     .map_err(|_| ReloadRequired::MergeDefect)?;
                 *entries = oracle
                     .entries()
@@ -1840,11 +1859,18 @@ fn commit_effect(
 
 fn interest(chat: &ChatWindow) -> WindowInterest {
     WindowInterest {
-        held_keys: chat
-            .entries
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect(),
+        // A followed-tip window is a contiguous suffix, already described by
+        // `feed_from`. Enumerating every key duplicated a growing window into
+        // every commit. A scrolled window is not contiguous with the tip and
+        // still names its exact held keys.
+        held_keys: if chat.retain_oldest {
+            chat.entries
+                .iter()
+                .map(|entry| entry.key().clone())
+                .collect()
+        } else {
+            Vec::new()
+        },
         feed_from: if chat.retain_oldest {
             None
         } else {
@@ -2250,6 +2276,50 @@ mod tests {
         assert_eq!(retained.visible_entries, 1);
         assert_eq!(retained.canonical_entries, 0);
         assert_eq!(retained.canonical_entry_bytes, 0);
+    }
+
+    #[test]
+    fn fresh_store_backed_upsert_leaves_the_visible_allocation_untouched() {
+        let mut chat = chat();
+        chat.entries = vec![StoredDto::Claude(Box::new(stored("held", 1)))];
+        let entries_allocation = chat.entries.as_ptr();
+        let held_entry = match &chat.entries[0] {
+            StoredDto::Claude(entry) => std::ptr::from_ref(entry.as_ref()),
+            _ => unreachable!(),
+        };
+        let revision = Revision::row(2);
+        let fresh = MutationBatchDto::Claude(vec![Mutation::Upsert {
+            key: EntryKey::new("message:fresh").unwrap(),
+            order: Order::new(2, 0).unwrap(),
+            revision,
+            entry: partial("fresh".to_owned(), revision),
+        }]);
+
+        fresh
+            .apply_to(&mut chat.entries, &mut chat.aliases, 1, false)
+            .unwrap();
+
+        assert_eq!(chat.entries.as_ptr(), entries_allocation);
+        let StoredDto::Claude(entry) = &chat.entries[0] else {
+            unreachable!()
+        };
+        assert_eq!(std::ptr::from_ref(entry.as_ref()), held_entry);
+        assert_eq!(entry.entry.text(), Some("held"));
+    }
+
+    #[test]
+    fn followed_tip_interest_uses_the_contiguous_lower_bound() {
+        let mut chat = chat();
+        chat.entries = vec![StoredDto::Claude(Box::new(stored("held", 1)))];
+
+        let followed = interest(&chat);
+        assert!(followed.held_keys.is_empty());
+        assert!(followed.feed_from.is_some());
+
+        chat.retain_oldest = true;
+        let scrolled = interest(&chat);
+        assert_eq!(scrolled.held_keys.len(), 1);
+        assert!(scrolled.feed_from.is_none());
     }
 
     #[test]

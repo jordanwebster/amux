@@ -17,8 +17,16 @@ slope to 2.009 MiB/min with a 26.750 MiB peak, proving the recorder was the
 largest owner but leaving the 1.000 MiB/min slope budget unmet. The store-backed
 window therefore no longer retains a second canonical copy of the same
 scrollback, and mutation folding moves the visible window through the merge
-oracle instead of deep-cloning the growing window for every batch. The next
-driver-owned four-minute diagnostic supplies the final after slope and peak.
+oracle instead of deep-cloning the growing window for every batch. That change
+lowered the peak to 22.985 MiB, but the next driver run still measured 3.120
+MiB/min: the retained window was smaller while growing per-commit scratch
+allocations still raised the allocator's high-water mark. Store-backed fresh
+upserts now wait for their canonical SQLite body without rebuilding an
+unchanged visible materialiser; followed-tip commits describe their contiguous
+window by its lower bound instead of cloning every held key; and store-worker
+queue accounting counts serialized bytes without allocating a second encoded
+operation. The next driver-owned four-minute diagnostic supplies the final
+after slope and peak.
 The visible window still caps at 800 entries or 16 MiB per chat (about 400 s at
 2 rows/s), and the legacy provider feed caps at 1,000 entries (500 s); no
 window, warm-up, rate or workload bound changed.
