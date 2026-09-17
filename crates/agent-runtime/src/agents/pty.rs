@@ -14,7 +14,7 @@ use crate::agents::{
 };
 
 /// Maximum replay buffer size for PTY bytes.
-const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
+const MAX_REPLAY_BUFFER: usize = 1024 * 1024;
 const TERMINATE_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
@@ -292,5 +292,67 @@ fn pty_size(size: TerminalSize) -> pty_host::PtySize {
     pty_host::PtySize {
         rows: size.rows,
         cols: size.cols,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::BroadcastRead;
+
+    #[tokio::test]
+    async fn raw_replay_after_wrap_repaints_the_uncut_terminal_screen() {
+        const ROWS: u16 = 24;
+        const COLS: u16 = 80;
+        const CUT_INSIDE_CSI_AT: usize = 2;
+
+        let colour_reset = b"\x1b[0m";
+        let final_frame = b"\x1b[4;7H\x1b[38;5;42mwrapped replay\x1b[0m";
+        let suffix_len = MAX_REPLAY_BUFFER - (colour_reset.len() - CUT_INSIDE_CSI_AT);
+        let mut suffix = vec![0; suffix_len - final_frame.len()];
+        suffix.extend_from_slice(final_frame);
+
+        let prefix_end = b"\x1b[31m\x1b[0m\x1b[2J\x1b[H";
+        let mut prefix = vec![b'p'; 4096 - prefix_end.len()];
+        prefix.extend_from_slice(prefix_end);
+        let mut uncut = Vec::with_capacity(prefix.len() + colour_reset.len() + suffix.len());
+        uncut.extend_from_slice(&prefix);
+        uncut.extend_from_slice(colour_reset);
+        uncut.extend_from_slice(&suffix);
+        assert!(uncut.len() > MAX_REPLAY_BUFFER);
+        let arbitrary_cut = uncut.len() - MAX_REPLAY_BUFFER;
+        assert_eq!(arbitrary_cut, prefix.len() + CUT_INSIDE_CSI_AT);
+        assert_eq!(&uncut[arbitrary_cut - 2..arbitrary_cut + 2], b"\x1b[0m");
+
+        let buffer = MultiplexByteBuffer::new(MAX_REPLAY_BUFFER);
+        for chunk in uncut.chunks(4093) {
+            buffer.write(chunk.to_vec()).await;
+        }
+        let debug = buffer.debug_snapshot().await;
+        assert!(debug.buffer.bytes <= MAX_REPLAY_BUFFER);
+
+        let mut reader = buffer.subscribe_with_query(None).await.unwrap();
+        let replay = match reader.read_event().await.unwrap() {
+            BroadcastRead::ReplayItem(bytes) => bytes,
+            _ => panic!("late raw attach must begin with retained replay bytes"),
+        };
+        assert!(matches!(
+            reader.read_event().await.unwrap(),
+            BroadcastRead::ReplayComplete
+        ));
+        assert_ne!(replay.as_slice(), &uncut[arbitrary_cut..]);
+
+        let mut expected = vt100::Parser::new(ROWS, COLS, 0);
+        expected.process(&uncut);
+        let mut attached = vt100::Parser::new(ROWS, COLS, 0);
+        attached.process(&replay);
+        assert_eq!(
+            attached.screen().contents_formatted(),
+            expected.screen().contents_formatted()
+        );
+        assert_eq!(
+            attached.screen().cursor_position(),
+            expected.screen().cursor_position()
+        );
     }
 }

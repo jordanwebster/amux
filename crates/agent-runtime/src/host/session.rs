@@ -1109,7 +1109,10 @@ mod tests {
             let (query, terminal_size) = structured_replay_query(&request.args).unwrap();
             assert!(terminal_size.is_none());
 
-            let log = StructuredLogSource::new(3);
+            let row_bytes = serde_json::to_vec(&serde_json::json!({"type": "row", "seq": 1}))
+                .unwrap()
+                .len();
+            let log = StructuredLogSource::new(row_bytes * 3);
             for seq in 1..=5 {
                 log.write(serde_json::json!({"type": "row", "seq": seq}))
                     .await;
@@ -1150,7 +1153,7 @@ mod tests {
     #[tokio::test]
     async fn daemon_protocol_row_facts_are_identical_for_live_and_replay_observers() {
         let agent_id = Uuid::from_u128(92);
-        let log = StructuredLogSource::new(8);
+        let log = StructuredLogSource::new(1024 * 1024);
         let (live_reader, live_replay) = log.subscribe_with_query(None).await.unwrap();
         let (_live_close_tx, live_close_rx) = mpsc::channel(1);
         let (_live_shutdown_tx, live_shutdown_rx) = mpsc::channel(1);
@@ -1225,7 +1228,7 @@ mod tests {
     #[tokio::test]
     async fn daemon_protocol_semantic_reset_is_a_session_closed_reset_event() {
         let agent_id = Uuid::from_u128(91);
-        let log = StructuredLogSource::new(8);
+        let log = StructuredLogSource::new(1024 * 1024);
         let (reader, replay) = log.subscribe_with_query(None).await.unwrap();
         let (_close_tx, close_rx) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
@@ -1482,7 +1485,7 @@ mod tests {
     #[tokio::test]
     async fn structured_session_replays_pinned_refs_immediately_after_opened() {
         let agent_id = Uuid::from_u128(9);
-        let log = StructuredLogSource::new(8);
+        let log = StructuredLogSource::new(1024 * 1024);
         let (reader, replay) = log.subscribe_with_query(None).await.unwrap();
         let (_close_tx, close_rx) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);

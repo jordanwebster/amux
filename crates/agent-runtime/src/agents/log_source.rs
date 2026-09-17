@@ -4,9 +4,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write as _;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use chrono::DateTime;
 use model::{ReplayFacts, ReplayOutcome};
@@ -192,39 +190,33 @@ impl PublicationGate {
     }
 }
 
-/// Byte and row ceilings for one provider's in-memory structured log.
+/// Byte ceiling for one provider's in-memory structured log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RingPolicy {
     pub(crate) max_bytes: usize,
-    pub(crate) max_rows: usize,
-    pub(crate) idle_trim_bytes: usize,
-    pub(crate) idle_after: Duration,
 }
 
 impl RingPolicy {
-    const fn provider(max_bytes: usize, max_rows: usize) -> Self {
+    const fn provider() -> Self {
         Self {
-            max_bytes,
-            max_rows,
-            idle_trim_bytes: 1024 * 1024,
-            idle_after: Duration::from_secs(30 * 60),
+            max_bytes: 1024 * 1024,
         }
     }
 
     pub(crate) const fn claude_pty() -> Self {
-        Self::provider(4 * 1024 * 1024, 2_000)
+        Self::provider()
     }
 
     pub(crate) const fn claude_sdk() -> Self {
-        Self::provider(16 * 1024 * 1024, 8_192)
+        Self::provider()
     }
 
     pub(crate) const fn codex() -> Self {
-        Self::provider(16 * 1024 * 1024, 8_192)
+        Self::provider()
     }
 
-    pub(crate) fn test(max_rows: usize) -> Self {
-        Self::provider(usize::MAX, max_rows)
+    pub(crate) const fn test(max_bytes: usize) -> Self {
+        Self { max_bytes }
     }
 }
 
@@ -235,8 +227,6 @@ pub(crate) struct StructuredLogSource {
     publication: Arc<PublicationGate>,
     recording: Option<Arc<Mutex<File>>>,
     recent_subscriptions: Arc<Mutex<VecDeque<SubscriptionRecord>>>,
-    idle_monitor_started: Arc<AtomicBool>,
-    idle_monitor_wake: Arc<Notify>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,9 +236,9 @@ pub(crate) struct PendingStructuredInput {
 }
 
 impl StructuredLogSource {
-    /// Create an empty source retaining at most `retention` entries.
-    pub(crate) fn new(retention: usize) -> Self {
-        Self::with_policy(RingPolicy::test(retention))
+    /// Create an empty source retaining at most `max_bytes` encoded bytes.
+    pub(crate) fn new(max_bytes: usize) -> Self {
+        Self::with_policy(RingPolicy::test(max_bytes))
     }
 
     pub(crate) fn with_policy(policy: RingPolicy) -> Self {
@@ -257,8 +247,6 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: None,
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
-            idle_monitor_started: Arc::new(AtomicBool::new(false)),
-            idle_monitor_wake: Arc::new(Notify::new()),
         }
     }
 
@@ -279,8 +267,6 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: Some(Arc::new(Mutex::new(file))),
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
-            idle_monitor_started: Arc::new(AtomicBool::new(false)),
-            idle_monitor_wake: Arc::new(Notify::new()),
         })
     }
 
@@ -291,8 +277,6 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: None,
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
-            idle_monitor_started: Arc::new(AtomicBool::new(false)),
-            idle_monitor_wake: Arc::new(Notify::new()),
         }
     }
 
@@ -373,7 +357,6 @@ impl StructuredLogSource {
         activity_at_unix_ms: Option<i64>,
         historical: bool,
     ) -> Result<u64, LogClosed> {
-        self.ensure_idle_monitor();
         let payload = clip_oversized_row(payload);
         let item = self
             .buffer
@@ -384,7 +367,6 @@ impl StructuredLogSource {
             })
             .await
             .ok_or(LogClosed::Exhausted)?;
-        self.idle_monitor_wake.notify_waiters();
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
         {
@@ -409,7 +391,6 @@ impl StructuredLogSource {
         let Ok(_permit) = self.publication.enter_waiting().await else {
             return self.current_seq().await;
         };
-        self.ensure_idle_monitor();
         let marker = clip_oversized_row(marker);
         let Some(item) = self
             .buffer
@@ -422,7 +403,6 @@ impl StructuredLogSource {
         else {
             return u64::MAX;
         };
-        self.idle_monitor_wake.notify_waiters();
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
         {
@@ -482,40 +462,6 @@ impl StructuredLogSource {
     pub(crate) async fn close(&self) {
         self.publication.close();
         self.buffer.close().await;
-        self.idle_monitor_wake.notify_waiters();
-    }
-
-    fn ensure_idle_monitor(&self) {
-        if self
-            .idle_monitor_started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-        let buffer = self.buffer.clone();
-        let wake = self.idle_monitor_wake.clone();
-        tokio::spawn(async move {
-            loop {
-                let wait = buffer.idle_check_after().await;
-                tokio::select! {
-                    () = tokio::time::sleep(wait) => {}
-                    () = wake.notified() => {
-                        if buffer.is_closed().await {
-                            break;
-                        }
-                        continue;
-                    }
-                }
-                if buffer.trim_if_idle().await {
-                    // Keep watching: a later publication starts a fresh idle period.
-                    continue;
-                }
-                if buffer.is_closed().await {
-                    break;
-                }
-            }
-        });
     }
 }
 
@@ -660,10 +606,22 @@ fn replay_query_label(query: Option<&SequencedReplayQuery>) -> String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tokio::time::{Duration, timeout};
 
     use super::*;
     use crate::agents::BroadcastRead;
+
+    const TEST_RING_BYTES: usize = 1024 * 1024;
+
+    fn test_log() -> StructuredLogSource {
+        StructuredLogSource::new(TEST_RING_BYTES)
+    }
+
+    fn test_log_retaining_rows(count: usize) -> StructuredLogSource {
+        let row_bytes = serde_json::to_vec(&json!({"type": "test", "id": 1}))
+            .unwrap()
+            .len();
+        StructuredLogSource::new(row_bytes * count)
+    }
 
     async fn write_rows(log: &StructuredLogSource, count: u64) {
         for seq in 1..=count {
@@ -686,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_after_before_reset_uses_the_exact_cursor_cut() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 3).await;
         let exact_cursor = log.current_seq().await;
         let reset_at = log
@@ -716,7 +674,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_after_at_through_is_continuous_and_empty() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 3).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::After {
@@ -732,7 +690,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_after_retained_cursor_is_continuous_unless_bound_drops_rows() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 5).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::After {
@@ -758,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_after_missing_cursor_is_truncated_including_empty_retention() {
-        let log = StructuredLogSource::new(2);
+        let log = test_log_retaining_rows(2);
         write_rows(&log, 5).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::After {
@@ -789,7 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_after_cursor_ahead_is_a_reset_discipline_violation() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 3).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::After {
@@ -811,7 +769,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_tail_positive_with_retention_reports_selected_prefix() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 5).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
@@ -855,7 +813,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_tail_zero_is_empty_and_reflects_the_watermark() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 3).await;
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
@@ -868,7 +826,7 @@ mod tests {
         assert_eq!(facts.outcome, ReplayOutcome::Truncated { missing_after: 3 });
         assert!(replay_seqs(reader).await.is_empty());
 
-        let empty = StructuredLogSource::new(16);
+        let empty = test_log();
         let (reader, facts) = empty
             .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
                 count: 0,
@@ -882,7 +840,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_truth_tail_on_never_written_log_is_continuous_and_empty() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         let (reader, facts) = log
             .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
                 count: 10,
@@ -898,27 +856,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_protocol_ring_enforces_provider_rows_bytes_and_oversized_admission() {
-        assert_eq!(RingPolicy::claude_pty().max_bytes, 4 * 1024 * 1024);
-        assert_eq!(RingPolicy::claude_pty().max_rows, 2_000);
-        assert_eq!(RingPolicy::claude_sdk().max_bytes, 16 * 1024 * 1024);
-        assert_eq!(RingPolicy::claude_sdk().max_rows, 8_192);
+    async fn daemon_protocol_ring_enforces_one_provider_byte_budget_and_oversized_admission() {
+        assert_eq!(RingPolicy::claude_pty().max_bytes, 1024 * 1024);
+        assert_eq!(RingPolicy::claude_sdk().max_bytes, 1024 * 1024);
         assert_eq!(RingPolicy::codex(), RingPolicy::claude_sdk());
 
-        let rows = StructuredLogSource::with_policy(RingPolicy {
-            max_bytes: usize::MAX,
-            max_rows: 2,
-            idle_trim_bytes: 1024 * 1024,
-            idle_after: Duration::from_secs(60),
-        });
-        write_rows(&rows, 3).await;
-        let (_, facts) = rows.subscribe_with_query(None).await.unwrap();
-        assert_eq!(facts.retained_from, 2);
+        let byte_only = StructuredLogSource::with_policy(RingPolicy::codex());
+        for _ in 0..9_000 {
+            byte_only.write(Value::Null).await;
+        }
+        let (_, facts) = byte_only.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.retained_from, 1, "there is no hidden row ceiling");
 
         let bytes = StructuredLogSource::with_policy(RingPolicy::claude_pty());
-        for id in 0..5 {
+        for id in 0..4 {
             bytes
-                .write(json!({"type": "assistant", "uuid": id, "payload": "x".repeat(1024 * 1024)}))
+                .write(json!({"type": "assistant", "uuid": id, "payload": "x".repeat(400 * 1024)}))
                 .await;
         }
         let debug = bytes.debug_snapshot().await;
@@ -942,32 +895,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_protocol_idle_ring_trims_to_one_policy_budget() {
-        let log = StructuredLogSource::with_policy(RingPolicy {
-            max_bytes: 4096,
-            max_rows: 100,
-            idle_trim_bytes: 180,
-            idle_after: Duration::from_millis(20),
-        });
-        for id in 0..4 {
-            log.write(json!({"type": "test", "id": id, "payload": "x".repeat(100)}))
-                .await;
-        }
-        timeout(Duration::from_secs(1), async {
-            loop {
-                if log.debug_snapshot().await.buffer.bytes <= 180 {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
     async fn daemon_protocol_semantic_reset_closes_existing_subscribers_with_reset() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         write_rows(&log, 2).await;
         let (mut old_reader, _) = log
             .subscribe_with_query(Some(SequencedReplayQuery::After {
@@ -990,7 +919,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_seal_parks_publishers_and_reuses_one_token() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         log.write(json!({"type": "before"})).await;
 
         let seal = log.prepare_suspend().await.unwrap();
@@ -1008,7 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_seal_close_releases_a_parked_publisher_without_numbering_it() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         let publication = log.publication.clone();
         {
             let mut state = publication
@@ -1029,7 +958,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_seal_abort_releases_an_emitting_publisher_after_the_barrier() {
-        let log = StructuredLogSource::new(16);
+        let log = test_log();
         log.write(json!({"type": "before-seal"})).await;
         let seal = log.prepare_suspend().await.unwrap();
 
@@ -1049,7 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_is_visible_to_later_subscribers() {
-        let log_source = StructuredLogSource::new(1000);
+        let log_source = test_log();
         log_source
             .write(json!({"type": "hook.stop", "cwd": "/tmp"}))
             .await;
@@ -1061,7 +990,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_debug_records_only_post_cursor_rows() {
-        let log_source = StructuredLogSource::new(5);
+        let log_source = StructuredLogSource::new(64);
         for seq in 1..=10 {
             log_source.write(json!({"seq": seq})).await;
         }
@@ -1115,7 +1044,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_debug_records_keep_only_eight_newest() {
-        let log_source = StructuredLogSource::new(5);
+        let log_source = test_log();
         log_source.write(json!({"seq": 1})).await;
 
         for count in 0..10 {

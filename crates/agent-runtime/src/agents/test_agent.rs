@@ -26,7 +26,7 @@ use crate::agents::{
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
 
-const STRUCTURED_LOG_RETENTION: usize = 1000;
+const STRUCTURED_LOG_BYTES: usize = 1024 * 1024;
 
 pub(crate) mod io {
     pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
@@ -114,7 +114,7 @@ impl TestAgentSession {
             working_dir: std::env::temp_dir(),
             parent: None,
             pty: Some(PtyHandle::test_echo()),
-            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
+            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_BYTES)),
             delivery_ready: Arc::new(AtomicBool::new(true)),
             terminal_size: None,
             created_at: Utc::now(),
@@ -135,7 +135,7 @@ impl TestAgentSession {
             parent: req.parent,
             pty: None,
             log_source: Some(StructuredLogSource::resuming_with_policy(
-                super::RingPolicy::test(STRUCTURED_LOG_RETENTION),
+                super::RingPolicy::test(STRUCTURED_LOG_BYTES),
                 sealed_through,
             )),
             delivery_ready: Arc::new(AtomicBool::new(false)),
@@ -150,7 +150,7 @@ impl TestAgentSession {
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
             if self.log_source.is_none() {
-                self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+                self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_BYTES));
             }
             self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));
@@ -184,7 +184,7 @@ impl TestAgentSession {
         let log_source = self
             .log_source
             .clone()
-            .unwrap_or_else(|| StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+            .unwrap_or_else(|| StructuredLogSource::new(STRUCTURED_LOG_BYTES));
         let exit_log_source = log_source.clone();
         self.pty = Some(pty);
         self.delivery_ready.store(true, Ordering::Release);
@@ -376,7 +376,7 @@ mod tests {
             working_dir: std::env::temp_dir(),
             parent: None,
             pty: None,
-            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
+            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_BYTES)),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             terminal_size: None,
             created_at: Utc::now(),

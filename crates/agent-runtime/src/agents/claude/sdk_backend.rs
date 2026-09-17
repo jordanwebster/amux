@@ -1719,7 +1719,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_conversation_reset_cuts_the_sdk_log_and_subscribers() {
-        let log = StructuredLogSource::new(8);
+        let log = StructuredLogSource::new(1024 * 1024);
         log.write(json!({"type": "assistant", "uuid": Uuid::new_v4()}))
             .await;
         let cursor = log.current_seq().await;

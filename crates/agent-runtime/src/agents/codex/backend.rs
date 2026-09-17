@@ -3186,7 +3186,7 @@ mod tests {
             pty: None,
             next_pty_epoch: 0,
         }));
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let materialize_client = client.clone();
         let materialize_runtime = runtime.clone();
@@ -3350,7 +3350,7 @@ mod tests {
             pty: None,
             next_pty_epoch: 0,
         }));
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let materialize_client = client.clone();
         let materialize_runtime = runtime.clone();
@@ -3536,7 +3536,7 @@ mod tests {
             pty: None,
             next_pty_epoch: 0,
         }));
-        let source = StructuredLogSource::new(16);
+        let source = StructuredLogSource::new(1024 * 1024);
         let observed_source = source.clone();
         let (mut old_subscription, _) = source.subscribe_with_query(None).await.unwrap();
         assert!(matches!(
@@ -3723,7 +3723,7 @@ mod tests {
                     &ThreadConfig::default(),
                     thread,
                     &runtime,
-                    &StructuredLogSource::new(8),
+                    &StructuredLogSource::new(1024 * 1024),
                     &mut stop_rx,
                 )
                 .await
@@ -3855,7 +3855,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_loss_resolves_every_pending_request() {
-        let source = StructuredLogSource::new(16);
+        let source = StructuredLogSource::new(1024 * 1024);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
             desired_name_generation: 0,
@@ -3914,7 +3914,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_protocol_revision_codex_approval_rows_preserve_provider_correlation() {
-        let source = StructuredLogSource::new(16);
+        let source = StructuredLogSource::new(1024 * 1024);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
             desired_name_generation: 0,
@@ -4086,7 +4086,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_approval_id_produces_one_correlated_error_row() {
-        let source = StructuredLogSource::new(16);
+        let source = StructuredLogSource::new(1024 * 1024);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
             desired_name_generation: 0,
@@ -4224,7 +4224,7 @@ mod tests {
         .unwrap();
         let thread = client.start_thread(ThreadConfig::default()).await.unwrap();
         let ProviderSession { control, .. } = codex::open(thread).await.unwrap();
-        let source = StructuredLogSource::new(4);
+        let source = StructuredLogSource::new(1024 * 1024);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
             desired_name_generation: 0,
@@ -4352,7 +4352,7 @@ mod tests {
             agent_id: Uuid::from_u128(2),
             host_id: Uuid::from_u128(3),
         });
-        let source = StructuredLogSource::new(64);
+        let source = StructuredLogSource::new(1024 * 1024);
         let completion_sink = session
             .completion_sink(&event_tx)
             .expect("parent agent has a completion sink");

@@ -938,7 +938,7 @@ mod materialise {
     #[tokio::test]
     async fn missing_pin_emits_no_refs_row() {
         let (_directory, owner) = owner();
-        let log = crate::agents::StructuredLogSource::new(8);
+        let log = crate::agents::StructuredLogSource::new(1024 * 1024);
         let missing = ArtifactId::from_str(
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         )
@@ -967,7 +967,7 @@ mod materialise {
         let stored = owner
             .put(ArtifactKind::File, "notes.txt", "text/plain", b"notes")
             .unwrap();
-        let log = crate::agents::StructuredLogSource::new(8);
+        let log = crate::agents::StructuredLogSource::new(1024 * 1024);
 
         let prepared = materialise_and_log(
             &owner,

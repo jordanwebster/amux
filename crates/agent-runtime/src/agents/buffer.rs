@@ -14,7 +14,6 @@ use model::{ReplayFacts, ReplayOutcome, ReplayQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::Instant;
 
 use super::log_source::RingPolicy;
 use super::{BufferDebug, OutputDebug};
@@ -119,7 +118,7 @@ pub(crate) trait BufferPolicy: Send + Sync + 'static {
     /// Clear stored data while preserving any policy-owned metadata.
     fn clear(storage: &mut Self::Storage);
     /// Channel capacity for a buffer with the given max capacity.
-    fn channel_capacity(buffer_capacity: usize) -> usize;
+    fn channel_capacity(storage: &Self::Storage, buffer_capacity: usize) -> usize;
     /// Retained sequence coordinates and encoded size for diagnostics.
     fn debug(storage: &Self::Storage) -> BufferDebug;
 }
@@ -136,6 +135,92 @@ pub(crate) struct BytePolicy;
 pub(crate) struct ByteStorage {
     bytes: Vec<u8>,
     tail_seq: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TerminalSequence {
+    Ground,
+    Escape,
+    EscapeIntermediate,
+    Csi,
+    String,
+    StringEscape,
+}
+
+/// Find the first terminal-parser boundary at or after `minimum`.
+///
+/// A replay cannot begin inside an ANSI control string, CSI sequence, or UTF-8
+/// scalar. The buffer always begins at a boundary, so scanning it from the
+/// front is enough to find a safe place to discard old bytes.
+fn terminal_safe_tail_start(bytes: &[u8], minimum: usize) -> usize {
+    if minimum == 0 {
+        return 0;
+    }
+
+    let mut sequence = TerminalSequence::Ground;
+    let mut utf8_remaining = 0u8;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if index >= minimum && sequence == TerminalSequence::Ground && utf8_remaining == 0 {
+            return index;
+        }
+
+        if sequence == TerminalSequence::Ground && utf8_remaining > 0 {
+            if byte & 0b1100_0000 == 0b1000_0000 {
+                utf8_remaining -= 1;
+                continue;
+            }
+            utf8_remaining = 0;
+        }
+
+        sequence = match sequence {
+            TerminalSequence::Ground => match byte {
+                0x1b => TerminalSequence::Escape,
+                0x90 | 0x98 | 0x9d | 0x9e | 0x9f => TerminalSequence::String,
+                0x9b => TerminalSequence::Csi,
+                0xc2..=0xdf => {
+                    utf8_remaining = 1;
+                    TerminalSequence::Ground
+                }
+                0xe0..=0xef => {
+                    utf8_remaining = 2;
+                    TerminalSequence::Ground
+                }
+                0xf0..=0xf4 => {
+                    utf8_remaining = 3;
+                    TerminalSequence::Ground
+                }
+                _ => TerminalSequence::Ground,
+            },
+            TerminalSequence::Escape => match byte {
+                b'[' => TerminalSequence::Csi,
+                b']' | b'P' | b'X' | b'^' | b'_' => TerminalSequence::String,
+                0x20..=0x2f => TerminalSequence::EscapeIntermediate,
+                0x1b => TerminalSequence::Escape,
+                _ => TerminalSequence::Ground,
+            },
+            TerminalSequence::EscapeIntermediate => match byte {
+                0x30..=0x7e => TerminalSequence::Ground,
+                0x1b => TerminalSequence::Escape,
+                _ => TerminalSequence::EscapeIntermediate,
+            },
+            TerminalSequence::Csi => match byte {
+                0x40..=0x7e | 0x18 | 0x1a => TerminalSequence::Ground,
+                0x1b => TerminalSequence::Escape,
+                _ => TerminalSequence::Csi,
+            },
+            TerminalSequence::String => match byte {
+                0x07 | 0x9c => TerminalSequence::Ground,
+                0x1b => TerminalSequence::StringEscape,
+                _ => TerminalSequence::String,
+            },
+            TerminalSequence::StringEscape => match byte {
+                b'\\' => TerminalSequence::Ground,
+                0x1b => TerminalSequence::StringEscape,
+                _ => TerminalSequence::String,
+            },
+        };
+    }
+    bytes.len()
 }
 
 impl BufferPolicy for BytePolicy {
@@ -155,7 +240,8 @@ impl BufferPolicy for BytePolicy {
         storage.bytes.extend_from_slice(&input);
         if storage.bytes.len() > capacity {
             let excess = storage.bytes.len() - capacity;
-            storage.bytes.drain(..excess);
+            let drain = terminal_safe_tail_start(&storage.bytes, excess);
+            storage.bytes.drain(..drain);
         }
 
         Some(input)
@@ -170,7 +256,8 @@ impl BufferPolicy for BytePolicy {
             None => storage.bytes.as_slice(),
             Some(ByteReplayQuery::Tail { count }) => {
                 let count = usize::try_from(*count).unwrap_or(usize::MAX);
-                let start = storage.bytes.len().saturating_sub(count);
+                let minimum = storage.bytes.len().saturating_sub(count);
+                let start = terminal_safe_tail_start(&storage.bytes, minimum);
                 &storage.bytes[start..]
             }
         };
@@ -186,7 +273,7 @@ impl BufferPolicy for BytePolicy {
         storage.bytes.clear();
     }
 
-    fn channel_capacity(_buffer_capacity: usize) -> usize {
+    fn channel_capacity(_storage: &ByteStorage, _buffer_capacity: usize) -> usize {
         CHANNEL_HEADROOM
     }
 
@@ -205,32 +292,18 @@ impl BufferPolicy for BytePolicy {
 
 /// Policy for structured entry buffers (Claude structured I/O).
 ///
-/// Entries are stored in a `Vec` and truncated by entry count. The storage also
+/// Entries are stored in a `Vec` and truncated by encoded byte size. The storage also
 /// tracks the most recently published sequence number. Replay sends each entry
 /// individually to preserve message boundaries.
 pub(crate) struct StructuredPolicy;
 
 #[doc(hidden)]
+#[derive(Default)]
 pub(crate) struct StructuredStorage {
     entries: Vec<StructuredOutput>,
     last_seq: u64,
     reset_at: u64,
     retained_bytes: usize,
-    policy: RingPolicy,
-    last_published_at: Option<Instant>,
-}
-
-impl Default for StructuredStorage {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            last_seq: 0,
-            reset_at: 0,
-            retained_bytes: 0,
-            policy: RingPolicy::test(usize::MAX),
-            last_published_at: None,
-        }
-    }
 }
 
 impl BufferPolicy for StructuredPolicy {
@@ -257,12 +330,7 @@ impl BufferPolicy for StructuredPolicy {
 
         storage.entries.push(item.clone());
         storage.retained_bytes = storage.retained_bytes.saturating_add(encoded_len);
-        storage.last_published_at = Some(Instant::now());
-        trim_structured(
-            storage,
-            storage.policy.max_bytes,
-            storage.policy.max_rows.min(capacity),
-        );
+        trim_structured(storage, capacity);
 
         Some(item)
     }
@@ -283,8 +351,8 @@ impl BufferPolicy for StructuredPolicy {
         storage.retained_bytes = 0;
     }
 
-    fn channel_capacity(buffer_capacity: usize) -> usize {
-        buffer_capacity + CHANNEL_HEADROOM
+    fn channel_capacity(storage: &StructuredStorage, _buffer_capacity: usize) -> usize {
+        storage.entries.len().saturating_add(CHANNEL_HEADROOM)
     }
 
     fn debug(storage: &StructuredStorage) -> BufferDebug {
@@ -310,10 +378,10 @@ impl BufferPolicy for StructuredPolicy {
     }
 }
 
-fn trim_structured(storage: &mut StructuredStorage, max_bytes: usize, max_rows: usize) {
+fn trim_structured(storage: &mut StructuredStorage, max_bytes: usize) {
     let mut remove = 0;
     let mut retained_bytes = storage.retained_bytes;
-    while storage.entries.len().saturating_sub(remove) > max_rows || retained_bytes > max_bytes {
+    while retained_bytes > max_bytes {
         let Some(entry) = storage.entries.get(remove) else {
             break;
         };
@@ -458,8 +526,7 @@ struct BroadcastSubscriber<T> {
 impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// Create a new buffer with the given capacity.
     ///
-    /// For byte buffers, capacity is the maximum byte count.
-    /// For entry buffers, capacity is the maximum entry count.
+    /// Capacity is the maximum retained byte count.
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             inner: Arc::new(BroadcastInner {
@@ -520,11 +587,6 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
         filter: P::Filter,
         snapshot: impl FnOnce(&P::Storage) -> R,
     ) -> Option<(BroadcastReader<P>, R)> {
-        let capacity = P::channel_capacity(self.inner.capacity);
-        let (tx, rx) = mpsc::channel(capacity);
-        let overflowed = Arc::new(AtomicBool::new(false));
-        let reset = Arc::new(AtomicBool::new(false));
-
         // Acquire storage read lock FIRST to synchronize with both write() (which
         // holds storage write lock) and close() (which also holds storage write lock).
         // The closed check must be inside this lock to prevent a TOCTOU race where
@@ -535,6 +597,10 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
             return None;
         }
 
+        let capacity = P::channel_capacity(&storage, self.inner.capacity);
+        let (tx, rx) = mpsc::channel(capacity);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let reset = Arc::new(AtomicBool::new(false));
         let snapshot = snapshot(&storage);
         self.inner
             .subscribers
@@ -725,11 +791,9 @@ impl BroadcastBuffer<StructuredPolicy> {
                     last_seq,
                     reset_at: 0,
                     retained_bytes: 0,
-                    policy,
-                    last_published_at: None,
                 }),
                 subscribers: RwLock::new(Vec::new()),
-                capacity: policy.max_rows,
+                capacity: policy.max_bytes,
                 closed: RwLock::new(false),
                 epoch: AtomicU64::new(0),
             }),
@@ -756,37 +820,6 @@ impl BroadcastBuffer<StructuredPolicy> {
         subscribers.clear();
         self.inner.epoch.fetch_add(1, Ordering::Relaxed);
         Some(item)
-    }
-
-    pub(crate) async fn idle_check_after(&self) -> std::time::Duration {
-        self.inspect(|storage| {
-            let Some(last) = storage.last_published_at else {
-                return storage.policy.idle_after;
-            };
-            storage
-                .policy
-                .idle_after
-                .saturating_sub(Instant::now().saturating_duration_since(last))
-        })
-        .await
-    }
-
-    pub(crate) async fn trim_if_idle(&self) -> bool {
-        let mut storage = self.inner.storage.write().await;
-        let idle = storage.last_published_at.is_some_and(|last| {
-            Instant::now().saturating_duration_since(last) >= storage.policy.idle_after
-        });
-        if idle {
-            let max_rows = storage.policy.max_rows;
-            let idle_trim_bytes = storage.policy.idle_trim_bytes;
-            trim_structured(&mut storage, idle_trim_bytes, max_rows);
-            storage.last_published_at = None;
-        }
-        idle
-    }
-
-    pub(crate) async fn is_closed(&self) -> bool {
-        *self.inner.closed.read().await
     }
 
     /// Return the current structured output sequence number.
@@ -832,6 +865,8 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+
+    const TEST_RING_BYTES: usize = 1024 * 1024;
 
     // ── Byte buffer tests ───────────────────────────────────────────
 
@@ -1119,8 +1154,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_entry_truncation_by_count() {
-        let buffer = MultiplexStructuredBuffer::new(3); // Only 3 entries max
+    async fn test_entry_truncation_by_encoded_bytes() {
+        let row_bytes = serde_json::to_vec(&user_msg("msg1", "1")).unwrap().len();
+        let buffer = MultiplexStructuredBuffer::new(row_bytes * 3);
 
         for i in 1..=5 {
             buffer
@@ -1128,7 +1164,7 @@ mod tests {
                 .await;
         }
 
-        // Late subscriber should see only the last 3 entries (with original seqs)
+        // Late subscriber sees the three rows that fit the encoded-byte budget.
         let mut reader = buffer.subscribe().await.unwrap();
         assert_envelope(reader.read().await.unwrap(), 3, "msg3", "3");
         assert_envelope(reader.read().await.unwrap(), 4, "msg4", "4");
@@ -1137,7 +1173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_per_entry_replay() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
 
         buffer.write(user_msg("first", "1").into()).await;
         buffer.write(user_msg("second", "2").into()).await;
@@ -1156,7 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_resets_storage_keeps_subscribers() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
 
         buffer.write(user_msg("before", "1").into()).await;
         buffer.write(user_msg("also-before", "2").into()).await;
@@ -1177,7 +1213,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_close_returns_none() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         let mut reader = buffer.subscribe().await.unwrap();
 
         buffer.write(user_msg("data", "1").into()).await;
@@ -1189,7 +1225,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_seq_increments_on_each_write() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         assert_eq!(buffer.current_seq().await, 0);
 
         buffer.write(user_msg("a", "1").into()).await;
@@ -1204,7 +1240,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_seq_survives_clear() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
 
         buffer.write(user_msg("a", "1").into()).await;
         buffer.write(user_msg("b", "2").into()).await;
@@ -1222,7 +1258,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribers_receive_correct_seq_in_replay_and_live() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
 
         buffer.write(user_msg("a", "1").into()).await;
         buffer.write(user_msg("b", "2").into()).await;
@@ -1242,7 +1278,7 @@ mod tests {
 
     #[tokio::test]
     async fn structured_replay_marks_boundary_and_then_delivers_live_rows() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         for i in 1..=3 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
@@ -1308,7 +1344,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribing_after_exactly_the_stored_through_replays_no_rows_and_is_continuous() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         for i in 1..=5 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
@@ -1340,7 +1376,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_cursor_selects_only_later_rows() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         for i in 1..=5 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
@@ -1362,7 +1398,8 @@ mod tests {
 
     #[tokio::test]
     async fn cursor_behind_retention_gets_bounded_tail_and_truncated_facts() {
-        let buffer = MultiplexStructuredBuffer::new(2);
+        let row_bytes = serde_json::to_vec(&user_msg("msg1", "1")).unwrap().len();
+        let buffer = MultiplexStructuredBuffer::new(row_bytes * 2);
         for i in 1..=5 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
@@ -1383,7 +1420,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_zero_replays_nothing_but_keeps_live_delivery() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(TEST_RING_BYTES);
         buffer.write(user_msg("a", "1").into()).await;
         buffer.write(user_msg("b", "2").into()).await;
         let (mut reader, facts) = buffer

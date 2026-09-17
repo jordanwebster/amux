@@ -473,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_summarizer_attached_before_start_observes_row_one() {
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(1),
@@ -502,7 +502,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn daemon_summarizer_idle_ticks_publish_nothing_without_new_rows() {
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle =
             SummarizerHandle::attach(Uuid::from_u128(6), StructuredProtocol::Codex, source, tx)
@@ -522,7 +522,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn daemon_summarizer_tick_publishes_finished_decay_to_idle() {
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(7),
@@ -559,7 +559,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn daemon_summarizer_steady_rows_coalesce_summaries_and_publish_progress() {
-        let source = StructuredLogSource::new(1_024);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(8),
@@ -615,7 +615,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_summarizer_provider_exit_publishes_exited() {
-        let source = StructuredLogSource::new(8);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(2),
@@ -642,7 +642,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_summarizer_resume_starts_at_unknown_sealed_cut() {
-        let source = StructuredLogSource::resuming_with_policy(RingPolicy::test(8), 41);
+        let source = StructuredLogSource::resuming_with_policy(RingPolicy::test(1024 * 1024), 41);
         let (tx, _rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(3),
@@ -670,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_summarizer_backpressure_stales_then_recovers_at_current_cut() {
-        let source = StructuredLogSource::new(1);
+        let source = StructuredLogSource::new(128);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(4),
@@ -705,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn daemon_summarizer_matches_client_fold_at_every_through() {
-        let source = StructuredLogSource::new(16);
+        let source = StructuredLogSource::new(1024 * 1024);
         let (tx, _rx) = mpsc::unbounded_channel();
         let handle = SummarizerHandle::attach(
             Uuid::from_u128(5),

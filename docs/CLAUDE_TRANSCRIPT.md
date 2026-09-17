@@ -78,8 +78,8 @@ Consequences:
   transcript order. A `hook.stop` can arrive before the tail has caught
   up to the turn's final rows. Never assume a hook row sits at a
   transcript position.
-- Catch-up replays the whole file; the bounded buffer (1000 entries)
-  means long sessions replay only a tail → B9's explicit "earlier
+- Catch-up replays the whole file; the bounded 1 MiB structured buffer
+  means long sessions replay only a byte-bounded tail → B9's explicit "earlier
   history unavailable" boundary.
 - The tailer recovers from file *shrinkage* by relinking and reading the new
   file from its beginning. The daemon turns that relink into a semantic reset

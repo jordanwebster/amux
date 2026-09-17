@@ -1,3 +1,19 @@
+2026-09-17 — **Daemon replay retention is one byte budget per buffer.** Claude
+PTY, Claude SDK and Codex structured rings now retain at most 1 MiB of encoded
+rows, with no row ceiling, idle timer or second idle-trim budget. Claude PTY raw
+replay likewise retains 1 MiB. Raw eviction advances to a complete ANSI/UTF-8
+boundary, so a late raw attach never begins inside a terminal control sequence;
+a vt100 repaint test forces the nominal cut through a colour sequence after
+more than 1 MiB of cursor movement, colour and clear output and reproduces the
+uncut screen.
+
+The daemon soak now measures the Claude PTY owner set it reports: one structured
+ring, one raw replay buffer and one live summarizer per agent. Agent counts,
+corpus, pulse cadence, warm-up, reset and sampling remain unchanged. The next
+driver-owned four-minute diagnostic supplies the measured per-active-agent row
+and the residual summarizer fold-state accounting; its expected composition is
+about 1 MiB structured plus 1 MiB raw plus the small fold state.
+
 2026-09-17 — **A store-backed session retains one small chat cache.** The
 client's rising footprint was bounded fill, not an unbounded leak: before the
 two-minute diagnostic regression ended, each chat was still filling an

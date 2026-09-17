@@ -326,11 +326,12 @@ pub mod test_support {
 
     /// Daemon-owned rings and summarizers used by the release memory soak.
     /// The wrapper keeps private runtime machinery out of the test harness
-    /// while ensuring the qualification allocates the same state as a live
-    /// structured agent.
+    /// while ensuring the qualification allocates the daemon-owned structured
+    /// ring, raw PTY replay, and summarizer state of a live Claude PTY agent.
     #[doc(hidden)]
     pub struct DaemonMemoryHarness {
         sources: Vec<crate::agents::StructuredLogSource>,
+        ptys: Vec<crate::agents::PtyHandle>,
         summarizers: Vec<crate::agents::SummarizerHandle>,
         publications: tokio::sync::mpsc::UnboundedReceiver<crate::agents::SummarizerPublication>,
         publisher: tokio::sync::mpsc::UnboundedSender<crate::agents::SummarizerPublication>,
@@ -349,6 +350,7 @@ pub mod test_support {
             let (publisher, publications) = tokio::sync::mpsc::unbounded_channel();
             Self {
                 sources: Vec::new(),
+                ptys: Vec::new(),
                 summarizers: Vec::new(),
                 publications,
                 publisher,
@@ -373,11 +375,12 @@ pub mod test_support {
 
         async fn add_agent(&mut self, index: usize) {
             let source = crate::agents::StructuredLogSource::with_policy(
-                crate::agents::RingPolicy::claude_sdk(),
+                crate::agents::RingPolicy::claude_pty(),
             );
+            let pty = crate::agents::PtyHandle::test_echo();
             let handle = crate::agents::SummarizerHandle::attach(
                 uuid::Uuid::from_u128(0xDAE0_0000 + index as u128),
-                model::StructuredProtocol::ClaudeSdk,
+                model::StructuredProtocol::ClaudePtyTranscript,
                 source.clone(),
                 self.publisher.clone(),
             )
@@ -385,6 +388,7 @@ pub mod test_support {
             .expect("an open daemon performance source accepts a summarizer");
             handle.activate();
             self.sources.push(source);
+            self.ptys.push(pty);
             self.summarizers.push(handle);
         }
 
@@ -397,15 +401,15 @@ pub mod test_support {
             {
                 source
                     .semantic_reset(serde_json::json!({
-                        "type": "amux.claude_sdk.ready",
-                        "session_id": "daemon-memory-reset",
-                        "resumed": true,
+                        "type": "amux.transcript_ready",
+                        "reset": true,
+                        "reason": "daemon-memory-reset",
                     }))
                     .await;
             }
             for (offset, source) in self.sources[self.active_from..].iter().enumerate() {
-                // Fill the provider's 8,192-row ring during the two-minute
-                // warm-up, then measure the bounded steady state.
+                // Fill the provider's structured byte ring during the
+                // two-minute warm-up, then measure the bounded steady state.
                 for _ in 0..4 {
                     self.sequence = self.sequence.saturating_add(1);
                     source
@@ -416,6 +420,15 @@ pub mod test_support {
                         }))
                         .await;
                 }
+                let pty = &self.ptys[self.active_from + offset];
+                let mut repaint =
+                    format!("\x1b[2J\x1b[H\x1b[38;5;42mdaemon {offset:02} pulse {iteration:08}")
+                        .into_bytes();
+                repaint.resize(1020, b' ');
+                repaint.extend_from_slice(b"\x1b[0m");
+                pty.send_input(repaint)
+                    .await
+                    .expect("daemon memory PTY echo remains open");
             }
             self.drain_publications();
         }
@@ -435,11 +448,11 @@ pub mod test_support {
                 let source = &active[ask % active.len()];
                 source
                     .write(serde_json::json!({
-                        "type": "amux.claude_sdk.permission_required",
-                        "request_id": format!("daemon-ask-{ask}"),
+                        "type": "hook.permission_request",
+                        "session_id": "daemon-memory",
                         "tool_name": "Write",
-                        "input": {"file_path": format!("/tmp/daemon-{ask}")},
-                        "suggestions": [],
+                        "tool_input": {"file_path": format!("/tmp/daemon-{ask}")},
+                        "permission_suggestions": [],
                     }))
                     .await;
             }

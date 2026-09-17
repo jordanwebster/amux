@@ -1482,7 +1482,7 @@ mod tests {
     async fn duplicate_hook_is_suppressed_inside_window_and_admitted_afterward() {
         let agent_id = Uuid::new_v4();
         let runtime = Arc::new(Mutex::new(Runtime::default()));
-        let log = StructuredLogSource::new(8);
+        let log = StructuredLogSource::new(1024 * 1024);
         let ready = Arc::new(AtomicBool::new(false));
         let (event_tx, _event_rx) = mpsc::channel(8);
         let hook = hook_payload("PermissionRequest", Uuid::new_v4(), "/tmp/one");

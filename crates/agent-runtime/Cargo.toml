@@ -39,4 +39,5 @@ tokio-tungstenite = { workspace = true }
 prost = { workspace = true }
 replay-support = { path = "../replay-support" }
 tonic = { workspace = true }
+vt100 = "0.15"
 wire = { workspace = true }
