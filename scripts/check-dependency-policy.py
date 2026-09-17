@@ -21,7 +21,9 @@ ALLOWED_LOCAL = {
     "redaction": set(),
     "ui-state": {"fold", "model"},
     "ui-runtime": {"artifacts", "client", "model", "store", "ui-state"},
-    "tui": {"ui-runtime", "ui-state"},
+    # Report replay reconstructs canonical store-backed windows using the
+    # provider folds, while ordinary rendering still consumes ui-state.
+    "tui": {"fold", "ui-runtime", "ui-state"},
     "e2e-runner": {"wire"},
     # The app layer any rich client reuses. app-runtime never reaches node, so
     # a desktop app attached to a running daemon links it without app-embedded.

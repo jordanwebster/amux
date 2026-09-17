@@ -1,3 +1,10 @@
+2026-09-17 — **The dependency policy covers store-backed report replay.** The
+TUI report player reconstructs canonical stored windows with provider fold
+types, so the production dependency policy now permits the direct `tui` to
+`fold` edge that the replay implementation already requires. The policy had
+still described the pre-store renderer boundary and stopped `just ci` before
+tests despite the workspace building successfully.
+
 2026-09-17 — **The repaired harness has a complete reference baseline.** On
 the quiet Mac14,6 reference machine running macOS 26.5.2, the release
 `bundled,perf` qualification records every desktop metric after the store-window
