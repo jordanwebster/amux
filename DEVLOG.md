@@ -1,3 +1,10 @@
+2026-09-17 — **Live summarizer costs have a reference-machine baseline.**
+The Mac14,6 baseline now records the shipping ring-reader and summarizer-task
+measurements: 5.104 microseconds of process CPU per consumed row and 0.128% of
+one core while 200 summarizers idle for ten seconds. Both remain well inside
+their unchanged absolute budgets; the replaced values measured only direct
+fold calls and assumed ticks, so they were not comparable to the live workload.
+
 2026-09-17 — **The summarizer benchmark enters its Tokio timer context.**
 The ten-second idle interval is now constructed inside the benchmark runtime,
 so the release performance binary can measure the shipping summarizer tasks
