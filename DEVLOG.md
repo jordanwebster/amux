@@ -12,10 +12,16 @@ ring alone in steady state and captures the authoritative Model only when a
 report is requested. Short recordings remain checkpoint-plus-message replays;
 long reports carry an exact captured Model with recent inputs marked as context,
 and panic-only captures with evicted history refuse replay instead of claiming
-completeness. The driver-owned four-minute diagnostic supplies the after slope
-and peak. Visible and canonical vectors still cap at 800 entries or 16 MiB per
-chat (about 400 s at 2 rows/s), and the legacy provider feed caps at 1,000
-entries (500 s); no window, warm-up, rate or workload bound changed.
+completeness. Its first driver-owned four-minute diagnostic reduced the client
+slope to 2.009 MiB/min with a 26.750 MiB peak, proving the recorder was the
+largest owner but leaving the 1.000 MiB/min slope budget unmet. The store-backed
+window therefore no longer retains a second canonical copy of the same
+scrollback, and mutation folding moves the visible window through the merge
+oracle instead of deep-cloning the growing window for every batch. The next
+driver-owned four-minute diagnostic supplies the final after slope and peak.
+The visible window still caps at 800 entries or 16 MiB per chat (about 400 s at
+2 rows/s), and the legacy provider feed caps at 1,000 entries (500 s); no
+window, warm-up, rate or workload bound changed.
 
 2026-09-17 — **Memory repair runs keep the real soak workload.** The original
 ten-minute client run grew at 4.010 MiB/min with a 56.688 MiB peak because the

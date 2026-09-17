@@ -205,10 +205,14 @@ impl MutationBatchDto {
     ) -> Result<(), ReloadRequired> {
         macro_rules! apply {
             ($mutations:expr, $entry_variant:ident, $entry_ty:ty) => {{
-                let concrete = entries
+                let held = entries
                     .iter()
+                    .map(|entry| entry.key().clone())
+                    .collect::<std::collections::BTreeSet<_>>();
+                let concrete = std::mem::take(entries)
+                    .into_iter()
                     .map(|stored| match stored {
-                        StoredDto::$entry_variant(value) => Ok((**value).clone()),
+                        StoredDto::$entry_variant(value) => Ok(*value),
                         _ => Err(ReloadRequired::ProviderMismatch),
                     })
                     .collect::<Result<Vec<Stored<$entry_ty>>, _>>()?;
@@ -234,10 +238,6 @@ impl MutationBatchDto {
                     redirects,
                 )
                 .map_err(|_| ReloadRequired::MergeDefect)?;
-                let held = entries
-                    .iter()
-                    .map(|entry| entry.key().clone())
-                    .collect::<std::collections::BTreeSet<_>>();
                 let filtered = if admit_new {
                     $mutations.clone()
                 } else {
@@ -548,8 +548,6 @@ pub struct ChatWindow {
     pub catching_up_since: Option<DateTime<Utc>>,
     pub paused: bool,
     pub abandoned_flush: bool,
-    canonical_entries: Vec<StoredDto>,
-    canonical_aliases: Vec<(EntryKey, EntryKey)>,
     pending: Vec<PendingCommit>,
     in_flight: Option<PendingCommit>,
     page_request: Option<PageRequest>,
@@ -631,8 +629,6 @@ impl ChatWindow {
             catching_up_since: None,
             paused: false,
             abandoned_flush: false,
-            canonical_entries: Vec::new(),
-            canonical_aliases: Vec::new(),
             pending: Vec::new(),
             in_flight: None,
             page_request: None,
@@ -654,17 +650,15 @@ impl ChatWindow {
             + self.in_flight.as_ref().map_or(0, |batch| batch.bytes)
     }
 
-    /// Encoded ownership inside this store-backed window. This deliberately
-    /// reports the visible and canonical vectors separately: they are two
-    /// allocations containing the same logical entries.
+    /// Encoded ownership inside this store-backed window.
     pub fn retention(&self) -> ChatWindowRetention {
         let encoded =
             |entries: &[StoredDto]| postcard::to_allocvec(entries).map_or(0, |bytes| bytes.len());
         ChatWindowRetention {
             visible_entries: self.entries.len(),
             visible_entry_bytes: encoded(&self.entries),
-            canonical_entries: self.canonical_entries.len(),
-            canonical_entry_bytes: encoded(&self.canonical_entries),
+            canonical_entries: 0,
+            canonical_entry_bytes: 0,
             pending_commits: self.pending.len() + usize::from(self.in_flight.is_some()),
             pending_mutations: self
                 .pending
@@ -1059,13 +1053,11 @@ fn install_loaded(chat: &mut ChatWindow, loaded: LoadedDto) -> LoadedBranch {
             chat.host = $loaded.host;
             chat.progress = $loaded.progress;
             chat.aliases = $loaded.aliases;
-            chat.canonical_aliases = chat.aliases.clone();
             chat.entries = $loaded
                 .window
                 .into_iter()
                 .map(|value| StoredDto::$entry_variant(Box::new(value)))
                 .collect();
-            chat.canonical_entries = chat.entries.clone();
             chat.pending.clear();
             chat.in_flight = None;
             chat.transition = None;
@@ -1150,7 +1142,6 @@ fn conflict_result(
     chat.pending.clear();
     chat.in_flight = None;
     chat.entries.clear();
-    chat.canonical_entries.clear();
     chat.active_load = Some(op);
     let mut result = loaded_result(state, agent, new_attempt, op, loaded, true);
     result.effects.insert(0, Effect::CloseStream { agent });
@@ -1222,26 +1213,27 @@ fn committed_result(
     StoreUpdate::effects(effects)
 }
 
-/// Install a canonical acknowledged prefix, then replay the speculative suffix.
+/// Install a canonical acknowledgement into the visible window, then replay
+/// the speculative suffix that followed it.
+///
+/// Commit results contain the canonical bodies for every changed held key, so
+/// a second full copy of the window is unnecessary. Replacing those bodies in
+/// place and replaying only later pending mutations preserves the same result
+/// while retaining each unchanged scrollback entry once.
 pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(), ReloadRequired> {
     let encoded = postcard::to_allocvec(result).map_err(|_| ReloadRequired::CanonicalBody)?;
     if encoded.len() > COMMIT_RESULT_MAX_BYTES {
         return Err(ReloadRequired::ResultTooLarge);
     }
     for deleted in &result.deleted {
-        chat.canonical_entries
-            .retain(|entry| entry.key() != deleted);
+        chat.entries.retain(|entry| entry.key() != deleted);
     }
     for (from, to) in &result.redirected {
-        chat.canonical_entries.retain(|entry| entry.key() != from);
-        if let Some(existing) = chat
-            .canonical_aliases
-            .iter_mut()
-            .find(|(source, _)| source == from)
-        {
+        chat.entries.retain(|entry| entry.key() != from);
+        if let Some(existing) = chat.aliases.iter_mut().find(|(source, _)| source == from) {
             existing.1.clone_from(to);
         } else {
-            chat.canonical_aliases.push((from.clone(), to.clone()));
+            chat.aliases.push((from.clone(), to.clone()));
         }
     }
     for body in &result.bodies {
@@ -1251,20 +1243,17 @@ pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(
             .find(|placement| placement.key == body.key)
             .ok_or(ReloadRequired::CanonicalBody)?;
         let stored = decode_body(chat.protocol, placement, body)?;
-        chat.canonical_entries
-            .retain(|entry| entry.key() != stored.key());
-        chat.canonical_entries.push(stored);
+        chat.entries.retain(|entry| entry.key() != stored.key());
+        chat.entries.push(stored);
     }
-    sort_entries(&mut chat.canonical_entries);
+    sort_entries(&mut chat.entries);
     let retained = if chat.retain_oldest {
         WindowEnd::Oldest
     } else {
         WindowEnd::Newest
     };
-    let evicted = trim_window(&mut chat.canonical_entries, retained);
+    let evicted = trim_window(&mut chat.entries, retained);
     chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
-    chat.entries.clone_from(&chat.canonical_entries);
-    chat.aliases.clone_from(&chat.canonical_aliases);
     for pending in &chat.pending {
         pending.mutations.apply_to(
             &mut chat.entries,
@@ -1340,13 +1329,11 @@ fn paged_result(
                 .into_iter()
                 .map(|value| StoredDto::$variant(Box::new(value)))
                 .collect::<Vec<_>>();
-            chat.canonical_entries.extend(older);
-            sort_entries(&mut chat.canonical_entries);
-            chat.canonical_entries
+            chat.entries.extend(older);
+            sort_entries(&mut chat.entries);
+            chat.entries
                 .dedup_by(|left, right| left.key() == right.key());
-            chat.newest_evicted |= trim_window(&mut chat.canonical_entries, WindowEnd::Oldest);
-            chat.entries.clone_from(&chat.canonical_entries);
-            chat.aliases.clone_from(&chat.canonical_aliases);
+            chat.newest_evicted |= trim_window(&mut chat.entries, WindowEnd::Oldest);
             for pending in &chat.pending {
                 if pending
                     .mutations
@@ -2202,11 +2189,10 @@ mod tests {
     }
 
     #[test]
-    fn canonical_reconciliation_reapplies_the_pending_suffix() {
+    fn in_place_canonical_reconciliation_reapplies_the_pending_suffix() {
         let mut chat = chat();
         let canonical = stored("canonical", 1);
-        chat.canonical_entries = vec![StoredDto::Claude(Box::new(canonical.clone()))];
-        chat.entries = chat.canonical_entries.clone();
+        chat.entries = vec![StoredDto::Claude(Box::new(canonical.clone()))];
 
         let revision = Revision::row(2);
         let pending = MutationBatchDto::Claude(vec![Mutation::Upsert {
@@ -2260,6 +2246,10 @@ mod tests {
             panic!("one Claude entry remains")
         };
         assert_eq!(entry.entry.text(), Some("speculative"));
+        let retained = chat.retention();
+        assert_eq!(retained.visible_entries, 1);
+        assert_eq!(retained.canonical_entries, 0);
+        assert_eq!(retained.canonical_entry_bytes, 0);
     }
 
     #[test]
