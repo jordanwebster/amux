@@ -150,12 +150,14 @@ just perf --baseline
 just perf soak
 ```
 
-Baselines live at `crates/testnet/perf/baselines/<hw.model>.json` and are
+Desktop baselines live at `crates/testnet/perf/baselines/<hw.model>.json`, and
+phone baselines live at `apps/apple/Perf/baselines/<machine>.json`. They are
 valid only for the recorded machine model, release profile and feature set.
-An unknown hardware model is refused. `--baseline` still enforces every
-absolute budget; it never turns a miss into the new expectation. Baseline
-recording is qualification work, so do it only on an otherwise idle reference
-machine and review the complete report before committing the file.
+An unknown hardware model is refused. `--baseline` records both parts of the
+combined run while still enforcing every absolute budget; it never turns a
+miss into the new expectation. Baseline recording is qualification work, so do
+it only on an otherwise idle reference machine and review both complete
+reports before committing the files.
 
 The soak holds ten chat windows and the daemon state for 200 idle plus 20
 active structured agents for ten minutes. It samples the platform's named

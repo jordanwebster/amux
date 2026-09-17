@@ -1,3 +1,10 @@
+2026-09-18 — **The combined performance command records both baselines.**
+`just perf --baseline` now forwards baseline mode to its iOS qualification leg,
+so one quiet reference-machine run records both the desktop and phone medians
+it just measured. Previously the phone suite ran and passed but silently kept
+its older baseline, leaving later phone runs to compare the current app with a
+pre-flight runtime.
+
 2026-09-18 — **Commit drift uses the established reference value.** The final
 baseline-completion run replaced commit latency's existing 5.068 ms reference
 with a 4.007 ms fast-mode sample even though the measured workload was
