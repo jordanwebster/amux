@@ -5,8 +5,10 @@ diagnostic recorder retained serialized stream and store messages up to its
 shipping 2 MiB byte ceiling now advances those messages into its exact replay
 checkpoint instead. `AMUX_PERF_SOAK_SECONDS=240` runs the same on-disk client,
 ten chats, row rate and two-minute warm-up for repair diagnosis, moves reset
-and reopen to minute three, and labels itself as shortened diagnostic evidence;
-an unset duration remains the ten-minute qualification.
+and reopen to minute three, and labels itself as shortened diagnostic evidence.
+The reset trigger follows elapsed wall time, so real provider I/O cannot defer
+it past the diagnostic window; an unset duration remains the ten-minute
+qualification.
 
 2026-09-17 — **Cold-start qualification now launches the shipped terminal client.**
 The 40- and 200-agent rows exec the release `amux` binary under a pseudo-terminal,

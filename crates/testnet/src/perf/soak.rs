@@ -31,7 +31,7 @@ const SEED: u64 = 0xA6_2026_0917;
 struct ClientSoakTiming {
     stall_after: Duration,
     stall_for: Duration,
-    reset_iteration: u64,
+    reset_after: Duration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,12 +72,10 @@ impl SoakRunConfig {
     }
 
     fn client_timing(self) -> ClientSoakTiming {
-        let reset_after = RESET_AFTER.min(self.duration - RESET_REOPEN_MARGIN);
         ClientSoakTiming {
             stall_after: Duration::from_secs(10),
             stall_for: Duration::from_secs(5),
-            reset_iteration: u64::try_from(reset_after.as_millis() / PULSE_INTERVAL.as_millis())
-                .expect("soak reset iteration fits u64"),
+            reset_after: RESET_AFTER.min(self.duration - RESET_REOPEN_MARGIN),
         }
     }
 }
@@ -569,6 +567,7 @@ async fn client_daemon_runtime(
     std::fs::write(directory.join("workload-ready"), b"ready\n")?;
     let started = Instant::now();
     let mut iteration = 0;
+    let mut reset = false;
     while !directory.join("stop").is_file() {
         let pulse = Instant::now();
         let chat = iteration as usize % providers.len();
@@ -576,7 +575,7 @@ async fn client_daemon_runtime(
             .emit(vec![corpus_row(chat, iteration / providers.len() as u64)])
             .await
             .with_context(|| format!("replay client corpus for chat {chat}"))?;
-        if iteration == timing.reset_iteration {
+        if !reset && started.elapsed() >= timing.reset_after {
             for provider in &providers {
                 provider
                     .play(vec![Step::Compaction])
@@ -584,6 +583,7 @@ async fn client_daemon_runtime(
                     .context("reset client stream through provider relink")?;
             }
             std::fs::write(directory.join("reset"), b"reset\n")?;
+            reset = true;
         }
         iteration += 1;
         tokio::time::sleep(PULSE_INTERVAL.saturating_sub(pulse.elapsed())).await;
@@ -829,7 +829,7 @@ mod tests {
         let timing = ClientSoakTiming {
             stall_after: Duration::from_millis(50),
             stall_for: Duration::from_millis(100),
-            reset_iteration: 1,
+            reset_after: Duration::from_millis(50),
         };
 
         let daemon_path = daemon_dir.clone();
@@ -916,7 +916,10 @@ mod tests {
         let config = SoakRunConfig::from_override(None).unwrap();
         assert_eq!(config.duration, Duration::from_secs(10 * 60));
         assert!(!config.diagnostic);
-        assert_eq!(config.client_timing().reset_iteration, 4_800);
+        assert_eq!(
+            config.client_timing().reset_after,
+            Duration::from_secs(4 * 60)
+        );
     }
 
     #[test]
@@ -924,8 +927,7 @@ mod tests {
         let config = SoakRunConfig::from_override(Some(OsStr::new("240"))).unwrap();
         assert_eq!(config.duration, Duration::from_secs(4 * 60));
         assert!(config.diagnostic);
-        assert_eq!(config.client_timing().reset_iteration, 3_600);
-        let reset_at = PULSE_INTERVAL * config.client_timing().reset_iteration as u32;
+        let reset_at = config.client_timing().reset_after;
         assert_eq!(reset_at, Duration::from_secs(3 * 60));
         assert!(reset_at >= WARM_UP);
         assert!(reset_at + RESET_REOPEN_MARGIN <= config.duration);
