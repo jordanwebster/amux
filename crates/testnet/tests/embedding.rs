@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use node::discovery::ScriptedDiscovery;
 use node::installation::{BindTarget, Observed, ProfileStatus, RelayCarrier};
 use node::{
     AccessToken, AuthError, BindRequest, Client, CredentialProvider, CredentialSource, HostId,
@@ -51,7 +52,7 @@ type Providers = Arc<Mutex<HashMap<ProfileId, Arc<HostCredentials>>>>;
 
 fn options(name: &str, providers: Providers, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
-        discovery: None,
+        discovery: Some(Arc::new(ScriptedDiscovery::new())),
         relocation: Default::default(),
         root,
         settings: InstallationSettings {

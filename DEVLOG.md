@@ -1,3 +1,12 @@
+2026-09-17 — **Embedding tests stop browsing the real network.** The embedded
+installation tests left discovery unset, which means the platform default:
+real mDNS on the developer's network. The account isolation test failed on any
+Mac running an amux server or a worktree daemon, because those machines were
+offered as pairing candidates and it refuses any candidate from outside its
+accounts. Its machines find each other through the relay, so both embedding test
+files now use in-memory discovery. The phone journeys still exercise the app's
+real Bonjour browser against the test network's machines.
+
 2026-09-17 — **The TCP fallback is timed where it is decided.** The relay spec
 for a UDP-blocked network asserted that it finished within two seconds, but its
 clock started before the test network was built. The two seconds also covered
