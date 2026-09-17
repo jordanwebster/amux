@@ -3,7 +3,10 @@ frame-under-flood workload now sends every generated Codex batch through the
 open chat's store stream and applies the canonical commit acknowledgement
 before drawing. Every measured pulse must advance the stored tip and paint its
 last provider row, so the frame and keypress budgets cannot pass while timing
-an unchanged transcript.
+an unchanged transcript. Reconnect and live-attach qualification now seed the
+client's 5,000-row cursor in SQLite instead of requiring the daemon's 1 MiB
+replay ring to retain that entire history; measured reconnects still request
+and account for only the rows published after the stored cursor.
 
 2026-09-17 — **Report replay preserves modern raw stream semantics.** New
 report headers identify store-backed chat recordings, and reports from the

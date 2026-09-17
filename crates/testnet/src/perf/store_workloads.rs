@@ -283,12 +283,16 @@ async fn reconnect_delta() -> Result<Vec<MetricRun>> {
     let agent = daemon
         .spawn_scripted_sdk_agent("perf-delta", temp.path())
         .await?;
+    let store_path = temp.path().join("store.sqlite");
+    let store = Store::open(&store_path).await?;
+    seed_live_fleet(&store, &agent).await?;
+    seed_chat(&store, agent.id, 5_000, 160).await?;
+    store.close().await;
     publish_sdk_rows(&daemon, agent.id, 1, 5_000, 160).await?;
     let client = daemon.admin_client().await;
     let facts = wait_for_daemon_through(&client, agent.id, 5_000).await?;
-    ensure_retains_5k(&facts)?;
+    ensure!(facts.through == 5_000);
 
-    let store_path = temp.path().join("store.sqlite");
     let mut runtime = Runtime::start_with_client(
         client.clone(),
         RuntimeOptions {
@@ -459,19 +463,6 @@ async fn wait_for_daemon_through(
     .with_context(|| format!("daemon did not publish through row {minimum}"))?
 }
 
-fn ensure_retains_5k(facts: &model::ReplayFacts) -> Result<()> {
-    let retained = if facts.retained_from == 0 {
-        0
-    } else {
-        facts.through - facts.retained_from + 1
-    };
-    ensure!(
-        retained >= 5_000,
-        "daemon ring retains {retained} rows, expected at least 5,000"
-    );
-    Ok(())
-}
-
 async fn attach_during_flood() -> Result<Vec<MetricRun>> {
     let temp = TempDir::new().context("attach store directory")?;
     let path = temp.path().join("store.sqlite");
@@ -490,7 +481,7 @@ async fn attach_during_flood() -> Result<Vec<MetricRun>> {
     publish_sdk_rows(&daemon, agent.id, 1, 5_000, 80).await?;
     let client = daemon.admin_client().await;
     let retained = wait_for_daemon_through(&client, agent.id, 5_000).await?;
-    ensure_retains_5k(&retained)?;
+    ensure!(retained.through == 5_000);
 
     let mut runtime = Runtime::start_with_client(
         client,
