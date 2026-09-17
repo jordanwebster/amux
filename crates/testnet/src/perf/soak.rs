@@ -56,6 +56,7 @@ pub fn run_soak(machine: Machine) -> Result<()> {
     let mut client = ChildGuard::spawn(&executable, "client", &client_dir)?;
     wait_marker(&mut client, &client_dir.join("ready"))?;
 
+    let started_at = Utc::now();
     let started = Instant::now();
     let mut client_samples = Vec::with_capacity(121);
     let mut daemon_samples = Vec::with_capacity(121);
@@ -80,6 +81,8 @@ pub fn run_soak(machine: Machine) -> Result<()> {
     std::fs::write(daemon_dir.join("stop"), b"stop\n")?;
     client.wait_success()?;
     daemon.wait_success()?;
+    let ended_at = Utc::now();
+    let observation_count = client_samples.len();
 
     let memory_name = daemon_active.name();
     println!("memory measure: {memory_name} (sampled every 5 s)");
@@ -90,6 +93,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             1.0,
             Unit::MegabytesPerMinute,
             CLIENT_WORKLOAD,
+            Statistic::Worst,
+            observation_count,
+            started_at,
+            ended_at,
         ),
         memory_run(
             "bounded client memory peak",
@@ -97,6 +104,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             300.0,
             Unit::Megabytes,
             CLIENT_WORKLOAD,
+            Statistic::Peak,
+            observation_count,
+            started_at,
+            ended_at,
         ),
         memory_run(
             "bounded daemon memory slope",
@@ -104,6 +115,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             1.0,
             Unit::MegabytesPerMinute,
             DAEMON_WORKLOAD,
+            Statistic::Worst,
+            observation_count,
+            started_at,
+            ended_at,
         ),
         memory_run(
             "daemon memory per idle agent",
@@ -111,6 +126,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             2.0,
             Unit::Megabytes,
             DAEMON_WORKLOAD,
+            Statistic::Worst,
+            observation_count,
+            started_at,
+            ended_at,
         ),
         memory_run(
             "daemon memory per active agent",
@@ -125,6 +144,10 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             40.0,
             Unit::Megabytes,
             DAEMON_WORKLOAD,
+            Statistic::Peak,
+            observation_count,
+            started_at,
+            ended_at,
         ),
     ];
     let report = Report::evaluate(machine, runs, None, false)?;
@@ -377,12 +400,15 @@ fn memory_run(
     budget: f64,
     unit: Unit,
     workload: Workload,
+    statistic: Statistic,
+    observation_count: usize,
+    started_at: chrono::DateTime<Utc>,
+    ended_at: chrono::DateTime<Utc>,
 ) -> MetricRun {
-    let at = Utc::now();
     MetricRun {
         metric: Metric {
             name,
-            statistic: Statistic::Worst,
+            statistic,
             budget,
             unit,
             workload,
@@ -392,8 +418,9 @@ fn memory_run(
             value,
             unit,
         }],
-        started_at: at,
-        ended_at: at,
+        observation_count,
+        started_at,
+        ended_at,
     }
 }
 
@@ -493,5 +520,26 @@ mod tests {
             assert!(chat.pending.is_empty());
             assert!(chat.fold.tip_bytes() <= fold::TIP_MAX_BYTES);
         }
+    }
+
+    #[test]
+    fn derived_memory_metric_preserves_observation_contract() {
+        let started_at = Utc::now();
+        let ended_at = Utc::now();
+        let run = memory_run(
+            "fixture slope",
+            0.25,
+            1.0,
+            Unit::MegabytesPerMinute,
+            CLIENT_WORKLOAD,
+            Statistic::Worst,
+            121,
+            started_at,
+            ended_at,
+        );
+        assert_eq!(run.samples.len(), 1);
+        assert_eq!(run.observation_count, 121);
+        assert_eq!(run.started_at, started_at);
+        assert_eq!(run.ended_at, ended_at);
     }
 }

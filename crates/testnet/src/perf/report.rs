@@ -97,6 +97,12 @@ pub struct Sample {
 pub struct MetricRun {
     pub metric: Metric,
     pub samples: Vec<Sample>,
+    /// Raw workload observations represented by `samples`.
+    ///
+    /// Most metrics retain every observation as a sample. Derived metrics,
+    /// such as a regression slope, retain one reportable value while still
+    /// naming the full observation count required by the measurement contract.
+    pub observation_count: usize,
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
 }
@@ -315,7 +321,7 @@ impl Report {
                 run.metric.workload.description,
                 run.metric.workload.seed,
                 run.metric.workload.identity_growth,
-                run.samples.len(),
+                run.observation_count,
                 run.metric.workload.warm_up,
                 run.started_at.to_rfc3339(),
                 run.ended_at.to_rfc3339(),
@@ -480,6 +486,7 @@ mod tests {
                     unit,
                 })
                 .collect(),
+            observation_count: values.len(),
             started_at: Utc::now(),
             ended_at: Utc::now(),
         }

@@ -1,3 +1,11 @@
+2026-09-17 — **Client and daemon memory stay bounded under sustained structured work.**
+The release soak keeps ten chat windows active while fresh provider identities stream for
+ten minutes, including oversized and unresolved work, a stalled persistence interval and
+a reset. Alongside it, 200 idle and 20 active daemon rings run their live summarizers. The
+report samples the platform's named process-memory measure every five seconds, preserves
+the full observation count and interval, and enforces the required slopes, peak and
+per-agent ceilings.
+
 2026-09-17 — **Desktop performance is qualified at product boundaries.** A
 release-only harness now reports machine, configuration, workload contract,
 budget, baseline and drift for steady and flooded frames, stored cold starts,

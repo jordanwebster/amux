@@ -720,6 +720,7 @@ fn metric_run(
     started_at: chrono::DateTime<Utc>,
     values: &[f64],
 ) -> MetricRun {
+    let observation_count = values.len();
     MetricRun {
         metric: Metric {
             name,
@@ -736,6 +737,7 @@ fn metric_run(
                 unit,
             })
             .collect(),
+        observation_count,
         started_at,
         ended_at: Utc::now(),
     }

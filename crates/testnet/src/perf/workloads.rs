@@ -392,6 +392,7 @@ fn run(
     started_at: chrono::DateTime<Utc>,
     samples: Vec<Sample>,
 ) -> MetricRun {
+    let observation_count = samples.len();
     MetricRun {
         metric: Metric {
             name,
@@ -401,6 +402,7 @@ fn run(
             workload,
         },
         samples,
+        observation_count,
         started_at,
         ended_at: Utc::now(),
     }
