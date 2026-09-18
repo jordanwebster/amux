@@ -171,6 +171,15 @@ slower and with wider spread, even though the work itself has not changed.
 The absolute budgets hold both when the machine is idle and when the cluster
 warmer is active. The warmer defines the repeatable state used for relative
 drift; it does not change any workload, statistic, budget or drift limit.
+The `summarizer idle core` row is ceiling-only under its unchanged 1.0%
+absolute budget. Five identical-code runs measured 0.055%, 0.071%, 0.057%,
+0.078% and 0.059%, a 42% spread caused by macOS park and unpark cost for the
+roughly 2,000 one-second health-tick wakeups in each window. Over those same
+runs, `summarizer CPU per row` stayed between 4.243 and 4.397 microseconds, a
+3.6% spread. The idle row therefore cannot carry a useful percentage drift
+gate; other percentage rows, including `growth after sweep`, retain the 15%
+limit. A miss of either an absolute budget or any remaining drift gate is
+still a defect to explain, not a value to adopt.
 Baseline recording is qualification work, so wait for unrelated builds,
 simulator runs and performance harnesses to finish, then review the complete
 reports before committing the files. `just perf soak` remains a memory-only

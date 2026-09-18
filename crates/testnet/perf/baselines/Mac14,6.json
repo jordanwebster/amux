@@ -23,7 +23,7 @@
     "scroll-back memory return": 0.6323187193972699,
     "steady-state frame": 0.415333,
     "summarizer CPU per row": 4.307,
-    "summarizer idle core": 0.05515854677271459,
+    "summarizer idle core": null,
     "tip bound": 4288.0
   }
 }

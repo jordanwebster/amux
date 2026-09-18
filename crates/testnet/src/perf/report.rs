@@ -85,7 +85,18 @@ pub struct Metric {
     pub statistic: Statistic,
     pub budget: f64,
     pub unit: Unit,
+    pub ceiling_only: bool,
     pub workload: Workload,
+}
+
+impl Metric {
+    const fn drift_limit(self) -> Option<f64> {
+        if self.ceiling_only {
+            None
+        } else {
+            self.unit.drift_limit()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -335,7 +346,7 @@ impl Report {
             values.sort_by(f64::total_cmp);
             let median = Statistic::Median.value(&values);
             let measured = run.metric.statistic.value(&values);
-            let drift_limit = run.metric.unit.drift_limit();
+            let drift_limit = run.metric.drift_limit();
             let baseline = drift_limit.and_then(|_| {
                 baselines
                     .and_then(|values| values.medians.get(run.metric.name))
@@ -396,7 +407,7 @@ impl Report {
         println!("metric | median | measured | budget | baseline | drift | verdict");
         for (run, verdict) in self.runs.iter().zip(&self.verdicts) {
             let unit = run.metric.unit.name();
-            let ceiling_only = run.metric.unit.drift_limit().is_none();
+            let ceiling_only = run.metric.drift_limit().is_none();
             let baseline = if ceiling_only {
                 "ceiling only".to_owned()
             } else {
@@ -466,7 +477,7 @@ impl Report {
                 .map(|(run, verdict)| {
                     (
                         verdict.metric.to_owned(),
-                        run.metric.unit.drift_limit().map(|_| verdict.median),
+                        run.metric.drift_limit().map(|_| verdict.median),
                     )
                 })
                 .collect(),
@@ -606,6 +617,7 @@ mod tests {
                 statistic,
                 budget: 20.0,
                 unit,
+                ceiling_only: false,
                 workload: WORKLOAD,
             },
             samples: values
@@ -734,6 +746,56 @@ mod tests {
         assert!(report.passed());
         assert_eq!(report.verdicts[0].baseline, None);
         assert_eq!(report.verdicts[0].drift, None);
+    }
+
+    #[test]
+    fn per_metric_ceiling_only_rows_ignore_and_retire_numeric_baselines() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(0.001))]),
+        };
+        let mut metric_run = run(Unit::Percent, Statistic::Median, &[0.9]);
+        metric_run.metric.ceiling_only = true;
+        let report = Report::evaluate(machine(), vec![metric_run], Some(&baseline), false).unwrap();
+
+        assert!(report.passed());
+        assert_eq!(report.verdicts[0].baseline, None);
+        assert_eq!(report.verdicts[0].drift, None);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Mac14,6.json");
+        report.write_baseline(&path).unwrap();
+        let recorded = Baselines::read(&path, &machine(), Some(DESKTOP_REFERENCE_STATE))
+            .unwrap()
+            .unwrap();
+        assert_eq!(recorded.medians["fixture"], None);
+    }
+
+    #[test]
+    fn percent_rows_without_the_flag_keep_the_fifteen_percent_drift_gate() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(10.0))]),
+        };
+        let report = Report::evaluate(
+            machine(),
+            vec![run(Unit::Percent, Statistic::Median, &[11.6])],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
+
+        assert!(!report.passed());
+        assert_eq!(report.verdicts[0].baseline, Some(10.0));
+        assert!(report.verdicts[0].drift.unwrap() > 0.15);
     }
 
     #[test]

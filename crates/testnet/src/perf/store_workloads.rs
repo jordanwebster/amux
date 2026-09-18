@@ -1218,6 +1218,7 @@ fn metric_run(
             statistic,
             budget,
             unit,
+            ceiling_only: false,
             workload,
         },
         samples: values

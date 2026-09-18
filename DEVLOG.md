@@ -1,3 +1,9 @@
+2026-09-18 — **Idle summarizer CPU is guarded by its absolute ceiling.**
+The row's 1.0% budget remains enforced, while its baseline is explicitly null:
+five identical-code runs varied by 42% because the measurement is dominated by
+macOS health-tick park and unpark cost. The stable CPU-per-row metric and every
+other percentage drift gate remain unchanged.
+
 2026-09-18 — **Mac14,6 baselines use the active-cluster reference state.**
 On macOS 26.5.2, the release `bundled,perf` desktop qualification recorded
 its baseline with one busy core maintained by the cluster warmer; the phone
