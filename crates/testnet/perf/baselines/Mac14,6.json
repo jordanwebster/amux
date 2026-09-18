@@ -20,7 +20,7 @@
     "reconnect delta (1,000 rows)": 377027.0,
     "reconnect delta (10 rows)": 3797.0,
     "reconnect delta (100 rows)": 37727.0,
-    "scroll-back memory return": 0.6323187193972699,
+    "scroll-back memory return": null,
     "steady-state frame": 0.415333,
     "summarizer CPU per row": 4.307,
     "summarizer idle core": null,

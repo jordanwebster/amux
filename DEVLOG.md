@@ -1,3 +1,10 @@
+2026-09-18 — **Scroll-back memory return is guarded by its absolute ceiling.**
+The row's 1.10x budget remains enforced, while its relative baseline is
+explicitly null. Identical-code runs split between ratios near 0.6 and 1.0
+depending on whether allocator and kernel memory returned before or after the
+initial physical-footprint snapshot. The three growth rows keep their drift
+gates.
+
 2026-09-18 — **Idle summarizer CPU is guarded by its absolute ceiling.**
 The row's 1.0% budget remains enforced, while its baseline is explicitly null:
 five identical-code runs varied by 42% because the measurement is dominated by

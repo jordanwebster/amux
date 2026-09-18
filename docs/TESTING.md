@@ -180,6 +180,17 @@ runs, `summarizer CPU per row` stayed between 4.243 and 4.397 microseconds, a
 gate; other percentage rows, including `growth after sweep`, retain the 15%
 limit. A miss of either an absolute budget or any remaining drift gate is
 still a defect to explain, not a value to adopt.
+The `scroll-back memory return` row is also ceiling-only under its unchanged
+1.10x absolute budget. Five warmed runs of identical code measured 0.632x,
+0.591x, 1.004x, 0.595x and 1.006x. Its denominator is the physical-footprint
+snapshot taken after seeding 50,000 rows and the preceding commit workload. It
+reads near 0.6 when allocator and kernel memory is returned during scrolling,
+and near 1.0 when that memory was already returned before the first snapshot.
+A lower ratio is therefore an inflated denominator, not a better product, and
+a relative gate cannot usefully distinguish the two modes. The absolute budget
+still guards the row. `growth after sweep`, `growth sweep duration` and
+`growth longest statement upper bound` keep their relative gates, and any
+budget miss remains a defect to explain.
 Baseline recording is qualification work, so wait for unrelated builds,
 simulator runs and performance harnesses to finish, then review the complete
 reports before committing the files. `just perf soak` remains a memory-only

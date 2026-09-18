@@ -434,7 +434,7 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
             started_at,
             active_samples,
         ),
-        ceiling_only(run(
+        run(
             "summarizer idle core",
             Statistic::Median,
             1.0,
@@ -442,7 +442,8 @@ fn summarizer_cost() -> Result<[MetricRun; 2]> {
             SUMMARIZER_WORKLOAD,
             started_at,
             idle_samples,
-        )),
+        )
+        .ceiling_only(),
     ])
 }
 
@@ -520,11 +521,6 @@ fn run(
         started_at,
         ended_at: Utc::now(),
     }
-}
-
-fn ceiling_only(mut run: MetricRun) -> MetricRun {
-    run.metric.ceiling_only = true;
-    run
 }
 
 #[cfg(test)]

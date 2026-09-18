@@ -880,7 +880,8 @@ async fn scroll_and_sweep() -> Result<Vec<MetricRun>> {
             SCROLL_WORKLOAD,
             started_at,
             &[memory_ratio],
-        ),
+        )
+        .ceiling_only(),
         metric_run(
             "growth after sweep",
             Statistic::Worst,

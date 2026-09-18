@@ -120,6 +120,14 @@ pub struct MetricRun {
     pub ended_at: DateTime<Utc>,
 }
 
+#[cfg(any(feature = "perf", test))]
+impl MetricRun {
+    pub(crate) fn ceiling_only(mut self) -> Self {
+        self.metric.ceiling_only = true;
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verdict {
     pub metric: &'static str,
@@ -758,9 +766,39 @@ mod tests {
             reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([("fixture".to_owned(), Some(0.001))]),
         };
-        let mut metric_run = run(Unit::Percent, Statistic::Median, &[0.9]);
-        metric_run.metric.ceiling_only = true;
+        let metric_run = run(Unit::Percent, Statistic::Median, &[0.9]).ceiling_only();
         let report = Report::evaluate(machine(), vec![metric_run], Some(&baseline), false).unwrap();
+
+        assert!(report.passed());
+        assert_eq!(report.verdicts[0].baseline, None);
+        assert_eq!(report.verdicts[0].drift, None);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Mac14,6.json");
+        report.write_baseline(&path).unwrap();
+        let recorded = Baselines::read(&path, &machine(), Some(DESKTOP_REFERENCE_STATE))
+            .unwrap()
+            .unwrap();
+        assert_eq!(recorded.medians["fixture"], None);
+    }
+
+    #[test]
+    fn ratio_rows_can_be_ceiling_only_per_metric() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(0.6))]),
+        };
+        let report = Report::evaluate(
+            machine(),
+            vec![run(Unit::Ratio, Statistic::Worst, &[1.0]).ceiling_only()],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
 
         assert!(report.passed());
         assert_eq!(report.verdicts[0].baseline, None);
