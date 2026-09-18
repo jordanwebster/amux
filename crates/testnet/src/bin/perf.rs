@@ -1,9 +1,12 @@
 use anyhow::{Result, bail};
-use testnet::perf::{Baselines, Machine, Report, run_fast, run_soak, run_summarizer, soak_child};
+use testnet::perf::{
+    Baselines, Machine, Report, run_cold_start, run_fast, run_soak, run_summarizer, soak_child,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Selection {
     All,
+    ColdStart,
     Summarizer,
 }
 
@@ -29,16 +32,19 @@ fn main() -> Result<()> {
     let recorded = Baselines::read(&path, &machine)?;
     let runs = match selection {
         Selection::All => run_fast()?,
+        Selection::ColdStart => run_cold_start()?,
         Selection::Summarizer => run_summarizer()?,
     };
     let metric_names = runs.iter().map(|run| run.metric.name).collect::<Vec<_>>();
     let projected = match (&recorded, selection) {
-        (Some(recorded), Selection::Summarizer) => Some(recorded.project(&metric_names)?),
+        (Some(recorded), Selection::ColdStart | Selection::Summarizer) => {
+            Some(recorded.project(&metric_names)?)
+        }
         _ => None,
     };
     let recorded = match selection {
         Selection::All => recorded.as_ref(),
-        Selection::Summarizer => projected.as_ref(),
+        Selection::ColdStart | Selection::Summarizer => projected.as_ref(),
     };
     let report = Report::evaluate(machine, runs, recorded, baseline)?;
     report.print();
@@ -66,12 +72,15 @@ fn qualification_arguments(arguments: &[String]) -> Result<(bool, Selection)> {
     match arguments.as_slice() {
         [] => Ok((false, Selection::All)),
         ["--baseline"] => Ok((true, Selection::All)),
+        ["--only", "cold-start"] => Ok((false, Selection::ColdStart)),
         ["--only", "summarizer"] => Ok((false, Selection::Summarizer)),
         ["--baseline", "--only", "summarizer"] | ["--only", "summarizer", "--baseline"] => {
             bail!("a summarizer-only run cannot replace the complete performance baseline")
         }
         [argument] => bail!("unknown performance argument {argument:?}"),
-        _ => bail!("performance qualification accepts --baseline or --only summarizer"),
+        _ => bail!(
+            "performance qualification accepts --baseline, --only cold-start, or --only summarizer"
+        ),
     }
 }
 
@@ -91,6 +100,14 @@ mod tests {
         );
         assert!(
             qualification_arguments(&arguments(&["--only", "summarizer", "--baseline"])).is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_cold_start_only_without_baseline_recording() {
+        assert_eq!(
+            qualification_arguments(&arguments(&["--only", "cold-start"])).unwrap(),
+            (false, Selection::ColdStart)
         );
     }
 

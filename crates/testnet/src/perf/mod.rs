@@ -16,6 +16,8 @@ pub use report::{
 #[cfg(feature = "perf")]
 pub use soak::{run_soak, soak_child};
 #[cfg(feature = "perf")]
+pub use store_workloads::run_cold_start;
+#[cfg(feature = "perf")]
 pub use workloads::{run_fast, run_summarizer};
 
 /// The platform's process-residency measure.

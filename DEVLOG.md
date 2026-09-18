@@ -3,7 +3,9 @@ Bare `amux`, `amux ui`, and store inspection now resolve UUID, label,
 remembered, and single-profile selection from the durable installation
 registry and open that profile's SQLite store before the installation front
 door or profile socket is awaited. The release cold-start workload uses the
-same split installation layout and supported invocation. The warm-start
+same split installation layout and supported invocation, and `perf --only
+cold-start` can requalify it without conflating unrelated performance rows.
+The warm-start
 journey seeds from a captured real Claude Code session, holds the profile
 socket open without answering, proves the remembered card and closed composer
 gate, then restores the socket and observes confirmation in the same TUI.

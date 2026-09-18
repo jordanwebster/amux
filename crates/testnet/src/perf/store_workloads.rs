@@ -90,6 +90,14 @@ pub(super) fn run_store() -> Result<Vec<MetricRun>> {
     })
 }
 
+pub fn run_cold_start() -> Result<Vec<MetricRun>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build cold-start performance runtime")?;
+    runtime.block_on(cold_start())
+}
+
 async fn cold_start() -> Result<Vec<MetricRun>> {
     let mut runs = Vec::new();
     for agents in [40_usize, 200] {
