@@ -19,10 +19,8 @@ fn main() -> Result<()> {
         bail!("performance qualification must run with the release profile");
     }
     if arguments.first().map(String::as_str) == Some("soak") {
-        if arguments.len() != 1 {
-            bail!("memory soak accepts no additional arguments");
-        }
-        return run_soak(Machine::detect()?);
+        let recording = soak_arguments(&arguments)?;
+        return run_soak(Machine::detect()?, recording);
     }
     let (baseline, selection) = qualification_arguments(&arguments)?;
 
@@ -52,6 +50,15 @@ fn main() -> Result<()> {
         bail!("one or more performance metrics missed their budget or drift limit");
     }
     Ok(())
+}
+
+fn soak_arguments(arguments: &[String]) -> Result<bool> {
+    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    match arguments.as_slice() {
+        ["soak"] => Ok(false),
+        ["soak", "--baseline"] => Ok(true),
+        _ => bail!("memory soak accepts exactly `soak` or `soak --baseline`"),
+    }
 }
 
 fn qualification_arguments(arguments: &[String]) -> Result<(bool, Selection)> {
@@ -85,5 +92,13 @@ mod tests {
         assert!(
             qualification_arguments(&arguments(&["--only", "summarizer", "--baseline"])).is_err()
         );
+    }
+
+    #[test]
+    fn soak_accepts_only_plain_and_baseline_modes() {
+        assert!(!soak_arguments(&arguments(&["soak"])).unwrap());
+        assert!(soak_arguments(&arguments(&["soak", "--baseline"])).unwrap());
+        assert!(soak_arguments(&arguments(&["soak", "extra"])).is_err());
+        assert!(soak_arguments(&arguments(&["soak", "--baseline", "extra"])).is_err());
     }
 }

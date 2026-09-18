@@ -13,7 +13,7 @@ use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::store::ChatState;
 use uuid::Uuid;
 
-use super::{Machine, Metric, MetricRun, Report, Sample, Statistic, Unit, Workload};
+use super::{Baselines, Machine, Metric, MetricRun, Report, Sample, Statistic, Unit, Workload};
 use crate::script::{Provider, Script, ScriptAsk, Step};
 use crate::{TestNet, connect_user};
 
@@ -108,8 +108,9 @@ const DAEMON_DIAGNOSTIC_WORKLOAD: Workload = Workload {
     warm_up: "exclude the first two minutes from slope",
 };
 
-pub fn run_soak(machine: Machine) -> Result<()> {
+pub fn run_soak(machine: Machine, recording: bool) -> Result<()> {
     let config = SoakRunConfig::from_env()?;
+    Report::validate_recording(recording, config.diagnostic)?;
     if config.diagnostic {
         println!(
             "run: diagnostic memory soak shortened to {} s (qualification remains {} s; warm-up remains {} s)",
@@ -289,8 +290,22 @@ pub fn run_soak(machine: Machine) -> Result<()> {
             ended_at,
         ),
     ];
-    let report = Report::evaluate(machine, runs, None, false)?;
+    let baseline_path = machine.soak_baseline_path();
+    let recorded = if config.diagnostic {
+        None
+    } else {
+        Baselines::read(&baseline_path, &machine)?
+    };
+    let report = if config.diagnostic {
+        Report::evaluate_diagnostic(machine, runs)?
+    } else {
+        Report::evaluate(machine, runs, recorded.as_ref(), recording)?
+    };
     report.print();
+    if recording {
+        report.write_baseline(&baseline_path)?;
+        println!("baseline: wrote {}", baseline_path.display());
+    }
     if !report.passed() {
         bail!("one or more memory soak metrics missed their budget");
     }

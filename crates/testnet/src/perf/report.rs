@@ -61,10 +61,11 @@ impl Unit {
         }
     }
 
-    const fn drift_limit(self) -> f64 {
+    const fn drift_limit(self) -> Option<f64> {
         match self {
-            Self::Bytes | Self::Megabytes | Self::MegabytesPerMinute | Self::Ratio => 0.10,
-            Self::Milliseconds | Self::Microseconds | Self::Percent => 0.15,
+            Self::MegabytesPerMinute => None,
+            Self::Bytes | Self::Megabytes | Self::Ratio => Some(0.10),
+            Self::Milliseconds | Self::Microseconds | Self::Percent => Some(0.15),
         }
     }
 }
@@ -206,6 +207,10 @@ impl Machine {
     pub fn baseline_path(&self) -> PathBuf {
         Path::new(BASELINE_ROOT).join(format!("{}.json", self.model))
     }
+
+    pub fn soak_baseline_path(&self) -> PathBuf {
+        Path::new(BASELINE_ROOT).join(format!("{}-soak.json", self.model))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -226,6 +231,7 @@ pub struct Report {
     pub features: &'static str,
     pub verdicts: Vec<Verdict>,
     pub runs: Vec<MetricRun>,
+    diagnostic: bool,
 }
 
 impl Report {
@@ -234,6 +240,20 @@ impl Report {
         runs: Vec<MetricRun>,
         baselines: Option<&Baselines>,
         recording: bool,
+    ) -> Result<Self, PerfError> {
+        Self::evaluate_mode(machine, runs, baselines, recording, false)
+    }
+
+    pub fn evaluate_diagnostic(machine: Machine, runs: Vec<MetricRun>) -> Result<Self, PerfError> {
+        Self::evaluate_mode(machine, runs, None, false, true)
+    }
+
+    fn evaluate_mode(
+        machine: Machine,
+        runs: Vec<MetricRun>,
+        baselines: Option<&Baselines>,
+        recording: bool,
+        diagnostic: bool,
     ) -> Result<Self, PerfError> {
         let metric_names = runs
             .iter()
@@ -277,13 +297,18 @@ impl Report {
             values.sort_by(f64::total_cmp);
             let median = Statistic::Median.value(&values);
             let measured = run.metric.statistic.value(&values);
-            let baseline = baselines
-                .and_then(|values| values.medians.get(run.metric.name))
-                .copied()
-                .flatten();
+            let drift_limit = run.metric.unit.drift_limit();
+            let baseline = drift_limit.and_then(|_| {
+                baselines
+                    .and_then(|values| values.medians.get(run.metric.name))
+                    .copied()
+                    .flatten()
+            });
             let drift = baseline.map(|baseline| median / baseline - 1.0);
-            let within_drift =
-                recording || drift.is_none_or(|drift| drift <= run.metric.unit.drift_limit());
+            let within_drift = recording
+                || drift_limit
+                    .zip(drift)
+                    .is_none_or(|(limit, drift)| drift <= limit);
             verdicts.push(Verdict {
                 metric: run.metric.name,
                 median,
@@ -301,7 +326,17 @@ impl Report {
             features: "bundled,perf",
             verdicts,
             runs,
+            diagnostic,
         })
+    }
+
+    pub fn validate_recording(recording: bool, diagnostic: bool) -> Result<(), PerfError> {
+        if recording && diagnostic {
+            return Err(PerfError::Baseline(
+                "a shortened diagnostic soak cannot become a baseline".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn passed(&self) -> bool {
@@ -313,17 +348,29 @@ impl Report {
             "machine: {} ({}) · OS: {} · profile: {} · features: {}",
             self.machine.name, self.machine.model, self.machine.os, self.profile, self.features
         );
+        if self.diagnostic {
+            println!("drift: not applied to diagnostic runs");
+        }
         println!("metric | median | measured | budget | baseline | drift | verdict");
         for (run, verdict) in self.runs.iter().zip(&self.verdicts) {
             let unit = run.metric.unit.name();
-            let baseline = verdict.baseline.map_or_else(
-                || "unavailable".to_owned(),
-                |value| format!("{value:.3} {unit}"),
-            );
-            let drift = verdict.drift.map_or_else(
-                || "unavailable".to_owned(),
-                |value| format!("{:+.1}%", value * 100.0),
-            );
+            let ceiling_only = run.metric.unit.drift_limit().is_none();
+            let baseline = if ceiling_only {
+                "ceiling only".to_owned()
+            } else {
+                verdict.baseline.map_or_else(
+                    || "unavailable".to_owned(),
+                    |value| format!("{value:.3} {unit}"),
+                )
+            };
+            let drift = if ceiling_only {
+                "ceiling only".to_owned()
+            } else {
+                verdict.drift.map_or_else(
+                    || "unavailable".to_owned(),
+                    |value| format!("{:+.1}%", value * 100.0),
+                )
+            };
             println!(
                 "{} | {:.3} {} | {} {:.3} {} | {:.3} {} | {} | {} | {}",
                 verdict.metric,
@@ -348,7 +395,7 @@ impl Report {
                 run.started_at.to_rfc3339(),
                 run.ended_at.to_rfc3339(),
             );
-            if verdict.baseline.is_none() {
+            if verdict.baseline.is_none() && !ceiling_only && !self.diagnostic {
                 println!("  no committed baseline for this workload");
             }
         }
@@ -370,9 +417,15 @@ impl Report {
             profile: self.profile.to_owned(),
             features: self.features.to_owned(),
             medians: self
-                .verdicts
+                .runs
                 .iter()
-                .map(|verdict| (verdict.metric.to_owned(), Some(verdict.median)))
+                .zip(&self.verdicts)
+                .map(|(run, verdict)| {
+                    (
+                        verdict.metric.to_owned(),
+                        run.metric.unit.drift_limit().map(|_| verdict.median),
+                    )
+                })
                 .collect(),
         };
         if let Some(parent) = path.parent() {
@@ -495,9 +548,18 @@ mod tests {
     };
 
     fn run(unit: Unit, statistic: Statistic, values: &[f64]) -> MetricRun {
+        named_run("fixture", unit, statistic, values)
+    }
+
+    fn named_run(
+        name: &'static str,
+        unit: Unit,
+        statistic: Statistic,
+        values: &[f64],
+    ) -> MetricRun {
         MetricRun {
             metric: Metric {
-                name: "fixture",
+                name,
                 statistic,
                 budget: 20.0,
                 unit,
@@ -506,7 +568,7 @@ mod tests {
             samples: values
                 .iter()
                 .map(|value| Sample {
-                    metric: "fixture",
+                    metric: name,
                     value: *value,
                     unit,
                 })
@@ -592,6 +654,79 @@ mod tests {
         )
         .unwrap();
         assert!(!report.passed(), "11% memory drift exceeds the 10% limit");
+
+        let passing = Report::evaluate(
+            machine(),
+            vec![run(Unit::Megabytes, Statistic::Peak, &[10.9])],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
+        assert!(
+            passing.passed(),
+            "9% memory drift remains within the 10% limit"
+        );
+    }
+
+    #[test]
+    fn slope_rows_are_ceiling_only_even_with_a_numeric_baseline() {
+        let baseline = Baselines {
+            schema_version: BASELINE_SCHEMA,
+            machine_model: "Mac14,6".to_owned(),
+            profile: "release".to_owned(),
+            features: "bundled,perf".to_owned(),
+            medians: BTreeMap::from([("fixture".to_owned(), Some(0.001))]),
+        };
+        let report = Report::evaluate(
+            machine(),
+            vec![run(Unit::MegabytesPerMinute, Statistic::Worst, &[0.9])],
+            Some(&baseline),
+            false,
+        )
+        .unwrap();
+        assert!(report.passed());
+        assert_eq!(report.verdicts[0].baseline, None);
+        assert_eq!(report.verdicts[0].drift, None);
+    }
+
+    #[test]
+    fn soak_baseline_records_null_for_slope_rows() {
+        let report = Report::evaluate(
+            machine(),
+            vec![
+                named_run("slope", Unit::MegabytesPerMinute, Statistic::Worst, &[0.2]),
+                named_run("peak", Unit::Megabytes, Statistic::Peak, &[12.0]),
+            ],
+            None,
+            true,
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Mac14,6-soak.json");
+        report.write_baseline(&path).unwrap();
+        let baseline = Baselines::read(&path, &machine()).unwrap().unwrap();
+        assert_eq!(baseline.medians["slope"], None);
+        assert_eq!(baseline.medians["peak"], Some(12.0));
+    }
+
+    #[test]
+    fn diagnostic_soaks_are_refused_before_baseline_recording() {
+        assert!(Report::validate_recording(true, true).is_err());
+        assert!(Report::validate_recording(false, true).is_ok());
+        assert!(Report::validate_recording(true, false).is_ok());
+    }
+
+    #[test]
+    fn fast_and_soak_baselines_have_distinct_paths() {
+        let machine = machine();
+        assert_eq!(
+            machine.baseline_path(),
+            Path::new(BASELINE_ROOT).join("Mac14,6.json")
+        );
+        assert_eq!(
+            machine.soak_baseline_path(),
+            Path::new(BASELINE_ROOT).join("Mac14,6-soak.json")
+        );
     }
 
     #[test]

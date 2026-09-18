@@ -1,3 +1,10 @@
+2026-09-18 — **Memory soaks enforce their own stable baseline.** Ten-minute
+soaks now record and read a workload-specific baseline without touching the
+fast report. Peak and per-agent memory enforce the 10% drift gate, while fitted
+MiB/minute slopes are explicitly ceiling-only because percentage drift around
+zero is not meaningful. Shortened diagnostic runs cannot record or apply a
+baseline.
+
 2026-09-18 — **Phone stores maintain and recover without a desktop operator.**
 The cold-start store read and the first callback frame now enable the same
 hourly, 100 ms maintenance worker used by the terminal, with the phone's

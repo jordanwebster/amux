@@ -148,16 +148,19 @@ phone suite starts.
 just perf
 just perf --baseline
 just perf soak
+just perf soak --baseline
 ```
 
 Desktop baselines live at `crates/testnet/perf/baselines/<hw.model>.json`, and
-phone baselines live at `apps/apple/Perf/baselines/<machine>.json`. They are
-valid only for the recorded machine model, release profile and feature set.
-An unknown hardware model is refused. `--baseline` records both parts of the
-combined run while still enforcing every absolute budget; it never turns a
-miss into the new expectation. Baseline recording is qualification work, so do
-it only on an otherwise idle reference machine and review both complete
-reports before committing the files.
+soak baselines live separately at
+`crates/testnet/perf/baselines/<hw.model>-soak.json`. Phone baselines live at
+`apps/apple/Perf/baselines/<machine>.json`. They are valid only for the
+recorded machine model, release profile and feature set. An unknown hardware
+model is refused. `--baseline` records the complete workload it accompanies
+while still enforcing every absolute budget; it never turns a miss into the
+new expectation. Baseline recording is qualification work, so do it only on
+an otherwise idle reference machine and review the complete reports before
+committing the files.
 
 The soak holds ten chat windows and the daemon state for 200 idle plus 20
 active structured agents for ten minutes. It samples the platform's named
@@ -166,7 +169,14 @@ growth, and fails above 1 MiB/minute, 300 MiB client peak, 2 MiB per idle
 daemon agent, or 40 MiB per active daemon agent. Fresh identities, an
 oversized row, one hundred unresolved asks, a five-second persistence stall
 and a semantic reset prevent deduplication or a quiet happy path from hiding
-growth.
+growth. Client peak and daemon memory per idle and active agent enforce the
+10% memory drift limit. The two fitted MiB/minute rates are ceiling-only: a
+percentage change near zero is not meaningful. Four passing ten-minute runs
+measured client slopes from 0.068 to 0.255 MiB/min while the daemon slope
+rounded to 0.001 MiB/min. A shortened `AMUX_PERF_SOAK_SECONDS` diagnostic run
+therefore applies neither committed baselines nor drift, and it cannot record
+a baseline. As with the fast report, a budget or drift miss is a defect to
+explain, not a new value to adopt.
 
 ## Failure evidence
 
