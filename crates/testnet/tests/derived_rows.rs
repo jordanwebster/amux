@@ -440,6 +440,24 @@ fn claude_prompts(recording: &Recording) -> Result<Vec<String>> {
         .collect()
 }
 
+fn claude_replay_with_prompt_identities(recording: &Recording) -> Result<Recording> {
+    let mut replay = recording.clone();
+    let mut ordinal = 0u128;
+    for event in &mut replay.io {
+        if event.direction != IoDirection::Write {
+            continue;
+        }
+        let mut value: Value = serde_json::from_str(&event.line)?;
+        if value.get("type").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        ordinal += 1;
+        value["uuid"] = Value::String(uuid::Uuid::from_u128(ordinal).to_string());
+        event.line = serde_json::to_string(&value)?;
+    }
+    Ok(replay)
+}
+
 async fn open_claude_harness(
     transport: ReplayTransport,
     session_id: &str,
@@ -517,11 +535,16 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         );
     }
 
+    // These immutable captures predate prompt UUIDs on the SDK wire. The
+    // production boundary now forwards each input identity, so teach strict
+    // replay the deterministic identities used below without rewriting the
+    // captured provider session or its derived-row fixture.
+    let replay_recording = claude_replay_with_prompt_identities(&recording)?;
     let StrictReplay {
         mut transports,
         controller,
         clock,
-    } = strict_replay(&recording, ReplayOptions::default());
+    } = strict_replay(&replay_recording, ReplayOptions::default());
     drop(clock);
     let mut ordered_transports = transport_order
         .into_iter()

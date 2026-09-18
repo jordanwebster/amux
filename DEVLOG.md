@@ -1,3 +1,10 @@
+2026-09-18 — **Claude SDK derivation replays follow prompt identity.** The
+immutable real-session captures still describe the provider versions that
+produced them, while the replay harness overlays the deterministic prompt UUIDs
+the current daemon sends on the wire. Strict replay therefore continues to
+verify every captured exchange and every byte of derived output after prompt
+identity became explicit.
+
 2026-09-18 — **The listener-release regression waits on the OS clock.** The
 test still proves a profile restart yields while its previous listener owns
 the address, but its retry deadline now advances in real time. A transient
