@@ -10,7 +10,6 @@ pub(crate) enum ExternalHookBootstrap {
 pub(crate) enum HookOutcome {
     Noop,
     KeepSession,
-    Completed { text: String },
     WithdrawSession,
 }
 

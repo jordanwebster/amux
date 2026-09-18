@@ -17,16 +17,16 @@ use host_api::{
     LocalAgentHostFactory, OperationBarrier, PreparedHostState, SessionInputRequest,
     SessionRequest,
 };
-use model::envelope::{Envelope, EnvelopeKind};
+use model::envelope::Envelope;
 use model::{ProtocolError, ShutdownReason};
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use super::lifecycle::{
-    CreateAgentError, RenameAgentError, abort_server_suspend, attach_summarizer, clear_working_on,
-    commit_server_suspend, create_agent_record, delete_local_agent, parent_envelope,
-    prepare_server_suspend, rename_local_agent_record, resume_agents, shutdown_server,
-    spawn_session_event_loop, spawn_summarizer_publication_loop, withdraw_agent,
+    CreateAgentError, RenameAgentError, abort_server_suspend, attach_summarizer,
+    commit_server_suspend, create_agent_record, delete_local_agent, prepare_server_suspend,
+    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
+    spawn_summarizer_publication_loop, withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
@@ -944,15 +944,6 @@ impl LocalAgentHost for AgentRuntime {
             if let Some(session) = state.agent_session_mut(&agent_id) {
                 match session.handle_hook_payload(&payload, &env).await {
                     Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
-                    Ok(HookOutcome::Completed { text }) => {
-                        let envelope =
-                            parent_envelope(session, self.host_id, EnvelopeKind::Completed, text);
-                        clear_working_on(&mut state, self.host_id, agent_id);
-                        if let Some(envelope) = envelope {
-                            state.outbound_envelopes.emit(envelope);
-                        }
-                        Ok(())
-                    }
                     Ok(HookOutcome::WithdrawSession) => {
                         session_to_stop = withdraw_agent(&mut state, self.host_id, agent_id);
                         Ok(())
@@ -1522,6 +1513,18 @@ mod summarizer_registration_tests {
         .unwrap()
     }
 
+    fn stop_hook(agent_id: Uuid) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": agent_id,
+            "transcript_path": "/tmp/amux-summarizer-registration.jsonl",
+            "cwd": "/tmp",
+            "last_assistant_message": "finished once",
+            "stop_hook_active": false,
+        }))
+        .unwrap()
+    }
+
     fn supplied_session() -> (Session, mpsc::Sender<claude::hooks::HookPayload>) {
         let (_output_tx, output) = mpsc::channel(1);
         let (hooks, hook_tx) = HookSource::channel(8);
@@ -1647,6 +1650,53 @@ mod summarizer_registration_tests {
 
         external_host.stop_all().await;
         supplied_host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn daemon_scripted_stop_publishes_one_parent_completion() {
+        let host_id = Uuid::new_v4();
+        let host = AgentRuntime::new(host_id);
+        let agent_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        host.register_scripted_claude(CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: Some("scripted-child".into()),
+            agent_type: AgentType::Claude {
+                driver: model::ClaudeDriver::Pty,
+            },
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: Some(model::AgentParent {
+                agent_id: parent_id,
+                host_id,
+            }),
+            initial_prompt: None,
+        })
+        .await
+        .unwrap();
+        let mut envelopes = host.state.write().await.outbound_envelopes.subscribe();
+
+        host.deliver_scripted_hook(agent_id, stop_hook(agent_id))
+            .await
+            .unwrap();
+
+        let envelope = tokio::time::timeout(std::time::Duration::from_secs(1), envelopes.recv())
+            .await
+            .expect("completion arrives")
+            .expect("outbound envelope stream stays open");
+        assert_eq!(envelope.kind, model::envelope::EnvelopeKind::Completed);
+        assert_eq!(envelope.text, "finished once");
+        assert_eq!(envelope.to.agent_id, parent_id);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), envelopes.recv())
+                .await
+                .is_err(),
+            "one Stop hook must not publish two completion envelopes"
+        );
+
+        host.stop_all().await;
     }
 }
 

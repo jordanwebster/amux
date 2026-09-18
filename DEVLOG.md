@@ -1,3 +1,9 @@
+2026-09-18 — **A Claude Stop hook publishes one parent completion.** Structured
+PTY ingestion is now the sole publisher of the completion lifecycle envelope;
+the host no longer emits a second copy while enqueueing the same hook. Hook
+deduplication also precedes lifecycle publication, so a provider retry inside
+the suppression window cannot notify the parent twice.
+
 2026-09-18 — **Continuation tests follow the complete recorded corpus.** The
 Claude PTY, Claude SDK and Codex gates now discover every recorded row fixture
 instead of maintaining partial lists, and the shared postcard vocabulary

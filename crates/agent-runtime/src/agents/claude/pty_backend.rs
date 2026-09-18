@@ -718,13 +718,6 @@ impl AgentBackend for ClaudePtyBackend {
         self.sync_messaging(env);
         let unknown = matches!(hook, HookPayload::Unknown { .. });
         let withdraw = self.readonly && matches!(hook, HookPayload::SessionEnd(_));
-        let completion = match &hook {
-            HookPayload::Stop {
-                last_assistant_message,
-                ..
-            } => last_assistant_message.clone(),
-            _ => None,
-        };
         if !unknown {
             self.send_hook(hook).await?;
         }
@@ -732,8 +725,6 @@ impl AgentBackend for ClaudePtyBackend {
             HookOutcome::Noop
         } else if withdraw {
             HookOutcome::WithdrawSession
-        } else if let Some(text) = completion {
-            HookOutcome::Completed { text }
         } else {
             HookOutcome::KeepSession
         })
@@ -973,28 +964,21 @@ async fn ingest_hook(
             state.messaging = Some(messaging.clone());
         }
     }
-    let tag = match &hook {
+    let (tag, completion) = match &hook {
         HookPayload::SessionStart(_) => {
             ready.store(true, Ordering::Release);
             return;
         }
         HookPayload::SessionEnd(_) | HookPayload::Unknown { .. } => return,
-        HookPayload::PermissionRequest { .. } => "hook.permission_request",
+        HookPayload::PermissionRequest { .. } => ("hook.permission_request", None),
         HookPayload::Stop {
             last_assistant_message,
             ..
-        } => {
-            if let Some(text) = last_assistant_message.clone() {
-                let _ = event_tx
-                    .send(SessionEvent::Completed { agent_id, text })
-                    .await;
-            }
-            "hook.stop"
-        }
-        HookPayload::Notification { .. } => "hook.notification",
-        HookPayload::UserPromptSubmit(_) => "hook.user_prompt_submit",
-        HookPayload::PreToolUse { .. } => "hook.pre_tool_use",
-        HookPayload::PostToolUse { .. } => "hook.post_tool_use",
+        } => ("hook.stop", last_assistant_message.clone()),
+        HookPayload::Notification { .. } => ("hook.notification", None),
+        HookPayload::UserPromptSubmit(_) => ("hook.user_prompt_submit", None),
+        HookPayload::PreToolUse { .. } => ("hook.pre_tool_use", None),
+        HookPayload::PostToolUse { .. } => ("hook.post_tool_use", None),
     };
     let fingerprint = hook_fingerprint(hook.raw());
     let now = tokio::time::Instant::now();
@@ -1008,6 +992,11 @@ async fn ingest_hook(
     };
     if duplicate {
         return;
+    }
+    if let Some(text) = completion {
+        let _ = event_tx
+            .send(SessionEvent::Completed { agent_id, text })
+            .await;
     }
     let mut value = hook.raw().clone();
     if let Some(object) = value.as_object_mut() {
