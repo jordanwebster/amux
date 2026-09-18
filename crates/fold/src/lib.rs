@@ -1887,6 +1887,20 @@ mod tests {
                 ordinal: 3,
             },
         });
+        roundtrip(&MergeDefect::ComponentDisagreement {
+            source: "sequence:1:0".into(),
+        });
+        roundtrip(&MergeDefect::AliasCycle {
+            from: key("msg:from"),
+            to: key("msg:to"),
+        });
+        roundtrip(&MergeDefect::InvalidLifecycleFence);
+        roundtrip(&MergeDefect::RevisionExhausted);
+        roundtrip(&MergeDefect::EntryOverBudget {
+            key: key("msg:large"),
+            encoded_bytes: 1025,
+            budget: 1024,
+        });
 
         let revision = Revision {
             seq: 9,

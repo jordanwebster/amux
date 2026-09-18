@@ -2568,6 +2568,9 @@ impl PostcardSafe for ClaudeSdkFold {}
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use chrono::TimeZone;
     use serde_json::json;
 
@@ -2579,6 +2582,35 @@ mod tests {
     const CONVERSE_PROVENANCE: &str =
         include_str!("../../../ui-state/tests/spec/fixtures/claude_sdk/converse.provenance.json");
     const TASK_TOOL_CAPTURE: &str = include_str!("../../fixtures/claude-task-tools-2.1.273.jsonl");
+
+    fn corpora() -> Vec<(String, String)> {
+        let directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/claude-sdk");
+        let mut paths = fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+            .map(|entry| entry.expect("read corpus directory entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".rows.jsonl"))
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        let mut corpora = paths
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .expect("corpus file name")
+                    .to_string_lossy()
+                    .into_owned();
+                let corpus = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                (name, corpus)
+            })
+            .collect::<Vec<_>>();
+        corpora.push(("converse.rows.jsonl".into(), CONVERSE.into()));
+        corpora
+    }
 
     fn at(seq: u64) -> DateTime<Utc> {
         Utc.timestamp_opt(1_760_000_000 + seq as i64, 0)
@@ -2740,46 +2772,52 @@ unrecognized=000001070000010b066675747572650573686170650000000000000000000000000
 
     #[test]
     fn claude_sdk_continuation_matches_uninterrupted_at_every_corpus_cut() {
-        let input = rows(CONVERSE);
-        let (expected_fold, expected_oracle) = fold_rows(&input);
-        let expected_entries = expected_oracle.entries();
-        let mut prefix_fold = ClaudeSdkFold::default();
-        prefix_fold.begin(1, Baseline::Start);
-        let mut prefix_oracle = MutationOracle::default();
-        for cut in 0..=input.len() {
-            if cut > 0 {
-                apply_row(
-                    &mut prefix_fold,
-                    &mut prefix_oracle,
-                    cut as u64,
-                    false,
-                    &input[cut - 1],
+        for (name, corpus) in corpora() {
+            let input = rows(&corpus);
+            let (expected_fold, expected_oracle) = fold_rows(&input);
+            let expected_entries = expected_oracle.entries();
+            let mut prefix_fold = ClaudeSdkFold::default();
+            prefix_fold.begin(1, Baseline::Start);
+            let mut prefix_oracle = MutationOracle::default();
+            for cut in 0..=input.len() {
+                if cut > 0 {
+                    apply_row(
+                        &mut prefix_fold,
+                        &mut prefix_oracle,
+                        cut as u64,
+                        false,
+                        &input[cut - 1],
+                    );
+                }
+                let bytes = postcard::to_allocvec(&prefix_fold).unwrap();
+                let mut resumed: ClaudeSdkFold = postcard::from_bytes(&bytes).unwrap();
+                let mut materialized = prefix_oracle.clone();
+                for (index, payload) in input.iter().enumerate().skip(cut) {
+                    apply_row(
+                        &mut resumed,
+                        &mut materialized,
+                        index as u64 + 1,
+                        false,
+                        payload,
+                    );
+                }
+                assert_eq!(resumed, expected_fold, "{name}: tip differs at cut {cut}");
+                assert_eq!(
+                    resumed.summary(),
+                    expected_fold.summary(),
+                    "{name}: summary at {cut}"
+                );
+                assert_eq!(
+                    materialized.entries(),
+                    expected_entries,
+                    "{name}: entries at {cut}"
+                );
+                assert_eq!(
+                    materialized.redirects(),
+                    expected_oracle.redirects(),
+                    "{name}: redirects at {cut}"
                 );
             }
-            let bytes = postcard::to_allocvec(&prefix_fold).unwrap();
-            let mut resumed: ClaudeSdkFold = postcard::from_bytes(&bytes).unwrap();
-            let mut materialized = prefix_oracle.clone();
-            for (index, payload) in input.iter().enumerate().skip(cut) {
-                apply_row(
-                    &mut resumed,
-                    &mut materialized,
-                    index as u64 + 1,
-                    false,
-                    payload,
-                );
-            }
-            assert_eq!(resumed, expected_fold, "tip differs at cut {cut}");
-            assert_eq!(
-                resumed.summary(),
-                expected_fold.summary(),
-                "summary at {cut}"
-            );
-            assert_eq!(materialized.entries(), expected_entries, "entries at {cut}");
-            assert_eq!(
-                materialized.redirects(),
-                expected_oracle.redirects(),
-                "redirects at {cut}"
-            );
         }
     }
 

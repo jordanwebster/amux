@@ -1,3 +1,10 @@
+2026-09-18 — **Continuation tests follow the complete recorded corpus.** The
+Claude PTY, Claude SDK and Codex gates now discover every recorded row fixture
+instead of maintaining partial lists, and the shared postcard vocabulary
+round-trips every merge defect. Codex streaming deltas retain their stable item
+type until completion rather than exposing the transport method name; this is
+a value correction, so the encoded entry layout and version remain unchanged.
+
 2026-09-18 — **Synchronized fleet loads cannot revive removed agents.** A
 store refresh may advance the standing and progress of a card already held by
 the authoritative live fleet, but it cannot change membership or replace live

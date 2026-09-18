@@ -2004,31 +2004,43 @@ impl PostcardSafe for ClaudeFold {}
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use chrono::TimeZone;
     use serde_json::json;
 
     use super::*;
     use crate::MutationOracle;
 
-    const CORPORA: &[(&str, &str)] = &[
-        (
-            "pong",
-            include_str!("../../../claude-specs/fixtures/claude-pty/pong.rows.jsonl"),
-        ),
-        (
-            "tools",
-            include_str!("../../../claude-specs/fixtures/claude-pty/tools.rows.jsonl"),
-        ),
-        (
-            "interrupt",
-            include_str!("../../../claude-specs/fixtures/claude-pty/interrupt.rows.jsonl"),
-        ),
-        (
-            "compact",
-            include_str!("../../../claude-specs/fixtures/claude-pty/compact.rows.jsonl"),
-        ),
-    ];
     const TASK_TOOL_CAPTURE: &str = include_str!("../../fixtures/claude-task-tools-2.1.273.jsonl");
+
+    fn corpora() -> Vec<(String, String)> {
+        let directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/claude-pty");
+        let mut paths = fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+            .map(|entry| entry.expect("read corpus directory entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".rows.jsonl"))
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .expect("corpus file name")
+                    .to_string_lossy()
+                    .into_owned();
+                let corpus = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                (name, corpus)
+            })
+            .collect()
+    }
 
     fn rows(raw: &str) -> Vec<Vec<u8>> {
         raw.lines()
@@ -2175,8 +2187,8 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
 
     #[test]
     fn claude_pty_continuation_matches_uninterrupted_at_every_corpus_cut() {
-        for (name, raw) in CORPORA {
-            let input = rows(raw);
+        for (name, raw) in corpora() {
+            let input = rows(&raw);
             let (expected_fold, expected_oracle) = fold_rows(&input);
             let expected_entries = expected_oracle.entries();
             let mut prefix_fold = ClaudeFold::default();

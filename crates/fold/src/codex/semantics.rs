@@ -791,7 +791,7 @@ impl CodexFold {
             kind,
             CodexBody::Item {
                 item_id,
-                item_type: method.into(),
+                item_type: delta_item_type(method).into(),
             },
             None,
             revision,
@@ -1195,6 +1195,15 @@ fn compact_id(value: &Value) -> String {
         512,
     )
 }
+fn delta_item_type(method: &str) -> &str {
+    if method == "command/exec/outputDelta" {
+        return "commandExecution";
+    }
+    method
+        .strip_prefix("item/")
+        .and_then(|suffix| suffix.split('/').next())
+        .unwrap_or(method)
+}
 fn bounded_json(value: &Value) -> Vec<u8> {
     let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"null".to_vec());
     if bytes.len() <= VALUE_MAX {
@@ -1496,6 +1505,8 @@ impl PostcardSafe for CodexFold {}
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::PathBuf;
 
     use chrono::TimeZone;
     use serde_json::json;
@@ -1505,24 +1516,32 @@ mod tests {
     use crate::claude_sdk::{ClaudeSdkEntryKind, ClaudeSdkFold};
     use crate::{Entry, MutationOracle};
 
-    const CORPORA: &[(&str, &str)] = &[
-        (
-            "round_trip",
-            include_str!("../../../codex-specs/fixtures/codex/turn_round_trip.rows.jsonl"),
-        ),
-        (
-            "approval",
-            include_str!("../../../codex-specs/fixtures/codex/approval_allow.rows.jsonl"),
-        ),
-        (
-            "dynamic",
-            include_str!("../../../codex-specs/fixtures/codex/dynamic_tools.rows.jsonl"),
-        ),
-        (
-            "messages",
-            include_str!("../../../codex-specs/fixtures/codex/two_assistant_messages.rows.jsonl"),
-        ),
-    ];
+    fn corpora() -> Vec<(String, String)> {
+        let directory =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../codex-specs/fixtures/codex");
+        let mut paths = fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+            .map(|entry| entry.expect("read corpus directory entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".rows.jsonl"))
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .expect("corpus file name")
+                    .to_string_lossy()
+                    .into_owned();
+                let corpus = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                (name, corpus)
+            })
+            .collect()
+    }
     fn at(seq: u64) -> DateTime<Utc> {
         Utc.timestamp_opt(1_760_000_000 + seq as i64, 0)
             .single()
@@ -1833,8 +1852,8 @@ unrecognized=000001070000010806667574757265000000000000000000000000000000"#
 
     #[test]
     fn codex_continuation_matches_uninterrupted_at_every_corpus_cut() {
-        for (name, corpus) in CORPORA {
-            let input = rows(corpus);
+        for (name, corpus) in corpora() {
+            let input = rows(&corpus);
             let (expected_fold, expected_oracle) = fold_rows(&input);
             let expected_entries = expected_oracle.entries();
             let mut prefix_fold = CodexFold::default();
@@ -1867,6 +1886,74 @@ unrecognized=000001070000010806667574757265000000000000000000000000000000"#
                     "{name} entries at {cut}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn codex_delta_keeps_the_item_type_until_completion() {
+        for (method, item_type) in [
+            ("item/agentMessage/delta", "agentMessage"),
+            ("item/reasoning/textDelta", "reasoning"),
+            ("item/commandExecution/outputDelta", "commandExecution"),
+            ("command/exec/outputDelta", "commandExecution"),
+            ("item/fileChange/patchUpdated", "fileChange"),
+            ("item/plan/delta", "plan"),
+        ] {
+            let item_id = format!("{item_type}-item");
+            let mut fold = CodexFold::default();
+            fold.begin(1, Baseline::Start);
+            let mut oracle = MutationOracle::default();
+            for (seq, row) in [
+                json!({"type":"item/started","item":{"id":item_id,"type":item_type}}),
+                json!({"type":method,"itemId":item_id,"delta":"part"}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                apply_row(
+                    &mut fold,
+                    &mut oracle,
+                    seq as u64 + 1,
+                    &serde_json::to_vec(&row).unwrap(),
+                );
+            }
+            let entry = oracle
+                .entries()
+                .into_iter()
+                .find(|entry| entry.key.as_str() == format!("item:{item_id}"))
+                .expect("streaming item");
+            assert_eq!(
+                entry.entry.body(),
+                Some(&CodexBody::Item {
+                    item_id: item_id.clone(),
+                    item_type: item_type.into(),
+                }),
+                "{method}"
+            );
+
+            let completed = json!({
+                "type":"item/completed",
+                "item":{"id":item_id,"type":item_type,"text":"part"}
+            });
+            apply_row(
+                &mut fold,
+                &mut oracle,
+                3,
+                &serde_json::to_vec(&completed).unwrap(),
+            );
+            let entry = oracle
+                .entries()
+                .into_iter()
+                .find(|entry| entry.key.as_str() == format!("item:{item_id}"))
+                .expect("completed item");
+            assert_eq!(
+                entry.entry.body(),
+                Some(&CodexBody::Item {
+                    item_id: item_id.clone(),
+                    item_type: item_type.into(),
+                }),
+                "{method} completed"
+            );
         }
     }
 
@@ -2196,8 +2283,8 @@ unrecognized=000001070000010806667574757265000000000000000000000000000000"#
                 .collect::<Vec<_>>();
             fold_codex_delivery_variants(&rows, &mut observed);
         }
-        for (_, corpus) in CORPORA {
-            fold_codex_delivery_variants(&rows(corpus), &mut observed);
+        for (_, corpus) in corpora() {
+            fold_codex_delivery_variants(&rows(&corpus), &mut observed);
         }
 
         let declared_set = declared.iter().copied().collect::<BTreeSet<_>>();
