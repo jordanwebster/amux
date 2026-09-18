@@ -74,7 +74,7 @@ fn with_standing(mut agent: Agent, standing: &Standing) -> Result<Agent, String>
     };
     agent.summary = Some(SummaryEnvelope {
         through: 1,
-        producer_version: fold::AgentFold::for_protocol(protocol).tip_version(),
+        producer_version: ui_state::summary_producer_version(protocol),
         observed_at: standing.last_activity,
         stale: false,
         revision: agent.inventory_revision,

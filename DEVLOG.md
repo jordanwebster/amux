@@ -79,6 +79,12 @@ the authoritative live fleet, but it cannot change membership or replace live
 inventory facts after snapshot synchronization. Cold-start loads retain their
 remembered-card behavior before the connection reaches that boundary.
 
+2026-09-18 — **Phone store fixtures keep the app dependency boundary.** The
+debug-only remembered-store seeder now obtains the provider summary version
+through `ui-state`'s existing public helper. This removes an unnecessary direct
+production dependency from `app-runtime` to `fold` while preserving the exact
+version used by the reducer and daemon summaries.
+
 2026-09-18 — **Provider folds enforce their whole-entry ceiling.** After the
 per-field caps, every provider now trims combined oversized entries in a fixed
 order until their encoded bodies fit the store budget, retaining identity,

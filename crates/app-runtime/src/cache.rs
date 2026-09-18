@@ -370,10 +370,9 @@ mod tests {
             agent.created_at = created;
             agent.summary = Some(model::SummaryEnvelope {
                 through: 1,
-                producer_version: fold::AgentFold::for_protocol(
+                producer_version: ui_state::summary_producer_version(
                     model::StructuredProtocol::ClaudePtyTranscript,
-                )
-                .tip_version(),
+                ),
                 observed_at: at,
                 stale: false,
                 revision: 1,
