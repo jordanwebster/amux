@@ -240,38 +240,32 @@ impl Entry for CodexEntry {
         truncate_string(&mut self.text, TEXT_MAX);
         truncate_bytes(&mut self.details, VALUE_MAX);
         self.rebuild();
-        let mut encoded_bytes = self.bytes();
-        if clipped_fields || encoded_bytes > budget {
+        if clipped_fields || self.bytes() > budget {
             mark_clipped(
                 &mut self.clipped,
                 self.kind.revision().or(self.body.revision()),
             );
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget && self.components.drop_oldest() {
+        while self.bytes() > budget && self.components.drop_oldest() {
             self.rebuild();
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_string_by(&mut self.rendered_text, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_versioned_bytes_by(&mut self.details, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_versioned_string_by(&mut self.text, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
     }
     fn bytes(&self) -> usize {

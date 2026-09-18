@@ -276,51 +276,44 @@ impl Entry for ClaudeEntry {
         truncate_versioned_bytes(&mut self.tool_input, 64 * 1024);
         truncate_versioned_bytes(&mut self.tool_outcome, 64 * 1024);
         self.rebuild_text();
-        let mut encoded_bytes = self.bytes();
-        if clipped_fields || encoded_bytes > budget {
+        if clipped_fields || self.bytes() > budget {
             let revision = self
                 .kind
                 .revision()
                 .or(self.body.revision())
                 .unwrap_or(Revision::row(0));
             let _ = self.clipped.merge("clipped", &Patch::set(true, revision));
-            encoded_bytes = self.bytes();
         }
 
         // Independent field caps can still exceed the whole-entry ceiling
         // when several large fields coexist. Finish in the contract's loss
         // order while leaving identity and obligation state untouched.
-        while encoded_bytes > budget && self.components.drop_oldest() {
+        while self.bytes() > budget && self.components.drop_oldest() {
             self.rebuild_text();
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_string_by(&mut self.rendered_text, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_versioned_bytes_by(&mut self.tool_input, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_versioned_bytes_by(&mut self.tool_outcome, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
-        while encoded_bytes > budget {
-            let excess = encoded_bytes.saturating_sub(budget);
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
             if !shrink_versioned_string_by(&mut self.text, excess) {
                 break;
             }
-            encoded_bytes = self.bytes();
         }
     }
 
