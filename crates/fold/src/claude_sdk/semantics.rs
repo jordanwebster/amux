@@ -404,29 +404,34 @@ impl Entry for ClaudeSdkEntry {
         truncate_versioned_string(&mut self.task_summary, TEXT_MAX_BYTES);
         truncate_versioned_bytes(&mut self.task_usage, VALUE_MAX_BYTES);
         self.rebuild_text();
-        if clipped_fields || self.bytes() > budget {
+        let mut encoded_bytes = self.bytes();
+        if clipped_fields || encoded_bytes > budget {
             mark_clipped(
                 &mut self.clipped,
                 self.kind.revision().or(self.body.revision()),
             );
+            encoded_bytes = self.bytes();
         }
 
-        while self.bytes() > budget && self.components.drop_oldest() {
+        while encoded_bytes > budget && self.components.drop_oldest() {
             self.rebuild_text();
+            encoded_bytes = self.bytes();
         }
-        while self.bytes() > budget {
-            let excess = self.bytes().saturating_sub(budget);
+        while encoded_bytes > budget {
+            let excess = encoded_bytes.saturating_sub(budget);
             if !shrink_string_by(&mut self.rendered_text, excess) {
                 break;
             }
+            encoded_bytes = self.bytes();
         }
         macro_rules! shrink_bytes_field {
             ($field:expr) => {
-                while self.bytes() > budget {
-                    let excess = self.bytes().saturating_sub(budget);
+                while encoded_bytes > budget {
+                    let excess = encoded_bytes.saturating_sub(budget);
                     if !shrink_versioned_bytes_by($field, excess) {
                         break;
                     }
+                    encoded_bytes = self.bytes();
                 }
             };
         }
@@ -436,11 +441,12 @@ impl Entry for ClaudeSdkEntry {
 
         macro_rules! shrink_text_field {
             ($field:expr) => {
-                while self.bytes() > budget {
-                    let excess = self.bytes().saturating_sub(budget);
+                while encoded_bytes > budget {
+                    let excess = encoded_bytes.saturating_sub(budget);
                     if !shrink_versioned_string_by($field, excess) {
                         break;
                     }
+                    encoded_bytes = self.bytes();
                 }
             };
         }
