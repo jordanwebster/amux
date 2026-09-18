@@ -2,6 +2,7 @@
 """Build and run the complete Rust store suite on the pinned iOS simulator."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -74,13 +75,13 @@ def build_tests() -> dict[str, Path]:
 
 def run_on_simulator(udid: str, executable: Path, family_fixture: Path) -> None:
     command = [
-        "xcrun", "simctl", "spawn", udid, "env",
-        f"AMUX_STORE_FAMILY_V2_BIN={family_fixture.resolve()}",
-        str(executable.resolve()), "--nocapture",
+        "xcrun", "simctl", "spawn", udid, str(executable.resolve()), "--nocapture",
     ]
+    environment = os.environ.copy()
+    environment["SIMCTL_CHILD_AMUX_STORE_FAMILY_V2_BIN"] = str(family_fixture.resolve())
     print(f"\nRunning {executable.name} on {udid}", flush=True)
     completed = subprocess.run(
-        command, capture_output=True, text=True, timeout=900,
+        command, capture_output=True, text=True, timeout=900, env=environment,
     )
     if completed.stdout:
         print(completed.stdout, end="", flush=True)
