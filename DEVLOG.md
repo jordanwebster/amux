@@ -5,7 +5,7 @@ and proves the subscriber saw every numbered pre-seal row. A saved but
 unconsumed seal resumes the same identity at its watermark with the documented
 continuous, reset, and truncated cursor outcomes; a consumed seal, including
 one followed by a resumed publication, recreates the agent at sequence one.
-The focused protocol recipe now forwards Cargo test flags such as
+The focused protocol recipe now forwards test-harness flags such as
 `--nocapture` without mistaking them for a narrower test-name suffix.
 
 2026-09-18 — **The desktop paints its selected profile before discovery.**
