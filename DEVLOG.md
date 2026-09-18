@@ -1,3 +1,8 @@
+2026-09-18 — **Restored SDK rows retain their renderer position.** The SDK feed
+cleanup keeps no discarded presentation model, but its durable row DTO still
+carries the stream sequence that app projections use to order and diff stored
+history.
+
 2026-09-18 — **A Claude Stop hook publishes one parent completion.** Structured
 PTY ingestion is now the sole publisher of the completion lifecycle envelope;
 the host no longer emits a second copy while enqueueing the same hook. Hook

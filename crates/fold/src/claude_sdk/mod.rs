@@ -34,6 +34,8 @@ const TASK_LAUNCHES_RETAINED: usize = 1000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FeedEntry {
     pub id: u64,
+    /// Stream position used by renderers to order and diff restored rows.
+    pub seq: u64,
     pub kind: FeedEntryKind,
     /// The tool use whose subagent produced this entry, when it was not the
     /// session's own. Stream-JSON carries a subagent's rows on the parent's
@@ -59,6 +61,7 @@ impl FeedEntry {
     ) -> Self {
         Self {
             id,
+            seq: 0,
             kind,
             parent_tool_use_id,
             content_truncated,
