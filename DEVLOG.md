@@ -1,3 +1,9 @@
+2026-09-18 — **Mac14,6 cold-start baselines use the no-daemon capture state.**
+On macOS 26.5.2, two quiet release `bundled,perf` probes under the one-busy-core
+reference state agreed within 7.0%. The four cold-start drift references now
+come from the first direct-profile probe, where no daemon socket, installation
+lock or server process appeared; all other desktop baselines remain unchanged.
+
 2026-09-18 — **Desktop cold start measures the stored frame without daemon startup.**
 The release-exec workload now opens its fixture through the perf-only direct
 profile route and verifies that no front-door socket, installation lock or
