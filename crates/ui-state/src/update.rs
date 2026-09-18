@@ -757,6 +757,7 @@ fn update_store_message(model: &mut Model, message: crate::store::StoreMsg) -> V
 }
 
 fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
+    let synchronized = model.is_synchronized();
     for remembered in fleet.hosts {
         model.hosts.entry(remembered.host.id).or_insert(HostState {
             entry: remembered.host,
@@ -764,6 +765,14 @@ fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
         });
     }
     for remembered in fleet.agents {
+        if synchronized {
+            if remembered.membership == fold::Membership::Cached
+                && let Some(card) = model.agents.get_mut(&remembered.agent.id)
+            {
+                refresh_stored_standing(card, remembered.agent);
+            }
+            continue;
+        }
         if remembered.membership != fold::Membership::Cached {
             model.agents.remove(&remembered.agent.id);
             continue;
@@ -798,6 +807,33 @@ fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
             },
         );
     }
+}
+
+/// Once the connection's snapshots are authoritative, the store can advance
+/// advisory standing but cannot change live membership or inventory facts.
+fn refresh_stored_standing(card: &mut AgentCard, stored: model::Agent) {
+    let last_activity = stored
+        .summary
+        .as_ref()
+        .and_then(|summary| summary.summary.last_activity)
+        .unwrap_or(stored.created_at);
+    if stored.summary.as_ref().is_some_and(|incoming| {
+        card.agent
+            .summary
+            .as_ref()
+            .is_none_or(|current| incoming.revision > current.revision)
+    }) {
+        card.agent.summary = stored.summary;
+    }
+    if stored.progress.as_ref().is_some_and(|incoming| {
+        card.agent
+            .progress
+            .as_ref()
+            .is_none_or(|current| incoming.revision > current.revision)
+    }) {
+        card.agent.progress = stored.progress;
+    }
+    card.last_activity = card.last_activity.max(last_activity);
 }
 
 fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> Vec<Effect> {

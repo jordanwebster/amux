@@ -1987,27 +1987,126 @@ fn remembered_fleet() -> Fleet {
     }
 }
 
-/// Store results live in the same recording as network and interaction
-/// messages; replay must reproduce the complete model after every prefix.
-pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
-    vec![(
-        "store/startup-remembered-cursor",
+fn synchronized_removal_then_delayed_fleet_load() -> Vec<Msg> {
+    seq([
+        vec![Msg::StoreStartup {
+            profile: PROFILE,
+            generations: GENERATIONS,
+            window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
+        }],
         vec![
-            Msg::StoreStartup {
-                profile: PROFILE,
-                generations: GENERATIONS,
-                window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
-            },
-            Msg::Store(StoreMsg::ViewLoaded {
-                profile: PROFILE,
-                op: StoreOpId(2),
-                value: Some(agent_id("stored").to_string()),
-            }),
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("stored", "nova")),
+        ],
+        synced(),
+        vec![
+            agent_gone("stored"),
             Msg::Store(StoreMsg::FleetLoaded {
                 profile: PROFILE,
                 op: StoreOpId(1),
                 fleet: remembered_fleet(),
             }),
         ],
-    )]
+    ])
+}
+
+#[test]
+fn a_delayed_store_load_cannot_resurrect_a_live_removal() {
+    let (model, _) = fold_with_effects(synchronized_removal_then_delayed_fleet_load());
+    assert!(model.is_synchronized());
+    assert!(
+        model.agent(agent_id("stored")).is_none(),
+        "the synchronized live fleet owns membership"
+    );
+}
+
+#[test]
+fn a_synchronized_store_load_refreshes_standing_without_replacing_live_facts() {
+    let mut model = Model::default();
+    update(
+        &mut model,
+        Msg::StoreStartup {
+            profile: PROFILE,
+            generations: GENERATIONS,
+            window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
+        },
+    );
+    let mut live = an_agent("stored", "nova");
+    live.command = "live-command".into();
+    for message in seq([
+        vec![connected("nova"), host_up(&a_host("nova")), agent_up(&live)],
+        synced(),
+    ]) {
+        update(&mut model, message);
+    }
+
+    let mut stored = an_agent("stored", "nova");
+    stored.command = "stale-store-command".into();
+    stored.summary = Some(model::SummaryEnvelope {
+        through: 9,
+        producer_version: ClaudeFold::TIP_VERSION,
+        observed_at: t0_plus(9),
+        stale: false,
+        revision: 9,
+        summary: ClaudeFold::default().summary(),
+    });
+    stored.progress = Some(model::Progress {
+        through: 9,
+        at: t0_plus(9),
+        revision: 9,
+    });
+    let mut fleet = remembered_fleet();
+    fleet.agents[0].agent = stored;
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::FleetLoaded {
+            profile: PROFILE,
+            op: StoreOpId(1),
+            fleet,
+        }),
+    );
+
+    let card = model.agent(agent_id("stored")).expect("live card remains");
+    assert_eq!(card.agent.command, "live-command");
+    assert_eq!(
+        card.agent.summary.as_ref().map(|value| value.revision),
+        Some(9)
+    );
+    assert_eq!(
+        card.agent.progress.as_ref().map(|value| value.revision),
+        Some(9)
+    );
+    assert!(!card.remembered);
+}
+
+/// Store results live in the same recording as network and interaction
+/// messages; replay must reproduce the complete model after every prefix.
+pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
+    vec![
+        (
+            "store/startup-remembered-cursor",
+            vec![
+                Msg::StoreStartup {
+                    profile: PROFILE,
+                    generations: GENERATIONS,
+                    window_max_entries: ui_state::store::WINDOW_MAX_ENTRIES,
+                },
+                Msg::Store(StoreMsg::ViewLoaded {
+                    profile: PROFILE,
+                    op: StoreOpId(2),
+                    value: Some(agent_id("stored").to_string()),
+                }),
+                Msg::Store(StoreMsg::FleetLoaded {
+                    profile: PROFILE,
+                    op: StoreOpId(1),
+                    fleet: remembered_fleet(),
+                }),
+            ],
+        ),
+        (
+            "store/synchronized-removal-before-delayed-fleet-load",
+            synchronized_removal_then_delayed_fleet_load(),
+        ),
+    ]
 }

@@ -1,3 +1,9 @@
+2026-09-18 — **Synchronized fleet loads cannot revive removed agents.** A
+store refresh may advance the standing and progress of a card already held by
+the authoritative live fleet, but it cannot change membership or replace live
+inventory facts after snapshot synchronization. Cold-start loads retain their
+remembered-card behavior before the connection reaches that boundary.
+
 2026-09-18 — **Provider folds enforce their whole-entry ceiling.** After the
 per-field caps, every provider now trims combined oversized entries in a fixed
 order until their encoded bodies fit the store budget, retaining identity,
