@@ -220,13 +220,15 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let backend = ClaudePtyBackend::scripted(
+        let mut backend = ClaudePtyBackend::scripted(
             &request,
             PathBuf::from("/tmp"),
             crate::agents::claude::ClaudeVersionCache::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
             PathBuf::from("/tmp/amux-test-keymaps"),
         );
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
         let envelope = model::envelope::Envelope {
             id: Uuid::new_v4(),
             context: None,
@@ -239,6 +241,7 @@ mod tests {
             text: "hello".to_string(),
         };
         assert_eq!(backend.deliver(&envelope).await.unwrap(), Delivery::Pty);
+        ingest.abort();
     }
 
     #[cfg(unix)]

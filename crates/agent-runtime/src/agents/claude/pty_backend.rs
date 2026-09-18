@@ -1311,13 +1311,15 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let backend = ClaudePtyBackend::scripted(
+        let mut backend = ClaudePtyBackend::scripted(
             &req,
             PathBuf::from("/tmp"),
             ClaudeVersionCache::default(),
             crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
             PathBuf::from("/tmp/amux-test-keymaps"),
         );
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
         assert!(matches!(
             backend.plane(Protocol::TerminalV1),
             Ok(Plane::Terminal(_))
@@ -1330,6 +1332,7 @@ mod tests {
             backend.plane(Protocol::ClaudeSdkV1),
             Err(ProtocolError::NotExposed { .. })
         ));
+        ingest.abort();
     }
 
     #[tokio::test]
@@ -1432,13 +1435,15 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let backend = ClaudePtyBackend::scripted(
+        let mut backend = ClaudePtyBackend::scripted(
             &req,
             deps.runtime_dir,
             deps.claude_version_cache,
             deps.mcp_launch_route,
             deps.claude_user_keymap_dir,
         );
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
 
         tokio::time::timeout(Duration::from_secs(1), async {
             while backend.log.current_seq().await < 1 {
@@ -1455,6 +1460,7 @@ mod tests {
         assert_eq!(row["keymap"]["source"]["source"], "user");
         assert_eq!(row["keymap"]["source"]["path"].as_str(), user_file.to_str());
         assert_eq!(row["basis"]["basis"], "in_range");
+        ingest.abort();
     }
 
     #[tokio::test(start_paused = true)]

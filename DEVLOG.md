@@ -1,3 +1,8 @@
+2026-09-18 — **Injected PTY fixtures follow the explicit-start boundary.**
+The delivery, protocol-plane and installed-keymap unit fixtures now start
+their inert scripted backends before asserting behavior that belongs to an
+active session, matching the host's summarizer-before-ingestion order.
+
 2026-09-18 — **Store recovery has an operator guide.** The UI boundary now
 names the daemon's advisory fleet summary beside the rule it excepts. The
 debugging guide explains what quarantine moves aside, what remains visible
