@@ -242,7 +242,7 @@ impl Entry for ClaudeEntry {
         Ok(())
     }
 
-    fn clip(&mut self, budget: usize) -> usize {
+    fn clip(&mut self, budget: usize) {
         let clipped_fields = self.components.values().len() > 256
             || self
                 .components
@@ -322,7 +322,6 @@ impl Entry for ClaudeEntry {
             }
             encoded_bytes = self.bytes();
         }
-        encoded_bytes
     }
 
     fn bytes(&self) -> usize {

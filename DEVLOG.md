@@ -1,10 +1,9 @@
 2026-09-18 — **Entry budgets avoid repeated serialization below the cap.**
-Provider entries now carry their encoded size through the clipping loss order,
-return it to the enforcing store or in-memory oracle, and recompute it only
-after a field actually changes. Ordinary Codex and Claude entries retain the
-same field caps, whole-entry ceiling, clipped marker, and loss order without
-serializing the unchanged entry once for every possible fallback or again at
-the caller, restoring the flood-render and SQLite commit qualification paths.
+Provider entries now carry their encoded size through the clipping loss order
+and recompute it only after a field actually changes. Ordinary Codex and Claude
+entries retain the same field caps, whole-entry ceiling, clipped marker, and
+loss order without serializing the unchanged entry once for every possible
+fallback, restoring the flood-render and SQLite commit qualification paths.
 
 2026-09-18 — **Store rebuild proof uses two compiled family definitions.**
 The store suite now keeps a process built with the supported chat-family v2

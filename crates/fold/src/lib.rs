@@ -358,8 +358,7 @@ pub trait Entry: Serialize + DeserializeOwned + Clone + PostcardSafe {
     ) -> Result<(), MergeDefect>;
     /// Apply a promotion when only one side of an alias currently exists.
     fn promote(&mut self, promotion: Option<Promotion>) -> Result<(), MergeDefect>;
-    /// Enforce the entry budget and return the resulting encoded size.
-    fn clip(&mut self, budget: usize) -> usize;
+    fn clip(&mut self, budget: usize);
     fn bytes(&self) -> usize;
 }
 
@@ -1534,7 +1533,7 @@ mod tests {
             Ok(())
         }
 
-        fn clip(&mut self, budget: usize) -> usize {
+        fn clip(&mut self, budget: usize) {
             self.components.clip_by(
                 ENTRY_MAX_COMPONENTS,
                 budget.saturating_sub(32),
@@ -1560,7 +1559,6 @@ mod tests {
                 }
                 break;
             }
-            self.bytes()
         }
 
         fn bytes(&self) -> usize {

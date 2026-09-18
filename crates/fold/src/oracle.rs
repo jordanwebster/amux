@@ -373,7 +373,8 @@ impl<E: Entry> MutationOracle<E> {
         key: &EntryKey,
         entry: &mut E,
     ) -> Result<(), MergeDefect> {
-        let encoded_bytes = entry.clip(entry_budget);
+        entry.clip(entry_budget);
+        let encoded_bytes = entry.bytes();
         if encoded_bytes > entry_budget {
             return Err(MergeDefect::EntryOverBudget {
                 key: key.clone(),

@@ -214,7 +214,7 @@ impl Entry for CodexEntry {
     fn promote(&mut self, _promotion: Option<crate::Promotion>) -> Result<(), MergeDefect> {
         Ok(())
     }
-    fn clip(&mut self, budget: usize) -> usize {
+    fn clip(&mut self, budget: usize) {
         let clipped_fields = self.components.values().len() > 256
             || self
                 .components
@@ -273,7 +273,6 @@ impl Entry for CodexEntry {
             }
             encoded_bytes = self.bytes();
         }
-        encoded_bytes
     }
     fn bytes(&self) -> usize {
         postcard::to_allocvec(self).map_or(usize::MAX, |bytes| bytes.len())
