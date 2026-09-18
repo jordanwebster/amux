@@ -1,3 +1,9 @@
+2026-09-18 — **Mac14,6 baselines use the active-cluster reference state.**
+On macOS 26.5.2, the release `bundled,perf` desktop qualification recorded
+its baseline with one busy core maintained by the cluster warmer; the phone
+baseline was refreshed by the same quiet `just perf --baseline` invocation.
+Every desktop and phone row remained inside its unchanged absolute budget.
+
 2026-09-18 — **Desktop performance drift uses a defined CPU-cluster state.**
 The release performance harness now keeps one core busy in a re-exec child for
 the complete desktop qualification, ties that child to a parent-owned pipe and
