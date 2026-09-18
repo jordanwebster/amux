@@ -139,6 +139,46 @@ For a profile's live diagnostics, use
 directory, including startup failures. A profile's `daemon.json` is not a
 snapshot of every account in the installation.
 
+## Inspect and recover the client store
+
+Each profile keeps its client cache at `<data_dir>/store.sqlite`. To inspect
+the transcript currently readable for one agent, first get its UUID from
+`amux --profile Work list --all`, then run:
+
+```console
+$ amux --profile Work store dump 01234567-89ab-cdef-0123-456789abcdef
+```
+
+`amux store dump` reads the current store and prints that agent's segments,
+boundaries, entry keys, revisions and entry text. It does not read files that
+have already been moved into quarantine.
+
+A quarantine is a corrupt store database and any associated WAL or
+shared-memory file moved aside under `<data_dir>/quarantine/<id>/` while amux
+holds the store's exclusive lease. The manifest there records which files
+moved and whether durable families may have been present. Amux then opens a
+fresh replacement store: disposable fleet and chat data can refill from the
+daemon, but durable view reads and writes remain unresolved so the quarantined
+data is never silently presented as recovered. During that interval the
+desktop can still show the derived fleet and chats available from the
+replacement store and live daemon; durable view state such as the
+remembered-chat pointer is neither loaded nor updated.
+
+After inspecting the dump, close other amux processes using the profile and
+run:
+
+```console
+$ amux --profile Work store resolve
+```
+
+`amux store resolve` prints every unresolved quarantine and asks for explicit
+confirmation (`--yes` is available for a script). Confirmation atomically
+enables durable view reads and writes in the replacement store; it does not
+restore or delete the quarantined files. The phone has no store operator: it
+keeps the quarantine files and resolves a completed quarantine automatically
+on the next launch, so its recovery action is Relaunch rather than either
+desktop command.
+
 ## Replay before changing code
 
 Replay the final frame through the current build. An absolute report path (or

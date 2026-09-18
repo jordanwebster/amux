@@ -272,7 +272,10 @@ own renderers is a different surface (above).
 - Core never **interprets**: it preserves provenance but never applies
   precedence across sources (provider facts vs user facts), and never
   makes presentation policy or derives UX state. All interpretation
-  happens in UI-layer folds at observation time.
+  happens in UI-layer folds at observation time, with one named exception:
+  the daemon publishes an advisory fleet summary from the same pure fold,
+  carrying enough position, version, completeness and freshness evidence for
+  clients to check and, for an open chat, correct it with their own fold.
 
 And in the other direction: views **format typed facts; they do not
 recover them**. The UI layer owns provider and schema parsing, action and

@@ -1,3 +1,10 @@
+2026-09-18 — **Store recovery has an operator guide.** The UI boundary now
+names the daemon's advisory fleet summary beside the rule it excepts. The
+debugging guide explains what quarantine moves aside, what remains visible
+while durable views are unresolved, how to inspect the current transcript and
+restore durable service with the desktop commands, and why the phone recovers
+that state on relaunch instead.
+
 2026-09-18 — **The phone's schema tests follow the pinned projection again.**
 Removing the provider layers' retained presentation feed added a fleet update
 to the pinned phone schema (the Stop hook now marks the agent as needing you)
