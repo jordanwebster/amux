@@ -1,3 +1,9 @@
+2026-09-18 — **The shared-store runtime passes strict lint again.** Store
+worker launch policy now travels in one named configuration value, keeping the
+profile, window, maintenance and recovery choices explicit without an
+overloaded constructor. The already-drawn first-frame signal also uses the
+direct conditional form required by the workspace lint policy.
+
 2026-09-18 — **Injected PTY fixtures follow the explicit-start boundary.**
 The delivery, protocol-plane and installed-keymap unit fixtures now start
 their inert scripted backends before asserting behavior that belongs to an

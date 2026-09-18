@@ -41,7 +41,7 @@ use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
     ReportWriter, TraceKind, log_tail, read_model_checkpoint, write_model_checkpoint,
 };
-use crate::store_worker::{QuarantineOutcome, StoreWorker, StoreWorkerFailure};
+use crate::store_worker::{QuarantineOutcome, StoreWorker, StoreWorkerConfig, StoreWorkerFailure};
 
 /// Reducer build identity, stamped into reports.
 pub const BUILD: &str = concat!("ui-runtime/", env!("CARGO_PKG_VERSION"));
@@ -850,20 +850,22 @@ impl Runtime {
         let (store_failure_tx, store_failure_rx) = mpsc::unbounded_channel();
         let store_worker = options.store_path.map(|path| {
             StoreWorker::spawn(
-                path,
-                profile,
-                options.local_host_id,
-                options.chat_window_max_entries,
-                options.store_maintenance_budget,
-                options.store_recovery == StoreRecovery::Relaunch,
+                StoreWorkerConfig {
+                    path,
+                    profile,
+                    local_host: options.local_host_id,
+                    window_max_entries: options.chat_window_max_entries,
+                    maintenance_budget: options.store_maintenance_budget,
+                    resolve_quarantine: options.store_recovery == StoreRecovery::Relaunch,
+                },
                 msg_sink.clone(),
                 store_failure_tx,
             )
         });
-        if options.store_first_frame_seen {
-            if let Some(worker) = &store_worker {
-                worker.after_first_frame();
-            }
+        if options.store_first_frame_seen
+            && let Some(worker) = &store_worker
+        {
+            worker.after_first_frame();
         }
         if store_worker.is_none() {
             startup_gate.finish_all();
@@ -3675,12 +3677,14 @@ mod tests {
                 runtime.store_failure_channel_open = true;
                 runtime.store_path = Some(path.clone());
                 runtime.store_worker = Some(StoreWorker::spawn(
-                    path.clone(),
-                    ProfileGeneration(0),
-                    None,
-                    ui_state::WINDOW_MAX_ENTRIES,
-                    store::Budget::default(),
-                    false,
+                    StoreWorkerConfig {
+                        path: path.clone(),
+                        profile: ProfileGeneration(0),
+                        local_host: None,
+                        window_max_entries: ui_state::WINDOW_MAX_ENTRIES,
+                        maintenance_budget: store::Budget::default(),
+                        resolve_quarantine: false,
+                    },
                     runtime.msg_sink.clone(),
                     failure_tx,
                 ));

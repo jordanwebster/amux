@@ -52,6 +52,15 @@ pub(crate) struct StoreWorker {
     data_version_polls: Arc<AtomicUsize>,
 }
 
+pub(crate) struct StoreWorkerConfig {
+    pub path: PathBuf,
+    pub profile: ProfileGeneration,
+    pub local_host: Option<model::HostId>,
+    pub window_max_entries: usize,
+    pub maintenance_budget: Budget,
+    pub resolve_quarantine: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct StoreWorkerHandle {
     sender: Sender<Command>,
@@ -83,15 +92,18 @@ pub(crate) struct StoreWorkerRetention {
 
 impl StoreWorker {
     pub(crate) fn spawn(
-        path: PathBuf,
-        profile: ProfileGeneration,
-        local_host: Option<model::HostId>,
-        window_max_entries: usize,
-        maintenance_budget: Budget,
-        resolve_quarantine: bool,
+        config: StoreWorkerConfig,
         sink: MsgSink,
         failure: tokio::sync::mpsc::UnboundedSender<StoreWorkerFailure>,
     ) -> Self {
+        let StoreWorkerConfig {
+            path,
+            profile,
+            local_host,
+            window_max_entries,
+            maintenance_budget,
+            resolve_quarantine,
+        } = config;
         let (sender, receiver) = mpsc::channel();
         let worker_sender = sender.clone();
         let retired = Arc::new(AtomicBool::new(false));
