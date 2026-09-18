@@ -1,3 +1,11 @@
+2026-09-18 — **The phone's schema tests follow the pinned projection again.**
+Removing the provider layers' retained presentation feed added a fleet update
+to the pinned phone schema (the Stop hook now marks the agent as needing you)
+and changed the pty session and rewritten message it pins, but the Swift
+schema tests still read the old positions and values. They now read the
+current event positions, the unknown pty gate and phase, and the merged
+message text.
+
 2026-09-18 — **The phone's remembered fleet goldens show each agent's stored
 standing.** Store seeding now accepts the standing each machine last published
 and stores it as that machine's summary, so the cached-fleet captures draw the

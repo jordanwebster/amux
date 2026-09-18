@@ -15,7 +15,7 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 20)
+        XCTAssertEqual(events.count, 21)
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a
@@ -53,7 +53,7 @@ final class SchemaTests: XCTestCase {
 
     func testTheThreeLayersStayApart() throws {
         let events = try pinnedEvents()
-        guard case .fleet(let codex) = events[9], case .fleet(let sdk) = events[12] else {
+        guard case .fleet(let codex) = events[10], case .fleet(let sdk) = events[13] else {
             return XCTFail("expected the codex and SDK fleets")
         }
         XCTAssertEqual(codex.agents.first?.agent.kind, .codex)
@@ -61,12 +61,12 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(sdk.agents.first?.attention, .unknown)
 
         guard case .session(let pty) = events[2],
-              case .session(let codexSession) = events[10],
-              case .session(let sdkSession) = events[13] else {
+              case .session(let codexSession) = events[11],
+              case .session(let sdkSession) = events[14] else {
             return XCTFail("expected one session per layer")
         }
-        XCTAssertEqual(pty.gate, .claudePty(.ready))
-        XCTAssertEqual(pty.phase.phase, "idle")
+        XCTAssertEqual(pty.gate, .claudePty(.unknown))
+        XCTAssertEqual(pty.phase.phase, "unknown")
         XCTAssertEqual(pty.stream, .live)
         XCTAssertEqual(pty.settingsGate, .ptySettingsUnavailable)
         XCTAssertNil(pty.queue)
@@ -81,7 +81,7 @@ final class SchemaTests: XCTestCase {
     }
 
     func testSDKModelChoicesDecodeFromRecordedInitialization() throws {
-        guard case .session(let session) = try pinnedEvents()[13] else {
+        guard case .session(let session) = try pinnedEvents()[14] else {
             return XCTFail("expected SDK session facts")
         }
         XCTAssertEqual(session.provider.model, "claude-haiku-4-5-20251001")
@@ -97,8 +97,8 @@ final class SchemaTests: XCTestCase {
 
     func testFeedRowsKeepTheirLayerPositionAndKind() throws {
         let events = try pinnedEvents()
-        guard case .feed(let first) = events[3], case .feed(let rewritten) = events[8],
-              case .feed(let codex) = events[11] else {
+        guard case .feed(let first) = events[3], case .feed(let rewritten) = events[9],
+              case .feed(let codex) = events[12] else {
             return XCTFail("expected the three feed updates")
         }
         XCTAssertEqual(first.base, 0)
@@ -113,7 +113,7 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(rewritten.replace[0].position, 0)
         XCTAssertEqual(
             rewritten.replace[0].entry.row["kind"]?["segments"]?.arrayValue?.compactMap(\.stringValue),
-            ["Hello", "Updated"])
+            ["Hello\n\nUpdated"])
 
         XCTAssertEqual(codex.append[0].layer, .codex)
         XCTAssertEqual(codex.append[0].seq, 2)
@@ -122,8 +122,8 @@ final class SchemaTests: XCTestCase {
     /// A break in stored history arrives as a row of its own, drawn as a rule.
     func testABreakInStoredHistoryDecodesAsItsOwnRow() throws {
         let events = try pinnedEvents()
-        guard case .feed(let stored) = events[18] else {
-            return XCTFail("expected a stored feed with a break, got \(events[18])")
+        guard case .feed(let stored) = events[19] else {
+            return XCTFail("expected a stored feed with a break, got \(events[19])")
         }
         XCTAssertEqual(stored.append.count, 1)
         XCTAssertEqual(stored.append[0].layer, .history)
@@ -161,20 +161,20 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(diff.document.identity.head, "abc")
 
         XCTAssertEqual(events[4], .tokenRequest(requestId: 7, account: "personal"))
-        XCTAssertEqual(events[15], .invariant(detail: "example diagnostic"))
+        XCTAssertEqual(events[16], .invariant(detail: "example diagnostic"))
         XCTAssertEqual(
-            events[16],
+            events[17],
             .storeFailure(
                 message: "store /cache/personal.sqlite: the disk is full; free space and relaunch"))
         // What an account nobody is looking at has waiting, named for itself.
-        XCTAssertEqual(events[17], .attention(account: "work", waiting: 2))
+        XCTAssertEqual(events[18], .attention(account: "work", waiting: 2))
     }
 
     func testTheLinkStatesWhyItIsDown() throws {
         let events = try pinnedEvents()
         XCTAssertEqual(events[0], .connection(ConnectionUpdate(state: .connecting)))
         XCTAssertEqual(
-            events[14],
+            events[15],
             .connection(ConnectionUpdate(state: .disconnected, reason: .unreachable)))
     }
 
