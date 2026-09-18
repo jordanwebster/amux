@@ -14,6 +14,26 @@ if [ "$#" -lt 2 ]; then
     exit 64
 fi
 
+# Agent runners may deliberately lower their own CPU priority. Performance
+# qualification has committed baselines from the interactive user's normal
+# priority, so its bounded children must not silently inherit that throttle.
+if [ "${AMUX_NORMAL_PRIORITY-}" = 1 ] && [ "${AMUX_NORMAL_PRIORITY_ACTIVE-}" != 1 ]; then
+    if [ "$(uname -s)" = Darwin ]; then
+        nice_value=$(ps -o ni= -p $$ | tr -d ' ')
+        if [ "${nice_value:-0}" -gt 0 ]; then
+            exec "$(dirname "$0")/normal-priority" "$0" "$@"
+        fi
+    fi
+fi
+
+if [ "${AMUX_NORMAL_PRIORITY_ACTIVE-}" = 1 ] && [ "$(uname -s)" = Darwin ]; then
+    nice_value=$(ps -o ni= -p $$ | tr -d ' ')
+    if [ "${nice_value:-0}" -gt 0 ]; then
+        echo "bounded: normal-priority runner still has nice ${nice_value}" >&2
+        exit 78
+    fi
+fi
+
 if command -v timeout >/dev/null 2>&1; then
     exec timeout "$@"
 fi

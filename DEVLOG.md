@@ -1,3 +1,10 @@
+2026-09-18 — **Performance qualification normalizes inherited CPU priority.**
+On macOS, bounded performance commands now detect an agent runner's positive
+nice value and relaunch through the interactive user's launchd domain at nice
+zero. The release workload, sample statistics, budgets, baselines, and drift
+limits are unchanged; the qualification no longer compares an efficiency-core
+agent subprocess with baselines recorded from a normal-priority terminal.
+
 2026-09-18 — **Store rebuild proof uses two compiled family definitions.**
 The store suite now keeps a process built with the supported chat-family v2
 fixture live while the current v3 test binary opens and rebuilds the same
