@@ -395,29 +395,58 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         ] {
             assert!(control.request(request).await.get("Error").is_some());
         }
-        eprintln!(
-            "projected stored transcript: {:?}",
-            runtime.model().chat(agent)
-        );
+        // Inventory removal and session closure travel on independent streams.
+        // Observe the close directly so an authoritative AgentDown may remove
+        // the fleet card first without losing coverage of the exit reason.
+        let mut exit_stream = client
+            .subscribe_session(node::SubscribeSessionRequest {
+                agent: agent.into(),
+                args: model::SessionArgs::ClaudePtyTranscriptV1(
+                    model::ClaudePtyTranscriptV1Args::default(),
+                ),
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                match exit_stream.recv().await.unwrap() {
+                    node::SubscribeSessionEvent::ReplayComplete => break,
+                    node::SubscribeSessionEvent::Closed { reason } => {
+                        panic!("session closed before exit request: {reason:?}")
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for exit observer replay");
         control
             .ack(json!({"AgentExit":{"agent":"helper","code":7}}))
             .await;
-        wait_for(&mut runtime, "exited session", |model| {
-            matches!(
-                model.agent(agent).unwrap().phase,
-                ui_state::AgentPhase::Exited { .. }
-            )
+        let close_reason = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let node::SubscribeSessionEvent::Closed { reason } =
+                    exit_stream.recv().await.unwrap()
+                {
+                    break reason;
+                }
+            }
         })
-        .await;
+        .await
+        .expect("timed out waiting for exited session");
         // The code the agent was asked to exit with, all the way through. The
         // end of the output stream is how a subscriber learns the agent has
         // gone and it carries no code, so this is the assertion that keeps the
         // daemon completing the close reason from the backend instead of
         // sending an empty one every reader has to guess at.
         assert_eq!(
-            runtime.model().agent(agent).unwrap().phase,
-            ui_state::AgentPhase::Exited { exit_code: Some(7) }
+            close_reason,
+            node::SessionCloseReason::AgentExited { exit_code: Some(7) }
         );
+        wait_for(&mut runtime, "agent removal", |model| {
+            model.agent(agent).is_none()
+        })
+        .await;
         assert_eq!(
             control
                 .ack(json!({"AgentObserve":{"agent":"helper"}}))

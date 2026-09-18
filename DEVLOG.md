@@ -1,3 +1,8 @@
+2026-09-18 — **The authenticated agent journey follows authoritative fleet
+removal.** Its exit-code assertion now observes the session-close stream
+directly while the runtime independently confirms the agent leaves the fleet,
+so the test no longer imposes an ordering on those two protocol streams.
+
 2026-09-18 — **The shared-store runtime passes strict lint again.** Store
 worker launch policy now travels in one named configuration value, keeping the
 profile, window, maintenance and recovery choices explicit without an
