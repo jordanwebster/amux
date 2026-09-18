@@ -1,3 +1,10 @@
+2026-09-18 — **Mac14,6 has a qualified ten-minute soak baseline.** On macOS
+26.5.2 with the release `bundled,perf` build, `just perf soak --baseline`
+recorded 13.313 MiB client peak, 1.049 MiB per idle daemon agent and 16.572 MiB
+per active daemon agent. An immediate independent run passed the 10% drift
+gate at -1.8%, -0.1% and +2.5%; both fitted slopes remained under their
+absolute ceilings.
+
 2026-09-18 — **Memory soaks enforce their own stable baseline.** Ten-minute
 soaks now record and read a workload-specific baseline without touching the
 fast report. Peak and per-agent memory enforce the 10% drift gate, while fitted

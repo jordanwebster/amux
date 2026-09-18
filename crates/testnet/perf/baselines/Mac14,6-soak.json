@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "machine_model": "Mac14,6",
+  "profile": "release",
+  "features": "bundled,perf",
+  "medians": {
+    "bounded client memory peak": 13.312980651855469,
+    "bounded client memory slope": null,
+    "bounded daemon memory slope": null,
+    "daemon memory per active agent": 16.571887588500978,
+    "daemon memory per idle agent": 1.0490635299682618
+  }
+}
