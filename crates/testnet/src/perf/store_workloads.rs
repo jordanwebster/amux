@@ -34,7 +34,7 @@ const SEED: u64 = 0xA6_2026_0917;
 const VIEWPORT: (u16, u16) = (120, 40);
 
 const COLD_WORKLOAD: Workload = Workload {
-    description: "exec to flushed fleet frame, daemon unreachable, 10 MiB stored chat",
+    description: "exec to flushed fleet frame, direct profile, daemon socket absent, no daemon spawned, 10 MiB stored chat",
     seed: SEED,
     identity_growth: "40 or 200 stored fleet agents and 5,000 chat entries",
     warm_up: "one unmeasured child exec",
@@ -143,13 +143,16 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
         let config_path = paths.config_path.context("profile config path")?;
         std::fs::write(
             &config_path,
-            serde_yaml::to_string(&node::ProfileConfig {
-                installation_config: installation_path,
+            serde_yaml::to_string(&Config {
+                host_name: "perf-mac".to_owned(),
                 socket_path: paths.socket_path,
                 data_dir,
                 state_path: paths.state_path,
                 cloud_url: Config::default().cloud_url,
                 tcp_port: None,
+                prevent_idle_sleep: Some(false),
+                ui: installation.ui.clone(),
+                ..Config::default()
             })?,
         )?;
         let record = node::installation::ProfileRecord {
@@ -184,7 +187,8 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
         );
         let mut daemon = InstallationDaemonGuard::new(
             &executable,
-            &config_path,
+            &installation_path,
+            &installation_root,
             &installation.front_door_socket,
         );
         run_release_tui(&executable, &config_path)?;
@@ -221,64 +225,215 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
             started_at,
             &samples,
         ));
-        daemon.stop()?;
+        daemon.assert_absent()?;
     }
     Ok(runs)
 }
 
 struct InstallationDaemonGuard {
     executable: PathBuf,
-    config_path: PathBuf,
+    installation_path: PathBuf,
+    installation_root: PathBuf,
     front_door_socket: PathBuf,
-    stopped: bool,
+    finished: bool,
 }
 
 impl InstallationDaemonGuard {
-    fn new(executable: &Path, config_path: &Path, front_door_socket: &Path) -> Self {
+    fn new(
+        executable: &Path,
+        installation_path: &Path,
+        installation_root: &Path,
+        front_door_socket: &Path,
+    ) -> Self {
         Self {
             executable: executable.to_owned(),
-            config_path: config_path.to_owned(),
+            installation_path: installation_path.to_owned(),
+            installation_root: installation_root.to_owned(),
             front_door_socket: front_door_socket.to_owned(),
-            stopped: false,
+            finished: false,
         }
     }
 
-    fn stop(&mut self) -> Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !self.front_door_socket.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
+    fn assert_absent(&mut self) -> Result<()> {
+        let lock_path = self.installation_root.join("lock");
+        let daemons = self.daemon_processes()?;
+        let mut appeared = Vec::new();
+        if self.front_door_socket.exists() {
+            appeared.push(format!(
+                "front-door socket {}",
+                self.front_door_socket.display()
+            ));
         }
-        if !self.front_door_socket.exists() {
-            self.stopped = true;
+        if lock_path.exists() {
+            appeared.push(format!("installation lock file {}", lock_path.display()));
+        }
+        if !daemons.is_empty() {
+            appeared.push(format!(
+                "amux server start process{} {}",
+                if daemons.len() == 1 { "" } else { "es" },
+                daemons
+                    .iter()
+                    .map(|process| format!("{} ({})", process.pid, process.command))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+
+        if appeared.is_empty() {
+            self.finished = true;
             return Ok(());
         }
-        let output = std::process::Command::new(&self.executable)
-            .arg("--config")
-            .arg(&self.config_path)
-            .args(["server", "stop"])
+
+        let cleanup = self.stop_if_present();
+        self.finished = cleanup.is_ok();
+        let cleanup = cleanup
+            .err()
+            .map(|error| format!("; cleanup also failed: {error:#}"))
+            .unwrap_or_default();
+        bail!(
+            "cold-start direct-profile workload spawned forbidden installation state: {}{}",
+            appeared.join("; "),
+            cleanup
+        )
+    }
+
+    fn stop_if_present(&self) -> Result<()> {
+        let mut stop_error = None;
+        if self.front_door_socket.exists() {
+            let output = std::process::Command::new(&self.executable)
+                .arg("--config")
+                .arg(&self.installation_path)
+                .args(["server", "stop"])
+                .output()
+                .context("stop cold-start installation daemon")?;
+            if !output.status.success() {
+                stop_error = Some(format!(
+                    "server stop failed: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                ));
+            }
+        }
+
+        terminate_daemons(&self.installation_path, self.daemon_processes()?)?;
+        ensure!(
+            self.daemon_processes()?.is_empty(),
+            "cold-start installation daemon survived cleanup under {}",
+            self.installation_root.display()
+        );
+        if let Some(error) = stop_error {
+            bail!(error);
+        }
+        Ok(())
+    }
+
+    fn daemon_processes(&self) -> Result<Vec<DaemonProcess>> {
+        let output = std::process::Command::new("ps")
+            .args(["-axo", "pid=,command="])
             .output()
-            .context("stop cold-start installation daemon")?;
+            .context("list processes for cold-start daemon guard")?;
         ensure!(
             output.status.success(),
-            "cold-start installation daemon did not stop: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
+            "ps failed for cold-start daemon guard"
         );
-        ensure!(
-            !self.front_door_socket.exists(),
-            "cold-start installation daemon left its front-door socket behind"
-        );
-        self.stopped = true;
-        Ok(())
+        Ok(parse_daemon_processes(
+            &String::from_utf8_lossy(&output.stdout),
+            &self.installation_path,
+        ))
     }
 }
 
 impl Drop for InstallationDaemonGuard {
     fn drop(&mut self) {
-        if !self.stopped {
-            let _ = self.stop();
+        if !self.finished {
+            let _ = self.stop_if_present();
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DaemonProcess {
+    pid: u32,
+    command: String,
+}
+
+fn parse_daemon_processes(output: &str, installation_path: &Path) -> Vec<DaemonProcess> {
+    let installation_path = installation_path.to_string_lossy();
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let split = line.find(char::is_whitespace)?;
+            let pid = line[..split].parse().ok()?;
+            let command = line[split..].trim_start();
+            (command.contains("server start") && command.contains(installation_path.as_ref())).then(
+                || DaemonProcess {
+                    pid,
+                    command: command.to_owned(),
+                },
+            )
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn terminate_daemons(installation_path: &Path, daemons: Vec<DaemonProcess>) -> Result<()> {
+    for daemon in daemons {
+        // SAFETY: kill has no pointer arguments. ESRCH means the process exited
+        // between the process snapshot and cleanup, which already satisfies it.
+        let result = unsafe { libc::kill(daemon.pid as libc::pid_t, libc::SIGTERM) };
+        if result != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("terminate cold-start installation daemon {}", daemon.pid)
+            });
+        }
+    }
+
+    let graceful_deadline = Instant::now() + Duration::from_secs(2);
+    let forced_deadline = graceful_deadline + Duration::from_secs(2);
+    let mut forced = false;
+    loop {
+        let output = std::process::Command::new("ps")
+            .args(["-axo", "pid=,command="])
+            .output()
+            .context("poll cold-start daemon cleanup")?;
+        ensure!(
+            output.status.success(),
+            "ps failed while cleaning cold-start daemon"
+        );
+        let remaining =
+            parse_daemon_processes(&String::from_utf8_lossy(&output.stdout), installation_path);
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if !forced && Instant::now() >= graceful_deadline {
+            for daemon in &remaining {
+                // SAFETY: kill has no pointer arguments, and these exact PIDs
+                // still matched this workload's unique installation path.
+                let _ = unsafe { libc::kill(daemon.pid as libc::pid_t, libc::SIGKILL) };
+            }
+            forced = true;
+        } else if forced && Instant::now() >= forced_deadline {
+            bail!(
+                "cold-start installation daemon survived SIGKILL: {}",
+                remaining
+                    .iter()
+                    .map(|process| process.pid.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_daemons(_installation_path: &Path, daemons: Vec<DaemonProcess>) -> Result<()> {
+    ensure!(
+        daemons.is_empty(),
+        "cold-start daemon cleanup is unsupported on this platform"
+    );
+    Ok(())
 }
 
 fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
@@ -338,6 +493,7 @@ fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
     command.arg(config_path);
     command.arg("ui");
     command.env("TERM", "xterm-256color");
+    command.env("AMUX_TUI_DIRECT_PROFILE", "1");
     command.env_remove("AMUX_CONFIG");
 
     let began = Instant::now();
@@ -1233,5 +1389,27 @@ fn metric_run(
         observation_count,
         started_at,
         ended_at: Utc::now(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cold_start_daemon_guard_matches_only_server_for_its_installation() {
+        let installation = Path::new("/private/tmp/amux-cold-start-a/installation.yaml");
+        let output = "\
+  41 /target/release/amux server start --foreground --config-path /private/tmp/amux-cold-start-a/installation.yaml\n\
+  42 /target/release/amux server start --foreground --config-path /private/tmp/amux-cold-start-b/installation.yaml\n\
+  43 /target/release/amux --config /private/tmp/amux-cold-start-a/installation.yaml ui\n";
+
+        assert_eq!(
+            parse_daemon_processes(output, installation),
+            vec![DaemonProcess {
+                pid: 41,
+                command: "/target/release/amux server start --foreground --config-path /private/tmp/amux-cold-start-a/installation.yaml".into(),
+            }]
+        );
     }
 }

@@ -171,6 +171,22 @@ slower and with wider spread, even though the work itself has not changed.
 The absolute budgets hold both when the machine is idle and when the cluster
 warmer is active. The warmer defines the repeatable state used for relative
 drift; it does not change any workload, statistic, budget or drift limit.
+
+The two `TUI cold start` rows measure an exec through the store-painted first
+fleet frame with `AMUX_TUI_DIRECT_PROFILE=1`: the fixture profile socket is
+absent and no installation daemon is spawned. Before this capture state was
+fixed, the production connector started a fixture daemon beside some samples.
+Six focused runs of the unchanged binary measured 14.200/14.254,
+14.290/14.449, 14.843/14.914, 14.117/13.896, 15.556/14.989 and
+14.159/15.349 ms for 40/200 agents, while three full qualifications shifted
+both rows to roughly 30 ms. One observed fixture daemon failed with
+`installation root is already in use: /Users/jlw/.local/share/amux`; that
+message means the sample included a failing daemon start against the
+operator's real installation lock, not store-painted client startup. The
+workload now fails if a front-door socket, installation lock file or matching
+`amux server start` process appears. The unchanged 100 ms median and 200 ms
+worst budgets and the 15% drift gate remain the cold-start promise.
+
 The `summarizer idle core` row is ceiling-only under its unchanged 1.0%
 absolute budget. Five identical-code runs measured 0.055%, 0.071%, 0.057%,
 0.078% and 0.059%, a 42% spread caused by macOS park and unpark cost for the

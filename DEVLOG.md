@@ -1,3 +1,12 @@
+2026-09-18 — **Desktop cold start measures the stored frame without daemon startup.**
+The release-exec workload now opens its fixture through the perf-only direct
+profile route and verifies that no front-door socket, installation lock or
+matching server process appeared. This removes variable concurrent daemon
+startup from the timing window while retaining the cold-start drift gate and
+absolute budgets. Investigation also found a fixture daemon resolving the
+operator's real installation root and reporting it busy; that separate
+configuration-routing defect remains follow-up work outside this store flight.
+
 2026-09-18 — **Scroll-back memory return is guarded by its absolute ceiling.**
 The row's 1.10x budget remains enforced, while its relative baseline is
 explicitly null. Identical-code runs split between ratios near 0.6 and 1.0
