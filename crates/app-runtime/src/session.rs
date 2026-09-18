@@ -17,7 +17,7 @@ use client::{Client, DeviceIdentity, PeerEntry, PendingPeer};
 use futures_util::future::BoxFuture;
 use model::{HostId, ProfileId, RelayConnection};
 use tokio::sync::{mpsc, watch};
-use ui_runtime::{HostInventory, Runtime, RuntimeOptions, ShellEdge};
+use ui_runtime::{HostInventory, Runtime, RuntimeOptions, ShellEdge, StoreRecovery};
 use ui_state::Attention;
 
 /// The account's link to its relay, as far as a screen can influence it.
@@ -96,6 +96,11 @@ impl Places {
     /// runtime writes them where a report is looked for. An account nobody is
     /// reading writes neither: it exists to be counted.
     fn options_for(&self, session: &Session, on_screen: bool) -> RuntimeOptions {
+        let store_path =
+            on_screen.then(|| crate::cache::store_path(&self.cache_dir, &session.account));
+        let store_first_frame_seen = store_path
+            .as_deref()
+            .is_some_and(crate::cache::take_first_frame);
         RuntimeOptions {
             host_inventory: Some(session.inventory.clone()),
             // Which host is this device. Nothing infers it for an embedded
@@ -104,8 +109,7 @@ impl Places {
             local_host_id: Some(session.host),
             // The account on screen keeps its fleet and conversations in its
             // own store; an account nobody is reading only counts.
-            store_path: on_screen
-                .then(|| crate::cache::store_path(&self.cache_dir, &session.account)),
+            store_path,
             report_dir: on_screen.then(|| self.report_dir.clone()),
             log_path: on_screen.then(|| self.log_path.clone()),
             artifact_cache: on_screen.then(|| {
@@ -114,6 +118,9 @@ impl Places {
                     .join(session.profile.to_string())
             }),
             chat_window_max_entries: ui_state::store::PHONE_WINDOW_MAX_ENTRIES,
+            store_maintenance_budget: store::Budget::phone(),
+            store_recovery: StoreRecovery::Relaunch,
+            store_first_frame_seen,
             ..Default::default()
         }
     }

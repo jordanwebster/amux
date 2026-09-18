@@ -12,6 +12,8 @@ use crate::db::{
 use crate::families::REGISTRY;
 
 const ABSENT_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
+const DESKTOP_STORE_TARGET_BYTES: u64 = 500 * 1024 * 1024;
+const PHONE_STORE_TARGET_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
@@ -20,12 +22,29 @@ pub struct Budget {
     pub store_target_bytes: u64,
 }
 
-impl Default for Budget {
-    fn default() -> Self {
+impl Budget {
+    pub const fn desktop() -> Self {
         Self {
             retired_rows_per_table: 1_024,
             vacuum_steps: usize::MAX,
+            store_target_bytes: DESKTOP_STORE_TARGET_BYTES,
+        }
+    }
+
+    pub const fn phone() -> Self {
+        Self {
+            retired_rows_per_table: 1_024,
+            vacuum_steps: usize::MAX,
+            store_target_bytes: PHONE_STORE_TARGET_BYTES,
+        }
+    }
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Self {
             store_target_bytes: STORE_TARGET_BYTES,
+            ..Self::desktop()
         }
     }
 }

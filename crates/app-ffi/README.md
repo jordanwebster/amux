@@ -134,6 +134,11 @@ with no rows because the cache is disposable. An existing store that cannot
 be opened or read returns `{"error":STRING}` with the same cause and remedy as
 the running runtime's `StoreFailure`; `NULL` is reserved for arguments that
 cannot be read as strings. Release the returned string with `amux_app_free`.
+The cold-start read or, when it is skipped, the first callback frame enables
+hourly bounded maintenance. A corruption quarantine is retained beside the
+store and resolved automatically on the next launch, because the phone has no
+store operator; its failure text asks for a relaunch rather than desktop store
+commands.
 
 The running library installs those remembered cards in the shared reducer,
 marked as awaiting their machine and with send gates closed. The event queue

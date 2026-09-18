@@ -403,6 +403,20 @@ pub struct RuntimeOptions {
     /// use a small paging cache; clients without paging opt into their own
     /// larger visible-history bound.
     pub chat_window_max_entries: usize,
+    /// Store reclamation target for this client class.
+    pub store_maintenance_budget: store::Budget,
+    /// Whether a completed quarantine is resolved without an operator.
+    pub store_recovery: StoreRecovery,
+    /// A first frame drawn before this runtime was created (for example a
+    /// phone's synchronous cold-start store read).
+    pub store_first_frame_seen: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StoreRecovery {
+    #[default]
+    Operator,
+    Relaunch,
 }
 
 impl Default for RuntimeOptions {
@@ -422,6 +436,9 @@ impl Default for RuntimeOptions {
             artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
             attachment_opener: Arc::new(open_with_platform_viewer),
             chat_window_max_entries: ui_state::WINDOW_MAX_ENTRIES,
+            store_maintenance_budget: store::Budget::default(),
+            store_recovery: StoreRecovery::Operator,
+            store_first_frame_seen: false,
         }
     }
 }
@@ -453,6 +470,7 @@ pub struct Runtime {
     store_terminated: bool,
     store_failure: Option<String>,
     store_first_frame_seen: bool,
+    store_recovery: StoreRecovery,
     startup_gate: Arc<StartupGate>,
     report_dir: Option<PathBuf>,
     log_path: Option<PathBuf>,
@@ -836,10 +854,17 @@ impl Runtime {
                 profile,
                 options.local_host_id,
                 options.chat_window_max_entries,
+                options.store_maintenance_budget,
+                options.store_recovery == StoreRecovery::Relaunch,
                 msg_sink.clone(),
                 store_failure_tx,
             )
         });
+        if options.store_first_frame_seen {
+            if let Some(worker) = &store_worker {
+                worker.after_first_frame();
+            }
+        }
         if store_worker.is_none() {
             startup_gate.finish_all();
         }
@@ -873,7 +898,8 @@ impl Runtime {
             store_failure_channel_open,
             store_terminated: false,
             store_failure: None,
-            store_first_frame_seen: false,
+            store_first_frame_seen: options.store_first_frame_seen,
+            store_recovery: options.store_recovery,
             startup_gate,
             report_dir: options.report_dir,
             log_path: options.log_path,
@@ -1064,13 +1090,19 @@ impl Runtime {
         // Interactive callers draw before they await the next input. The
         // first completed wait is therefore the store worker's safe signal
         // that launch-critical reads no longer share the first-frame path.
-        if !self.store_first_frame_seen {
-            self.store_first_frame_seen = true;
-            if let Some(worker) = &self.store_worker {
-                worker.after_first_frame();
-            }
-        }
+        self.after_first_frame();
         true
+    }
+
+    /// Let deferred store work begin once a client has drawn its first frame.
+    pub fn after_first_frame(&mut self) {
+        if self.store_first_frame_seen {
+            return;
+        }
+        self.store_first_frame_seen = true;
+        if let Some(worker) = &self.store_worker {
+            worker.after_first_frame();
+        }
     }
 
     /// Fold one input so embedders can observe every resolved operation before
@@ -1659,7 +1691,12 @@ impl Runtime {
             .store_path
             .as_deref()
             .unwrap_or_else(|| Path::new("<unconfigured store>"));
-        self.store_failure = Some(format_store_failure(path, error, quarantine));
+        self.store_failure = Some(format_store_failure(
+            path,
+            error,
+            quarantine,
+            self.store_recovery,
+        ));
     }
 }
 
@@ -1683,13 +1720,29 @@ pub fn store_open_failure_message(
         (DurableStoreError::Corrupt, false) => QuarantineOutcome::Pending,
         _ => QuarantineOutcome::NotRequested,
     };
-    format_store_failure(path, error, quarantine)
+    format_store_failure(path, error, quarantine, StoreRecovery::Operator)
+}
+
+/// The diagnosis shown by a phone, which has no quarantine operator and
+/// resolves completed quarantines on its next launch.
+pub fn phone_store_open_failure_message(
+    path: &Path,
+    error: DurableStoreError,
+    quarantine_completed: bool,
+) -> String {
+    let quarantine = match (error, quarantine_completed) {
+        (DurableStoreError::Corrupt, true) => QuarantineOutcome::Completed,
+        (DurableStoreError::Corrupt, false) => QuarantineOutcome::Pending,
+        _ => QuarantineOutcome::NotRequested,
+    };
+    format_store_failure(path, error, quarantine, StoreRecovery::Relaunch)
 }
 
 fn format_store_failure(
     path: &Path,
     error: DurableStoreError,
     quarantine: QuarantineOutcome,
+    recovery: StoreRecovery,
 ) -> String {
     let remedy = match error {
         DurableStoreError::Permission => {
@@ -1708,6 +1761,14 @@ fn format_store_failure(
             ),
             _ => "it was written by a newer amux; update amux".to_owned(),
         },
+        DurableStoreError::Corrupt if recovery == StoreRecovery::Relaunch => {
+            let state = if quarantine == QuarantineOutcome::Completed {
+                "it is corrupt and has been quarantined; relaunching amux restores writable durable views"
+            } else {
+                "it is corrupt and will be quarantined when the other amux process using it exits; close that process and relaunch, then amux restores writable durable views"
+            };
+            format!("{state}; nothing the daemon still retains is lost")
+        }
         DurableStoreError::Corrupt => {
             let state = if quarantine == QuarantineOutcome::Completed {
                 "it is corrupt and has been quarantined"
@@ -1722,10 +1783,10 @@ fn format_store_failure(
         DurableStoreError::Invalid => {
             "the requested store operation was invalid; report this amux defect".to_owned()
         }
-        DurableStoreError::RecoveryRequired => {
-            "durable recovery is required; run `amux store dump` and then `amux store resolve`"
-                .to_owned()
-        }
+        DurableStoreError::RecoveryRequired if recovery == StoreRecovery::Relaunch =>
+            "a corrupt store was quarantined and durable views are temporarily unavailable; relaunching amux restores writable durable views".to_owned(),
+        DurableStoreError::RecoveryRequired =>
+            "durable recovery is required; run `amux store dump` and then `amux store resolve`".to_owned(),
         DurableStoreError::GenerationMoved => {
             "its generation changed unexpectedly; relaunch amux".to_owned()
         }
@@ -3389,6 +3450,7 @@ mod tests {
             store_terminated: false,
             store_failure: None,
             store_first_frame_seen: false,
+            store_recovery: StoreRecovery::Operator,
             startup_gate: Arc::new(StartupGate::default()),
             report_dir: Some(report_dir),
             log_path: Some(log_path),
@@ -3617,6 +3679,8 @@ mod tests {
                     ProfileGeneration(0),
                     None,
                     ui_state::WINDOW_MAX_ENTRIES,
+                    store::Budget::default(),
+                    false,
                     runtime.msg_sink.clone(),
                     failure_tx,
                 ));

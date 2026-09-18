@@ -389,6 +389,7 @@ pub async fn run(
                 }
                 if !events.is_empty() {
                     sink.send(&events);
+                    sessions.ui.after_first_frame();
                     cadence.emitted();
                     events.clear();
                 }
@@ -455,6 +456,7 @@ pub async fn run(
     drop(watchers);
     if let Some(event) = store_failure {
         sink.send(&[event]);
+        sessions.ui.after_first_frame();
     }
     Ok(())
 }

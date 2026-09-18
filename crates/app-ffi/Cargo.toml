@@ -28,6 +28,8 @@ chrono = { workspace = true }
 client = { workspace = true }
 model = { workspace = true }
 node = { workspace = true }
+rusqlite = { workspace = true }
+store = { workspace = true }
 tempfile = { workspace = true }
 testnet = { workspace = true }
 ui-runtime = { workspace = true }

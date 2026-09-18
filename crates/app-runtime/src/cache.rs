@@ -7,7 +7,9 @@
 //! runtime at all, so the screen a launch draws and the screen a connection
 //! replaces it with come from one source through one projection.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use model::{DisconnectReason, HostId, RelayConnection};
 use store::{Fleet, Store, StoreError};
@@ -102,11 +104,11 @@ pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Result<Event,
         }
         Err(error) => return Err(open_failure_message(&path, &error)),
     }
-    let store = match Store::open(&path).await {
+    let store = match open_phone_store(&path).await {
         Ok(store) => store,
         Err(error) => {
             let quarantined = complete_corruption_quarantine(&path, error).await;
-            return Err(ui_runtime::store_open_failure_message(
+            return Err(ui_runtime::phone_store_open_failure_message(
                 &path,
                 error,
                 quarantined,
@@ -116,13 +118,46 @@ pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Result<Event,
     let fleet = cached_fleet(&store).await;
     store.close().await;
     match fleet {
-        Ok(fleet) => Ok(fleet),
-        Err(error) => Err(ui_runtime::store_open_failure_message(
+        Ok(fleet) => {
+            remember_first_frame(&path);
+            Ok(fleet)
+        }
+        Err(error) => Err(ui_runtime::phone_store_open_failure_message(
             &path,
             error,
             complete_corruption_quarantine(&path, error).await,
         )),
     }
+}
+
+async fn open_phone_store(path: &Path) -> Result<Store, StoreError> {
+    let store = Store::open(path).await?;
+    let report = store.quarantine_report().await?;
+    if report.is_empty() {
+        return Ok(store);
+    }
+    store.close().await;
+    Store::resolve_quarantine(path, &report).await?;
+    Store::open(path).await
+}
+
+fn first_frames() -> &'static Mutex<HashSet<PathBuf>> {
+    static FIRST_FRAMES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    FIRST_FRAMES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn remember_first_frame(path: &Path) {
+    first_frames()
+        .lock()
+        .expect("phone first-frame set poisoned")
+        .insert(path.to_owned());
+}
+
+pub(crate) fn take_first_frame(path: &Path) -> bool {
+    first_frames()
+        .lock()
+        .expect("phone first-frame set poisoned")
+        .remove(path)
 }
 
 async fn complete_corruption_quarantine(path: &Path, error: StoreError) -> bool {
@@ -200,6 +235,7 @@ fn remembered(fleet: Fleet, generations: store::Generations, local: Option<HostI
 #[cfg(test)]
 mod tests {
     use chrono::DateTime;
+    use rusqlite::Connection;
     use store::{FleetDelta, FleetSnapshot};
     use uuid::Uuid;
 
@@ -453,5 +489,69 @@ mod tests {
             failure.contains("delete the file to start with an empty cache"),
             "{failure}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_cold_start_frame_enables_phone_store_maintenance() {
+        let root = tempfile::tempdir().unwrap();
+        let path = store_path(root.path(), "owner");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let store = Store::open(&path).await.unwrap();
+        store.close().await;
+
+        let raw = Connection::open(&path).unwrap();
+        let id = model::AgentId::from_u128(77).to_string();
+        raw.execute(
+            "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+                previous_through,needs_baseline,retiring) VALUES (?1,0,0,1,NULL,0,0)",
+            [&id],
+        )
+        .unwrap();
+        raw.execute(
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<512)
+             INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
+                revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
+             SELECT ?1,printf('cold-%05d',x),1,x,0,x,0,0,'prompt',NULL,4096,
+                zeroblob(4096) FROM n",
+            [&id],
+        )
+        .unwrap();
+        drop(raw);
+        let before = store_disk_bytes(&path);
+
+        read_cached_fleet(root.path(), "owner").await.unwrap();
+        let mut runtime = ui_runtime::Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            ui_runtime::RuntimeOptions {
+                store_path: Some(path.clone()),
+                store_maintenance_budget: store::Budget {
+                    store_target_bytes: before / 2,
+                    ..store::Budget::phone()
+                },
+                store_recovery: ui_runtime::StoreRecovery::Relaunch,
+                store_first_frame_seen: take_first_frame(&path),
+                ..Default::default()
+            },
+        );
+        assert!(runtime.next_message().await);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while store_disk_bytes(&path) >= before {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("phone maintenance did not reclaim after its cold-start frame");
+    }
+
+    fn store_disk_bytes(path: &Path) -> u64 {
+        [
+            path.to_path_buf(),
+            PathBuf::from(format!("{}-wal", path.display())),
+            PathBuf::from(format!("{}-shm", path.display())),
+        ]
+        .into_iter()
+        .filter_map(|path| std::fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum()
     }
 }

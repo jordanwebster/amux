@@ -1,3 +1,11 @@
+2026-09-18 — **Phone stores maintain and recover without a desktop operator.**
+The cold-start store read and the first callback frame now enable the same
+hourly, 100 ms maintenance worker used by the terminal, with the phone's
+200 MiB reclamation target. A completed corruption quarantine remains beside
+the replacement store and is resolved automatically on relaunch, restoring
+writable durable views; phone diagnostics describe that recovery instead of
+directing people to desktop store commands.
+
 2026-09-18 — **Restored SDK rows retain their renderer position.** The SDK feed
 cleanup keeps no discarded presentation model, but its durable row DTO still
 carries the stream sequence that app projections use to order and diff stored

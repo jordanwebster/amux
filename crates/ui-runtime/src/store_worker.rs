@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use store::{CommitOutcome, Store};
+use store::{Budget, CommitOutcome, Store};
 use ui_state::{
     HeadDto, LoadedDto, Msg, MutationBatchDto, PageDto, ProfileGeneration, StoreMsg, StoreOp,
     StoreOpKind,
@@ -87,6 +87,8 @@ impl StoreWorker {
         profile: ProfileGeneration,
         local_host: Option<model::HostId>,
         window_max_entries: usize,
+        maintenance_budget: Budget,
+        resolve_quarantine: bool,
         sink: MsgSink,
         failure: tokio::sync::mpsc::UnboundedSender<StoreWorkerFailure>,
     ) -> Self {
@@ -113,7 +115,7 @@ impl StoreWorker {
                     .enable_all()
                     .build()
                     .expect("store executor runtime");
-                let store = match runtime.block_on(Store::open(&path)) {
+                let store = match open_store(&runtime, &path, resolve_quarantine) {
                     Ok(store) => store,
                     Err(error) => {
                         if error == store::StoreError::Corrupt {
@@ -235,7 +237,7 @@ impl StoreWorker {
                                     .expect("store maintenance runtime");
                                 let result = runtime.block_on(
                                     maintenance_store
-                                        .maintain(store::Budget::default(), MAINTENANCE_DEADLINE),
+                                        .maintain(maintenance_budget, MAINTENANCE_DEADLINE),
                                 );
                                 let _ = completion.send(Command::MaintenanceFinished(result));
                             });
@@ -329,6 +331,24 @@ impl StoreWorker {
     pub(crate) fn data_version_poll_counter(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.data_version_polls)
     }
+}
+
+fn open_store(
+    runtime: &tokio::runtime::Runtime,
+    path: &std::path::Path,
+    resolve_quarantine: bool,
+) -> Result<Store, store::StoreError> {
+    let store = runtime.block_on(Store::open(path))?;
+    if !resolve_quarantine {
+        return Ok(store);
+    }
+    let report = runtime.block_on(store.quarantine_report())?;
+    if report.is_empty() {
+        return Ok(store);
+    }
+    runtime.block_on(store.close());
+    runtime.block_on(Store::resolve_quarantine(path, &report))?;
+    runtime.block_on(Store::open(path))
 }
 
 impl StoreWorkerHandle {

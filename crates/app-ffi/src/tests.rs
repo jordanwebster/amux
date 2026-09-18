@@ -1133,9 +1133,21 @@ fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
         corrupt["error"].as_str().is_some_and(|message| {
             message.contains("it is corrupt")
                 && message.contains("has been quarantined")
+                && message.contains("relaunching amux restores writable durable views")
                 && message.contains("nothing the daemon still retains is lost")
+                && !message.contains("amux store resolve")
         }),
         "{corrupt}"
+    );
+    let quarantine = path.parent().unwrap().join("quarantine");
+    let database_name = path.file_name().unwrap();
+    assert!(
+        std::fs::read_dir(&quarantine)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join(database_name).exists()),
+        "the corrupt database stays beside its replacement under {}",
+        quarantine.display()
     );
     let recovered: Event = serde_json::from_value(cached_fleet(root.path(), "personal")).unwrap();
     assert!(
@@ -1143,6 +1155,25 @@ fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
             if agents.is_empty() && hosts.is_empty()),
         "the C boundary reads the replacement empty cache after quarantine"
     );
+    let store = blocking(store::Store::open(&path)).unwrap().unwrap();
+    blocking(store.view_set("ui", "remembered_chat", "chat-after-relaunch"))
+        .unwrap()
+        .unwrap();
+    let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
+    blocking(store.view_set(kind, key, "host-after-relaunch"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        blocking(store.view_get("ui", "remembered_chat"))
+            .unwrap()
+            .unwrap(),
+        Some("chat-after-relaunch".to_owned())
+    );
+    assert_eq!(
+        blocking(store.view_get(kind, key)).unwrap().unwrap(),
+        Some("host-after-relaunch".to_owned())
+    );
+    blocking(store.close()).unwrap();
 
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, "file").unwrap();
@@ -1162,6 +1193,86 @@ fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
         assert!(amux_app_report_snapshot(std::ptr::null_mut()).is_null());
         amux_app_free(std::ptr::null_mut());
     }
+}
+
+#[tokio::test]
+async fn phone_first_frame_reclaims_a_store_over_its_soft_budget() {
+    let root = test_root();
+    let path = app_runtime::cache::store_path(root.path().join("cache").as_path(), "personal");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let store = store::Store::open(&path).await.unwrap();
+    store.close().await;
+
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let id = AgentId::from_u128(0x5150).to_string();
+    raw.execute(
+        "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+            previous_through,needs_baseline,retiring) VALUES (?1,0,0,1,NULL,0,0)",
+        [&id],
+    )
+    .unwrap();
+    raw.execute(
+        "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<205)
+         INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
+            revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
+         SELECT ?1,printf('phone-%05d',x),1,x,0,x,0,0,'prompt',NULL,1048576,
+            zeroblob(1048576) FROM n",
+        [&id],
+    )
+    .unwrap();
+    drop(raw);
+    let before = store_disk_bytes(&path);
+    let retained_before = stored_entry_bytes(&path);
+    assert!(
+        before > store::Budget::phone().store_target_bytes,
+        "fixture must exceed the phone soft budget: {before}"
+    );
+
+    let fleet = cached_fleet(root.path().join("cache").as_path(), "personal");
+    assert!(fleet.get("Fleet").is_some(), "{fleet}");
+    let (sender, _receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let config = config(root.path(), "http://127.0.0.1:9".into(), json!("Callback"));
+    let running = Running {
+        handle: start(&config, &events),
+        _events: &events,
+    };
+    assert!(!running.handle.is_null());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while stored_entry_bytes(&path) >= retained_before {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("phone maintenance did not shrink the over-budget store after first frame");
+}
+
+fn stored_entry_bytes(path: &std::path::Path) -> u64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row(
+            "SELECT COALESCE(SUM(bytes),0) FROM claude_sdk_entry",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|bytes| bytes as u64)
+        .unwrap()
+}
+
+fn store_disk_bytes(path: &std::path::Path) -> u64 {
+    [
+        path.to_path_buf(),
+        std::path::PathBuf::from(format!("{}-wal", path.display())),
+        std::path::PathBuf::from(format!("{}-shm", path.display())),
+    ]
+    .into_iter()
+    .filter_map(|path| std::fs::metadata(path).ok())
+    .map(|metadata| metadata.len())
+    .sum()
 }
 
 fn cached_fleet_result(cache_dir: &std::path::Path, account: &str) -> Value {
