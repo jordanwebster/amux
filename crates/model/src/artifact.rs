@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// The maximum size accepted for one artifact.
-pub const ARTIFACT_SIZE_CAP: u64 = 10 * 1024 * 1024;
+pub const ARTIFACT_SIZE_CAP: u64 = 32 * 1024 * 1024;
 
 /// The SHA-256 identity of an artifact.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

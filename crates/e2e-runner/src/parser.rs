@@ -1,6 +1,31 @@
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountTier {
+    Free,
+    #[default]
+    Pro,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum AccountConfig {
+    Name(String),
+    Detailed {
+        name: String,
+        #[serde(default)]
+        tier: AccountTier,
+    },
+}
+
+impl From<&str> for AccountConfig {
+    fn from(value: &str) -> Self {
+        Self::Name(value.to_string())
+    }
+}
 
 /// Directory definition in test environment
 #[derive(Debug, Clone, Deserialize)]
@@ -22,7 +47,7 @@ pub struct TestConfig {
     pub cloud_account: Option<String>,
     /// Ordered auto-approved identities for successive device logins.
     #[serde(default)]
-    pub accounts: Vec<String>,
+    pub accounts: Vec<AccountConfig>,
     /// Unbound profiles belonging to this installation.
     #[serde(default)]
     pub profiles: Vec<String>,
@@ -33,6 +58,20 @@ pub struct TestConfig {
     pub cloud_url: Option<String>,
     #[serde(default)]
     pub tcp_port: Option<u16>,
+    #[serde(default)]
+    pub lan_port: Option<u16>,
+    /// Use the platform mDNS implementation instead of isolated scripted discovery.
+    #[serde(default)]
+    pub lan_discovery: bool,
+    /// Disable discovery for this daemon, modelling a network that blocks multicast.
+    #[serde(default)]
+    pub multicast_blocked: bool,
+    /// Block this daemon's UDP path to the cloud relay while leaving TCP available.
+    #[serde(default)]
+    pub udp_blocked: bool,
+    /// Debug-build-only free-tier refresh interval.
+    #[serde(default)]
+    pub cloud_refresh_secs: Option<u64>,
     #[serde(default)]
     pub cloud_relay: bool,
     /// Serve a release manifest and a disposable copy of the current executable.
@@ -69,14 +108,20 @@ pub enum TestStep {
     ExpectContains(String),
     /// Wait for a PTY command to exit successfully and release the terminal.
     Exit(u32),
+    /// Terminate a long-running PTY command and release the terminal.
+    Terminate,
     /// Require a captured agent process to disappear from the OS.
     ProcessExited(String),
     /// Capture one output line suffix after a required prefix into a variable.
     CaptureOutput { name: String, prefix: String },
+    /// Find an output line by prefix and capture its suffix into a variable.
+    CaptureContainingOutput { name: String, prefix: String },
     /// Sleep for a given number of milliseconds
     Sleep(u64),
     /// Retry the next expected output by rerunning the last one-shot command.
     RetryNextExpect(RetryPolicy),
+    /// Change a fixture account's tier for subsequent connection tokens.
+    SetTier { account: String, tier: AccountTier },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -321,6 +366,31 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     steps.push(TestStep::ProcessExited(rest.to_string()));
                     continue;
                 }
+                if let Some(rest) = trimmed.strip_prefix("@@tier ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 2 {
+                        return Err(ParseError {
+                            line: line_num,
+                            message: "@@tier requires <account> <free|pro>".into(),
+                        });
+                    }
+                    let tier = match parts[1] {
+                        "free" => AccountTier::Free,
+                        "pro" => AccountTier::Pro,
+                        _ => {
+                            return Err(ParseError {
+                                line: line_num,
+                                message: "@@tier requires free or pro".into(),
+                            });
+                        }
+                    };
+                    steps.push(TestStep::SetTier {
+                        account: parts[0].to_string(),
+                        tier,
+                    });
+                    continue;
+                }
                 if let Some(rest) = trimmed.strip_prefix("@@contains ") {
                     flush_pending_output(&mut pending_output_lines, &mut steps);
                     steps.push(TestStep::ExpectContains(rest.to_string()));
@@ -337,6 +407,11 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                         })?
                     };
                     steps.push(TestStep::Exit(code));
+                    continue;
+                }
+                if trimmed == "@@terminate" {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    steps.push(TestStep::Terminate);
                     continue;
                 }
 
@@ -384,6 +459,26 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                         });
                     }
                     steps.push(TestStep::CaptureOutput {
+                        name: name.to_string(),
+                        prefix: prefix.to_string(),
+                    });
+                    continue;
+                }
+
+                // Capture-search directive: @@capture-contains <variable> <line prefix>
+                if let Some(rest) = trimmed.strip_prefix("@@capture-contains ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let (name, prefix) = rest.split_once(' ').ok_or_else(|| ParseError {
+                        line: line_num,
+                        message: format!("Invalid capture-search directive: {rest}"),
+                    })?;
+                    if name.is_empty() || prefix.is_empty() {
+                        return Err(ParseError {
+                            line: line_num,
+                            message: format!("Invalid capture-search directive: {rest}"),
+                        });
+                    }
+                    steps.push(TestStep::CaptureContainingOutput {
                         name: name.to_string(),
                         prefix: prefix.to_string(),
                     });
@@ -527,6 +622,89 @@ No agents running.
     }
 
     #[test]
+    fn parses_terminate_directive() {
+        let content = r#"# test: terminate
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux server start --foreground
+@@terminate
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(matches!(test_case.steps[2], TestStep::Terminate));
+    }
+
+    #[test]
+    fn parses_account_tiers_and_the_tier_directive() {
+        let content = r#"# test: tier
+
+## Environment
+
+config:
+  name: cloud
+  cloud_relay: true
+  accounts:
+    - name: alice
+      tier: free
+
+terminal:
+  name: T1
+  config: cloud
+
+## Test
+
+@@tier alice pro
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(matches!(
+            &test_case.configs[0].accounts[0],
+            AccountConfig::Detailed {
+                name,
+                tier: AccountTier::Free,
+            } if name == "alice"
+        ));
+        assert!(matches!(
+            &test_case.steps[0],
+            TestStep::SetTier {
+                account,
+                tier: AccountTier::Pro,
+            } if account == "alice"
+        ));
+    }
+
+    #[test]
+    fn parses_udp_blocked_config() {
+        let content = r#"# test: udp_blocked
+
+## Environment
+
+config:
+  name: local
+  udp_blocked: true
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux profiles
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(test_case.configs[0].udp_blocked);
+    }
+
+    #[test]
     fn test_parse_capture_output() {
         let content = r#"# test: capture
 
@@ -549,6 +727,31 @@ terminal:
                 assert_eq!(prefix, "Pairing PIN:");
             }
             _ => panic!("expected capture step"),
+        }
+    }
+
+    #[test]
+    fn test_parse_capture_containing_output() {
+        let content = r#"# test: capture_search
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux init
+@@capture-contains pairing_code Pairing code:
+"#;
+        let test_case = parse_test_content(content).unwrap();
+        match &test_case.steps[2] {
+            TestStep::CaptureContainingOutput { name, prefix } => {
+                assert_eq!(name, "pairing_code");
+                assert_eq!(prefix, "Pairing code:");
+            }
+            _ => panic!("expected capture-search step"),
         }
     }
 

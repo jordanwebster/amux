@@ -311,6 +311,7 @@ impl AgentBackend for TestAgentSession {
             parent: self.parent,
             working_on: None,
             seal: None,
+            last_activity: None,
         })
     }
 

@@ -30,6 +30,7 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
     let root = crate::test_fixtures::short_installation_root();
     let installation = Arc::new(
         Installation::open(InstallationOptions {
+            discovery: None,
             relocation: Default::default(),
             root: InstallationRoot::OnDisk(root.path().into()),
             listeners,
@@ -222,6 +223,42 @@ async fn lifecycle_replays_original_results_and_rejects_stale_and_deleted_ids() 
 }
 
 #[tokio::test]
+async fn profile_status_carries_connected_tier_and_carrier_over_grpc() {
+    let (front, _root) = front(Listeners::InProcessOnly).await;
+    let mut client = client(&front);
+    let profile = create(&mut client, "free").await;
+    let id = crate::ProfileId(profile.id.parse().unwrap());
+    crate::test_fixtures::report_profile_status(
+        &front.installation,
+        id,
+        crate::installation::Observed::Connected {
+            tier: crate::Tier::Free,
+            carrier: crate::installation::RelayCarrier::Tcp,
+        },
+    )
+    .await;
+
+    let profiles = client
+        .list_profiles(wire::ListProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .profiles;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == id.to_string())
+        .unwrap();
+    assert_eq!(profile.observed, wire::Observed::Connected as i32);
+    assert_eq!(profile.tier, wire::Tier::Free as i32);
+    assert_eq!(profile.relay_carrier, wire::RelayCarrier::Tcp as i32);
+
+    front
+        .installation
+        .stop(crate::server::ShutdownReason::UserRequested)
+        .await;
+}
+
+#[tokio::test]
 async fn watch_delivers_snapshot_boundary_ordered_changes_and_removal() {
     use wire::watch_profiles_response::Event;
     let (front, _root) = front(Listeners::InProcessOnly).await;
@@ -335,8 +372,8 @@ async fn pairing_targets_one_profile_and_replays_its_original_secret() {
         profile_id: a.id.clone(),
         pairing: Some(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin.into(),
-            require_lan_direct: false,
             demo: None,
+            ttl_seconds: None,
         }),
     };
     let pairing = client
@@ -614,6 +651,7 @@ async fn binding_reports_identity_labels_and_named_account_refusals_over_grpc() 
                 sub: sub.into(),
                 name: Some(format!("{sub} Example")),
                 email: Some(format!("{sub}@example.test")),
+                tier: crate::Tier::Pro,
             })
             .collect(),
         None,
@@ -844,6 +882,7 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: crate::Tier::Pro,
         }],
         None,
     )
@@ -984,7 +1023,7 @@ async fn profile_pairing_identity_and_pending_requests_stay_on_the_selected_prof
     assert_ne!(identity.host_id, other.host_id);
     assert_ne!(identity.fingerprint, other.fingerprint);
     assert!(matches!(
-        first.begin_pair_pin(other.host_id, "123").await,
+        first.begin_pair_pin(other.host_id, "123", &[]).await,
         Err(crate::PairingError::InvalidPin)
     ));
     let pending = || crate::PendingPeer {
@@ -992,6 +1031,7 @@ async fn profile_pairing_identity_and_pending_requests_stay_on_the_selected_prof
         name: other.name.clone(),
         fingerprint: other.fingerprint.clone(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(1),
+        via: crate::PeerVia::Direct,
         token: uuid::Uuid::new_v4().as_bytes().to_vec(),
     };
     assert!(matches!(

@@ -47,6 +47,7 @@ async fn identity() -> IdentityServer {
                 sub: sub.into(),
                 name: Some(format!("{sub} Example")),
                 email: Some(format!("{sub}@example.test")),
+                tier: crate::Tier::Pro,
             })
             .collect(),
         None,
@@ -230,6 +231,7 @@ fn options_with_credentials(
     credentials: CredentialSource,
 ) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root,
         listeners: Listeners::InProcessOnly,

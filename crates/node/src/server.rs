@@ -21,15 +21,16 @@ use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::{Config, ConfigError};
 use crate::identity;
-use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
-use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
-use crate::subscription::SubscriptionReporter;
-use crate::transport::{TransportError, create_tls_acceptor};
+use crate::profile::runtime::{
+    Listeners, ProfileRuntimeOptions, platform_discovery, start_with_security,
+};
+use crate::services::{CloudLinkServer, DeviceRuntimeSecurity};
+use crate::transport::{TransportError, create_tls_acceptor, relay_quic_server_config};
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
 
 /// Maximum time allowed for a TLS handshake to complete.
-const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Local grace before aborting routing tasks so queued LinkClose frames can
 /// flush onto the sockets. Purely local; nothing on the wire mentions it.
 const SERVER_LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
@@ -40,7 +41,6 @@ type BuilderParts = (
     Option<Arc<dyn CredentialProvider>>,
     bool,
     Option<Arc<dyn UpdateReporter>>,
-    Option<Arc<dyn SubscriptionReporter>>,
 );
 
 /// Reason for server shutdown notification.
@@ -79,7 +79,6 @@ enum ServerMode {
 pub struct ServerBuilder {
     config: Option<Config>,
     credentials: Option<Arc<dyn CredentialProvider>>,
-    subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
     update_reporter: Option<Arc<dyn UpdateReporter>>,
     as_cloud_relay: bool,
 }
@@ -98,7 +97,6 @@ impl Server {
         ServerBuilder {
             config: None,
             credentials: None,
-            subscription_reporter: None,
             update_reporter: None,
             as_cloud_relay: false,
         }
@@ -173,10 +171,11 @@ impl Server {
     /// - All connections require valid JWT tokens
     pub(crate) async fn run(&mut self) -> Result<()> {
         let is_cloud_server = self.is_cloud_relay();
-        let (tcp_port, cloud_url, prevent_idle_sleep) = {
+        let (tcp_port, udp_port, cloud_url, prevent_idle_sleep) = {
             let state = self.state.read().await;
             (
                 state.config.tcp_port,
+                state.config.udp_port,
                 state.config.cloud_url.clone(),
                 state.config.prevent_idle_sleep.unwrap_or(false),
             )
@@ -184,6 +183,9 @@ impl Server {
 
         if is_cloud_server && tcp_port.is_none() {
             return Err(ConfigError::Invalid("cloud relay requires tcp_port".into()).into());
+        }
+        if is_cloud_server && udp_port.is_none() {
+            return Err(ConfigError::Invalid("cloud relay requires udp_port".into()).into());
         }
 
         // Validate shared settings before creating runtime services.
@@ -195,19 +197,12 @@ impl Server {
         let _sleep_inhibitor = crate::sleep_inhibitor::SleepInhibitor::new(prevent_idle_sleep);
 
         if !is_cloud_server {
-            let (
-                config,
-                credentials,
-                update_reporter,
-                subscription_reporter,
-                has_cloud_credentials,
-            ) = {
+            let (config, credentials, update_reporter, has_cloud_credentials) = {
                 let state = self.state.read().await;
                 (
                     state.config.clone(),
                     state.credentials.clone(),
                     state.update_reporter.clone(),
-                    state.subscription_reporter.clone(),
                     state.credentials.is_some(),
                 )
             };
@@ -215,8 +210,8 @@ impl Server {
                 config,
                 credentials,
                 update_reporter,
-                subscription_reporter,
                 Listeners::Sockets,
+                platform_discovery().map_err(|error| ServerError::State(error.to_string()))?,
                 None,
             );
             let security = self.take_device_runtime_security();
@@ -237,7 +232,7 @@ impl Server {
         }
 
         // Configure cloud server: enable JWT validation and TLS.
-        let tls_acceptor = {
+        let (tls_acceptor, quic_server_config) = {
             let mut state = self.state.write().await;
             state.is_cloud_server = true;
             state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
@@ -268,19 +263,28 @@ impl Server {
             })?;
 
             let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
+            let quic = relay_quic_server_config(&cert_pem, &key_pem)?;
             tracing::info!("TLS configured for cloud mode");
-            acceptor
+            (acceptor, quic)
         };
 
-        let cloud_routing = CloudLinkService::new(self.state.clone());
+        let cloud_routing = CloudLinkServer::new(self.state.clone());
         let Some(port) = tcp_port else {
             unreachable!("cloud server config validation requires tcp_port");
         };
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         let listener = TcpListener::bind(addr).await?;
-        tracing::info!(addr = %addr, "listening on cloud TLS LinkService");
-        let cloud_routing_task =
+        tracing::info!(addr = %addr, "listening for cloud TLS carriers");
+        let cloud_tcp_task =
             cloud_routing.serve_on_tls_tcp_listener(listener, tls_acceptor, TLS_HANDSHAKE_TIMEOUT);
+        let Some(udp_port) = udp_port else {
+            unreachable!("cloud server config validation requires udp_port");
+        };
+        let quic_addr = SocketAddr::from(([0, 0, 0, 0], udp_port));
+        let quic_endpoint = quinn::Endpoint::server(quic_server_config, quic_addr)?;
+        tracing::info!(addr = %quic_addr, "listening for cloud QUIC carriers");
+        let cloud_quic_task =
+            cloud_routing.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
 
         tokio::signal::ctrl_c().await?;
         cloud_routing
@@ -289,7 +293,9 @@ impl Server {
             ))
             .await;
         tokio::time::sleep(SERVER_LINK_CLOSE_FLUSH_TIMEOUT).await;
-        cloud_routing_task.abort();
+        quic_endpoint.close(quinn::VarInt::from_u32(0), b"relay shutting down");
+        cloud_tcp_task.abort();
+        cloud_quic_task.abort();
         tracing::info!("server exiting");
 
         Ok(())
@@ -312,11 +318,6 @@ impl ServerBuilder {
         self
     }
 
-    pub fn subscription_reporter(mut self, reporter: Arc<dyn SubscriptionReporter>) -> Self {
-        self.subscription_reporter = Some(reporter);
-        self
-    }
-
     pub fn as_cloud_relay(mut self) -> Self {
         self.as_cloud_relay = true;
         self
@@ -334,15 +335,13 @@ impl ServerBuilder {
     }
 
     pub async fn run(self) -> Result<()> {
-        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
-            self.into_parts()?;
+        let (config, credentials, as_cloud_relay, update_reporter) = self.into_parts()?;
         let mut server = Server::with_config_and_credentials(
             config,
             credentials,
             update_reporter,
             as_cloud_relay,
         )?;
-        server.state.write().await.subscription_reporter = subscription_reporter;
         server.run().await
     }
 }
@@ -354,31 +353,36 @@ impl EmbeddedBuilder {
     }
 
     pub async fn open(self) -> Result<EmbeddedRuntime> {
-        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
-            self.inner.into_parts()?;
+        let (config, credentials, as_cloud_relay, update_reporter) = self.inner.into_parts()?;
         if as_cloud_relay {
             return Err(ServerError::State(
                 "embedded cloud relays are not supported".into(),
             ));
         }
+        // An attached relay carries the credentials this device authenticates
+        // to the cloud with. Holding them is what makes the device reachable
+        // through that cloud, and so what lets its invitation name it.
+        let credentials =
+            credentials.or_else(|| self.relay.as_ref().map(|relay| relay.credentials.clone()));
         let options = ProfileRuntimeOptions::from_legacy_config(
             config,
             credentials,
             update_reporter,
-            subscription_reporter,
             Listeners::InProcessOnly,
+            // An embedded client browses nothing itself: the application owns
+            // the platform's discovery and hands hosts in through this bus.
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
             None,
         );
         let runtime = crate::profile::runtime::start(options)
             .await
             .map_err(|e| ServerError::State(e.to_string()))?;
         // Relay attachment changes the route; the cloud remains the one in config.
-        let relay_task = self
-            .relay
-            .map(|relay| relay.spawn(runtime.services.link_connector_ctx()));
+        if let Some(relay) = self.relay {
+            runtime.attach_relay(relay).await;
+        }
         Ok(EmbeddedRuntime {
             runtime: Some(runtime),
-            relay_task,
         })
     }
 }
@@ -387,7 +391,6 @@ impl EmbeddedBuilder {
 /// Its administration handle is local and is never served on a peer connection.
 pub struct EmbeddedRuntime {
     runtime: Option<crate::profile::runtime::ProfileRuntime>,
-    relay_task: Option<JoinHandle<()>>,
 }
 
 impl EmbeddedRuntime {
@@ -418,10 +421,6 @@ impl EmbeddedRuntime {
     }
 
     pub async fn shutdown(mut self) {
-        if let Some(task) = self.relay_task.take() {
-            task.abort();
-            let _ = task.await;
-        }
         if let Some(runtime) = self.runtime.take() {
             runtime.stop(ShutdownReason::UserRequested).await;
         }
@@ -430,9 +429,6 @@ impl EmbeddedRuntime {
 
 impl Drop for EmbeddedRuntime {
     fn drop(&mut self) {
-        if let Some(task) = self.relay_task.take() {
-            task.abort();
-        }
         if let Some(runtime) = self.runtime.take() {
             tokio::spawn(runtime.stop(ShutdownReason::UserRequested));
         }
@@ -471,7 +467,6 @@ impl ServerBuilder {
             self.credentials,
             self.as_cloud_relay,
             self.update_reporter,
-            self.subscription_reporter,
         ))
     }
 }
@@ -616,20 +611,38 @@ mod tests {
                 .unwrap();
             let runtime = embedded.runtime.as_ref().unwrap();
             assert_eq!(
-                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
-                cloud
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
             );
             embedded.admin().cancel_pairing().await.unwrap();
             runtime.attach_relay(relay()).await;
             assert_eq!(
-                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
-                cloud
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
             );
             embedded.admin().cancel_pairing().await.unwrap();
             runtime.attach_relay(relay()).await;
             assert_eq!(
-                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
-                cloud
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
             );
             embedded.shutdown().await;
         }

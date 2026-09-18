@@ -14,7 +14,7 @@ use crate::front_door;
 
 #[cfg(test)]
 mod tests {
-    use node::{SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
+    use node::{UpdateInfo, UpdateReporter, UpdateStatus};
 
     use super::*;
 
@@ -96,7 +96,8 @@ mod tests {
                     data_dir: paths.data_dir,
                     state_path: paths.state_path,
                     cloud_url: cloud_url.clone(),
-                    tcp_port: None,
+                    lan: Default::default(),
+                    cloud_refresh_secs: None,
                 };
                 let path = paths.config_path.unwrap();
                 std::fs::write(&path, serde_yaml::to_string(&profile).unwrap()).unwrap();
@@ -128,20 +129,19 @@ mod tests {
             }
             println!("Both desktop profiles show installation release 99.0.0; the separate cloud server advertises 100.0.0.");
             report_profile_status(&owner, ids[0], Observed::UpdateRequired { minimum_version: Some("99.0.0".into()) }).await;
-            report_profile_status(&owner, ids[0], Observed::SubscriptionRequired).await;
-            report_profile_status(&owner, ids[1], Observed::Connected).await;
+            report_profile_status(&owner, ids[1], Observed::Connected {
+                tier: node::Tier::Pro,
+                carrier: node::installation::RelayCarrier::Tcp,
+            }).await;
             assert_eq!(readers[0].read_active_update_required(env!("CARGO_PKG_VERSION")).as_deref(), Some("99.0.0"));
-            assert!(readers[0].subscription_required());
             assert!(readers[1].read_update_required().is_none());
-            assert!(!readers[1].subscription_required());
             let selected = node::load_profile_config(
                 &root.join("profiles").join(ids[0].to_string()).join("config.yaml"),
             ).unwrap();
             crate::client_common::print_update_banner(&selected.profile.state_path);
-            println!("Desktop profile A: CLI reads update-required=99.0.0 and TUI reads subscription-required; profile B connecting leaves both intact.");
+            println!("Desktop profile A reads update-required=99.0.0; profile B connecting leaves it intact.");
 
             report_profile_status(&owner, ids[1], Observed::UpdateRequired { minimum_version: Some("98.0.0".into()) }).await;
-            report_profile_status(&owner, ids[1], Observed::SubscriptionRequired).await;
             for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
                 reader.dismiss_update_required(version);
             }
@@ -152,19 +152,16 @@ mod tests {
                 assert!(reader.read_update_marker().is_none());
                 assert!(reader.read_update_required().is_none());
                 assert!(!reader.is_update_dismissed(version));
-                assert!(!reader.subscription_required());
             }
-            println!("amux update (already current): update-required, update-dismissed and subscription-required clear in both profile state directories.");
+            println!("amux update (already current): update-required and update-dismissed clear in both profile state directories.");
             owner.shutdown(node::ShutdownReason::UserRequested).await;
 
             for reader in &readers {
                 reader.report(UpdateStatus::Required(Some("99.0.0".into())));
-                reader.report_subscription_required(true);
             }
             run_update(&config).await.unwrap();
             for reader in &readers {
                 assert!(reader.read_update_required().is_none());
-                assert!(!reader.subscription_required());
             }
             println!("amux update also clears both profiles while the installation is stopped.");
             assert!(!root.join("state/state.yaml").exists());
@@ -270,10 +267,10 @@ mod tests {
             let reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
             reporter.report(UpdateStatus::Required(Some("99.0.0".into())));
             reporter.dismiss_update_required("99.0.0");
-            reporter.report_subscription_required(true);
 
             let root = testnet::identity::short_installation_root();
             let installation = node::Installation::open(node::InstallationOptions {
+                discovery: None,
                 relocation: Default::default(),
                 root: node::InstallationRoot::OnDisk(root.path().into()),
                 settings: node::InstallationSettings {
@@ -286,7 +283,7 @@ mod tests {
                     minimum_client_versions: Default::default(),
                     update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
                     status_reporters: node::update::StatusReporters::Host {
-                        update: Some(reporter.clone()), subscription: Some(reporter.clone()),
+                        update: Some(reporter.clone()),
                     },
                 },
                 listeners: node::Listeners::InProcessOnly,
@@ -299,20 +296,14 @@ mod tests {
             client.list_agents().await.unwrap();
             assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
             assert!(reporter.is_update_dismissed("99.0.0"));
-            assert!(!reporter.subscription_required());
-            println!("Runtime started: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
+            println!("Runtime started: update-required=99.0.0 and update-dismissed=99.0.0 remain visible");
 
-            reporter.report_subscription_required(true);
             drop(client);
             installation.shutdown(node::ShutdownReason::UserRequested).await;
-            while reporter.subscription_required() {
-                tokio::task::yield_now().await;
-            }
 
             assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
             assert!(reporter.is_update_dismissed("99.0.0"));
-            assert!(!reporter.subscription_required());
-            println!("Embedded owner stopped: update-required=99.0.0, update-dismissed=99.0.0, subscription-required absent");
+            println!("Embedded owner stopped: update-required=99.0.0 and update-dismissed=99.0.0 remain visible");
         })
         .await
         .expect("runtime marker test timed out");
@@ -343,18 +334,6 @@ mod tests {
             Some("0.4.0")
         );
         assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
-    }
-
-    #[test]
-    fn subscription_marker_round_trips_and_clears() {
-        let temp = tempfile::tempdir().unwrap();
-        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
-
-        reporter.report_subscription_required(true);
-        assert!(reporter.subscription_required());
-
-        reporter.report_subscription_required(false);
-        assert!(!reporter.subscription_required());
     }
 }
 

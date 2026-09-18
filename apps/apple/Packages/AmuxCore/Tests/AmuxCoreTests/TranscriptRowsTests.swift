@@ -266,6 +266,45 @@ final class TranscriptRowsTests: XCTestCase {
         XCTAssertEqual(row, .edit(path: "a.rs", added: 3, removed: 1))
     }
 
+    /// A finished tool that was not an edit is its own kind of line. A
+    /// producer that writes the absent edit out as `null` must not turn every
+    /// such tool into a +0 −0 edit, which is what reading presence off a null
+    /// field did.
+    func testAnSdkToolResultWithNoEditIsAnOrdinaryToolLine() {
+        for edit in [JSONValue?.none, .some(.null)] {
+            var result: [String: JSONValue] = ["text": .string("Cargo.toml"), "is_error": .bool(false)]
+            if let edit { result["edit"] = edit }
+            let row = sdk(0, "tool", .object([
+                "tool_use_id": .string("toolu_1"), "name": .string("Bash"),
+                "invocation": .object(["tool": .string("bash"), "command": .string("ls")]),
+                "finality": .string("complete"),
+                "result": .object(result),
+            ])).kind
+            XCTAssertEqual(
+                row,
+                .ran(command: "ls", meta: nil,
+                     output: TranscriptRow.Output(head: "Cargo.toml", hidden: 0)),
+                "edit: \(String(describing: edit))")
+        }
+    }
+
+    /// A tool with no result yet is still running, whether the result is left
+    /// out or written as `null`.
+    func testAnSdkToolWithNoResultIsRunning() {
+        for result in [JSONValue?.none, .some(.null)] {
+            var entry: [String: JSONValue] = [
+                "tool_use_id": .string("toolu_1"), "name": .string("Bash"),
+                "invocation": .object(["tool": .string("bash"), "command": .string("cargo test")]),
+                "finality": .string("complete"),
+            ]
+            if let result { entry["result"] = result }
+            XCTAssertEqual(
+                sdk(0, "tool", .object(entry)).kind,
+                .ran(command: "cargo test", meta: "running", output: nil),
+                "result: \(String(describing: result))")
+        }
+    }
+
     func testAnSdkTurnThatErroredIsAProviderErrorRatherThanATurnEnd() {
         let row = sdk(0, "turn", .object([
             "outcome": .string("error"), "is_error": .bool(true),

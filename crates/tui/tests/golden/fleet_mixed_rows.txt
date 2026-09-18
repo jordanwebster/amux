@@ -1,10 +1,10 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ /                                                                                                        4 agents    │
 │                                                                                                                      │
-│ ▎ ! fix-auth              claude   nova       2m    permission                                                       │
-│   ! fix-sync              claude   nova       2m    permission                                                       │
-│   ⋯ docs-auth             claude   nova       12s   working                                                          │
-│   ⋯ docs-sync             claude   nova       12s   working                                                          │
+│ ▎ ! fix-auth              claude   nova ·direct       2m    permission                                               │
+│   ! fix-sync              claude   nova ·direct       2m    permission                                               │
+│   ⋯ docs-auth             claude   nova ·direct       12s   working                                                  │
+│   ⋯ docs-sync             claude   nova ·direct       12s   working                                                  │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

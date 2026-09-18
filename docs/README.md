@@ -5,7 +5,8 @@ subject; when two overlap, the owner named here wins.
 
 - `HOW_IT_WORKS.md` — the user-facing model: installations, account profiles,
   what amux lets your devices do and why it is trustworthy.
-- `PROTOCOL.md` — the wire protocol: links, routing, tunnels, pairing,
+- `PROTOCOL.md` — the wire protocol: carriers, links, streams, channels,
+  routing, pairing,
   and the design rationale.
 - `ARCHITECTURE.md` — the system: installations and profiles, configuration
   ownership, front-door discovery, servers, dispatcher, trust storage, service

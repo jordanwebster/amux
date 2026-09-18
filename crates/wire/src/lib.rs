@@ -4,8 +4,8 @@ mod domain;
 mod error;
 mod provider;
 
-/// Protocol version for the generated `LinkService.Connect` handshake.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Protocol version for the native-stream link handshake.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub use domain::{
     agent_from_wire, agent_parent_from_wire, agent_to_wire, artifact_kind_from_wire,
@@ -37,22 +37,25 @@ pub mod pb {
     pub use super::amux::v1::*;
 }
 
+/// Bound for link-control messages and application-stream prefaces.
 pub const MESSAGE_SIZE_LIMIT: usize = 16 * 1024 * 1024;
+/// RPC payloads include artifacts plus protobuf framing overhead.
+const CHANNEL_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
 
 pub fn agent_service_client(
     channel: tonic::transport::Channel,
 ) -> agent_service_client::AgentServiceClient<tonic::transport::Channel> {
     agent_service_client::AgentServiceClient::new(channel)
-        .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
 pub fn client_service_client(
     channel: tonic::transport::Channel,
 ) -> client_service_client::ClientServiceClient<tonic::transport::Channel> {
     client_service_client::ClientServiceClient::new(channel)
-        .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
 pub fn agent_service_server<T>(service: T) -> agent_service_server::AgentServiceServer<T>
@@ -60,8 +63,8 @@ where
     T: agent_service_server::AgentService,
 {
     agent_service_server::AgentServiceServer::new(service)
-        .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
 pub fn client_service_server<T>(service: T) -> client_service_server::ClientServiceServer<T>
@@ -69,8 +72,8 @@ where
     T: client_service_server::ClientService,
 {
     client_service_server::ClientServiceServer::new(service)
-        .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
 pub fn agent_kind_to_wire(kind: model::AgentKind) -> AgentKind {
@@ -123,26 +126,244 @@ mod tests {
     use super::DESCRIPTOR_SET;
 
     #[test]
-    fn descriptor_set_contains_declared_services() {
+    fn descriptor_set_contains_core_protocol_messages_and_services() {
         let descriptor = prost_types::FileDescriptorSet::decode(DESCRIPTOR_SET)
             .expect("descriptor set should decode");
-        let services = descriptor
+        let message_names = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.message_type.iter())
+            .filter_map(|message| message.name.as_deref())
+            .collect::<std::collections::BTreeSet<_>>();
+        let service_names = descriptor
             .file
             .iter()
             .filter(|file| file.package.as_deref() == Some("amux.v1"))
             .flat_map(|file| file.service.iter())
             .filter_map(|service| service.name.as_deref())
             .collect::<std::collections::BTreeSet<_>>();
+
+        for message_name in [
+            "Message",
+            "Hello",
+            "HelloAck",
+            "NeighborUp",
+            "NeighborDown",
+            "StreamPreface",
+            "BeginPairRequest",
+            "PendingPairResponse",
+            "TrustSshPeerRequest",
+            "PairMessage",
+            "PairingComplete",
+            "PairingError",
+            "PairingIdentity",
+            "AgentUpdated",
+            "AgentKind",
+            "ProtocolNotExposed",
+            "ArtifactRef",
+            "DiffBase",
+            "BaseIdentity",
+            "DiffFile",
+            "AttachmentMissing",
+            "AttachmentTooLarge",
+            "ArtifactCorrupt",
+            "DiffUnavailable",
+            "ClaudeKind",
+            "CodexKind",
+            "TestAgentKind",
+            "TerminalV1Args",
+            "TerminalV1Input",
+            "TerminalV1Output",
+            "ClaudeSdkV1Args",
+            "ClaudeSdkV1Input",
+            "CodexCreateConfig",
+            "CodexSdkV1Args",
+            "CodexSdkV1Input",
+            "TestEchoV1Args",
+            "TestEchoV1Input",
+            "TestEchoV1Output",
+            "StructuredRow",
+            "SessionClosed",
+            "Reauth",
+            "LinkClose",
+        ] {
+            assert!(
+                message_names.contains(message_name),
+                "{message_name} should be in the descriptor"
+            );
+        }
+
+        let expected_services = std::collections::BTreeSet::from([
+            "AgentService",
+            "ClientService",
+            "PairingService",
+            "ProfileService",
+            "InstallationService",
+        ]);
+        assert_eq!(service_names, expected_services);
+
+        let service_methods = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.service.iter())
+            .map(|service| {
+                (
+                    service.name.as_deref().unwrap_or_default(),
+                    service
+                        .method
+                        .iter()
+                        .filter_map(|method| method.name.as_deref())
+                        .collect::<std::collections::BTreeSet<_>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
-            services,
-            std::collections::BTreeSet::from([
-                "AgentService",
-                "ClientService",
-                "InstallationService",
-                "LinkService",
-                "PairingService",
-                "ProfileService",
+            service_methods.get("PairingService").cloned(),
+            Some(std::collections::BTreeSet::from(["Pair"]))
+        );
+        assert_eq!(
+            service_methods.get("AgentService").cloned(),
+            Some(std::collections::BTreeSet::from([
+                "CreateAgent",
+                "DeleteAgent",
+                "Diff",
+                "GetArtifact",
+                "ListRepositories",
+                "PutArtifact",
+                "RenameAgent",
+                "SendInput",
+                "SendMessage",
+                "SetAgentStatus",
+                "SubscribeAgentEvents",
+                "SubscribeSession",
+            ]))
+        );
+        assert_eq!(
+            service_methods.get("ClientService").cloned(),
+            Some(std::collections::BTreeSet::from([
+                "CreateAgent",
+                "Debug",
+                "DeleteAgent",
+                "Diff",
+                "GetArtifact",
+                "HandleHook",
+                "ListAgents",
+                "ListHosts",
+                "ListRepositories",
+                "PutArtifact",
+                "RenameAgent",
+                "SendInput",
+                "SendMessage",
+                "SetAgentStatus",
+                "SubscribeAgents",
+                "SubscribeHosts",
+                "SubscribeSession",
+            ]))
+        );
+
+        let message_fields = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.message_type.iter())
+            .map(|message| {
+                (
+                    message.name.as_deref().unwrap_or_default(),
+                    message
+                        .field
+                        .iter()
+                        .map(|field| {
+                            (
+                                field.name.as_deref().unwrap_or_default(),
+                                field.number.unwrap_or_default(),
+                            )
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            message_fields.get("Message").cloned(),
+            Some(std::collections::BTreeMap::from([
+                ("hello", 1),
+                ("hello_ack", 2),
+                ("neighbor_up", 3),
+                ("neighbor_down", 4),
+                ("reauth", 8),
+                ("link_close", 9),
+            ]))
+        );
+        assert_eq!(
+            message_fields.get("Hello").cloned(),
+            Some(std::collections::BTreeMap::from([
+                ("supported_protocol_versions", 1),
+                ("host", 2),
+                ("neighbors", 3),
+                ("auth_token", 4),
+                ("incarnation", 5),
+            ]))
+        );
+        assert_eq!(
+            message_fields.get("StreamPreface").cloned(),
+            Some(std::collections::BTreeMap::from([("dst", 1)]))
+        );
+
+        let enum_values = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.enum_type.iter())
+            .map(|enumeration| {
+                (
+                    enumeration.name.as_deref().unwrap_or_default(),
+                    enumeration
+                        .value
+                        .iter()
+                        .filter_map(|value| value.name.as_deref())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            enum_values.get("StreamRefusal").cloned(),
+            Some(vec![
+                "STREAM_REFUSAL_UNSPECIFIED",
+                "NO_ROUTE",
+                "PAYMENT_REQUIRED",
+                "RATE_LIMITED",
+                "NOT_ADJACENT",
+                "SHUTTING_DOWN",
             ])
         );
+
+        let pairing_methods = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.service.iter())
+            .find(|service| service.name.as_deref() == Some("PairingService"))
+            .expect("PairingService should exist");
+        let pair = pairing_methods
+            .method
+            .iter()
+            .find(|method| method.name.as_deref() == Some("Pair"))
+            .expect("Pair should exist");
+        assert_eq!(pair.input_type.as_deref(), Some(".amux.v1.PairMessage"));
+        assert_eq!(pair.output_type.as_deref(), Some(".amux.v1.PairMessage"));
+        assert_eq!(pair.client_streaming, Some(true));
+        assert_eq!(pair.server_streaming, Some(true));
+    }
+
+    #[test]
+    fn generated_service_clients_are_available() {
+        let clients = [
+            std::any::type_name::<super::agent_service_client::AgentServiceClient<()>>(),
+            std::any::type_name::<super::client_service_client::ClientServiceClient<()>>(),
+            std::any::type_name::<super::pairing_service_client::PairingServiceClient<()>>(),
+        ];
+
+        assert!(clients.iter().all(|client| client.contains("Client")));
     }
 }

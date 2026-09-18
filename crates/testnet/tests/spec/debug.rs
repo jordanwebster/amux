@@ -7,14 +7,14 @@
 use testnet::{TestNet, Via};
 
 /// A live dump explains both halves of a remote session: the calling daemon's
-/// route, link, and tunnel, and the hosting daemon's output subscription,
+/// route, link, and channel, and the hosting daemon's output subscription,
 /// retained buffer, provider process state, and unanswered asks.
 #[tokio::test]
 async fn debug_dump_reports_live_routing_and_session_state() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -26,7 +26,7 @@ async fn debug_dump_reports_live_routing_and_session_state() {
     session.expect_output("diagnostic-tail").await;
 
     let laptop_dump = laptop.debug_dump(true).await;
-    for field in ["hosts", "routes", "links", "tunnels"] {
+    for field in ["hosts", "routes", "links", "channels"] {
         let entries = laptop_dump[field]
             .as_array()
             .unwrap_or_else(|| panic!("laptop dump field {field} is not an array"));

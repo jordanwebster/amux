@@ -134,8 +134,8 @@ fn apply_host(
     let trust = encode(&host.trust_status)?;
     transaction
         .execute(
-            "INSERT INTO host(id,name,online,version,platform,capabilities,trust,dial_error,revision,updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+            "INSERT INTO host(id,name,online,version,platform,capabilities,trust,dial_error,revision,updated_at,via,signed_in)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 online=excluded.online,
@@ -144,6 +144,8 @@ fn apply_host(
                 capabilities=excluded.capabilities,
                 trust=excluded.trust,
                 dial_error=excluded.dial_error,
+                via=excluded.via,
+                signed_in=excluded.signed_in,
                 revision=MAX(host.revision,excluded.revision),
                 updated_at=excluded.updated_at",
             params![
@@ -157,6 +159,8 @@ fn apply_host(
                 host.last_dial_error,
                 to_i64(revision)?,
                 now.timestamp_millis(),
+                encode(&host.via)?,
+                host.signed_in.map(i64::from),
             ],
         )
         .map_err(map_sqlite_error)?;
@@ -433,8 +437,8 @@ fn write_agent_facts(
             "INSERT INTO agent(
                 id,host_id,kind,protocol,name,command,working_dir,args,readonly,
                 parent_host_id,parent_id,created_at,working_on,working_on_at,
-                membership,revision,absent_since,last_opened_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,NULL)
+                membership,revision,absent_since,last_opened_at,last_activity)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,NULL,?18)
              ON CONFLICT(id) DO UPDATE SET
                 host_id=excluded.host_id,
                 kind=excluded.kind,
@@ -447,6 +451,7 @@ fn write_agent_facts(
                 parent_host_id=excluded.parent_host_id,
                 parent_id=excluded.parent_id,
                 created_at=excluded.created_at,
+                last_activity=excluded.last_activity,
                 working_on=excluded.working_on,
                 working_on_at=excluded.working_on_at,
                 membership=excluded.membership,
@@ -470,6 +475,7 @@ fn write_agent_facts(
                 membership_code(membership),
                 to_i64(revision)?,
                 absent_since.map(|value| value.timestamp_millis()),
+                agent.last_activity.timestamp_millis(),
             ],
         )
         .map_err(map_sqlite_error)?;
@@ -683,7 +689,7 @@ fn stored_agents_for_host(
 fn load_hosts(transaction: &Transaction<'_>) -> Result<Vec<FleetHost>, StoreError> {
     let mut statement = transaction
         .prepare(
-            "SELECT id,name,online,version,platform,capabilities,trust,dial_error,revision,updated_at
+            "SELECT id,name,online,version,platform,capabilities,trust,dial_error,revision,updated_at,via,signed_in
              FROM host ORDER BY id",
         )
         .map_err(map_sqlite_error)?;
@@ -700,6 +706,8 @@ fn load_hosts(transaction: &Transaction<'_>) -> Result<Vec<FleetHost>, StoreErro
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, Vec<u8>>(10)?,
+                row.get::<_, Option<i64>>(11)?,
             ))
         })
         .map_err(map_sqlite_error)?
@@ -718,6 +726,8 @@ fn load_hosts(transaction: &Transaction<'_>) -> Result<Vec<FleetHost>, StoreErro
                 last_dial_error,
                 revision,
                 updated_at,
+                via,
+                signed_in,
             )| {
                 Ok(FleetHost {
                     host: HostEntry {
@@ -733,6 +743,8 @@ fn load_hosts(transaction: &Transaction<'_>) -> Result<Vec<FleetHost>, StoreErro
                             .transpose()?,
                         trust_status: decode::<HostTrustStatus>(&trust)?,
                         last_dial_error,
+                        via: decode(&via)?,
+                        signed_in: signed_in.map(|value| value != 0),
                         platform,
                     },
                     revision: from_i64(revision)?,
@@ -840,12 +852,13 @@ fn load_agents(
         i64,
         Option<i64>,
         Option<i64>,
+        i64,
     );
     let mut statement = transaction
         .prepare(
             "SELECT id,host_id,kind,name,command,working_dir,args,readonly,
                     parent_host_id,parent_id,created_at,working_on,working_on_at,
-                    membership,revision,absent_since,last_opened_at
+                    membership,revision,absent_since,last_opened_at,last_activity
              FROM agent ORDER BY id",
         )
         .map_err(map_sqlite_error)?;
@@ -869,6 +882,7 @@ fn load_agents(
                 row.get(14)?,
                 row.get(15)?,
                 row.get(16)?,
+                row.get(17)?,
             ))
         })
         .map_err(map_sqlite_error)?
@@ -894,6 +908,7 @@ fn load_agents(
                 revision,
                 absent_since,
                 last_opened_at,
+                last_activity,
             )| {
                 let agent_id = parse_id(&id)?;
                 let host_id = parse_id(&host_id)?;
@@ -924,6 +939,7 @@ fn load_agents(
                         readonly: readonly != 0,
                         args: decode(&args)?,
                         created_at: timestamp(created_at)?,
+                        last_activity: timestamp(last_activity)?,
                         parent,
                         working_on,
                         summary: summaries.get(&id).cloned(),

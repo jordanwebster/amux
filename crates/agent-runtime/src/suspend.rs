@@ -51,6 +51,10 @@ pub(crate) enum SuspendedAgent {
         working_on: Option<WorkingOn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seal: Option<SealedAt>,
+        /// When the agent last did anything before the daemon stopped, so a
+        /// restarted daemon reports its real age rather than its creation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_activity: Option<DateTime<Utc>>,
     },
     #[cfg(unix)]
     Codex {
@@ -70,6 +74,10 @@ pub(crate) enum SuspendedAgent {
         working_on: Option<WorkingOn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seal: Option<SealedAt>,
+        /// When the agent last did anything before the daemon stopped, so a
+        /// restarted daemon reports its real age rather than its creation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_activity: Option<DateTime<Utc>>,
     },
     #[cfg(any(debug_assertions, test))]
     TestAgent {
@@ -85,6 +93,10 @@ pub(crate) enum SuspendedAgent {
         working_on: Option<WorkingOn>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seal: Option<SealedAt>,
+        /// When the agent last did anything before the daemon stopped, so a
+        /// restarted daemon reports its real age rather than its creation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_activity: Option<DateTime<Utc>>,
     },
 }
 
@@ -116,6 +128,26 @@ impl SuspendedAgent {
             Self::Codex { working_on, .. } => working_on.as_ref(),
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent { working_on, .. } => working_on.as_ref(),
+        }
+    }
+
+    pub(crate) fn last_activity(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Claude { last_activity, .. } => *last_activity,
+            #[cfg(unix)]
+            Self::Codex { last_activity, .. } => *last_activity,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { last_activity, .. } => *last_activity,
+        }
+    }
+
+    pub(crate) fn set_last_activity(&mut self, value: Option<DateTime<Utc>>) {
+        match self {
+            Self::Claude { last_activity, .. } => *last_activity = value,
+            #[cfg(unix)]
+            Self::Codex { last_activity, .. } => *last_activity = value,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { last_activity, .. } => *last_activity = value,
         }
     }
 
@@ -348,6 +380,7 @@ fn consumed_seals_path(state_path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
     use tempfile::TempDir;
 
     use super::*;
@@ -378,6 +411,7 @@ mod tests {
                         updated_at: Utc::now(),
                     }),
                     seal: None,
+                    last_activity: Some(Utc.timestamp_millis_opt(1_700_000_000_000).unwrap()),
                 },
                 #[cfg(unix)]
                 SuspendedAgent::Codex {
@@ -393,6 +427,7 @@ mod tests {
                     parent: None,
                     working_on: None,
                     seal: None,
+                    last_activity: None,
                 },
                 #[cfg(any(debug_assertions, test))]
                 SuspendedAgent::TestAgent {
@@ -405,6 +440,7 @@ mod tests {
                     parent: None,
                     working_on: None,
                     seal: None,
+                    last_activity: None,
                 },
             ],
         };
@@ -423,8 +459,10 @@ mod tests {
                 name,
                 parent: Some(parent),
                 working_on: Some(working_on),
+                last_activity: Some(last_activity),
                 ..
             } if name.as_deref() == Some("test-claude")
+                && last_activity.timestamp_millis() == 1_700_000_000_000
                 && parent.agent_id != Uuid::nil()
                 && parent.host_id != Uuid::nil()
                 && working_on.text == "reviewing protocol"
@@ -453,6 +491,7 @@ mod tests {
                 parent: None,
                 working_on: None,
                 seal: None,
+                last_activity: None,
             }],
         };
         let yaml = serde_yaml::to_string(&state).unwrap();

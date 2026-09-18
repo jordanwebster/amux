@@ -58,6 +58,18 @@ calls using the handle before stopping it. Start returns null for invalid
 configuration or failure to create a worker; asynchronous failures arrive as
 connection events. The generated header documents pointer lifetimes.
 
+The start configuration's `forget` lists accounts removed from the device.
+Before any profile is opened, each one's profile is deleted (its key, trust
+store and pairings) together with its fleet cache, artifacts cache and
+`profiles.json` entry. A failure is logged and the start continues. Once the
+profiles are open, a `Forgotten` event names the accounts the device is
+genuinely rid of — profile deleted or already absent, and its caches deleted —
+which is the only word the application may drop a pending removal on. An
+account something failed for is not named, keeps its `profiles.json` entry so
+caches that outlived their profile can still be found, and must be named again
+on the next start. Naming an account this device holds nothing for reports it
+as gone. An account in `forget` may not also be in `accounts` or be `active`.
+
 Run `just test-crate app-ffi` for the C-boundary relay, reconnection, token
 and teardown tests; `just test-crate app-runtime` covers the projection and
 queue with no node linked. `just ios graph-check` proves the shipping library
@@ -164,7 +176,7 @@ stored conversation before any connection and returns the projected
 `{"events":[…]}` or `{"error":"…"}`. Both results must be released with
 `amux_app_free`.
 
-Also in `debug-tools` builds, `amux_app_report_snapshot` returns
+In every build, `amux_app_report_snapshot` returns
 `{"msgs":{"format_version":3,"checkpoint":MODEL,"invariant_violation":BOOL,
 "msgs":[JSON_LINE,...]},
 "daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
@@ -178,7 +190,7 @@ with an explicit absence reason. These calls wait up to five seconds for the
 worker; call them outside the event callback, finish before stop, check for
 null and release returned strings with `amux_app_free`.
 
-`amux_app_replay_report` takes the path of a
+Only in `debug-tools` builds, `amux_app_replay_report` takes the path of a
 `msgs.jsonl` written that way and returns `{"events":[EVENT,...]}` — the same
 projected events a live connection delivers — or `{"error":STRING}` when the
 file cannot be read or folded. It needs no handle and starts nothing: the

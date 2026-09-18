@@ -27,6 +27,14 @@ public final class FleetStore {
     public private(set) var epoch: UInt64 = 0
     public private(set) var hosts: [HostId: HostEntry] = [:]
     public private(set) var connection = ConnectionUpdate(state: .connecting)
+    /// Whether anybody is signed in and what the relay will carry for them, as
+    /// the link itself reports it.
+    ///
+    /// The home reads it for one question only: whether an account is worth
+    /// offering. Read from the link rather than asked of the account service,
+    /// because what decides whether a machine can be used is the credential
+    /// the relay holds.
+    public private(set) var cloud: CloudState = .signedOut
 
     /// "3 need you · 12 agents", or the quiet form.
     public var subtitle: String {
@@ -75,14 +83,23 @@ public final class FleetStore {
     public func apply(_ event: Event) {
         switch event {
         case .fleet(let fleet):
+            // A fleet nobody has confirmed that names no agents is a runtime
+            // that has not reached anything yet, not a phone whose agents are
+            // gone. It happens on every launch that cannot get to the relay,
+            // and taking it at its word would empty the screen a moment after
+            // the cache had filled it. What such a runtime does know is which
+            // machines this device is paired with, so those are taken and the
+            // remembered rows are kept until something answers for them.
+            let unreached = !fleet.reconciled && fleet.agents.isEmpty && !cards.isEmpty
+            let agents = unreached ? Array(cards.values) : fleet.agents
             // Check the existing indexed content before allocating its
             // replacements. Confirmation of an unchanged cached fleet is the
             // common reconnect path, and dictionary construction was most of
             // its fixed cost.
             let visibleContentChanged = fleet.hosts.count != hosts.count
-                || fleet.agents.count != cards.count
+                || agents.count != cards.count
                 || fleet.hosts.contains { hosts[$0.id] != $0.entry }
-                || fleet.agents.contains { cards[$0.id] != $0 }
+                || agents.contains { cards[$0.id] != $0 }
             epoch = fleet.epoch
             let wasReconciled = reconciled
             reconciled = fleet.reconciled
@@ -94,8 +111,10 @@ public final class FleetStore {
             if visibleContentChanged {
                 hosts = Dictionary(
                     uniqueKeysWithValues: fleet.hosts.map { ($0.entry.id, $0.entry) })
-                cards = Dictionary(
-                    fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                if !unreached {
+                    cards = Dictionary(
+                        fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                }
                 reconcileOrder()
                 rebuild()
             }
@@ -108,8 +127,10 @@ public final class FleetStore {
             let wasConnected = connection.state == .connected
             connection = update
             if !wasConnected && update.state == .connected { Signposts.emit(.streamConnected) }
-        case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant,
-             .storeFailure, .devices, .attention:
+        case .cloudState(let state):
+            cloud = state
+        case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
+             .attention, .forgotten, .unreadable, .storeFailure:
             break
         }
     }
@@ -149,6 +170,32 @@ public final class FleetStore {
     }
 
     public func host(_ id: HostId) -> HostEntry? { hosts[id] }
+
+    /// Where a machine is, under the rule the Hosts tab groups by.
+    public func reach(of host: HostEntry) -> HostReach { host.reach(tier: cloud.tier) }
+
+    /// Where the machine an agent runs on is, or nothing where the fleet has
+    /// not named that machine yet.
+    public func reach(ofHost id: HostId?) -> HostReach? {
+        guard let id, let host = hosts[id] else { return nil }
+        return reach(of: host)
+    }
+
+    /// The machine the relay can see and this account may not tunnel to, or
+    /// nothing where there is none.
+    ///
+    /// Named rather than counted: the one line a home is allowed above the
+    /// list says which machine, and a count would leave a reader looking for
+    /// it. Alphabetical where there are several, so two runs say the same
+    /// thing.
+    public var awayHost: String? {
+        hosts.values.filter { reach(of: $0) == .away }.map(\.name).sorted().first
+    }
+
+    /// The machine no route reaches, on the same terms.
+    public var unreachableHost: String? {
+        hosts.values.filter { reach(of: $0) == .offline }.map(\.name).sorted().first
+    }
 
     /// What this agent is called, for a screen that has an identity and needs
     /// a name.
@@ -194,18 +241,9 @@ public final class FleetStore {
             guard let card = cards[id] else { return nil }
             return AgentRow(card: card, unread: unread.isUnread(card))
         }
-        let waiting = rows.filter { placement[$0.id] == .needsYou }
-        let recent = rows.filter { placement[$0.id] == .everythingElse }
+        let recent = rows.filter { placement[$0.id] == .agents }
         let older = rows.filter { placement[$0.id] == .older }
-        var built: [FleetSection] = []
-        if !waiting.isEmpty {
-            built.append(FleetSection(kind: .needsYou, title: "Needs you", rows: waiting, folded: false))
-        }
-        built.append(FleetSection(
-            kind: .everythingElse,
-            title: waiting.isEmpty ? "Agents" : "Everything else",
-            rows: recent,
-            folded: false))
+        var built = [FleetSection(kind: .agents, title: "Agents", rows: recent, folded: false)]
         if !older.isEmpty {
             built.append(FleetSection(kind: .older, title: "Older", rows: older, folded: true))
         }

@@ -29,8 +29,7 @@ final class GrantedAccessTests: XCTestCase {
         let cloud = ScriptedCloudService(state: .granted)
         let entitlement = try await cloud.entitlement(ada.id)
 
-        XCTAssertEqual(entitlement.noun, "Pro")
-        XCTAssertEqual(entitlement.summary, "Active · Included")
+        XCTAssertEqual(entitlement.summary, "Included with this account")
         XCTAssertFalse(entitlement.summary.contains("App Store"))
         XCTAssertFalse(entitlement.summary.contains("amux.sh"))
     }

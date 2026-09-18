@@ -84,6 +84,12 @@ public struct Remembered: Sendable {
         guard var object = try JSONSerialization.jsonObject(with: fleet) as? [String: Any] else {
             return fleet
         }
+        if var records = object["agents"] as? [[String: Any]] {
+            for index in records.indices {
+                records[index]["last_activity"] = records[index]["created_at"]
+            }
+            object["agents"] = records
+        }
         func rows(_ conversations: [AgentId: [String]]) throws -> [String: Any] {
             var object: [String: Any] = [:]
             for (agent, rows) in conversations {

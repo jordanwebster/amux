@@ -12,23 +12,31 @@ mod unix;
 
 use std::time::Duration;
 
+pub(crate) use embedded_relay::RelayTransport;
 pub use embedded_relay::{EmbeddedRelay, RelayEndpoint, RelayRetry};
 pub(crate) use io::{
     BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcIo, GrpcIo, PreTrustPairingReachability,
     TrustedPeerConnections,
 };
 pub use memory::InProcessConnection;
-pub(crate) use memory::{ShutdownIo, in_process_channel, managed_in_process_transport_pair};
 #[cfg(test)]
-pub(crate) use memory::{in_process_incoming, in_process_transport_pair};
+pub(crate) use memory::in_process_transport_pair;
+pub(crate) use memory::{ShutdownIo, in_process_channel, managed_in_process_transport_pair};
 pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
-pub use tcp::TcpServerTransport;
-pub(crate) use tcp::{configure_tcp_keepalive, tcp_incoming};
+pub(crate) use tcp::configure_relay_tcp_keepalive;
+#[allow(unused_imports)]
+pub(crate) use tcp::tcp_incoming;
 use thiserror::Error;
-pub use tls::trusted_device_channel_tracked;
-pub(crate) use tls::{create_tls_acceptor, pairing_channel, pairing_channel_from_io, tls_channel};
+pub(crate) use tls::{
+    create_tls_acceptor, pairing_channel_from_io, pairing_quic_channel, relay_quic_client_config,
+    relay_quic_server_config, tls_connect_stream,
+};
+pub use tls::{
+    pairing_quic_client_config, relay_quic_client_config_with_roots,
+    relay_quic_server_config_from_der,
+};
 use tonic::transport::{Endpoint, Server};
 #[cfg(unix)]
 pub(crate) use unix::{bind_unix_listener, unix_incoming};

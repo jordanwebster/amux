@@ -3,11 +3,13 @@
 
 Everything a release needs is here and nothing beyond it: this script bumps
 the two version numbers, archives the app against the distribution
-configuration, exports it, has Apple validate it, and only then commits the
-numbers and cuts the tag that records them. It never pushes and
-never uploads: Apple sees the build only as a validation, which spends no
-build number and shows the build to nobody. docs/RELEASE.md explains why each
-rule is what it is; this is the rule enforced.
+configuration, exports it, has Apple validate it, uploads it, and only then
+commits the numbers, cuts the tag that records them and pushes both. It never
+submits anything for review. A rehearsal stops at the validation, which
+spends no build number and shows the build to nobody, and is what makes it
+free to run as often as anybody likes; `--no-upload` stops a real run there
+too. docs/RELEASE.md explains why each rule is what it is; this is the rule
+enforced.
 
 Three ways to run it:
 
@@ -16,8 +18,9 @@ Three ways to run it:
   --rehearse    archive, export and validate with the numbers the next
                 release would use, writing nothing to the tree and cutting no
                 tag, so it can be run as often as you like.
-  (neither)     write the numbers, archive, export and validate, and only
-                then commit the numbers and cut the tag.
+  (neither)     write the numbers, archive, export, validate, upload, and
+                only then commit the numbers, cut the tag and push both.
+                --no-upload and --no-push each stop short of their step.
 
 The Team ID comes from the untracked apps/apple/Signing.local.xcconfig and the App
 Store Connect key from this Mac's login keychain; neither is ever written to a
@@ -488,6 +491,28 @@ def validate(package: Path, facts: dict) -> None:
     ], check=True, timeout=1800)
 
 
+def upload(package: Path, facts: dict) -> None:
+    """Deliver the validated build to App Store Connect.
+
+    Runs only after validation has answered on this exact package, so a build
+    Apple would refuse never reaches the upload. It is the one step here that
+    cannot be taken back: the build number is spent permanently whether or not
+    anything is ever submitted, and the build becomes visible to everyone on
+    the team as soon as processing finishes. Everything before it is local and
+    undone with one `git checkout`.
+
+    It runs before the commit and the tag for the same reason validation does:
+    the tree should record a build that reached Apple, not one that failed on
+    the way."""
+    print("uploading to App Store Connect", flush=True)
+    subprocess.run([
+        "xcrun", "altool", "--upload-app",
+        "-f", str(package), "-t", "ios",
+        "--api-key", facts["key"], "--api-issuer", facts["issuer"],
+    ], check=True, timeout=3600)
+    print("uploaded; TestFlight shows it once Apple has processed it", flush=True)
+
+
 def commit_and_tag(version: str, build: int, message: str) -> None:
     """The permanent half, run only after Apple has accepted the build.
 
@@ -505,7 +530,26 @@ def commit_and_tag(version: str, build: int, message: str) -> None:
                    check=True, timeout=120)
     subprocess.run(["git", "tag", "-a", tag_name(version, build), "-m", message],
                    check=True, timeout=120)
-    print(f"tagged {tag_name(version, build)}; it is not pushed", flush=True)
+    print(f"tagged {tag_name(version, build)}", flush=True)
+
+
+def publish(version: str, build: int) -> None:
+    """Send the commit and the tag where everything else can read them.
+
+    The tag is the ledger. A build number is spent permanently the moment the
+    upload lands, and the next release derives the number after it from the
+    tags — so a tag that exists only in the tree that cut it is a record of a
+    spent number that can be lost with that tree, leaving the release after
+    this one refusing to guess and sending somebody back to App Store Connect
+    to look up what this run already knew.
+
+    The commit goes with it because the tag names it: a tag pointing at a
+    commit nobody else has is a tag nobody else can check out."""
+    tag = tag_name(version, build)
+    print("pushing the release commit and its tag", flush=True)
+    subprocess.run(["git", "push", "origin", "HEAD:main"], check=True, timeout=300)
+    subprocess.run(["git", "push", "origin", tag], check=True, timeout=300)
+    print(f"pushed the release commit and {tag}", flush=True)
 
 
 def main() -> int:
@@ -521,6 +565,14 @@ def main() -> int:
                         help="the build number, which may only be raised")
     parser.add_argument("--notes-file", default="",
                         help="release notes, instead of the drafted ones")
+    parser.add_argument("--no-push", action="store_true",
+                        help="commit and tag without sending either anywhere; "
+                             "the tag is the build-number ledger, so a tag "
+                             "left unpushed is a spent number nobody else "
+                             "can read")
+    parser.add_argument("--no-upload", action="store_true",
+                        help="stop at validation, as every run did before "
+                             "uploading was part of a release")
     arguments = parser.parse_args()
     if arguments.preflight and arguments.rehearse:
         parser.error("--preflight and --rehearse are different runs")
@@ -586,6 +638,11 @@ def main() -> int:
         print(f"release notes beside it in {written}")
         step = "validate"
         validate(exported, facts)
+        # A rehearsal never delivers: that is what lets it run as often as
+        # anybody likes, since validation spends no build number.
+        if not arguments.rehearse and not arguments.no_upload:
+            step = "upload"
+            upload(exported, facts)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as failed:
         reason = "timed out" if isinstance(failed, subprocess.TimeoutExpired) else "failed"
         if arguments.rehearse:
@@ -598,6 +655,8 @@ def main() -> int:
         return 1
     if not arguments.rehearse:
         commit_and_tag(version, build, message)
+        if not arguments.no_push:
+            publish(version, build)
     if arguments.rehearse:
         # The claim is measured, not asserted: a rehearsal regenerates the
         # project and drives Xcode, either of which could leave a tracked file
@@ -609,7 +668,15 @@ def main() -> int:
             return 1
         print("rehearsal: git status --porcelain is what it was before the "
               "run, so nothing was written to the tree, and no tag was cut")
-    print("nothing was uploaded and nothing was pushed")
+    if arguments.rehearse:
+        print("nothing was uploaded and nothing was pushed")
+    elif arguments.no_upload:
+        print("nothing was uploaded"
+              + ("" if arguments.no_push else "; the commit and tag were pushed"))
+    else:
+        print("uploaded to App Store Connect"
+              + ("" if arguments.no_push else ", and the commit and tag pushed")
+              + "; nothing was submitted for review")
     return 0
 
 

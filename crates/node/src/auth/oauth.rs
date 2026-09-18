@@ -117,6 +117,9 @@ pub async fn refresh_access_token(
         expires_at: token_response
             .expires_in()
             .map(|duration| SystemTime::now() + duration),
+        // The identity service answers an OAuth exchange, not an entitlement
+        // question; what this account may do comes back from the connect call.
+        tier: None,
     };
     let new_refresh = token_response
         .refresh_token()

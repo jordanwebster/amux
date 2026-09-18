@@ -15,7 +15,7 @@ the preserved designs.
 
 ## Nothing is quarantined
 
-Every one of the 126 captures gates. `strip.light`, `strip.dark` and
+Every one of the 150 captures gates. `strip.light`, `strip.dark` and
 `ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
 
 They varied for two reasons, both in the transcript rather than in the camera.
@@ -32,6 +32,23 @@ nothing left to guess at. The strip's own feed and the accessibility composer's
 show exactly what they showed before.
 
 The global tolerance remains two per channel with at most 64 differing pixels.
+
+## Re-approved 2026-09-16: frosted panels and the papercut pass
+
+Every capture was taken again for one batch of fixes, and nearly all of them
+changed. Glass stays on small controls only: the conversation's pill, round
+icon buttons, the changes chip, the pairing keypad and the tab bar. Panels that
+carry content use frosted material with a hairline rim: the composer, ask
+panels, cards, menus, bottom actions and the home's groups of rows. The home is
+one list with no "Needs you" section and no leading mark slot. A row waiting on
+you has an accent dot beside its age and says what it wants in the accent, and
+its separators start at the row's own padding. The filter button is gone from
+the home header and the "+" from Hosts. The empty home and Hosts say how to
+pair instead of offering a button. The composer's empty field is two lines
+tall. A place is written short, directory first and host without `.local`
+(`~/s/amux · Studio`). New Agent has a Name field. `home-no-agents` is new. The
+home fixture's two waiting agents carry their asks and new headlines, so the
+rows show a realistic want.
 
 ## Departures every screen shares
 
@@ -66,10 +83,6 @@ approved presentation.
 ## probe
 
 Added state using the `probe` fixture. The harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists. It follows the same visual system as its parent screen.
-
-## drawer
-
-Added state using the `drawer` fixture. The drawer is a state of the home screen the design has no capture of. It follows the same visual system as its parent screen.
 
 ## home
 
@@ -198,7 +211,9 @@ Reference-backed capture of `working` using the `working` fixture. No visual dep
 
 ## devices
 
-Added state using the `devices` fixture. This phone's identity and the devices paired with it. It follows the same visual system as its parent screen.
+Added state using the `devices` fixture. This phone's identity and the devices
+paired with it. The capture moved with the Hosts regrouping; see the
+[hosts](#hosts) entry beside it for the parent screen's re-approval.
 
 ## exited
 
@@ -206,7 +221,29 @@ Reference-backed capture of `exited` using the `exited` fixture. No visual depar
 
 ## hosts
 
-Reference-backed capture of `hosts` using the `hosts` fixture. No visual departure is accepted.
+Reference-backed capture of `hosts` using the `hosts` fixture. Re-approved
+2026-09-14: the machines are read in the groups that decide what can be done
+with them — on this network, through the relay, away and offline — where the
+approved drawing had connected and offline. The grouping is the product's own
+vocabulary rather than a presentation choice: a machine on the same network and
+one across the relay are different things to use, and the words are the ones
+the command line and the desktop already print. The layout, typography,
+surfaces and row hierarchy are the approved ones.
+
+## hosts-groups
+
+Added state using the `hosts-groups` fixture. The four groups the machines are
+read in, filled: one on this network, one across the relay, one nowhere, and
+one more found here and not paired with. It follows the same visual system as
+its parent screen.
+
+## local-network-refused
+
+Added state using the `local-network-refused` fixture. A phone nobody let look
+at the network it is on. By the list alone this is indistinguishable from an
+empty network, and only one of the two can be fixed, so the screen says which
+it is and where the answer is changed. It follows the same visual system as its
+parent screen.
 
 ## new-agent
 
@@ -220,13 +257,52 @@ Reference-backed capture of `offline` using the `offline` fixture. No visual dep
 
 Added state using the `pair-confirm` fixture. The confirmation an amux://pair link arrives at, which never pairs on arrival. It follows the same visual system as its parent screen.
 
+## pair-confirmation
+
+Added state using the `pair-confirmation` fixture. The same confirmation on a
+phone with no account at all, reached by scanning a machine's code across the
+room. The invitation carried the machine's addresses, so nothing about reaching
+this screen went through a relay or an account. It follows the same visual
+system as its parent screen.
+
 ## pin
 
-Reference-backed capture of `pin` using the `pin` fixture. No visual departure is accepted.
+Reference-backed capture of `pin` using the `pin` fixture. Re-approved
+2026-09-14: the screen now names the route the code takes under the machine it
+names, because a code for a machine on this network and one for a machine only
+the relay has seen are different promises. The layout, typography and keypad
+are the approved ones.
+
+Re-approved again on 2026-09-15 in the light appearance, where each key's shadow
+is now a single even one. The keys sit ten points apart and their shadows are
+wider than that, so ten separate pieces of glass laid their shadows over each
+other and the plates picked up a doubled bottom edge the design's own picture
+does not have; the keypad is now declared as one group, which draws each shadow
+once. That also settles a capture that would not repeat itself: composited
+separately, the overlap came out heavier on one key than the run before, over
+the whole ring around it and by up to eleven parts in 255, on a screen where
+nothing had changed. The keys, their spacing, their type and their corners are
+untouched, and the dark appearance is pixel for pixel what it was.
+
+## code-entry
+
+Added state using the `code-entry` fixture. The code screen on a phone nobody
+has signed into, against the machine it found on this network. It is the state
+the free on-ramp actually runs through, and the route line is what makes the
+code legible without an account. It follows the same visual system as its
+parent screen, including the single even key shadows re-approved with it on
+2026-09-15.
 
 ## delete
 
-Reference-backed capture of `delete` using the `delete` fixture. No visual departure is accepted.
+Reference-backed capture of `delete` using the `delete` fixture.
+Re-approved 2026-09-14: the account page behind the sheet heads its
+subscription row `Relay` and says how the subscription was bought, where the
+approved drawing read `Subscription` and `Active · amux.sh`. The sheet itself
+— its question, its three consequences, the typed confirmation and the two
+buttons — is the approved one.
+Re-approved 2026-09-17: the page behind the sheet has a `Remove from This
+Phone` row above Delete Account; the sheet is unchanged.
 
 ## delete-blocked
 
@@ -234,11 +310,29 @@ Added state using the `delete-blocked` fixture. Account deletion blocked by live
 
 ## first-run
 
-Reference-backed capture of `first-run` using the `first-run` fixture. No visual departure is accepted.
+Reference-backed capture of `first-run` using the `first-run` fixture.
+Re-approved 2026-09-14: the empty home leads with pairing and offers an account
+under it, where the approved drawing led with signing in. amux is free on the
+network a phone is already on, and a first screen that asked for an account
+first would teach the opposite. The headline, the layout and the control
+hierarchy — one filled primary, one outlined secondary — are the approved ones.
+
+## found-host
+
+Added state using the `found-host` fixture. The same first launch on a network
+that already has a machine running on it: it is offered by name before anybody
+has typed or signed into anything. It follows the same visual system as its
+parent screen.
 
 ## first-run-paid
 
-Reference-backed capture of `first-run-paid` using the `first-run-paid` fixture. No visual departure is accepted.
+Reference-backed capture of `first-run-paid` using the `first-run-paid` fixture.
+Re-approved 2026-09-14: a signed-in phone with nothing paired reaches the same
+pairing-first empty screen as any other phone, where the approved drawing put
+Subscribe in front of it. Hosts on the network a phone is already on are free,
+so an empty list is never evidence that something has to be bought. With one
+account signed in there is no account question to answer, so the title carries
+no switcher and no avatar.
 
 ## paywall
 
@@ -260,22 +354,41 @@ Reference-backed capture of `sign-in` using the `sign-in` fixture. No visual dep
 
 Added state using the `sign-in-failed` fixture. A sign-in the cloud refuses. It follows the same visual system as its parent screen.
 
+## sign-in-mismatch
+
+Added state using the `sign-in-mismatch` fixture. Signing back into an account
+this phone lists, with amux.sh answering as a different one: the page names both
+addresses, offers `Continue as` the returned account and a quiet Cancel, and
+adds nobody until one is pressed. It follows the same visual system as its
+parent screen.
+
 ## you
 
-Reference-backed capture of `you` using the `you` fixture. No visual departure is accepted.
+Reference-backed capture of `you` using the `you` fixture.
+Re-approved 2026-09-14: the account's first row is headed `Relay` and says
+how the subscription was bought, where the approved drawing headed it
+`Subscription` and said only that it was active. Naming the thing being paid
+for is what makes the row the one place a subscription is bought and read.
+The rest of the page is the approved drawing.
+Re-approved 2026-09-17: `Remove from This Phone` sits between Sign Out and
+Delete Account, taking an account off this phone while leaving it on amux.sh,
+and `Report a Problem` is offered under Help in every build. The same account
+section appears behind the `you-granted`, `delete` and `delete-blocked` states.
 
 ## you-granted
 
-Added state using the `you-granted` fixture. An account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription. It follows the same visual system as its parent screen.
+Added state using the `you-granted` fixture. An account whose access was given
+rather than bought reads differently on this page, and the design catalogue only
+pictured a bought subscription. Its `Relay` row reads `Included with this
+account`. It follows the same visual system as its parent screen.
 
-## store-failure
 
-Added state using the `store-failure` fixture. An unusable SQLite store stops
-the runtime and replaces the entire shell with the exact cause and remedy plus
-one Relaunch action. There is no fleet, conversation, navigation or alternate
-action behind it. The light and dark baselines were reviewed together on
-2026-09-17 before being established.
+## remove-account
 
+Added state using the `remove-account` fixture. Taking a signed-out account off
+the phone, asked over the You page the way deleting one is: what stays on
+amux.sh and on the hosts is said before what the phone lets go of, and nothing
+is typed to confirm it. It follows the same visual system as Delete Account.
 ## dump
 
 Reference-backed capture of `dump` using the `dump` fixture. No visual departure is accepted.
@@ -287,6 +400,12 @@ Reference-backed capture of `shake` using the `shake` fixture. No visual departu
 ## upload-failed
 
 Added state using the `upload-failed` fixture. A report the cloud would not take. It follows the same visual system as its parent screen.
+
+## report-signed-out
+
+Added state using the `report-signed-out` fixture. A report written on a phone
+nobody is signed in on: Send is unavailable and a card above the picture says a
+report needs an account. It follows the same visual system as its parent screen.
 
 ## ax-conversation
 
@@ -319,22 +438,6 @@ Added state using the `home-unreadable` fixture. An agent run by a provider this
 
 Added state using the `home-offline` fixture. The two row states an ordinary fleet keeps below the fold: an agent whose machine is not answering, which names the machine in words instead of drawing a mark, and one whose working inference has expired, which is the only row in the app that draws neither a mark nor a state word. It follows the same visual system as its parent screen.
 
-## cached-fleet-unreachable
-
-Added state using the `cached-fleet-unreachable` fixture. A launch drawn from the account's SQLite store while air is not answering: every remembered agent is listed, unconfirmed and waiting for its machine, and nothing can be sent until it answers. Each row draws the standing its machine last published and that standing's age, so the header counts the agents that needed attention when the phone last heard; air's agent says its machine is offline instead of guessing at a standing. It follows the same visual system as its parent screen.
-
-## cached-fleet-removal
-
-Added state using the `cached-fleet-removal` fixture. The same launch after Studio said two of its agents were gone before the phone lost its connection: the store no longer remembers them, so they are not drawn. The remaining rows keep their stored standing and age. It follows the same visual system as its parent screen.
-
-## cached-chat
-
-Added state using the `cached-chat` fixture. A conversation opened before anything has connected, painted from the window its store kept rather than from a live stream. It follows the same visual system as its parent screen.
-
-## cached-chat-gap
-
-Added state using the `cached-chat-gap` fixture. The same stored conversation after the phone reconnected to a machine that no longer held what was said while it was away: the store kept the rows from before and after, and a missing-history rule sits between them so they are not read as one exchange. It follows the same visual system as its parent screen.
-
 ## small-home
 
 Added state using the `home` fixture. The home screen on the narrowest supported display. It follows the same visual system as its parent screen.
@@ -358,3 +461,61 @@ Added state using the `dictation-denied` fixture. Composer speech recognition de
 ## dictation-unavailable
 
 Added state using the `dictation-unavailable` fixture. Composer speech recognition unavailable state. It follows the same visual system as its parent screen.
+
+## host-away
+
+Added state using the `host-away` fixture. An account with nothing bought whose
+machines the relay can see. The agents are still listed — they exist, and the
+last thing this phone was told about them is still the last thing that was true
+— and every row on a machine the relay will not carry to says it is not live,
+because nothing is arriving. The line above the list names one of those
+machines and what would reach it. It follows the same visual system as its
+parent screen.
+
+## home-signed-out-offline
+
+Added state using the `home-signed-out-offline` fixture. A phone nobody is
+signed into that has lost sight of one of its machines. The agents on it stay
+listed and the machine is named; an account is offered above them as the thing
+that would find it from somewhere else, drawn as an offer rather than as a
+fault. It follows the same visual system as its parent screen.
+
+## home-no-agents
+
+Added state using the `home-no-agents` fixture. Paired with reachable machines
+that are running nothing. The home names what is true, no agents and how many
+hosts, and offers New Agent; it does not offer to pair again, which a phone
+that has just paired would read as its pairing having failed. It follows the
+same visual system as its parent screen.
+
+## home-all-reachable
+
+Added state using the `home-all-reachable` fixture. Every machine reachable.
+Nothing is offered and the top of the screen is the list, which is the ordinary
+morning and what makes the two offers above it conditional rather than
+decorative. It follows the same visual system as its parent screen.
+
+## chat-subscribe
+
+Added state using the `chat-subscribe` fixture. A conversation on a machine the
+relay can see and will not carry agents to. The transcript is the cache and
+stays readable; the composer's place holds the one thing that would make the
+conversation live again, because a box that took a message nothing could
+deliver would be the worse lie. It follows the same visual system as its parent
+screen.
+
+## host-offline
+
+Added state using the `host-offline` fixture. The same unsubscribed account on a
+machine that is simply switched off. Nothing is sold here — no subscription
+reaches a machine that is not there — and what the composer's place offers is
+the one thing that might, which is asking again. It follows the same visual
+system as its parent screen.
+
+## host-not-signed-in
+
+Added state using the `host-not-signed-in` fixture. A machine nothing can reach
+that has never had an account. It is not a subscription away and never was: no
+relay is seeing it, so the row says both facts rather than leaving it looking
+like a machine money would fix. It follows the same visual system as its parent
+screen.

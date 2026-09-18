@@ -31,8 +31,8 @@ mod update;
 pub use ::model::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
-    HostTrustStatus, ProfileId, Progress, Protocol, Summary, SummaryEnvelope, SummaryField,
-    WorkingOn,
+    HostTrustStatus, HostVia, ProfileId, Progress, Protocol, RelayCarrier, Summary,
+    SummaryEnvelope, SummaryField, Tier, WorkingOn,
 };
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DIFF_MIME, DraftAttachment,
@@ -79,9 +79,9 @@ pub fn summary_producer_version(protocol: StructuredProtocol) -> u32 {
 }
 
 pub use self::model::{
-    AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation, AgentMessageSender,
-    AgentPhase, Attention, ClaudeSdkLayer, Connection, FamilyMember, FamilyNeed, FinishedOp,
-    FleetItem, HostState, MessageDigest, Model, ModelRetention, PendingOp, StreamPhase,
-    StreamState, StructuredProtocol, Violation, Why, agent_type_label, display_name_fallback,
-    format_relative_age, message_digest,
+    AccountPrompt, AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation,
+    AgentMessageSender, AgentPhase, Attention, ClaudeSdkLayer, CloudState, Connection,
+    FamilyMember, FamilyNeed, FinishedOp, FleetItem, HostState, MessageDigest, Model,
+    ModelRetention, PendingOp, StreamPhase, StreamState, StructuredProtocol, Violation, Why,
+    agent_type_label, display_name_fallback, format_relative_age, message_digest,
 };

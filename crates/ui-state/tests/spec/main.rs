@@ -30,6 +30,8 @@ mod draft; // Drafts: what a message's attachments become when it is sent
 
 mod connection; // Chapter 1 — Connection: epochs, snapshots, auth expiry
 
+mod cloud_state; // Cloud state, route derivation, and cached remote inventory
+
 mod inventory; // Chapter 2 — Inventory: upserts, unknown types, authority
 
 mod ops; // Chapter 3 — Operations: the Command write surface

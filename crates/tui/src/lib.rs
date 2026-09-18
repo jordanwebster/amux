@@ -16,6 +16,7 @@ pub mod chrome;
 pub mod clipboard;
 pub mod composer;
 pub mod diagnostics;
+mod hosts;
 pub mod keys;
 pub(crate) mod markdown;
 pub mod render;

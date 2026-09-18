@@ -6,9 +6,9 @@
 // stale output) — and must be wrapped in domain types before being used by
 // application code.
 //
-// The amux runtime uses gRPC services for application calls.
-// Host-to-host links use LinkService.Connect, whose bidi stream carries the
-// Message envelope defined below.
+// The amux runtime uses gRPC services for application calls. Host-to-host
+// links exchange length-prefixed Message values on their control stream and
+// carry application channels on separate native streams.
 
 syntax = "proto3";
 
@@ -234,16 +234,15 @@ enum ErrorCode {
 // Transport setup and control
 // ---------------------------------------------------------------------------
 
-// Host-to-host link stream envelope exchanged by LinkService.Connect.
+// Host-to-host control envelope exchanged on the link's control stream.
 message Message {
+  reserved 5 to 7;
+
   oneof body {
     Hello hello = 1;
     HelloAck hello_ack = 2;
     NeighborUp neighbor_up = 3;
     NeighborDown neighbor_down = 4;
-    TunnelOpen tunnel_open = 5;
-    TunnelData tunnel_data = 6;
-    TunnelClose tunnel_close = 7;
     Reauth reauth = 8;
     LinkClose link_close = 9;
   }
@@ -255,6 +254,12 @@ message Hello {
   repeated uint32 supported_protocol_versions = 1;
   Host host = 2;
   repeated Host neighbors = 3;
+  optional string auth_token = 4;
+  // 16 random bytes drawn when the sender's runtime starts and kept for its
+  // life. A link that arrives carrying a different incarnation than an
+  // earlier link from the same host proves that earlier link belongs to a
+  // process that no longer exists, however healthy it still looks.
+  bytes incarnation = 5;
 }
 
 message HelloAck {
@@ -268,6 +273,8 @@ message HelloAccepted {
   uint32 protocol_version = 1;
   Host host = 2;
   repeated Host neighbors = 3;
+  // The acceptor's incarnation; see `Hello.incarnation`.
+  bytes incarnation = 4;
 }
 
 // "I have a direct link to this host." Strictly adjacency: a node never
@@ -282,36 +289,21 @@ message NeighborDown {
   optional string reason = 2;
 }
 
-// Opens a tunnel: the only frame that allocates endpoint state. The reply
-// address (`src`) travels exactly once, here; replies leave on the link the
-// tunnel's frames arrive on, addressed `dst = src`. There is no open-ack —
-// the pinned mTLS handshake inside the tunnel is the acknowledgement, and
-// rejection is TunnelClose.
-message TunnelOpen {
-  // A plain 16-byte UUID minted by the initiator.
-  bytes tunnel_id = 1;
-  // The initiator's host_id: where replies go.
-  bytes src = 2;
-  // The destination host_id. A relay forwards iff it has a direct link to
-  // dst; otherwise the frame is dropped. dst == self delivers locally.
-  bytes dst = 3;
+// Written by the opener as the first bytes of every non-control stream. The
+// destination is routing information only; the pinned handshake inside the
+// stream establishes the caller's authority.
+message StreamPreface {
+  bytes dst = 1;
 }
 
-// Carries tunnel bytes (payload <= 64 KiB). Data for an unknown tunnel_id is
-// a protocol violation by a confused or stale peer: it is dropped without
-// allocating anything, and the link stays up.
-message TunnelData {
-  bytes tunnel_id = 1;
-  bytes dst = 2;
-  bytes payload = 3;
-}
-
-// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
-// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
-// the link they are pinned to.
-message TunnelClose {
-  bytes tunnel_id = 1;
-  bytes dst = 2;
+// A stream reset before acceptance carries one of these refusal reasons.
+enum StreamRefusal {
+  STREAM_REFUSAL_UNSPECIFIED = 0;
+  NO_ROUTE = 1;
+  PAYMENT_REQUIRED = 2;
+  RATE_LIMITED = 3;
+  NOT_ADJACENT = 4;
+  SHUTTING_DOWN = 5;
 }
 
 // Fire-and-forget credential refresh on the cloud link, sent before the
@@ -351,18 +343,6 @@ enum LinkCloseReason {
   LINK_CLOSE_REASON_USER_REVOKED = 8;
 }
 
-// ---------------------------------------------------------------------------
-// Link service
-// ---------------------------------------------------------------------------
-
-service LinkService {
-  // Host-to-host link. The bidi stream IS the link: opening it (after
-  // successful auth + handshake) brings the link up; closing it tears the
-  // link down. Neighbor events and tunnel frames flow inside the Message
-  // envelope after the handshake completes.
-  rpc Connect(stream Message) returns (stream Message);
-}
-
 message Host {
   bytes host_id = 1;
   string name = 2;
@@ -372,6 +352,7 @@ message Host {
   // system it runs, as it named itself when it was built. A host that
   // predates this field says nothing rather than guessing.
   optional string platform = 5;
+  optional bool signed_in = 6;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,9 +425,19 @@ message HostEntry {
   // daemon honestly knows; "never tried / no news" is
   // `!online && last_dial_error` unset, derived client-side if needed.
   optional string last_dial_error = 7;
+  HostVia via = 8;
+  optional bool signed_in = 9;
   // The machine's kind, as it announced itself in the handshake. Unset for a
   // host that has never been adjacent, because nothing else knows it.
-  optional string platform = 8;
+  optional string platform = 10;
+}
+
+enum HostVia {
+  HOST_VIA_UNSPECIFIED = 0;
+  HOST_VIA_DIRECT = 1;
+  HOST_VIA_RELAY = 2;
+  HOST_VIA_SSH = 3;
+  HOST_VIA_OFFLINE = 4;
 }
 
 message Agent {
@@ -462,6 +453,10 @@ message Agent {
   int64 created_at_unix_ms = 10;
   optional AgentParent parent = 11;
   optional WorkingOn working_on = 12;
+  // When the host last saw the agent do anything: a transcript row, an ask,
+  // a tool call. Dated by the host where it happened, so every client orders
+  // and ages agents by the same fact whether or not it reads their streams.
+  int64 last_activity_unix_ms = 16;
   optional AgentSummary summary = 13;
   optional Progress progress = 14;
   uint64 inventory_revision = 15;
@@ -854,13 +849,11 @@ service ProfileService {
   rpc StartPairing(ProfileStartPairingRequest) returns (StartPairingResponse);
   rpc GetPairingStatus(ProfilePairingStatusRequest) returns (GetPairingStatusResponse);
   rpc CancelPairing(ProfileOperation) returns (CancelPairingResponse);
-  rpc PairPeer(ProfilePairPeerRequest) returns (PairPeerResponse);
-  rpc PairPinCloudPeer(ProfilePairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
-  rpc PairQrCloudPeer(ProfilePairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
   rpc BeginPair(ProfileBeginPairRequest) returns (PendingPairResponse);
   rpc ConfirmPair(ProfilePendingPairRequest) returns (GetPeerResponse);
   rpc AbandonPair(ProfilePendingPairRequest) returns (PairingAbandoned);
   rpc GetDeviceIdentity(ProfileRequest) returns (DeviceIdentity);
+  rpc TrustSshPeer(ProfileTrustSshPeerRequest) returns (Empty);
   rpc ListPeers(ProfileRequest) returns (ListPeersResponse);
   rpc GetPeer(ProfileGetPeerRequest) returns (GetPeerResponse);
   rpc Unpair(ProfileUnpairRequest) returns (UnpairResponse);
@@ -890,9 +883,19 @@ enum Observed {
   OBSERVED_CONNECTED = 3;
   OBSERVED_RETRYING = 4;
   OBSERVED_AUTHENTICATION_REQUIRED = 5;
-  OBSERVED_SUBSCRIPTION_REQUIRED = 6;
+  reserved 6;
   OBSERVED_UPDATE_REQUIRED = 7;
   OBSERVED_STARTUP_FAILED = 8;
+}
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_FREE = 1;
+  TIER_PRO = 2;
+}
+enum RelayCarrier {
+  RELAY_CARRIER_UNSPECIFIED = 0;
+  RELAY_CARRIER_QUIC = 1;
+  RELAY_CARRIER_TCP = 2;
 }
 message ProfileInfo {
   string id = 1;
@@ -907,6 +910,8 @@ message ProfileInfo {
   string startup_error = 10;
   bool available = 11;
   optional string minimum_version = 12;
+  Tier tier = 13;
+  RelayCarrier relay_carrier = 14;
 }
 message ListProfilesRequest {}
 message ListProfilesResponse { repeated ProfileInfo profiles = 1; }
@@ -947,20 +952,20 @@ message ProfileStartPairingRequest {
   StartPairingRequest pairing = 3;
 }
 message ProfilePairingStatusRequest { string profile_id = 1; }
-message ProfilePairPeerRequest {
+message ProfileBeginPairRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairPeerRequest pairing = 3;
+  BeginPairRequest pairing = 3;
 }
-message ProfilePairPinCloudPeerRequest {
+message ProfilePendingPairRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairPinCloudPeerRequest pairing = 3;
+  PendingPairRequest pairing = 3;
 }
-message ProfilePairQrCloudPeerRequest {
+message ProfileTrustSshPeerRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairQrCloudPeerRequest pairing = 3;
+  TrustSshPeerRequest pairing = 3;
 }
 message ProfileGetPeerRequest { string profile_id = 1; PeerRef peer = 2; }
 message ProfileUnpairRequest {
@@ -969,7 +974,18 @@ message ProfileUnpairRequest {
   PeerRef peer = 3;
   string reason = 4;
 }
-message ListPairingCandidatesResponse { repeated HostEntry hosts = 1; }
+enum PeerVia {
+  PEER_VIA_UNSPECIFIED = 0;
+  PEER_VIA_DIRECT = 1;
+  PEER_VIA_RELAY = 2;
+  PEER_VIA_SSH = 3;
+}
+message PairingCandidate {
+  HostEntry host = 1;
+  PeerVia via = 2;
+  repeated string addrs = 3;
+}
+message ListPairingCandidatesResponse { repeated PairingCandidate candidates = 1; }
 message ProfileDebugRequest { string profile_id = 1; DebugRequest debug = 2; }
 message GetInfoRequest {}
 message InstallationInfo {
@@ -1169,50 +1185,30 @@ message SshTarget {
   string profile_id = 2;
 }
 
-message PairPeerRequest {
-  PairingIdentity peer = 1;
-
-  oneof reachability {
-    SshTarget ssh_target = 2;
-    string direct_tcp_addr = 3;
-  }
-}
-
-message PairPeerResponse {}
-
-message PairPinCloudPeerRequest {
-  bytes host_id = 1;
-  string pin = 2;
-}
-
-message PairPinCloudPeerResponse {
-  PairingIdentity peer = 1;
-}
-
-message PairQrCloudPeerRequest {
-  bytes host_id = 1;
-  bytes secret = 2;
-}
-
-message PairQrCloudPeerResponse {
-  PairingIdentity peer = 1;
-}
-
 message BeginPairRequest {
   bytes host_id = 1;
   oneof secret {
     string pin = 2;
     bytes qr_secret = 3;
   }
+  repeated string addrs = 4;
 }
 
 message PendingPairResponse {
   bytes token = 1;
   PairingIdentity peer = 2;
+  PeerVia via = 3;
 }
 
 message PendingPairRequest {
   bytes token = 1;
+}
+
+// SSH has already authenticated its peer outside the secret-based pairing
+// protocol, so its identity commit remains a separate, SSH-only operation.
+message TrustSshPeerRequest {
+  PairingIdentity peer = 1;
+  SshTarget ssh_target = 2;
 }
 
 message PeerRef {
@@ -1226,8 +1222,12 @@ message PeerReachability {
   oneof kind {
     Empty cloud = 1;
     SshTarget ssh_target = 2;
-    string direct_tcp_addr = 3;
+    DirectReachability direct = 3;
   }
+}
+
+message DirectReachability {
+  repeated string addrs = 1;
 }
 
 message PeerEntry {
@@ -1296,11 +1296,11 @@ message StartPairingRequest {
   }
 
   Mode mode = 1;
-  bool require_lan_direct = 2;
   // Operator-chosen reusable PIN for unattended demos. When set, `mode`
   // must be PIN; the session lasts `ttl_seconds` instead of the one-shot
   // window and is neither consumed by success nor locked out by failures.
   optional DemoPairing demo = 3;
+  optional uint64 ttl_seconds = 4;
 }
 
 message DemoPairing {
@@ -1311,8 +1311,8 @@ message DemoPairing {
 message StartPairingResponse {
   PairingIdentity identity = 1;
   uint64 ttl_seconds = 2;
-  optional uint32 tcp_port = 3;
-  string cloud_url = 4;
+  repeated string addrs = 3;
+  optional string cloud_url = 4;
 
   oneof secret {
     string pin = 10;
@@ -1347,15 +1347,4 @@ message ProjectEntry {
   string path = 1;
   string name = 2;
   optional int64 last_used_unix_ms = 3;
-}
-
-message ProfileBeginPairRequest {
-  string operation_id = 1;
-  string profile_id = 2;
-  BeginPairRequest pairing = 3;
-}
-message ProfilePendingPairRequest {
-  string operation_id = 1;
-  string profile_id = 2;
-  PendingPairRequest pairing = 3;
 }

@@ -68,6 +68,7 @@ async fn exercise() {
         net,
         listener,
         [("laptop".into(), "laptop".into())].into(),
+        ["default".into()].into(),
         agents,
     );
     let journey = async {
@@ -76,18 +77,16 @@ async fn exercise() {
             .ack(json!({"StartQrPairing":{"daemon":"laptop"}}))
             .await;
         let qr = node::parse_qr_pairing_payload(qr["qr"].as_str().unwrap()).unwrap();
-        assert_eq!(qr.cloud_url, client.cloud_url());
+        assert_eq!(qr.cloud_url.as_deref(), Some(client.cloud_url()));
         wait_for(
             &mut runtime,
             "relay host discovery before pairing",
             |model| model.host_online(qr.host_id),
         )
         .await;
-        client
-            .admin()
-            .pair_qr_cloud_peer(qr.host_id, qr.secret)
-            .await
-            .unwrap();
+        let admin = client.admin();
+        let pending = admin.begin_pair_qr(&qr).await.unwrap();
+        admin.confirm_pair(pending).await.unwrap();
         let sdk = ready
             .agents
             .iter()

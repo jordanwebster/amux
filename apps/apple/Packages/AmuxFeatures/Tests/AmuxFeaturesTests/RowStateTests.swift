@@ -61,7 +61,7 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(state, .working)
         XCTAssertEqual(state.word, "Working")
         XCTAssertNil(state.elaboration)
-        XCTAssertEqual(state.attentionMark, .idle, "working draws no mark")
+        XCTAssertFalse(state.needsYou, "working is not drawn in the accent")
     }
 
     func testAnIdleAgentKeepsItsWord() {
@@ -101,18 +101,18 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(state.spoken, "gemini, update amux to open it")
     }
 
-    /// The one mark left in the vocabulary, for the one state that wants you.
-    func testOnlyADemandDrawsAMark() {
+    /// The one accent left in the vocabulary, for the one state that wants you.
+    func testOnlyADemandIsDrawnInTheAccent() {
         for why in [Why.permission, .question] {
-            XCTAssertEqual(state(.needsYou(why: why)).attentionMark, .needsYou(why: why))
-            XCTAssertNil(state(.needsYou(why: why)).word, "the mark has already said it")
+            XCTAssertTrue(state(.needsYou(why: why)).needsYou)
+            XCTAssertNil(state(.needsYou(why: why)).word, "the row says what is wanted instead")
         }
         for quiet in [Attention.idle, .working, .unknown] {
-            XCTAssertEqual(state(quiet).attentionMark, .idle, "\(quiet) draws nothing")
+            XCTAssertFalse(state(quiet).needsYou, "\(quiet) draws nothing")
         }
-        XCTAssertEqual(
-            state(.needsYou(why: .finished)).attentionMark, .idle,
-            "a finished turn says so in words, not with a tick")
+        XCTAssertFalse(
+            state(.needsYou(why: .finished)).needsYou,
+            "a finished turn says so in words, not in the accent")
     }
 
     // MARK: - The state that deliberately says nothing
@@ -129,7 +129,7 @@ final class RowStateTests: XCTestCase {
         XCTAssertNil(state.word)
         XCTAssertNil(state.elaboration)
         XCTAssertNil(state.spoken)
-        XCTAssertEqual(state.attentionMark, .idle)
+        XCTAssertFalse(state.needsYou)
     }
 
     // MARK: - The order they are read in
@@ -168,6 +168,45 @@ final class RowStateTests: XCTestCase {
     func testAnUnknownMachineIsNotCalledOffline() {
         let unheardOf = RowState(row: row(attention: .working), host: nil)
         XCTAssertEqual(unheardOf, .working)
+    }
+
+    // MARK: - A machine the relay can see and will not carry to
+
+    /// An agent on an away machine stays on the list and says it is not being
+    /// watched. Deleting the row would claim the agent had stopped existing
+    /// because somebody has not paid, and leaving it saying "Working" would be
+    /// the phone asserting something no stream is telling it.
+    func testAnAwayMachineLeavesTheRowListedAndNotLive() {
+        let away = RowState(
+            row: row(attention: .working), host: host(online: true), reach: .away)
+
+        XCTAssertEqual(away, .hostAway("Studio"))
+        XCTAssertEqual(away.word, "Studio away")
+        XCTAssertEqual(away.elaboration, "not live")
+        XCTAssertEqual(away.spoken, "Studio is away, not live")
+        XCTAssertEqual(away.name, "host-away")
+    }
+
+    /// A machine that is not there outranks one the relay can see: the row
+    /// says the machine is offline, and nothing anywhere near it offers to
+    /// sell a route to a machine that is switched off.
+    func testAMachineThatIsNotThereIsNeverCalledAway() {
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: false), reach: .offline),
+            .hostOffline("Studio"))
+    }
+
+    /// A machine on this network or across a relay this account may use is
+    /// live, and the row says whatever the agent is doing.
+    func testAReachableMachineLetsTheAgentSpeakForItself() {
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: true),
+                     reach: .onThisNetwork),
+            .working)
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: true),
+                     reach: .throughTheRelay),
+            .working)
     }
 
     // MARK: - The vocabulary a driver reads

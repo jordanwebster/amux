@@ -64,9 +64,11 @@ struct FactsStrip: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Glass, like the composer it stands on: the two are the bottom
+        // chrome of one conversation and read as one family of surfaces.
         .frosted(
             RoundedRectangle(cornerRadius: open ? 24 : 21, style: .continuous),
-            wash: open ? 0.88 : Glass.wash)
+            wash: open ? 0.88 : Glass.wash, as: .glass)
         .moving(value: open)
         .accessibilityElement(children: .contain)
         .identified("facts", value: open ? "open" : "folded")

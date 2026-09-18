@@ -74,7 +74,14 @@ def runner(topology: str):
                 raise RuntimeError("phone topologies must match the default cloud in the phone's profile config")
             print(f"testnet: cloud {ready['cloud_url']} assigns relay {ready['relay']}, "
                   f"control {ready['control']}", flush=True)
-            yield ready
+            # Every UI test run inside this block launches the app scoped to
+            # these machines. xcodebuild hands TEST_RUNNER_X to the test as X.
+            scope = "TEST_RUNNER_AMUX_TESTNET_HOSTS"
+            os.environ[scope] = ",".join(daemon["host_id"] for daemon in ready["daemons"])
+            try:
+                yield ready
+            finally:
+                os.environ.pop(scope, None)
             control(ready["control"], "Shutdown")
             if process.wait(timeout=30) != 0:
                 raise SystemExit("the test relay failed during shutdown")

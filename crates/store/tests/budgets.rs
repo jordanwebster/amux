@@ -168,6 +168,7 @@ fn durable_view_survives_derived_rebuilds_and_reports_external_changes() {
                 generations(&rebuilt),
                 FleetDelta::AgentUp {
                     agent: Agent {
+                        last_activity: now(),
                         id: agent_id(),
                         host_id,
                         name: Some("removed agent".to_owned()),
@@ -486,15 +487,15 @@ fn recording_a_chat_open_only_changes_its_recency() {
         let raw = Connection::open(&path).unwrap();
         raw.execute(
             "INSERT INTO agent(id,host_id,kind,protocol,name,command,working_dir,args,readonly,
-                created_at,membership,revision,absent_since,last_opened_at)
-             VALUES (?1,'host',X'01',1,'name','command','/work',X'02',0,123,0,9,NULL,NULL)",
+                created_at,last_activity,membership,revision,absent_since,last_opened_at)
+             VALUES (?1,'host',X'01',1,'name','command','/work',X'02',0,123,123,0,9,NULL,NULL)",
             [&id],
         )
         .unwrap();
         let unchanged = "quote(host_id)||'|'||quote(kind)||'|'||quote(protocol)||'|'||
             quote(name)||'|'||quote(command)||'|'||quote(working_dir)||'|'||quote(args)||'|'||
             quote(readonly)||'|'||quote(parent_host_id)||'|'||quote(parent_id)||'|'||
-            quote(created_at)||'|'||quote(working_on)||'|'||quote(working_on_at)||'|'||
+            quote(created_at)||'|'||quote(last_activity)||'|'||quote(working_on)||'|'||quote(working_on_at)||'|'||
             quote(membership)||'|'||quote(revision)||'|'||quote(absent_since)";
         let before: String = raw
             .query_row(
@@ -539,8 +540,8 @@ fn maintenance_restores_a_small_store_target_in_lru_order() {
             let id = model::AgentId::from_u128(index).to_string();
             raw.execute(
                 "INSERT INTO agent(id,host_id,kind,protocol,command,working_dir,args,readonly,
-                    created_at,membership,revision,last_opened_at)
-                 VALUES (?1,'host',X'01',1,'command','/work',X'02',0,0,0,1,?2)",
+                    created_at,last_activity,membership,revision,last_opened_at)
+                 VALUES (?1,'host',X'01',1,'command','/work',X'02',0,0,0,0,1,?2)",
                 params![id, opened],
             )
             .unwrap();
@@ -840,9 +841,9 @@ fn large_store_opens_without_data_proportional_work_and_refuses_writes_at_reserv
                  VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000
              )
              INSERT INTO agent(id,host_id,kind,protocol,name,command,working_dir,args,
-                 readonly,created_at,membership,revision)
+                 readonly,created_at,last_activity,membership,revision)
              SELECT printf('fleet-%06d',x),'large-host',X'00',1,
-                 printf('fleet agent %06d',x),'command','/work',X'00',0,0,0,x FROM n;
+                 printf('fleet agent %06d',x),'command','/work',X'00',0,0,0,0,x FROM n;
              PRAGMA wal_checkpoint(TRUNCATE);",
         )
         .unwrap();

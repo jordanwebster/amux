@@ -1,0 +1,132 @@
+# test: free_tier
+# description: A free cloud link keeps presence while refusing remote agents, then becomes live after a tier refresh
+
+## Environment
+
+config:
+  name: relay
+  host_name: relay
+  tcp_port: 0
+  cloud_relay: true
+  accounts:
+    - name: alice
+      tier: free
+
+config:
+  name: server_a
+  host_name: host-a
+  cloud_account: alice
+  cloud_refresh_secs: 1
+
+config:
+  name: server_b
+  host_name: host-b
+  cloud_account: alice
+  cloud_refresh_secs: 1
+
+directory:
+  name: dir_b
+
+terminal:
+  name: Relay
+  config: relay
+
+terminal:
+  name: A
+  config: server_a
+
+terminal:
+  name: B
+  config: server_b
+  cwd: dir_b
+
+terminal:
+  name: PairA
+  config: server_a
+
+terminal:
+  name: PairB
+  config: server_b
+
+## Test
+
+@Relay
+> amux server start --cloud --foreground
+@@sleep 500
+
+@B
+> amux new test-agent --name away-agent
+> hello before free
+hello before free
+echo: hello before free
+
+# Pairing itself is a paid relay operation. Grant it only for fixture setup;
+# the actual proof starts after the account and both links are free again.
+@@tier alice pro
+
+@PairA
+> amux profiles
+@@retry 10000 100
+@@contains bound / connected (pro, quic)
+
+@PairB
+> amux profiles
+@@retry 10000 100
+@@contains bound / connected (pro, quic)
+
+@PairB
+> amux pair
+@@capture pairing_pin Pairing PIN:
+PIN expires in 5 minutes.
+@@capture direct_addresses LAN direct addresses:
+Pairing mode active for 5 minutes.
+
+@PairA
+> amux pair host-b
+> $pairing_pin
+@@sleep 1000
+@@capture-contains paired_peer Paired with
+
+@PairB
+@@sleep 500
+Pairing mode ended.
+
+@A
+> amux list
+@@retry 8000 200
+@@contains away-agent
+
+# Force both connector links to fetch the fixture's restored free tier without
+# restarting either daemon. From this point the only transition is free to pro.
+@@tier alice free
+
+@Relay
+@@terminate
+> amux server start --cloud --foreground
+@@sleep 500
+
+@A
+> amux profiles
+@@retry 10000 100
+@@contains bound / connected (free, quic)
+
+> amux peer list
+@@retry 10000 100
+@@contains away
+@@contains host-b
+
+> amux list
+@@retry 10000 100
+@@contains Cloud subscription required
+@@contains host-b
+
+@@tier alice pro
+
+> amux peer list
+@@retry 10000 100
+@@contains relay
+@@contains host-b
+
+> amux list
+@@retry 10000 100
+@@contains away-agent

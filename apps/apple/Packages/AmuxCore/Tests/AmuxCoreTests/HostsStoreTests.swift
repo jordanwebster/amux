@@ -43,11 +43,118 @@ final class HostsStoreTests: XCTestCase {
         .fleet(Fleet(epoch: 1, agents: [], hosts: hosts, reconciled: true))
     }
 
-    private func host(_ id: HostId, _ name: String, online: Bool, platform: String? = "macOS")
-        -> HostState
-    {
+    private func host(
+        _ id: HostId, _ name: String, online: Bool, platform: String? = "macOS",
+        via: HostVia = .offline, signedIn: Bool? = nil
+    ) -> HostState {
         HostState(
-            entry: HostEntry(id: id, name: name, online: online, platform: platform), epoch: 1)
+            entry: HostEntry(
+                id: id, name: name, online: online, platform: platform, via: via,
+                signedIn: signedIn),
+            epoch: 1)
+    }
+
+    // MARK: - The four groups
+
+    /// A route is not a degree of goodness. Which group a machine is in is the
+    /// route this phone holds to it, and each group is a different thing that
+    /// can be done with the machine rather than a worse version of the last.
+    func testEachRouteIsItsOwnGroup() {
+        let hosts = store()
+        hosts.apply(fleet([
+            host(studio, "Studio", online: true, via: .direct),
+            host(mini, "mini", online: true, via: .relay),
+            host(air, "air", online: false, via: .offline),
+        ]))
+        XCTAssertEqual(hosts.hosts(.onThisNetwork).map(\.name), ["Studio"])
+        XCTAssertEqual(hosts.hosts(.throughTheRelay).map(\.name), ["mini"])
+        XCTAssertEqual(hosts.hosts(.away).map(\.name), [])
+        XCTAssertEqual(hosts.hosts(.offline).map(\.name), ["air"])
+    }
+
+    /// The relay can see the machine and this link may not tunnel to it. That
+    /// is "away": not offline, because it is plainly there, and not reachable,
+    /// because nothing started on it would run.
+    func testAFreeLinkPutsARelaysMachinesAway() {
+        let hosts = store()
+        hosts.apply(fleet([
+            host(studio, "Studio", online: true, via: .direct),
+            host(mini, "mini", online: true, via: .relay, signedIn: true),
+        ]))
+        hosts.apply(.cloudState(.connected(tier: .free, carrier: .quic)))
+
+        XCTAssertEqual(hosts.hosts(.away).map(\.name), ["mini"])
+        // The machine on the same network is untouched: nothing about it goes
+        // through the relay, so nothing about it is a question of money.
+        XCTAssertEqual(hosts.hosts(.onThisNetwork).map(\.name), ["Studio"])
+        XCTAssertEqual(hosts.hosts(.throughTheRelay).map(\.name), [])
+    }
+
+    /// A machine that says it has no account is not on the relay at all, so
+    /// nothing about it is worth asking anybody for money over.
+    func testAMachineThatIsNotSignedInIsNeverAway() {
+        let hosts = store()
+        hosts.apply(fleet([host(mini, "mini", online: false, via: .offline, signedIn: false)]))
+        hosts.apply(.cloudState(.connected(tier: .free, carrier: .quic)))
+
+        XCTAssertEqual(hosts.hosts(.away).map(\.name), [])
+        XCTAssertEqual(hosts.hosts(.offline).map(\.name), ["mini"])
+    }
+
+    /// Offers are grouped by their own route, because where a machine is has
+    /// the same answer whether or not any trust has been written yet.
+    func testAnOfferIsGroupedWhereTheMachineIs() {
+        let hosts = store()
+        hosts.apply(.discovered([
+            HostEntry(
+                id: mini, name: "mini", online: true, trustStatus: .untrustedButOnline,
+                via: .direct),
+            HostEntry(
+                id: air, name: "air", online: true, trustStatus: .untrustedButOnline,
+                via: .relay),
+        ]))
+        XCTAssertEqual(hosts.candidates(.onThisNetwork).map(\.name), ["mini"])
+        XCTAssertEqual(hosts.candidates(.throughTheRelay).map(\.name), ["air"])
+    }
+
+    /// Two known facts at once: the advertisement is on this network and no
+    /// link to the machine stands. Worth saying because the cause is almost
+    /// never the machine.
+    func testAMachineCanBeFoundHereAndStillNotAnswer() {
+        let hosts = store()
+        hosts.apply(fleet([host(studio, "Studio", online: false, via: .offline)]))
+        XCTAssertEqual(hosts.foundButUnreachable, [])
+
+        hosts.apply(.discovered([
+            HostEntry(
+                id: studio, name: "Studio", online: true, trustStatus: .untrustedButOnline,
+                via: .direct),
+        ]))
+        XCTAssertEqual(hosts.foundButUnreachable, [studio])
+    }
+
+    /// A record that names no route claims no reachability. Reading silence as
+    /// anything else would invent a way to a machine nothing has reached.
+    func testARecordThatNamesNoRouteIsOffline() throws {
+        let json = """
+            {"id":"40000000-0000-0000-0000-000000000001","name":"Studio","online":true,
+             "version":null,"capabilities":null,"trust_status":"trusted",
+             "last_dial_error":null,"platform":null}
+            """
+        let entry = try JSONDecoder().decode(HostEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.via, .offline)
+        XCTAssertNil(entry.signedIn)
+    }
+
+    func testARouteAndAnAccountFactAreReadOffTheWire() throws {
+        let json = """
+            {"id":"40000000-0000-0000-0000-000000000001","name":"Studio","online":true,
+             "version":null,"capabilities":null,"trust_status":"trusted",
+             "last_dial_error":null,"platform":null,"via":"direct","signed_in":false}
+            """
+        let entry = try JSONDecoder().decode(HostEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.via, .direct)
+        XCTAssertEqual(entry.signedIn, false)
     }
 
     func testReachableMachinesComeFirstThenTheAlphabet() {

@@ -152,7 +152,9 @@ pub fn load(path: &Path) -> Result<Config> {
         host_name: resolved.installation.host_name,
         cloud_url: resolved.profile.cloud_url,
         socket_path: resolved.profile.socket_path,
-        tcp_port: resolved.profile.tcp_port,
+        tcp_port: None,
+        udp_port: None,
+        lan: resolved.profile.lan,
         state_path: resolved.profile.state_path,
         data_dir: resolved.profile.data_dir,
         reports_dir: resolved.installation.reports_dir,
@@ -285,6 +287,29 @@ pub fn local_configuration(path: Option<&Path>, selector: Option<&str>) -> Resul
     let config = load(&config_path(&installation, &info)?)?;
     config.validate()?;
     Ok(config)
+}
+
+/// Connected entitlement for the profile selected by this resolved config.
+pub async fn current_tier(config: &Config) -> Result<Option<node::Tier>> {
+    let Some(path) = config.path.as_deref() else {
+        return Ok(None);
+    };
+    let resolved = node::load_profile_config(&std::fs::canonicalize(path)?)?;
+    let mut front = crate::front_door::connect(&resolved.installation, true).await?;
+    let profiles = directory(&mut front).await?;
+    let Some(profile) = profiles
+        .iter()
+        .find(|profile| profile.id == resolved.profile_id.to_string())
+    else {
+        return Ok(None);
+    };
+    Ok(
+        match rpc::Tier::try_from(profile.tier).unwrap_or(rpc::Tier::Unspecified) {
+            rpc::Tier::Free => Some(node::Tier::Free),
+            rpc::Tier::Pro => Some(node::Tier::Pro),
+            rpc::Tier::Unspecified => None,
+        },
+    )
 }
 
 /// Record the profile a command has settled on, before it does its work.
@@ -506,8 +531,10 @@ pub async fn login(
     // A successful login is an explicit selection, even if cloud connection
     // establishment is still in progress.
     remember(&last_used(installation), &info.id)?;
-    println!("Logged in:");
-    print_profile(&info);
+    println!(
+        "Signed in as {}. The relay shows which hosts are up; a subscription carries agents through it. Hosts on your network and over SSH work without either.",
+        info.email
+    );
     Ok(())
 }
 
@@ -624,7 +651,8 @@ mod tests {
                 state_path: paths.state_path.clone(),
                 data_dir: paths.data_dir.clone(),
                 cloud_url: node::Config::default().cloud_url,
-                tcp_port: None,
+                lan: Default::default(),
+                cloud_refresh_secs: None,
             })
             .unwrap(),
         )
@@ -692,7 +720,8 @@ mod tests {
                         state_path: paths.state_path,
                         data_dir: paths.data_dir,
                         cloud_url: node::Config::default().cloud_url,
-                        tcp_port: None,
+                        lan: Default::default(),
+                        cloud_refresh_secs: None,
                     })
                     .unwrap(),
                 )

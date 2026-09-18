@@ -25,8 +25,8 @@ use uuid::Uuid;
 use super::lifecycle::{
     CreateAgentError, RenameAgentError, abort_server_suspend, attach_summarizer,
     commit_server_suspend, create_agent_record, delete_local_agent, prepare_server_suspend,
-    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
-    spawn_summarizer_publication_loop, withdraw_agent,
+    rename_local_agent_record, resume_agents, shutdown_server, spawn_activity_publisher,
+    spawn_session_event_loop, spawn_summarizer_publication_loop, withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
@@ -136,6 +136,7 @@ impl AgentRuntime {
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
         spawn_summarizer_publication_loop(state.clone(), summarizer_rx, host_id);
+        spawn_activity_publisher(&state, host_id);
         let artifact_sweeper = crate::agents::spawn_artifact_sweeper(artifact_owners.clone());
         Ok(Arc::new(Self {
             state,
@@ -196,6 +197,7 @@ impl AgentRuntime {
                 session,
                 None,
                 summarizer,
+                None,
             )
             .map_err(anyhow::Error::msg)?;
         if let Some(summarizer) = state
@@ -238,6 +240,7 @@ impl AgentRuntime {
                 session,
                 None,
                 summarizer,
+                None,
             )
             .map_err(|message| ProtocolError::ServerError { message })?;
         if let Some(summarizer) = state
@@ -283,6 +286,7 @@ impl AgentRuntime {
                 session,
                 None,
                 summarizer,
+                None,
             )
             .map_err(protocol_error)?;
         if let Some(summarizer) = state
@@ -315,6 +319,7 @@ impl AgentRuntime {
     ) -> Result<Agent, ProtocolError> {
         use crate::agents::codex::CodexBackend;
         use crate::agents::{AgentBackend, AgentKind, AgentRecord};
+        let created_at = chrono::Utc::now();
         let record = AgentRecord {
             id: Uuid::new_v4(),
             host_id: self.host_id,
@@ -324,7 +329,8 @@ impl AgentRuntime {
             kind: AgentKind::Codex,
             readonly: false,
             args: Vec::new(),
-            created_at: chrono::Utc::now(),
+            created_at,
+            last_activity: created_at,
             parent: None,
             working_on: None,
             summary: None,
@@ -350,6 +356,7 @@ impl AgentRuntime {
                 session,
                 None,
                 summarizer,
+                None,
             )
             .map_err(|message| ProtocolError::ServerError { message })?;
         if let Some(summarizer) = state
@@ -977,6 +984,7 @@ impl LocalAgentHost for AgentRuntime {
                             session,
                             None,
                             summarizer,
+                            None,
                         ) {
                             Ok(announce) => {
                                 if let Some(context) = state.local_agents.get_mut(&agent_id) {
@@ -2317,6 +2325,7 @@ mod suspend_tests {
         let host = host(root.path());
         let original_id = Uuid::new_v4();
         let agent = SuspendedAgent::TestAgent {
+            last_activity: None,
             agent_id: original_id,
             name: Some("consumed-before-start".to_string()),
             command: crate::agents::TEST_ECHO_COMMAND.to_string(),

@@ -80,7 +80,6 @@ public enum Fixtures {
         Built(.run, "cached-chat"),
         Built(.run, "cached-chat-gap"),
         Built(.homeQuiet, "home-quiet"),
-        Built(.drawer, "drawer"),
         Built(.run, "run"),
         Built(.run, "host-lost"),
         Built(.typing, "typing"),
@@ -116,9 +115,11 @@ public enum Fixtures {
         Built(.firstRunPaid, "first-run-paid"),
         Built(.signIn, "sign-in"),
         Built(.signIn, "sign-in-failed"),
+        Built(.signIn, "sign-in-mismatch"),
         Built(.profiles, "profiles"),
         Built(.you, "you"),
         Built(.you, "you-granted"),
+        Built(.you, "remove-account"),
         Built(.delete, "delete"),
         Built(.delete, "delete-blocked"),
         Built(.paywall, "paywall"),
@@ -128,14 +129,27 @@ public enum Fixtures {
         Built(.paywall, "paywall-unconfirmed"),
         Built(.hosts, "hosts"),
         Built(.hosts, "devices"),
+        Built(.hosts, "hosts-groups"),
+        Built(.hosts, "local-network-refused"),
+        Built(.hosts, "host-not-signed-in"),
+        Built(.home, "host-away"),
+        Built(.home, "home-signed-out-offline"),
+        Built(.home, "home-all-reachable"),
+        Built(.home, "home-no-agents"),
+        Built(.run, "chat-subscribe"),
+        Built(.offline, "host-offline"),
         Built(.pin, "pin"),
+        Built(.pin, "code-entry"),
         Built(.pairConfirm, "pair-confirm"),
+        Built(.pairConfirm, "pair-confirmation"),
+        Built(.firstRun, "found-host"),
         Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
         Built(.storeFailure, "store-failure"),
         Built(.shake, "shake"),
         Built(.dump, "dump"),
         Built(.dump, "upload-failed"),
+        Built(.dump, "report-signed-out"),
     ]
 
     /// The screens the design catalogue describes, in its own order.
@@ -151,9 +165,6 @@ public enum Fixtures {
             // Nothing blocked and nothing unread: the exceptions line appears
             // only because one machine is actually unreachable.
             States.open(bundle, agents: Scenario.settledAgents, unread: Scenario.allRead)
-        },
-        Fixture(id: "drawer", screen: .drawer) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
 
         // 2 · A conversation
@@ -413,6 +424,14 @@ public enum Fixtures {
             States.open(bundle)
             States.trusted(bundle)
         },
+        // Taking an account off the phone, asked over the page: the one
+        // signed out of, which is removed from its own row. What stays on
+        // amux.sh is said before what this phone lets go of.
+        Fixture(id: "remove-account", screen: .you, accounts: Fixture.several,
+                removing: Fixture.several[2].id) { bundle in
+            States.open(bundle)
+            States.trusted(bundle)
+        },
         // Giving up an account, asked over the page it was asked from. The
         // address is already typed, because what the button does once it is
         // typed is the whole point of the screen; the subscription renews, so
@@ -440,6 +459,12 @@ public enum Fixtures {
             States.trusted(bundle)
         },
         Fixture(id: "first-run", screen: .firstRun, cloud: .firstRun, accounts: []),
+        // The same first launch on a network with a host already running on
+        // it. Nothing has been typed and nobody has signed in: the machine is
+        // simply there, with the one thing there is to do with it.
+        Fixture(id: "found-host", screen: .firstRun, cloud: .firstRun, accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+        },
         Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun, accounts: []),
         Fixture(id: "first-run-paid", screen: .firstRunPaid, cloud: .unsubscribed,
                 accounts: [Fixture.unsubscribed]),
@@ -480,6 +505,11 @@ public enum Fixtures {
     /// has to send somebody out of the app.
     static let appStoreSubscriptions = URL(
         string: "https://apps.apple.com/account/subscriptions")!
+
+    /// An account amux.sh signed somebody in as that this phone has never
+    /// listed.
+    static let stranger = SignedInAccount(
+        id: AccountId("stranger"), email: "jw@example.com", displayName: "JW")
 
     /// The accounts of the two deletion states: the same phone the You page
     /// shows, with the account being given up paying a subscription that is
@@ -532,6 +562,103 @@ public enum Fixtures {
             States.offering(bundle)
             States.offered(bundle)
         },
+        // The same landing on a phone with no account at all, reached by
+        // scanning a machine's code across the room. The invitation carried
+        // the machine's addresses, so nothing about this needed an account —
+        // which is the whole claim, and the screen has to be able to show it.
+        Fixture(id: "pair-confirmation", screen: .pairConfirm, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+            States.offered(bundle)
+        },
+        // Half a code typed on a phone nobody has signed into, against the
+        // machine it found on this network. The route is named because it is
+        // what makes this code workable with no account behind it.
+        Fixture(id: "code-entry", screen: .pin, cloud: .firstRun, accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+            bundle.pairing.open(machine: Scenario.foundNearby)
+            bundle.pairing.enter("419")
+        },
+        // The machines in the groups that decide what can be done with them:
+        // one on the same network, one across the relay, one nowhere, and one
+        // more found here and not paired with. The link is on a paid tier, so
+        // a machine the relay can see is a machine this phone can use.
+        Fixture(id: "hosts-groups", screen: .hosts) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+            States.offering(bundle, [Scenario.foundNearby])
+            States.trusted(bundle)
+        },
+        // A machine nothing can reach that has never had an account. It is
+        // not a subscription away and never was: no relay is seeing it, so
+        // offering to sell one would be selling a fix that is not one. The row
+        // says both facts, which is the only way to tell it apart from a
+        // machine a subscription would reach.
+        Fixture(id: "host-not-signed-in", screen: .hosts) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts + [Scenario.neverSignedIn])
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+            States.trusted(bundle)
+        },
+        // An account with nothing bought, whose machines the relay can see.
+        // The agents are still listed — they exist, and the last thing this
+        // phone was told about them is still the last thing that was true —
+        // and every row says it is not live, because nothing is arriving. The
+        // line above the list names a machine and what would reach it.
+        Fixture(id: "host-away", screen: .home, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
+        },
+        // A phone nobody is signed into that has lost sight of one of its
+        // machines. The agents on it stay listed and the machine is named; the
+        // account is offered under that, as the thing that would find it from
+        // somewhere else, and not as something that has gone wrong.
+        Fixture(id: "home-signed-out-offline", screen: .home, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+        },
+        // Every machine reachable. Nothing is offered, nothing is sold and the
+        // top of the screen is the list — which is the ordinary morning, and
+        // the state that proves the two offers above are conditional rather
+        // than decorative.
+        Fixture(id: "home-all-reachable", screen: .home) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+        },
+        // Paired and nothing started yet. The phone has done the pairing, so
+        // the home says what comes next rather than offering to pair again.
+        Fixture(id: "home-no-agents", screen: .home) { bundle in
+            States.open(bundle, agents: [], hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+        },
+        // Opening one of those agents. The transcript is the cache and stays
+        // readable; where the composer would be there is the one thing that
+        // would make this conversation live again, because a box that took a
+        // message nothing could deliver would be the worse lie.
+        Fixture(id: "chat-subscribe", screen: .run, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.open(
+                bundle, hosts: Scenario.reachableHosts, entries: Transcript.codexTurn,
+                agent: Scenario.agentId("spec-suite"), session: Sessions.codex())
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
+        },
+        // The same account, and a machine that is simply not there. Nothing is
+        // sold here: no subscription reaches a machine that is switched off,
+        // and the screen offers the one thing that might — asking again.
+        Fixture(id: "host-offline", screen: .offline, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.hostLost(bundle)
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
+        },
+        // A phone nobody let look at the network it is on. Indistinguishable
+        // from an empty network by the list alone, which is why the screen
+        // says which it is and where the answer can be changed.
+        Fixture(id: "local-network-refused", screen: .hosts, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.localNetwork(bundle, .denied)
+        },
         // The host went away mid-turn. The feed stays readable and says so.
         // The same state the `offline` screen is photographed in: one is the
         // design's screen and one is the state list's, and they are one
@@ -573,6 +700,18 @@ public enum Fixtures {
                 extra: [.opResult(OpResult(
                     op: OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA11")!),
                     outcome: .failed(refusal)))])
+        },
+        // A report written with nobody signed in. A report goes to the
+        // person's own account, so there is nowhere to send this one, and the
+        // screen says so above the picture rather than after Send.
+        Fixture(id: "report-signed-out", screen: .dump, cloud: .firstRun, accounts: [],
+                report: Fixture.Reporting(
+                    note: "Queued message stays on screen\nafter sending",
+                    marks: [ReportMark(
+                        x: 24, y: 236, width: 354, height: 30,
+                        note: "this row never leaves once the\nmessage has gone")])
+        ) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
         // The report could not be sent. The draft is not lost.
         Fixture(id: "upload-failed", screen: .dump,
@@ -620,6 +759,12 @@ public enum Fixtures {
                 cloud: ScriptedCloudState(signIn: .refused(Fixtures.refusedSignIn),
                                           entitlement: .none, token: nil),
                 signIn: .failed(Fixtures.refusedSignIn)),
+        // Signing back into the account this phone lists as signed out, and
+        // the browser answering as somebody else. Nothing is added until the
+        // person says which account they meant.
+        Fixture(id: "sign-in-mismatch", screen: .signIn, accounts: Fixture.several,
+                signIn: .mismatched(wanted: Fixture.several[2].account, got: Fixtures.stranger),
+                signInIntent: .returning(Fixture.several[2].account)),
         // A machine on the account running a newer amux than the phone: one of
         // its agents arrives under a provider name this build has never heard
         // of. It is listed under that name, said to be unreadable, and the

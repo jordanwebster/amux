@@ -1618,6 +1618,12 @@ mod tests {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: if online {
+                ui_state::HostVia::Direct
+            } else {
+                ui_state::HostVia::Offline
+            },
+            signed_in: Some(true),
             platform: None,
         }
     }
@@ -1648,6 +1654,7 @@ mod tests {
                     readonly: false,
                     args: Vec::new(),
                     created_at: at(0),
+                    last_activity: at(0),
                     parent: None,
                     working_on: None,
                     summary: None,

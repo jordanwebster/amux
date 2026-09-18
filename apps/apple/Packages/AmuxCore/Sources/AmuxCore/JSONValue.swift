@@ -48,9 +48,18 @@ public enum JSONValue: Sendable, Hashable, Codable {
         }
     }
 
+    /// The field, or nothing where the object has no such field — or has it
+    /// as `null`.
+    ///
+    /// A null field and a missing one are the same answer to every question
+    /// this app asks of a payload, and readers decide things by presence: a
+    /// tool result with an `edit` is an edit, and a tool with a `result` has
+    /// finished. Handing back `.null` as though it were a value made every
+    /// such reader wrong the moment a producer wrote an absent value out.
     public subscript(key: String) -> JSONValue? {
-        guard case .object(let fields) = self else { return nil }
-        return fields[key]
+        guard case .object(let fields) = self, let value = fields[key], value != .null
+        else { return nil }
+        return value
     }
 
     public var stringValue: String? {

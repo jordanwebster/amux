@@ -63,6 +63,17 @@ class TheAppIcon(unittest.TestCase):
                       audit.icon_violations(self.info, self.bundle))
 
 
+def shipping_info(**extra) -> dict:
+    """An Info.plist the audit accepts, for tests about something else.
+
+    Every key here is one the audit requires of a shipping bundle, so a test
+    checking the device family does not also have to restate the local-network
+    declaration."""
+    return {"UIDeviceFamily": [1], "CFBundleIconName": "AppIcon",
+            "NSBonjourServices": ["_amux._udp"],
+            "NSLocalNetworkUsageDescription": audit.LOCAL_NETWORK_PURPOSE} | extra
+
+
 class ScopeAuditTests(unittest.TestCase):
     def test_excluded_code_and_rows_are_rejected(self):
         for name in (*audit.DEBUG_SYMBOLS, *audit.FORBIDDEN_APIS):
@@ -73,16 +84,44 @@ class ScopeAuditTests(unittest.TestCase):
                 self.assertTrue(audit.binary_violations("", "before\n" + row + "\nafter"))
         self.assertEqual(audit.binary_violations("NotificationCenter", "Contact Support\n3 need you"), [])
 
+    def test_reporting_ships_and_its_absence_is_refused(self):
+        symbols = "\n".join(audit.REPORT_SYMBOLS)
+        strings = "\n".join(audit.REPORT_COPY)
+        self.assertEqual(audit.reporting_violations(symbols, strings), [])
+        # Shipping is not a debug surface: none of it trips the exclusions.
+        self.assertEqual(audit.binary_violations(symbols, strings), [])
+        for name in audit.REPORT_SYMBOLS:
+            with self.subTest(symbol=name):
+                self.assertIn(f"reporting is absent: {name}", audit.reporting_violations(
+                    symbols.replace(name, ""), strings))
+        for copy in audit.REPORT_COPY:
+            with self.subTest(copy=copy):
+                self.assertIn(f"reporting copy is absent: {copy}", audit.reporting_violations(
+                    symbols, strings.replace(copy, "")))
+
+    def test_the_legacy_bonjour_browsers_stay_refused(self):
+        # Both reach the same multicast as Network.framework without the
+        # system's permission prompt in front of them.
+        for legacy in ("DNSServiceBrowse", "NSNetServiceBrowser"):
+            with self.subTest(api=legacy):
+                self.assertTrue(audit.binary_violations("_" + legacy, ""))
+
+    def test_the_network_framework_browser_is_accepted(self):
+        # The app browses the local network, so its browser is the one API in
+        # the binary that says so. Refusing it would refuse the feature.
+        for allowed in ("NWBrowser", "_nw_browser_create", "NWBrowserResult"):
+            with self.subTest(api=allowed):
+                self.assertEqual(audit.binary_violations(allowed, ""), [])
+
     def test_entitlements_device_family_and_destinations(self):
         bundle = Path(tempfile.mkdtemp())
         png(bundle / "AppIcon60x60@2x.png", 120, 120)
-        info = {"UIDeviceFamily": [1], "CFBundleIconName": "AppIcon"}
+        info = shipping_info()
         settings = {"TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
                     "SUPPORTS_MACCATALYST": "NO", "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
                     "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO"}
         self.assertEqual(audit.bundle_violations(info, {}, settings, bundle), [])
         self.assertTrue(audit.bundle_violations(info, {"aps-environment": "development"}, settings, bundle))
-        self.assertTrue(audit.bundle_violations(info | {"NSBonjourServices": []}, {}, settings, bundle))
         self.assertTrue(audit.bundle_violations(info | {"UIDeviceFamily": [1, 2]}, {}, settings, bundle))
         for flag in ("SUPPORTS_MACCATALYST", "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD",
                      "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD"):
@@ -115,7 +154,7 @@ class ScopeAuditTests(unittest.TestCase):
     def test_the_whole_bundle_check_carries_the_resource_verdict(self):
         bundle = Path(tempfile.mkdtemp())
         png(bundle / "AppIcon60x60@2x.png", 120, 120)
-        info = {"UIDeviceFamily": [1], "CFBundleIconName": "AppIcon"}
+        info = shipping_info()
         settings = {"TARGETED_DEVICE_FAMILY": "1",
                     "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
                     "SUPPORTS_MACCATALYST": "NO",
@@ -133,6 +172,48 @@ class ScopeAuditTests(unittest.TestCase):
             graph = {"name": "Amux", "dependencies": [{"name": "local", "dependencies": [{"name": name}]}]}
             with self.subTest(package=name):
                 self.assertTrue(audit.graph_violations([graph]))
+
+
+class TheLocalNetworkDeclaration(unittest.TestCase):
+    """Bonjour is declared for amux's own service and explained, or refused."""
+
+    def setUp(self):
+        self.bundle = Path(tempfile.mkdtemp())
+        png(self.bundle / "AppIcon60x60@2x.png", 120, 120)
+        self.info = shipping_info()
+        self.settings = {"TARGETED_DEVICE_FAMILY": "1",
+                         "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
+                         "SUPPORTS_MACCATALYST": "NO",
+                         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
+                         "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO"}
+
+    def violations(self, info):
+        return audit.bundle_violations(info, {}, self.settings, self.bundle)
+
+    def test_a_bundle_that_declares_nothing_cannot_browse_and_is_refused(self):
+        # iOS answers an undeclared browser with nothing, so the app would find
+        # no machines on a network full of them and look merely empty.
+        bare = dict(self.info)
+        del bare["NSBonjourServices"]
+        self.assertTrue(self.violations(bare))
+
+    def test_amuxs_own_service_with_the_agreed_sentence_passes(self):
+        self.assertEqual(self.violations(self.info), [])
+
+    def test_a_second_service_is_refused(self):
+        # A declaration is the scope: a service listed here is one this app may
+        # look for on somebody's network whether or not it ever does.
+        self.assertTrue(self.violations(
+            self.info | {"NSBonjourServices": ["_amux._udp", "_ssh._tcp"]}))
+
+    def test_browsing_without_the_agreed_explanation_is_refused(self):
+        # The sentence is what a person reads before answering; an absent or
+        # reworded one is a different question being asked.
+        without = dict(self.info)
+        del without["NSLocalNetworkUsageDescription"]
+        self.assertTrue(self.violations(without))
+        self.assertTrue(self.violations(
+            self.info | {"NSLocalNetworkUsageDescription": "amux needs your network."}))
 
 
 if __name__ == "__main__":

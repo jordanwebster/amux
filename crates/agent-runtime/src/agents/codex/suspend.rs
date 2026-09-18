@@ -34,6 +34,7 @@ impl From<CodexSuspendRecord> for SuspendedAgent {
             parent: record.parent,
             working_on: None,
             seal: None,
+            last_activity: None,
         }
     }
 }

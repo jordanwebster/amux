@@ -105,11 +105,15 @@ public final class StoreBundle {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
         case .diff(let update): conversation(update.agent).apply(event)
+        // An event about one agent that could not be read is that agent's
+        // conversation's to admit to, even when nothing has opened it yet.
+        case .unreadable(let unread) where unread.agent != nil:
+            conversation(unread.agent!).apply(event)
         // Nothing here names an agent, so every open conversation is offered
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
-        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant,
-             .storeFailure, .devices, .attention:
+        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices,
+             .attention, .cloudState, .forgotten, .unreadable, .storeFailure:
             for store in conversations.values { store.apply(event) }
         }
     }
@@ -206,6 +210,19 @@ public final class StoreBundle {
         dispatch?(.retryNow) != nil
     }
 
+    /// Asks the relay what this account may now do.
+    ///
+    /// Sent after a purchase. The account service knowing about one changes
+    /// nothing on its own — the relay reads the tier off the credential the
+    /// link holds — so without this the machines somebody just bought a route
+    /// to stay away until the link's own re-check comes round minutes later.
+    ///
+    /// False means there was nothing to ask: no account, no runtime.
+    @discardableResult
+    public func refreshEntitlement() -> Bool {
+        dispatch?(.refreshEntitlement) != nil
+    }
+
     /// Stops trusting a machine.
     ///
     /// The one destructive thing this screen does, and it is not a request the
@@ -268,7 +285,7 @@ public final class StoreBundle {
     public func startAgent() -> Bool {
         guard newAgent.ready, let host = newAgent.machine else { return false }
         let op = dispatch?(.createAgent(
-            host: host, directory: newAgent.directory, name: newAgent.name,
+            host: host, directory: newAgent.directory, name: newAgent.chosenName,
             agent: newAgent.kind))
         newAgent.starts(op)
         return op != nil
@@ -476,6 +493,11 @@ public final class StoreBundle {
     public func delete(_ agent: AgentId) -> Bool {
         guard let op = dispatch?(AgentWrite.delete(agent)) else { return false }
         conversation(agent).dispatched(op)
+        // New Agent holds the name of an agent it started until an inventory
+        // lists it. Deleting that agent before one ever did would otherwise
+        // keep its name reserved for as long as the app runs, so New Agent
+        // offered api-2 while api was free.
+        newAgent.deleted(agent)
         return true
     }
 

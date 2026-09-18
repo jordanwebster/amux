@@ -575,6 +575,10 @@ pub struct ChatWindow {
     pub protocol: StructuredProtocol,
     pub attempt: AttemptId,
     pub stream_attempt: StreamAttempt,
+    /// An open request has not answered yet. Stored rows remain painted
+    /// while it is pending, so chat state alone cannot suppress a duplicate.
+    #[serde(default)]
+    pub(crate) stream_opening: bool,
     pub generations: Option<Generations>,
     pub expected: ExpectedHead,
     pub content_revision: ChatRevision,
@@ -658,6 +662,7 @@ impl ChatWindow {
             protocol,
             attempt,
             stream_attempt: StreamAttempt(0),
+            stream_opening: false,
             generations: None,
             expected: ExpectedHead::Absent { fence: 0 },
             content_revision: 0,
@@ -1506,6 +1511,12 @@ pub(crate) fn update_chat_stream(
     if chat.stream_attempt != attempt {
         return Vec::new();
     }
+    if matches!(
+        event,
+        ChatStreamMsg::Opened { .. } | ChatStreamMsg::Closed { .. }
+    ) {
+        chat.stream_opening = false;
+    }
     match event {
         ChatStreamMsg::Opened { facts, at } => opened(state, agent, facts, at),
         ChatStreamMsg::Batch { at, entries } => batch(state, agent, at, entries),
@@ -1515,31 +1526,39 @@ pub(crate) fn update_chat_stream(
 }
 
 pub(crate) fn reconnect(state: &mut StoreState) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    for (agent, chat) in &mut state.chats {
-        if chat.state != ChatState::Painted {
-            continue;
-        }
-        chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
-        let query = chat.head.as_ref().map_or(
-            StoreStreamQuery::TailCount {
-                count: crate::REPLAY_TAIL,
-                tail_bound: Some(crate::REPLAY_TAIL),
-            },
-            |head| StoreStreamQuery::After {
-                after: head.through(),
-                tail_bound: Some(crate::REPLAY_TAIL),
-            },
-        );
-        effects.push(open_effect(
-            *agent,
-            chat.protocol,
-            chat.stream_attempt,
-            query,
-            chat.paused,
-        ));
+    for chat in state.chats.values_mut() {
+        chat.stream_opening = false;
     }
-    effects
+    let agents = state.chats.keys().copied().collect::<Vec<_>>();
+    agents
+        .into_iter()
+        .filter_map(|agent| reconnect_chat(state, agent))
+        .collect()
+}
+
+pub(crate) fn reconnect_chat(state: &mut StoreState, agent: AgentId) -> Option<Effect> {
+    let chat = state.chats.get_mut(&agent)?;
+    if chat.state != ChatState::Painted || chat.stream_opening {
+        return None;
+    }
+    chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
+    let query = chat.head.as_ref().map_or(
+        StoreStreamQuery::TailCount {
+            count: crate::REPLAY_TAIL,
+            tail_bound: Some(crate::REPLAY_TAIL),
+        },
+        |head| StoreStreamQuery::After {
+            after: head.through(),
+            tail_bound: Some(crate::REPLAY_TAIL),
+        },
+    );
+    Some(open_effect(
+        agent,
+        chat.protocol,
+        chat.stream_attempt,
+        query,
+        chat.paused,
+    ))
 }
 
 fn opened(

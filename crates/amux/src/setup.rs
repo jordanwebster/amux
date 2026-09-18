@@ -27,6 +27,14 @@ pub fn clear_prevent_idle_sleep(config: &mut Config) -> Result<(), SetupError> {
     Ok(())
 }
 
+/// Persist the installation's advertised host name and update the in-memory config.
+pub fn set_host_name(config: &mut Config, value: String) -> Result<(), SetupError> {
+    settings::validate_host_name(&value).map_err(|error| SetupError::Config(error.to_string()))?;
+    write_config_value(config, "host_name", Some(Value::String(value.clone())))?;
+    config.host_name = value;
+    Ok(())
+}
+
 /// Return whether prevent-idle-sleep support is actually available at runtime.
 pub fn prevent_idle_sleep_supported() -> bool {
     node::installation::prevent_idle_sleep_supported()
@@ -59,6 +67,10 @@ pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
 }
 
 fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<(), SetupError> {
+    write_config_value(config, key, value.map(Value::Bool))
+}
+
+fn write_config_value(config: &Config, key: &str, value: Option<Value>) -> Result<(), SetupError> {
     let selected = config_file_path(config);
     let path = if selected.exists() {
         let map = read_config_mapping(&selected)
@@ -74,8 +86,8 @@ fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<
         read_config_mapping(&path).map_err(|e| wrap_config_persistence_error(&path, key, e))?;
 
     match value {
-        Some(v) => {
-            map.insert(Value::String(key.to_string()), Value::Bool(v));
+        Some(value) => {
+            map.insert(Value::String(key.to_string()), value);
         }
         None => {
             map.remove(Value::String(key.to_string()));
@@ -207,5 +219,29 @@ mod tests {
         assert!(msg.contains("active config file"));
         assert!(msg.contains("--config"));
         assert!(msg.contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn set_host_name_persists_to_the_installation_config() {
+        let dir = tempdir().unwrap();
+        let installation_path = dir.path().join("installation.yaml");
+        let profile_path = dir.path().join("profile.yaml");
+        fs::write(&installation_path, "host_name: old-name\n").unwrap();
+        fs::write(
+            &profile_path,
+            format!("installation_config: {}\n", installation_path.display()),
+        )
+        .unwrap();
+        let mut config = Config {
+            path: Some(profile_path),
+            host_name: "old-name".into(),
+            ..Config::default()
+        };
+
+        set_host_name(&mut config, "Living Room Mac".into()).unwrap();
+
+        assert_eq!(config.host_name, "Living Room Mac");
+        let yaml = fs::read_to_string(installation_path).unwrap();
+        assert!(yaml.contains("host_name: Living Room Mac"), "{yaml}");
     }
 }

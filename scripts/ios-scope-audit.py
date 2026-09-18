@@ -14,20 +14,38 @@ import ios_project
 OUTPUT = Path("target/ios/scope-audit")
 DERIVED = Path("target/ios/DerivedData")
 APP = DERIVED / "Build/Products/Release-iphonesimulator/Amux.app"
+# Reporting a problem ships: the report store, its bundle, its screens and the
+# freeze that photographs the window are in every build, and so is the bridge
+# call that freezes the session and host records. What stays out is what only
+# driving and replaying need — the view-state trace (written by the door, and
+# `ReportFreeze.driven` that asks it), a recording put back into the app, and
+# the library built with the driving tools.
 DEBUG_SYMBOLS = (
     "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
     "DoorRecording", "DrivenRoot", "ScenarioShell", "ScenarioScene", "VisibleTree", "AmuxTestSupport",
-    "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
-    "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
+    "FreezeOnScreenshot", "DebugReports", "ColdStartProbe", "PerfRun",
     "Workloads", "BudgetTable",
-    "amux_app_report_snapshot", "amux_app_replay_report", "amux_app_seed_store",
-    "amux_app_cached_chat", "+debug-tools",
+    "amux_app_replay_report", "amux_app_seed_store",
+    "amux_app_cached_chat", "amux_app_pair_qr", "+debug-tools",
 )
+# What a person reports a problem with, which a Release build must carry: the
+# two entry points, the report screen and the call that freezes the records.
+REPORT_SYMBOLS = ("ReportStore", "ReportScreen", "ReportFreeze", "amux_app_report_snapshot")
+REPORT_COPY = ("Report a Problem", "What went wrong?")
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",
-    "ActivityKit", "ActivityAuthorizationInfo", "NWBrowser", "nw_browser_create",
+    "ActivityKit", "ActivityAuthorizationInfo",
+    # The app browses the local network through Network.framework and nothing
+    # else. The two legacy Bonjour entry points stay refused: they reach the
+    # same multicast without the system's own permission prompt in front of
+    # them, so code that used one would be browsing where nobody was asked.
     "DNSServiceBrowse", "NSNetServiceBrowser",
 )
+# The one service this app may look for, and the sentence the system shows
+# when it asks. A declaration for anything else is scope nobody agreed to.
+BONJOUR_SERVICES = ["_amux._udp"]
+LOCAL_NETWORK_PURPOSE = ("amux finds hosts on your network so this phone can "
+                         "pair and connect to them directly.")
 FORBIDDEN_ROWS = ("Live Activity", "Live Activities", "Mute", "Notifications")
 # Resources that only the driving and capture tools need. Code that reads them
 # is caught by the symbol list above, but a resource can be carried into the
@@ -51,6 +69,17 @@ def binary_violations(symbols: str, strings: str) -> list[str]:
                 for name in (*DEBUG_SYMBOLS, *FORBIDDEN_APIS) if name in text]
     rows = set(strings.splitlines())
     failures += [f"excluded row: {row}" for row in FORBIDDEN_ROWS if row in rows]
+    return failures
+
+
+def reporting_violations(symbols: str, strings: str) -> list[str]:
+    """Refuse a bundle somebody could not report a problem from.
+
+    Reporting is for everybody, so its absence is as much a scope failure as a
+    door left in: a build that lost the report screen, the freeze or the Help
+    row would still launch and look complete."""
+    failures = [f"reporting is absent: {name}" for name in REPORT_SYMBOLS if name not in symbols]
+    failures += [f"reporting copy is absent: {copy}" for copy in REPORT_COPY if copy not in strings]
     return failures
 
 
@@ -113,8 +142,16 @@ def bundle_violations(info: dict, entitlements: dict, settings: dict,
     failures = icon_violations(info, bundle) + resource_violations(bundle)
     if "aps-environment" in entitlements:
         failures.append("push entitlement: aps-environment")
-    if "NSBonjourServices" in info:
-        failures.append("Bonjour services declared")
+    # Required as well as bounded. Without the declaration iOS answers the
+    # app's browser with nothing, and a phone on the same network as a machine
+    # reports finding none — which looks like an empty network, not a bundle
+    # built wrong, so nothing downstream would catch it.
+    if info.get("NSBonjourServices") != BONJOUR_SERVICES:
+        failures.append("Bonjour must be declared for exactly "
+                        f"{BONJOUR_SERVICES}, not {info.get('NSBonjourServices')}")
+    if info.get("NSLocalNetworkUsageDescription") != LOCAL_NETWORK_PURPOSE:
+        failures.append("the local network is browsed without the agreed "
+                        "explanation in Info.plist")
     if info.get("UIDeviceFamily") != [1]:
         failures.append("bundle device family must be iPhone only")
     if settings.get("TARGETED_DEVICE_FAMILY") != "1":
@@ -164,13 +201,13 @@ def detector_probe() -> None:
     """
     source = OUTPUT / "excluded-symbol.c"
     binary = OUTPUT / "excluded-symbol"
-    source.write_text("void amux_app_report_snapshot(void) {}\n"
-                      "int main(void) { amux_app_report_snapshot(); return 0; }\n")
+    source.write_text("void amux_app_replay_report(void) {}\n"
+                      "int main(void) { amux_app_replay_report(); return 0; }\n")
     sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).stdout.decode().strip()
     run(["xcrun", "clang", "-target", "arm64-apple-ios26.0-simulator", "-isysroot", sdk,
          str(source), "-o", str(binary)])
     failures = binary_violations(*inspect_binary(binary))
-    if "excluded symbol or API: amux_app_report_snapshot" not in failures:
+    if "excluded symbol or API: amux_app_replay_report" not in failures:
         raise RuntimeError("audit accepted a test build containing a debug-only export")
     (OUTPUT / "detector-probe.txt").write_text("Rejected compiler-built probe:\n" + "\n".join(failures) + "\n")
 
@@ -211,6 +248,7 @@ def main() -> None:
     failures += binary_violations(symbols, strings)
     if "Contact Support" not in strings:
         failures.append("Contact Support is absent")
+    failures += reporting_violations(symbols, strings)
     if not any(copy in strings for copy in ("need you", "needs you")):
         failures.append("in-app attention copy is absent")
     graphs = []
@@ -238,9 +276,11 @@ def main() -> None:
                   f"and a {'x'.join(map(str, png_size(APP / 'AppIcon60x60@2x.png')))} iPhone icon in the bundle.",
                   "PASS: no frozen-frame or test-support resource in the bundle.",
                   "PASS: no push authorization, Live Activity, Mute or Notifications row;",
-                  "no Bonjour declaration or network browser; iPhone destinations only;",
-                  "no amuxcloud or React Native package; no driving or report-capture code.",
-                  "PASS: in-app attention copy and Contact Support remain."]
+                  f"Bonjour limited to {' '.join(BONJOUR_SERVICES)} behind the agreed explanation "
+                  "and no legacy browser; iPhone destinations only;",
+                  "no amuxcloud or React Native package; no driving, trace or replay code.",
+                  "PASS: in-app attention copy, Contact Support and Report a Problem remain;",
+                  "the report screen, its freeze and the record snapshot ship."]
     lines += ["Limit: simulator Release bundle inspection; distribution signing is checked before release."]
     report.write_text("\n".join(lines) + "\n")
     print(report.read_text(), end="", flush=True)

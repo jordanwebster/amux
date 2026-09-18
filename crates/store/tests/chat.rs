@@ -137,6 +137,7 @@ fn wait_for(path: &Path, timeout: Duration) {
 async fn seed_standing(store: &Store, generations: fold::Generations) {
     let host_id = model::HostId::from_u128(1);
     let agent = Agent {
+        last_activity: now(0),
         id: agent_id(),
         host_id,
         name: Some("chat agent".into()),

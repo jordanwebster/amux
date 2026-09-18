@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use super::{AgentServiceState, SharedAgentServiceState};
 use crate::agents::{
-    AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest, SessionEvent,
-    StopPolicy, SummarizerHandle, SummarizerPublication, WorkingOn, agent_from_suspended,
-    new_agent, summarizer_protocol,
+    AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
+    SessionEvent, StopPolicy, SummarizerHandle, SummarizerPublication, WorkingOn,
+    agent_from_suspended, new_agent, summarizer_protocol,
 };
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
@@ -28,6 +28,72 @@ pub(super) fn monitor_session_exit(
         let _ = exit_handle.await;
         let _ = event_tx.send(SessionEvent::Ended { agent_id }).await;
     });
+}
+
+/// How often the host re-announces agents whose activity has moved.
+///
+/// A client that is not reading an agent's stream learns its activity only
+/// from inventory updates, and announcing every transcript row would send an
+/// update per streamed token. Five seconds keeps an unopened agent's age and
+/// place in a list within a few seconds of the truth, which is finer than any
+/// list shows an age, while a busy agent costs one small update per interval.
+const ACTIVITY_PUBLISH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Re-announce, every few seconds, the agents that have been active since
+/// they were last announced. Stops when the registry is dropped.
+pub(crate) fn spawn_activity_publisher(
+    agent_state: &SharedAgentServiceState,
+    host_id: Uuid,
+) -> JoinHandle<()> {
+    let agent_state = std::sync::Arc::downgrade(agent_state);
+    tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(ACTIVITY_PUBLISH_INTERVAL);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            let Some(agent_state) = agent_state.upgrade() else {
+                return;
+            };
+            // Look under the read lock first: most ticks find nothing moved,
+            // and those should not queue behind or block registry writers.
+            let moved = agent_state
+                .read()
+                .await
+                .local_agents
+                .values()
+                .any(|context| context.last_activity() > context.published_activity);
+            if moved {
+                publish_activity(&mut *agent_state.write().await, host_id);
+            }
+        }
+    })
+}
+
+/// Announce every agent whose activity is later than what was last announced
+/// for it, and remember what was announced.
+pub(crate) fn publish_activity(state: &mut AgentServiceState, host_id: Uuid) {
+    let moved = state
+        .local_agents
+        .iter()
+        .filter_map(|(id, context)| {
+            (context.last_activity() > context.published_activity).then_some(*id)
+        })
+        .collect::<Vec<_>>();
+    for id in moved {
+        match state.updated_agent_event(host_id, id) {
+            Ok(event) => {
+                if let AgentEvent::AgentUpdated { agent } = &event {
+                    state
+                        .local_agents
+                        .get_mut(&id)
+                        .expect("registered agent")
+                        .published_activity = agent.last_activity;
+                }
+                state.local_agent_events.emit(event);
+            }
+            Err(error) => tracing::warn!(%id, %error, "cannot publish agent activity"),
+        }
+    }
 }
 
 pub(crate) fn spawn_session_event_loop(
@@ -318,6 +384,7 @@ pub(crate) async fn create_agent_record(
                 session,
                 working_on.clone(),
                 summarizer,
+                None,
             )
             .map_err(|error| {
                 CreateAgentError::Register(format!(
@@ -482,6 +549,7 @@ pub(crate) async fn prepare_server_suspend(
         match context.session.prepare_suspend().await {
             Ok(mut sa) => {
                 sa.set_working_on(context.working_on.clone());
+                sa.set_last_activity(Some(context.last_activity()));
                 suspended.push(sa);
             }
             Err(e) => {
@@ -605,6 +673,7 @@ pub(crate) async fn resume_agents(
         }
         let original = sa.clone();
         let working_on = sa.working_on().cloned();
+        let last_activity = sa.last_activity();
         let agent_id = sa.agent_id();
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
@@ -671,6 +740,7 @@ pub(crate) async fn resume_agents(
                                     .expect("resumed session should still be available"),
                                 working_on.clone(),
                                 summarizer.take(),
+                                last_activity,
                             )
                         }
                     } else {
@@ -682,6 +752,7 @@ pub(crate) async fn resume_agents(
                                 .expect("resumed session should still be available"),
                             working_on.clone(),
                             summarizer.take(),
+                            last_activity,
                         )
                     };
 
@@ -1178,6 +1249,121 @@ mod tests {
         );
     }
 
+    fn echo_request(agent_id: Uuid) -> CreateAgentRequest {
+        CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: None,
+            agent_type: AgentType::TestAgent {
+                command: TEST_ECHO_COMMAND.to_string(),
+            },
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        }
+    }
+
+    /// Remote clients learn an unopened agent's activity only from inventory
+    /// updates, so activity is re-announced once it moves, and only then.
+    #[tokio::test]
+    async fn activity_is_announced_when_it_moves_and_not_otherwise() {
+        let agent_state = empty_state();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let mut state = agent_state.write().await;
+        let mut session =
+            TestAgentSession::new(&echo_request(agent_id), TEST_ECHO_COMMAND.to_string());
+        session.start().unwrap();
+        let log = crate::agents::AgentBackend::attachment_log(&session).unwrap();
+        let session: AgentSession = Box::new(session);
+        let AgentEvent::AgentUp { agent } = state
+            .insert_registered_local_agent(host_id, agent_id, session)
+            .unwrap()
+        else {
+            panic!("registration announces the agent");
+        };
+        assert_eq!(agent.last_activity, agent.created_at);
+        let mut events = state.local_agent_events.subscribe();
+
+        publish_activity(&mut state, host_id);
+        assert!(
+            events.try_recv().is_err(),
+            "nothing moved, nothing announced"
+        );
+
+        // Activity is kept to the millisecond, as the wire carries it.
+        let later = chrono::TimeZone::timestamp_millis_opt(
+            &Utc,
+            (agent.created_at + chrono::Duration::seconds(30)).timestamp_millis(),
+        )
+        .unwrap();
+        log.write_activity(serde_json::json!({"type": "output"}), later)
+            .await;
+        log.write(serde_json::json!({"type": "amux.bookkeeping"}))
+            .await;
+        publish_activity(&mut state, host_id);
+        let Ok(AgentEvent::AgentUpdated { agent }) = events.try_recv() else {
+            panic!("moved activity is announced");
+        };
+        assert_eq!(agent.last_activity, later);
+
+        publish_activity(&mut state, host_id);
+        assert!(events.try_recv().is_err(), "announced once");
+    }
+
+    /// A restarted daemon reports the activity the previous one saw, not the
+    /// agent's creation.
+    #[tokio::test]
+    async fn suspended_activity_survives_a_resume() {
+        let agent_state = empty_state();
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let created_at = Utc::now() - chrono::Duration::days(2);
+        let active_at = created_at + chrono::Duration::hours(1);
+
+        let suspended = SuspendedAgent::TestAgent {
+            seal: Some(crate::agents::SealedAt {
+                id: Uuid::new_v4(),
+                through: 0,
+            }),
+            agent_id,
+            name: None,
+            command: TEST_ECHO_COMMAND.to_string(),
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            created_at,
+            parent: None,
+            working_on: None,
+            last_activity: Some(active_at),
+        };
+        let state_root = tempfile::tempdir().unwrap();
+        let result = resume_agents(
+            &agent_state,
+            &event_tx,
+            vec![suspended],
+            host_id,
+            &host_api::OperationGate::default(),
+            false,
+            &state_root.path().join("state.yaml"),
+        )
+        .await;
+        assert_eq!(result.resumed_count, 1);
+        let record = agent_state
+            .read()
+            .await
+            .local_agent_info(host_id, &agent_id)
+            .unwrap();
+        assert_eq!(record.created_at, created_at);
+        assert_eq!(record.last_activity, active_at);
+
+        let (prepared, errors) = prepare_server_suspend(&agent_state).await;
+        assert!(errors.is_empty());
+        assert_eq!(prepared.agents[0].last_activity(), Some(active_at));
+    }
+
     #[tokio::test]
     async fn resume_registration_failure_does_not_replace_existing_agent_session() {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(
@@ -1218,6 +1404,7 @@ mod tests {
                 id: Uuid::new_v4(),
                 through: 0,
             }),
+            last_activity: None,
         };
 
         let result = resume_agents(
@@ -1301,6 +1488,7 @@ mod tests {
             through: 41,
         };
         let suspended = SuspendedAgent::TestAgent {
+            last_activity: None,
             agent_id: original_id,
             name: Some("emitting-scripted-provider".to_string()),
             command: TEST_ECHO_COMMAND.to_string(),
@@ -1411,6 +1599,7 @@ mod tests {
         let state_path = directory.path().join("state.yaml");
         let original_id = Uuid::new_v4();
         let suspended = SuspendedAgent::TestAgent {
+            last_activity: None,
             agent_id: original_id,
             name: Some("provider-that-cannot-start".to_string()),
             command: directory

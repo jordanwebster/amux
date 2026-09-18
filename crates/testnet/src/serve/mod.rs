@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::FutureExt;
+use node::discovery::Advertisement;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -49,6 +50,11 @@ pub struct Topology {
     #[serde(default = "default_cloud_url")]
     pub cloud_url: String,
     pub users: Vec<String>,
+    /// What each account buys, where it is not the default. An account left
+    /// out is on the paid tier, which is what every topology written before
+    /// tiers existed assumed.
+    #[serde(default)]
+    pub tiers: HashMap<String, node::Tier>,
     pub daemons: Vec<DaemonDecl>,
     pub paired: Vec<(String, String, PairVia)>,
     pub agents: Vec<AgentDecl>,
@@ -65,11 +71,21 @@ pub struct Topology {
 #[serde(deny_unknown_fields)]
 pub struct DaemonDecl {
     pub name: String,
-    pub user: String,
+    /// The cloud account this machine is signed in to, where it is signed in
+    /// to one. A declaration with no user is a device nobody has signed in on
+    /// — a phone before its first account — which still pairs with and
+    /// reaches the machines on its own network.
+    #[serde(default)]
+    pub user: Option<String>,
     pub repository_roots: Vec<PathBuf>,
     /// Run this host as a profile behind the production installation front door.
     #[serde(default)]
     pub installation: bool,
+    /// Whether this machine is on the network when the topology starts: an
+    /// advertisement a browsing device resolves, as if it had just been
+    /// switched on beside it.
+    #[serde(default)]
+    pub lan: bool,
     /// Provider transport for every SDK session this host creates, including
     /// requests that arrive later from a paired client.
     #[serde(default)]
@@ -78,7 +94,9 @@ pub struct DaemonDecl {
 
 #[derive(Debug, Deserialize)]
 pub enum PairVia {
-    Tcp,
+    /// Pair over a direct link. Named for the fact, not the carrier: direct
+    /// pairing runs over QUIC now, and said "Tcp" only while it did not.
+    Direct,
     Cloud,
 }
 
@@ -176,6 +194,41 @@ pub enum Control {
     },
     Latency {
         millis: u64,
+    },
+    /// Puts a machine on this network, as an advertisement a device browsing
+    /// would resolve. Nothing is trusted by it: what it offers a browser is a
+    /// name, an identity claim and addresses to try.
+    ///
+    /// Published twice: to the daemons of this network, and over real mDNS on
+    /// this Mac, where a simulator's own browser resolves it the way a phone's
+    /// resolves a real machine. A device test that handed the app a decoded
+    /// advertisement instead would never read the record the daemon writes.
+    ///
+    /// Only this verb reaches the Mac's network. A daemon declared `lan` is
+    /// announced to the other daemons when the topology starts, but a phone
+    /// finds it only once a test puts it there, so a story can begin with a
+    /// phone that has found nothing.
+    Announce {
+        daemon: String,
+    },
+    /// Takes it off again, the way a machine going away says goodbye, on both
+    /// of the networks it was announced on.
+    Withdraw {
+        daemon: String,
+    },
+    /// Changes what one cloud account buys, from the next token it is issued.
+    /// Links already up keep the tier they were admitted on until they
+    /// re-authenticate, which is what makes a flip observable rather than
+    /// instantaneous.
+    Tier {
+        user: String,
+        tier: node::Tier,
+    },
+    /// Eats or restores every direct UDP datagram involving a machine, which
+    /// is the network a phone on a hotel connection is on.
+    UdpBlocked {
+        daemon: String,
+        blocked: bool,
     },
     AgentEmit {
         agent: String,
@@ -283,6 +336,15 @@ pub enum Reply {
         /// What a machine says it trusts, for an `Inventory`.
         devices: Vec<InventoryDevice>,
         diagnostics: Option<serde_json::Value>,
+        /// What a browser on this network would resolve, for an `Announce`.
+        ///
+        /// A device that cannot browse this network itself is told what is on
+        /// it from here: the name, the identity claim and the addresses the
+        /// machine just put up. Absent for every other verb.
+        ///
+        /// Boxed because every other acknowledgement carries none of it, and
+        /// an advertisement inline would widen every reply to its size.
+        found: Option<Box<FoundHost>>,
     },
     Error {
         message: String,
@@ -301,8 +363,18 @@ impl Reply {
             agents: Vec::new(),
             devices: Vec::new(),
             diagnostics: None,
+            found: None,
         }
     }
+}
+
+/// One machine on this network, as an advertisement resolves it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FoundHost {
+    pub host: Uuid,
+    pub name: String,
+    pub version: u32,
+    pub addrs: Vec<String>,
 }
 
 fn default_cloud_url() -> String {
@@ -327,6 +399,9 @@ impl Topology {
                 "empty or duplicate user: {user}"
             );
         }
+        for user in topology.tiers.keys() {
+            ensure!(users.contains(user), "unknown user in tiers: {user}");
+        }
         let mut daemons = HashSet::new();
         for daemon in &mut topology.daemons {
             // Daemon names become directory components inside TestNet's temporary root.
@@ -335,11 +410,9 @@ impl Topology {
                 "invalid or duplicate daemon: {}",
                 daemon.name
             );
-            ensure!(
-                users.contains(&daemon.user),
-                "unknown user: {}",
-                daemon.user
-            );
+            if let Some(user) = &daemon.user {
+                ensure!(users.contains(user), "unknown user: {user}");
+            }
             for root in &mut daemon.repository_roots {
                 *root = resolve_directory(&base, root)?;
             }
@@ -362,14 +435,21 @@ impl Topology {
             );
             if matches!(via, PairVia::Cloud) {
                 let user = |name: &str| {
-                    &topology
+                    topology
                         .daemons
                         .iter()
                         .find(|d| d.name == name)
                         .unwrap()
                         .user
+                        .as_deref()
                 };
-                ensure!(user(a) == user(b), "cloud pair crosses users: {a}, {b}");
+                // A machine nobody is signed in on has no cloud identity to
+                // pair through, so two of them are not a pair through the
+                // cloud however alike their absent accounts look.
+                match (user(a), user(b)) {
+                    (Some(x), Some(y)) if x == y => {}
+                    _ => bail!("cloud pair crosses users: {a}, {b}"),
+                }
             }
         }
         let mut agents = HashSet::new();
@@ -484,6 +564,74 @@ impl AgentProvider {
 
 type Agents = HashMap<String, ScriptedAgent>;
 
+/// The advertisement each daemon announced so far has on this machine's own
+/// network, by name. Dropping one withdraws it.
+type Advertised = HashMap<String, Published>;
+
+/// One advertisement registered with macOS's own mDNS responder, which
+/// answers for it on every interface for as long as the registering process
+/// lives.
+///
+/// The system responder rather than the daemon's own mDNS publisher, because a
+/// simulator browses through the Mac's responder and does not report services
+/// seen only on the loopback interface — which is the only interface a
+/// publisher advertising a loopback address answers on. The system responder
+/// advertises the loopback address on every interface. The record it carries
+/// is built by `node::discovery::txt_properties`, the function the daemon's
+/// own publisher uses.
+struct Published {
+    #[cfg(target_os = "macos")]
+    _registration: tokio::process::Child,
+}
+
+impl Published {
+    #[cfg(target_os = "macos")]
+    fn register(advertisement: &Advertisement) -> Result<Self> {
+        let addr = advertisement
+            .addrs
+            .first()
+            .context("an advertisement needs a listener address")?;
+        let mut command = tokio::process::Command::new("/usr/bin/dns-sd");
+        command
+            .arg("-P")
+            .arg(&advertisement.name)
+            .arg("_amux._udp")
+            .arg("local")
+            .arg(addr.port().to_string())
+            .arg(format!("amux-{}.local", advertisement.host_id.simple()))
+            .arg(addr.ip().to_string());
+        for (key, value) in node::discovery::txt_properties(advertisement) {
+            command.arg(format!("{key}={value}"));
+        }
+        let registration = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("cannot register with this Mac's mDNS responder")?;
+        Ok(Self {
+            _registration: registration,
+        })
+    }
+
+    /// Only a Mac runs a simulator, so nowhere else has a browser to reach.
+    #[cfg(not(target_os = "macos"))]
+    fn register(_advertisement: &Advertisement) -> Result<Self> {
+        Ok(Self {})
+    }
+}
+
+/// Publishes one daemon's advertisement on this machine's network, replacing
+/// whatever that daemon published before.
+fn publish(advertised: &mut Advertised, name: String, advertisement: Advertisement) -> Result<()> {
+    // The old registration goes first: the responder would otherwise rename
+    // the new one to avoid a clash with a record that is about to disappear.
+    advertised.remove(&name);
+    advertised.insert(name, Published::register(&advertisement)?);
+    Ok(())
+}
+
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
     let mut builder = if topology.daemons.iter().any(|daemon| daemon.installation) {
         TestNet::builder().cloud().identity()
@@ -496,21 +644,35 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                 .installation(&daemon.name)
                 .profile(&daemon.name)
                 .front_door()
-                .cloud_user(&daemon.user)
                 .repository_roots(daemon.repository_roots.clone())
         } else {
             builder
                 .daemon(&daemon.name)
-                .cloud_user(&daemon.user)
                 .repository_roots(daemon.repository_roots.clone())
         };
+
+        match &daemon.user {
+            Some(user) => {
+                builder = builder.cloud_user(user);
+                // Declared before the machine starts as well as after, so its
+                // own link is admitted on the tier its account has rather than
+                // on the default and then corrected.
+                if let Some(tier) = topology.tiers.get(user) {
+                    builder = builder.cloud_tier(*tier);
+                }
+            }
+            // Nobody has signed in on this machine, so it has no account to
+            // reach the relay with: it is only ever found and reached on its
+            // own network.
+            None => builder = builder.no_cloud(),
+        }
     }
     for (a, b, via) in &topology.paired {
         builder = builder.paired(
             a,
             b,
             match via {
-                PairVia::Tcp => Via::Tcp,
+                PairVia::Direct => Via::Direct,
                 PairVia::Cloud => Via::Cloud,
             },
         );
@@ -530,6 +692,16 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
             )
         })
         .collect::<HashMap<_, _>>();
+    // Before anything outside this process can ask for a token: what an
+    // account buys has to be settled before the first device signs in with it.
+    for (user, tier) in &topology.tiers {
+        net.cloud_user_tier(user, *tier);
+    }
+    // A machine declared to be on this network is on it from the start, so a
+    // device that browses before sending any control verb finds it there.
+    for daemon in topology.daemons.iter().filter(|daemon| daemon.lan) {
+        let _ = net.announce(&net.daemon(&daemon.name));
+    }
     for (name, script) in &topology.sdk_scripts {
         net.daemon(&daemon_names[name])
             .script_sdk_sessions(script.clone())
@@ -650,7 +822,9 @@ struct Request {
 async fn apply(
     net: &TestNet,
     names: &HashMap<String, String>,
+    users: &HashSet<String>,
     agents: &mut Agents,
+    advertised: &mut Advertised,
     control: Control,
 ) -> Result<Reply> {
     let daemon = |name: &str| -> Result<Daemon> {
@@ -765,8 +939,39 @@ async fn apply(
         }
         Control::Latency { millis } => {
             ensure!(millis <= 1000, "relay latency must not exceed 1000 ms");
-            net.latency(millis);
+            net.relay_latency(millis);
         }
+        Control::Announce { daemon: name } => {
+            let advertisement = net.announce(&daemon(&name)?);
+            publish(advertised, name, advertisement.clone())?;
+            if let Reply::Ack { found, .. } = &mut reply {
+                *found = Some(Box::new(FoundHost {
+                    host: advertisement.host_id,
+                    name: advertisement.name,
+                    version: advertisement.version,
+                    addrs: advertisement
+                        .addrs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                }));
+            }
+        }
+        Control::Withdraw { daemon: name } => {
+            net.withdraw(&daemon(&name)?);
+            advertised.remove(&name);
+        }
+        Control::Tier { user, tier } => {
+            // An account the topology never declared would otherwise be
+            // invented here and bought a tier no device ever asks about, so a
+            // misspelled label would look like it worked.
+            ensure!(users.contains(&user), "unknown user: {user}");
+            net.cloud_user_tier(&user, tier);
+        }
+        Control::UdpBlocked {
+            daemon: name,
+            blocked,
+        } => net.udp_blocked(&daemon(&name)?, blocked),
         Control::AgentEmit { agent, rows } => {
             scripted(&agent)?.provider.claude()?.emit(rows).await?;
         }
@@ -985,6 +1190,7 @@ async fn serve(topology: Topology) -> Result<()> {
                 (daemon.name, runtime)
             })
             .collect(),
+        topology.users.into_iter().collect(),
         agents,
     )
     .await
@@ -994,8 +1200,10 @@ async fn serve_net(
     net: TestNet,
     listener: TcpListener,
     names: HashMap<String, String>,
+    users: HashSet<String>,
     mut agents: Agents,
 ) -> Result<()> {
+    let mut advertised = Advertised::new();
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let termination = async {
@@ -1023,7 +1231,7 @@ async fn serve_net(
                 control => {
                     // TestNet's assertion verbs panic with topology diagnostics.
                     // Preserve those diagnostics as a control failure for the caller.
-                    let operation = AssertUnwindSafe(apply(&net, &names, &mut agents, control)).catch_unwind();
+                    let operation = AssertUnwindSafe(apply(&net, &names, &users, &mut agents, &mut advertised, control)).catch_unwind();
                     let reply = match tokio::time::timeout(Duration::from_secs(30), operation).await {
                         Ok(Ok(Ok(reply))) => reply,
                         Ok(Ok(Err(error))) => Reply::Error { message: error.to_string() },
@@ -1038,6 +1246,7 @@ async fn serve_net(
         }
     };
     drop(listener);
+    drop(advertised);
     net.shutdown().await;
     for agent in agents.values_mut() {
         agent.provider.close().await;
@@ -1065,6 +1274,16 @@ pub fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Serve { topology } => {
+            // A served network's daemons are ordinary runtimes with ordinary
+            // tracing, and a driver outside this process has no other way to
+            // watch them decide. Silent unless RUST_LOG asks, so an ordinary
+            // run stays quiet and a diagnosis costs one environment variable.
+            if std::env::var_os("RUST_LOG").is_some() {
+                let _ = tracing_subscriber::fmt()
+                    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                    .with_writer(std::io::stderr)
+                    .try_init();
+            }
             let topology = Topology::load(&topology)?;
             // Drop the executor before returning: detached transport tasks cannot
             // retain listeners or outlive a successfully terminated runner.
@@ -1124,7 +1343,7 @@ mod tests {
             .daemon("a")
             .daemon("b")
             .daemon("c")
-            .paired("a", "b", Via::Tcp)
+            .paired("a", "b", Via::Direct)
             .start()
             .await;
         let [a, b, c] = net.daemons(["a", "b", "c"]);
@@ -1140,6 +1359,7 @@ mod tests {
             ["a", "b", "c"]
                 .map(|name| (name.to_owned(), name.to_owned()))
                 .into(),
+            ["default"].map(String::from).into(),
             HashMap::new(),
         );
         let exercise = async {
@@ -1151,9 +1371,44 @@ mod tests {
                     .as_u64()
                     .unwrap()
             }
-            assert_eq!(count(&mut second, "b").await, 2);
+            // What a verb does to links is eventual: its acknowledgement says
+            // the daemon was told, and the link it takes or restores is seen a
+            // moment later. So the count is waited for rather than read once,
+            // which on a loaded machine reads the moment before the change.
+            // The claim is unchanged — a count that settles anywhere else,
+            // including one link too many, still fails.
+            async fn settles(
+                client: &mut ControlClient,
+                name: &str,
+                want: impl Fn(u64) -> bool,
+                claim: &str,
+            ) {
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let seen = count(client, name).await;
+                    if want(seen) {
+                        return;
+                    }
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "{claim}: '{name}' holds {seen} connections"
+                    );
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+            let linked = count(&mut second, "b").await;
+            assert_eq!(
+                linked, 2,
+                "a directly paired daemon holds one peer link and one relay link"
+            );
             control.ack(json!("CloudOffline")).await;
-            assert_eq!(count(&mut second, "b").await, 1);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == 1,
+                "going offline takes the relay link and leaves one direct link",
+            )
+            .await;
             assert!(TcpStream::connect(relay).await.is_err());
             assert!(
                 b.admin_client()
@@ -1167,31 +1422,56 @@ mod tests {
             assert!(b.lists_agents_on(&a).await.is_ok());
 
             control.ack(json!("CloudOnline")).await;
-            assert_eq!(count(&mut second, "b").await, 2);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == linked,
+                "coming back restores the relay link",
+            )
+            .await;
             // A repeated online command must not create a second relay connection.
             control.ack(json!("CloudOnline")).await;
-            assert_eq!(count(&mut second, "b").await, 2);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == linked,
+                "coming back twice is still one relay link",
+            )
+            .await;
             control.ack(json!({"SeverDirect":{"a":"a","b":"b"}})).await;
-            assert_eq!(count(&mut second, "b").await, 1);
-            assert!(b.lists_agents_on(&a).await.is_ok());
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == 1,
+                "severing the direct path leaves only the relay link",
+            )
+            .await;
+            b.can_call(&a).await;
+            b.connects_to(&a).via_cloud().await;
+            b.uses_quic_relay().await;
 
             control.ack(json!({"Latency":{"millis":100}})).await;
             let start = tokio::time::Instant::now();
-            assert!(b.lists_agents_on(&a).await.is_ok());
+            let delayed_stream = b.open_event_stream_to(&a).await;
+            let elapsed = start.elapsed();
             assert!(
-                start.elapsed() >= Duration::from_millis(100),
-                "real routed call must traverse delayed relay bytes"
+                elapsed >= Duration::from_millis(100),
+                "real routed call must traverse delayed relay bytes; completed in {elapsed:?}"
             );
-            eprintln!(
-                "routed call with 100 ms relay latency: {:?}",
-                start.elapsed()
-            );
+            eprintln!("routed call with 100 ms relay latency: {elapsed:?}");
+            drop(delayed_stream);
             control.ack(json!({"Latency":{"millis":0}})).await;
             assert!(b.lists_agents_on(&a).await.is_ok());
             control
                 .ack(json!({"EstablishDirect":{"a":"a","b":"b"}}))
                 .await;
-            assert_eq!(count(&mut second, "b").await, 2);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == 2,
+                "establishing the direct path restores exactly one direct link beside the relay",
+            )
+            .await;
             let stream = b.open_event_stream_to(&a).await;
             control.ack(json!({"StopDaemon":{"name":"a"}})).await;
             assert!(
@@ -1204,7 +1484,13 @@ mod tests {
             control.ack(json!({"RestartDaemon":{"name":"a"}})).await;
             stream.expect_disconnect().await;
             assert_eq!(a.identity_on_disk(), identity);
-            assert_eq!(count(&mut second, "a").await, 2);
+            settles(
+                &mut second,
+                "a",
+                |seen| seen == linked,
+                "a restarted daemon comes back with the same links",
+            )
+            .await;
             assert!(b.lists_agents_on(&a).await.is_ok());
 
             control
@@ -1266,17 +1552,35 @@ mod tests {
             // Validate the host-produced invitation against this topology
             // before passing its secret to the accepting device.
             let qr = node::parse_qr_pairing_payload(&qr).unwrap();
-            assert_eq!(qr.cloud_url, cloud_url);
+            assert_eq!(qr.cloud_url.as_deref(), Some(cloud_url.as_str()));
             assert_eq!(qr.host_id, a.host_id());
-            c.pairing_admin()
-                .await
-                .pair_qr_cloud_peer(qr.host_id, qr.secret)
-                .await
-                .unwrap();
+            let admin = c.pairing_admin().await;
+            let pending = admin.begin_pair_qr(&qr).await.unwrap();
+            admin.confirm_pair(pending).await.unwrap();
             c.can_call(&a).await;
+
+            // A machine can be put on this network and taken off it again,
+            // and the datagrams a direct link runs on can be eaten. What each
+            // does is the harness's own claim, proved in the spec suite; what
+            // is proved here is that the door names them and reaches them.
+            control.ack(json!({"Announce":{"daemon":"c"}})).await;
+            control.ack(json!({"Withdraw":{"daemon":"c"}})).await;
+            control
+                .ack(json!({"UdpBlocked":{"daemon":"c","blocked":true}}))
+                .await;
+            control
+                .ack(json!({"UdpBlocked":{"daemon":"c","blocked":false}}))
+                .await;
+            control
+                .ack(json!({"Tier":{"user":"default","tier":"free"}}))
+                .await;
 
             for invalid in [
                 json!({"Connections":{"daemon":"missing"}}),
+                json!({"Announce":{"daemon":"missing"}}),
+                json!({"Withdraw":{"daemon":"missing"}}),
+                json!({"UdpBlocked":{"daemon":"missing","blocked":true}}),
+                json!({"Tier":{"user":"missing","tier":"pro"}}),
                 json!({"SeverDirect":{"a":"a","b":"a"}}),
                 json!({"EstablishDirect":{"a":"a","b":"b"}}),
                 json!({"StartPinPairing":{"daemon":"b","ttl_secs":0}}),
@@ -1292,6 +1596,54 @@ mod tests {
         assert!(TcpStream::connect(relay).await.is_err());
         assert!(TcpStream::connect(address).await.is_err());
         eprintln!("Network control cleanup verified: relay and control refuse connections");
+    }
+
+    fn topology(name: &str) -> Topology {
+        Topology::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../../e2e-tests/topologies/{name}")),
+        )
+        .unwrap()
+    }
+
+    /// A phone's first network: one machine on it, nobody signed in anywhere,
+    /// and the machine already announcing itself when the topology comes up.
+    #[tokio::test]
+    async fn testnet_serve_starts_a_network_with_nobody_signed_in() {
+        let topology = topology("onramp.json");
+        assert!(topology.users.is_empty());
+        let (net, ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
+            .await
+            .unwrap();
+        assert!(ready.users.is_empty(), "nobody is signed in here");
+        assert_eq!(
+            net.daemon("workstation").connections().await,
+            0,
+            "a machine nobody signed in on has no relay link"
+        );
+        let workstation = net.daemon("workstation");
+        assert!(
+            net.discovery_events().iter().any(|event| matches!(
+                event,
+                node::discovery::DiscoveryEvent::Found(advert)
+                    if advert.host_id == workstation.host_id()
+            )),
+            "a machine declared to be on this network is on it from the start"
+        );
+    }
+
+    /// An account that has not paid for the relay. Its machine's own link is
+    /// admitted on that tier rather than on the default.
+    #[tokio::test]
+    async fn testnet_serve_starts_an_account_on_the_tier_its_topology_declares() {
+        let topology = topology("free-tier.json");
+        let (net, _ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            net.daemon("workstation").refresh_entitlement().await,
+            node::Tier::Free
+        );
     }
 
     #[tokio::test]
@@ -1368,6 +1720,31 @@ mod tests {
             ),
         ] {
             std::fs::write(&path, serde_json::to_vec(&serde_json::json!({"users":users,"daemons":daemons,"paired":paired,"agents":[]})).unwrap()).unwrap();
+            assert!(Topology::load(&path).is_err());
+        }
+        for bad in [
+            // A tier is what one named account buys; naming no such account
+            // is a topology that means nothing.
+            serde_json::json!({
+                "users": ["u"],
+                "tiers": {"other": "free"},
+                "daemons": [],
+                "paired": [],
+                "agents": [],
+            }),
+            // Two machines nobody is signed in on have no shared account to
+            // pair through, so this is not a pairing through the cloud.
+            serde_json::json!({
+                "users": [],
+                "daemons": [
+                    {"name":"a","repository_roots":[]},
+                    {"name":"b","repository_roots":[]},
+                ],
+                "paired": [["a", "b", "Cloud"]],
+                "agents": [],
+            }),
+        ] {
+            std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
             assert!(Topology::load(&path).is_err());
         }
     }

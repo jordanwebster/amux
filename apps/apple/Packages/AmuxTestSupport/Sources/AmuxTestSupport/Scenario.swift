@@ -47,16 +47,22 @@ public enum Scenario {
 
     /// The paired machines. `air` is one you cannot reach this morning, which
     /// is why one agent's state is genuinely unknown rather than idle.
+    ///
+    /// Each names the route this phone holds to it, because that is what
+    /// decides which group it is in and what may be said about it: Studio is
+    /// on the same network as the phone, mini answers across the relay, and
+    /// air answers nowhere.
     public static let hosts: [HostState] = [
         HostState(entry: HostEntry(
             id: studio, name: "Studio", online: true, version: "0.4.0",
-            platform: "Mac Studio"), epoch: 1),
+            platform: "Mac Studio", via: .direct, signedIn: true), epoch: 1),
         HostState(entry: HostEntry(
             id: mini, name: "mini", online: true, version: "0.4.0",
-            platform: "Mac mini"), epoch: 1),
+            platform: "Mac mini", via: .relay, signedIn: true), epoch: 1),
         HostState(entry: HostEntry(
             id: air, name: "air", online: false, version: "0.4.0",
-            lastDialError: "no route to host", platform: "MacBook Air"), epoch: 1),
+            lastDialError: "no route to host", platform: "MacBook Air",
+            via: .offline, signedIn: true), epoch: 1),
     ]
 
     /// The complete machine list used by the selected Hosts and New Agent
@@ -65,25 +71,43 @@ public enum Scenario {
     public static let catalogueHosts: [HostState] = hosts + [
         HostState(entry: HostEntry(
             id: homelab, name: "homelab", online: true, version: "0.4.0",
-            platform: "Linux"), epoch: 1),
+            platform: "Linux", via: .relay, signedIn: true), epoch: 1),
     ]
 
     /// The same machines on a morning when all three answer. What a phone
     /// hears before one of them goes away, so a fixture can put a machine's
     /// departure in the past by playing both.
-    public static let reachableHosts: [HostState] = hosts.map { host in
+    public static let reachableHosts: [HostState] = hosts.map(answering)
+
+    public static let reachableCatalogueHosts: [HostState] = catalogueHosts.map(answering)
+
+    /// The same machine on a morning when it answers. A machine that names no
+    /// route is answering across the relay, which is where a machine that came
+    /// back from nowhere comes back.
+    private static func answering(_ host: HostState) -> HostState {
         var reachable = host
         reachable.entry.online = true
         reachable.entry.lastDialError = nil
+        if reachable.entry.via == .offline { reachable.entry.via = .relay }
         return reachable
     }
 
-    public static let reachableCatalogueHosts: [HostState] = catalogueHosts.map { host in
-        var reachable = host
-        reachable.entry.online = true
-        reachable.entry.lastDialError = nil
-        return reachable
-    }
+    /// A machine nothing can reach that has never had an account.
+    ///
+    /// Two different reasons a machine cannot be reached look identical from a
+    /// list: one is a subscription away and the other is not reachable from
+    /// anywhere but its own network whatever anybody buys. This is the second,
+    /// so the screens that tell them apart have something to tell apart.
+    public static let neverSignedIn = HostState(entry: HostEntry(
+        id: homelab, name: "homelab", online: false, version: "0.4.0",
+        lastDialError: "no route to host", platform: "Linux",
+        via: .offline, signedIn: false), epoch: 1)
+
+    /// A machine found on this network, with the route that says so. What a
+    /// browser hands over before any account exists.
+    public static let foundNearby = HostEntry(
+        id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline,
+        platform: "Linux", via: .direct)
 
     /// What the pinned clock reads.
     ///
@@ -98,7 +122,7 @@ public enum Scenario {
     /// the fleet — an untrusted host is an offer, not a host.
     public static let unpaired = HostEntry(
         id: homelab, name: "homelab", online: true, trustStatus: .untrustedButOnline,
-        platform: "Linux")
+        platform: "Linux", via: .direct)
 
     /// This phone and the machines that hold a key to it.
     ///
@@ -179,7 +203,8 @@ public enum Scenario {
         minutesAgo: Double,
         phase: AgentPhase = .running,
         headline: String? = nil,
-        outcome: TurnOutcome? = nil
+        outcome: TurnOutcome? = nil,
+        ask: Ask? = nil
     ) -> AgentCard {
         let activity = now.addingTimeInterval(-60 * minutesAgo)
         return AgentCard(
@@ -196,7 +221,8 @@ public enum Scenario {
             attention: attention,
             phase: phase,
             lastActivity: activity,
-            outcome: outcome)
+            outcome: outcome,
+            ask: ask)
     }
 
     private static let claude = AgentKind.claude(driver: .pty)
@@ -208,13 +234,15 @@ public enum Scenario {
     public static let agents: [AgentCard] = [
         card("refactor-auth", host: studio, directory: "~/src/amux", kind: claude,
              attention: .needsYou(why: .permission), minutesAgo: 2,
-             headline: "Wants to run a command"),
+             headline: "Checking the token refresh against the spec",
+             ask: Sessions.claudePermission),
         card("spec-suite", host: mini, directory: "~/src/amux", kind: codex,
              attention: .working, minutesAgo: 14.0 / 60,
              headline: "Running the spec suite · 47 of 126"),
         card("docs-pass", host: studio, directory: "~/src/amux-docs", kind: claude,
              attention: .needsYou(why: .question), minutesAgo: 6,
-             headline: "Which crate should own the redaction table?"),
+             headline: "Moving the redaction notes next to the code",
+             ask: Sessions.claudeQuestion),
         card("ios-bridge", host: studio, directory: "~/src/amux-core-bridge", kind: codex,
              attention: .working, minutesAgo: 3,
              headline: "Editing bridge/src/session.rs"),

@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
+use node::discovery::{Discovery, ScriptedDiscovery};
 use node::harness::runtime::{ProfileRuntime, RuntimeFixtures};
 use node::installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
@@ -13,6 +14,7 @@ use node::installation::{
 };
 
 use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
+use super::udp_proxy::UdpProxy;
 use super::{Daemon, NetInner};
 use crate::identity::IdentityServer;
 
@@ -20,6 +22,7 @@ pub(super) struct InstallationSpec {
     pub name: String,
     pub persistent: bool,
     pub front_door: bool,
+    pub embedded: bool,
     pub profiles: Vec<ProfileSpec>,
 }
 
@@ -31,8 +34,7 @@ pub(super) struct ProfileSpec {
 }
 
 struct ProfileFixture {
-    tcp_addr: Option<SocketAddr>,
-    tracked_tcp: node::harness::TrackedTcpConnections,
+    direct_addr: Option<SocketAddr>,
     clock: Arc<TestArtifactClock>,
     sources: Arc<super::sources::DaemonSources>,
 }
@@ -49,9 +51,6 @@ struct FixturePlan {
     cloud_only: VecDeque<bool>,
 }
 type Fixtures = Arc<Mutex<FixturePlan>>;
-
-#[cfg(test)]
-mod tests;
 
 pub(crate) struct ProfileOwner {
     installation: Weak<InstallationInner>,
@@ -133,9 +132,12 @@ struct InstallationInner {
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
     relay_addr: Option<SocketAddr>,
+    discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
     root: PathBuf,
     repository_roots: Vec<PathBuf>,
     persistent: bool,
+    embedded: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
     _disk_root: Option<tempfile::TempDir>,
     lifecycle: tokio::sync::Mutex<()>,
@@ -224,8 +226,14 @@ impl InstallationHandle {
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
                 self.inner.repository_roots.clone(),
+                self.inner.embedded,
             ),
-            fixture_factory(self.inner.fixtures.clone(), self.inner.relay_addr),
+            fixture_factory(
+                self.inner.fixtures.clone(),
+                self.inner.relay_addr,
+                self.inner.discovery.clone(),
+                self.inner.udp_proxy.clone(),
+            ),
         )
         .await
         .expect("reopen installation");
@@ -321,6 +329,7 @@ impl InstallationHandle {
             &self.inner.name,
             InstallationRoot::OnDisk(self.inner.root.clone()),
             self.inner.repository_roots.clone(),
+            self.inner.embedded,
         ))
         .await
     }
@@ -531,11 +540,20 @@ fn options(
     name: &str,
     root: InstallationRoot,
     repository_roots: Vec<PathBuf>,
+    embedded: bool,
 ) -> InstallationOptions {
     InstallationOptions {
+        // A testnet installation is handed its discovery per profile through
+        // the runtime fixtures below, which is a finer grain than one browser
+        // for the whole device.
+        discovery: None,
         relocation: Default::default(),
         root,
-        listeners: Listeners::Sockets,
+        listeners: if embedded {
+            Listeners::InProcessOnly
+        } else {
+            Listeners::Sockets
+        },
         credentials: CredentialSource::ProfileFiles,
         identity_http: reqwest::Client::new(),
         host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
@@ -553,53 +571,54 @@ fn options(
     }
 }
 
-fn fixture_factory(fixtures: Fixtures, relay_addr: Option<SocketAddr>) -> RuntimeFixtureFactory {
+fn fixture_factory(
+    fixtures: Fixtures,
+    relay_addr: Option<SocketAddr>,
+    discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
+) -> RuntimeFixtureFactory {
     Arc::new(move |id| {
         let fixtures = fixtures.clone();
+        let discovery = discovery.clone();
+        let udp_proxy = udp_proxy.clone();
         Box::pin(async move {
-            let addr = {
-                let mut fixtures = fixtures.lock().unwrap();
-                if let Some(fixture) = fixtures.profiles.get(&id) {
-                    fixture.tcp_addr
-                } else if fixtures.cloud_only.pop_front().unwrap_or(false) {
-                    None
-                } else {
-                    Some("127.0.0.1:0".parse().unwrap())
-                }
-            };
-            // A stopped runtime's port can remain occupied briefly. Use the
-            // daemon/relay restart bound, yielding without the fixture lock so
-            // socket teardown can finish on the same runtime.
-            let listener = if let Some(addr) = addr {
-                Some(super::relay::bind_addr_with_retries(addr).await)
-            } else {
-                None
-            };
             let mut fixtures = fixtures.lock().unwrap();
+            let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
+                fixture.direct_addr.is_none()
+            } else {
+                fixtures.cloud_only.pop_front().unwrap_or(false)
+            };
+            let existing = fixtures.profiles.contains_key(&id);
+            let binding = (!cloud_only && !existing).then(|| udp_proxy.register(id.0));
+            let listener = if cloud_only {
+                None
+            } else if existing {
+                Some(udp_proxy.rebind(id.0))
+            } else {
+                Some(binding.as_ref().unwrap().socket.try_clone().unwrap())
+            };
             let fixture = fixtures
                 .profiles
                 .entry(id)
                 .or_insert_with(|| ProfileFixture {
-                    tcp_addr: listener
-                        .as_ref()
-                        .map(|listener| listener.local_addr().unwrap()),
-                    tracked_tcp: Default::default(),
+                    direct_addr: binding.as_ref().map(|binding| binding.public_addr),
                     clock: Arc::new(TestArtifactClock::new()),
                     sources: Default::default(),
                 });
             RuntimeFixtures {
                 listener,
-                tracked_tcp: Some(fixture.tracked_tcp.clone()),
+                quic_client_socket: None,
+                advertised_addr: fixture.direct_addr,
+                quic_transport: Some(udp_proxy.transport_config()),
+                discovery: Some(Arc::new(discovery) as Arc<dyn Discovery>),
                 host_factory: Some(Arc::new(
                     agent_runtime::test_support::Factory::new(fixture.clock.clone())
                         .with_sources(fixture.sources.clone()),
                 )),
                 cloud: None,
-                cloud_transport: relay_addr.map(|addr| {
-                    tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
-                        .unwrap()
-                        .connect_lazy()
-                }),
+                cloud_transport: relay_addr,
+                cloud_refresh_interval: None,
+                udp_blocked_memory: None,
             }
         })
     })
@@ -609,6 +628,8 @@ pub(super) async fn start(
     spec: InstallationSpec,
     identity: Arc<IdentityServer>,
     cloud: Option<&super::relay::CloudRelay>,
+    discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
 ) -> InstallationHandle {
     let disk_root = crate::identity::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
@@ -629,8 +650,13 @@ pub(super) async fn start(
         .collect::<Vec<_>>();
     let installation = Arc::new(
         Installation::open_for_test(
-            options(&spec.name, root, repository_roots.clone()),
-            fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.relay_addr())),
+            options(&spec.name, root, repository_roots.clone(), spec.embedded),
+            fixture_factory(
+                fixtures.clone(),
+                cloud.map(|cloud| cloud.relay_addr()),
+                discovery.clone(),
+                udp_proxy.clone(),
+            ),
         )
         .await
         .expect("start production installation"),
@@ -675,14 +701,24 @@ pub(super) async fn start(
                     data_dir: paths.data_dir.clone(),
                     repository_roots: Vec::new(),
                     artifact_clock: fixture.clock.clone(),
-                    tcp_addr: fixture.tcp_addr,
+                    direct_addr: fixture.direct_addr,
+                    proxy_id: id.0,
+                    udp_proxy: udp_proxy.clone(),
                     cloud: profile.cloud_user.as_ref().map(|user| {
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
                         CloudAttachment {
                             addr: cloud.relay_addr(),
+                            quic_addr: cloud.relay_addr(),
                             user_id,
                             token,
+                            tier: node::Tier::Pro,
+                            tokens: cloud.token_registry(),
+                            user_tiers: cloud.user_tier_registry(),
+                            refresh_interval: None,
+                            udp_blocked_memory: None,
+                            relay_transport: super::RelayTransport::Tcp,
+                            quic_client_config: cloud.quic_client_config(),
                         }
                     }),
                     runtime: tokio::sync::Mutex::new(None),
@@ -691,7 +727,6 @@ pub(super) async fn start(
                         id,
                         paths,
                     }),
-                    tracked_tcp: fixture.tracked_tcp.clone(),
                     sources: fixture.sources.clone(),
                 });
                 (profile.name.clone(), (id, daemon))
@@ -708,9 +743,12 @@ pub(super) async fn start(
         identity,
         fixtures,
         relay_addr: cloud.map(|cloud| cloud.relay_addr()),
+        discovery,
+        udp_proxy,
         root,
         repository_roots,
         persistent: spec.persistent,
+        embedded: spec.embedded,
         _disk_root: Some(disk_root),
         lifecycle: tokio::sync::Mutex::new(()),
     });

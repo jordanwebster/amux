@@ -359,6 +359,71 @@ fn reconnect_empty_replay(model: &mut Model, stream: fold::StreamAttempt, throug
 }
 
 #[test]
+fn remote_host_inventory_rejoins_stored_chats_once_without_reconnecting_the_client() {
+    for (kind, loaded) in [
+        (
+            model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
+            },
+            pty_loaded_with_pending_ask(),
+        ),
+        (
+            model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Sdk,
+            },
+            sdk_loaded_with_pending_ask(),
+        ),
+        (model::AgentKind::Codex, codex_loaded_with_pending_ask()),
+    ] {
+        for online_first in [true, false] {
+            let mut agent = an_agent("stored", "hetzner");
+            agent.kind = kind;
+            let mut model = inventory_model_with(agent.clone());
+            update(&mut model, host_up(&a_host("hetzner")));
+            let (attempt, op) = begin_open(&mut model);
+            let effects = load(&mut model, attempt, op, loaded.clone());
+            let stream = stream_attempt(&effects);
+            complete_empty_replay(&mut model, stream, 10, 1);
+            update(
+                &mut model,
+                Msg::ChatStream {
+                    agent: agent.id,
+                    attempt: stream,
+                    event: ChatStreamMsg::Closed {
+                        at: t0_plus(20),
+                        reason: StreamCloseReason::HostUnreachable,
+                    },
+                },
+            );
+            update(&mut model, host_up(&an_offline_host("hetzner")));
+            if online_first {
+                update(&mut model, host_up(&a_host("hetzner")));
+            }
+            let inventory = Msg::Server(ServerMsg::HostInventory {
+                host_id: agent.host_id,
+                agent_ids: vec![agent.id],
+            });
+            let effects = update(&mut model, inventory.clone());
+            assert!(matches!(
+                effects.as_slice(),
+                [Effect::OpenStoreStream {
+                    query: StoreStreamQuery::After { after: 10, .. },
+                    ..
+                }]
+            ));
+            if !online_first {
+                assert!(update(&mut model, host_up(&a_host("hetzner"))).is_empty());
+            }
+            let reopened = stream_attempt(&effects);
+            assert_ne!(stream, reopened);
+            assert!(update(&mut model, inventory.clone()).is_empty());
+            complete_empty_replay(&mut model, reopened, 10, 21);
+            assert!(update(&mut model, inventory).is_empty());
+        }
+    }
+}
+
+#[test]
 fn store_cursor_restores_pty_ask_on_open_and_reconnect_without_new_rows() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);

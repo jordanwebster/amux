@@ -8,11 +8,23 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     public var data_dir: String
     public var cache_dir: String
     public var device_name: String
-    public var relay: Relay
+    /// The relay this phone reaches its account's machines through, where
+    /// there is one. A phone nobody has signed in on has none: it finds the
+    /// machines on its own network and dials them directly, and a relay is
+    /// what an account adds.
+    public var relay: Relay?
     /// Every account this phone is signed in to, in the order the switcher
-    /// lists them, and which of them is on screen.
+    /// lists them, and which of them is on screen. Empty is a phone nobody
+    /// has signed in on, which is a phone that works.
     public var accounts: [Account]
-    public var active: String
+    /// Which account is on screen, or the one this phone was last signed in
+    /// as. Signing out leaves that account's machines on screen rather than
+    /// emptying the app, so the name outlives the credential.
+    public var active: String?
+    /// Accounts somebody removed from this phone. The bridge deletes each
+    /// one's profile and caches before opening anything; naming one that is
+    /// already gone does nothing.
+    public var forget: [String]
     public var log_path: String
     /// One callback batch per display frame by default.
     public var frame_interval_ns: UInt64
@@ -48,10 +60,20 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     /// Where the relay credential comes from. `callback` means the bridge asks
     /// this app each time, which is what a rotating cloud token needs.
     public enum Token: Codable, Sendable, Equatable {
-        case fixed(String)
+        /// A bearer this app already holds, and what the account that holds it
+        /// buys.
+        ///
+        /// The tier travels with it for the same reason it travels with a
+        /// credential the account service issues: the bearer is opaque here
+        /// and below, so nothing underneath can read a tier out of it, and a
+        /// link that reported none would report free — which would put every
+        /// machine on the far side of the relay out of reach on a phone whose
+        /// account had paid for them.
+        case fixed(String, tier: Tier?)
         case callback
 
         private enum Key: String, CodingKey { case Static }
+        private enum Fixed: String, CodingKey { case bearer, tier }
 
         public init(from decoder: any Decoder) throws {
             if let text = try? decoder.singleValueContainer().decode(String.self), text == "Callback" {
@@ -59,7 +81,10 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
                 return
             }
             let container = try decoder.container(keyedBy: Key.self)
-            self = .fixed(try container.decode(String.self, forKey: .Static))
+            let fixed = try container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
+            self = .fixed(
+                try fixed.decode(String.self, forKey: .bearer),
+                tier: try fixed.decodeIfPresent(Tier.self, forKey: .tier))
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -67,16 +92,18 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
             case .callback:
                 var container = encoder.singleValueContainer()
                 try container.encode("Callback")
-            case .fixed(let bearer):
+            case .fixed(let bearer, let tier):
                 var container = encoder.container(keyedBy: Key.self)
-                try container.encode(bearer, forKey: .Static)
+                var fixed = container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
+                try fixed.encode(bearer, forKey: .bearer)
+                try fixed.encodeIfPresent(tier, forKey: .tier)
             }
         }
     }
 
     public init(
-        dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay,
-        accounts: [Account], active: String,
+        dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay?,
+        accounts: [Account], active: String?, forget: [String] = [],
         logPath: URL, frameIntervalNanoseconds: UInt64 = 16_666_667
     ) {
         self.data_dir = dataDirectory.path
@@ -85,6 +112,7 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
         self.relay = relay
         self.accounts = accounts
         self.active = active
+        self.forget = forget
         self.log_path = logPath.path
         self.frame_interval_ns = frameIntervalNanoseconds
     }
@@ -144,10 +172,17 @@ public final class BridgeClient: Sendable {
                 let data = Data(
                     bytesNoCopy: UnsafeMutableRawPointer(mutating: json),
                     count: strlen(json), deallocator: .none)
-                guard let batch = try? decoder.decode([Event].self, from: data) else {
+                // Event by event, so one event this build cannot read stands
+                // in its place as unreadable and the rest still arrive. Only a
+                // callback that is not a JSON array at all is lost whole.
+                guard let decoded = try? Event.batch(from: data, decoder: decoder) else {
                     lock.withLock { unreadable.append(String(decoding: data, as: UTF8.self)) }
                     return
                 }
+                if !decoded.unreadable.isEmpty {
+                    lock.withLock { unreadable.append(contentsOf: decoded.unreadable) }
+                }
+                let batch = decoded.events
                 batches.yield(batch)
                 for event in batch {
                     guard case .tokenRequest(let request, let account) = event else { continue }
@@ -270,6 +305,23 @@ public final class BridgeClient: Sendable {
         }
     }
 
+    /// Hands over every machine this phone's browser can currently see.
+    ///
+    /// The whole set, not a change to it: a machine that has gone is a machine
+    /// missing from the set, and an empty set is how the app says it can see
+    /// nothing. Nothing in the shared library asks the system for the network,
+    /// because on iOS only the system may, so this is the only way it learns
+    /// what is nearby.
+    public func discovered(_ hosts: [FoundHost]) {
+        guard let json = try? AmuxJSON.encoder.encode(hosts) else { return }
+        state.withLock { state in
+            guard let handle = state.handle else { return }
+            String(decoding: json, as: UTF8.self).withCString { found in
+                amux_app_discovered(handle, found)
+            }
+        }
+    }
+
     /// Matches callback cadence to the display the app is actually drawing on.
     public func setFrameInterval(nanoseconds: UInt64) {
         state.withLock { state in
@@ -339,12 +391,19 @@ public final class BridgeClient: Sendable {
     private func answerToken(_ request: UInt64, for account: String) {
         Task { [tokenProvider] in
             let token = await tokenProvider(request, account)
-            let reply: [String: JSONValue] = if let token {
-                token.expiresAt.map {
-                    ["token": .string(token.bearer), "expires_at": .int(Int($0.timeIntervalSince1970))]
-                } ?? ["token": .string(token.bearer)]
-            } else {
-                ["error": .string("no credential for this account")]
+            // The tier travels with the token because it came back in the
+            // same reply: the core cannot read one out of an opaque bearer,
+            // and this is how it learns what the relay will do for this
+            // account without anybody asking a second time.
+            var reply: [String: JSONValue] = ["error": .string("no credential for this account")]
+            if let token {
+                reply = ["token": .string(token.bearer)]
+                if let expiry = token.expiresAt {
+                    reply["expires_at"] = .int(Int(expiry.timeIntervalSince1970))
+                }
+                if let tier = token.tier {
+                    reply["tier"] = .string(tier.rawValue)
+                }
             }
             guard let json = try? AmuxJSON.encoder.encode(reply) else { return }
             self.state.withLock { state in
@@ -397,6 +456,11 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case selectAccount(String)
     /// Stop waiting out the reconnect backoff and dial the relay now.
     case retryNow
+    /// Ask the relay what this account may now do, without waiting for the
+    /// link's own re-check. Sent after a purchase, so the machines that were
+    /// away become reachable on the screen somebody bought them on rather than
+    /// minutes later.
+    case refreshEntitlement
     /// Stop trusting a machine, closing every link this phone holds to it.
     case revoke(host: HostId)
     /// Ask a machine what it has to offer as a working directory. The limit is
@@ -440,6 +504,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
                 return
             case "retry_now":
                 self = .retryNow
+                return
+            case "refresh_entitlement":
+                self = .refreshEntitlement
                 return
             case "revoke":
                 self = .revoke(host: try container.decode(HostId.self, forKey: .host))
@@ -497,6 +564,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
         case .retryNow:
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("retry_now", forKey: .command)
+        case .refreshEntitlement:
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("refresh_entitlement", forKey: .command)
         case .revoke(let host):
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("revoke", forKey: .command)

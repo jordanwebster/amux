@@ -10,13 +10,10 @@ use std::time::Duration;
 
 use testnet::{TestNet, Via};
 
-/// PIN pairing over direct TCP establishes mutual trust; afterwards both
-/// sides can call each other over the new direct link — the initiator as
-/// its dialer, the responder back over the same inbound link.
+/// Discovery supplies the direct address, so no account or relay is needed.
 #[tokio::test]
-async fn pin_pairing_over_direct_tcp_establishes_mutual_trust() {
+async fn pin_pairing_with_a_found_host_needs_no_account() {
     let net = TestNet::builder()
-        .cloud()
         .daemon("laptop")
         .daemon("desktop")
         .start()
@@ -24,17 +21,141 @@ async fn pin_pairing_over_direct_tcp_establishes_mutual_trust() {
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
     let pin = desktop.start_pairing().await;
+    net.announce(&desktop);
+    laptop.sees_pairing_candidate(&desktop).await;
     laptop
         .pair(&desktop)
-        .with_pin(&pin)
+        .with_found_pin(&pin)
         .await
-        .expect("PIN pairing over direct TCP");
+        .expect("PIN pairing with a found host");
 
     laptop.trusts(&desktop).await;
     desktop.trusts(&laptop).await;
     laptop.connects_to(&desktop).via_direct().await;
     laptop.can_call(&desktop).await;
     desktop.can_call(&laptop).await;
+}
+
+/// A typed socket address is enough to begin pairing. The initiator leaves
+/// host_id empty and pins the identity returned by the SPAKE2 handshake.
+#[tokio::test]
+async fn a_typed_address_learns_the_host_id_from_the_handshake() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    let pin = desktop.start_pairing().await;
+    laptop.pair(&desktop).with_pin(&pin).await.unwrap();
+
+    laptop.trusts(&desktop).await;
+    desktop.trusts(&laptop).await;
+}
+
+/// The QR carries routable addresses, so it still works when discovery is
+/// suppressed and neither profile has a cloud account.
+#[tokio::test]
+async fn a_qr_with_addresses_pairs_with_multicast_blocked_and_no_cloud() {
+    let net = TestNet::builder()
+        .daemon("desktop")
+        .outside_discovery("desktop")
+        .daemon("phone")
+        .start()
+        .await;
+    let [desktop, phone] = net.daemons(["desktop", "phone"]);
+
+    let qr = desktop.start_qr_pairing().await;
+    assert!(!qr.addrs.is_empty(), "the QR must carry listener addresses");
+    assert_eq!(qr.cloud_url, None, "an unbound profile has no cloud URL");
+    phone.pair(&desktop).with_qr(&qr).await.unwrap();
+
+    phone.trusts(&desktop).await;
+    desktop.trusts(&phone).await;
+}
+
+/// A stale VPN or virtual-interface address may accept no UDP traffic at all.
+/// Pairing gives that candidate one bounded QUIC dial before moving to the
+/// responder's working address.
+#[tokio::test]
+async fn pairing_moves_past_a_silent_candidate_address_promptly() {
+    let net = TestNet::builder()
+        .daemon("desktop")
+        .outside_discovery("desktop")
+        .daemon("phone")
+        .start()
+        .await;
+    let [desktop, phone] = net.daemons(["desktop", "phone"]);
+
+    let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut qr = desktop.start_qr_pairing().await;
+    qr.addrs.insert(0, blackhole.local_addr().unwrap());
+
+    tokio::time::timeout(Duration::from_secs(5), phone.pair(&desktop).with_qr(&qr))
+        .await
+        .expect("pairing should move past a silent address within one candidate budget")
+        .expect("pair through the later working address");
+
+    phone.trusts(&desktop).await;
+    desktop.trusts(&phone).await;
+}
+
+/// An untrusted advertisement is offered to local callers as a direct
+/// candidate, but never enters the trusted host dial path.
+#[tokio::test]
+async fn a_found_unpinned_host_is_a_candidate_for_local_callers_only_and_never_dialed_for_a_trusted_channel()
+ {
+    let net = TestNet::builder()
+        .daemon("phone")
+        .daemon("desktop")
+        .start()
+        .await;
+    let [phone, desktop] = net.daemons(["phone", "desktop"]);
+
+    net.announce(&desktop);
+    phone
+        .sees_pairing_candidate_without_trusted_dial(&desktop)
+        .await;
+    let candidate = phone
+        .pairing_candidate_details()
+        .await
+        .into_iter()
+        .find(|candidate| candidate.host.id == desktop.host_id())
+        .expect("found host is a pairing candidate");
+    assert_eq!(candidate.via, node::PeerVia::Direct);
+    assert!(!candidate.addrs.is_empty());
+    phone.does_not_trust(&desktop).await;
+}
+
+/// Discovery is only a dial hint. A spoof that claims a pinned host id but
+/// presents a stranger's key is rejected before any trust is replaced.
+#[tokio::test]
+async fn an_advertisement_claiming_a_pinned_hosts_id_with_a_strangers_key_is_refused_at_the_handshake_and_the_dialer_sends_no_certificate()
+ {
+    let net = TestNet::builder()
+        .daemon("phone")
+        .daemon("desktop")
+        .daemon("stranger")
+        .trusted_without_discovery("phone", "desktop")
+        .outside_discovery("stranger")
+        .start()
+        .await;
+    let [phone, desktop, stranger] = net.daemons(["phone", "desktop", "stranger"]);
+
+    let pin = stranger.start_pairing().await;
+    net.announce_as(&stranger, desktop.host_id());
+    phone.sees_found_address_for(&desktop).await;
+
+    let error = phone
+        .pair(&desktop)
+        .with_found_pin(&pin)
+        .await
+        .expect_err("a discovery claim cannot replace a pinned identity");
+    assert!(error.to_string().contains("INVALID_PIN"), "got: {error}");
+    phone.trusts(&desktop).await;
+    phone.does_not_trust(&stranger).await;
+    stranger.does_not_trust(&phone).await;
 }
 
 /// PIN pairing works between peers that share only the relay: SPAKE2 runs
@@ -73,6 +194,7 @@ async fn qr_pairing_through_the_cloud() {
     let net = TestNet::builder()
         .cloud()
         .daemon("desktop")
+        .cloud_only()
         .daemon("phone")
         .cloud_only()
         .start()
@@ -81,6 +203,10 @@ async fn qr_pairing_through_the_cloud() {
     phone.sees(&desktop).await;
 
     let qr = desktop.start_qr_pairing().await;
+    assert!(
+        qr.addrs.is_empty(),
+        "a cloud-only responder must not put a direct route in its QR"
+    );
     phone
         .pair(&desktop)
         .with_qr(&qr)
@@ -89,6 +215,7 @@ async fn qr_pairing_through_the_cloud() {
 
     phone.trusts(&desktop).await;
     desktop.trusts(&phone).await;
+    phone.connects_to(&desktop).via_cloud().await;
     phone.can_call(&desktop).await;
     desktop.can_call(&phone).await;
     desktop.pair_mode_ends().await; // the one-shot secret is consumed
@@ -290,7 +417,7 @@ async fn re_pairing_a_rotated_key_replaces_the_old_entry() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -340,7 +467,10 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let start = chrono::Utc::now();
     let pin = host.start_pairing().await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     assert_eq!(pending.host_id, host.host_id());
     assert_eq!(pending.name, "host");
     assert_eq!(
@@ -375,7 +505,10 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
     let client = phone.pairing_admin().await;
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     client.abandon_pair(pending).await.unwrap();
     assert_eq!(
         before,
@@ -405,6 +538,7 @@ async fn pairing_confirm_qr_can_be_abandoned_then_confirmed() {
     };
     let payload = node::QrPairingPayload {
         host_id: host.host_id(),
+        addrs: start.addrs.clone(),
         cloud_url: start.cloud_url,
         secret,
     };
@@ -467,24 +601,27 @@ async fn pairing_confirm_secret_failures_are_indistinguishable() {
     let pin = host.start_pairing().await;
     for invalid in [pin.wrong_guess().to_string(), "123".into()] {
         let error = client
-            .begin_pair_pin(host.host_id(), &invalid)
+            .begin_pair_pin(host.host_id(), &invalid, &[])
             .await
             .unwrap_err();
         assert!(matches!(error, node::PairingError::InvalidPin));
-        assert_eq!(error.to_string(), "InvalidPin");
+        assert_eq!(error.to_string(), "INVALID_PIN");
     }
     host.cancel_pairing().await;
     let pin = host
         .start_pairing_with_ttl(Duration::from_millis(800))
         .await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     host.pair_mode_ends().await;
     assert!(matches!(
         client.confirm_pair(pending).await,
         Err(node::PairingError::InvalidPin)
     ));
     let error = client
-        .begin_pair_pin(host.host_id(), &pin)
+        .begin_pair_pin(host.host_id(), &pin, &[])
         .await
         .unwrap_err();
     assert!(matches!(error, node::PairingError::InvalidPin));
@@ -564,13 +701,13 @@ async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_q
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
     let pin_error = client
-        .begin_pair_pin(host.host_id(), &pin)
+        .begin_pair_pin(host.host_id(), &pin, &[])
         .await
         .unwrap_err();
     responder.cancel_pairing().await.unwrap();
     let offer = responder.start_qr_pairing().await.unwrap();
-    assert_eq!(offer.cloud_url, elsewhere.cloud_url());
-    assert_ne!(offer.cloud_url, net.cloud_url());
+    assert_eq!(offer.cloud_url.as_deref(), Some(elsewhere.cloud_url()));
+    assert_ne!(offer.cloud_url.as_deref(), Some(net.cloud_url()));
     let node::PairingSecret::QrSecret(secret) = &offer.secret else {
         panic!("expected QR secret")
     };
@@ -581,9 +718,12 @@ async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_q
     assert!(matches!(pin_error, node::PairingError::Transport(_)));
     assert!(matches!(qr_error, node::PairingError::Transport(_)));
     assert_eq!(pin_error.to_string(), qr_error.to_string());
-    assert!(pin_error.to_string().contains(
-        "Pairing could not reach this host. Check that both devices are online and signed in to the same cloud account."
-    ));
+    assert!(
+        pin_error.to_string().contains(
+            "Pairing could not reach this host. Check that both devices are online and signed in to the same cloud account."
+        ),
+        "got: {pin_error}"
+    );
     assert_eq!(
         before,
         (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
@@ -594,4 +734,163 @@ async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_q
     );
     net.shutdown().await;
     elsewhere.shutdown().await;
+}
+
+/// A machine in the same room is paired with on this network even when the
+/// relay can see it too — and on an account that has bought nothing, which is
+/// the only way that pairing can succeed at all.
+///
+/// Both routes are open at once here: the machine advertises on this network
+/// and is signed in to the same account as the device pairing with it, so the
+/// relay has a route to it before any code is typed. The route the pairing
+/// takes decides what the machine reads as afterwards — a device that paired
+/// through the relay holds a relay link to a machine in the same room, and a
+/// free account is told that machine is away — so the direct address must win
+/// wherever there is one. The relay would refuse this pairing anyway (see the
+/// entitlement chapter), which is the second half of the same rule: on a free
+/// account a pairing either goes direct or does not happen.
+#[tokio::test]
+async fn a_found_machine_the_relay_can_also_see_is_paired_with_directly_on_a_free_account() {
+    let net = TestNet::builder()
+        .cloud()
+        // On this network and on the relay: the default daemon keeps its
+        // direct transports, and one cloud account is shared.
+        .daemon("workstation")
+        .daemon("phone")
+        .cloud_tier(node::Tier::Free)
+        .start()
+        .await;
+    let [workstation, phone] = net.daemons(["workstation", "phone"]);
+    // The relay's route exists first, so choosing the direct address is a
+    // choice and not the only thing left.
+    phone.sees(&workstation).await;
+
+    let pin = workstation.start_pairing().await;
+    net.announce(&workstation);
+    phone.sees_found_address_for(&workstation).await;
+
+    let admin = phone.pairing_admin().await;
+    let pending = admin
+        .begin_pair_pin(workstation.host_id(), &pin, &[])
+        .await
+        .expect("a machine on this network authenticates a printed code");
+    assert_eq!(
+        pending.via,
+        node::PeerVia::Direct,
+        "the code was authenticated over {:?} with the machine on this network",
+        pending.via
+    );
+    admin.confirm_pair(pending).await.expect("trust is written");
+
+    phone.trusts(&workstation).await;
+    workstation.trusts(&phone).await;
+    phone.connects_to(&workstation).via_direct().await;
+    phone.can_call(&workstation).await;
+}
+
+/// The phone's own shape: an embedded installation with no listener, pairing
+/// on its own network with a machine the relay can also see.
+#[tokio::test]
+async fn an_embedded_device_pairs_directly_with_a_machine_the_relay_can_also_see() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_user("personal")
+        .daemon("spare")
+        .no_cloud()
+        .installation("phone")
+        .embedded()
+        .profile("main")
+        .cloud_user("personal")
+        .cloud_only()
+        .start()
+        .await;
+    let phone = net.installation("phone").profile("main");
+    let [workstation, spare] = net.daemons(["workstation", "spare"]);
+    phone.sees(&workstation).await;
+
+    net.announce(&workstation);
+    net.announce(&spare);
+    phone.sees_found_address_for(&workstation).await;
+    phone.sees_found_address_for(&spare).await;
+
+    let admin = phone.pairing_admin().await;
+    for machine in [&workstation, &spare] {
+        let pin = machine.start_pairing().await;
+        let pending = admin
+            .begin_pair_pin(machine.host_id(), &pin, &[])
+            .await
+            .expect("a machine on this network authenticates a printed code");
+        assert_eq!(
+            pending.via,
+            node::PeerVia::Direct,
+            "{} paired over the relay",
+            machine.name()
+        );
+        admin.confirm_pair(pending).await.expect("trust is written");
+    }
+
+    phone.connects_to(&workstation).via_direct().await;
+    phone.connects_to(&spare).via_direct().await;
+}
+
+/// A machine the relay can also see is first known through the relay, and a
+/// connected client is told so. When pairing then puts a direct link up, that
+/// client must be told again: it holds one subscription for the whole session
+/// and never asks a second time, so a route change that is not published
+/// leaves a machine on the same network reading as away for as long as the
+/// client stays connected.
+#[tokio::test]
+async fn a_connected_client_is_told_when_a_relay_seen_machine_becomes_directly_linked() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_user("personal")
+        .installation("phone")
+        .embedded()
+        .profile("main")
+        .cloud_user("personal")
+        .cloud_only()
+        .start()
+        .await;
+    let phone = net.installation("phone").profile("main");
+    let workstation = net.daemon("workstation");
+
+    // The relay's word arrives first, and the client subscribes while that is
+    // all anybody knows — the order a phone that signs in before it is near
+    // its machines actually lives through.
+    phone.sees(&workstation).await;
+    let watch = phone.watch_hosts().await;
+    watch
+        .sees_host_status(&workstation, node::HostVia::Relay, None)
+        .await;
+
+    net.announce(&workstation);
+    phone.sees_found_address_for(&workstation).await;
+    let pin = workstation.start_pairing().await;
+    let admin = phone.pairing_admin().await;
+    let pending = admin
+        .begin_pair_pin(workstation.host_id(), &pin, &[])
+        .await
+        .expect("a machine on this network authenticates a printed code");
+    admin.confirm_pair(pending).await.expect("trust is written");
+
+    phone.connects_to(&workstation).via_direct().await;
+    // Asking again has always answered correctly, which is exactly why this
+    // was invisible from any surface that re-reads the host list.
+    phone
+        .sees_host_status(&workstation, node::HostVia::Direct, Some(true))
+        .await;
+    watch
+        .sees_host_status(&workstation, node::HostVia::Direct, Some(true))
+        .await;
+    // Twice, and only twice: reached over the relay, then reached directly.
+    // Being described again is not free — it ends the inventory subscription
+    // the client is holding and opens a fresh one — so a link that arrives and
+    // changes nothing about how the machine is reached must cost nothing.
+    assert_eq!(
+        watch.updates_about(&workstation),
+        2,
+        "the machine was described once per route it was actually reached over"
+    );
 }

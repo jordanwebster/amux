@@ -30,9 +30,19 @@ consequences. Do not add reassurance or describe implementation choices.
 | The account service | account |
 | What a subscription provides | relay |
 | Adding a host | pair |
+| A host reached on the local network | on this network |
+| The route to a host on the local network | direct |
+| An unpaired host discovered on the local network | found |
+| A host visible through a free relay link but unavailable for agent operations | away |
+| A host with no usable route and no relay presence | offline |
 | Leaving an account or ending a device's access | sign out / revoke |
 | The debug bundle | report |
 | A plan you do not accept | send back |
+
+Use **away** only when the relay currently sees the host but the selected
+account has no subscription. Use **offline** when there is no usable route and
+the relay does not currently see the host. Never describe an offline host as
+away, and never offer a subscription merely because a host is offline.
 
 Use second person and present tense. An agent or host is *it*. Avoid hedging,
 filler and exclamation marks. Use digits for numbers, a middle dot between
@@ -46,8 +56,9 @@ commands and provider/user content.
 `timeout 300 wt run ios-lint` runs the copy inventory and its failure probes
 alongside the feature architecture checks. It runs without Xcode or a
 simulator. The English catalogue is
-`apps/apple/Amux/Resources/Localizable.xcstrings`. Debug report copy is in
-`AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings` and its
+`apps/apple/Amux/Resources/Localizable.xcstrings`, and report copy is in it
+like any other shipping screen's. Copy only the driving tools use is in
+`AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings`, whose
 resource directory is excluded from Release.
 
 Update the source and the catalogue together. Each catalogue entry has its
@@ -59,7 +70,7 @@ formatting from Swift expressions. Copy returned by models and helpers is
 reviewed just like text written directly in a view.
 
 The checker scans all Swift sources in the app and every package, including
-debug report views. Raw strings, multiline strings and strings inside
+report views. Raw strings, multiline strings and strings inside
 interpolation are included. It refuses any new nonempty literal until it
 appears in the appropriate catalogue or receives an exact non-copy exemption
 in `apps/apple/Tools/noncopy.json`. An exemption names its file, literal, surrounding

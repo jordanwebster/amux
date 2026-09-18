@@ -938,6 +938,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: t(0),
+            last_activity: t(0),
             parent: None,
             working_on: None,
             summary: None,
@@ -952,6 +953,8 @@ mod tests {
             capabilities: None,
             trust_status: ui_state::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: ui_state::HostVia::Direct,
+            signed_in: Some(true),
             platform: None,
         };
         vec![

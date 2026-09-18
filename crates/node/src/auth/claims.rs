@@ -1,3 +1,4 @@
+pub use model::Tier;
 use serde::Deserialize;
 
 /// Claims from a cloud routing connection token.
@@ -13,4 +14,6 @@ pub(crate) struct ConnectionClaims {
     pub(crate) port: u16,
     /// Expiration time as seconds since Unix epoch.
     pub(crate) exp: u64,
+    /// Relay entitlement carried by this token.
+    pub(crate) tier: Tier,
 }

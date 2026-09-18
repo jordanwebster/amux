@@ -3,17 +3,19 @@
 The app ships from this repository, built by Xcode from the generated
 project — there is no Expo, no EAS and no hosted build service in the path.
 One command, `just ios release`, takes a clean checkout to a signed `.ipa` that
-Apple has validated, and stops there. **Nothing in this document uploads
-anything.** Promoting the recipe to an upload is a separate, deliberate
-change; see [Where it stops](#where-it-stops).
+Apple has validated, and delivers it to App Store Connect, where TestFlight
+shows it once Apple has processed it; the commit and its tag are pushed after
+that. It stops there: **nothing here submits anything for review.** A
+rehearsal, `--no-upload` and `--no-push` each stop short; see
+[Where it stops](#where-it-stops).
 
 The app is the next version of the listing already on the App Store, not a
 new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
 Store record agree on, and it is committed in `apps/apple/project.yml`, from which
 XcodeGen writes `apps/apple/Amux/Info.plist`. The listing's numeric Apple ID is not
-recorded here: nothing this recipe runs asks for it, and an upload — the one
-step that would — is not something this recipe does. Read it back from the
-App Store Connect record when it is wanted:
+recorded here: nothing this recipe runs asks for it, the upload included —
+altool finds the listing from the bundle identifier inside the package. Read
+it back from the App Store Connect record when it is wanted:
 `xcrun altool --list-apps --api-key <key id> --api-issuer <issuer id>`.
 
 ## The two numbers
@@ -116,10 +118,9 @@ replaces the draft with prose written by hand. The same text is written
 beside the exported `.ipa` as `ReleaseNotes.txt`, so the archive directory
 carries what the build claims to contain.
 
-Notes reach Apple only at upload, as a TestFlight build's "What to Test".
-This recipe does not upload, so today their destination is the tag and the
-export directory. When upload is promoted, that file is what feeds it —
-nothing new to compose at that point.
+Notes reach Apple at upload, as a TestFlight build's "What to Test", and the
+same text is recorded in the tag. A run that does not upload — a rehearsal, or
+`--no-upload` — leaves them in the export directory and the tag alone.
 
 ## Signing
 
@@ -290,16 +291,20 @@ build, and is visible to nobody.
 ## One command
 
 ```
-just ios release              # bump, archive, export, validate, commit, tag
+just ios release              # bump, archive, export, validate, upload,
+                               # commit, tag, push
+just ios release --no-upload   # all of that except the upload
+just ios release --no-push     # all of that except the push
 just ios release --preflight   # check every input, do nothing
 just ios release --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
 ```
 
-Validation is the last step of both runs that build anything, so `just ios
-release` is the whole release and there is no `altool` command to remember
-afterwards. A rehearsal ends the same way, which is what makes it a real
-proof rather than a dry run: Apple answers on the actual signed binary.
+Validation is where a rehearsal ends and where a release goes on to deliver,
+so `just ios release` is the whole release and there is no `altool` command to
+remember afterwards. A rehearsal reaching that point is what makes it a real
+proof rather than a dry run: Apple answers on the actual signed binary, and
+answers the same way it will when the build is delivered.
 
 `--preflight` checks what the run needs — the signing file, the key and both
 identifiers in the keychain, the private key on disk, the export options, the
@@ -359,18 +364,31 @@ gets issued twice.
 
 ## Where it stops
 
-The recipe ends at validation. It does not upload, does not create a
-TestFlight build, does not submit for review and does not push a tag or a
-commit.
+The recipe ends at the push. It does not submit for review.
 
-That boundary is deliberate and worth keeping until somebody decides
-otherwise, because both of the next steps are irreversible in ways local
-work is not: an uploaded build consumes its build number permanently, and a
-TestFlight build is visible to everyone on the team the moment it finishes
-processing. Making `just ios release` upload is a one-line change to a
-different `altool` verb — which is exactly why it should be a change somebody
-makes on purpose, with the release notes, the screenshots and the reviewers
-already decided, and not a flag that gets passed by accident.
+Uploading is the one step here that cannot be taken back. The build number is
+spent permanently whether or not anything is ever submitted, and the build is
+visible to everyone on the team the moment Apple finishes processing it.
+Everything before it is local and undone with one `git checkout`. That is why
+it runs after the validation, on the same package Apple has just accepted, and
+before the commit and the tag: a build Apple would refuse never reaches the
+upload, and the tag records a build that actually arrived.
+
+The commit and the tag are pushed after it, because the tag is the ledger. A
+build number is spent permanently the moment the upload lands, and the next
+release counts from the tags — so a tag left in the tree that cut it is a
+record of a spent number that disappears with that tree, and the release after
+it would refuse to guess and send somebody back to App Store Connect to look
+up what this run already knew.
+
+Three ways to stop short. A rehearsal never delivers — that is what makes it
+free to run as often as you like, since validation spends no build number.
+`--no-upload` runs a full release, tag and push and all, stopping before the
+delivery. `--no-push` keeps the commit and tag at home, which leaves the
+ledger unreadable to every other checkout.
+
+Submitting for review stays a person's act in App Store Connect, with the
+screenshots, the notes and the reviewers already decided.
 
 ## One-time operator setup
 

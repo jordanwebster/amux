@@ -43,24 +43,25 @@ enum DoorScreens {
         case .profiles:
             AgentsHome(
                 model: host.stores.fleet, accounts: host.accounts,
-                accountsOpen: true) { _ in }
+                hosts: host.stores.hosts, accountsOpen: true) { _ in }
         // You. The accounts this phone knows, what the one on screen has, and
         // what belongs to the phone rather than to any account.
         case .you:
-            YouScreen(
-                // Nothing, meaning whatever the phone is set to. The
-                // appearance the door is holding is the instrument taking the
-                // photograph, not a choice anybody made on this screen, and
-                // marking it as chosen would say the person picked the one the
-                // capture happens to be in.
-                accounts: host.accounts, appearance: nil,
-                // This phone's own key, read off the machine store the way
-                // the devices page reads it, so the row names the same
-                // identity the machines were paired with.
-                identity: host.stores.hosts.roster.map {
-                    Fingerprint.short($0.identity.fingerprint)
-                },
-                debugTools: true) { _ in }
+            RemoveAccountOverlay(accounts: host.accounts, model: host.removal, actions: { _ in }) {
+                YouScreen(
+                    // Nothing, meaning whatever the phone is set to. The
+                    // appearance the door is holding is the instrument taking the
+                    // photograph, not a choice anybody made on this screen, and
+                    // marking it as chosen would say the person picked the one the
+                    // capture happens to be in.
+                    accounts: host.accounts, appearance: nil,
+                    // This phone's own key, read off the machine store the way
+                    // the devices page reads it, so the row names the same
+                    // identity the machines were paired with.
+                    identity: host.stores.hosts.roster.map {
+                        Fingerprint.short($0.identity.fingerprint)
+                    }) { _ in }
+            }
         // Giving up an account, over the page it was asked from. The You page
         // behind it is the real one, filled from the same accounts, because
         // how the page dims and how much of it the card covers are facts about
@@ -75,26 +76,7 @@ enum DoorScreens {
                     accounts: host.accounts, appearance: nil,
                     identity: host.stores.hosts.roster.map {
                         Fingerprint.short($0.identity.fingerprint)
-                    },
-                    debugTools: true) { _ in }
-            }
-        // The drawer is drawn over the screen it was opened from, which is a
-        // conversation. It is the real one, filled from the same state, rather
-        // than a stand-in: what the panel dims, what its edge uncovers and how
-        // far its shadow reaches are all facts about the screen underneath, and
-        // a baseline photographed over bare ground would be a picture of none
-        // of them.
-        case .drawer:
-            DrawerOverlay(
-                open: .constant(true),
-                drawer: AgentsDrawer(
-                    model: host.stores.fleet, hosts: host.stores.hosts,
-                    current: Scenario.focus) { _ in }
-            ) {
-                Conversation(
-                    model: host.stores.conversation(Scenario.focus),
-                    subject: ConversationSubject(
-                        agent: Scenario.focus, in: host.stores.fleet)) { _ in }
+                    }) { _ in }
             }
         // One screen, eight names. Whether a turn is still running, who else
         // has spoken in it, whether a message is waiting to go, whether the
@@ -121,9 +103,9 @@ enum DoorScreens {
                     agent: Scenario.focus, in: host.stores.fleet),
                 showing: host.overlay) { _ in }
         // The plus, opened. Which overlay a conversation is showing is a state
-        // of the conversation and is handed in, the way the drawer's own
-        // openness is, so what is photographed is the real screen with the
-        // real card over it rather than the card on bare ground.
+        // of the conversation and is handed in, so what is photographed is the
+        // real screen with the real card over it rather than the card on bare
+        // ground.
         // Typing a command raises rows over the box from the draft the
         // fixture wrote, so this is the ordinary conversation and nothing is
         // handed in: what is photographed is what somebody typing would see.
@@ -209,7 +191,10 @@ enum DoorScreens {
         // picture and drawing it twice would say something untrue about what
         // this screen covers.
         case .dump:
-            ReportScreen(model: host.reports) { _ in }
+            ReportScreen(
+                model: host.reports,
+                signedIn: host.accounts.selectedAccount?.signedIn == true
+            ) { _ in }
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.
@@ -244,8 +229,8 @@ struct DrivenRoot<Content: View>: View {
                 Shell(
                     router: replayed.router, accounts: replayed.accounts,
                     stores: replayed.stores, signIn: host.signIn,
-                    paywall: host.paywall, deletion: host.deletion,
-                    appearance: host.appearance, report: nil,
+                    paywall: host.paywall, deletion: host.deletion, removal: host.removal,
+                    appearance: host.appearance,
                     recording: replayed.recording,
                     actions: { _ in })
                     .preferredColorScheme(host.appearance == .dark ? .dark : .light)

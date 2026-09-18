@@ -366,7 +366,7 @@ async fn client_runtime(
                 .context("list soak pairing candidates")?;
             if hosts
                 .iter()
-                .any(|host| host.id == qr.host_id && host.online)
+                .any(|host| host.host.id == qr.host_id && host.host.online)
             {
                 return Ok::<(), anyhow::Error>(());
             }
@@ -375,8 +375,12 @@ async fn client_runtime(
     })
     .await
     .context("timed out waiting for soak daemon cloud presence")??;
+    let pending = admin
+        .begin_pair_qr(&qr)
+        .await
+        .context("authenticate soak daemon")?;
     admin
-        .pair_qr_cloud_peer(qr.host_id, qr.secret)
+        .confirm_pair(pending)
         .await
         .context("pair soak client to daemon")?;
 
@@ -1029,7 +1033,7 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|host| host.id == qr.host_id && host.online)
+                    .any(|host| host.host.id == qr.host_id && host.host.online)
                 {
                     break;
                 }
@@ -1038,11 +1042,9 @@ mod tests {
         })
         .await
         .unwrap();
-        client
-            .admin()
-            .pair_qr_cloud_peer(qr.host_id, qr.secret)
-            .await
-            .unwrap();
+        let admin = client.admin();
+        let pending = admin.begin_pair_qr(&qr).await.unwrap();
+        admin.confirm_pair(pending).await.unwrap();
 
         let mut runtime = Runtime::start_with_client(
             (*client).clone(),

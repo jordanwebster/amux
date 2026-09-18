@@ -21,7 +21,9 @@ async fn direct_beats_cloud_when_both_are_available() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -30,6 +32,25 @@ async fn direct_beats_cloud_when_both_are_available() {
     desktop.connects_to(&laptop).via_direct().await;
     laptop.can_call(&desktop).await;
     desktop.can_call(&laptop).await;
+}
+
+/// A direct pair uses one bidirectional link. Both peers may discover one
+/// another while the first dial is still settling, but crossed dials converge
+/// instead of leaving two permanent links between the same hosts.
+#[tokio::test]
+async fn a_direct_pair_holds_exactly_one_link_to_each_peer() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Direct)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop.can_call(&desktop).await;
+    desktop.can_call(&laptop).await;
+    assert_eq!(laptop.links_to(&desktop).await, 1);
+    assert_eq!(desktop.links_to(&laptop).await, 1);
 }
 
 /// Cloud-only peers communicate through an end-to-end encrypted tunnel the
@@ -66,7 +87,9 @@ async fn a_dying_direct_link_fails_over_to_the_cloud_route() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -94,7 +117,9 @@ async fn a_recovering_direct_link_wins_back_and_breaks_in_flight_cloud_streams()
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -121,7 +146,7 @@ async fn a_cloud_outage_does_not_affect_directly_paired_peers() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -167,24 +192,85 @@ async fn cloud_only_peers_lose_each_other_in_an_outage_and_recover() {
 
 /// A daemon restart re-establishes direct links from the reachabilities in
 /// its own trust store — no nudge from the network: the restarted dialer
-/// re-dials its stored `DirectTcp` address on startup.
+/// re-dials its stored direct address on startup.
 /// (docs/ARCHITECTURE.md "Identity and the trust store")
 #[tokio::test]
 async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
-    // The laptop is the side that stores the DirectTcp reachability (the
+    // The laptop is the side that stores the direct reachability (the
     // pairing initiator); its restart must bring the link back by itself.
     laptop.restart().await;
 
     laptop.connects_to(&desktop).via_direct().await;
     laptop.can_call(&desktop).await;
+}
+
+/// A machine killed without closing its links comes straight back. The peer
+/// it dialled cannot tell the old link is dead until it idles out, so the
+/// relaunched machine's dial arrives while that link is still registered, in
+/// the same direction. The new process's link replaces the dead one rather
+/// than being refused until the timeout. This is a phone swiped away and
+/// reopened.
+#[tokio::test]
+async fn a_relaunched_machine_reconnects_while_its_peer_still_holds_the_dead_link() {
+    let net = TestNet::builder()
+        .direct_idle_timeout(Duration::from_secs(60))
+        .daemon("phone")
+        .daemon("laptop")
+        .paired("phone", "laptop", Via::Direct)
+        .outside_discovery("phone")
+        .outside_discovery("laptop")
+        .start()
+        .await;
+    let [phone, laptop] = net.daemons(["phone", "laptop"]);
+    phone.can_call(&laptop).await;
+
+    phone.kill_and_relaunch().await;
+
+    phone.connects_to(&laptop).via_direct().await;
+    phone.can_call(&laptop).await;
+    laptop.can_call(&phone).await;
+    assert_eq!(laptop.links_to(&phone).await, 1);
+}
+
+/// Two machines that find each other keep the link the lower host id dialled.
+/// When the other one crashes and comes back, it dials in the opposite
+/// direction, and its link is the one a crossed dial would refuse — while the
+/// survivor still holds the dead preferred link. The new link comes from a
+/// different incarnation, which proves the held one dead, so it replaces it.
+#[tokio::test]
+async fn a_machine_that_crashed_reconnects_against_the_direction_of_the_dead_link() {
+    let net = TestNet::builder()
+        .direct_idle_timeout(Duration::from_secs(60))
+        .daemon("studio")
+        .daemon("laptop")
+        .trusted("studio", "laptop")
+        .start()
+        .await;
+    let [studio, laptop] = net.daemons(["studio", "laptop"]);
+    let (dialler, crashes) = if studio.host_id() < laptop.host_id() {
+        (studio, laptop)
+    } else {
+        (laptop, studio)
+    };
+    dialler.can_call(&crashes).await;
+    crashes.can_call(&dialler).await;
+
+    crashes.kill_and_relaunch().await;
+
+    crashes.connects_to(&dialler).via_direct().await;
+    crashes.can_call(&dialler).await;
+    dialler.can_call(&crashes).await;
+    assert_eq!(dialler.links_to(&crashes).await, 1);
 }
 
 /// Revocation: the moment one side unpairs, the revoked peer's fresh calls
@@ -196,7 +282,7 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 ///
 /// In-flight streams break too, as revocation always intended: every stream
 /// rides a tunnel, the revoker's teardown closes its links (`LinkClose`) and
-/// its tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
+/// its channels, and a channel's death is a transport EOF under
 /// the stream. The historical stall — one-sided teardown left both sides' in-flight
 /// streams silently hanging — is gone structurally.
 #[tokio::test]
@@ -205,7 +291,7 @@ async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -241,9 +327,9 @@ async fn endpoints_call_each_other_through_a_chain_regardless_of_dial_direction(
         .daemon("a")
         .daemon("b")
         .daemon("c")
-        .paired("a", "b", Via::Tcp)
-        .paired("b", "c", Via::Tcp)
-        .trusted("a", "c")
+        .paired("a", "b", Via::Direct)
+        .paired("b", "c", Via::Direct)
+        .trusted_without_discovery("a", "c")
         .start()
         .await;
     let [a, b, c] = net.daemons(["a", "b", "c"]);
@@ -267,12 +353,12 @@ async fn presence_reaches_exactly_two_hops_along_a_chain() {
         .daemon("b")
         .daemon("c")
         .daemon("d")
-        .paired("a", "b", Via::Tcp)
-        .paired("b", "c", Via::Tcp)
-        .paired("c", "d", Via::Tcp)
-        .trusted("a", "c") // call authority for the two-hop calls below;
-        .trusted("b", "d") // presence needs no trust at all
-        .trusted("a", "d")
+        .paired("a", "b", Via::Direct)
+        .paired("b", "c", Via::Direct)
+        .paired("c", "d", Via::Direct)
+        .trusted_without_discovery("a", "c") // call authority for the two-hop calls below;
+        .trusted_without_discovery("b", "d") // presence needs no trust at all
+        .trusted_without_discovery("a", "d")
         .start()
         .await;
     let [a, b, c, d] = net.daemons(["a", "b", "c", "d"]);
@@ -312,6 +398,9 @@ async fn cloud_peers_keep_communicating_across_a_jwt_expiry() {
         .start()
         .await;
     let [laptop, phone] = net.daemons(["laptop", "phone"]);
+
+    laptop.uses_quic_relay().await;
+    phone.uses_quic_relay().await;
 
     let jwt = laptop
         .reattach_cloud_with_expiring_jwt(Duration::from_secs(2))

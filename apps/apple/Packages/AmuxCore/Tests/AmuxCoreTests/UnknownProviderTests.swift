@@ -23,6 +23,7 @@ final class UnknownProviderTests: XCTestCase {
                 "readonly": .bool(false),
                 "args": .array([]),
                 "created_at": .string("2026-09-01T09:00:00Z"),
+                "last_activity": .string("2026-09-01T09:14:00Z"),
             ]),
             "display_name": .string("legacy-port"),
             "attention": .object(["attention": .string("idle")]),

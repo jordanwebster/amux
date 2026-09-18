@@ -4,6 +4,13 @@ use node::ProtocolError;
 use node::installation::{Intent, Observed, OperationId, ProfileEvent, ProfileStatus};
 use testnet::{TestNet, Via, WatchProbe};
 
+fn connected() -> Observed {
+    Observed::Connected {
+        tier: node::Tier::Pro,
+        carrier: node::installation::RelayCarrier::Tcp,
+    }
+}
+
 async fn devices() -> TestNet {
     TestNet::builder()
         .cloud()
@@ -22,7 +29,7 @@ async fn devices() -> TestNet {
         .cloud_user("bob")
         .cloud_only()
         .paired("phone", "laptop/personal", Via::Cloud)
-        .paired("desk", "laptop/personal", Via::Tcp)
+        .paired("desk", "laptop/personal", Via::Direct)
         .paired("colleague", "laptop/work", Via::Cloud)
         .start()
         .await
@@ -114,7 +121,7 @@ async fn pause_closes_only_cloud_sessions_and_repeated_resume_keeps_one_link() {
     );
     first.unwrap();
     second.unwrap();
-    a.reaches_status(Observed::Connected).await;
+    a.reaches_status(connected()).await;
     let links = a.cloud_link_ids().await;
     assert_eq!(links.len(), 1);
     laptop.resume("personal").await;
@@ -130,9 +137,9 @@ async fn pause_closes_only_cloud_sessions_and_repeated_resume_keeps_one_link() {
     assert_eq!(a.status().intent, Intent::Paused);
     assert!(a.cloud_link_ids().await.is_empty());
     a.socket_client().await.list_agents().await.unwrap();
-    b.reaches_status(Observed::Connected).await;
+    b.reaches_status(connected()).await;
     laptop.resume("personal").await;
-    a.reaches_status(Observed::Connected).await;
+    a.reaches_status(connected()).await;
     net.daemon("phone").can_call(&a).await;
     println!(
         "Paused intent survives disk reopen: Alice stays local and Bob reconnects. Explicit resume restores Alice with the existing trust."
@@ -141,7 +148,7 @@ async fn pause_closes_only_cloud_sessions_and_repeated_resume_keeps_one_link() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn authentication_subscription_and_version_failures_do_not_disconnect_another_profile() {
+async fn authentication_and_version_failures_do_not_disconnect_another_profile() {
     let net = devices().await;
     let laptop = net.installation("laptop");
     let a = laptop.profile("personal");
@@ -153,10 +160,6 @@ async fn authentication_subscription_and_version_failures_do_not_disconnect_anot
         (
             ProtocolError::InvalidCredentials,
             Observed::AuthenticationRequired,
-        ),
-        (
-            ProtocolError::PaymentRequired,
-            Observed::SubscriptionRequired,
         ),
         (
             ProtocolError::UpdateRequired {
@@ -173,7 +176,7 @@ async fn authentication_subscription_and_version_failures_do_not_disconnect_anot
         laptop.resume("personal").await;
         a.reaches_status(expected.clone()).await;
         assert!(a.cloud_link_ids().await.is_empty());
-        b.reaches_status(Observed::Connected).await;
+        b.reaches_status(connected()).await;
         assert_eq!(b.cloud_link_ids().await, links);
         work.send("account-failure-isolated").await;
         work.expect_output("account-failure-isolated").await;
@@ -183,7 +186,7 @@ async fn authentication_subscription_and_version_failures_do_not_disconnect_anot
         );
         net.reject_cloud_user("alice", None);
         laptop.login("personal", "alice").await.unwrap();
-        a.reaches_status(Observed::Connected).await;
+        a.reaches_status(connected()).await;
     }
 }
 
@@ -208,7 +211,7 @@ async fn a_watcher_observes_lifecycle_and_connector_changes_in_order_including_d
     let mut watch = laptop.watch().await;
     let snapshot = watch.snapshot().await;
     assert_eq!(snapshot.len(), 2);
-    assert!(snapshot.iter().all(|p| p.observed == Observed::Connected));
+    assert!(snapshot.iter().all(|p| p.observed == connected()));
     let admin = laptop.front_door();
     let created = admin
         .create(OperationId::new(), Some("spare".into()))
@@ -242,7 +245,7 @@ async fn a_watcher_observes_lifecycle_and_connector_changes_in_order_including_d
     })
     .await;
     watch_until(&mut watch, |p| {
-        p.record.id == a.id && p.observed == Observed::Connected
+        p.record.id == a.id && p.observed == connected()
     })
     .await;
     laptop.logout("personal").await;
@@ -252,7 +255,7 @@ async fn a_watcher_observes_lifecycle_and_connector_changes_in_order_including_d
     .await;
     laptop.login("personal", "alice").await.unwrap();
     watch_until(&mut watch, |p| {
-        p.record.id == a.id && p.intent == Intent::Bound && p.observed == Observed::Connected
+        p.record.id == a.id && p.intent == Intent::Bound && p.observed == connected()
     })
     .await;
     laptop.delete("personal").await;

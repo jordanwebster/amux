@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::pin::Pin;
 
 use futures_util::{Stream, stream};
@@ -253,123 +254,6 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .await
             .map(Response::new)
     }
-    async fn pair_peer(
-        &self,
-        request: Request<wire::ProfilePairPeerRequest>,
-    ) -> Rpc<wire::PairPeerResponse> {
-        let request = request.into_inner();
-        let op = operation_id(&request.operation_id)?;
-        let encoded = request.encode_to_vec();
-        let installation = self.installation.clone();
-        self.operations
-            .run(op, "pair_peer", encoded, async move {
-                let admin = installation
-                    .admin(profile_id(&request.profile_id)?)
-                    .await
-                    .map_err(installation_error)?;
-                admin
-                    .rpc_pair_peer(local(
-                        request
-                            .pairing
-                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
-                    ))
-                    .await
-                    .map(Response::into_inner)
-            })
-            .await
-            .map(Response::new)
-    }
-    async fn pair_pin_cloud_peer(
-        &self,
-        request: Request<wire::ProfilePairPinCloudPeerRequest>,
-    ) -> Rpc<wire::PairPinCloudPeerResponse> {
-        let request = request.into_inner();
-        let op = operation_id(&request.operation_id)?;
-        let encoded = request.encode_to_vec();
-        let installation = self.installation.clone();
-        self.operations
-            .run(op, "pair_pin_cloud_peer", encoded, async move {
-                let admin = installation
-                    .admin(profile_id(&request.profile_id)?)
-                    .await
-                    .map_err(installation_error)?;
-                admin
-                    .rpc_pair_pin_cloud_peer(local(
-                        request
-                            .pairing
-                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
-                    ))
-                    .await
-                    .map(Response::into_inner)
-            })
-            .await
-            .map(Response::new)
-    }
-    async fn pair_qr_cloud_peer(
-        &self,
-        request: Request<wire::ProfilePairQrCloudPeerRequest>,
-    ) -> Rpc<wire::PairQrCloudPeerResponse> {
-        let request = request.into_inner();
-        let op = operation_id(&request.operation_id)?;
-        let encoded = request.encode_to_vec();
-        let installation = self.installation.clone();
-        self.operations
-            .run(op, "pair_qr_cloud_peer", encoded, async move {
-                let admin = installation
-                    .admin(profile_id(&request.profile_id)?)
-                    .await
-                    .map_err(installation_error)?;
-                admin
-                    .rpc_pair_qr_cloud_peer(local(
-                        request
-                            .pairing
-                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
-                    ))
-                    .await
-                    .map(Response::into_inner)
-            })
-            .await
-            .map(Response::new)
-    }
-    async fn unpair(
-        &self,
-        request: Request<wire::ProfileUnpairRequest>,
-    ) -> Rpc<wire::UnpairResponse> {
-        let request = request.into_inner();
-        let op = operation_id(&request.operation_id)?;
-        let encoded = request.encode_to_vec();
-        let installation = self.installation.clone();
-        self.operations
-            .run(op, "unpair", encoded, async move {
-                let admin = installation
-                    .admin(profile_id(&request.profile_id)?)
-                    .await
-                    .map_err(installation_error)?;
-                admin
-                    .rpc_unpair(local(wire::UnpairRequest {
-                        peer: request.peer,
-                        reason: request.reason,
-                    }))
-                    .await
-                    .map(Response::into_inner)
-            })
-            .await
-            .map(Response::new)
-    }
-    async fn get_pairing_status(
-        &self,
-        request: Request<wire::ProfilePairingStatusRequest>,
-    ) -> Rpc<wire::GetPairingStatusResponse> {
-        let request = request.into_inner();
-        let admin = self
-            .installation
-            .admin(profile_id(&request.profile_id)?)
-            .await
-            .map_err(installation_error)?;
-        admin
-            .rpc_get_pairing_status(local(wire::GetPairingStatusRequest {}))
-            .await
-    }
     async fn begin_pair(
         &self,
         request: Request<wire::ProfileBeginPairRequest>,
@@ -461,6 +345,71 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .rpc_get_device_identity(local(wire::GetDeviceIdentityRequest {}))
             .await
     }
+    async fn trust_ssh_peer(
+        &self,
+        request: Request<wire::ProfileTrustSshPeerRequest>,
+    ) -> Rpc<wire::Empty> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "trust_ssh_peer", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_trust_ssh_peer(local(
+                        request
+                            .pairing
+                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
+                    ))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn unpair(
+        &self,
+        request: Request<wire::ProfileUnpairRequest>,
+    ) -> Rpc<wire::UnpairResponse> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "unpair", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_unpair(local(wire::UnpairRequest {
+                        peer: request.peer,
+                        reason: request.reason,
+                    }))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn get_pairing_status(
+        &self,
+        request: Request<wire::ProfilePairingStatusRequest>,
+    ) -> Rpc<wire::GetPairingStatusResponse> {
+        let request = request.into_inner();
+        let admin = self
+            .installation
+            .admin(profile_id(&request.profile_id)?)
+            .await
+            .map_err(installation_error)?;
+        admin
+            .rpc_get_pairing_status(local(wire::GetPairingStatusRequest {}))
+            .await
+    }
     async fn list_peers(
         &self,
         request: Request<wire::ProfileRequest>,
@@ -503,18 +452,36 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         &self,
         request: Request<wire::ProfileRequest>,
     ) -> Rpc<wire::ListPairingCandidatesResponse> {
+        let profile_id = profile_id(&request.into_inner().profile_id)?;
+        let installation_hosts = self
+            .installation
+            .profiles()
+            .into_iter()
+            .map(|profile| profile.host_id)
+            .collect::<HashSet<_>>();
         let admin = self
             .installation
-            .admin_service(profile_id(&request.into_inner().profile_id)?)
+            .admin_service(profile_id)
             .await
             .map_err(installation_error)?;
-        let hosts = admin
+        let candidates = admin
             .list_pairing_candidates()
             .await
-            .iter()
-            .map(crate::services::client::host_entry_to_wire)
+            .into_iter()
+            .filter(|candidate| !installation_hosts.contains(&candidate.host.id))
+            .map(|candidate| wire::PairingCandidate {
+                host: Some(crate::services::client::host_entry_to_wire(&candidate.host)),
+                via: match candidate.via {
+                    crate::PeerVia::Direct => wire::PeerVia::Direct as i32,
+                    crate::PeerVia::Relay => wire::PeerVia::Relay as i32,
+                    crate::PeerVia::Ssh => wire::PeerVia::Ssh as i32,
+                },
+                addrs: candidate.addrs.iter().map(ToString::to_string).collect(),
+            })
             .collect();
-        Ok(Response::new(wire::ListPairingCandidatesResponse { hosts }))
+        Ok(Response::new(wire::ListPairingCandidatesResponse {
+            candidates,
+        }))
     }
 }
 

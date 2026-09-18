@@ -1061,6 +1061,7 @@ model_struct_safe!(
         readonly,
         args,
         created_at,
+        last_activity,
         parent,
         working_on,
         summary,
@@ -1076,6 +1077,7 @@ model_struct_safe!(
         readonly,
         args,
         created_at,
+        last_activity,
         parent,
         working_on,
         summary,
@@ -1104,6 +1106,9 @@ impl private::Sealed for HostTrustStatus {
     }
 }
 impl PostcardSafe for HostTrustStatus {}
+fieldless_enum_safe!(model::HostVia, value => match value {
+    model::HostVia::Offline | model::HostVia::Ssh | model::HostVia::Direct | model::HostVia::Relay => {}
+});
 
 model_struct_safe!(
     HostEntry,
@@ -1115,6 +1120,8 @@ model_struct_safe!(
         capabilities,
         trust_status,
         last_dial_error,
+        via,
+        signed_in,
         platform,
     } => [
         id,
@@ -1124,6 +1131,8 @@ model_struct_safe!(
         capabilities,
         trust_status,
         last_dial_error,
+        via,
+        signed_in,
         platform,
     ]
 );
@@ -1749,6 +1758,7 @@ mod tests {
 
     fn sample_agent() -> Agent {
         Agent {
+            last_activity: at(2),
             id: AgentId::from_u128(1),
             host_id: HostId::from_u128(2),
             name: Some("agent".into()),
@@ -1770,6 +1780,8 @@ mod tests {
 
     fn sample_host() -> HostEntry {
         HostEntry {
+            signed_in: Some(true),
+            via: model::HostVia::Direct,
             id: HostId::from_u128(2),
             name: "host".into(),
             online: true,

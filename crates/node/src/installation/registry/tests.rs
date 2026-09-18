@@ -42,7 +42,15 @@ fn root_lock_release_does_not_wait_for_inherited_descriptors() {
     let registry = open(root.path());
     // A forked child retains the same open-file description until exec, even
     // with close-on-exec set. A duplicate reproduces that lifetime without fork.
-    let inherited = registry.root.as_ref().unwrap().lock.try_clone().unwrap();
+    let inherited = registry
+        .root
+        .as_ref()
+        .unwrap()
+        .lock
+        .as_ref()
+        .unwrap()
+        .try_clone()
+        .unwrap();
     assert!(matches!(
         Registry::open(InstallationRoot::OnDisk(root.path().to_owned())),
         Err(InstallationError::RootBusy(_))
@@ -508,12 +516,14 @@ fn socket_allocation_checks_platform_byte_limit_without_truncation() {
         + 1
         + "/profiles/".len()
         + id.to_string().len()
-        + ".sock".len();
+        + ".link.sock".len();
     let boundary_root = canonical.join("y".repeat(limit - overhead));
     let registry = open(&boundary_root);
     let paths = ProfilePaths::for_id(registry.path().unwrap(), id).unwrap();
-    assert_eq!(paths.socket_path.as_os_str().as_bytes().len(), limit);
+    let link = crate::installation::adjacent_link_socket_path(&paths.socket_path);
+    assert_eq!(link.as_os_str().as_bytes().len(), limit);
     validate_socket_path(&paths.socket_path).unwrap();
+    validate_socket_path(&link).unwrap();
     let codex = crate::installation::adjacent_codex_socket_path(&paths.socket_path);
     assert_eq!(codex.parent(), paths.socket_path.parent());
     assert!(codex.as_os_str().as_bytes().len() <= crate::installation::MAX_CODEX_SOCKET_PATH_BYTES);

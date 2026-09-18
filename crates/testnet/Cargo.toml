@@ -34,6 +34,8 @@ futures-util = { workspace = true }
 host-api = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
+quinn = { workspace = true }
+rcgen = { workspace = true }
 model = { workspace = true }
 prost = { workspace = true, optional = true }
 portable-pty = { workspace = true, optional = true }
@@ -53,11 +55,13 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tokio-util = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 tui = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
 uuid = { workspace = true }

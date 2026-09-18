@@ -11,7 +11,13 @@ public enum HomeAction: Equatable, Sendable {
     case switchAccount(AccountId)
     case addAccount
     case signIn
+    /// Sign back into one account this phone lists, from its row.
+    case signInAgain(AccountId)
     case subscribe
+    /// Pair with a machine this phone has found. There is no pairing without
+    /// one: a code is typed for a particular machine, and a machine that has
+    /// not been found is reached by scanning the code it prints instead.
+    case pair(HostId)
     case openExceptions
     /// The list was pulled, or the screen came back into view. Only then may
     /// the ordering regroup.
@@ -33,6 +39,10 @@ public struct AgentsHome: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     private let model: FleetStore
     private let accounts: AccountRegistry
+    /// The machines, for the one thing this screen says about them: a phone
+    /// with no agents yet is a phone that has not paired, and what it has
+    /// found on its network is the shortest way out of that.
+    private let hosts: HostsStore
     private let actions: @MainActor (HomeAction) -> Void
     /// The fold is view state, not fleet state: opening it is a thing this
     /// screen is doing, and coming back to the screen starts it closed again.
@@ -41,17 +51,17 @@ public struct AgentsHome: View {
     /// and handed in only so a capture can ask for the panel: which accounts
     /// this phone has is a fact, having the list open is not.
     @State private var switcherOpen: Bool
-    @State private var filter: HomeFilter = .all
-    @State private var choosingFilter = false
 
     public init(
         model: FleetStore,
         accounts: AccountRegistry,
+        hosts: HostsStore,
         accountsOpen: Bool = false,
         actions: @escaping @MainActor (HomeAction) -> Void
     ) {
         self.model = model
         self.accounts = accounts
+        self.hosts = hosts
         self.actions = actions
         _switcherOpen = State(initialValue: accountsOpen)
     }
@@ -69,14 +79,22 @@ public struct AgentsHome: View {
             Ground()
             VStack(alignment: .leading, spacing: 0) {
                 header
-                // An account problem is only the whole screen when there is
-                // nothing else on it. A phone that is signed out but still
-                // remembers agents has a list worth reading; what it cannot do
-                // is refresh it, and that belongs on the exceptions line.
-                if accounts.gate == .ready || !model.rows.isEmpty {
+                // The list whenever there is one. An account is never what
+                // decides this: a phone that is signed out and paired with a
+                // machine on its own network has a fleet worth reading, and a
+                // phone that remembers agents it cannot refresh has one too.
+                // What it cannot do is said on the exceptions line.
+                //
+                // Without agents, what is worth saying depends on whether this
+                // phone has a machine at all. One that has paired is not a
+                // phone with nothing paired, and offering to pair again there
+                // would say the pairing it just did never happened.
+                if !model.rows.isEmpty {
                     fleet
+                } else if !model.hosts.isEmpty {
+                    noAgentsYet
                 } else {
-                    gated
+                    nothingPairedYet
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -93,9 +111,24 @@ public struct AgentsHome: View {
 
     // MARK: - Header
 
+    /// Whether anybody is signed in on this phone. An account listed with Sign
+    /// In beside it is remembered, not signed in.
+    private var signedIn: Bool { accounts.accounts.contains(where: \.signedIn) }
+
+    /// Whether there is an account question on this phone worth putting under
+    /// the title: another account to read, or nobody signed in at all.
+    private var switchable: Bool {
+        accounts.accounts.count > 1 || !signedIn
+    }
+
+    /// Whether any machine would actually run something started now.
+    private var canStartAnAgent: Bool {
+        model.hosts.values.contains { model.reach(of: $0).live }
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            if accounts.accounts.count > 1 || accounts.gate != .ready { accountDisc }
+            if switchable { accountDisc }
             VStack(alignment: .leading, spacing: 1) {
                 title
                 Text(subtitle)
@@ -104,40 +137,20 @@ public struct AgentsHome: View {
                     .identified("home.subtitle", value: subtitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Starting an agent needs a host, a host needs pairing, and
-            // pairing needs an account that may reach one. Until that is true
-            // the button would open onto a screen with nothing on it, so the
-            // header leaves it out and the screen keeps the one action that
-            // does lead somewhere.
-            if accounts.gate == .ready {
-                HStack(spacing: 8) {
-                    if !switcherOpen {
-                        Button { choosingFilter = true } label: {
-                            GlassIcon(glyph: "line.3.horizontal.decrease")
-                                .thumbTarget(x: 5, y: 5)
-                        }
-                        .buttonStyle(.amuxControl)
-                        .accessibilityLabel("Filter Agents")
-                        .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
-                        .reclaimingThumbTarget(x: 5, y: 5)
-                        .confirmationDialog(
-                            "Show Agents", isPresented: $choosingFilter,
-                            titleVisibility: .visible
-                        ) {
-                            ForEach(HomeFilter.allCases) { choice in
-                                Button(choice.title) { filter = choice }
-                            }
-                        }
-                    }
-                    Button { actions(.newAgent) } label: {
-                        GlassIcon(glyph: "plus", prominent: true)
-                            .thumbTarget(x: 5, y: 5)
-                    }
-                    .buttonStyle(.amuxControl)
-                    .accessibilityLabel("New Agent")
-                    .identified("home.newAgent", label: "New Agent")
-                    .reclaimingThumbTarget(x: 5, y: 5)
+            // Starting an agent needs a machine something can be started on.
+            // Not an account — a phone paired with a host on its own network
+            // has one — and not a subscription, which buys the route to a
+            // machine rather than the right to use it. Without one the button
+            // would open onto a screen with nothing on it.
+            if canStartAnAgent {
+                Button { actions(.newAgent) } label: {
+                    GlassIcon(glyph: "plus", prominent: true)
+                        .thumbTarget(x: 5, y: 5)
                 }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel("New Agent")
+                .identified("home.newAgent", label: "New Agent")
+                .reclaimingThumbTarget(x: 5, y: 5)
             }
         }
         .padding(.horizontal, design.metrics.gutter)
@@ -150,7 +163,7 @@ public struct AgentsHome: View {
     /// title and the account lives under You.
     @ViewBuilder
     private var title: some View {
-        if accounts.accounts.count > 1 || accounts.gate != .ready {
+        if switchable {
             Button { switcherOpen.toggle() } label: {
                 HStack(spacing: 5) {
                     Text("Agents")
@@ -189,15 +202,16 @@ public struct AgentsHome: View {
         case .add:
             switcherOpen = false
             actions(.addAccount)
-        case .signIn:
+        case .signIn(let id):
             switcherOpen = false
-            actions(.signIn)
+            actions(.signInAgain(id))
         case .dismiss:
             switcherOpen = false
         // Nothing else the panel can say reaches this screen: the rest of an
         // account's actions live under You, where there is room to state what
         // they do.
-        case .signOut, .delete, .subscription, .appearance, .identity, .support, .report:
+        case .signOut, .remove, .delete, .subscription, .appearance, .identity, .support,
+             .report:
             break
         }
     }
@@ -240,47 +254,37 @@ public struct AgentsHome: View {
     /// and once on the exceptions line above the rows.
     private var subtitle: String {
         if accounts.accounts.count > 1, let entry = accounts.selectedAccount {
-            let waiting = model.sections.first { $0.kind == .needsYou }?.rows.count ?? 0
+            let waiting = model.rows.filter(\.needsYou).count
             return waiting == 0
                 ? "\(entry.name) · nothing needs you"
                 : "\(entry.name) · \(waiting) need you"
         }
-        if accounts.gate == .ready || !model.rows.isEmpty { return model.subtitle }
-        switch accounts.gate {
-        case .ready: return model.subtitle
-        case .signedOut: return "Not signed in"
-        case .unsubscribed: return "Not subscribed"
+        if !model.rows.isEmpty { return model.subtitle }
+        if !model.hosts.isEmpty {
+            let count = model.hosts.count
+            return "No agents yet · \(count) host\(count == 1 ? "" : "s")"
         }
+        // Not "Not signed in" and not "Not subscribed". A phone with no agents
+        // is a phone that has paired with nothing, whatever its account is
+        // doing: amux is free on the network this phone is already on, so an
+        // empty list is never evidence that something has to be bought.
+        return "Nothing paired yet"
     }
 
     // MARK: - The list
 
-    private var sections: [FleetSection] {
-        switch filter {
-        case .all:
-            model.sections
-        case .needsYou:
-            model.sections.filter { $0.kind == .needsYou }
-        case .running:
-            [FleetSection(
-                kind: .everythingElse, title: "Running",
-                rows: model.rows.filter { $0.phase == .running }, folded: false)]
-        }
-    }
+    private var sections: [FleetSection] { model.sections }
 
     private var fleet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let exceptions {
-                    exceptionsLine(exceptions)
+                    exceptionsLine(exceptions.text, exceptions.act)
                 }
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 8) {
                         if section.kind != .older {
-                            SectionHead(
-                                title: section.title,
-                                trailing: section.kind == .needsYou
-                                    ? "\(section.rows.count)" : nil)
+                            SectionHead(title: section.title)
                         }
                         if section.folded && !foldOpen {
                             fold(section)
@@ -310,16 +314,17 @@ public struct AgentsHome: View {
     @ViewBuilder
     private func agentRow(_ row: AgentRow) -> some View {
         let host = model.host(row.hostId)
-        let state = RowState(row: row, host: host)
+        let state = RowState(row: row, host: host, reach: model.reach(ofHost: row.hostId))
         let content = AgentRowView(
-            row: row, state: state, host: host?.name, now: model.orderedAt)
+            row: row, state: state, host: host.map { PlaceNames.host($0.name) },
+            now: model.orderedAt)
         // An agent run by a provider this build has no case for is listed and
         // not offered to open. A button that led to a conversation of which
         // not one row could be read would be a worse answer than the row
         // saying so where it stands.
         if row.readable {
             Button { actions(.open(row.id)) } label: { content }
-                .buttonStyle(.amuxRow)
+                .buttonStyle(.amuxPush)
                 .accessibilityLabel(spoken(row, state))
                 .identified(
                     "home.row.\(row.id)", label: spoken(row, state),
@@ -338,6 +343,7 @@ public struct AgentsHome: View {
         var parts = [row.name]
         if let headline = row.headline { parts.append(headline) }
         if let said = state.spoken { parts.append(said) }
+        if state.needsYou, let need = row.need { parts.append(need) }
         if case .finished(let outcome) = state, let outcome { parts.append(outcome.arithmetic) }
         parts.append([model.host(row.hostId)?.name, row.workingDirectory]
             .compactMap { $0 }.joined(separator: ", "))
@@ -392,27 +398,42 @@ public struct AgentsHome: View {
     /// fills itself with counts nobody asked for. It is an exceptions line: it
     /// appears only when something is actually wrong, it takes one row when it
     /// does, and when everything is fine the top of the screen is the list.
-    private var exceptions: String? {
-        switch accounts.gate {
-        case .ready: model.exceptions
-        // Said once, where the one thing that is wrong goes. The rows below it
-        // are real; they are just not going to change until this is fixed.
-        case .signedOut: "Not signed in · nothing is live"
-        case .unsubscribed: "Not subscribed · nothing is live"
+    ///
+    /// The order is the one the desktop's banner follows, and for the same
+    /// reason: a connection that is down outranks everything, then a machine
+    /// the relay can see and this account may not reach, then a machine
+    /// nothing can reach on a phone with no account, and last the plain fact
+    /// that a machine is offline. A phone that can reach every machine it owns
+    /// shows none of it and is never asked for an account.
+    private var exceptions: (text: String, act: HomeAction)? {
+        // A link that is down outranks everything — on a phone that has one.
+        // Nobody signed in means no relay was ever dialled, and a phone told
+        // it was offline would be told about the absence of something it never
+        // had; what is actually true about such a phone is said below, machine
+        // by machine.
+        if signedIn, model.connection.state == .disconnected, let sentence = model.exceptions {
+            return (sentence, .openExceptions)
         }
+        if let away = model.awayHost {
+            return ("\(away) is away · subscribe to reach your agents from anywhere", .subscribe)
+        }
+        // With nobody signed in there is one thing worth saying and one thing
+        // to do about it: a machine this phone cannot reach, and the account
+        // that would reach it from somewhere else. Everything else a link
+        // could report belongs to a phone that has one.
+        guard signedIn else {
+            return model.unreachableHost == nil ? nil : (SignInCopy.caption, .signIn)
+        }
+        return model.exceptions.map { ($0, .openExceptions) }
     }
 
-    private func exceptionsLine(_ text: String) -> some View {
+    private func exceptionsLine(_ text: String, _ act: HomeAction) -> some View {
         Button {
-            switch accounts.gate {
-            case .ready: actions(.openExceptions)
-            case .signedOut: actions(.signIn)
-            case .unsubscribed: actions(.subscribe)
-            }
+            actions(act)
         } label: {
             Surface {
                 HStack(spacing: 11) {
-                    Image(systemName: accounts.gate == .ready ? "wifi.slash" : "person.slash")
+                    Image(systemName: glyph(for: act))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: 18)
@@ -436,9 +457,18 @@ public struct AgentsHome: View {
                 .frame(minHeight: 44)
             }
         }
-        .buttonStyle(.amuxRow(cornerRadius: design.metrics.cardRadius))
+        .buttonStyle(.amuxPush)
         .accessibilityLabel(text)
         .identified("home.exceptions", label: text, value: text)
+    }
+
+    /// What the line is about: a link that is down, or an account that would
+    /// open one.
+    private func glyph(for act: HomeAction) -> String {
+        switch act {
+        case .signIn, .subscribe: "person.slash"
+        default: "wifi.slash"
+        }
     }
 
     // MARK: - Nothing to reach yet
@@ -446,52 +476,128 @@ public struct AgentsHome: View {
     /// Not a splash: the real home screen, empty.
     ///
     /// A splash would teach that this is a service you subscribe to; an empty
-    /// list teaches that it is a client for hosts you own. There is one action
-    /// because there is one thing to do, and the headline is still the list
-    /// being empty, because that is what the screen is.
-    private var gated: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("No hosts yet")
-                    .designFont(.screenTitle, design)
+    /// list teaches that it is a client for machines you own. So the one
+    /// action is pairing, and an account is offered under it as what pairing
+    /// is not: reaching those machines when you are not on their network. A
+    /// phone that has already found something on this network leads with that
+    /// — there is nothing to type and nothing to sign into, and the machine is
+    /// right there.
+    ///
+    /// There is no Pair button of its own. Pairing is always with a particular
+    /// machine: one this phone has found is offered by name above, and one it
+    /// has not found prints a code to scan. A button that opened a keypad for
+    /// no machine at all led to a code that could not be sent anywhere.
+    private var nothingPairedYet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No agents yet")
+                        .designFont(.screenTitle, design)
+                        .foregroundStyle(design.ink.color)
+                        .identified("home.empty.firstRun", value: "No agents yet")
+                    Explain("Pair with a host and its agents appear here.")
+                        .identified("home.empty.explain")
+                }
+                if !found.isEmpty { offers }
+                PairingHint()
+                    .identified("home.empty.howToPair")
+                if !signedIn {
+                    SignInCallToAction(identifier: "home.empty.signIn") { actions(.signIn) }
+                }
+            }
+            .padding(.horizontal, design.metrics.gutter)
+            .padding(.top, 30)
+            .padding(.bottom, 120)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// Paired, and nothing running yet.
+    ///
+    /// The phone has done the part that needed doing, so the screen says what
+    /// comes next rather than offering to pair again. Starting an agent is the
+    /// one action, and only where a machine would run it; the exceptions line
+    /// says why not otherwise.
+    private var noAgentsYet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let exceptions {
+                    exceptionsLine(exceptions.text, exceptions.act)
+                }
+                // No headline of its own: the subtitle under the title already
+                // says there are no agents and how many hosts there are.
+                Explain("Start an agent on a host and it appears here.")
+                    .identified("home.empty.noAgents")
+                if canStartAnAgent {
+                    Button { actions(.newAgent) } label: {
+                        ActionLabel("New Agent", kind: .primary, fill: true)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .accessibilityLabel("New Agent")
+                    .identified("home.empty.newAgent", label: "New Agent")
+                }
+            }
+            .padding(.horizontal, design.metrics.gutter)
+            .padding(.top, 30)
+            .padding(.bottom, 120)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// The machines on this network this phone has found and not paired with.
+    ///
+    /// Offered here and not only on the Hosts tab because this is where
+    /// somebody is standing when they have nothing: the shortest true sentence
+    /// about an empty phone on a network with a host on it is that the host is
+    /// right there.
+    private var found: [HostEntry] { hosts.candidates(.onThisNetwork) }
+
+    private var offers: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHead(title: "On this network")
+            RowGroup(items: found) { host in offer(host) }
+        }
+    }
+
+    private func offer(_ host: HostEntry) -> some View {
+        HStack(spacing: 11) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.name)
+                    .designFont(.identifier, design)
                     .foregroundStyle(design.ink.color)
-                    .identified("home.empty.title", value: "No hosts yet")
-                Explain(accounts.gate == .signedOut
-                    ? "Sign in to pair one." : "Subscribe to pair one.")
-                    .identified("home.empty.explain")
+                Text(offered(host))
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
             }
-            Button {
-                actions(accounts.gate == .signedOut ? .signIn : .subscribe)
-            } label: {
-                ActionLabel(gateActionTitle, kind: .primary, fill: true)
+            Spacer(minLength: 6)
+            Button { actions(.pair(host.id)) } label: {
+                ActionLabel("Pair", kind: .outline)
             }
-            .buttonStyle(.amuxControl)
-            .accessibilityLabel(gateActionTitle)
-            .identified("home.empty.action", label: gateActionTitle)
+            .buttonStyle(.amuxRow)
+            .accessibilityLabel("Pair with \(host.name)")
+            .identified("home.pair.\(host.id)", label: "Pair with \(host.name)")
         }
-        .padding(.horizontal, design.metrics.gutter)
-        .padding(.top, 40)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .identified("home.offer.\(host.id)", label: spokenOffer(host), value: "found")
     }
 
-    private var gateActionTitle: String {
-        accounts.gate == .signedOut ? "Sign In" : "Subscribe"
+    private func offered(_ host: HostEntry) -> String {
+        var parts: [String] = []
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("found")
+        return parts.joined(separator: " · ")
     }
-}
 
-private enum HomeFilter: String, CaseIterable, Identifiable {
-    case all
-    case needsYou
-    case running
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: "All Agents"
-        case .needsYou: "Needs You"
-        case .running: "Running"
-        }
+    private func spokenOffer(_ host: HostEntry) -> String {
+        var parts = [host.name]
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("found, not paired")
+        return parts.joined(separator: ", ")
     }
+
 }
 
 extension FleetGate {
@@ -510,6 +616,12 @@ extension FleetGate {
 /// Three lines: who it is and how long ago, what it is doing in its own words,
 /// and where it runs. The state is said in words on the third line wherever a
 /// mark would have done the job badly.
+///
+/// There is no mark in front of the name. A row that needs you carries the
+/// accent dot beside its age, where an unread conversation is marked in
+/// Messages, and its third line says what it wants in the accent colour. Rows
+/// that need nothing line up with it because nothing reserves a slot for a
+/// mark they do not have.
 struct AgentRowView: View {
     @Environment(\.design) private var design
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -519,28 +631,25 @@ struct AgentRowView: View {
     let now: Date
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            AttentionMark(attention: state.attentionMark)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(row.name)
-                        .designFont(row.unread ? .identifierUnread : .identifier, design)
-                        .foregroundStyle(design.ink.color)
-                    Spacer(minLength: 4)
-                    Text(row.age(at: now))
-                        .designFont(.caption, design)
-                        .foregroundStyle(design.inkFaint.color)
-                }
-                if let headline = row.headline {
-                    Text(headline)
-                        .designFont(.detail, design)
-                        .foregroundStyle(design.ink.color)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                third
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(row.name)
+                    .designFont(row.unread ? .identifierUnread : .identifier, design)
+                    .foregroundStyle(design.ink.color)
+                Spacer(minLength: 4)
+                Text(row.age(at: now))
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkFaint.color)
+                if state.needsYou { NeedsYouDot() }
             }
+            if let headline = row.headline {
+                Text(headline)
+                    .designFont(.detail, design)
+                    .foregroundStyle(design.ink.color)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            third
         }
         .padding(.horizontal, 13)
         .padding(.vertical, design.metrics.rowPadding)
@@ -552,7 +661,25 @@ struct AgentRowView: View {
     /// readable without having learnt a vocabulary first. When the provider
     /// never counted the changes the word stands alone: an absent count is not
     /// a zero.
+    ///
+    /// A row that needs you says what it needs instead — the question, or the
+    /// command it wants to run — in the one colour this app keeps for that.
+    @ViewBuilder
     private var third: some View {
+        if case .needsYou(let why) = state {
+            Text(row.need ?? why.spoken)
+                .designFont(.monoSmall, design)
+                .foregroundStyle(design.accent.color)
+                .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 1)
+        } else {
+            words
+        }
+    }
+
+    private var words: some View {
         Group {
             if typeSize.isAccessibilitySize {
                 // Three things competing for one line leave each of them a few
@@ -570,7 +697,11 @@ struct AgentRowView: View {
                         Text(word)
                         Text("·")
                     }
+                    // A place loses its middle, where the parents are; what a
+                    // state has to say loses its end, as a sentence does.
                     Text(detail)
+                        .truncationMode(state.word != nil && state.elaboration != nil
+                                        ? .tail : .middle)
                     Spacer(minLength: 0)
                     if let host, showsHost { Text(host) }
                 }
@@ -590,10 +721,11 @@ struct AgentRowView: View {
         state.word != nil && !state.namesTheHost
     }
 
+    /// Written by ``PlaceNames``, as every line that places an agent is.
     private var detail: String {
         guard state.word != nil else {
-            return [host, row.workingDirectory].compactMap { $0 }.joined(separator: " · ")
+            return PlaceNames.place(host: host, directory: row.workingDirectory)
         }
-        return state.elaboration ?? row.workingDirectory
+        return state.elaboration ?? PlaceNames.directory(row.workingDirectory)
     }
 }

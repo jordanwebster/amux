@@ -2,14 +2,14 @@
 //!
 //! Responder verbs (`start_pairing`, `start_qr_pairing`, `cancel_pairing`)
 //! use the profile owner's in-process administration handle. Initiator verbs
-//! run the real bootstrap flows: the one SPAKE2 protocol over direct TCP or a cloud-routed tunnel
+//! run the real bootstrap flows: the one SPAKE2 protocol over direct QUIC or a cloud-routed stream
 //! (the secret typed as a PIN or scanned from a QR), and the SSH identity
 //! exchange (over an in-memory stream in place of a real `ssh` child).
 
 use std::time::Duration;
 
 use client::PairingSecret;
-use node::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
+use node::{HostId, pair_via_pin_direct_quic, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 use super::Daemon;
 use super::assertions::eventually;
@@ -56,15 +56,23 @@ pub struct QrPayload {
     /// The one-shot 256-bit SPAKE2 secret consumed by the first successful
     /// pairing; it never crosses the wire.
     pub secret: Vec<u8>,
+    /// Where the responder said it can be reached directly.
+    pub addrs: Vec<std::net::SocketAddr>,
     /// The cloud the invitation names, from the responder's configuration.
-    pub cloud_url: String,
+    /// Unset when the responder offers only direct reachability.
+    pub cloud_url: Option<String>,
 }
 
 impl QrPayload {
     /// The invitation as the responder's QR code carries it.
     pub fn encoded(&self) -> String {
-        node::encode_qr_pairing_invitation(self.host_id, &self.cloud_url, &self.secret)
-            .expect("a started QR pairing encodes")
+        node::encode_qr_pairing_invitation(
+            self.host_id,
+            &self.addrs,
+            self.cloud_url.as_deref(),
+            &self.secret,
+        )
+        .expect("a started QR pairing encodes")
     }
 }
 
@@ -106,6 +114,7 @@ impl Daemon {
             PairingSecret::QrSecret(secret) => Ok(QrPayload {
                 host_id: start.identity.host_id,
                 secret: secret.clone(),
+                addrs: start.addrs.clone(),
                 cloud_url: start.cloud_url.clone(),
             }),
             PairingSecret::Pin(_) => anyhow::bail!("StartPairing(QR) returned a PIN"),
@@ -221,55 +230,56 @@ pub struct PairAttempt<'a> {
 }
 
 impl PairAttempt<'_> {
-    /// PIN pairing over direct TCP: dial the responder's listener, run the
-    /// real SPAKE2 exchange, and commit trust through the initiator's
-    /// `PairPeer` operation.
+    /// PIN pairing to a typed address. The responder's host id is learned
+    /// from the authenticated pairing handshake.
     pub async fn with_pin(self, pin: &str) -> anyhow::Result<()> {
-        let addr = self.to.inner.tcp_addr.unwrap_or_else(|| {
+        let addr = self.to.inner.direct_addr.unwrap_or_else(|| {
             panic!(
-                "with_pin: responder '{}' has no direct-TCP listener (cloud_only)",
+                "with_pin: responder '{}' has no direct QUIC listener (cloud_only)",
                 self.to.name()
             )
         });
         let client = self.from.pairing_admin().await;
-        pair_via_pin_direct_tcp(
-            &self.from.inner.data_dir,
-            self.from.name(),
-            addr,
-            pin,
-            &client,
-        )
-        .await?;
+        pair_via_pin_direct_quic(addr, pin, &client).await?;
         Ok(())
     }
 
-    /// PIN pairing through the cloud: the `PairPinCloudPeer` operation
-    /// runs SPAKE2 over a cloud-routed pairing tunnel to `other`.
+    /// PIN pairing to a host selected from the discovery inventory.
+    pub async fn with_found_pin(self, pin: &str) -> anyhow::Result<()> {
+        let admin = self.from.pairing_admin().await;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin, &[]).await?;
+        admin.confirm_pair(pending).await?;
+        Ok(())
+    }
+
+    /// PIN pairing through the cloud runs SPAKE2 over a relay-routed pairing
+    /// tunnel to `other`.
     pub async fn with_cloud_pin(self, pin: &str) -> anyhow::Result<()> {
-        self.from
-            .pairing_admin()
-            .await
-            .pair_pin_cloud_peer(self.to.host_id(), pin.to_string())
-            .await?;
+        let admin = self.from.pairing_admin().await;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin, &[]).await?;
+        admin.confirm_pair(pending).await?;
         Ok(())
     }
 
-    /// QR pairing through the cloud: the `PairQrCloudPeer` operation
-    /// feeds the QR's 256-bit secret into the same SPAKE2 stream the typed
-    /// PIN uses, over a cloud-routed pairing tunnel.
+    /// QR pairing feeds the QR's 256-bit secret and addresses into the same
+    /// route-selecting pairing operation the typed PIN uses.
     pub async fn with_qr(self, qr: &QrPayload) -> anyhow::Result<()> {
-        self.from
-            .pairing_admin()
-            .await
-            .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
-            .await?;
+        let admin = self.from.pairing_admin().await;
+        let payload = node::QrPairingPayload {
+            host_id: qr.host_id,
+            secret: qr.secret.clone(),
+            addrs: qr.addrs.clone(),
+            cloud_url: qr.cloud_url.clone(),
+        };
+        let pending = admin.begin_pair_qr(&payload).await?;
+        admin.confirm_pair(pending).await?;
         Ok(())
     }
 
     /// SSH pairing: runs the real identity exchange (initiator on `self`,
     /// `amux pair-recv` responder on `other`) over an in-memory stream
     /// standing in for the authenticated SSH stdio. Both sides commit via
-    /// their own `PairPeer` operations, exactly like the CLI flow.
+    /// their own authenticated SSH trust commits, exactly like the CLI flow.
     pub async fn over_ssh(self) -> anyhow::Result<()> {
         let (initiator_io, responder_io) = tokio::io::duplex(64 * 1024);
         let initiator_client = self.from.pairing_admin().await;
@@ -303,18 +313,10 @@ impl PairAttempt<'_> {
         // In production the initiator's commit immediately dials its stored
         // SSH reachability (`ssh <target> amux relay`) and brings the Link
         // up. The hermetic harness cannot spawn `ssh`, so the responder's
-        // test TCP transport stands in for the SSH stdio link — the Link
+        // in-memory transport stands in for the SSH stdio link — the Link
         // semantics under test (a live, bidirectional, tunnel-carrying
         // stream) are transport-agnostic.
-        let addr = self.to.inner.tcp_addr.expect(
-            "over_ssh: the responder needs a TCP listener to stand in for the SSH stdio link",
-        );
-        self.from
-            .spawn_direct_link(
-                self.to.host_id(),
-                node::harness::Reachability::DirectTcp { addr },
-            )
-            .await;
+        self.from.connect_via_ssh_fixture(self.to).await;
         Ok(())
     }
 }

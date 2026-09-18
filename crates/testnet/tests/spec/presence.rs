@@ -6,7 +6,119 @@
 //! candidates. (docs/PROTOCOL.md "Routing: two rules"; docs/ARCHITECTURE.md
 //! "Service surface map", "The cloud deployment")
 
+use node::HostVia;
+use node::installation::{BindRequest, BindTarget, OperationId};
 use testnet::{TestNet, Via};
+
+/// Host inventory follows the active route, including the carrier under a
+/// direct route, rather than merely repeating configured reachabilities.
+#[tokio::test]
+async fn a_host_reports_direct_relay_ssh_or_offline_as_its_links_change() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Cloud)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    net.announce(&desktop);
+    laptop
+        .sees_host_status(&desktop, HostVia::Direct, Some(true))
+        .await;
+
+    net.withdraw(&desktop);
+    desktop.sever_direct_connections().await;
+    laptop.can_call(&desktop).await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Relay, Some(true))
+        .await;
+
+    laptop.connect_via_ssh_fixture(&desktop).await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Ssh, Some(true))
+        .await;
+
+    desktop.stop_cloud().await;
+    desktop.sever_direct_connections().await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Offline, Some(true))
+        .await;
+}
+
+/// A peer's binding fact is retained with trust when its last live route
+/// disappears, so signed-out hosts are not mistaken for subscription leads.
+#[tokio::test]
+async fn an_offline_host_that_never_signed_in_is_reported_as_such() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Direct)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop
+        .sees_host_status(&desktop, HostVia::Direct, Some(false))
+        .await;
+    desktop.stop().await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Offline, Some(false))
+        .await;
+}
+
+/// Direct handshakes read the profile's current account binding. Signing in
+/// and out changes the next hello without rebuilding either device runtime.
+#[tokio::test]
+async fn direct_hellos_follow_login_and_logout_without_restarting() {
+    let net = TestNet::builder()
+        .cloud()
+        .installation("laptop")
+        .profile("personal")
+        .daemon("desktop")
+        .no_cloud()
+        .paired("desktop", "laptop/personal", Via::Direct)
+        .start()
+        .await;
+    let installation = net.installation("laptop");
+    let laptop = installation.profile("personal");
+    let desktop = net.daemon("desktop");
+
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(false))
+        .await;
+
+    installation
+        .front_door()
+        .bind(
+            OperationId::new(),
+            BindRequest {
+                target: BindTarget::Explicit(laptop.id),
+                cloud_url: installation.identity().url(),
+                staged_refresh_token: installation.identity().refresh_token_for("default"),
+                adopt_non_pristine: true,
+            },
+        )
+        .await
+        .unwrap();
+    laptop.sever_direct_connections().await;
+    net.announce(&laptop);
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(true))
+        .await;
+
+    installation.logout("personal").await;
+    laptop.sever_direct_connections().await;
+    net.announce(&laptop);
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(false))
+        .await;
+
+    println!(
+        "A paired profile announces signed_in=false, then true after login and false after logout; both daemons keep the same running runtime throughout."
+    );
+}
 
 /// Two daemons attached to the same cloud user see each other come online —
 /// no trust required — and see each other disappear when one goes away.
@@ -139,7 +251,7 @@ async fn untrusted_online_hosts_are_absent_from_profile_inventory() {
         .cloud_only() // untrusted: same cloud user, never paired
         .daemon("phone")
         .no_cloud() // paired remote caller; its only path to laptop is direct
-        .paired("phone", "laptop/personal", Via::Tcp)
+        .paired("phone", "laptop/personal", Via::Direct)
         .start()
         .await;
     let laptop = net.installation("laptop").profile("personal");
@@ -256,7 +368,7 @@ async fn profile_runtime_stop_closes_direct_links_without_severing() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);

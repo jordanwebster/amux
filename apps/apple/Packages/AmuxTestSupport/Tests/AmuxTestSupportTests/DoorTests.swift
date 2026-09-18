@@ -27,8 +27,10 @@ final class DoorTests: XCTestCase {
             .calls,
             .accounts,
             .late(account: "work"),
-            .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
+            .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada", tier: .pro),
+            .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada", tier: .free),
             .addAccount(user: "work", token: "another-bearer"),
+            .refreshEntitlement,
             .restoreSession(
                 account: "9f1c1f8e-0000-4000-8000-000000000003", refresh: "a-refresh-token"),
             .awaitReconciled(seconds: 90),

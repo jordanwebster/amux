@@ -16,7 +16,7 @@ final class BridgeClientTests: XCTestCase {
             deviceName: "iPhone",
             relay: .init(url: "https://relay.example", tls: .system),
             accounts: [
-                .init(id: "personal", token: .fixed("bearer")),
+                .init(id: "personal", token: .fixed("bearer", tier: .pro)),
                 .init(id: "work", token: .callback),
             ],
             active: "work",
@@ -33,7 +33,12 @@ final class BridgeClientTests: XCTestCase {
         XCTAssertEqual(accounts.map { $0["id"] as? String }, ["personal", "work"])
         XCTAssertTrue(accounts.allSatisfy { Set($0.keys) == ["id", "token"] },
                       "accounts supply credentials; the runtime configuration owns the cloud")
-        XCTAssertEqual((accounts[0]["token"] as? [String: Any])?["Static"] as? String, "bearer")
+        // The bridge's fixed credential names its bearer. What an account
+        // buys sits beside it and only a driving fixture ever says it.
+        let fixed = (accounts[0]["token"] as? [String: Any])?["Static"] as? [String: Any]
+        XCTAssertEqual(fixed?["bearer"] as? String, "bearer")
+        XCTAssertEqual(fixed?["tier"] as? String, "pro")
+        XCTAssertEqual(fixed.map { Set($0.keys) }, ["bearer", "tier"])
         XCTAssertEqual(accounts[1]["token"] as? String, "Callback")
         XCTAssertEqual(json["active"] as? String, "work")
 
@@ -65,7 +70,7 @@ final class BridgeClientTests: XCTestCase {
             cacheDirectory: root.appendingPathComponent("cache"),
             deviceName: "unit-test",
             relay: .init(url: "https://127.0.0.1:1", tls: .system),
-            accounts: [.init(id: "unit-test", token: .fixed("unused"))],
+            accounts: [.init(id: "unit-test", token: .fixed("unused", tier: nil))],
             active: "unit-test",
             logPath: root.appendingPathComponent("amux.log")))
         defer { client.stop() }

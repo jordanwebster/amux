@@ -67,10 +67,15 @@ public struct AskPanel: Identifiable, Equatable, Sendable {
         public let scope: Scope?
         /// Set when this build must not offer any answer at all, and why.
         public let unanswerable: String?
+        /// The whole want in one line for a list row: "Wants to run
+        /// rm -rf build". The headline names the kind of thing and the
+        /// subject is the thing; a row has room for one sentence, so the two
+        /// are said together.
+        public let need: String
 
         public init(
             headline: String, subject: String, literal: Bool, purpose: String?,
-            scope: Scope?, unanswerable: String?
+            scope: Scope?, unanswerable: String?, need: String? = nil
         ) {
             self.headline = headline
             self.subject = subject
@@ -78,6 +83,7 @@ public struct AskPanel: Identifiable, Equatable, Sendable {
             self.purpose = purpose
             self.scope = scope
             self.unanswerable = unanswerable
+            self.need = need ?? "\(headline): \(subject)"
         }
     }
 
@@ -161,16 +167,19 @@ public struct AskPanel: Identifiable, Equatable, Sendable {
         public let reason: String?
         /// Codex's own choices, in the order Codex offered them.
         public let choices: [Choice]
+        /// The whole want in one line for a list row, as for a permission.
+        public let need: String
 
         public init(
             headline: String, subject: String?, place: String?, reason: String?,
-            choices: [Choice]
+            choices: [Choice], need: String? = nil
         ) {
             self.headline = headline
             self.subject = subject
             self.place = place
             self.reason = reason
             self.choices = choices
+            self.need = need ?? subject.map { "\(headline): \($0)" } ?? headline
         }
     }
 
@@ -337,6 +346,22 @@ extension AskPanel {
     }
 }
 
+extension AskPanel {
+    /// What is wanted, in one line, for a row that lists this agent. The
+    /// question itself where it is a question, and the thing to be allowed
+    /// where it is a permission.
+    public var need: String {
+        switch kind {
+        case .permission(let permission): permission.need
+        case .approval(let approval): approval.need
+        case .plan: "Wants a plan approved"
+        case .question(let questions):
+            questions.first.map { "Asks: \($0.prompt)" } ?? "Has a question"
+        case .unreadable: "Needs you"
+        }
+    }
+}
+
 extension Ask {
     /// The panel this ask is drawn as, or nil where the ask has already been
     /// answered and is only waiting for the layer to say so.
@@ -416,39 +441,49 @@ extension Ask {
         let name = tool ?? "a tool"
         let headline: String
         let subject: String
+        let need: String
         var literal = true
         switch invocation?["tool"]?.stringValue {
         case "bash":
             headline = "Wants to run a command"
             subject = invocation?["command"]?.stringValue ?? name
+            need = "Wants to run \(subject)"
         case "edit":
             headline = "Wants to edit a file"
             subject = invocation?["file_path"]?.stringValue ?? name
+            need = "Wants to edit \(subject)"
         case "write":
             headline = "Wants to write a file"
             subject = invocation?["file_path"]?.stringValue ?? name
+            need = "Wants to write \(subject)"
         case "read":
             headline = "Wants to read a file"
             subject = invocation?["file_path"]?.stringValue ?? name
+            need = "Wants to read \(subject)"
         case "query":
             headline = "Wants to search"
             subject = invocation?["text"]?.stringValue ?? name
+            need = "Wants to search for \(subject)"
         case "amux_send":
             headline = "Wants to message another agent"
             subject = invocation?["to"]?.stringValue ?? name
+            need = "Wants to message \(subject)"
         case "task":
             headline = "Wants to start another agent"
             subject = invocation?["description"]?.stringValue ?? name
+            need = headline
             literal = false
         default:
             headline = "Wants to use \(name)"
             subject = name
+            need = headline
         }
         return AskPanel.Permission(
             headline: headline, subject: subject, literal: literal,
             purpose: invocation?["description"]?.stringValue,
             scope: scope(suggestions),
-            unanswerable: sdk ? nil : Self.unanswerable(suggestions))
+            unanswerable: sdk ? nil : Self.unanswerable(suggestions),
+            need: need)
     }
 
     /// The standing grant to offer, from the host's own suggestion.
@@ -497,26 +532,31 @@ extension Ask {
         let approval: AskPanel.Approval
         switch context?["ask"]?.stringValue {
         case "command":
+            let command = context?["command"]?.stringValue
             approval = AskPanel.Approval(
                 headline: "Wants to run a command",
-                subject: context?["command"]?.stringValue,
+                subject: command,
                 place: context?["cwd"]?.stringValue,
-                reason: context?["reason"]?.stringValue, choices: choices)
+                reason: context?["reason"]?.stringValue, choices: choices,
+                need: command.map { "Wants to run \($0)" })
         case "file_change":
             let changed = (context?["changes"]?.arrayValue ?? []).count
+            let files = changed == 1 ? "1 file" : "\(changed) files"
             approval = AskPanel.Approval(
                 headline: "Wants to change files",
-                subject: changed == 1 ? "1 file" : "\(changed) files", place: nil,
-                reason: context?["reason"]?.stringValue, choices: choices)
+                subject: files, place: nil,
+                reason: context?["reason"]?.stringValue, choices: choices,
+                need: "Wants to change \(files)")
         case "permissions":
             approval = AskPanel.Approval(
                 headline: "Wants more permission", subject: nil, place: nil,
                 reason: context?["reason"]?.stringValue, choices: choices)
         case "dynamic_tool":
+            let tool = context?["tool"]?.stringValue
             approval = AskPanel.Approval(
                 headline: "Wants to use a tool",
-                subject: context?["tool"]?.stringValue, place: nil, reason: nil,
-                choices: choices)
+                subject: tool, place: nil, reason: nil,
+                choices: choices, need: tool.map { "Wants to use \($0)" })
         case let other:
             return AskPanel(
                 id: id, address: .codex(request: request),

@@ -109,6 +109,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
         net,
         listener,
         [("host".into(), "host".into())].into(),
+        ["default".into()].into(),
         agents,
     );
     let exercise = async {
@@ -120,12 +121,10 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             .unwrap()
             .to_owned();
         let qr = node::parse_qr_pairing_payload(&qr).unwrap();
-        assert_eq!(qr.cloud_url, client.cloud_url());
-        client
-            .admin()
-            .pair_qr_cloud_peer(qr.host_id, qr.secret)
-            .await
-            .unwrap();
+        assert_eq!(qr.cloud_url.as_deref(), Some(client.cloud_url()));
+        let admin = client.admin();
+        let pending = admin.begin_pair_qr(&qr).await.unwrap();
+        admin.confirm_pair(pending).await.unwrap();
         wait_for(&mut runtime, "paired agent inventory", |model| {
             model.agent(agent).is_some()
         })

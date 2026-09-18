@@ -37,17 +37,27 @@ class JourneyCase: XCTestCase {
         let agent: String
         let host: String
 
-        init() throws {
+        /// - Parameter withoutAnAccount: a journey about a phone nobody has
+        ///   signed in on. There is no relay to reach, no credential to reach
+        ///   it with and no account's agent to open, so those four stand empty
+        ///   rather than the test refusing to start for want of them. The
+        ///   runner's control channel and the app's door are needed either
+        ///   way: they are how the machines are driven and how the screen is
+        ///   read.
+        init(withoutAnAccount: Bool = false) throws {
             let environment = ProcessInfo.processInfo.environment
             func required(_ name: String) throws -> String {
                 try XCTUnwrap(environment[name], "the journey did not pass \(name)")
             }
-            relay = try required("AMUX_RELAY")
-            token = try required("AMUX_TOKEN")
-            user = try required("AMUX_USER")
+            func account(_ name: String) throws -> String {
+                withoutAnAccount ? environment[name] ?? "" : try required(name)
+            }
+            relay = try account("AMUX_RELAY")
+            token = try account("AMUX_TOKEN")
+            user = try account("AMUX_USER")
             control = try required("AMUX_CONTROL")
             doorPort = try required("AMUX_DOOR_PORT")
-            agent = try required("AMUX_AGENT")
+            agent = try account("AMUX_AGENT")
             host = try required("AMUX_HOST")
         }
     }
@@ -73,6 +83,13 @@ class JourneyCase: XCTestCase {
     ///     by pressing the button needs them: a browser at amux.sh has a
     ///     password in it and the App Store's sheet belongs to another
     ///     process, and neither can be driven from here.
+    /// The launch arguments that let an app find only the machines the runner
+    /// started. The simulator browses this Mac's network, where anything else
+    /// could be running, and a driven launch without them finds nothing.
+    var discoveryScope: [String] {
+        ["-amux-discover-only", ProcessInfo.processInfo.environment["AMUX_TESTNET_HOSTS"] ?? ""]
+    }
+
     func launch(
         _ runner: Runner, signedIn: Bool = true, link: String? = nil,
         as user: String? = nil, token: String? = nil, scripted: Bool = false,
@@ -85,6 +102,7 @@ class JourneyCase: XCTestCase {
             "-amux-user", user ?? runner.user,
         ] : []
         app.launchArguments = ["-amux-door-port", runner.doorPort]
+            + discoveryScope
             + credential
             + (scripted ? ["-amux-scripted-cloud"] : [])
             // Exact app-layout rectangles are expensive and normally duplicate
@@ -241,6 +259,10 @@ class JourneyCase: XCTestCase {
         var relay: String?
         var token: String?
         var user: String?
+        /// What the account that credential belongs to has paid for, which the
+        /// account service says beside a real one. Absent is paid, which is
+        /// what every journey but the one about a free account is.
+        var tier: String?
         var attachment: String?
         var name: String?
         var mime: String?
@@ -260,6 +282,12 @@ class JourneyCase: XCTestCase {
         /// under one says so here.
         var appearance: String?
         var size: String?
+        /// What the system answered when this app asked to look at that
+        /// network: `granted` or `denied`.
+        var permission: String?
+        /// How much of the end of the runtime's own account of itself to
+        /// read back.
+        var bytes: Int?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -276,6 +304,7 @@ class JourneyCase: XCTestCase {
             if let relay { fields["relay"] = relay }
             if let token { fields["token"] = token }
             if let user { fields["user"] = user }
+            if let tier { fields["tier"] = tier }
             if let attachment { fields["attachment"] = attachment }
             if let name { fields["name"] = name }
             if let mime { fields["mime"] = mime }
@@ -287,8 +316,20 @@ class JourneyCase: XCTestCase {
             if let account { fields["account"] = account }
             if let appearance { fields["appearance"] = appearance }
             if let size { fields["size"] = size }
+            if let permission { fields["permission"] = permission }
+            if let bytes { fields["bytes"] = bytes }
             return fields
         }
+    }
+
+    /// The end of what this launch's runtime wrote about what it decided.
+    ///
+    /// A build with the driving tools writes its Rust tracing to a file in
+    /// the app's own container, which is the only account of a dial that
+    /// nothing on a screen can show — which address was tried, and why a link
+    /// did not come up. Empty in a build that writes none.
+    func runtimeLog(_ runner: Runner, lastBytes: Int = 200_000) throws -> String {
+        try door(runner, .init(kind: "runtimeLog", bytes: lastBytes))["log"] as? String ?? ""
     }
 
     /// Opens the door, says one thing, and closes it. One connection at a time
@@ -465,6 +506,32 @@ class JourneyCase: XCTestCase {
             if !waitUntil(within: 3, { self.element(app, identifier).exists }) { return }
         }
         XCTFail("\(complaint); \(identifier) is still on screen")
+    }
+
+    /// Leaves the conversation on show by its back chevron, which is the way
+    /// out a conversation offers, and waits until the Agents list is the
+    /// screen with its tab bar back under it.
+    func backToAgents(_ app: XCUIApplication) {
+        press(app, "conversation.back")
+        waitForNo(app, "conversation", "the back chevron did not leave the conversation")
+        waitFor(app, "tab.agents", "leaving the conversation did not return to the Agents list")
+    }
+
+    /// Opens one agent's conversation from the Agents list and waits until it
+    /// is that agent's conversation on show, as the screen tells the door.
+    func openFromAgents(
+        _ runner: Runner, _ app: XCUIApplication, _ agent: String, _ complaint: String
+    ) {
+        waitFor(app, "home.row.\(agent)", "\(complaint): the Agents list does not hold \(agent)")
+        press(app, "home.row.\(agent)")
+        var showing = ""
+        XCTAssertTrue(
+            waitUntil {
+                showing = self.said((try? self.declared(runner, settling: false)) ?? [],
+                                    "conversation")?.value ?? ""
+                return showing == agent
+            },
+            "\(complaint); the conversation on show is \(showing.isEmpty ? "none" : showing)")
     }
 
     func pressTab(_ app: XCUIApplication, _ title: String) {

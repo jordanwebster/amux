@@ -1,6 +1,6 @@
 use fold::ProviderFold;
 
-pub const FLEET_SHAPE: u32 = 2;
+pub const FLEET_SHAPE: u32 = 3;
 #[cfg(feature = "family-definition-v2-fixture")]
 pub const CHAT_SHAPE: u32 = 2;
 #[cfg(not(feature = "family-definition-v2-fixture"))]
@@ -146,6 +146,8 @@ CREATE TABLE host (
     capabilities BLOB,
     trust BLOB,
     dial_error TEXT,
+    via BLOB NOT NULL,
+    signed_in INTEGER,
     revision INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -162,6 +164,7 @@ CREATE TABLE agent (
     parent_host_id TEXT,
     parent_id TEXT,
     created_at INTEGER NOT NULL,
+    last_activity INTEGER NOT NULL,
     working_on TEXT,
     working_on_at INTEGER,
     membership INTEGER NOT NULL,

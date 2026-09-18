@@ -5,10 +5,10 @@
 //! top-to-bottom works as documentation; the modules below are declared in
 //! that reading order.
 //!
-//! Run with: `timeout 600 cargo test --workspace --test spec`
+//! Run with: `timeout 1200 wt run spec`
 //!
 //! Adding a test: build a topology with `TestNet::builder()` —
-//! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Tcp | Via::Cloud)`,
+//! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Direct | Via::Cloud)`,
 //! `.trusted(a, b)` — then assert with the prose verbs on `Daemon`
 //! (`sees`, `cannot_see`, `can_call`, `connects_to(..).via_direct()`,
 //! `pair().with_pin()`, `attach`, `restart`, ...). Every verb retries
@@ -20,20 +20,43 @@
 //! daemon with real TLS); anything exercising a shared rate limiter gets
 //! its own `TestNet`.
 
-// Test scaffolding exists only in debug profiles (see build.rs); a
-// release-profile test build compiles this crate empty rather than failing.
-mod smoke; // the harness in one test: the canonical TestNet example
+// Chapter 0 — Discovery
+mod discovery;
 
-mod agents; // Chapter 7 — Agent messaging & relationships
-mod attachments; // Chapter 9 — Artifact routing, persistence & lifetime
-mod debug; // Chapter 8 — Live daemon diagnostics
-mod identity; // Chapter 1 — Identity & trust
-mod pairing; // Chapter 2 — Pairing
-mod presence; // Chapter 3 — Presence
-mod repositories; // Host project discovery and recent directories
-mod revocation; // Device identity and immediate session revocation
-mod routing; // Chapter 4 — Routing & failover
-mod sessions; // Chapter 5 — Remote sessions & authority
-mod wire; // Chapter 6 — Wire conformance (WirePeer)
-
+// Chapter 1 — Profiles, identity and trust
+mod identity;
 mod profiles;
+mod revocation; // Device identity and immediate session revocation
+
+// Chapter 2 — Pairing
+mod pairing;
+
+// Chapter 3 — Presence
+mod presence;
+
+// Chapter 4 — Routing and failover
+mod routing;
+
+// Chapter 5 — Carriers, links, streams and channels
+mod channels;
+mod quic;
+mod wire;
+
+// Chapter 6 — Relay forwarding and entitlement
+mod entitlement;
+mod relay;
+
+// Chapter 7 — Agent messaging and remote sessions
+mod agents;
+mod sessions;
+
+// Chapter 8 — Diagnostics
+mod debug;
+
+// Chapter 9 — Artifact routing, persistence and lifetime
+mod attachments;
+
+// Host project discovery and recent directories
+mod repositories;
+
+mod smoke; // The canonical TestNet harness example

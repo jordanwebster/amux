@@ -154,8 +154,8 @@ final class AccessibilityAuditTests: XCTestCase {
     /// hold what XCUITest found, and XCUITest's own where it did not.
     ///
     /// Size and not position, because the two do not have to agree on where a
-    /// control is and are both right. A screen that slides sideways — the
-    /// conversation with the drawer open — is moved by a transform the layout
+    /// control is and are both right. A screen that slides sideways — a page
+    /// being pushed — is moved by a transform the layout
     /// never sees, so the screen's declaration stays at the untranslated
     /// place while XCUITest reports where it ended up. What a thumb needs is
     /// the size either way.

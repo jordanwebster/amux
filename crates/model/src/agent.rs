@@ -112,6 +112,10 @@ pub struct Agent {
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// When the host last saw this agent do anything, by the host's clock.
+    /// Never earlier than `created_at`; an agent that has done nothing yet
+    /// was last active when it was created.
+    pub last_activity: DateTime<Utc>,
     pub parent: Option<AgentParent>,
     pub working_on: Option<WorkingOn>,
     /// Latest daemon-folded standing, absent for terminal and test agents.
@@ -133,6 +137,7 @@ struct HumanAgent {
     readonly: bool,
     args: Vec<String>,
     created_at: DateTime<Utc>,
+    last_activity: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent: Option<AgentParent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +165,7 @@ struct BinaryAgent {
     readonly: bool,
     args: Vec<String>,
     created_at: DateTime<Utc>,
+    last_activity: DateTime<Utc>,
     parent: Option<AgentParent>,
     working_on: Option<WorkingOn>,
     summary: Option<SummaryEnvelope>,
@@ -181,6 +187,7 @@ macro_rules! impl_agent_conversion {
                     readonly: value.readonly,
                     args: value.args,
                     created_at: value.created_at,
+                    last_activity: value.last_activity,
                     parent: value.parent,
                     working_on: value.working_on,
                     summary: value.summary,
@@ -202,6 +209,7 @@ macro_rules! impl_agent_conversion {
                     readonly: value.readonly,
                     args: value.args,
                     created_at: value.created_at,
+                    last_activity: value.last_activity,
                     parent: value.parent,
                     working_on: value.working_on,
                     summary: value.summary,

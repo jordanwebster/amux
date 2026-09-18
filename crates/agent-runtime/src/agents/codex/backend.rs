@@ -1545,15 +1545,68 @@ fn raw_row(event: &ThreadEvent) -> Value {
     Value::Object(row)
 }
 
+/// Whether a thread event is the agent doing something, and so dates its last
+/// activity.
+///
+/// The turn counts: its items, their streamed output, plans and diffs, the
+/// approvals it stops for, and errors that end it. What Codex says about the
+/// thread and the connection does not — token counts, status and name
+/// changes, warnings, hooks — because those also arrive when a thread is
+/// resumed or a connection settles. Matched exhaustively so a new kind of
+/// event has to be decided here.
+fn is_activity(event: &TurnEvent) -> bool {
+    match event {
+        TurnEvent::ItemStarted(_)
+        | TurnEvent::ItemCompleted(_)
+        | TurnEvent::AgentMessageDelta { .. }
+        | TurnEvent::CommandOutputDelta { .. }
+        | TurnEvent::FileChangeDelta { .. }
+        | TurnEvent::PlanDelta { .. }
+        | TurnEvent::ReasoningSummaryDelta { .. }
+        | TurnEvent::ReasoningTextDelta { .. }
+        | TurnEvent::ReasoningSummaryPartAdded { .. }
+        | TurnEvent::DiffUpdated { .. }
+        | TurnEvent::PlanUpdated { .. }
+        | TurnEvent::TurnStarted { .. }
+        | TurnEvent::TurnCompleted { .. }
+        | TurnEvent::ThreadCompacted { .. }
+        | TurnEvent::ModelRerouted { .. }
+        | TurnEvent::FileChangePatchUpdated { .. }
+        | TurnEvent::ApprovalRequired(_)
+        | TurnEvent::ToolCallRequired(_)
+        | TurnEvent::ServerRequest { .. }
+        | TurnEvent::Error { .. } => true,
+        TurnEvent::TokenUsageUpdated(_)
+        | TurnEvent::ThreadStarted { .. }
+        | TurnEvent::ThreadStatusChanged { .. }
+        | TurnEvent::ThreadNameUpdated { .. }
+        | TurnEvent::ThreadArchived { .. }
+        | TurnEvent::ThreadUnarchived { .. }
+        | TurnEvent::ThreadClosed { .. }
+        | TurnEvent::Warning { .. }
+        | TurnEvent::HookStarted(_)
+        | TurnEvent::HookCompleted(_)
+        | TurnEvent::ApprovalResolved { .. }
+        | TurnEvent::Unknown { .. } => false,
+    }
+}
+
 async fn ingest_event(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
     completion_sink: Option<&CodexCompletionSink>,
     event: ThreadEvent,
 ) {
-    let row = raw_row(&event);
-    let activity_at = crate::agents::provider_activity_at_unix_ms(&row);
-    log_source.write_row(row, activity_at, false).await;
+    // History a resume replays is written to the log like any other row, but
+    // it already happened: dating it now would make an idle agent jump to the
+    // top of every list each time its daemon restarts or its link recovers.
+    if !event.replayed && is_activity(&event.event) {
+        log_source.write_activity(raw_row(&event), Utc::now()).await;
+    } else {
+        log_source
+            .write_row(raw_row(&event), None, event.replayed)
+            .await;
+    }
     match &event.event {
         TurnEvent::TurnStarted { turn } => {
             update_attached(runtime, |attached| {
@@ -2181,6 +2234,80 @@ mod tests {
     use super::*;
     use crate::agents::AgentType;
 
+    /// The turn dates activity; what Codex says about the thread does not.
+    #[test]
+    fn only_turn_events_are_activity() {
+        let turn = || codex::Turn {
+            id: "turn-1".into(),
+            items: Vec::new(),
+            status: Default::default(),
+            error: None,
+        };
+        for event in [
+            TurnEvent::Warning {
+                message: "resumed".into(),
+            },
+            TurnEvent::ThreadNameUpdated { name: None },
+        ] {
+            assert!(!is_activity(&event));
+        }
+        for event in [
+            TurnEvent::TurnStarted { turn: turn() },
+            TurnEvent::AgentMessageDelta {
+                item_id: "item-1".into(),
+                delta: "hi".into(),
+            },
+            TurnEvent::TurnCompleted { turn: turn() },
+        ] {
+            assert!(is_activity(&event));
+        }
+    }
+
+    /// History a resume replays is logged but does not date the agent; the
+    /// same event arriving live does.
+    #[tokio::test]
+    async fn replayed_turn_events_are_logged_but_are_not_activity() {
+        let source = StructuredLogSource::new(16);
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
+            attached: None,
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let delta = |replayed| ThreadEvent {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId": "thread-1", "delta": "hi"}),
+            turn_id: Some("turn-1".into()),
+            event: TurnEvent::AgentMessageDelta {
+                item_id: "item-1".into(),
+                delta: "hi".into(),
+            },
+            replayed,
+        };
+
+        ingest_event(&runtime, &source, None, delta(true)).await;
+        assert_eq!(
+            source.current_seq().await,
+            1,
+            "the replayed row is still logged"
+        );
+        assert_eq!(source.last_activity(), None);
+
+        let before = Utc::now();
+        ingest_event(&runtime, &source, None, delta(false)).await;
+        assert!(
+            source
+                .last_activity()
+                .is_some_and(|at| at >= before - chrono::Duration::milliseconds(1))
+        );
+    }
+
     fn session_request() -> CreateAgentRequest {
         CreateAgentRequest {
             agent_id: Uuid::from_u128(1),
@@ -2309,6 +2436,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
             summary: None,
@@ -3846,6 +3974,7 @@ mod tests {
                 method: "ignored".into(),
                 params: Value::Null,
             },
+            replayed: false,
         };
         assert_eq!(
             raw_row(&event),
@@ -3939,6 +4068,7 @@ mod tests {
         assert_eq!(initial.through, 0);
 
         let item_approval = ThreadEvent {
+            replayed: false,
             method: "item/commandExecution/requestApproval".into(),
             params: json!({"itemId":"item-7","availableDecisions":["accept","decline"]}),
             turn_id: Some("turn-3".into()),
@@ -3957,6 +4087,7 @@ mod tests {
             &source,
             None,
             ThreadEvent {
+                replayed: false,
                 method: "item/commandExecution/requestApproval/resolved".into(),
                 params: json!({"itemId":"item-7"}),
                 turn_id: Some("turn-3".into()),
@@ -3968,6 +4099,7 @@ mod tests {
         .await;
 
         let call_approval = ThreadEvent {
+            replayed: false,
             method: "item/commandExecution/requestApproval".into(),
             params: json!({"callId":"call-8","availableDecisions":["accept","decline"]}),
             turn_id: Some("turn-3".into()),

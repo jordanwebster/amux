@@ -23,10 +23,11 @@ use tui::view::{Mode, UiAction, ViewState, visible_rows};
 use tui::{ColorMode, FrameContext, Theme, render};
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::{
-    Agent, AgentId, AgentParent, Boundary, BoundaryAt, ChatCommand, ChatStreamMsg, Command,
-    DisconnectReason, Effect, FleetDelta, HostEntry, HostId, LoadedDto, Model, Msg,
-    MutationBatchDto, OpId, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, ServerMsg,
-    StoreMsg, StoreOp, StreamCloseReason, StreamEntry, StreamMsg, WorkingOn, update,
+    Agent, AgentId, AgentParent, Boundary, BoundaryAt, ChatCommand, ChatStreamMsg, CloudState,
+    Command, DisconnectReason, Effect, FleetDelta, HostEntry, HostId, LoadedDto, Model, Msg,
+    MutationBatchDto, OpId, ProfileGeneration, RelayCarrier, ReplayFactsDto, ReplayOutcomeDto,
+    ServerMsg, StoreMsg, StoreOp, StreamCloseReason, StreamEntry, StreamMsg, Tier, WorkingOn,
+    update,
 };
 use uuid::Uuid;
 
@@ -75,6 +76,8 @@ fn a_host(name: &str) -> HostEntry {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: ui_state::HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: ui_state::HostVia::Direct,
+        signed_in: Some(true),
         platform: None,
     }
 }
@@ -85,6 +88,7 @@ fn an_offline_host(name: &str) -> HostEntry {
         version: None,
         capabilities: None,
         last_dial_error: Some("dial tcp: connection refused".to_string()),
+        via: ui_state::HostVia::Offline,
         platform: None,
         ..a_host(name)
     }
@@ -107,6 +111,7 @@ fn an_agent(name: &str, agent_type: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
         summary: None,
@@ -261,6 +266,10 @@ fn fleet_msgs() -> Vec<Msg> {
         server(ServerMsg::Connected {
             local_host_id: Some(host_id("nova")),
         }),
+        server(ServerMsg::CloudState(CloudState::Connected {
+            tier: Tier::Pro,
+            carrier: RelayCarrier::Tcp,
+        })),
         server(ServerMsg::HostUpserted {
             host: a_host("nova"),
         }),
@@ -1696,59 +1705,108 @@ async fn sqlite_chat_pages_past_the_loaded_window_and_returns_to_the_tip() {
     assert!(newest.contains("stored row 2400"), "{newest}");
 }
 
-/// Cloud-auth expiry is a degraded banner over a working fleet — never a
-/// blocking screen.
+/// A free relay link keeps presence: the host and banner call that state away.
 #[test]
-fn fleet_cloud_auth_banner() {
+fn fleet_away_banner() {
     let mut msgs = fleet_msgs();
-    msgs.push(Msg::Command {
-        op: op(1),
-        command: Command::RenameAgent {
-            agent: agent_id("migration-plan"),
-            name: "plan".to_string(),
-        },
-    });
-    msgs.push(Msg::OpResult {
-        op: op(1),
-        outcome: ui_state::OpOutcome::Error {
-            error: ui_state::OpError::classified("Invalid or missing credentials", true, false),
-        },
-    });
-    let model = fold(msgs);
-    let view = ViewState {
-        // The op failure itself was seen and dismissed; the banner stays.
-        dismissed_error_seq: u64::MAX,
-        ..view_default()
-    };
-    let rendered = render_frame(&model, &view, 68, 11);
-    assert_golden("fleet_cloud_auth_banner", &rendered);
+    let mut host = a_host("hetzner");
+    host.via = ui_state::HostVia::Relay;
+    msgs.push(server(ServerMsg::HostUpserted { host }));
+    msgs.push(server(ServerMsg::CloudState(CloudState::Connected {
+        tier: Tier::Free,
+        carrier: RelayCarrier::Tcp,
+    })));
+    let rendered = render_frame(&fold(msgs), &view_default(), 68, 11);
+    assert!(rendered.contains("hetzner ·away"), "{rendered}");
+    assert_golden("fleet_away_banner", &rendered);
 }
 
-/// A missing cloud subscription is a degraded banner over the working local
-/// fleet, with account recovery guidance.
+/// Signed out with an offline trusted host, the banner offers remote reach.
 #[test]
-fn fleet_cloud_subscription_banner() {
+fn fleet_signed_out_offline_banner() {
     let mut msgs = fleet_msgs();
-    msgs.push(Msg::Command {
-        op: op(1),
-        command: Command::RenameAgent {
-            agent: agent_id("migration-plan"),
-            name: "plan".to_string(),
-        },
-    });
-    msgs.push(Msg::OpResult {
-        op: op(1),
-        outcome: ui_state::OpOutcome::Error {
-            error: ui_state::OpError::classified("Cloud subscription required", false, true),
-        },
-    });
-    let model = fold(msgs);
-    let view = ViewState {
-        dismissed_error_seq: u64::MAX,
+    msgs.push(server(ServerMsg::CloudState(CloudState::SignedOut)));
+    let rendered = render_frame(&fold(msgs), &view_default(), 68, 11);
+    assert!(
+        rendered.contains("sign in to reach your agents from anywhere · amux login"),
+        "{rendered}"
+    );
+    assert_golden("fleet_signed_out_offline_banner", &rendered);
+}
+
+fn hosts_overlay_model() -> Model {
+    let mut msgs = fleet_msgs();
+    let mut away = a_host("hetzner");
+    away.via = ui_state::HostVia::Relay;
+    msgs.push(server(ServerMsg::HostUpserted { host: away }));
+
+    let mut relay = a_host("relay-no-account");
+    relay.via = ui_state::HostVia::Relay;
+    relay.signed_in = Some(false);
+    msgs.push(server(ServerMsg::HostUpserted { host: relay }));
+
+    let mut ssh = a_host("bastion");
+    ssh.via = ui_state::HostVia::Ssh;
+    msgs.push(server(ServerMsg::HostUpserted { host: ssh }));
+
+    let mut found = a_host("new-mac");
+    found.trust_status = ui_state::HostTrustStatus::UntrustedButOnline;
+    msgs.push(server(ServerMsg::HostUpserted { host: found }));
+    msgs.push(server(ServerMsg::CloudState(CloudState::Connected {
+        tier: Tier::Free,
+        carrier: RelayCarrier::Tcp,
+    })));
+    fold(msgs)
+}
+
+fn hosts_overlay_view() -> ViewState {
+    ViewState {
+        mode: Mode::Hosts,
         ..view_default()
-    };
-    let rendered = render_frame(&model, &view, 68, 11);
-    assert_golden("fleet_cloud_subscription_banner", &rendered);
+    }
+}
+
+#[test]
+fn fleet_hosts_overlay_dark() {
+    let model = hosts_overlay_model();
+    let view = hosts_overlay_view();
+    let theme = Theme::default();
+    let buffer = render_buffer(&model, &view, 120, 40, theme);
+    let capture = capture_frame(&buffer, theme);
+    let rendered = &capture.text;
+    for text in [
+        "·direct",
+        "·relay, not signed in",
+        "·ssh",
+        "·away",
+        "·offline",
+        "found · run amux pair new-mac",
+    ] {
+        assert!(rendered.contains(text), "missing {text:?}:\n{rendered}");
+    }
+    assert_golden(
+        "fleet_hosts_overlay_dark",
+        &format!(
+            "--- text ---\n{}--- styles ---\n{}",
+            capture.text, capture.styles
+        ),
+    );
+}
+
+#[test]
+fn fleet_hosts_overlay_light() {
+    let model = hosts_overlay_model();
+    let view = hosts_overlay_view();
+    let theme = Theme::light(ColorMode::TrueColor);
+    let buffer = render_buffer(&model, &view, 120, 40, theme);
+    let capture = capture_frame(&buffer, theme);
+    assert_golden(
+        "fleet_hosts_overlay_light",
+        &format!(
+            "--- text ---\n{}--- styles ---\n{}",
+            capture.text, capture.styles
+        ),
+    );
 }
 
 #[test]

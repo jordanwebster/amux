@@ -21,7 +21,7 @@ public struct ComposerActivity: Equatable, Sendable {
     }
 }
 
-/// Whether there is a composer at all, and which of its two states it is in.
+/// Whether there is a composer at all, and which of its states it is in.
 ///
 /// The bottom of a conversation holds exactly one thing. An unanswered ask
 /// holds it first, then a finished turn's offer, then whatever
@@ -30,9 +30,17 @@ public struct ComposerActivity: Equatable, Sendable {
 /// message — an ended run, a session this build cannot read, a layer catching
 /// up — and a box is drawn only where writing one is a thing a person can
 /// actually do.
+///
+/// A message on its way is not one of those gates. The box that sent it stays
+/// where it is, with its keyboard still up, and only its button waits: taking
+/// the box away for the moment between the tap and the machine's answer put
+/// the keyboard down, stuttered the page and then put a new box back.
 public enum ComposerState: Equatable, Sendable {
     /// The layer will take a message now.
     case writing
+    /// The last message has left and the machine has not acknowledged it yet.
+    /// The field can be written in; nothing more can be sent until it answers.
+    case sending
     /// A turn is running. What is written is held until it ends.
     case working(ComposerActivity)
 
@@ -44,18 +52,21 @@ public enum ComposerState: Equatable, Sendable {
         case .claudePty(let gate):
             switch gate {
             case .ready: self = .writing
+            case .sendInFlight: self = .sending
             case .working: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
         case .claudeSdk(let gate):
             switch gate {
             case .ready: self = .writing
+            case .inputInFlight: self = .sending
             case .working: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
         case .codex(let gate):
             switch gate {
             case .ready: self = .writing
+            case .inputInFlight: self = .sending
             case .activeTurn: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
@@ -69,7 +80,7 @@ public enum ComposerState: Equatable, Sendable {
     /// box which one is about to be interrupted.
     public func placeholder(agent name: String) -> String {
         switch self {
-        case .writing: "Message \(name)"
+        case .writing, .sending: "Message \(name)"
         case .working: "Queue a message"
         }
     }
@@ -79,9 +90,25 @@ public enum ComposerState: Equatable, Sendable {
         return activity
     }
 
+    /// What the working line shows, which starts a step before the turn
+    /// does: a message on its way is the turn beginning, and a line that
+    /// waited for the machine's acknowledgement would appear a beat after the
+    /// tap and read as the box changing its mind.
+    public var line: ComposerActivity? {
+        switch self {
+        case .working(let activity): activity
+        case .sending: ComposerActivity(name: "Working", elapsed: nil)
+        case .writing: nil
+        }
+    }
+
     /// A turn is running, so pressing the button holds the message rather
     /// than sending it, and the button with nothing to say stops the turn.
     public var busy: Bool { activity != nil }
+
+    /// Whether the button may send. Not while a message is still on its way:
+    /// the layer takes one at a time, and a second tap would only be refused.
+    public var sends: Bool { self != .sending }
 
     /// What the agent is doing, named by the row it is doing it in.
     ///
@@ -93,21 +120,19 @@ public enum ComposerState: Equatable, Sendable {
     }
 
     /// One word, because the row it came from is directly above the box and
-    /// already spells the command, the path or the query in full. Repeating it
-    /// here would put the same sentence on the screen twice and truncate it
-    /// the second time, which is the version a person would try to read.
+    /// already spells the command in full. Repeating it here would put the
+    /// same sentence on the screen twice and truncate it the second time,
+    /// which is the version a person would try to read.
+    ///
+    /// Only three words, because the line describes the turn, not the row
+    /// being drawn: a turn is thinking, running something, or working, and
+    /// streaming its answer or reading a file is still working. A tool row's
+    /// own name is never used — layer status reports reach the feed as tool
+    /// rows ("requesting") and are not something the agent is doing.
     private static func name(_ tail: TranscriptRow?) -> String {
         switch tail?.kind {
         case .thinking: "Thinking"
-        case .prose(_, let open): open ? "Writing" : "Working"
         case .ran: "Running"
-        case .exploration: "Reading"
-        case .edit: "Editing"
-        case .wrote: "Writing"
-        case .tool(let name, _, _): name
-        // A turn whose last row is the prompt that started it, or a row this
-        // build has no word for. "Working" is the true thing to say, and the
-        // elapsed time beside it is still the useful half.
         default: "Working"
         }
     }

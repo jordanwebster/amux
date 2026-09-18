@@ -73,6 +73,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
     };
+    for effect in &effects {
+        if let Effect::OpenStoreStream { agent, .. } = effect
+            && let Some(chat) = model.store.chats.get_mut(agent)
+        {
+            chat.stream_opening = true;
+        }
+    }
     effects.extend(crate::queue::deliver_ready(model));
     effects
 }
@@ -376,16 +383,6 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
     let Some(pending) = model.pending_ops.remove(&op) else {
         return Vec::new();
     };
-    if let OpOutcome::Error { error } = &outcome
-        && error.auth_required()
-    {
-        model.cloud_auth_required = true;
-    }
-    if let OpOutcome::Error { error } = &outcome
-        && error.subscription_required()
-    {
-        model.cloud_subscription_required = true;
-    }
     // A failed input send resurfaces its optimistic state with the failure
     // stated (C5): the echo leaves (the draft resurfaces from ViewState;
     // this finished op carries the fact), the ask flips to SendFailed. An
@@ -504,12 +501,48 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 agents_synchronized: false,
             };
             model.local_host_id = local_host_id.or(model.local_host_id);
-            model.cloud_auth_required = false;
-            model.cloud_subscription_required = false;
             crate::store::reconnect(&mut model.store)
         }
-        ServerMsg::CloudSubscriptionStatus { required } => {
-            model.cloud_subscription_required = required;
+        ServerMsg::CloudState(state) => {
+            // Being away is a fact about the account, not about the machine:
+            // the relay refuses to carry a free account's traffic and carries
+            // it the moment the account pays. So a tier change moves machines
+            // in and out of reach in both directions, and nothing on those
+            // machines sends its inventory again to say so. Taking liveness
+            // away without ever giving it back would leave an agent on a
+            // machine that is answering reading as a memory for good.
+            let was_away = model
+                .hosts
+                .values()
+                .filter_map(|host| model.host_is_away(host.entry.id).then_some(host.entry.id))
+                .collect::<std::collections::BTreeSet<_>>();
+            model.cloud_state = state;
+            let now_away = model
+                .hosts
+                .values()
+                .filter_map(|host| model.host_is_away(host.entry.id).then_some(host.entry.id))
+                .collect::<std::collections::BTreeSet<_>>();
+            let back = was_away
+                .iter()
+                .copied()
+                .filter(|id| !now_away.contains(id) && model.host_online(*id))
+                .collect::<std::collections::BTreeSet<_>>();
+            for card in model.agents.values_mut() {
+                let host = card.agent.host_id;
+                if now_away.contains(&host) {
+                    card.live = false;
+                } else if back.contains(&host)
+                    // Coming back in reach is no evidence the agent is still
+                    // there: one the machine said was gone while it was out of
+                    // reach stays the memory it became.
+                    && model
+                        .remote_inventories
+                        .get(&host)
+                        .is_none_or(|ids| ids.contains(&card.agent.id))
+                {
+                    card.live = true;
+                }
+            }
             Vec::new()
         }
         ServerMsg::Disconnected { reason } => {
@@ -520,6 +553,16 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("host upsert while not connected");
             }
+            let host_id = host.id;
+            let live = host.online
+                && !(host.via == model::HostVia::Relay
+                    && matches!(
+                        model.cloud_state(),
+                        crate::model::CloudState::Connected {
+                            tier: model::Tier::Free,
+                            ..
+                        }
+                    ));
             model.hosts.insert(
                 host.id,
                 HostState {
@@ -527,6 +570,15 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     epoch: model.epoch,
                 },
             );
+            if !live {
+                for card in model
+                    .agents
+                    .values_mut()
+                    .filter(|card| card.agent.host_id == host_id)
+                {
+                    card.live = false;
+                }
+            }
             Vec::new()
         }
         ServerMsg::HostRemoved { id } => {
@@ -535,9 +587,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             }
             model.hosts.remove(&id);
             model.attached.retain(|_, host| *host != id);
-            // A host that left the paired set can no longer confirm what this
-            // device remembered about it.
-            forget_remembered(model, |card| card.agent.host_id == id)
+            remove_host_agents(model, id)
         }
         ServerMsg::HostsSynchronized => {
             let Connection::Connected {
@@ -558,16 +608,27 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if let Some(ids) = model.remote_inventories.get_mut(&agent.host_id) {
                 ids.insert(agent_id);
             }
+            let live = model.host(agent.host_id).is_none_or(|_| {
+                model.host_online(agent.host_id) && !model.host_is_away(agent.host_id)
+            });
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
                     // Facts update; UI-layer derived state persists across
-                    // upserts of the same entity.
+                    // upserts of the same entity. Activity only moves
+                    // forward: a live batch this client saw may already be
+                    // later than the host's last announcement.
+                    card.last_activity = card.last_activity.max(agent.last_activity);
                     card.agent = agent;
                     card.epoch = epoch;
+                    card.live = live;
                 }
                 None => {
                     let card = AgentCard {
-                        last_activity: agent.created_at,
+                        live,
+                        // The host's own date for the agent's last activity,
+                        // so an agent this client never opens still sorts
+                        // and ages by what it actually did.
+                        last_activity: agent.last_activity,
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
@@ -608,20 +669,29 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("agent removal while not connected");
             }
-            crate::queue::remove(model, id);
             // Remote removal can race the separate host-offline event. Its
             // authoritative HostInventory, not reachability at this instant,
             // decides whether a requested conversation is really gone.
             if model.attached.get(&id).copied() == model.local_host_id {
                 model.attached.remove(&id);
             }
-            model.agents.remove(&id);
-            if let Some(stream) = model.streams.remove(&id)
-                && !matches!(stream.phase, StreamPhase::Closed { .. })
-            {
-                return vec![Effect::CloseStream { agent: id }];
+            let retain_offline = model.agents.get(&id).is_some_and(|card| {
+                model.host(card.agent.host_id).is_some()
+                    && (!model.host_online(card.agent.host_id)
+                        || model.host_is_away(card.agent.host_id))
+            });
+            if retain_offline {
+                if let Some(card) = model.agents.get_mut(&id) {
+                    card.live = false;
+                }
+                return close_stream(model, id);
             }
-            Vec::new()
+            // A held draft belongs to the conversation. Cached inventory is
+            // still a conversation, so the draft is dropped only once the
+            // agent is really gone.
+            crate::queue::remove(model, id);
+            model.agents.remove(&id);
+            close_stream(model, id)
         }
         ServerMsg::HostInventory { host_id, agent_ids } => {
             if !model.is_connected() {
@@ -638,10 +708,39 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     card.remembered = false;
                 }
             }
-            let effects = forget_remembered(model, |card| {
+            let mut effects = forget_remembered(model, |card| {
                 card.agent.host_id == host_id && !agent_ids.contains(&card.agent.id)
             });
-            model.remote_inventories.insert(host_id, agent_ids);
+            model.remote_inventories.insert(host_id, agent_ids.clone());
+            // An inventory is how a machine says its subscription stands
+            // again. Agents outlive their host's link, so a machine that
+            // went away and came back re-states records identical to the
+            // cached ones and no per-agent event follows: this is the only
+            // moment that says the conversation held open across the outage
+            // can be rejoined, and that a cached agent is answering again.
+            if model.host_online(host_id) && !model.host_is_away(host_id) {
+                for card in model.agents.values_mut().filter(|card| {
+                    card.agent.host_id == host_id && agent_ids.contains(&card.agent.id)
+                }) {
+                    card.live = true;
+                }
+            }
+            let reopening = model
+                .attached
+                .iter()
+                .filter(|(_, host)| **host == host_id)
+                .map(|(agent, _)| *agent)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|agent| ensure_stream(model, agent))
+                .collect::<Vec<_>>();
+            effects.extend(reopening);
+            // Inventory and host reachability arrive on independent streams.
+            // The authoritative inventory can rejoin a chat before its host's
+            // online metadata catches up, just as for attached legacy chats.
+            for agent in agent_ids {
+                effects.extend(crate::store::reconnect_chat(&mut model.store, agent));
+            }
             effects
         }
         ServerMsg::AgentsSynchronized => {
@@ -782,7 +881,7 @@ fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
             .summary
             .as_ref()
             .and_then(|summary| summary.summary.last_activity)
-            .unwrap_or(agent.created_at);
+            .unwrap_or(agent.last_activity);
         if let Some(card) = model.agents.get_mut(&agent.id) {
             // Another client can advance the shared fleet fold without this
             // connection receiving a matching inventory upsert. Refresh the
@@ -795,6 +894,7 @@ fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
         model.agents.insert(
             agent.id,
             AgentCard {
+                live: false,
                 last_activity,
                 provider_label: None,
                 attention: Attention::Unknown,
@@ -816,7 +916,7 @@ fn refresh_stored_standing(card: &mut AgentCard, stored: model::Agent) {
         .summary
         .as_ref()
         .and_then(|summary| summary.summary.last_activity)
-        .unwrap_or(stored.created_at);
+        .unwrap_or(stored.last_activity);
     if stored.summary.as_ref().is_some_and(|incoming| {
         card.agent
             .summary
@@ -880,7 +980,16 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
             }
         }
         StreamMsg::Batch { at, entries } => {
-            if let Some(card) = model.agents.get_mut(&agent) {
+            // Only entries arriving live are activity seen now. A replay is
+            // the agent's history being read back — opening a conversation
+            // must not make it look as if the agent just did everything it
+            // ever did — and the host has already dated that history in the
+            // inventory.
+            let live = model
+                .streams
+                .get(&agent)
+                .is_some_and(|stream| stream.phase == StreamPhase::Live);
+            if live && let Some(card) = model.agents.get_mut(&agent) {
                 card.last_activity = card.last_activity.max(at);
             }
             with_layer(model, agent, |layer| {
@@ -919,12 +1028,6 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
             with_layer(model, agent, AgentLayer::observe_replay_complete);
         }
         StreamMsg::Closed { reason } => {
-            if reason == StreamCloseReason::AuthenticationRequired {
-                model.cloud_auth_required = true;
-            }
-            if reason == StreamCloseReason::SubscriptionRequired {
-                model.cloud_subscription_required = true;
-            }
             match &reason {
                 StreamCloseReason::AgentExited { exit_code } => {
                     let exit_code = *exit_code;
@@ -1005,27 +1108,70 @@ fn tripwire(detail: &str) -> Vec<Effect> {
     }]
 }
 
-/// Reconnect replaces state by snapshot: once both snapshots for the new
-/// epoch are complete, entities not re-upserted under it are gone. Streams
-/// dropped here still have a shell task behind them — each one leaves as a
-/// `CloseStream` effect so no task is orphaned across reconnects (both
-/// synchronized arms call this and must propagate the effects).
+fn close_stream(model: &mut Model, id: model::AgentId) -> Vec<Effect> {
+    if let Some(stream) = model.streams.remove(&id)
+        && !matches!(stream.phase, StreamPhase::Closed { .. })
+    {
+        return vec![Effect::CloseStream { agent: id }];
+    }
+    Vec::new()
+}
+
+fn remove_host_agents(model: &mut Model, host: model::HostId) -> Vec<Effect> {
+    let removed = model
+        .agents
+        .values()
+        .filter_map(|card| (card.agent.host_id == host).then_some(card.agent.id))
+        .collect::<Vec<_>>();
+    let mut effects = Vec::new();
+    for id in removed {
+        crate::queue::remove(model, id);
+        model.agents.remove(&id);
+        effects.extend(close_stream(model, id));
+    }
+    effects
+}
+
+/// Reconnect replaces reachable inventory by snapshot. Agents on an offline
+/// or away trusted host remain as non-live cached inventory until that host
+/// can reconcile them; removing the host from trust removes them immediately.
+/// Streams dropped here still have a shell task behind them — each one leaves
+/// as a `CloseStream` effect so no task is orphaned across reconnects.
 fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     if !model.is_synchronized() {
         return Vec::new();
     }
     let epoch = model.epoch;
     model.hosts.retain(|_, host| host.epoch == epoch);
+    let cached_hosts = model
+        .hosts
+        .values()
+        .filter_map(|host| {
+            (!host.entry.online || model.host_is_away(host.entry.id)).then_some(host.entry.id)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     let removed: Vec<_> = model
         .agents
         .iter()
-        .filter(|(_, card)| card.epoch != epoch && !model.awaits_own_host(card))
+        .filter(|(_, card)| {
+            card.epoch != epoch
+                && !model.awaits_own_host(card)
+                && !cached_hosts.contains(&card.agent.host_id)
+        })
         .map(|(id, _)| *id)
         .collect();
     for id in &removed {
         crate::queue::remove(model, *id);
     }
     model.agents.retain(|id, _| !removed.contains(id));
+    for card in model.agents.values_mut() {
+        if cached_hosts.contains(&card.agent.host_id) {
+            card.epoch = epoch;
+            card.live = false;
+        } else if card.epoch == epoch && !card.remembered {
+            card.live = true;
+        }
+    }
     let stale: Vec<model::AgentId> = model
         .streams
         .keys()

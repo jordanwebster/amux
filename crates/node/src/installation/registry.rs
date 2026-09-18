@@ -56,7 +56,12 @@ impl InstallationRoot {
 #[derive(Debug)]
 struct LockedRoot {
     path: PathBuf,
-    lock: File,
+    /// Held for as long as this installation owns the root. Released when the
+    /// installation is shut down rather than only when the last handle to it
+    /// is dropped: "stopped" has to mean the next opener may have the root,
+    /// and an owner that shares its handle around cannot promise to be the
+    /// last one holding it.
+    lock: Option<File>,
 }
 
 impl LockedRoot {
@@ -112,15 +117,28 @@ impl LockedRoot {
             }
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
-        Ok(Self { path, lock })
+        Ok(Self {
+            path,
+            lock: Some(lock),
+        })
+    }
+}
+
+impl LockedRoot {
+    /// Give up ownership of the root, keeping the path this installation was
+    /// opened at.
+    fn release(&mut self) {
+        // Closing alone leaves the lock held by descriptors inherited by a
+        // concurrently forked child until exec. Ownership ends here.
+        if let Some(lock) = self.lock.take() {
+            let _ = lock.unlock();
+        }
     }
 }
 
 impl Drop for LockedRoot {
     fn drop(&mut self) {
-        // Closing alone leaves the lock held by descriptors inherited by a
-        // concurrently forked child until exec. Ownership ends with this guard.
-        let _ = self.lock.unlock();
+        self.release();
     }
 }
 
@@ -194,6 +212,15 @@ impl Registry {
             credentials: data.credentials,
             logged_out: data.logged_out,
         })
+    }
+
+    /// Give up the installation root so another owner may open it. The
+    /// registry keeps its records and its path; what it no longer holds is
+    /// the claim on the directory.
+    pub fn release_root(&mut self) {
+        if let Some(root) = &mut self.root {
+            root.release();
+        }
     }
 
     /// Canonical disk root, or None for an entirely in-memory registry.

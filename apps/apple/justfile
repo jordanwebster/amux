@@ -15,8 +15,9 @@ set working-directory := "../.."
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
 bounded := "scripts/bounded"
 
-# The interpreter the scripts here need; not every Mac's `python3` is new enough.
-python := "scripts/python"
+# The interpreter these scripts are written to, chosen rather than assumed;
+# scripts/py explains why and picks it.
+python := "scripts/py"
 
 # List the iPhone app's recipes.
 default:

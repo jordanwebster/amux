@@ -416,6 +416,7 @@ pub async fn commit_peer_trust(
         .await
 }
 
+#[cfg(test)]
 pub(crate) async fn pair_initiator(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
@@ -433,9 +434,9 @@ pub(crate) async fn pair_initiator(
 }
 
 pub(crate) struct PendingPairing {
-    pub(crate) peer: wire::PairingIdentity,
-    tx: mpsc::Sender<wire::PairMessage>,
-    inbound: tonic::Streaming<wire::PairMessage>,
+    pub(crate) peer: wire::pb::PairingIdentity,
+    tx: mpsc::Sender<wire::pb::PairMessage>,
+    inbound: tonic::Streaming<wire::pb::PairMessage>,
     sealed_local_identity: Vec<u8>,
 }
 
@@ -446,7 +447,7 @@ impl PendingPairing {
         }
         send_client_pairing_body(
             &self.tx,
-            wire::pair_message::Body::SealedIdentity(self.sealed_local_identity),
+            wire::pb::pair_message::Body::SealedIdentity(self.sealed_local_identity),
         )
         .await?;
         let completion = self
@@ -455,12 +456,14 @@ impl PendingPairing {
             .await?
             .ok_or_else(|| Status::unavailable("pairing stream closed"))?;
         match completion.body {
-            Some(wire::pair_message::Body::PairingComplete(_)) => Ok(SshPairingPeer {
+            Some(wire::pb::pair_message::Body::PairingComplete(_)) => Ok(SshPairingPeer {
                 host_id: validate_pairing_identity(&self.peer).map_err(Status::invalid_argument)?,
                 pubkey: self.peer.pubkey,
                 name: self.peer.name,
             }),
-            Some(wire::pair_message::Body::Error(error)) => Err(peer_pairing_error_status(error)),
+            Some(wire::pb::pair_message::Body::Error(error)) => {
+                Err(peer_pairing_error_status(error))
+            }
             _ => Err(Status::invalid_argument("expected pairing completion")),
         }
     }
@@ -468,8 +471,8 @@ impl PendingPairing {
     pub(crate) async fn abandon(mut self) -> Result<(), Status> {
         send_client_pairing_body(
             &self.tx,
-            wire::pair_message::Body::Error(wire::PairingError {
-                reason: wire::pairing_error::Reason::UserRejected as i32,
+            wire::pb::pair_message::Body::Error(wire::pb::PairingError {
+                reason: wire::pb::pairing_error::Reason::UserRejected as i32,
                 detail: String::new(),
             }),
         )
@@ -480,8 +483,10 @@ impl PendingPairing {
             .await?
             .and_then(|message| message.body)
         {
-            Some(wire::pair_message::Body::PairingAbandoned(_)) => Ok(()),
-            Some(wire::pair_message::Body::Error(error)) => Err(peer_pairing_error_status(error)),
+            Some(wire::pb::pair_message::Body::PairingAbandoned(_)) => Ok(()),
+            Some(wire::pb::pair_message::Body::Error(error)) => {
+                Err(peer_pairing_error_status(error))
+            }
             _ => Err(Status::unavailable(
                 "pairing stream closed before abandonment acknowledgement",
             )),
@@ -617,6 +622,7 @@ async fn begin_pair_initiator_inner(
     })
 }
 
+#[cfg(test)]
 async fn pair_initiator_with_timeout(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
@@ -1344,11 +1350,11 @@ mod tests {
 
     use super::*;
     use crate::routing::{
-        Capabilities, Host, LinkId, LinkRole, Route, RoutingCore, SupportedAgentType,
+        Capabilities, Host, LinkCloseRequest, LinkId, LinkRole, Route, RoutingCore,
+        SupportedAgentType,
     };
     use crate::transport::{BoxedGrpcIo, in_process_channel, in_process_transport_pair};
     use crate::trust::{TrustEntry, TrustStore};
-    use crate::tunnel::TunnelPool;
 
     fn service_fixture() -> (
         TempDir,
@@ -1364,13 +1370,10 @@ mod tests {
         let pair_mode = Arc::new(PairMode::new());
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
-        let tunnels = Arc::new(TunnelPool::new(
-            responder.host_id,
-            routing.clone(),
-            incoming_tx,
-        ));
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels));
+        let channels = Arc::new(crate::link::ChannelPool::new(Arc::new(
+            crate::routing::LinkRegistry::default(),
+        )));
+        let connections = Arc::new(ConnectionManager::new(routing, channels));
         let service = PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&responder),
@@ -1993,6 +1996,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let before = trust_store.read().unwrap().clone();
@@ -2066,6 +2070,7 @@ mod tests {
                             agent_type: "test-agent".to_string(),
                         }],
                     },
+                    signed_in: Some(true),
                 },
             )
             .await;
@@ -2223,6 +2228,7 @@ mod tests {
                 name: "other".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
 
@@ -2289,6 +2295,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let bad_data_dir = dir.path().join("not-a-directory");
@@ -2334,6 +2341,7 @@ mod tests {
                             agent_type: "test-agent".to_string(),
                         }],
                     },
+                    signed_in: Some(true),
                 },
             )
             .await;
@@ -2354,6 +2362,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         pair_mode
@@ -2379,12 +2388,10 @@ mod tests {
         task.abort();
     }
 
-    /// D10: committing a same-host_id/different-pubkey replacement tears
-    /// down *everything* for that host — including the in-flight pairing
-    /// tunnel that carried the pairing RPC itself. Nothing is preserved; an
-    /// initiator that misses the response simply re-pairs.
+    /// Committing a same-host-id replacement tears down every existing link
+    /// before the new key becomes active.
     #[tokio::test]
-    async fn pairing_replacement_retires_the_in_flight_pairing_tunnel() {
+    async fn pairing_replacement_retires_the_existing_peer_link() {
         let data_dir = tempfile::tempdir().unwrap();
         let responder = DeviceIdentity::for_test(HostId::from_u128(1));
         let peer = DeviceIdentity::for_test(HostId::from_u128(2));
@@ -2398,50 +2405,39 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
-        let tunnels = Arc::new(TunnelPool::new(
-            responder.host_id,
-            routing.clone(),
-            incoming_tx,
-        ));
-        // Host an inbound tunnel initiated by the pairing peer over a relay
-        // link — the stand-in for the tunnel carrying this very pairing RPC.
+        let links = Arc::new(crate::routing::LinkRegistry::default());
         let (link_tx, _link_rx) = mpsc::channel(8);
-        let relay_link = LinkId::new(HostId::from_u128(99));
-        tunnels
-            .link_registry()
+        let peer_link = LinkId::new(peer.host_id);
+        let mut close_rx = links
             .register(
-                relay_link,
+                peer_link,
                 Host {
+                    id: peer.host_id,
+                    name: "old".to_string(),
                     platform: None,
-                    id: HostId::from_u128(99),
-                    name: "relay".to_string(),
                     version: "test".to_string(),
                     capabilities: Capabilities::default(),
+                    signed_in: Some(true),
                 },
                 link_tx,
                 LinkRole::Peer,
                 &[],
             )
             .await;
-        tunnels
-            .handle_inbound_open(
-                wire::pb::TunnelOpen {
-                    tunnel_id: uuid::Uuid::from_u128(42).as_bytes().to_vec(),
-                    src: peer.host_id.as_bytes().to_vec(),
-                    dst: responder.host_id.as_bytes().to_vec(),
-                },
-                &relay_link,
-            )
-            .await
-            .unwrap();
-        let _pairing_transport = incoming_rx.recv().await.unwrap();
-        assert_eq!(tunnels.active_count().await, 1);
+        let links_for_close = links.clone();
+        tokio::spawn(async move {
+            assert_eq!(close_rx.recv().await, Some(LinkCloseRequest::TrustReplaced));
+            links_for_close.remove(&peer_link).await;
+        });
 
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels.clone()));
+        let connections = Arc::new(ConnectionManager::new(
+            routing,
+            Arc::new(crate::link::ChannelPool::new(links.clone())),
+        ));
         let service = PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&responder),
@@ -2461,11 +2457,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            tunnels.active_count().await,
-            0,
-            "the replacement commit must retire the in-flight pairing tunnel"
-        );
+        assert!(links.link_to_peer(peer.host_id).await.is_none());
         assert_eq!(
             trust_store
                 .read()

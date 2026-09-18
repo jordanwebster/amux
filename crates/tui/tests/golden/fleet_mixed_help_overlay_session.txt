@@ -6,6 +6,7 @@
 │   / or i        filter                                                                                               │
 │   enter         open in chat                                                                                         │
 │   n             new agent                                                                                            │
+│   h             show hosts                                                                                           │
 │   r             rename selected                                                                                      │
 │   d             delete selected                                                                                      │
 │   C-a p         switch profile                                                                                       │
@@ -15,7 +16,6 @@
 │                                                                                                                      │
 │   C-a d         detach to shell                                                                                      │
 │   C-a s         back to fleet                                                                                        │
-│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

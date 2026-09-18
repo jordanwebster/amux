@@ -13,7 +13,7 @@ async fn administration_is_absent_from_profile_sockets_and_peer_tunnels() {
         .persistent()
         .profile("work")
         .daemon("laptop")
-        .paired("laptop", "desktop/work", Via::Tcp)
+        .paired("laptop", "desktop/work", Via::Direct)
         .start()
         .await;
     let desktop = net.installation("desktop").profile("work");

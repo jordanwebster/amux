@@ -10,39 +10,28 @@ pub use markers::MarkerFileReporter;
 pub enum StatusReporters {
     #[default]
     None,
-    MarkerFiles,
+    UpdateMarkerFiles,
     Host {
         update: Option<std::sync::Arc<dyn UpdateReporter>>,
-        subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
     },
 }
 
 pub(crate) struct ResolvedReporters {
     pub update: Option<std::sync::Arc<dyn UpdateReporter>>,
-    pub subscription: Option<std::sync::Arc<dyn crate::SubscriptionReporter>>,
 }
 
 impl StatusReporters {
     pub(crate) fn resolve(&self, state_path: &std::path::Path) -> ResolvedReporters {
         match self {
-            Self::None => ResolvedReporters {
-                update: None,
-                subscription: None,
+            Self::None => ResolvedReporters { update: None },
+            Self::UpdateMarkerFiles => ResolvedReporters {
+                update: Some(std::sync::Arc::new(MarkerFileReporter::from_state_path(
+                    state_path,
+                ))),
             },
-            Self::Host {
-                update,
-                subscription,
-            } => ResolvedReporters {
+            Self::Host { update } => ResolvedReporters {
                 update: update.clone(),
-                subscription: subscription.clone(),
             },
-            Self::MarkerFiles => {
-                let reporter = std::sync::Arc::new(MarkerFileReporter::from_state_path(state_path));
-                ResolvedReporters {
-                    update: Some(reporter.clone()),
-                    subscription: Some(reporter),
-                }
-            }
         }
     }
 }

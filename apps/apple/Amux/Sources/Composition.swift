@@ -29,16 +29,20 @@ final class Composition {
     /// the person out of the app to cancel a renewal, and coming back finds
     /// the same question with the same address typed.
     let deletion = DeletionStore()
+    /// The account somebody is being asked about taking off this phone.
+    let removal = RemovalStore()
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
-    #if AMUX_DEBUG_TOOLS
-    let reports: ReportStore?
-    let freezer: (any ReportFreezing)?
-    #endif
+    /// The one report this phone is in the middle of, from a screenshot or
+    /// from Help. In every build: reporting a problem is for everybody.
+    let reports = ReportStore()
+    /// What photographs the screen and freezes the records a report carries.
+    let freezer: any ReportFreezing
     /// Where the conversations say what they have open and where they are
     /// being read, so a report can carry two things no message ever does.
-    /// Nothing in a build a person installs: there is no report to write.
+    /// Only a build with the driving tools records them, because only that
+    /// build can put a recording of the views back.
     let conversations: ConversationRecording?
     /// A store failure replaces the entire shell; no cached or live state is
     /// left drawable behind it.
@@ -89,17 +93,34 @@ final class Composition {
         #else
         let allowLoopback = false
         #endif
-        runtime = RuntimeCoordinator(
+        let coordinator = RuntimeCoordinator(
             registry: accounts, cloud: cloud, support: AppFiles.support, cache: AppFiles.cache,
             deviceName: UIDevice.current.name, allowPlainLoopback: allowLoopback)
+        // Only the system may look at the network a phone is on, so the browser
+        // is the app's and the shared library is handed what it saw. Weak, or
+        // the two would hold each other alive for the life of the process.
         #if AMUX_DEBUG_TOOLS
-        reports = ReportStore()
+        let only = Self.driven ? Self.discoverable : nil
+        #else
+        let only: Set<HostId>? = nil
+        #endif
+        coordinator.discovery = LocalDiscovery(only: only) { [weak coordinator] hosts in
+            coordinator?.discovered(hosts)
+        }
+        // The stores this app draws with nobody signed in are the same ones
+        // the runtime writes into then. A phone without an account still finds
+        // the machines on its own network and still reaches the ones it has
+        // paired with, so there is a connection behind this screen too.
+        coordinator.signedOutStores = signedOut
+        runtime = coordinator
         // The page the person is on goes into the report, so whoever opens the
         // bundle knows what they are looking at before they open the picture —
         // and so a picture taken on one page and written up on another says
         // which one it is of.
-        freezer = ReportFreeze(
-            route: { router.top?.name ?? router.tab.rawValue },
+        let route = { router.top?.name ?? router.tab.rawValue }
+        #if AMUX_DEBUG_TOOLS
+        freezer = ReportFreeze.driven(
+            route: route,
             place: { Self.place(for: router) },
             account: { [accounts] in accounts.selectedAccount },
             ordered: { [accounts, signedOut] in (accounts.stores ?? signedOut).fleet.orderedAt },
@@ -132,6 +153,7 @@ final class Composition {
         conversations.asided = { DoorHost.shared.setAside($1, for: $0) }
         self.conversations = conversations
         #else
+        freezer = ReportFreeze(route: route, runtimeFailure: { [runtime] in runtime.failure })
         conversations = nil
         #endif
         storeFailure = runtime.storeFailure
@@ -154,6 +176,20 @@ final class Composition {
     /// and the fleet may rename it before anybody reads the report. Anything
     /// else is named the way the report header names it, which is the name the
     /// screen catalogue uses where it has one.
+    /// Whether a driver opened the door on this launch.
+    private static var driven: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.string(forKey: Door.readyArgument) != nil
+            || defaults.string(forKey: Door.portArgument) != nil
+    }
+
+    /// The machines a driven launch may find on the network, which are the
+    /// ones its driver put there.
+    private static var discoverable: Set<HostId> {
+        let named = UserDefaults.standard.string(forKey: Door.discoverOnlyArgument) ?? ""
+        return Set(named.split(separator: ",").compactMap { HostId(String($0)) })
+    }
+
     private static func place(for router: Router) -> Place {
         switch router.top {
         case .conversation(let agent): return .conversation(agent)
@@ -181,18 +217,28 @@ final class Composition {
             accounts.select(id)
             for tab in Tab.allCases { router.setPath([], for: tab) }
         // Signing in is a page, pushed onto whichever stack asked for it so
-        // going back leads where the person came from. Adding an account is
-        // the same page: this app has no idea who is about to sign in, and
-        // whoever comes back is either an account this phone already knows or
-        // a new one.
-        case .signIn, .addAccount:
-            // Opened afresh, it asks afresh. What came back last time was
-            // about whoever signed in then, and leaving it on screen would
-            // offer somebody a Done button for an account they are not
-            // signing in as. A browser still up is the exception: that
-            // attempt is this page's and is still running.
-            if !signIn.working { signIn.again() }
+        // going back leads where the person came from. The page is the same
+        // for adding an account and for signing back into one; what it asks
+        // amux.sh for is not. Adding offers the account chooser. Signing back
+        // in names the account, and whoever comes back is checked against it.
+        case .addAccount:
+            signIn.begin(.adding)
             router.open(.signIn(router.tab))
+        // Sign In with no row behind it — the home's, or pairing's. With a
+        // signed-out account on screen that is the account being signed back
+        // into; otherwise it is the first account on this phone.
+        case .signIn:
+            let entry = accounts.selectedAccount.flatMap { $0.signedIn ? nil : $0 }
+            signIn.begin(entry.map { .returning($0.account) } ?? .adding)
+            router.open(.signIn(router.tab))
+        case .signInAgain(let id):
+            let entry = accounts.accounts.first { $0.id == id }
+            signIn.begin(entry.map { .returning($0.account) } ?? .adding)
+            router.open(.signIn(router.tab))
+        case .keepSignIn:
+            Task { await signIn.keep(with: cloud, into: accounts) }
+        case .discardSignIn:
+            Task { await signIn.discard(with: cloud, from: accounts) }
         // The hand-off itself. It leaves for a browser this app cannot read
         // and comes back with an account or with what went wrong; the store
         // holds which, and the screen draws it.
@@ -232,8 +278,24 @@ final class Composition {
         // would make signing back in look like adding a stranger.
         case .signOutAccount(let id):
             accounts.signOut(id)
-            if let service = cloud as? AmuxCloudService {
-                Task { try? await service.forgetSession(id) }
+            Task { [cloud] in try? await cloud.forgetSession(id) }
+        // Taking an account off this phone, asked first. It reaches amux.sh
+        // only to let go of this phone's session, and the account there is
+        // untouched. The registry puts it on the accounts the runtime deletes
+        // the profile of — its key, the hosts it paired, what it cached — and
+        // moves the screen to another account when it was the one on screen.
+        case .removeAccount(let id):
+            removal.ask(id)
+        case .cancelRemoval:
+            removal.dismiss()
+        case .confirmRemoval:
+            guard let id = removal.account else { break }
+            removal.dismiss()
+            let wasSelected = accounts.selected == id
+            Task { [cloud] in try? await cloud.forgetSession(id) }
+            accounts.forget(id)
+            if wasSelected {
+                for tab in Tab.allCases { router.setPath([], for: tab) }
             }
         case .wear(let wanted):
             appearance = wanted
@@ -266,6 +328,12 @@ final class Composition {
         guard let accepted = accounts.accept(entitlement, for: id) else { return false }
         accounts.entitlement(accepted, for: id)
         paywall.entitled(accepted)
+        // And tell the link, which is what actually decides whether a machine
+        // can be reached. The account service knowing about a purchase changes
+        // nothing on its own: the relay reads the tier off the credential the
+        // link holds, and without this the machines bought a moment ago stay
+        // away until the link's own re-check comes round minutes later.
+        accounts.stores?.refreshEntitlement()
         return true
     }
 

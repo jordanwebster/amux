@@ -12,8 +12,10 @@ use std::time::Duration;
 
 pub use admin::ProfileAdmin;
 use chrono::Utc;
+use client::{PairingCandidate, PeerVia};
 use futures_util::{Stream, StreamExt, stream};
 use model::ProtocolError;
+use ring::rand::SecureRandom as _;
 use tokio::sync::{RwLock, mpsc};
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -27,10 +29,11 @@ use crate::agents::{
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
 use crate::identity::IdentityError;
+use crate::link::ChannelError;
 use crate::pairing::{PAIR_MODE_TTL, PairMode, PairModeError};
 use crate::routing::{
     EventSource, FEATURE_CLOUD_RELAY, Host, HostEntry, HostEvent, HostReachabilityEvent,
-    HostTrustStatus, RoutingCore, capabilities_to_wire,
+    HostTrustStatus, HostVia, RoutingCore, capabilities_to_wire,
 };
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::services::ReachabilityLinkConnector;
@@ -39,17 +42,17 @@ use crate::services::agent::{
 };
 use crate::services::pairing::{
     LocalPairingIdentity, PAIR_INITIATOR_TIMEOUT, PeerTrustCommitContext, PeerTrustUpdate,
-    PendingPairing, SharedTrustCommitLock, begin_pair_initiator, commit_peer_trust, pair_initiator,
+    PendingPairing, SharedTrustCommitLock, begin_pair_initiator, commit_peer_trust,
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
-use crate::tunnel::TunnelPoolError;
 use crate::user_state::ServerState;
-use crate::{AgentParent, HostId, audit, envelope};
+use crate::{AgentParent, audit, envelope};
 
 fn opaque_pairing_status(error: tonic::Status) -> tonic::Status {
     match error.code() {
         tonic::Code::Unavailable | tonic::Code::Internal => error,
+        tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => error,
         _ => tonic::Status::permission_denied("INVALID_PIN"),
     }
 }
@@ -58,7 +61,6 @@ type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
 
 const REMOTE_AGENT_SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(100);
-const HOST_ID_LEN: usize = 16;
 const PUBKEY_LEN: usize = 32;
 const QR_SECRET_LEN: usize = 32;
 const MAX_PAIRING_NAME_BYTES: usize = 256;
@@ -72,7 +74,12 @@ pub(crate) enum AgentRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostEventOutcome {
     Added,
-    Removed { removed_agents: usize },
+    Removed {
+        removed_agents: usize,
+    },
+    /// The host was already listed; its entry was described again because
+    /// something a subscriber was told about it is no longer true.
+    Republished,
     IgnoredRelayOrUnknown,
 }
 
@@ -92,7 +99,13 @@ struct ClientServiceState {
     remote_inventories: HashMap<Uuid, Vec<Uuid>>,
     remote_inventory_revisions: HashMap<Uuid, u64>,
     remote_agent_subs: HashMap<Uuid, tokio::task::JoinHandle<()>>,
-    pending_pairs: HashMap<Uuid, PendingPairing>,
+    pending_pairs: HashMap<Uuid, PendingAdminPair>,
+}
+
+struct PendingAdminPair {
+    pairing: PendingPairing,
+    reachability: Reachability,
+    via: wire::PeerVia,
 }
 
 #[derive(Clone)]
@@ -162,11 +175,68 @@ impl ClientService {
         }
     }
 
+    async fn take_pending_pair(
+        &self,
+        request: wire::PendingPairRequest,
+    ) -> Result<PendingAdminPair, tonic::Status> {
+        let token = Uuid::from_slice(&request.token)
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?;
+        self.state
+            .write()
+            .await
+            .pending_pairs
+            .remove(&token)
+            .ok_or_else(|| tonic::Status::permission_denied("INVALID_PIN"))
+    }
+
     /// Pairing discovery is served only by the installation front door.
-    pub async fn list_pairing_candidates(&self) -> Vec<HostEntry> {
+    pub async fn list_pairing_candidates(&self) -> Vec<PairingCandidate> {
+        let trusted = self
+            .pairing_trust
+            .trust_store
+            .read()
+            .map(|store| {
+                store
+                    .entries()
+                    .map(|(host, _)| host)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let mut candidates = self
+            .reachability_links
+            .found_candidates()
+            .into_iter()
+            .filter(|advert| {
+                !self.is_local_host(advert.host_id) && !trusted.contains(&advert.host_id)
+            })
+            .map(|advert| PairingCandidate {
+                host: HostEntry {
+                    id: advert.host_id,
+                    name: advert.name,
+                    online: true,
+                    version: Some(advert.version.to_string()),
+                    capabilities: Some(crate::Capabilities::default()),
+                    trust_status: HostTrustStatus::UntrustedButOnline,
+                    last_dial_error: None,
+                    via: HostVia::Direct,
+                    signed_in: None,
+                    // A discovery advertisement says a machine is here, not
+                    // what kind it is. Only the link handshake carries that,
+                    // and this candidate has never been adjacent.
+                    platform: None,
+                },
+                via: PeerVia::Direct,
+                addrs: advert.addrs,
+            })
+            .collect::<Vec<_>>();
+        let found_ids = candidates
+            .iter()
+            .map(|candidate| candidate.host.id)
+            .collect::<HashSet<_>>();
         let mut hosts = Vec::new();
         for host in self.hosts_snapshot().await {
             if !self.is_local_host(host.id)
+                && !found_ids.contains(&host.id)
                 && self.remote_agent_connections.has_cloud_route(host.id).await
             {
                 hosts.push(host);
@@ -175,7 +245,15 @@ impl ClientService {
         let mut entries = self.host_entries_for_online_hosts(hosts, false).await;
         entries.retain(|host| host.trust_status == HostTrustStatus::UntrustedButOnline);
         self.mark_client_visible_host_entries(&entries).await;
-        entries
+        candidates.extend(entries.into_iter().map(|host| PairingCandidate {
+            host: HostEntry {
+                via: HostVia::Relay,
+                ..host
+            },
+            via: PeerVia::Relay,
+            addrs: Vec::new(),
+        }));
+        candidates
     }
 
     pub async fn list_agents(&self) -> Vec<Agent> {
@@ -266,6 +344,13 @@ impl ClientService {
         match event {
             HostReachabilityEvent::Added { host } => self.add_host(host).await,
             HostReachabilityEvent::Removed { host_id } => self.remove_host(host_id).await,
+            HostReachabilityEvent::RouteChanged { host_id } => {
+                // A direct-link replacement can preserve presence while ending
+                // every stream on the retired carrier. Reopen the inventory
+                // subscription immediately on the route that replaced it.
+                self.publish_host_status_update(host_id, true).await;
+                HostEventOutcome::Republished
+            }
         }
     }
 
@@ -589,8 +674,11 @@ impl ClientService {
         hosts: Vec<Host>,
         include_trust_only: bool,
     ) -> Vec<HostEntry> {
-        let trusted_hosts = self.trusted_host_names();
-        let trusted_names = trusted_hosts.iter().cloned().collect::<HashMap<_, _>>();
+        let trusted_hosts = self.trusted_host_facts();
+        let trusted_names = trusted_hosts
+            .iter()
+            .map(|(host_id, name, _)| (*host_id, name.clone()))
+            .collect::<HashMap<_, _>>();
         let mut seen = HashSet::new();
         let mut entries = Vec::with_capacity(
             hosts.len()
@@ -608,11 +696,11 @@ impl ClientService {
             );
         }
         if include_trust_only {
-            for (host_id, name) in trusted_hosts {
+            for (host_id, name, signed_in) in trusted_hosts {
                 if seen.contains(&host_id) || self.is_local_host(host_id) {
                     continue;
                 }
-                entries.push(self.trusted_host_entry(host_id, name).await);
+                entries.push(self.trusted_host_entry(host_id, name, signed_in).await);
             }
         }
         entries.sort_unstable_by_key(|host| host.id);
@@ -635,6 +723,11 @@ impl ClientService {
         let name = host.name.clone();
         let version = host.version.clone();
         let capabilities = host.capabilities.clone();
+        let signed_in = if self.is_local_host(host_id) {
+            host.signed_in
+        } else {
+            self.trusted_host_signed_in(host_id)
+        };
         HostEntry {
             id: host_id,
             name,
@@ -647,11 +740,22 @@ impl ClientService {
                 HostTrustStatus::UntrustedButOnline
             },
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            via: if self.is_local_host(host_id) {
+                HostVia::Direct
+            } else {
+                self.remote_agent_connections.via_for(host_id).await
+            },
+            signed_in,
             platform: host.platform,
         }
     }
 
-    async fn trusted_host_entry(&self, host_id: Uuid, name: String) -> HostEntry {
+    async fn trusted_host_entry(
+        &self,
+        host_id: Uuid,
+        name: String,
+        signed_in: Option<bool>,
+    ) -> HostEntry {
         HostEntry {
             id: host_id,
             name,
@@ -660,6 +764,8 @@ impl ClientService {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            via: HostVia::Offline,
+            signed_in,
             // Nothing has been adjacent to it, so nothing has heard it say
             // what it is.
             platform: None,
@@ -676,14 +782,34 @@ impl ClientService {
     }
 
     fn trusted_host_names(&self) -> Vec<(Uuid, String)> {
+        self.trusted_host_facts()
+            .into_iter()
+            .map(|(host_id, name, _)| (host_id, name))
+            .collect()
+    }
+
+    fn trusted_host_facts(&self) -> Vec<(Uuid, String, Option<bool>)> {
         let Ok(store) = self.pairing_trust.trust_store.read() else {
             tracing::warn!("failed to read trust store for host listing status");
             return Vec::new();
         };
         store
             .entries()
-            .map(|(host_id, entry)| (host_id, entry.name.clone()))
+            .map(|(host_id, entry)| (host_id, entry.name.clone(), entry.signed_in))
             .collect()
+    }
+
+    fn trusted_host_signed_in(&self, host_id: Uuid) -> Option<bool> {
+        let Ok(store) = self.pairing_trust.trust_store.read() else {
+            tracing::warn!("failed to read trust store for host signed-in status");
+            return None;
+        };
+        store
+            .entries()
+            .find_map(|(entry_host_id, entry)| {
+                (entry_host_id == host_id).then_some(entry.signed_in)
+            })
+            .flatten()
     }
 
     fn trusted_host_name(&self, host_id: Uuid) -> Option<String> {
@@ -814,7 +940,7 @@ impl ClientService {
 
     /// Re-publishes `host_id`'s entry to host subscribers after a local
     /// trust transition (pairing) changes how it should be presented.
-    async fn publish_host_status_update(&self, host_id: Uuid) {
+    async fn publish_host_status_update(&self, host_id: Uuid, restart_subscription: bool) {
         let online_host = self.state.read().await.hosts_model.get(&host_id).cloned();
         let should_subscribe_remote = online_host.as_ref().is_some_and(|host| {
             !self.is_local_host(host_id)
@@ -827,10 +953,14 @@ impl ClientService {
                 let Some(name) = self.trusted_host_name(host_id) else {
                     return;
                 };
-                self.trusted_host_entry(host_id, name).await
+                self.trusted_host_entry(host_id, name, self.trusted_host_signed_in(host_id))
+                    .await
             }
         };
         let mut state = self.state.write().await;
+        if restart_subscription && let Some(existing) = state.remote_agent_subs.remove(&host_id) {
+            existing.abort();
+        }
         if should_subscribe_remote && !state.remote_agent_subs.contains_key(&host_id) {
             state.remote_agent_subs.insert(
                 host_id,
@@ -844,7 +974,10 @@ impl ClientService {
 
     async fn remove_host(&self, host_id: Uuid) -> HostEventOutcome {
         let trusted_replacement = match self.trusted_host_name(host_id) {
-            Some(name) => Some(self.trusted_host_entry(host_id, name).await),
+            Some(name) => Some(
+                self.trusted_host_entry(host_id, name, self.trusted_host_signed_in(host_id))
+                    .await,
+            ),
             None => None,
         };
         let mut state = self.state.write().await;
@@ -1566,6 +1699,13 @@ pub(crate) fn host_entry_to_wire(host: &HostEntry) -> wire::HostEntry {
             HostTrustStatus::UntrustedButOnline => wire::HostTrustStatus::UntrustedButOnline as i32,
         },
         last_dial_error: host.last_dial_error.clone(),
+        via: match host.via {
+            HostVia::Direct => wire::HostVia::Direct as i32,
+            HostVia::Relay => wire::HostVia::Relay as i32,
+            HostVia::Ssh => wire::HostVia::Ssh as i32,
+            HostVia::Offline => wire::HostVia::Offline as i32,
+        },
+        signed_in: host.signed_in,
         platform: host.platform.clone(),
     }
 }
@@ -1579,25 +1719,30 @@ fn peer_entry_to_wire(host_id: Uuid, entry: &TrustEntry) -> wire::PeerEntry {
         reachabilities: entry
             .reachabilities
             .iter()
-            .map(peer_reachability_to_wire)
+            .flat_map(peer_reachabilities_to_wire)
             .collect(),
     }
 }
 
-fn peer_reachability_to_wire(reachability: &Reachability) -> wire::PeerReachability {
-    let target = match reachability {
-        Reachability::Cloud => wire::peer_reachability::Kind::Cloud(wire::Empty {}),
+fn peer_reachabilities_to_wire(reachability: &Reachability) -> Vec<wire::PeerReachability> {
+    let targets = match reachability {
+        Reachability::Cloud => vec![wire::peer_reachability::Kind::Cloud(wire::Empty {})],
         Reachability::Ssh { target, profile } => {
-            wire::peer_reachability::Kind::SshTarget(wire::SshTarget {
+            vec![wire::peer_reachability::Kind::SshTarget(wire::SshTarget {
                 target: target.clone(),
                 profile_id: profile.to_string(),
-            })
+            })]
         }
-        Reachability::DirectTcp { addr } => {
-            wire::peer_reachability::Kind::DirectTcpAddr(addr.to_string())
-        }
+        Reachability::Direct { addrs } => vec![wire::peer_reachability::Kind::Direct(
+            wire::DirectReachability {
+                addrs: addrs.iter().map(ToString::to_string).collect(),
+            },
+        )],
     };
-    wire::PeerReachability { kind: Some(target) }
+    targets
+        .into_iter()
+        .map(|target| wire::PeerReachability { kind: Some(target) })
+        .collect()
 }
 
 pub(crate) fn client_agent_event_to_wire(
@@ -1749,82 +1894,6 @@ fn normalized_unpair_reason(reason: String) -> String {
 
 fn identity_status(error: IdentityError) -> tonic::Status {
     tonic::Status::internal(error.to_string())
-}
-
-fn ssh_pairing_identity_from_wire(
-    identity: wire::PairingIdentity,
-) -> Result<(HostId, Vec<u8>, String), tonic::Status> {
-    if identity.host_id.len() != HOST_ID_LEN {
-        return Err(tonic::Status::invalid_argument(
-            "PairingIdentity.host_id must be 16 bytes",
-        ));
-    }
-    if identity.pubkey.len() != PUBKEY_LEN {
-        return Err(tonic::Status::invalid_argument(
-            "PairingIdentity.pubkey must be 32 bytes",
-        ));
-    }
-    if identity.name.len() > MAX_PAIRING_NAME_BYTES {
-        return Err(tonic::Status::invalid_argument(
-            "PairingIdentity.name is too long",
-        ));
-    }
-
-    let mut host_id = [0_u8; HOST_ID_LEN];
-    host_id.copy_from_slice(&identity.host_id);
-    Ok((HostId::from_bytes(host_id), identity.pubkey, identity.name))
-}
-
-fn pair_peer_reachability_from_wire(
-    reachability: Option<wire::pair_peer_request::Reachability>,
-) -> Result<Option<Reachability>, tonic::Status> {
-    match reachability {
-        Some(wire::pair_peer_request::Reachability::SshTarget(target)) => {
-            validate_ssh_target(&target.target)?;
-            let profile =
-                crate::installation::ProfileId(target.profile_id.parse().map_err(|_| {
-                    tonic::Status::invalid_argument(
-                        "PairPeerRequest.ssh_target.profile_id must be a UUID",
-                    )
-                })?);
-            Ok(Some(Reachability::Ssh {
-                target: target.target,
-                profile,
-            }))
-        }
-        Some(wire::pair_peer_request::Reachability::DirectTcpAddr(addr)) => {
-            let addr = addr.parse::<SocketAddr>().map_err(|error| {
-                tonic::Status::invalid_argument(format!(
-                    "PairPeerRequest.direct_tcp_addr is invalid: {error}"
-                ))
-            })?;
-            Ok(Some(Reachability::DirectTcp { addr }))
-        }
-        None => Ok(None),
-    }
-}
-
-fn pair_peer_audit_method(reachability: &Option<Reachability>) -> &'static str {
-    match reachability {
-        Some(Reachability::Ssh { .. }) => "ssh",
-        Some(Reachability::DirectTcp { .. }) => "direct_pin",
-        Some(Reachability::Cloud) => "cloud",
-        None => "manual",
-    }
-}
-
-fn validate_ssh_target(target: &str) -> Result<(), tonic::Status> {
-    if target.trim().is_empty() {
-        return Err(tonic::Status::invalid_argument(
-            "PairPeerRequest.ssh_target must not be empty",
-        ));
-    }
-    if target.starts_with('-') {
-        return Err(tonic::Status::invalid_argument(
-            "PairPeerRequest.ssh_target must not begin with '-'",
-        ));
-    }
-    Ok(())
 }
 
 fn audit_caller<T>(request: &tonic::Request<T>) -> String {
@@ -2063,94 +2132,6 @@ impl ClientService {
         }))
     }
 
-    async fn take_pending_pair(
-        &self,
-        request: wire::PendingPairRequest,
-    ) -> Result<PendingPairing, tonic::Status> {
-        let token = Uuid::from_slice(&request.token)
-            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?;
-        self.state
-            .write()
-            .await
-            .pending_pairs
-            .remove(&token)
-            .ok_or_else(|| tonic::Status::permission_denied("INVALID_PIN"))
-    }
-
-    /// Runs the one pairing wire protocol — `PairingService.Pair`, SPAKE2 —
-    /// against `peer_host_id` over a cloud-routed pairing tunnel. The
-    /// out-of-band `secret` is the typed PIN's digits or the QR's 256-bit
-    /// secret; it never crosses the wire.
-    async fn pair_cloud_peer_with_secret(
-        &self,
-        peer_host_id: Uuid,
-        secret: &[u8],
-        method: &'static str,
-    ) -> Result<wire::PairingIdentity, tonic::Status> {
-        let trust = &self.pairing_trust;
-        if peer_host_id == self.local_agents.host_id() {
-            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-        }
-        audit::pairing_start(method);
-        let local_name = {
-            let state = self.server_state.read().await;
-            state.host_name().to_string()
-        };
-        let local_identity =
-            LocalPairingIdentity::new(self.local_agents.host_id(), trust.local_pubkey.clone());
-        let channel = self
-            .remote_agent_connections
-            .cloud_pairing_channel_to(peer_host_id)
-            .await
-            .map_err(|error| {
-                audit::pairing_failure(method, &error);
-                tonic::Status::unavailable(error.to_string())
-            })?;
-        let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
-        let peer = pair_initiator(&mut pairing_client, &local_identity, &local_name, secret)
-            .await
-            .inspect_err(|error| {
-                audit::pairing_failure(method, error);
-            })?;
-        if peer.host_id != peer_host_id {
-            audit::pairing_failure(method, "paired identity did not match requested host");
-            return Err(tonic::Status::invalid_argument(
-                "PROTOCOL_VIOLATION: paired identity did not match requested host",
-            ));
-        }
-        if peer.pubkey == trust.local_pubkey {
-            audit::pairing_failure(method, "SELF_PAIRING");
-            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-        }
-
-        commit_peer_trust(
-            PeerTrustCommitContext::new(
-                trust.trust_store.clone(),
-                trust.trust_commit_lock.clone(),
-                self.remote_agent_connections.clone(),
-                trust.data_dir.clone(),
-            ),
-            PeerTrustUpdate::new(
-                peer.host_id,
-                peer.pubkey.clone(),
-                peer.name.clone(),
-                Some(Reachability::Cloud),
-            ),
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure(method, error);
-        })?;
-        audit::pairing_success(method, peer.host_id);
-        self.publish_host_status_update(peer.host_id).await;
-        Ok(wire::PairingIdentity {
-            expires_at_unix_ms: 0,
-            host_id: peer.host_id.as_bytes().to_vec(),
-            pubkey: peer.pubkey,
-            name: peer.name,
-        })
-    }
-
     fn is_local_host(&self, host_id: Uuid) -> bool {
         self.local_agents.host_id() == host_id
     }
@@ -2195,7 +2176,7 @@ impl ClientService {
         crate::debug::dump_server_debug_info(
             &self.server_state,
             self.remote_agent_connections.routing(),
-            self.remote_agent_connections.tunnels(),
+            self.remote_agent_connections.channels(),
             remote_agent_count,
             format,
             verbose,
@@ -2223,7 +2204,18 @@ impl ClientService {
         method: &'static str,
         host_id: Uuid,
     ) -> Result<wire::agent_service_client::AgentServiceClient<Channel>, tonic::Status> {
-        let channel = match self.remote_agent_connections.channel_to(host_id).await {
+        let result = self.remote_agent_connections.channel_to(host_id).await;
+        self.remote_agent_client_with_channel(method, host_id, result)
+            .await
+    }
+
+    async fn remote_agent_client_with_channel(
+        &self,
+        method: &'static str,
+        host_id: Uuid,
+        result: Result<Channel, ChannelError>,
+    ) -> Result<wire::agent_service_client::AgentServiceClient<Channel>, tonic::Status> {
+        let channel = match result {
             Ok(channel) => {
                 self.remote_agent_connections
                     .clear_reachability_error(host_id)
@@ -2231,7 +2223,7 @@ impl ClientService {
                 channel
             }
             Err(error) => {
-                let status = remote_tunnel_status(method, host_id, error);
+                let status = remote_channel_status(method, host_id, error);
                 self.remote_agent_connections
                     .record_reachability_error(host_id, status.message().to_string())
                     .await;
@@ -2402,8 +2394,14 @@ impl ClientService {
         host_id: Uuid,
         request: wire::pb::SubscribeSessionRequest,
     ) -> TonicResult<ResponseStream<wire::SubscribeSessionResponse>> {
+        let agent = Uuid::from_slice(&request.agent_id)
+            .map_err(|_| tonic::Status::invalid_argument("invalid agent_id"))?;
+        let channel = self
+            .remote_agent_connections
+            .session_channel_to(host_id, agent)
+            .await;
         let mut client = match self
-            .remote_agent_client("ClientService.SubscribeSession", host_id)
+            .remote_agent_client_with_channel("ClientService.SubscribeSession", host_id, channel)
             .await
         {
             Ok(client) => client,
@@ -2461,8 +2459,9 @@ impl ClientService {
         host_id: Uuid,
         request: wire::GetArtifactRequest,
     ) -> TonicResult<wire::GetArtifactResponse> {
+        let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
         let mut client = self
-            .remote_agent_client("ClientService.GetArtifact", host_id)
+            .remote_agent_client_with_channel("ClientService.GetArtifact", host_id, channel)
             .await?;
         let response = client.get_artifact(request).await?.into_inner();
         Ok(tonic::Response::new(response))
@@ -2473,8 +2472,9 @@ impl ClientService {
         host_id: Uuid,
         request: wire::DiffRequest,
     ) -> TonicResult<wire::DiffResponse> {
+        let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
         let mut client = self
-            .remote_agent_client("ClientService.Diff", host_id)
+            .remote_agent_client_with_channel("ClientService.Diff", host_id, channel)
             .await?;
         let response = client.diff(request).await?.into_inner();
         Ok(tonic::Response::new(response))
@@ -2752,16 +2752,6 @@ fn uuid_from_bytes(field: &str, bytes: &[u8]) -> Result<Uuid, tonic::Status> {
         .map_err(|error| tonic::Status::invalid_argument(format!("{field} is invalid: {error}")))
 }
 
-fn validate_pairing_qr_secret(field: &str, bytes: &[u8]) -> Result<(), tonic::Status> {
-    if bytes.len() == QR_SECRET_LEN {
-        Ok(())
-    } else {
-        Err(tonic::Status::invalid_argument(format!(
-            "{field} must be 32 bytes"
-        )))
-    }
-}
-
 fn debug_format_from_wire(format: i32) -> Result<DebugFormat, tonic::Status> {
     match wire::DebugFormat::try_from(format).map_err(|_| {
         tonic::Status::invalid_argument(format!("DebugRequest.format has unknown value {format}"))
@@ -2777,22 +2767,32 @@ fn debug_format_from_wire(format: i32) -> Result<DebugFormat, tonic::Status> {
 /// Demo sessions are a standing shared secret; bound how long one can live.
 const DEMO_PAIR_MODE_MAX_TTL: std::time::Duration = std::time::Duration::from_secs(90 * 86_400);
 
-fn start_pairing_secret(
+fn start_pairing_secret_for_duration(
     pair_mode: &PairMode,
     mode: wire::start_pairing_request::Mode,
+    ttl: Duration,
 ) -> Result<wire::start_pairing_response::Secret, tonic::Status> {
     match mode {
         wire::start_pairing_request::Mode::Unspecified => Err(tonic::Status::invalid_argument(
             "StartPairingRequest.mode is required",
         )),
-        wire::start_pairing_request::Mode::Pin => pair_mode
-            .start_pin()
-            .map(wire::start_pairing_response::Secret::Pin)
-            .map_err(pair_mode_admin_status),
-        wire::start_pairing_request::Mode::Qr => pair_mode
-            .start_qr_secret()
-            .map(|secret| wire::start_pairing_response::Secret::QrSecret(secret.to_vec()))
-            .map_err(pair_mode_admin_status),
+        wire::start_pairing_request::Mode::Pin => {
+            let pin = format!("{:06}", Uuid::new_v4().as_u128() % 1_000_000);
+            pair_mode
+                .start_pin_for_duration(pin.clone(), ttl)
+                .map(|()| wire::start_pairing_response::Secret::Pin(pin))
+                .map_err(pair_mode_admin_status)
+        }
+        wire::start_pairing_request::Mode::Qr => {
+            let mut secret = [0_u8; QR_SECRET_LEN];
+            ring::rand::SystemRandom::new()
+                .fill(&mut secret)
+                .map_err(|_| pair_mode_admin_status(PairModeError::SecretGeneration))?;
+            pair_mode
+                .start_qr_secret_for_duration(secret, ttl)
+                .map(|()| wire::start_pairing_response::Secret::QrSecret(secret.to_vec()))
+                .map_err(pair_mode_admin_status)
+        }
     }
 }
 
@@ -2824,23 +2824,26 @@ fn decode_remote_status(error: wire::DecodeError) -> tonic::Status {
     tonic::Status::internal(error.to_string())
 }
 
-fn remote_tunnel_status(
+fn remote_channel_status(
     method: &'static str,
     host_id: Uuid,
-    error: TunnelPoolError,
+    error: ChannelError,
 ) -> tonic::Status {
     let message = format!("{method} remote dispatch to host {host_id} failed: {error}");
     match error {
-        TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
-        TunnelPoolError::CloudPairingUnavailable
-        | TunnelPoolError::LinkUnavailable { .. }
-        | TunnelPoolError::Identity(_)
-        | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),
-        TunnelPoolError::InvalidDestination { .. }
-        | TunnelPoolError::InvalidSource { .. }
-        | TunnelPoolError::InvalidTunnelId(_)
-        | TunnelPoolError::PayloadTooLarge { .. }
-        | TunnelPoolError::DeviceTlsRequired => tonic::Status::internal(message),
+        ChannelError::NoRoute { .. } => protocol_status(ProtocolError::Unreachable { message }),
+        ChannelError::Refused(wire::pb::StreamRefusal::PaymentRequired) => {
+            protocol_status(ProtocolError::PaymentRequired)
+        }
+        ChannelError::Refused(wire::pb::StreamRefusal::RateLimited) => {
+            protocol_status(ProtocolError::ResourceExhausted { message })
+        }
+        ChannelError::CloudPairingUnavailable
+        | ChannelError::Refused(_)
+        | ChannelError::LinkUnavailable { .. }
+        | ChannelError::Identity(_)
+        | ChannelError::Tls(_)
+        | ChannelError::Handshake(_) => tonic::Status::unavailable(message),
     }
 }
 
@@ -2932,14 +2935,20 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
+    use crate::HostId;
     use crate::config::Config;
+    use crate::dispatcher::TunnelDispatcher;
     use crate::identity::DeviceIdentity;
+    use crate::link::{
+        CarrierKind, ChannelPool, ControlSink, ControlSource, LinkCarrier as NativeLinkCarrier,
+        MuxCarrier, MuxRole, Piper, read_message, write_message,
+    };
     use crate::routing::{
-        Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
+        Capabilities, LinkAdmission, LinkCloseRequest, LinkId, LinkProperties, LinkRegistry,
+        LinkRole, RoutingCore, SupportedAgentType,
     };
     use crate::services::agent::spawn_agent_tonic_server;
     use crate::trust::{TrustEntry, TrustStore};
-    use crate::tunnel::TunnelPool;
     use crate::user_state::ServerState;
 
     fn host(id: u128, supported_agent_types: Vec<SupportedAgentType>) -> Host {
@@ -2952,6 +2961,7 @@ mod tests {
                 features: Vec::new(),
                 supported_agent_types,
             },
+            signed_in: Some(true),
         }
     }
 
@@ -2970,6 +2980,8 @@ mod tests {
             capabilities: Some(host.capabilities.clone()),
             trust_status: HostTrustStatus::UntrustedButOnline,
             last_dial_error: None,
+            via: HostVia::Offline,
+            signed_in: None,
             platform: None,
         }
     }
@@ -2980,6 +2992,7 @@ mod tests {
             name: name.to_string(),
             paired_at: Utc::now(),
             reachabilities: Vec::new(),
+            signed_in: None,
         }
     }
 
@@ -2994,6 +3007,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
+            last_activity: Utc.timestamp_millis_opt(0).single().unwrap(),
             parent: None,
             working_on: None,
             summary: None,
@@ -3161,9 +3175,9 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
+        let (routing, channels) = test_routing_and_channels(host_id);
         (
-            client_service_from_parts(agent_service, server_state, routing, tunnels),
+            client_service_from_parts(agent_service, server_state, routing, channels),
             host,
         )
     }
@@ -3176,10 +3190,10 @@ mod tests {
         )
     }
 
-    fn client_service_with_agent_and_tunnels(
+    fn client_service_with_agent_and_channels(
         agent_service: AgentServiceCtx,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        channels: Arc<ChannelPool>,
     ) -> ClientService {
         let host_id = agent_service.host_id();
 
@@ -3189,16 +3203,16 @@ mod tests {
             None,
             None,
         )));
-        client_service_from_parts(agent_service, server_state, routing, tunnels)
+        client_service_from_parts(agent_service, server_state, routing, channels)
     }
 
     fn client_service_from_parts(
         agent_service: AgentServiceCtx,
         server_state: Arc<RwLock<ServerState>>,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        channels: Arc<ChannelPool>,
     ) -> ClientService {
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels));
+        let connections = Arc::new(ConnectionManager::new(routing, channels));
         let identity = DeviceIdentity::for_test(agent_service.host_id());
         ClientService::new(
             agent_service,
@@ -3232,11 +3246,11 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(local_identity.host_id);
+        let (routing, channels) = test_routing_and_channels(local_identity.host_id);
         ClientService::new(
             agent_service,
             server_state,
-            Arc::new(ConnectionManager::new(routing, tunnels)),
+            Arc::new(ConnectionManager::new(routing, channels)),
             PairingTrustAccess::new(
                 local_identity.public_key().to_vec(),
                 trust_store,
@@ -3248,17 +3262,17 @@ mod tests {
         )
     }
 
-    fn test_routing_and_tunnels(host_id: Uuid) -> (Arc<RoutingCore>, Arc<TunnelPool>) {
+    fn test_routing_and_channels(_host_id: Uuid) -> (Arc<RoutingCore>, Arc<ChannelPool>) {
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
-        (routing, tunnels)
+        let channels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        (routing, channels)
     }
 
     struct RemoteDispatchHarness {
         service: ClientService,
         _remote_server: JoinHandle<Result<(), tonic::transport::Error>>,
         bridges: Vec<JoinHandle<()>>,
+        _controls: Vec<(ControlSink, ControlSource)>,
     }
 
     impl Drop for RemoteDispatchHarness {
@@ -3274,131 +3288,201 @@ mod tests {
         let local_host_id = Uuid::from_u128(1);
         let remote_host_id = Uuid::from_u128(2);
         let relay_host_id = Uuid::from_u128(3);
-        // Each daemon's own link to its neighbor, plus the relay's links to
-        // both endpoints. The relay forwards by adjacency alone.
+        let local_identity = DeviceIdentity::for_test(local_host_id);
+        let remote_identity = DeviceIdentity::for_test(remote_host_id);
+
+        // The local endpoint opens through its adjacent relay, which pipes the
+        // native stream to the remote endpoint without interpreting gRPC.
         let local_to_relay = LinkId::new(relay_host_id);
-        let remote_to_relay = LinkId::new(relay_host_id);
         let relay_to_remote = LinkId::new(remote_host_id);
         let relay_to_local = LinkId::new(local_host_id);
 
         let local_routing = Arc::new(RoutingCore::new());
-        let remote_routing = Arc::new(RoutingCore::new());
-        let relay_routing = Arc::new(RoutingCore::new());
         local_routing
             .apply_claim_up(relay_host_id, host(2, non_relay_types()))
             .await;
-        remote_routing
-            .apply_claim_up(relay_host_id, host(1, non_relay_types()))
-            .await;
 
-        let (local_incoming_tx, _local_incoming_rx) = mpsc::channel(8);
-        let (remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
-        let (relay_incoming_tx, _relay_incoming_rx) = mpsc::channel(8);
-        let local_tunnels = Arc::new(TunnelPool::new(
-            local_host_id,
-            local_routing.clone(),
-            local_incoming_tx,
-        ));
-        let remote_tunnels = Arc::new(TunnelPool::new(
-            remote_host_id,
-            remote_routing,
-            remote_incoming_tx,
-        ));
-        let relay_tunnels = Arc::new(TunnelPool::new(
-            relay_host_id,
-            relay_routing,
-            relay_incoming_tx,
+        let local_links = Arc::new(LinkRegistry::default());
+        let relay_links = Arc::new(LinkRegistry::default());
+        let local_trust = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        let mut remote_entry = trust_entry("remote", 0);
+        remote_entry.pubkey = remote_identity.public_key().to_vec();
+        local_trust
+            .write()
+            .unwrap()
+            .insert_for_test(remote_host_id, remote_entry);
+        let local_channels = Arc::new(ChannelPool::with_device_tls(
+            local_links.clone(),
+            local_identity.clone(),
+            local_trust,
         ));
 
-        let (local_to_relay_tx, local_to_relay_rx) = mpsc::channel(32);
-        let (relay_to_remote_tx, relay_to_remote_rx) = mpsc::channel(32);
-        let (remote_to_relay_tx, remote_to_relay_rx) = mpsc::channel(32);
-        let (relay_to_local_tx, relay_to_local_rx) = mpsc::channel(32);
-        local_tunnels
-            .link_registry()
-            .register(
+        let (local_carrier, relay_from_local, mut controls) = native_carrier_pair().await;
+        let (relay_to_remote_carrier, remote_carrier, remote_controls) =
+            native_carrier_pair().await;
+        controls.extend(remote_controls);
+
+        let (local_control_tx, _) = mpsc::channel(32);
+        local_links
+            .register_with_details(
                 local_to_relay,
                 host(3, Vec::new()),
-                local_to_relay_tx,
-                LinkRole::Peer,
+                local_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
+                    direct_order: None,
+                },
                 &[],
+                Some(local_carrier),
             )
             .await;
-        remote_tunnels
-            .link_registry()
-            .register(
-                remote_to_relay,
-                host(3, Vec::new()),
-                remote_to_relay_tx,
-                LinkRole::Peer,
-                &[],
-            )
-            .await;
-        relay_tunnels
-            .link_registry()
-            .register(
-                relay_to_remote,
-                host(2, non_relay_types()),
-                relay_to_remote_tx,
-                LinkRole::Peer,
-                &[],
-            )
-            .await;
-        relay_tunnels
-            .link_registry()
-            .register(
+        let (relay_local_control_tx, _) = mpsc::channel(32);
+        relay_links
+            .register_with_details(
                 relay_to_local,
                 host(1, non_relay_types()),
-                relay_to_local_tx,
-                LinkRole::Peer,
+                relay_local_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
+                    direct_order: None,
+                },
                 &[],
+                Some(relay_from_local.clone()),
+            )
+            .await;
+        let (relay_remote_control_tx, _) = mpsc::channel(32);
+        relay_links
+            .register_with_details(
+                relay_to_remote,
+                host(2, non_relay_types()),
+                relay_remote_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
+                    direct_order: None,
+                },
+                &[],
+                Some(relay_to_remote_carrier),
             )
             .await;
 
-        let bridges = vec![
-            spawn_tunnel_bridge(local_to_relay_rx, relay_tunnels.clone(), relay_to_local),
-            spawn_tunnel_bridge(relay_to_remote_rx, remote_tunnels.clone(), remote_to_relay),
-            spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels, relay_to_remote),
-            spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone(), local_to_relay),
-        ];
         let remote_agent_service = agent_service_ctx(remote_host_id);
+        let (remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
         let remote_server = spawn_agent_tonic_server(remote_agent_service, remote_incoming_rx);
+        let remote_trust = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        let mut local_entry = trust_entry("local", 0);
+        local_entry.pubkey = local_identity.public_key().to_vec();
+        remote_trust
+            .write()
+            .unwrap()
+            .insert_for_test(local_host_id, local_entry);
+        let (pairing_tx, _pairing_rx) = mpsc::channel(1);
+        let dispatcher = Arc::new(
+            TunnelDispatcher::new(
+                &remote_identity,
+                remote_trust,
+                Arc::new(PairMode::new()),
+                crate::transport::TrustedPeerConnections::default(),
+                remote_incoming_tx,
+                pairing_tx,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let bridges = vec![
+            spawn_piper_bridge(
+                relay_from_local,
+                Piper::new(relay_host_id, relay_links),
+                relay_to_local,
+            ),
+            spawn_remote_dispatch_bridge(remote_carrier, dispatcher, relay_host_id, remote_host_id),
+        ];
 
-        let service = client_service_with_agent_and_tunnels(
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             local_routing.clone(),
-            local_tunnels,
+            local_channels,
         );
 
         RemoteDispatchHarness {
             service,
             _remote_server: remote_server,
             bridges,
+            _controls: controls,
         }
     }
 
-    fn spawn_tunnel_bridge(
-        mut rx: mpsc::Receiver<wire::pb::Message>,
-        target_pool: Arc<TunnelPool>,
-        arrival_link: LinkId,
+    async fn native_carrier_pair() -> (
+        Arc<MuxCarrier>,
+        Arc<MuxCarrier>,
+        Vec<(ControlSink, ControlSource)>,
+    ) {
+        let (connector_io, acceptor_io) = tokio::io::duplex(2 * 1024 * 1024);
+        let connector = Arc::new(MuxCarrier::new(
+            connector_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let acceptor = Arc::new(MuxCarrier::new(
+            acceptor_io,
+            MuxRole::Acceptor,
+            CarrierKind::RelayTcp,
+        ));
+        let (mut connector_sink, connector_source) = connector.control();
+        let (acceptor_sink, mut acceptor_source) = acceptor.control();
+        write_message(&mut connector_sink, &wire::pb::Message { body: None })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_message(&mut acceptor_source).await.unwrap(),
+            Some(wire::pb::Message { body: None })
+        );
+        (
+            connector,
+            acceptor,
+            vec![
+                (connector_sink, connector_source),
+                (acceptor_sink, acceptor_source),
+            ],
+        )
+    }
+
+    fn spawn_piper_bridge(
+        incoming: Arc<dyn NativeLinkCarrier>,
+        piper: Piper,
+        origin: LinkId,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                match message.body {
-                    Some(wire::pb::message::Body::TunnelOpen(open)) => target_pool
-                        .handle_inbound_open(open, &arrival_link)
-                        .await
-                        .unwrap(),
-                    Some(wire::pb::message::Body::TunnelData(data)) => target_pool
-                        .handle_inbound_data(data, &arrival_link)
-                        .await
-                        .unwrap(),
-                    Some(wire::pb::message::Body::TunnelClose(close)) => target_pool
-                        .handle_inbound_close(close, &arrival_link)
-                        .await
-                        .unwrap(),
-                    _ => continue,
+            while let Some((preface, stream)) = incoming.accept_stream().await {
+                let _ = piper.pipe(origin, preface, stream).await;
+            }
+        })
+    }
+
+    fn spawn_remote_dispatch_bridge(
+        incoming: Arc<dyn NativeLinkCarrier>,
+        dispatcher: Arc<TunnelDispatcher>,
+        adjacent_peer: HostId,
+        destination_host: HostId,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Some((preface, mut stream)) = incoming.accept_stream().await {
+                if HostId::from_slice(&preface.dst).ok() != Some(destination_host) {
+                    let _ = stream.reset(wire::pb::StreamRefusal::NotAdjacent).await;
+                    continue;
                 }
+                let dispatcher = dispatcher.clone();
+                tokio::spawn(async move {
+                    let _ = dispatcher.dispatch_link_stream(adjacent_peer, stream).await;
+                });
             }
         })
     }
@@ -3689,9 +3773,8 @@ mod tests {
                 .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
-        let service = client_service_with_agent_and_tunnels(
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             routing.clone(),
             tunnels,
@@ -3730,9 +3813,8 @@ mod tests {
                 .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
-        let service = client_service_with_agent_and_tunnels(
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             routing.clone(),
             tunnels,
@@ -4377,6 +4459,8 @@ mod tests {
             wire::HostTrustStatus::Trusted as i32
         );
         assert!(hosts.hosts[0].last_dial_error.is_none());
+        assert_eq!(hosts.hosts[0].via, wire::HostVia::Offline as i32);
+        assert_eq!(hosts.hosts[0].signed_in, None);
 
         let agents = tonic_list_agents(&service).await;
         assert_eq!(agents.agents.len(), 1);
@@ -4393,10 +4477,14 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert!(matches!(
-            host_stream.next().await.unwrap().unwrap().event,
-            Some(wire::subscribe_hosts_response::Event::HostUpdated(_))
-        ));
+        let Some(wire::subscribe_hosts_response::Event::HostUpdated(updated)) =
+            host_stream.next().await.unwrap().unwrap().event
+        else {
+            panic!("expected host snapshot entry")
+        };
+        let streamed_host = updated.host.expect("host snapshot entry");
+        assert_eq!(streamed_host.via, wire::HostVia::Offline as i32);
+        assert_eq!(streamed_host.signed_in, None);
         assert!(matches!(
             host_stream.next().await.unwrap().unwrap().event,
             Some(wire::subscribe_hosts_response::Event::SnapshotComplete(_))
@@ -4597,7 +4685,7 @@ mod tests {
                     if updated.host.as_ref().is_some_and(|host| host.host_id == trusted.as_bytes() && host.online)));
             // Revoking an online peer removes the entry already delivered to this subscriber.
             trust_store.write().unwrap().remove(trusted);
-            service.publish_host_status_update(trusted).await;
+            service.publish_host_status_update(trusted, false).await;
             assert!(matches!(stream.next().await.unwrap().unwrap().event,
                 Some(wire::subscribe_hosts_response::Event::HostRemoved(removed)) if removed.host_id == trusted.as_bytes()));
             service
@@ -4635,7 +4723,7 @@ mod tests {
             .write()
             .unwrap()
             .insert_for_test(peer.id, trust_entry("trusted-peer", 2));
-        service.publish_host_status_update(peer.id).await;
+        service.publish_host_status_update(peer.id, false).await;
 
         assert!(matches!(
             rx.recv().await,
@@ -4669,6 +4757,12 @@ mod tests {
                     && host.online
                     && host.trust_status == HostTrustStatus::Trusted
         ));
+        let cached = agent(20, 2, "cached-remote");
+        service
+            .apply_agent_event(AgentEvent::AgentUp {
+                agent: cached.clone(),
+            })
+            .await;
 
         service
             .apply_host_event(HostReachabilityEvent::Removed { host_id: peer.id })
@@ -4682,6 +4776,7 @@ mod tests {
                     && host.trust_status == HostTrustStatus::Trusted
                     && host.last_dial_error.is_none()
         ));
+        assert_eq!(service.list_agents().await, vec![cached]);
     }
 
     #[tokio::test]
@@ -4727,9 +4822,8 @@ mod tests {
     async fn owner_host_inventory_discovers_only_cloud_pairing_candidates() {
         let host_id = Uuid::from_u128(1);
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
-        let service = client_service_with_agent_and_tunnels(
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(host_id),
             routing.clone(),
             tunnels.clone(),
@@ -4746,6 +4840,7 @@ mod tests {
                 features: vec![crate::routing::FEATURE_CLOUD_RELAY.to_string()],
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         };
         tunnels
             .link_registry()
@@ -4776,15 +4871,20 @@ mod tests {
 
         let hosts = service.list_pairing_candidates().await;
         assert_eq!(hosts.len(), 1);
-        assert_eq!(hosts[0].id, cloud_peer.id);
-        assert_eq!(hosts[0].trust_status, HostTrustStatus::UntrustedButOnline);
+        assert_eq!(hosts[0].host.id, cloud_peer.id);
+        assert_eq!(
+            hosts[0].host.trust_status,
+            HostTrustStatus::UntrustedButOnline
+        );
+        assert_eq!(hosts[0].host.via, HostVia::Relay);
+        assert_eq!(hosts[0].host.signed_in, None);
 
         let admin = ProfileAdmin::for_test(service.clone());
         let mut inventory = Box::pin(admin.subscribe_hosts().await.unwrap());
         assert_eq!(
             inventory.next().await.unwrap().unwrap(),
             HostEvent::HostUpdated {
-                host: hosts[0].clone()
+                host: hosts[0].host.clone()
             }
         );
         assert_eq!(
@@ -4817,7 +4917,7 @@ mod tests {
         assert_eq!(
             inventory.next().await.unwrap().unwrap(),
             HostEvent::HostUpdated {
-                host: hosts[0].clone()
+                host: hosts[0].host.clone()
             }
         );
     }
@@ -5215,7 +5315,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_client_service_dispatches_remote_agent_methods_over_tunnel() {
+    async fn tonic_client_service_dispatches_remote_agent_methods_over_native_link() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
         let remote_host_id = Uuid::from_u128(2);
@@ -5468,7 +5568,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paired_host_added_starts_remote_agent_subscription_over_tunnel() {
+    async fn paired_host_added_starts_remote_agent_subscription_over_native_link() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
         let remote_host_id = Uuid::from_u128(2);
@@ -5556,7 +5656,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_client_service_remote_lifecycle_dispatch_requires_reachable_tunnel_route() {
+    async fn tonic_client_service_remote_lifecycle_dispatch_requires_reachable_link_route() {
         let service = client_service_for_tests();
         service
             .apply_host_event(HostReachabilityEvent::Added {
@@ -5619,7 +5719,7 @@ mod tests {
         let request = |mode: wire::start_pairing_request::Mode, pin: &str, ttl_seconds: u64| {
             let mut request = tonic::Request::new(wire::StartPairingRequest {
                 mode: mode as i32,
-                require_lan_direct: false,
+                ttl_seconds: None,
                 demo: Some(wire::DemoPairing {
                     pin: pin.to_string(),
                     ttl_seconds,
@@ -5679,7 +5779,7 @@ mod tests {
 
         let mut pin_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
-            require_lan_direct: false,
+            ttl_seconds: None,
             demo: None,
         });
         pin_request.extensions_mut().insert(BoxedGrpcConnectInfo {
@@ -5718,7 +5818,7 @@ mod tests {
 
         let mut duplicate_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
-            require_lan_direct: false,
+            ttl_seconds: None,
             demo: None,
         });
         duplicate_request
@@ -5747,7 +5847,7 @@ mod tests {
 
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
-            require_lan_direct: false,
+            ttl_seconds: None,
             demo: None,
         });
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
@@ -5772,46 +5872,44 @@ mod tests {
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
         let service =
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
+        service.server_state.write().await.config.lan.listen = false;
 
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
-            require_lan_direct: true,
+            ttl_seconds: None,
             demo: None,
         });
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error =
+        let response =
             ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), qr_request)
                 .await
-                .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-        assert!(error.message().contains("tcp_port"));
-        assert!(!service.pair_mode.is_active());
+                .unwrap()
+                .into_inner();
+        assert!(response.addrs.is_empty());
+        assert!(service.pair_mode.is_active());
 
-        let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
-            mode: wire::start_pairing_request::Mode::Pin as i32,
-            require_lan_direct: true,
-            demo: None,
-        });
-        lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), lan_request)
-                .await
-                .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        let mut cancel_request = tonic::Request::new(wire::CancelPairingRequest {});
+        cancel_request
+            .extensions_mut()
+            .insert(BoxedGrpcConnectInfo {
+                auth: BoxedGrpcAuth::LocalTrusted,
+            });
+        ProfileAdmin::rpc_cancel_pairing(&ProfileAdmin::for_test(service.clone()), cancel_request)
+            .await
+            .unwrap();
         assert!(!service.pair_mode.is_active());
 
         {
             let mut state = service.server_state.write().await;
             state.config.host_name = "x".repeat(MAX_PAIRING_NAME_BYTES + 1);
-            state.config.tcp_port = Some(4242);
+            state.config.lan.listen = true;
+            state.config.lan.port = 4242;
         }
         let mut bad_name_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
-            require_lan_direct: true,
+            ttl_seconds: None,
             demo: None,
         });
         bad_name_request
@@ -5831,7 +5929,7 @@ mod tests {
         service.server_state.write().await.config.host_name = "ok".to_string();
         let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,
-            require_lan_direct: true,
+            ttl_seconds: None,
             demo: None,
         });
         lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
@@ -5842,175 +5940,8 @@ mod tests {
                 .await
                 .unwrap()
                 .into_inner();
-        assert_eq!(response.tcp_port, Some(4242));
+        assert!(response.addrs.iter().all(|addr| addr.ends_with(":4242")));
         assert!(service.pair_mode.is_active());
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_pin_cloud_peer_rejects_self_host_id() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut request = tonic::Request::new(wire::PairPinCloudPeerRequest {
-            host_id: local.host_id.as_bytes().to_vec(),
-            pin: "123456".to_string(),
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-
-        let error = ProfileAdmin::rpc_pair_pin_cloud_peer(
-            &ProfileAdmin::for_test(service.clone()),
-            request,
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-        assert!(trust_store.read().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_qr_cloud_peer_rejects_self_host_id_before_dialing() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut request = tonic::Request::new(wire::PairQrCloudPeerRequest {
-            host_id: local.host_id.as_bytes().to_vec(),
-            secret: vec![8; 32],
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error =
-            ProfileAdmin::rpc_pair_qr_cloud_peer(&ProfileAdmin::for_test(service.clone()), request)
-                .await
-                .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-        assert!(trust_store.read().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_qr_cloud_peer_validates_secret_length_before_dialing() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut short_secret = tonic::Request::new(wire::PairQrCloudPeerRequest {
-            host_id: Uuid::from_u128(3).as_bytes().to_vec(),
-            secret: vec![8; 31],
-        });
-        short_secret.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error = ProfileAdmin::rpc_pair_qr_cloud_peer(
-            &ProfileAdmin::for_test(service.clone()),
-            short_secret,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(
-            error.message(),
-            "PairQrCloudPeerRequest.secret must be 32 bytes"
-        );
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_ssh_peer_updates_live_and_persisted_trust() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut request = tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                expires_at_unix_ms: 0,
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.public_key().to_vec(),
-                name: "workstation".to_string(),
-            }),
-            reachability: Some(wire::pair_peer_request::Reachability::SshTarget(
-                wire::SshTarget {
-                    target: "workstation".to_string(),
-                    profile_id: Uuid::from_u128(42).to_string(),
-                },
-            )),
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
-            .await
-            .unwrap();
-
-        let expected = Reachability::Ssh {
-            target: "workstation".to_string(),
-            profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
-        };
-        let live = trust_store.read().unwrap();
-        let live_entry = live.entry(peer.host_id).unwrap();
-        assert_eq!(live_entry.pubkey.as_slice(), peer.public_key());
-        assert_eq!(live_entry.reachabilities, vec![expected.clone()]);
-        drop(live);
-
-        let persisted = TrustStore::load_or_create_in(data_dir.path()).unwrap();
-        let persisted_entry = persisted.entry(peer.host_id).unwrap();
-        assert_eq!(persisted_entry.pubkey.as_slice(), peer.public_key());
-        assert_eq!(persisted_entry.reachabilities, vec![expected]);
-    }
-
-    #[tokio::test]
-    async fn tonic_pair_direct_peer_updates_live_and_persisted_trust() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-        let addr = SocketAddr::from(([127, 0, 0, 1], 4242));
-
-        let mut request = tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                expires_at_unix_ms: 0,
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.public_key().to_vec(),
-                name: "phone".to_string(),
-            }),
-            reachability: Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
-                addr.to_string(),
-            )),
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
-            .await
-            .unwrap();
-
-        let expected = Reachability::DirectTcp { addr };
-        let live = trust_store.read().unwrap();
-        let live_entry = live.entry(peer.host_id).unwrap();
-        assert_eq!(live_entry.pubkey.as_slice(), peer.public_key());
-        assert_eq!(live_entry.reachabilities, vec![expected.clone()]);
-        drop(live);
-
-        let persisted = TrustStore::load_or_create_in(data_dir.path()).unwrap();
-        let persisted_entry = persisted.entry(peer.host_id).unwrap();
-        assert_eq!(persisted_entry.pubkey.as_slice(), peer.public_key());
-        assert_eq!(persisted_entry.reachabilities, vec![expected]);
     }
 
     #[tokio::test]
@@ -6046,7 +5977,7 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(local.host_id);
+        let (routing, tunnels) = test_routing_and_channels(local.host_id);
         let service = ClientService::new(
             agent_service,
             server_state,
@@ -6141,7 +6072,7 @@ mod tests {
                 .is_empty()
         );
         assert!(routing.route_to(peer.host_id).await.is_none());
-        assert_eq!(service.remote_agent_connections.pool().len().await, 0);
+        assert_eq!(service.remote_agent_connections.pool().len(), 0);
         assert_eq!(
             recv_agent_event(&mut agent_events).await,
             AgentEvent::AgentDown {
@@ -6213,34 +6144,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_pair_ssh_peer_rejects_self_pairing_pubkey() {
-        let data_dir = TempDir::new().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-
-        let mut request = tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                expires_at_unix_ms: 0,
-                host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-                pubkey: local.public_key().to_vec(),
-                name: "self-key".to_string(),
-            }),
-            reachability: None,
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error = ProfileAdmin::rpc_pair_peer(&ProfileAdmin::for_test(service.clone()), request)
-            .await
-            .unwrap_err();
-
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-    }
-
-    #[tokio::test]
     async fn tonic_client_service_handles_debug_and_hooks() {
         let service = client_service_with_local_services();
 
@@ -6305,11 +6208,11 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn dump_reports_live_peer_route_link_and_tunnel() {
+        async fn dump_reports_live_peer_route_link_and_channels() {
             let local = Uuid::from_u128(1);
             let peer = host(2, non_relay_types());
-            let (routing, tunnels) = test_routing_and_tunnels(local);
-            let service = client_service_with_agent_and_tunnels(
+            let (routing, tunnels) = test_routing_and_channels(local);
+            let service = client_service_with_agent_and_channels(
                 agent_service_ctx(local),
                 routing.clone(),
                 tunnels.clone(),
@@ -6321,30 +6224,26 @@ mod tests {
                 .register(link, peer.clone(), link_tx, LinkRole::Peer, &[])
                 .await;
             routing.apply_direct_up(peer.clone(), link).await;
-            let _channel = tunnels.channel_on_link(peer.id, link).await.unwrap();
-
             let dump = service.debug_dump(DebugFormat::Json, true).await;
             let dump: serde_json::Value = serde_json::from_str(&dump).unwrap();
 
             assert_eq!(dump["host_count"], 1);
             assert_eq!(dump["route_count"], 1);
             assert_eq!(dump["peer_link_count"], 1);
-            assert_eq!(dump["tunnel_count"], 1);
+            assert_eq!(dump["channel_count"], 0);
             assert_eq!(dump["hosts"][0]["id"], peer.id.to_string());
             assert_eq!(dump["routes"][0]["dst"], peer.id.to_string());
             assert_eq!(dump["routes"][0]["via"]["kind"], "direct");
             assert_eq!(dump["routes"][0]["via"]["link"], link.to_string());
             assert_eq!(dump["links"][0]["peer"], peer.id.to_string());
             assert_eq!(dump["links"][0]["id"], link.to_string());
-            assert_eq!(dump["tunnels"][0]["peer"], peer.id.to_string());
-            assert_eq!(dump["tunnels"][0]["link"], link.to_string());
-            assert_eq!(dump["tunnels"][0]["state"], "open_initiated");
+            assert_eq!(dump["channels"], serde_json::json!([]));
 
             let user = &dump["users"][0];
             assert_eq!(user["hosts"], dump["hosts"]);
             assert_eq!(user["routes"], dump["routes"]);
             assert_eq!(user["links"], dump["links"]);
-            assert_eq!(user["tunnels"], dump["tunnels"]);
+            assert_eq!(user["channels"], dump["channels"]);
         }
     }
 }

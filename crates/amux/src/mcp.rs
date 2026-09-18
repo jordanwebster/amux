@@ -643,6 +643,8 @@ mod attach_tests {
                     capabilities: Some(node::Capabilities::default()),
                     trust_status: node::HostTrustStatus::Trusted,
                     last_dial_error: None,
+                    via: node::HostVia::Direct,
+                    signed_in: Some(true),
                     platform: None,
                 })
                 .collect();
@@ -861,6 +863,7 @@ mod attach_tests {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
             summary: None,
@@ -1332,6 +1335,7 @@ mod attach_tests {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
             summary: None,

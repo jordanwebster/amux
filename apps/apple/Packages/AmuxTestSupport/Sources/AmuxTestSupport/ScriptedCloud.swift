@@ -21,6 +21,15 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
     /// How long every answer takes. Zero is instant.
     public var latency: Duration
 
+    /// What the relay will carry for this account, which is what an active
+    /// subscription buys and nothing else does.
+    public var tier: Tier {
+        switch entitlement {
+        case .active: .pro
+        case .none, .lapsed: .free
+        }
+    }
+
     public init(
         signIn: SignInOutcome = .succeeds(Self.ada),
         entitlement: Entitlement = .active(grant: .purchased(.web), renews: nil),
@@ -92,7 +101,11 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
 
 /// One call a screen made, in the order it made it.
 public enum CloudCall: Sendable, Equatable {
-    case signIn
+    /// A sign-in, with the account it asked amux.sh for.
+    case signIn(SignInIntent)
+    /// An account kept, and with it the session this phone holds for it.
+    case keepSession(AccountId)
+    case forgetSession(AccountId)
     case account(AccountId)
     case entitlement(AccountId)
     case connectToken(AccountId)
@@ -157,8 +170,10 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         try? await Task.sleep(for: state.latency)
     }
 
-    public func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
-        let state = record(.signIn)
+    public func signIn(
+        _ intent: SignInIntent, presenting: any WebAuthPresenter
+    ) async throws(CloudError) -> SignedInAccount {
+        let state = record(.signIn(intent))
         await wait(state)
         switch state.signIn {
         case .succeeds(let account):
@@ -171,6 +186,14 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         case .refused(let reason): throw CloudError.refused(reason)
         case .offline: throw CloudError.network("offline")
         }
+    }
+
+    public func keepSession(_ id: AccountId) async throws(CloudError) {
+        _ = record(.keepSession(id))
+    }
+
+    public func forgetSession(_ id: AccountId) async throws {
+        _ = record(.forgetSession(id))
     }
 
     public func account(_ id: AccountId) async throws(CloudError) -> AccountFacts {
@@ -194,7 +217,14 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         guard let token = state.token else { throw CloudError.unauthenticated }
         // Testnet credentials do not expire. Giving one the fixture clock’s
         // date would make it already expired against the runtime’s real clock.
-        return ConnectToken(bearer: token, host: state.relayHost, port: state.relayPort)
+        //
+        // The tier follows what the account has bought, because that is what
+        // amux.sh does: the same reply issues the credential and says what the
+        // relay will carry on it. A token that said nothing would be read as
+        // free, and every machine on the far side of the relay would go out of
+        // reach on an account that had paid for exactly that.
+        return ConnectToken(
+            bearer: token, host: state.relayHost, port: state.relayPort, tier: state.tier)
     }
 
     public func recordPurchase(

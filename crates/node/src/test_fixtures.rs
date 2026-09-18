@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -14,8 +14,14 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use tokio::sync::oneshot;
+use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
+use uuid::Uuid;
+
+use crate::config::Config;
+use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
+use crate::services::CloudLinkServer;
+use crate::user_state::ServerState;
 
 /// A caller-owned on-disk root for tests that allocate installation sockets.
 /// macOS's default TMPDIR leaves too little room for UUID socket names; tests
@@ -36,6 +42,7 @@ pub struct TestAccount {
     pub sub: String,
     pub name: Option<String>,
     pub email: Option<String>,
+    pub tier: crate::Tier,
 }
 
 #[derive(Clone, Debug)]
@@ -373,13 +380,15 @@ fn api_connect_response(
             serde_json::json!({ "error": "no_relay" }),
         );
     };
+    let account = state.accounts.get(sub).expect("access token account");
     json_response(
         StatusCode::OK,
         serde_json::json!({
             "host": relay.ip().to_string(),
             "port": relay.port(),
             "token": relay_token(sub),
-            "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339()
+            "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "tier": account.tier,
         }),
     )
 }
@@ -450,6 +459,101 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response<Full<B
         .header(hyper::header::CONTENT_TYPE, "application/json")
         .body(Full::new(Bytes::from(body.to_string())))
         .expect("valid identity fixture response")
+}
+
+#[derive(Clone, Debug)]
+pub struct RelayUser {
+    pub user_id: Uuid,
+    pub token: String,
+}
+
+#[derive(Default)]
+struct RelayAuthenticator {
+    users: Mutex<HashMap<String, Uuid>>,
+}
+
+#[tonic::async_trait]
+impl LinkTokenAuthenticator for RelayAuthenticator {
+    async fn authenticate_token(
+        &self,
+        token: &str,
+    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
+        let user_id = self
+            .users
+            .lock()
+            .expect("test relay users poisoned")
+            .get(token)
+            .copied()
+            .ok_or_else(|| tonic::Status::unauthenticated("unknown test relay token"))?;
+        Ok(AuthenticatedLinkUser {
+            user_id,
+            client_id: "test-fixture".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            tier: crate::Tier::Pro,
+        })
+    }
+}
+
+pub struct TestRelay {
+    pub addr: SocketAddr,
+    authenticator: Arc<RelayAuthenticator>,
+    task: JoinHandle<()>,
+}
+
+impl TestRelay {
+    pub async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind test relay");
+        let addr = listener.local_addr().expect("test relay address");
+        let authenticator = Arc::new(RelayAuthenticator::default());
+
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            None,
+            None,
+        )));
+        state.write().await.is_cloud_server = true;
+        let service = CloudLinkServer::with_authenticator(state, authenticator.clone());
+        let task = service.serve_on_tcp_listener(listener);
+        Self {
+            addr,
+            authenticator,
+            task,
+        }
+    }
+
+    /// One label is one relay account. The token is derived from the label, so
+    /// minting a fresh user on every call would silently repoint an account's
+    /// existing token at a new tenant the second time a test registers it.
+    pub fn register_user(&self, label: &str) -> RelayUser {
+        let token = relay_token(label);
+        let user_id = *self
+            .authenticator
+            .users
+            .lock()
+            .expect("test relay users poisoned")
+            .entry(token.clone())
+            .or_insert_with(Uuid::new_v4);
+        RelayUser { user_id, token }
+    }
+
+    /// Use this fixture's plaintext transport for an unbound profile. Credential
+    /// validation and relay authentication still run through the production connector.
+    pub async fn use_for_profile(
+        &self,
+        installation: &crate::Installation,
+        id: crate::ProfileId,
+    ) -> Result<(), crate::installation::InstallationError> {
+        installation.use_test_cloud_transport(id, self.addr).await
+    }
+}
+
+impl Drop for TestRelay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 /// Inject a connector observation into a live installation's production status

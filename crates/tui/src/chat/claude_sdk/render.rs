@@ -1061,7 +1061,14 @@ fn tool_main_text(tool: &ToolEntry) -> String {
             }
             text
         }
-        ToolInvocation::Plan { .. } if tool.result.is_some() => "plan approved".to_string(),
+        // Only a plan the tool accepted was approved. An errored result is
+        // a rejected or failed plan, and says so on its continuation line
+        // under the plain tool name, as the terminal chat does.
+        ToolInvocation::Plan { .. }
+            if tool.result.as_ref().is_some_and(|result| !result.is_error) =>
+        {
+            "plan approved".to_string()
+        }
         _ => name.to_string(),
     }
 }

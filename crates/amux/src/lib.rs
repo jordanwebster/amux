@@ -5,6 +5,7 @@
 //! can be unit-tested directly, and the binary uses it like any other
 //! dependency.
 
+pub mod connections;
 #[cfg(all(debug_assertions, feature = "diagnostics"))]
 pub mod debug_cmd;
 pub mod diagnostics;

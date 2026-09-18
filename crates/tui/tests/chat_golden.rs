@@ -71,6 +71,7 @@ fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
         readonly,
         args: Vec::new(),
         created_at: at("2026-08-12T08:00:00Z"),
+        last_activity: at("2026-08-12T08:00:00Z"),
         parent: None,
         working_on: None,
         summary: None,
@@ -85,6 +86,8 @@ fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: ui_state::HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: ui_state::HostVia::Direct,
+        signed_in: Some(true),
         platform: None,
     };
     vec![

@@ -41,3 +41,24 @@ Options:
       --profile <PROFILE>  Select a profile by label or UUID
   -h, --help               Print help
   -V, --version            Print version
+
+> amux pair --help
+Pair this device with another amux daemon
+
+Usage: amux pair [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  Host name, IP:port, or user@host to pair through SSH
+
+Options:
+      --qr                 Display a QR pairing code for this device
+      --qr-payload <LINK>  Pair using the deep link printed by `amux pair --qr --link`
+      --link               Also print the QR deep link for simulator pairing
+      --listen             Require LAN-direct responder mode; errors when the LAN listener is off
+      --demo               Hold a reusable fixed PIN open for unattended demos (returns immediately; the daemon keeps the session until it expires or `amux pair --cancel`)
+      --pin <DIGITS>       Six-digit PIN for `--demo`
+      --for <DURATION>     How long the `--demo` PIN stays valid, e.g. `30d`, `12h`, `45m`
+      --cancel             End any active pairing session on this daemon
+      --config <CONFIG>    Path to a profile config file (YAML). Also read from `AMUX_CONFIG`, so managed Claude hooks and daemons spawned by a wrapper find the same instance without adding a config flag to their command [env: AMUX_CONFIG=]
+      --profile <PROFILE>  Select a profile by label or UUID
+  -h, --help               Print help

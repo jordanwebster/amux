@@ -64,6 +64,27 @@ ViewState is renderer-local state (focus, scroll, drafts, navigation),
 FrameContext the frame's environment, and purity means: no inputs besides
 these three.
 
+### Cloud state and host routes
+
+`CloudState` is the reducer's single account-connectivity input. It is
+`SignedOut`, `Connecting`, `Connected { tier, carrier }`, `Retrying`, or
+`AuthRequired`; a connected state carries both the live `free` or `pro` tier
+and the relay carrier (`quic` or `tcp`). The runtime obtains it from the
+installation's profile-status stream. Renderers do not infer entitlement from
+failed calls, poll files, or query an account service separately.
+
+Each `HostEntry` independently carries its selected route as `Direct`, `Relay`,
+`Ssh`, or `Offline`, plus the peer's last stated `signed_in` fact. Direct and SSH
+are usable without an account. A relay route is usable for agent operations on
+a pro cloud link; on a free link it means the host is **away** and only presence
+is available. `Offline` means no route and no relay presence. A host that said
+it was signed out is never presented as a subscription problem.
+
+The Model owns these cross-client derivations. `host_via` exposes the route,
+`host_is_away` combines a relay route with a connected free tier, and
+`needs_account_prompt` returns `SignIn`, `Subscribe`, or nothing. Views format
+those results; they do not recreate the route, entitlement, or prompt rules.
+
 ## Edge vocabulary
 
 Only the edges are contracts; Model shape and reducer internals churn
@@ -153,6 +174,11 @@ fleet inventory (`AgentCard`), hosts and presence, session lifecycle,
 connection and auth state (including "authentication required" — login
 itself is CLI-owned via `amux init`; the UI layer only renders the
 state), pending operations, parent edges, and timestamped work status.
+
+A card's `last_activity` starts at the host's date in the inventory record and
+only moves forward: a later inventory update raises it, and so does a stream
+batch that arrives live. Batches replayed while a stream catches up never do,
+so opening an agent does not reorder a list sorted by recency.
 
 The Model derives families rather than storing another relationship view. A
 family is ranked by its highest effective attention and shown as one parent

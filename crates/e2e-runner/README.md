@@ -16,9 +16,11 @@ A config with `cloud_relay: true` supplies the identity fixture and relay TLS
 material. Start its relay with `amux server start --cloud --foreground` in a
 terminal. Its `accounts: [alice, bob]` list determines successive auto-approved
 device logins; once exhausted, the last account repeats (Alice by default).
-Both accounts have a name and email. Missing requested scopes, reused device
-codes or refresh tokens, and invalid access tokens are refused. An optional
-`cloud_account: alice` on a device logs it in through the CLI during setup.
+Both accounts have a name and email. Accounts default to pro; use
+`accounts: [{ name: alice, tier: free }]` to choose another starting tier.
+Missing requested scopes, reused device codes or refresh tokens, and invalid
+access tokens are refused. An optional `cloud_account: alice` on a device logs
+it in through the CLI during setup.
 
 Set `update_version: 999.0.0` on the relay config to serve a higher-version
 manifest at `/update/manifest.json` and the current executable at `/update/amux`.
@@ -35,11 +37,22 @@ template and invokes `scripts/worktree-profile.py` in a fresh temporary
 checkout directory. This tests the generated layout without creating a Git
 worktree or touching the developer's running daemon.
 
+Discovery is isolated by default: each daemon gets its own scripted source.
+Set `lan_discovery: true` on the daemons in a real multicast test to use the
+platform mDNS browser and advertiser. Set `multicast_blocked: true` to disable
+discovery for that daemon while leaving its LAN listener available to QR or
+typed-address pairing. Real-multicast tests print a skip reason on unsupported
+or multicast-disabled runners.
+
 Output lines compare exactly. Additional directives:
 
+- `@@tier <account> <free|pro>` changes the named fixture account's tier for
+  subsequently minted relay tokens.
 - `@@retry <timeout-ms> <interval-ms>` retries a one-shot command until the next
   exact output comparison succeeds.
 - `@@capture <name> <prefix>` captures the remainder of one output line.
+- `@@capture-contains <name> <prefix>` searches a completed command or live
+  terminal for a line with the prefix, then captures the remainder.
 - `@@contains <text>` asserts a stable fragment of a completed command whose
   output includes a generated identifier or asynchronous status.
 - `@@exit [code]` waits for the active PTY command to exit (zero by default),

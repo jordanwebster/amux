@@ -95,6 +95,16 @@ enum Commands {
         #[arg(long, default_value = "e2e-tests")]
         test_dir: PathBuf,
     },
+    /// Run the local cloud identity fixture used by the opt-in desktop capture.
+    #[command(hide = true)]
+    FreeTierFixture {
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        relay_port: u16,
+        #[arg(long)]
+        amux_binary: PathBuf,
+    },
 }
 
 fn find_test_files(test_dir: &Path, filter: &str) -> Vec<PathBuf> {
@@ -214,6 +224,7 @@ fn run_tests(
 
     let mut passed = 0;
     let mut failed = 0;
+    let mut skipped = 0;
 
     println!("Running {} test(s)...\n", test_files.len());
 
@@ -228,7 +239,10 @@ fn run_tests(
         match parser::parse_test_file(test_file) {
             Ok(test_case) => {
                 let result = executor.run_test(&test_case);
-                if result.passed {
+                if let Some(reason) = result.skipped {
+                    println!("skipped ({reason})");
+                    skipped += 1;
+                } else if result.passed {
                     println!("ok");
                     passed += 1;
                 } else {
@@ -248,7 +262,10 @@ fn run_tests(
     }
 
     println!();
-    println!("Results: {} passed, {} failed", passed, failed);
+    println!(
+        "Results: {} passed, {} skipped, {} failed",
+        passed, skipped, failed
+    );
 
     if failed > 0 {
         std::process::exit(1);
@@ -289,6 +306,18 @@ fn main() {
         }
         Commands::Update { filter, test_dir } => {
             update_tests(test_dir, filter);
+        }
+        Commands::FreeTierFixture {
+            state_dir,
+            relay_port,
+            amux_binary,
+        } => {
+            if let Err(error) =
+                executor::run_free_tier_fixture(&state_dir, relay_port, &amux_binary)
+            {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
         }
     }
 }

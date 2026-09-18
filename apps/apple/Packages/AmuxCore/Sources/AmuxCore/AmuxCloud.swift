@@ -124,6 +124,19 @@ public actor AmuxCloudService: CloudService {
         sessions[account]?.refresh
     }
 
+    /// Writes this phone's session for an account down, because the account
+    /// is being kept.
+    ///
+    /// Signing in leaves the session in memory only: what comes back from
+    /// amux.sh is not always the account that was asked for, and a refresh
+    /// token written for an account the person then turns down is one nobody
+    /// can see or sign out of. An account with no session here has nothing to
+    /// keep, which is not a failure.
+    public func keepSession(_ account: AccountId) throws(CloudError) {
+        guard let refresh = sessions[account]?.refresh else { return }
+        try save(refresh, for: account)
+    }
+
     public func forgetSession(_ account: AccountId) throws {
         sessions.removeValue(forKey: account)
         try savedSessions?.write(nil, for: account)
@@ -137,11 +150,13 @@ public actor AmuxCloudService: CloudService {
 
     // MARK: - Signing in
 
-    public func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
+    public func signIn(
+        _ intent: SignInIntent, presenting: any WebAuthPresenter
+    ) async throws(CloudError) -> SignedInAccount {
         let verifier = Self.randomToken()
         let state = Self.randomToken()
         let returned = try await presenting.present(
-            authorizeURL(verifier: verifier, state: state),
+            authorizeURL(verifier: verifier, state: state, intent: intent),
             callbackScheme: endpoint.callback.scheme ?? "amux")
         let code = try Self.code(from: returned, expecting: state)
         let issued = try await exchange([
@@ -153,7 +168,9 @@ public actor AmuxCloudService: CloudService {
         ])
         let who = try await who(with: issued.access_token)
         let id = AccountId(who.sub)
-        try save(issued.refresh_token, for: id)
+        // In memory and nowhere else. Whoever signed in is not always the
+        // account that was asked for, and the token is written down only when
+        // somebody keeps the account it belongs to.
         sessions[id] = Session(
             access: issued.access_token, refresh: issued.refresh_token,
             expiresAt: now().addingTimeInterval(TimeInterval(issued.expires_in ?? 3600)))
@@ -166,7 +183,14 @@ public actor AmuxCloudService: CloudService {
     /// the state is a second secret that is only ever compared with what comes
     /// back. Together they are what stops another app on this phone claiming
     /// the callback and redeeming somebody else's code.
-    private func authorizeURL(verifier: String, state: String) -> URL {
+    ///
+    /// The intent picks what amux.sh shows. Both ask for its account chooser,
+    /// which lists the accounts this browser has used and offers another:
+    /// without it amux.sh carries on as whoever the browser is signed in as,
+    /// whichever account was meant. Signing back into one account also names
+    /// it by its address, so the form amux.sh shows for it has the address
+    /// filled in. A server that knows neither parameter ignores both.
+    func authorizeURL(verifier: String, state: String, intent: SignInIntent) -> URL {
         var components = URLComponents(url: endpoint.authorize, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: endpoint.clientID),
@@ -177,6 +201,15 @@ public actor AmuxCloudService: CloudService {
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
         ]
+        components.queryItems?.append(URLQueryItem(name: "prompt", value: "select_account"))
+        if case .returning(let account) = intent {
+            components.queryItems?.append(URLQueryItem(name: "login_hint", value: account.email))
+        }
+        // A plus is legal in an address and left alone by URLComponents, but a
+        // server reading the query as a form turns it into a space, which
+        // would ask for somebody else's address.
+        components.percentEncodedQuery = components.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
         return components.url!
     }
 
@@ -240,7 +273,7 @@ public actor AmuxCloudService: CloudService {
         let issued: Connected = try await ask(request, as: Connected.self, for: id)
         return ConnectToken(
             bearer: issued.token, host: issued.host, port: issued.port,
-            expiresAt: issued.expires_at)
+            expiresAt: issued.expires_at, tier: issued.tier)
     }
 
     /// Hands a signed App Store transaction to the account service.
@@ -544,6 +577,9 @@ private struct Connected: Decodable {
     let port: Int
     let token: String
     let expires_at: Date?
+    /// What this account buys, as the connect reply says it. Older services
+    /// leave it out; the core then treats the account as free.
+    let tier: Tier?
 }
 
 /// What a purchase is posted as. One field: the App Store's signed

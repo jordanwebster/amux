@@ -2,7 +2,7 @@
 //! yields byte-identical Model JSON, and both equal the live Model.
 
 use chrono::{TimeZone, Utc};
-use model::{Agent, Capabilities, HostEntry, HostTrustStatus};
+use model::{Agent, Capabilities, HostEntry, HostTrustStatus, HostVia};
 use ui_runtime::report::{
     ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
 };
@@ -26,6 +26,8 @@ fn sequence() -> Vec<Msg> {
                 capabilities: Some(Capabilities::default()),
                 trust_status: HostTrustStatus::Trusted,
                 last_dial_error: None,
+                via: HostVia::Direct,
+                signed_in: None,
                 platform: None,
             },
         }),
@@ -42,6 +44,7 @@ fn sequence() -> Vec<Msg> {
                 readonly: false,
                 args: Vec::new(),
                 created_at: Utc.timestamp_opt(0, 0).unwrap(),
+                last_activity: Utc.timestamp_opt(0, 0).unwrap(),
                 parent: None,
                 working_on: None,
                 summary: None,

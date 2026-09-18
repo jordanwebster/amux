@@ -10,10 +10,10 @@ use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use model::{
     Agent, AgentEvent, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
-    DebugFormat, DiffBase, DiffResponse, HostEntry, HostEvent, HostTrustStatus, PeerIdentifier,
-    ProfileId, ProtocolError, SendInputRequest, SendMessageRequest, SessionCloseReason,
-    SetAgentStatusRequest, ShutdownReason, SshPairingPeer, SubscribeSessionEvent,
-    SubscribeSessionRequest,
+    DebugFormat, DiffBase, DiffResponse, HostEntry, HostEvent, HostId, HostTrustStatus, HostVia,
+    PeerIdentifier, ProfileId, ProtocolError, SendInputRequest, SendMessageRequest,
+    SessionCloseReason, SetAgentStatusRequest, ShutdownReason, SshPairingPeer,
+    SubscribeSessionEvent, SubscribeSessionRequest,
 };
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
@@ -59,8 +59,9 @@ pub mod installation_rpc {
     pub use wire::{
         BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
         InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
-        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RenameProfileRequest,
-        ResumeAllRequest, SuspendAllRequest, SuspendReason,
+        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RelayCarrier,
+        RenameProfileRequest, ResumeAllRequest, SuspendAllRequest, SuspendReason, Tier,
+        WatchProfilesRequest, WatchProfilesResponse, watch_profiles_response,
     };
 }
 
@@ -115,8 +116,8 @@ pub struct AgentEventStream {
 pub struct PairingStart {
     pub identity: SshPairingPeer,
     pub ttl_seconds: u64,
-    pub tcp_port: Option<u16>,
-    pub cloud_url: String,
+    pub addrs: Vec<SocketAddr>,
+    pub cloud_url: Option<String>,
     pub secret: PairingSecret,
 }
 
@@ -129,10 +130,11 @@ pub enum PairingSecret {
 /// Authenticated display identity awaiting an explicit trust decision.
 /// Dropping this value never grants trust; the host expires the attempt.
 pub struct PendingPeer {
-    pub host_id: model::HostId,
+    pub host_id: HostId,
     pub name: String,
     pub fingerprint: String,
     pub expires_at: DateTime<Utc>,
+    pub via: PeerVia,
     #[doc(hidden)]
     pub token: Vec<u8>,
 }
@@ -144,19 +146,30 @@ impl std::fmt::Debug for PendingPeer {
             .field("name", &self.name)
             .field("fingerprint", &self.fingerprint)
             .field("expires_at", &self.expires_at)
+            .field("via", &self.via)
             .finish_non_exhaustive()
     }
 }
 
 #[derive(Debug, Error)]
 pub enum PairingError {
-    #[error("InvalidPin")]
+    /// Every secret failure is this one opaque code, spelled as the protocol
+    /// spells it on the wire so a reader meets one word, not two.
+    #[error("INVALID_PIN")]
     InvalidPin,
+    #[error("pairing target was not found")]
+    NotFound,
+    #[error("a subscription is required for relay pairing")]
+    PaymentRequired,
+    #[error("SELF_PAIRING")]
+    SelfPairing,
     #[error("Expired")]
     Expired,
     #[error("Abandoned")]
     Abandoned,
-    /// The attempt never reached a verdict: the relay or host was unreachable.
+    /// The attempt never reached a verdict: the relay or host was unreachable,
+    /// or the daemon failed internally. The message is the host's own words, so
+    /// a client can show it without translating a code.
     #[error("{0}")]
     Transport(String),
 }
@@ -169,18 +182,46 @@ impl From<ClientError> for PairingError {
 
 #[doc(hidden)]
 pub fn status_to_pairing_error(error: tonic::Status) -> PairingError {
+    if protocol_error_from_status_details(&error) == Some(ProtocolError::PaymentRequired) {
+        return PairingError::PaymentRequired;
+    }
     match error.code() {
+        tonic::Code::NotFound => PairingError::NotFound,
         tonic::Code::Unavailable | tonic::Code::Internal => {
-            PairingError::Transport(error.to_string())
+            PairingError::Transport(error.message().to_string())
         }
+        tonic::Code::FailedPrecondition if error.message().contains("SUBSCRIPTION") => {
+            PairingError::PaymentRequired
+        }
+        tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => {
+            PairingError::SelfPairing
+        }
+        tonic::Code::DeadlineExceeded => PairingError::Expired,
         _ => PairingError::InvalidPin,
     }
+}
+
+/// How a pairing attempt reached, or would reach, the other device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerVia {
+    Direct,
+    Relay,
+    Ssh,
+}
+
+/// A host discovery found that this profile could pair with, and the route
+/// that would carry the attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingCandidate {
+    pub host: HostEntry,
+    pub via: PeerVia,
+    pub addrs: Vec<SocketAddr>,
 }
 
 /// This device's public identity, read without entering pairing mode.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceIdentity {
-    pub host_id: model::HostId,
+    pub host_id: HostId,
     pub name: String,
     /// SHA256 of the device public key, encoded as lowercase hexadecimal.
     pub fingerprint: String,
@@ -200,7 +241,7 @@ pub struct PeerEntry {
 pub enum PeerReachability {
     Cloud,
     Ssh { target: String, profile: ProfileId },
-    DirectTcp { addr: SocketAddr },
+    Direct { addrs: Vec<SocketAddr> },
 }
 
 struct ClientServiceResponseStream<T> {
@@ -1151,14 +1192,17 @@ fn peer_reachability_from_wire(
                 target: target.target,
             })
         }
-        wire::peer_reachability::Kind::DirectTcpAddr(addr) => {
-            let addr = addr
-                .parse::<SocketAddr>()
+        wire::peer_reachability::Kind::Direct(direct) => {
+            let addrs = direct
+                .addrs
+                .into_iter()
+                .map(|addr| addr.parse::<SocketAddr>())
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| ClientError::Decode {
                     method,
-                    message: format!("PeerReachability.direct_tcp_addr is invalid: {error}"),
+                    message: format!("PeerReachability.direct.addrs is invalid: {error}"),
                 })?;
-            Ok(PeerReachability::DirectTcp { addr })
+            Ok(PeerReachability::Direct { addrs })
         }
     }
 }
@@ -1266,6 +1310,21 @@ pub fn host_entry_from_wire(
             method,
             message: error.to_string(),
         })?;
+    let via = match wire::HostVia::try_from(host.via).map_err(|_| ClientError::Decode {
+        method,
+        message: format!("invalid HostEntry.via {}", host.via),
+    })? {
+        wire::HostVia::Direct => HostVia::Direct,
+        wire::HostVia::Relay => HostVia::Relay,
+        wire::HostVia::Ssh => HostVia::Ssh,
+        wire::HostVia::Offline => HostVia::Offline,
+        wire::HostVia::Unspecified => {
+            return Err(ClientError::Decode {
+                method,
+                message: "HostEntry.via is unspecified".to_string(),
+            });
+        }
+    };
     Ok(HostEntry {
         id,
         name: host.name,
@@ -1274,6 +1333,8 @@ pub fn host_entry_from_wire(
         capabilities,
         trust_status,
         last_dial_error: host.last_dial_error,
+        via,
+        signed_in: host.signed_in,
         platform: host.platform,
     })
 }
@@ -1458,14 +1519,16 @@ pub fn pairing_start_from_wire(
     Ok(PairingStart {
         identity: pairing_identity_to_peer(method, identity)?,
         ttl_seconds: response.ttl_seconds,
-        tcp_port: response
-            .tcp_port
-            .map(u16::try_from)
-            .transpose()
-            .map_err(|_| ClientError::Decode {
-                method,
-                message: "StartPairingResponse.tcp_port exceeds u16".to_string(),
-            })?,
+        addrs: response
+            .addrs
+            .into_iter()
+            .map(|addr| {
+                addr.parse().map_err(|error| ClientError::Decode {
+                    method,
+                    message: format!("invalid StartPairingResponse.addrs entry: {error}"),
+                })
+            })
+            .collect::<Result<_, _>>()?,
         cloud_url: response.cloud_url,
         secret,
     })
@@ -1837,8 +1900,8 @@ mod tests {
                     name: "laptop".to_string(),
                 }),
                 ttl_seconds: 300,
-                tcp_port: Some(4242),
-                cloud_url: "https://cloud.example".to_string(),
+                addrs: vec!["192.0.2.4:4242".to_string()],
+                cloud_url: Some("https://cloud.example".to_string()),
                 secret: Some(wire::start_pairing_response::Secret::Pin(
                     "123456".to_string(),
                 )),
@@ -1850,13 +1913,13 @@ mod tests {
         assert_eq!(start.identity.pubkey, vec![7; 32]);
         assert_eq!(start.identity.name, "laptop");
         assert_eq!(start.ttl_seconds, 300);
-        assert_eq!(start.tcp_port, Some(4242));
-        assert_eq!(start.cloud_url, "https://cloud.example");
+        assert_eq!(start.addrs, vec!["192.0.2.4:4242".parse().unwrap()]);
+        assert_eq!(start.cloud_url.as_deref(), Some("https://cloud.example"));
         assert_eq!(start.secret, PairingSecret::Pin("123456".to_string()));
     }
 
     #[test]
-    fn pairing_start_response_rejects_invalid_tcp_port() {
+    fn pairing_start_response_rejects_invalid_address() {
         let error = pairing_start_from_wire(
             method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
@@ -1867,13 +1930,13 @@ mod tests {
                     name: "laptop".to_string(),
                 }),
                 ttl_seconds: 300,
-                tcp_port: Some(u32::from(u16::MAX) + 1),
-                cloud_url: "https://cloud.example".to_string(),
+                addrs: vec!["not-an-address".to_string()],
+                cloud_url: Some("https://cloud.example".to_string()),
                 secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
             },
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("tcp_port"));
+        assert!(error.to_string().contains("addrs"));
     }
 }

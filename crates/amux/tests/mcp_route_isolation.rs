@@ -79,7 +79,8 @@ impl Route {
             state_path: config.state_path.clone(),
             data_dir: config.data_dir.clone(),
             cloud_url: config.cloud_url.clone(),
-            tcp_port: None,
+            cloud_refresh_secs: None,
+            lan: Default::default(),
         };
         std::fs::write(&config_path, serde_yaml::to_string(&profile).unwrap()).unwrap();
 

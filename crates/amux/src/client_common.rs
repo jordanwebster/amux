@@ -292,11 +292,6 @@ fn format_startup_diagnostics(contents: &str) -> Option<String> {
 /// The marker is ignored (and deleted) if its current_version doesn't match our binary.
 pub(super) fn print_update_banner(state_path: &Path) {
     let reporter = crate::update::MarkerFileReporter::from_state_path(state_path);
-    if reporter.subscription_required() {
-        println!(
-            "Cloud subscription required — manage at amux.sh/account; local agents remain available."
-        );
-    }
     let current = env!("CARGO_PKG_VERSION");
     if let Some(minimum_version) = reporter.read_active_update_required(current) {
         println!(
@@ -328,8 +323,8 @@ mod tests {
     #[test]
     fn server_not_running_message_can_include_retry_command() {
         assert_eq!(
-            server_not_running_message(Some("amux pair --connect")),
-            "amux server is not running.\n\nStart it with:\n  amux server start\n\nThen run:\n  amux pair --connect"
+            server_not_running_message(Some("amux pair <target>")),
+            "amux server is not running.\n\nStart it with:\n  amux server start\n\nThen run:\n  amux pair <target>"
         );
         assert_eq!(
             server_not_running_message(None),

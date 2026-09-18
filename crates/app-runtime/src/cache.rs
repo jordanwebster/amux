@@ -2,16 +2,17 @@
 //! account's machines and agents, projected the way the running library
 //! projects it.
 //!
-//! Nothing here writes. The account's runtime keeps its store current from
+//! The account's runtime keeps its store current from
 //! the fleet stream; a launch reads the same rows back before it has a
 //! runtime at all, so the screen a launch draws and the screen a connection
 //! replaces it with come from one source through one projection.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::{fs, io};
 
-use model::{DisconnectReason, HostId, RelayConnection};
+use model::{DisconnectReason, HostId, ProfileId, RelayConnection};
 use store::{Fleet, Store, StoreError};
 use ui_state::{Effect, Model, Msg, ProfileGeneration, StoreMsg, StoreOp, update};
 
@@ -41,15 +42,88 @@ pub fn file_name(account: &str) -> String {
     name
 }
 
-/// Where one account's store lives under an application's cache directory.
-///
-/// The remembered fleet is an account's, not the phone's: its rows are that
-/// account's machines and that account's agents, and a phone signed in to two
-/// accounts must never draw one of them under the other's name. Each account
-/// therefore keeps a store of its own, named so a launch can find it from the
-/// account alone.
+/// Where one profile keeps its SQLite database. The private directory also
+/// contains its WAL, locks and corruption quarantine, so removing a profile
+/// removes all of its cached data without touching another profile.
 pub fn store_path(cache_dir: &Path, account: &str) -> PathBuf {
-    cache_dir.join("store").join(file_name(account))
+    cache_dir
+        .join("store")
+        .join(file_name(account))
+        .join("store.sqlite")
+}
+
+/// Where the account-to-profile directory is kept, beside the fleets it
+/// explains.
+fn directory_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("fleet").join("profiles.json")
+}
+
+/// The key an account is recorded under. A device with nobody signed in still
+/// has a profile and still remembers a fleet, so the empty key names it.
+fn directory_key(account: Option<&str>) -> String {
+    account.unwrap_or_default().to_owned()
+}
+
+/// Record which profile each account is on, and which one this device uses
+/// with nobody signed in.
+///
+/// A launch has rows to draw before it has started anything, and a profile
+/// identifier is made by the installation rather than chosen by the
+/// application, so an application cannot name the file its own fleet is in.
+/// This is how it finds out: written by the process that opened the profiles,
+/// read by the next launch before one exists.
+pub fn remember_profiles(
+    cache_dir: &Path,
+    profiles: &BTreeMap<String, ProfileId>,
+) -> io::Result<()> {
+    let path = directory_path(cache_dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_vec(profiles)?)
+}
+
+/// Where one profile's downloaded artifacts are cached.
+pub fn artifacts_dir(cache_dir: &Path, profile: ProfileId) -> PathBuf {
+    cache_dir.join("artifacts").join(profile.to_string())
+}
+
+/// Delete everything this device cached for one profile: the fleet it
+/// remembered, the artifacts it downloaded, and every entry in the directory
+/// that pointed an account at it. Anything already gone is not an error.
+pub fn forget_profile(cache_dir: &Path, profile: ProfileId) -> io::Result<()> {
+    fn gone(result: io::Result<()>) -> io::Result<()> {
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+    let store = store_path(cache_dir, &profile.to_string());
+    gone(fs::remove_dir_all(
+        store.parent().expect("profile store directory"),
+    ))?;
+    gone(fs::remove_dir_all(artifacts_dir(cache_dir, profile)))?;
+    let path = directory_path(cache_dir);
+    let Ok(bytes) = fs::read(&path) else {
+        return Ok(());
+    };
+    let Ok(mut profiles) = serde_json::from_slice::<BTreeMap<String, ProfileId>>(&bytes) else {
+        return Ok(());
+    };
+    let before = profiles.len();
+    profiles.retain(|_, remembered| *remembered != profile);
+    if profiles.len() == before {
+        return Ok(());
+    }
+    fs::write(&path, serde_json::to_vec(&profiles)?)
+}
+
+/// Which profile an account's remembered fleet is under, as the last run left
+/// it. `None` asks for the profile this device uses signed out.
+pub fn remembered_profile(cache_dir: &Path, account: Option<&str>) -> Option<ProfileId> {
+    let bytes = fs::read(directory_path(cache_dir)).ok()?;
+    let profiles: BTreeMap<String, ProfileId> = serde_json::from_slice(&bytes).ok()?;
+    profiles.get(&directory_key(account)).copied()
 }
 
 /// The fleet the store remembers, as the Fleet event a running library
@@ -68,6 +142,20 @@ pub async fn cached_fleet(store: &Store) -> Result<Event, StoreError> {
         Err(error) => return Err(error),
     };
     Ok(remembered(fleet, generations, local))
+}
+
+/// Resolve the profile this account last used before reading its SQLite fleet.
+/// An account never opened on this device has no remembered rows.
+pub async fn read_account_cached_fleet(cache_dir: &Path, account: &str) -> Result<Event, String> {
+    if cache_dir.is_file() {
+        return read_cached_fleet(cache_dir, account).await;
+    }
+    let Some(profile) =
+        remembered_profile(cache_dir, Some(account).filter(|value| !value.is_empty()))
+    else {
+        return Ok(empty_fleet());
+    };
+    read_cached_fleet(cache_dir, &profile.to_string()).await
 }
 
 /// Opens an account's store, reads its remembered fleet and closes it again.
@@ -245,6 +333,8 @@ mod tests {
 
     fn host(id: u128, trust: model::HostTrustStatus) -> model::HostEntry {
         model::HostEntry {
+            signed_in: Some(true),
+            via: model::HostVia::Direct,
             id: Uuid::from_u128(id),
             name: format!("host-{id}"),
             online: true,
@@ -258,6 +348,7 @@ mod tests {
 
     fn agent(id: u128, host: u128, revision: u64) -> model::Agent {
         model::Agent {
+            last_activity: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             id: Uuid::from_u128(id),
             host_id: Uuid::from_u128(host),
             name: Some(format!("agent-{id}")),

@@ -54,7 +54,8 @@ impl Fixture {
                 data_dir: paths.data_dir,
                 state_path: paths.state_path,
                 cloud_url: "https://amux.sh".into(),
-                tcp_port: None,
+                cloud_refresh_secs: None,
+                lan: Default::default(),
             },
         );
         Self {
@@ -69,6 +70,8 @@ impl Fixture {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_amux"));
         cmd.env("AMUX_CONFIG", &self.profile)
             .env("AMUX_LOG", self.installation.root.join("daemon.log"))
+            // Ambient discovery can bypass the SSH transport these fixtures exercise.
+            .env("AMUX_TEST_DISCOVERY_MODE", "disabled")
             .args(args);
         cmd
     }
@@ -94,6 +97,23 @@ impl Drop for Fixture {
 
 fn write(path: &Path, value: &impl serde::Serialize) {
     std::fs::write(path, serde_yaml::to_string(value).unwrap()).unwrap();
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn direct_profile_store_uses_split_config_without_starting_a_daemon() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command(&["store", "resolve", "--yes"])
+        .env("AMUX_TUI_DIRECT_PROFILE", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No unresolved store quarantine"));
+    let profile = ProfileConfig::from_file(&fixture.profile).unwrap();
+    assert!(profile.data_dir.join("store.sqlite").is_file());
+    assert!(!profile.socket_path.exists());
+    assert!(!fixture.installation.front_door_socket.exists());
 }
 
 #[test]
@@ -400,6 +420,7 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: node::Tier::Pro,
         }],
         None,
     )
@@ -414,9 +435,13 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
     let key = std::fs::read(&key_path).unwrap();
     let login = fixture.run(&["login"]);
     let text = String::from_utf8_lossy(&login.stdout);
-    assert!(text.contains("Alice Example") && text.contains("alice@example.test"));
+    assert!(text.contains("Signed in as alice@example.test."));
+    assert!(text.contains("a subscription carries agents through it"));
+    let profiles = fixture.run(&["profiles"]);
+    let profiles = String::from_utf8_lossy(&profiles.stdout);
+    assert!(profiles.contains("Alice Example") && profiles.contains("alice@example.test"));
     assert!(
-        text.contains(&fixture.id.to_string()),
+        profiles.contains(&fixture.id.to_string()),
         "sole pristine profile is adopted"
     );
     let credential = fixture.profile.with_file_name("credentials.yaml");
@@ -432,7 +457,9 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
         "--name",
         "Personal",
     ]);
-    assert!(String::from_utf8_lossy(&login.stdout).contains("Personal"));
+    assert!(String::from_utf8_lossy(&login.stdout).contains("Signed in as alice@example.test."));
+    let profiles = fixture.run(&["profiles"]);
+    assert!(String::from_utf8_lossy(&profiles.stdout).contains("Personal"));
     assert_eq!(std::fs::read(&key_path).unwrap(), key);
     fixture.run(&["list"]);
 }
@@ -446,6 +473,7 @@ async fn profile_selector_cli_non_pristine_login_requires_confirmation() {
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: node::Tier::Pro,
         }],
         None,
     )
@@ -518,6 +546,14 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(text.contains("Created unbound profile"));
     assert!(!text.contains("Waiting for authentication"));
+    assert!(!text.contains("What should this host be called?"));
+    let installation_path = root.join("c/amux/config.yaml");
+    assert_eq!(
+        InstallationConfig::from_file(&installation_path)
+            .unwrap()
+            .host_name,
+        settings::suggested_host_name()
+    );
     let run = |args: &[&str]| {
         let output = command(args).output().unwrap();
         println!(
@@ -530,6 +566,17 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
         String::from_utf8(output.stdout).unwrap()
     };
     run(&["list"]);
+    let renamed = run(&["init", "--name", "Scripted Mac"]);
+    assert!(renamed.contains(
+        "Restart the server to advertise the new host name, then run `amux pair` to pair a phone."
+    ));
+    assert!(!renamed.contains("Pairing code:"), "{renamed}");
+    assert_eq!(
+        InstallationConfig::from_file(&installation_path)
+            .unwrap()
+            .host_name,
+        "Scripted Mac"
+    );
     let second = run(&["profile", "create", "Work"]);
     let id = second.split_whitespace().next().unwrap();
     run(&["list", "--profile", "Work"]);
@@ -557,7 +604,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let mut config = node::load_profile_config(&remote.profile).unwrap().profile;
-    config.tcp_port = Some(address.port());
+    config.lan.port = address.port();
     write(&remote.profile, &config);
     drop(listener);
     local.run(&["server", "start"]);
@@ -581,13 +628,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     assert!(personal.pairing_is_active().await.unwrap());
 
     let mut pair = local
-        .command(&[
-            "pair",
-            "--profile",
-            "work",
-            "--connect",
-            &address.to_string(),
-        ])
+        .command(&["pair", "--profile", "work", &address.to_string()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -596,12 +637,12 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     pair.stdin.take().unwrap().write_all(b"654321\n").unwrap();
     let output = pair.wait_with_output().unwrap();
     println!(
-        "$ amux pair --profile work --connect {address}\n{}{}",
+        "$ amux pair --profile work {address}\n{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.status.success(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stdout).contains("via direct TCP"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("on this network"));
     assert!(personal.list_peers().await.unwrap().is_empty());
     assert!(
         personal.pairing_is_active().await.unwrap(),
@@ -610,10 +651,13 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     let peers = local.run(&["peer", "list", "--profile", "work"]);
     assert!(String::from_utf8_lossy(&peers.stdout).contains("cli-installation"));
     let info = local.run(&["peer", "info", "cli-installation", "--profile", "work"]);
-    assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct-tcp:{address}")));
+    assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct:{address}")));
     local.run(&["unpair", "cli-installation", "--profile", "work", "--force"]);
     let peers = local.run(&["peer", "list", "--profile", "work"]);
-    assert!(String::from_utf8_lossy(&peers.stdout).contains("No trusted peers"));
+    assert_eq!(
+        String::from_utf8_lossy(&peers.stdout),
+        "HOST  ID  VIA  PAIRED\n"
+    );
     local.run(&["pair", "--profile", "personal", "--cancel"]);
     assert!(!personal.pairing_is_active().await.unwrap());
 }
@@ -781,7 +825,7 @@ async fn ssh_renamed_profile() {
 import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
-assert args[:6] == ["-T", "-o", "BatchMode=yes", "--", "remote.example", "amux"], args
+assert args[:6] == ["-T", "-o", "BatchMode=yes", "--", "user@remote.example", "amux"], args
 assert args[6:] == ["pair-recv"] or (len(args) == 9 and args[6:8] == ["relay", "--profile"]), args
 fd = os.open({calls}, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 os.write(fd, (json.dumps(args) + "\n").encode())
@@ -815,7 +859,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
         output
     };
     run_local_ssh(&["server", "start"]);
-    run_local_ssh(&["pair", "--via-ssh", "remote.example"]);
+    run_local_ssh(&["pair", "user@remote.example"]);
 
     let local_front = FrontDoorClient::connect_socket(&local.installation.front_door_socket)
         .await
@@ -829,7 +873,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
     assert_eq!(
         peers[0].reachabilities,
         vec![PeerReachability::Ssh {
-            target: "remote.example".into(),
+            target: "user@remote.example".into(),
             profile: work_id,
         }]
     );
@@ -956,7 +1000,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
                 "-o",
                 "BatchMode=yes",
                 "--",
-                "remote.example",
+                "user@remote.example",
                 "amux",
                 "relay",
                 "--profile",

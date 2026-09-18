@@ -75,6 +75,11 @@ public final class AccountRegistry {
     public private(set) var stores: StoreBundle?
     /// Late results refused because they answered for a deselected account.
     public private(set) var dropped = 0
+    /// Accounts removed from this phone whose local data the runtime is still
+    /// to delete. Remembered between launches, because the deleting happens
+    /// when a runtime starts and the app may not live to start one. An account
+    /// added back is taken off it.
+    public private(set) var forgotten: [AccountId] = []
     /// What to tell whoever holds the runtime when the account on screen
     /// changes.
     ///
@@ -94,6 +99,7 @@ public final class AccountRegistry {
     private struct Remembered: Codable {
         var accounts: [AccountEntry]
         var selected: AccountId?
+        var forgotten: [AccountId]?
     }
 
     public init(file: URL? = nil) {
@@ -101,6 +107,7 @@ public final class AccountRegistry {
         guard let file, let data = try? Data(contentsOf: file),
               let saved = try? AmuxJSON.decoder.decode(Remembered.self, from: data) else { return }
         accounts = saved.accounts
+        forgotten = saved.forgotten ?? []
         selected = saved.selected.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
         if let selected, accounts.contains(where: { $0.id == selected && $0.signedIn }) {
             stores = StoreBundle(account: selected)
@@ -112,7 +119,8 @@ public final class AccountRegistry {
         do {
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try AmuxJSON.encoder.encode(Remembered(accounts: accounts, selected: selected))
+            try AmuxJSON.encoder.encode(
+                Remembered(accounts: accounts, selected: selected, forgotten: forgotten))
                 .write(to: file, options: .atomic)
             persistenceFailed = false
         } catch {
@@ -133,11 +141,32 @@ public final class AccountRegistry {
     /// for a reason worth saying.
     public var gate: FleetGate {
         guard let entry = selectedAccount, entry.signedIn else { return .signedOut }
-        if case .active = entry.entitlement { return .ready }
-        return .unsubscribed
+        switch cloud.tier {
+        // What the relay will actually do for this account, as the link
+        // itself reports it. The account service's own answer is kept for the
+        // screens that name where a subscription was bought; what can be
+        // reached is decided here, by the link.
+        case .pro: return .ready
+        case .free: return .unsubscribed
+        // The link has not said yet — nothing is connected, or nobody has
+        // been asked for a token. Until it does, the answer the account
+        // service gave when this account signed in is the best one there is.
+        case nil:
+            if case .active = entry.entitlement { return .ready }
+            return .unsubscribed
+        }
     }
 
+    /// This device's standing with the relay, as the bridge last reported it.
+    ///
+    /// Read from the link rather than asked of the account service a second
+    /// time: a purchase that has gone through reaches this the moment the link
+    /// re-authenticates, and a screen deciding what to offer from a separate
+    /// question could offer something the link cannot do.
+    public private(set) var cloud: CloudState = .signedOut
+
     public func add(_ account: SignedInAccount, entitlement: Entitlement = .none) {
+        forgotten.removeAll { $0 == account.id }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index].account = account
             accounts[index].signedIn = true
@@ -165,14 +194,33 @@ public final class AccountRegistry {
         changed?()
     }
 
+    /// Takes an account off this phone: off the list, and onto the accounts
+    /// whose profile and caches the runtime deletes when it next starts.
+    ///
+    /// The account on screen is replaced by one still signed in where there is
+    /// one, because that is the phone still working; otherwise by whatever is
+    /// left, which with nothing signed in is a signed-out phone.
     public func forget(_ id: AccountId) {
+        let known = accounts.contains { $0.id == id }
         accounts.removeAll { $0.id == id }
+        if known, !forgotten.contains(id) { forgotten.append(id) }
         if selected == id {
-            selected = accounts.first?.id
+            selected = accounts.first(where: \.signedIn)?.id ?? accounts.first?.id
             stores = selectedAccount?.signedIn == true ? selected.map { StoreBundle(account: $0) } : nil
         }
         persist()
         changed?()
+    }
+
+    /// A runtime has reported these accounts gone from the device — profile
+    /// and caches deleted — so they need not be named again. Only what a
+    /// runtime says is gone belongs here: an account it could not finish with
+    /// stays listed, and the next start is asked for it again. Nothing about
+    /// which accounts are on this phone changed, so nobody is told.
+    public func forgottenDeleted(_ ids: [AccountId]) {
+        let before = forgotten
+        forgotten.removeAll { ids.contains($0) }
+        if forgotten != before { persist() }
     }
 
     /// Puts a whole set of accounts back, as a launch that remembered them or
@@ -195,6 +243,9 @@ public final class AccountRegistry {
         guard accounts.contains(where: { $0.id == id }) else { return }
         guard selected != id else { return }
         selected = id
+        // Nothing the previous account's link said is true of this one, and
+        // its own runtime has not started yet.
+        cloud = .signedOut
         stores = selectedAccount?.signedIn == true ? StoreBundle(account: id) : nil
         persist()
         switching?(id)
@@ -235,6 +286,7 @@ public final class AccountRegistry {
             return false
         }
         stores.apply(batch)
+        cloud = stores.hosts.cloud
         // How many machines this account reaches, from the connection that
         // just answered. The switcher reads it, and it is a fact rather than
         // a guess exactly because it came from here.

@@ -25,6 +25,45 @@ final class FleetStoreTests: XCTestCase {
     /// still say it was reconciled, because it was — before it was put down.
     /// Only a count can say a fleet arrived since, so only a count can be
     /// timed.
+    /// A launch with no network starts a runtime that reaches nothing, and the
+    /// first thing such a runtime says is that it knows the machines and no
+    /// agents. Believing it would empty the list the cache had just filled,
+    /// which is every launch away from home.
+    func testARuntimeThatHasReachedNothingKeepsTheRowsTheCacheDrew() {
+        let store = FleetStore(now: now)
+        let remembered = [
+            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now,
+                      awaiting: true),
+            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now,
+                      awaiting: true),
+        ]
+        store.apply(Made.fleet(remembered, reconciled: false))
+
+        store.apply(Made.fleet([], hosts: [Made.hostEntry(Made.host, name: "studio",
+                                                          online: false)],
+                               reconciled: false))
+
+        XCTAssertEqual(store.rows.map(\.name), ["alpha", "beta"],
+                       "a runtime that has reached nothing threw away what the phone remembers")
+        XCTAssertEqual(store.rows.map(\.confirmed), [false, false])
+        // The machines it does know are taken, so the home can say what is
+        // wrong rather than pretending everything is reachable.
+        XCTAssertEqual(store.exceptions, "studio offline")
+    }
+
+    /// The far side really can have nothing on it, and a machine that has
+    /// answered is entitled to say so.
+    func testAConfirmedEmptyFleetEmptiesTheList() {
+        let store = FleetStore(now: now)
+        store.apply(Made.fleet(
+            [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)],
+            reconciled: false))
+
+        store.apply(Made.fleet([], reconciled: true))
+
+        XCTAssertEqual(store.rows, [])
+    }
+
     func testEachConfirmedFleetMovesTheCountThatTheFlagCannot() {
         let store = FleetStore(now: now)
         let cards = [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)]
@@ -82,15 +121,15 @@ final class FleetStoreTests: XCTestCase {
         ], reconciled: true))
 
         XCTAssertEqual(store.rows.map(\.id), placedFirst)
-        XCTAssertEqual(store.sections.map(\.kind), [.everythingElse])
+        XCTAssertEqual(store.sections.map(\.kind), [.agents])
         XCTAssertTrue(store.reconciled)
         XCTAssertEqual(store.rows.map(\.confirmed), [true, true, true])
 
         // Regrouping is something the screen asks for, not something a sync
         // does to it.
         store.refreshOrder(now: now)
-        XCTAssertEqual(store.sections.map(\.kind), [.needsYou, .everythingElse])
-        XCTAssertEqual(store.sections[0].rows.map(\.name), ["gamma"])
+        XCTAssertEqual(store.sections.map(\.kind), [.agents])
+        XCTAssertEqual(store.rows.map(\.name), ["beta", "alpha", "gamma"])
     }
 
     /// Hosts answer one at a time, so rows are confirmed one at a time.
@@ -230,6 +269,100 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertTrue(store.rows[0].unread)
         store.opened(Made.agentId(1), at: now)
         XCTAssertFalse(store.rows[0].unread)
+    }
+
+    // MARK: - The two kinds of machine a home may offer an account for
+
+    private func home(_ hosts: [HostState], cloud: CloudState) -> FleetStore {
+        let store = FleetStore(now: now)
+        store.apply(.cloudState(cloud))
+        store.apply(Made.fleet(
+            [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)],
+            hosts: hosts, reconciled: true))
+        return store
+    }
+
+    private func machine(
+        _ slug: String, via: HostVia, online: Bool = true, signedIn: Bool? = true
+    ) -> HostState {
+        HostState(
+            entry: HostEntry(
+                id: HostId(UUID()), name: slug, online: online, via: via, signedIn: signedIn),
+            epoch: 1)
+    }
+
+    /// The ordinary morning. Every machine can be used, so nothing on the home
+    /// asks for an account: amux is free on the network this phone is on, and
+    /// a screen that sold something while everything worked would be selling
+    /// nothing.
+    func testNothingIsNamedWhenEveryMachineIsReachable() {
+        let signedOut = home([machine("studio", via: .direct)], cloud: .signedOut)
+        XCTAssertNil(signedOut.awayHost)
+        XCTAssertNil(signedOut.unreachableHost)
+
+        let paid = home(
+            [machine("studio", via: .direct), machine("mini", via: .relay)],
+            cloud: .connected(tier: .pro, carrier: .quic))
+        XCTAssertNil(paid.awayHost)
+        XCTAssertNil(paid.unreachableHost)
+    }
+
+    /// A machine the relay can see and this account may not tunnel to. What is
+    /// missing is the subscription, and the line names the machine.
+    func testAMachineTheRelayCanSeeIsNamedAsAway() {
+        let store = home(
+            [machine("studio", via: .direct), machine("mini", via: .relay)],
+            cloud: .connected(tier: .free, carrier: .quic))
+
+        XCTAssertEqual(store.awayHost, "mini")
+        XCTAssertNil(store.unreachableHost)
+    }
+
+    /// A machine nothing reaches is named apart from one the relay can see.
+    /// The home offers an account for the first only where nobody is signed
+    /// in, which is the registry's question rather than the fleet's.
+    func testAMachineNothingReachesIsNamedApart() {
+        let store = home(
+            [machine("studio", via: .direct), machine("air", via: .offline, online: false)],
+            cloud: .signedOut)
+
+        XCTAssertNil(store.awayHost)
+        XCTAssertEqual(store.unreachableHost, "air")
+    }
+
+    /// Both at once, each under its own name, so the screen can put the one
+    /// that is a question of money first.
+    func testBothKindsOfUnreachableMachineAreNamedSeparately() {
+        let store = home(
+            [machine("mini", via: .relay), machine("air", via: .offline, online: false)],
+            cloud: .connected(tier: .free, carrier: .quic))
+
+        XCTAssertEqual(store.awayHost, "mini")
+        XCTAssertEqual(store.unreachableHost, "air")
+    }
+
+    /// Nothing has said what the relay will carry, so nothing claims a machine
+    /// is away. A fixture, a launch before the link has answered and a phone
+    /// with no relay at all are the same here: silence is not a free tier.
+    func testAMachineIsNeverCalledAwayBeforeTheLinkHasSaidAnything() {
+        let store = home([machine("mini", via: .relay)], cloud: .signedOut)
+
+        XCTAssertNil(store.awayHost)
+        XCTAssertEqual(store.hosts.values.map { store.reach(of: $0) }, [.throughTheRelay])
+    }
+
+    /// A machine that says it has no account is never "away". The relay is not
+    /// seeing it, so nothing about it is a question of money, and grouping it
+    /// with the machines a subscription would reach would sell a fix that is
+    /// not one.
+    func testAMachineThatNeverSignedInIsNotSoldASubscription() {
+        let store = home(
+            [machine("homelab", via: .offline, online: false, signedIn: false)],
+            cloud: .connected(tier: .free, carrier: .quic))
+
+        XCTAssertNil(store.awayHost)
+        XCTAssertEqual(store.unreachableHost, "homelab")
+        XCTAssertEqual(store.hosts.values.map { store.reach(of: $0) }, [.offline])
     }
 }
 

@@ -32,7 +32,8 @@ pub fn configure(root: &Path, name: &str) -> Result<(Config, PathBuf)> {
         state_path: paths.state_path.clone(),
         data_dir: paths.data_dir.clone(),
         cloud_url: Config::default().cloud_url,
-        tcp_port: None,
+        cloud_refresh_secs: None,
+        lan: Default::default(),
     };
     let path = paths.config_path.unwrap();
     std::fs::write(&path, serde_yaml::to_string(&profile)?)?;

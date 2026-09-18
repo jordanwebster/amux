@@ -152,16 +152,56 @@ def invented(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"amux-journey/{name}"))
 
 
-def seed_cache(udid: str, fleet: dict) -> list[Path]:
+# The account a seeded remembered fleet belongs to. A remembered fleet is one
+# account's, so seeding one means seeding the account that saw it.
+REMEMBERED_ACCOUNT = "journey-phone"
+
+# The profile a seeded fleet is filed under where nothing on this phone has
+# made one yet, which is every workload that seeds a cache no runtime of its
+# own will ever read.
+INVENTED_PROFILE = "00000000-0000-4000-8000-00000000fee7"
+
+
+def filed_under(recorded: dict, account: str) -> str | None:
+    """Which profile an account's remembered fleet is filed under, out of the
+    record a run left behind, or nothing where that record names neither the
+    account nor the phone."""
+    return recorded.get(account) or recorded.get("") or None
+
+
+def installed_profile(udid: str, account: str = REMEMBERED_ACCOUNT) -> str | None:
+    """The profile this installation files a remembered fleet under.
+
+    A profile identifier is the installation's to make, never the seed's, and
+    the runtime that opened one writes down which account is on it. So a
+    journey that wants to seed what a previous run remembered reads the
+    identifier back rather than inventing one beside it: a fleet filed under an
+    invented profile is a file nothing will ever open, and the phone would
+    start every launch having forgotten everything.
+
+    Nothing where no runtime has run on this phone yet, or where its record has
+    been cleared. That record lives in the cache, so read it before forgetting.
+    """
+    path = container(udid) / "Library/Caches/amux/fleet/profiles.json"
+    try:
+        recorded = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return filed_under(recorded, account) if isinstance(recorded, dict) else None
+
+
+def seed_cache(udid: str, fleet: dict, profile: str | None = None) -> list[Path]:
     """Seed a declared remembered account and its fleet for the cold-start workloads.
 
     Live startup journeys do not use this helper: their first connection writes
-    the account and cache that the next launch reads.
+    the account and cache that the next launch reads. A journey whose phone has
+    already run a runtime says which profile that runtime is on, so what is
+    seeded is the file it will open; see ``installed_profile``.
     """
     data = container(udid)
     support = data / "Library/Application Support/amux"
     support.mkdir(parents=True, exist_ok=True)
-    account = "journey-phone"
+    account = REMEMBERED_ACCOUNT
     (support / "accounts.json").write_text(json.dumps({
         "accounts": [{"account": {"id": account, "email": "phone@example.com"},
                       "signedIn": True, "entitlement": {"active": {"grant": {"granted": {}}}}}],
@@ -169,8 +209,45 @@ def seed_cache(udid: str, fleet: dict) -> list[Path]:
     }))
     cache = data / "Library/Caches/amux/fleet"
     cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{account}.json"
-    path.write_text(json.dumps(fleet))
+    # A remembered fleet belongs to the profile that saw it, and a profile's
+    # identifier is made by the installation, so the library finds the file
+    # through the directory the last run wrote. A seeded cache writes both:
+    # the directory this account was on, and the fleet filed under it.
+    profile = profile or INVENTED_PROFILE
+    (cache / "profiles.json").write_text(json.dumps({"": profile, account: profile}))
+    remembered = fleet["Fleet"]
+    cards = remembered["agents"]
+    seed = {
+        "local": invented("remembered-phone"),
+        "hosts": [host["entry"] for host in remembered["hosts"]],
+        "agents": [dict(card["agent"], last_activity=card["last_activity"]) for card in cards],
+        "standings": {card["agent"]["id"]: {
+            "attention": card["attention"], "phase": card["phase"],
+            "last_activity": card["last_activity"],
+        } for card in cards},
+    }
+    request = cache.parent / "journey-seed.json"
+    result = cache.parent / "journey-seed-result.json"
+    request.write_text(json.dumps(seed))
+    result.unlink(missing_ok=True)
+    subprocess.run(
+        ["xcrun", "simctl", "launch", "--terminate-running-process", udid, BUNDLE_ID,
+         "-amux-probe", "journey-store", "-amux-seed-account", account],
+        check=True, capture_output=True, text=True, timeout=300)
+    try:
+        deadline = time.monotonic() + 120
+        while not result.is_file():
+            if time.monotonic() > deadline:
+                raise SystemExit("the app never finished seeding its remembered SQLite store")
+            time.sleep(0.2)
+        if json.loads(result.read_text()) != {"ok": True}:
+            raise SystemExit("the app could not seed its remembered SQLite store")
+    finally:
+        subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID],
+                       check=True, capture_output=True, text=True, timeout=300)
+    path = cache.parent / "store" / f"{profile}.sqlite" / "store.sqlite"
+    if not path.is_file():
+        raise SystemExit(f"the app seeded no store for the expected profile: {profile}")
     return [path]
 
 
@@ -327,31 +404,23 @@ def film(process: subprocess.Popen, udid: str, name: str, destination: Path) -> 
             marker.unlink(missing_ok=True)
 
 
-def perform(
-    journey: Journey, udid: str, test: str, collecting: dict[str, Path],
-    telling: dict[str, str] | None = None,
-    filming: Path | None = None,
-) -> None:
-    """Runs one UI test against the app on the pinned simulator.
+# A test runner that never got to run is not a result. The simulator's bridge
+# occasionally force-quits the runner process — before the first test starts, or
+# partway through one — and the run reports these two things: the runner died of
+# SIGKILL, and whatever step was in flight found the app gone. Nothing about the
+# app was measured, so there is nothing to read from it; the honest response is
+# to run it again. A failed assertion carries neither phrase and always stands.
+RUNNER_WAS_KILLED = ("crashed with signal kill", "Early unexpected exit")
 
-    A journey drives what it can through the door, which reads the same names
-    VoiceOver reads. Pressing a control is the one thing it cannot do —
-    SwiftUI builds an accessibility tree only for an attached accessibility
-    client, and an app is not one from inside its own process — so the steps
-    that are taps are a UI test, which is that client. What the test
-    photographs is left in its own container and collected here.
-    """
-    journey.directory.mkdir(parents=True, exist_ok=True)
-    log = journey.directory / f"{test.split('/')[-1]}.log"
-    result = journey.directory / f"{test.replace('/', '-')}.xcresult"
+
+def run_once(
+    udid: str, test: str, log: Path, result: Path,
+    environment: dict[str, str], filming: Path | None,
+) -> tuple[int, str]:
+    """Runs the test once, returning its exit status and what the bundle says."""
     # xcodebuild refuses to replace a result bundle. A repeated diagnosis is
     # about this run, so an earlier bundle cannot survive under its name.
     shutil.rmtree(result, ignore_errors=True)
-    # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
-    # is the only way to tell a UI test anything: it is launched by the system,
-    # not by this script.
-    environment = os.environ | {f"TEST_RUNNER_{key}": value
-                                for key, value in (telling or {}).items()}
     # Written straight to the log rather than through a pipe: the camera below
     # runs while xcodebuild does, and a pipe nobody is draining would stop it.
     with log.open("w") as sink:
@@ -374,22 +443,54 @@ def perform(
             if started.poll() is None:
                 started.kill()
                 started.wait(timeout=30)
-    if returned != 0 and result.is_dir():
-        # Keep passing output quiet, but make a failed assertion readable in
-        # the plain log as well as in the retained result bundle. The test
-        # tree includes XCTest's complaint and source location.
-        with log.open("a") as sink:
-            sink.write(f"\nFailure details from {result}:\n")
-            sink.flush()
-            details = subprocess.run([
-                "xcrun", "xcresulttool", "get", "test-results", "tests",
-                "--path", str(result.resolve()),
-            ], text=True, stdout=sink, stderr=subprocess.STDOUT, timeout=120)
-            if details.returncode != 0:
-                sink.write(
-                    f"xcresulttool could not read the test details "
-                    f"(exit {details.returncode})\n")
-    elif returned == 0:
+    if returned == 0 or not result.is_dir():
+        return returned, ""
+    # Keep passing output quiet, but make a failed assertion readable in the
+    # plain log as well as in the retained result bundle. The test tree includes
+    # XCTest's complaint and source location.
+    read = subprocess.run([
+        "xcrun", "xcresulttool", "get", "test-results", "tests",
+        "--path", str(result.resolve()),
+    ], text=True, capture_output=True, timeout=120)
+    details = read.stdout if read.returncode == 0 else (
+        f"xcresulttool could not read the test details (exit {read.returncode})\n"
+        f"{read.stdout}{read.stderr}")
+    with log.open("a") as sink:
+        sink.write(f"\nFailure details from {result}:\n{details}")
+    return returned, details
+
+
+def perform(
+    journey: Journey, udid: str, test: str, collecting: dict[str, Path],
+    telling: dict[str, str] | None = None,
+    filming: Path | None = None,
+) -> None:
+    """Runs one UI test against the app on the pinned simulator.
+
+    A journey drives what it can through the door, which reads the same names
+    VoiceOver reads. Pressing a control is the one thing it cannot do —
+    SwiftUI builds an accessibility tree only for an attached accessibility
+    client, and an app is not one from inside its own process — so the steps
+    that are taps are a UI test, which is that client. What the test
+    photographs is left in its own container and collected here.
+    """
+    journey.directory.mkdir(parents=True, exist_ok=True)
+    log = journey.directory / f"{test.split('/')[-1]}.log"
+    result = journey.directory / f"{test.replace('/', '-')}.xcresult"
+    # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
+    # is the only way to tell a UI test anything: it is launched by the system,
+    # not by this script.
+    environment = os.environ | {f"TEST_RUNNER_{key}": value
+                                for key, value in (telling or {}).items()}
+    for runs_left in (1, 0):
+        returned, details = run_once(udid, test, log, result, environment, filming)
+        if returned == 0 or runs_left == 0:
+            break
+        if not any(phrase in details for phrase in RUNNER_WAS_KILLED):
+            break
+        journey.say(f"the simulator force-quit the test runner before "
+                    f"{test} could finish; running it again")
+    if returned == 0:
         # Passing journeys need neither the sizeable bundle nor its build
         # chatter; the ordinary journey record is their evidence.
         shutil.rmtree(result, ignore_errors=True)
@@ -402,6 +503,23 @@ def perform(
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(written, destination)
         written.unlink()
+
+
+def fresh(udid: str) -> None:
+    """A phone out of its box: the app gone from the device, and every account,
+    key and cache any journey before this one left on it gone with it.
+
+    Deleting those files under an installed app is not enough for a story that
+    turns on nobody having signed in. The app the simulator is still holding
+    writes what it has in memory back out when it is finally stopped, which can
+    put an earlier journey's account back after its file has been removed.
+    Taking the app off the device removes the process and the container
+    together, and nothing can be restored from a container that is not there.
+    """
+    ios_simulators.quit_apps(udid)
+    subprocess.run(["xcrun", "simctl", "uninstall", udid, BUNDLE_ID],
+                   check=False, capture_output=True, timeout=120)
+    install(udid)
 
 
 def install(udid: str) -> None:
@@ -437,6 +555,438 @@ def named(state: dict, identifier: str) -> dict | None:
 
 
 # MARK: - The journeys
+
+
+def onramp(journey: Journey, udid: str, ready: dict) -> None:
+    """A phone with no account, finding and pairing with a machine on its own
+    network, and following that machine off the network and back.
+
+    Nothing an account buys exists in this story: no relay is reached, no
+    credential is held, no subscription is bought. So the machine on screen is
+    there because this phone's own browser found it, and everything after the
+    pairing travels over a link this phone opened to an address that browser
+    resolved.
+
+    Two of the phone's own faculties are stood in for, and both for the same
+    reason: they belong to the system rather than to the app. Only the system
+    may browse, and a simulator's browser looks at the Mac's real network
+    rather than at the one the runner is running here — so the runner puts the
+    machine on its network and the app is handed what a browser would have
+    resolved on it, through the same door the app's own browser goes through.
+    And iOS asks about the local network once and remembers the answer, so the
+    refusal a person can be left in is said rather than provoked.
+
+    The manifest names this journey's acts, and a run may be given some of
+    them: those are driven through the screen and every act before them is
+    replaced by the shortcut that leaves behind what it left behind.
+    """
+    workstation = next(host for host in ready["daemons"] if host["name"] == "workstation")
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+    control_address = ready["control"]
+
+    fresh(udid)
+    journey.say("workstation is on this network and nobody is signed in anywhere: no account, no "
+                "relay and no subscription exist in this story")
+
+    pictures = {"first-run": ("first-run",), "found-host": ("found-host",),
+                "code-entry": ("code-entry",), "paired": ("paired",),
+                "permission-refused": ("permission-refused",)}
+    driving = journey.acts
+    port = free_port()
+    read = journey.directory / "onramp.json"
+    photographs = {name: journey.directory / f"{name}.png"
+                   for act in driving for name in pictures.get(act, ())}
+    perform(
+        journey, udid, "AmuxUITests/OnrampTests",
+        {"onramp.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_ACTS": ",".join(driving) if journey.filtered else "",
+            "AMUX_CONTROL": control_address,
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_HOST": "workstation",
+            "AMUX_WORKSTATION": workstation["host_id"],
+            "AMUX_WORKSTATION_FINGERPRINT": workstation["fingerprint"],
+            "AMUX_AGENT_NAME": helper["name"],
+        })
+    seen = json.loads(read.read_text())
+
+    shortcut = seen.get("actsShortcut") or []
+    journey.expect(seen.get("actsPerformed") == driving,
+                   f"this run asked for {driving} and the phone drove "
+                   f"{seen.get('actsPerformed')}")
+    journey.expect(not set(shortcut) & set(driving),
+                   f"the phone both drove and shortcut {sorted(set(shortcut) & set(driving))}")
+    if journey.filtered:
+        journey.say(f"shortcut without a finger: {', '.join(shortcut) or 'nothing'}; "
+                    f"driven through the screen: {', '.join(driving)}")
+    else:
+        journey.expect(not shortcut, f"the whole journey shortcut {shortcut}")
+
+    def first_run() -> None:
+        """A phone nobody has signed in on."""
+        journey.expect(seen.get("accountsAtFirstRun") == 0,
+                       f"a phone out of its box knows {seen.get('accountsAtFirstRun')} accounts")
+        journey.expect(seen.get("machinesAtFirstRun") == []
+                       and seen.get("offersAtFirstRun") == [],
+                       f"the first launch shows machines {seen.get('machinesAtFirstRun')} and "
+                       f"offers {seen.get('offersAtFirstRun')}")
+        journey.say("the app opened with no account, no relay and nothing on the network, and said "
+                    "so rather than spinning")
+
+    def found_host() -> None:
+        """The machine on this network, offered by name."""
+        journey.expect("workstation" in (seen.get("foundName") or ""),
+                       f"the card on this network reads {seen.get('foundName')!r}")
+        journey.expect(seen.get("foundState") == "not paired",
+                       f"a machine nothing is paired with reads {seen.get('foundState')!r}")
+        journey.expect(seen.get("pairAction") == "Pair with workstation",
+                       f"the one thing to do about the machine reads "
+                       f"{seen.get('pairAction')!r}")
+        journey.say(f"workstation put itself on this network and the phone offered it by its own "
+                    f"name — {seen.get('foundName')!r} — with one thing to do about it: "
+                    f"{seen.get('pairAction')!r}. Nobody had signed in and no relay was reached "
+                    f"to learn any of it")
+
+    def code_entry() -> None:
+        """Six digits the machine printed."""
+        journey.expect(seen.get("confirmedMachine") == "workstation",
+                       f"the code was answered by {seen.get('confirmedMachine')!r}")
+        journey.say("the offer led to the keypad and the six digits workstation printed were "
+                    "authenticated against workstation itself")
+
+    def paired() -> None:
+        """Trusted, and what the machine is running."""
+        journey.expect(seen.get("confirmedKey") == workstation["fingerprint"],
+                       f"the key read on the phone before it trusted anything was "
+                       f"{seen.get('confirmedKey')!r} and workstation holds "
+                       f"{workstation['fingerprint']}")
+        journey.expect(len(seen.get("workstationDevices") or []) == 1,
+                       f"workstation holds {seen.get('workstationDevices')} after one phone paired "
+                       f"with it")
+        journey.expect(helper["name"] in (seen.get("agentsAfterPairing") or []),
+                       f"the phone shows {seen.get('agentsAfterPairing')} and workstation is "
+                       f"running {helper['name']}")
+        journey.expect(seen.get("accountsAfterPairing") == 0,
+                       f"pairing on this network left the phone knowing "
+                       f"{seen.get('accountsAfterPairing')} accounts")
+        journey.say(f"the phone read workstation's own name and the whole of its key before it "
+                    f"wrote anything, and trusting it left workstation holding exactly one device: "
+                    f"{seen.get('workstationDevices')}. What workstation is running then arrived on "
+                    f"the phone — {seen.get('agentsAfterPairing')} — with nobody signed in, so it "
+                    f"came over a link this phone opened to an address a browser resolved")
+
+    def withdrawn_and_back() -> None:
+        """The machine off this network, and back on it."""
+        journey.expect(seen.get("afterItLeft") == "offline",
+                       f"the machine left this network and the phone reads it as "
+                       f"{seen.get('afterItLeft')!r}")
+        journey.expect(seen.get("afterItCameBack") == "on-this-network",
+                       f"the machine came back and the phone reads it as "
+                       f"{seen.get('afterItCameBack')!r}")
+        journey.expect(seen.get("accountsWhenItCameBack") == 0,
+                       "the phone signed somebody in to get back to the machine")
+        journey.say("workstation said goodbye and stopped answering at the address it had "
+                    "advertised, and the phone said it was offline; it announced itself again and "
+                    "the phone reached it again with nobody pressing anything — and still with no "
+                    "account and no relay")
+
+    def permission_refused() -> None:
+        """A network this phone was not allowed to look at."""
+        journey.expect(seen.get("refusalHeadline") == "amux cannot see this network",
+                       f"a refused local network is explained as "
+                       f"{seen.get('refusalHeadline')!r}")
+        journey.expect(seen.get("refusalExplained") is True,
+                       "the refusal never said how it is undone")
+        journey.expect(seen.get("refusalSettings") == "Open Settings",
+                       f"the refusal offers {seen.get('refusalSettings')!r} as the way back")
+        journey.say("a phone whose owner refused the local network is told that is what happened "
+                    "rather than shown an empty network, and is sent to the one place it can be "
+                    "undone")
+
+    checks = {
+        "first-run": first_run,
+        "found-host": found_host,
+        "code-entry": code_entry,
+        "paired": paired,
+        "withdrawn-and-back": withdrawn_and_back,
+        "permission-refused": permission_refused,
+    }
+    journey.expect(journey.filtered or list(checks) == driving,
+                   f"the manifest declares {driving} and this driver asserts {list(checks)}")
+    for act in driving:
+        checks[act]()
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    if photographs:
+        journey.say("photographed " + ", ".join(sorted(photographs)))
+    forget_cache(udid)
+    forget_pairings(udid)
+
+
+def free_tier(journey: Journey, udid: str, ready: dict) -> None:
+    """An account that has not paid for the relay, on a phone that walks away
+    from the machine it paired with.
+
+    Everything the account buys is exactly one thing — the tunnel — so this is
+    the only journey where what changes on screen is what a subscription is
+    for. The machines are real and so is the relay; what moves is where the
+    phone is standing and what amux.sh says the account has bought.
+
+    The account service is the scripted one, as it is wherever money is
+    involved: the App Store's sheet belongs to another process and nobody
+    outside it can press it. The credential it hands over is this account's own
+    and the relay validates it, so the tier a screen reads is the tier the
+    relay admitted the link on rather than a claim the app made about itself.
+    """
+    daemons = {daemon["name"]: daemon for daemon in ready["daemons"]}
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+
+    fresh(udid)
+    journey.say("personal has bought nothing, workstation and spare are on this network, "
+                "studio is only on the relay, and workstation is running one agent")
+
+    pictures = ("at-home", "away", "chat-away", "code-needs-subscription", "subscribed")
+    read = journey.directory / "free-tier.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/FreeTierTests",
+        {"free-tier.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "personal",
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": daemons["workstation"]["host_id"],
+            "AMUX_STUDIO": daemons["studio"]["host_id"],
+            "AMUX_SPARE": daemons["spare"]["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    journey.expect(seen.get("atHome", {}).get("workstation") == "on-this-network"
+                   and not (seen.get("agentAtHome") or "host-away").startswith("host-"),
+                   f"at home the phone reads its machines as {seen.get('atHome')} and its agent "
+                   f"as {seen.get('agentAtHome')!r}")
+    journey.say(f"on this network an account that has bought nothing pairs with its machine and "
+                f"runs it: {seen.get('atHome')}, with the agent reading "
+                f"{seen.get('agentAtHome')!r}")
+
+    away = seen.get("away", {})
+    journey.expect(away.get("workstation") == "away",
+                   f"off the network the relay's machine reads {away.get('workstation')!r}")
+    journey.expect(away.get("spare") == "offline",
+                   f"the machine with no account reads {away.get('spare')!r}")
+    journey.expect("never signed in" in (seen.get("neverSignedIn") or ""),
+                   f"the machine signed in to nothing reads {seen.get('neverSignedIn')!r}")
+    journey.expect((seen.get("agentWhileAway") or "").startswith("host-away")
+                   and "not live" in (seen.get("agentSaysWhileAway") or ""),
+                   f"the agent on the away machine reads {seen.get('agentWhileAway')!r}, said as "
+                   f"{seen.get('agentSaysWhileAway')!r}")
+    journey.expect(seen.get("homeLineWhileAway")
+                   == "workstation is away · subscribe to reach your agents from anywhere",
+                   f"the one line above the list reads {seen.get('homeLineWhileAway')!r}")
+    journey.say(f"away from it the relay can see workstation and will carry nothing to it: the "
+                f"machines read {away}, the agent stays on the list as "
+                f"{seen.get('agentSaysWhileAway')!r}, and the home says "
+                f"{seen.get('homeLineWhileAway')!r}")
+
+    journey.expect("workstation" in (seen.get("chatOfferDetail") or "")
+                   and seen.get("chatOfferAction") == "Subscribe",
+                   f"opening the agent offered {seen.get('chatOffer')!r} / "
+                   f"{seen.get('chatOfferDetail')!r}")
+    journey.say(f"opening that agent shows what it last said with the offer where the composer "
+                f"would be: {seen.get('chatOffer')!r} — {seen.get('chatOfferDetail')!r}")
+
+    journey.expect(bool(seen.get("keypadOffer")),
+                   "a code for a machine only the relay has seen was answered with nothing")
+    journey.say(f"the code studio printed authenticated and pairing still did not happen, so the "
+                f"keypad says the one thing that would: {seen.get('keypadOffer')!r}")
+
+    subscribed = seen.get("afterSubscribing", {})
+    journey.expect(subscribed.get("workstation") == "through-the-relay",
+                   f"after the subscription workstation reads {subscribed.get('workstation')!r}")
+    agent = seen.get("agentAfterSubscribing") or ""
+    # Live, not merely no longer away: a row still saying "remembered" is this
+    # phone's memory of the machine, which is what the away act already showed.
+    journey.expect(agent and not agent.startswith("host-away")
+                   and "remembered" not in agent,
+                   f"after the subscription the agent reads {agent!r}")
+    line = seen.get("homeLineAfterSubscribing") or ""
+    journey.expect("subscribe" not in line and "workstation" not in line,
+                   f"after the subscription the home still says {line!r}")
+    journey.expect(seen.get("newAgentAfterSubscribing") is True,
+                   "after the subscription the home would not start an agent")
+    journey.say(f"amux.sh started saying the account is subscribed and the phone asked its own "
+                f"link to read that again: workstation became {subscribed.get('workstation')!r} "
+                f"and its agent confirmed live as {agent!r} at once, with the offer of "
+                f"a tunnel gone from the line above the list, which now reads {line!r}")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
+
+
+def signed_out(journey: Journey, udid: str, ready: dict) -> None:
+    """A phone nobody has signed in on, following its machine off the network
+    and back.
+
+    The same machine and the same protocol as the onramp journey, one step
+    later: this phone is already paired, and what it has to get right is what
+    it does when the machine it is paired with is no longer there. Keeping the
+    agents is the claim — the last thing this phone was told is still the last
+    thing that was true — and so is what it offers about it, which is an
+    account, once, and only while something is actually out of reach.
+    """
+    workstation = next(host for host in ready["daemons"] if host["name"] == "workstation")
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+
+    fresh(udid)
+    journey.say("workstation is on this network with one agent on it, and no account, no relay "
+                "and no subscription exist in this story")
+
+    pictures = ("signed-out-offline", "signed-out-reachable")
+    read = journey.directory / "signed-out.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/SignedOutTests",
+        {"signed-out.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": workstation["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    journey.expect(seen.get("accounts") == 0 and seen.get("accountsWhenItCameBack") == 0,
+                   f"this phone knew {seen.get('accounts')} accounts and "
+                   f"{seen.get('accountsWhenItCameBack')} afterwards")
+    journey.expect((seen.get("agentWhenItLeft") or "").startswith("host-offline"),
+                   f"the machine left and its agent reads {seen.get('agentWhenItLeft')!r}")
+    journey.expect(helper["name"] in (seen.get("agentsWhenItLeft") or []),
+                   f"the machine left and the phone is holding "
+                   f"{seen.get('agentsWhenItLeft')}")
+    journey.expect(seen.get("machineWhenItLeft") == "offline",
+                   f"the machine that left reads {seen.get('machineWhenItLeft')!r}")
+    journey.expect(seen.get("homeLineWhenItLeft") == "Sign in to reach your agents from anywhere",
+                   f"the one line above the list reads {seen.get('homeLineWhenItLeft')!r}")
+    journey.say(f"the machine left the network and the phone kept what it was told — "
+                f"{seen.get('agentsWhenItLeft')}, with the agent reading "
+                f"{seen.get('agentSaysWhenItLeft')!r} — said the machine was offline, and offered "
+                f"the one thing that would reach it from here: "
+                f"{seen.get('homeLineWhenItLeft')!r}")
+
+    journey.expect(seen.get("agentWhenItCameBack")
+                   and not seen["agentWhenItCameBack"].startswith("host-offline"),
+                   f"the machine came back and its agent reads "
+                   f"{seen.get('agentWhenItCameBack')!r}")
+    journey.expect(not seen.get("homeLineWhenItCameBack"),
+                   f"a phone that can reach everything it owns is being told "
+                   f"{seen.get('homeLineWhenItCameBack')!r}")
+    journey.say("it announced itself again, the phone reached it with nobody pressing anything, "
+                "and the offer of an account went away with the thing it was for")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
+
+
+def profiles(journey: Journey, udid: str, ready: dict) -> None:
+    """One machine on this network and two accounts coming and going over it.
+
+    The desktop's profile rules, on a phone: the first account adopts the
+    profile the phone was already running — with its key, its trust and the
+    machine it paired with — signing out changes nothing about any of it, and a
+    second account is a second device that starts with nothing. The machine is
+    signed in to nobody, so nothing it does depends on either account and
+    everything that changes on screen is the phone's own doing.
+    """
+    workstation = next(host for host in ready["daemons"] if host["name"] == "workstation")
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+    tokens = {user["label"]: user["token"] for user in ready["users"]}
+
+    fresh(udid)
+    journey.say("workstation is on this network and signed in to nobody; the phone has never had "
+                "an account and the relay has two waiting")
+
+    pictures = ("profile-adopted", "signed-out-keeps-the-machine", "second-profile")
+    read = journey.directory / "profiles.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/ProfilesTests",
+        {"profiles.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": tokens["personal"],
+            "AMUX_USER": "personal",
+            "AMUX_WORK_TOKEN": tokens["work"],
+            "AMUX_WORK_USER": "work",
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": workstation["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    def listed(what: str) -> list[str]:
+        return sorted(entry.get("id", "") for entry in seen.get(what) or [])
+
+    def signed_in(what: str) -> list[str]:
+        return sorted(entry.get("id", "") for entry in seen.get(what) or []
+                      if entry.get("signedIn"))
+
+    journey.expect(seen.get("accountsBeforeSigningIn") == []
+                   and seen.get("machineBeforeSigningIn") == "on-this-network",
+                   f"before any account the phone knew {seen.get('accountsBeforeSigningIn')} and "
+                   f"read its machine as {seen.get('machineBeforeSigningIn')!r}")
+    journey.expect(seen.get("machineAfterSigningIn") == "on-this-network",
+                   f"signing in left the machine reading "
+                   f"{seen.get('machineAfterSigningIn')!r}")
+    journey.expect(signed_in("accountsAfterSigningIn") == ["personal"],
+                   f"after signing in the phone has {signed_in('accountsAfterSigningIn')} "
+                   f"signed in")
+    journey.say("the phone paired with the machine on its network before it had an account, and "
+                "the first account to sign in took over that profile: same key, same trust, same "
+                "machine")
+
+    journey.expect(listed("accountsAfterSigningOut") == ["personal"]
+                   and signed_in("accountsAfterSigningOut") == [],
+                   f"after signing out the phone lists {listed('accountsAfterSigningOut')} with "
+                   f"{signed_in('accountsAfterSigningOut')} signed in")
+    journey.expect(seen.get("machineAfterSigningOut") == "on-this-network",
+                   f"signing out left the machine reading "
+                   f"{seen.get('machineAfterSigningOut')!r}")
+    journey.say("signing out kept the account listed with nobody signed in, and left the machine "
+                "exactly where it was: still on this network, still running its agent")
+
+    journey.expect(listed("accountsOnTheSecondAccount") == ["personal", "work"],
+                   f"the phone lists {listed('accountsOnTheSecondAccount')}")
+    journey.expect(signed_in("accountsOnTheSecondAccount") == ["work"],
+                   f"the phone has {signed_in('accountsOnTheSecondAccount')} signed in")
+    journey.expect(not seen.get("machineOnTheSecondAccount"),
+                   f"the second account can see the first one's machine: "
+                   f"{seen.get('machineOnTheSecondAccount')!r}")
+    journey.expect(seen.get("offeredOnTheSecondAccount") == "not paired",
+                   f"the machine on this network reads "
+                   f"{seen.get('offeredOnTheSecondAccount')!r} to the second account")
+    journey.say(f"a second account is a second device: it starts with no machines and no agents, "
+                f"and the machine on its own network is offered to it as something to pair with "
+                f"rather than as one of its own — with the first account still listed, "
+                f"{listed('accountsOnTheSecondAccount')}")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
 
 
 def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
@@ -586,7 +1136,7 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     the application rather than a state somebody set: pairing, remembering with
     the relay dead, reaching the machines, reaching them again after one of
     them has been made to say something, remembering nothing at all, and
-    opening a conversation and the drawer over it. The last one is a UI test
+    opening a conversation and coming back from it. The last one is a UI test
     rather than a door conversation, because it is the one made of taps.
     """
     daemons = {daemon["name"]: daemon["host_id"] for daemon in ready["daemons"]}
@@ -614,19 +1164,25 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         agent["host"] = identity["daemon"]
         agent["directory"] = here
     by_id = {agent["id"]: agent for agent in remembered}
-    # An agent unable to continue comes first. Finished and other work share
-    # one recency list below it.
+    # One recency list: an agent unable to continue is not pinned, it sits
+    # where its last activity puts it and says on its row what it wants.
     expected = [f"home.row.{agent['id']}" for agent in (
-        by_id[running["fix-login"]["agent_id"]],
         by_id[running["port-the-parser"]["agent_id"]],
+        by_id[running["fix-login"]["agent_id"]],
         by_id[running["chase-the-flake"]["agent_id"]],
         by_id[running["release-notes"]["agent_id"]],
         by_id[running["trim-the-fixtures"]["agent_id"]],
         by_id[running["warm-the-cache"]["agent_id"]])]
 
+    # Which profile this phone's runtime files a remembered fleet under. It is
+    # the installation's to make, so it is only known once this phone has run
+    # one: read after the pairing below, and read once, because the act that
+    # clears the cache clears the record of it too.
+    profile: str | None = None
+
     def seed() -> None:
         forget_cache(udid)
-        seed_cache(udid, remembered_fleet(remembered, daemons))
+        seed_cache(udid, remembered_fleet(remembered, daemons), profile=profile)
 
     def placed(state: dict, complaint: str) -> list[str]:
         """The rows on screen, in the order the ordering put them."""
@@ -664,6 +1220,10 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.say(f"paired with {' and '.join(trusted)} by the codes they printed, each in the "
                 f"two phases the protocol has: the code authenticated against the machine that "
                 f"printed it, then the trust written against the attempt it answered with")
+    profile = installed_profile(udid)
+    journey.expect(profile is not None,
+                   "the phone's runtime left no record of which profile it keeps a remembered "
+                   "fleet under, so nothing seeded below would ever be read")
 
     # MARK: One — what a paired phone shows when it cannot reach anything.
     control(ready["control"], "CloudOffline")
@@ -707,11 +1267,12 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         """What the row says out loud about how long ago it last did anything."""
         return next((part for part in (row["label"] or "").split(", ")
                      if part.endswith(" ago")), "never said")
-    # The request that cannot continue on its own is pinned above the recency
-    # list; a finished result stays with the rest of the completed work.
-    waiting = [(row["value"], age(row)) for row in rows(before)[:1]]
+    # The request that cannot continue on its own takes its place by recency
+    # and says what it is; a finished result stays with the completed work.
+    waiting = [(row["value"], age(row)) for row in rows(before)
+               if row["identifier"] == expected[1]]
     journey.expect(waiting == [("Needs permission, remembered", "6m ago")],
-                   f"the blocked request is not pinned at the top: {waiting}")
+                   f"the blocked request does not say what it is where it stands: {waiting}")
     day_old = next(row for row in rows(before) if row["identifier"] == expected[5])
     journey.expect(age(day_old) == "1d ago",
                    f"the agent that has not moved in a day reads {age(day_old)!r}")
@@ -723,7 +1284,7 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(first_frame is not None,
                    f"no first frame was marked: {[mark['signpost'] for mark in marks]}")
     journey.say(f"before reaching anything: {len(rows(before))} remembered rows, "
-                f"{waiting[0][1]} at the top, {subtitle!r}, "
+                f"the blocked one {waiting[0][1]}, {subtitle!r}, "
                 f"nothing spinning, first frame "
                 f"{first_frame['sinceProcessStart'] * 1000:.0f} ms after the process started")
 
@@ -836,29 +1397,36 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
                                       f"rows")
     journey.expect((named(nothing, "home") or {}).get("value") == "signed-out",
                    "the unsigned empty-home launch retained a usable account")
-    for element in ("home.empty.title", "home.empty.explain", "home.empty.action"):
+    # A phone with nothing on it says how pairing is done — a code typed for a
+    # machine this phone has found, or one scanned — rather than offering a
+    # button for no machine, and offers signing in beside it.
+    for element in ("home.empty.firstRun", "home.empty.explain", "home.empty.howToPair",
+                    "home.empty.signIn"):
         journey.expect(named(nothing, element) is not None,
                        f"the empty home is missing {element}: "
                        f"{[e['identifier'] for e in nothing['elements']]}")
-    journey.expect(named(nothing, "home.empty.action").get("label") == "Sign In",
+    journey.expect(named(nothing, "home.empty.pair") is None,
+                   "the unsigned empty home offers a Pair button for no machine")
+    journey.expect((named(nothing, "home.empty.signIn") or {}).get("label") == "Sign In",
                    "the unsigned empty home did not offer Sign In")
     journey.say(f"a phone that remembers nothing shows the home empty: "
-                f"{named(nothing, 'home.empty.title')['value']!r}, "
-                f"{named(nothing, 'home.empty.action')['label']!r}")
+                f"{(named(nothing, 'home.empty.firstRun') or {}).get('value')!r}, saying how "
+                f"to pair ahead of "
+                f"{(named(nothing, 'home.empty.signIn') or {}).get('label')!r}")
 
-    # MARK: Five — the drawer, and coming back to the fleet.
+    # MARK: Five — a conversation, and coming back to the fleet.
     seed()
-    drawer = journey.directory / "drawer.png"
-    perform(journey, udid, "AmuxUITests/DrawerTests", {"drawer.png": drawer})
-    journey.say(f"opened the row at the top, the drawer listed the whole remembered fleet over "
-                f"that conversation with Hosts and You at its foot, closing it came back to the "
-                f"same conversation, and going back came back to all {len(remembered)} rows")
+    opened = journey.directory / "opened.png"
+    perform(journey, udid, "AmuxUITests/FleetReturnTests", {"opened.png": opened})
+    journey.say(f"opened the row at the top into its conversation, with a way back on its chrome "
+                f"and no tab bar under the composer; its back chevron and the edge swipe each "
+                f"came back to all {len(remembered)} rows")
 
-    for capture in (cached, offline, reconciled_capture, empty, drawer):
+    for capture in (cached, offline, reconciled_capture, empty, opened):
         journey.expect(capture.is_file() and capture.stat().st_size > 0,
                        f"{capture} was not written")
     journey.say("photographed " + ", ".join(capture.name for capture in
-                                            (cached, offline, reconciled_capture, empty, drawer)))
+                                            (cached, offline, reconciled_capture, empty, opened)))
     forget_cache(udid)
 
 
@@ -2104,8 +2672,10 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
 
     def link_before_sign_in() -> None:
         """A link that landed before anybody had signed in."""
-        journey.expect(seen.get("desktopDevicesBeforeSigningIn") == 0,
-                       "a link that had only arrived was already trusted")
+        journey.expect(seen.get("linkAnsweredWithNoAccount") is True,
+                       "an invitation carrying this network's addresses waited for an account")
+        journey.expect(seen.get("desktopDevicesBeforeTrusting") == 0,
+                       "a link that had only been answered was already trusted")
         journey.expect(seen.get("linkOfferedMachine") == "desktop",
                        f"the invitation named {seen.get('linkOfferedMachine')!r}")
         journey.expect(seen.get("linkOfferedFingerprint", "").replace(" ", "")
@@ -2114,10 +2684,11 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
                        f"holds {daemons['desktop']['fingerprint']}")
         journey.expect(seen.get("desktopDevicesAfterCancelling") == 0,
                        "a machine turned down on the confirmation was trusted anyway")
-        journey.say("a launch opened by a pairing link with nobody signed in trusted nothing and "
-                    "claimed nothing; signing in put the held invitation to desktop, which answered "
-                    "with its own name and the whole of its key; turned down, it still holds no key "
-                    "to this phone")
+        journey.say("a launch opened by a pairing link with nobody signed in put it to desktop at "
+                    "once, because the invitation carries desktop's addresses on this network and "
+                    "no account buys anything between two machines in one room; desktop answered "
+                    "with its own name and the whole of its key, trusting nothing by answering; "
+                    "turned down, it still holds no key to this phone")
 
     def link_agreed_second_time() -> None:
         """The invitation taken up the second time."""
@@ -2207,17 +2778,20 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
                        f"revoking desktop left the phone showing {seen.get('machinesAfterRevoking')}")
         watched = running["release-notes"]["agent_id"]
         journey.expect(watched in (seen.get("watchingBeforeRevoking") or []),
-                       f"the agent on desktop was not being read when its machine's key went: "
+                       f"the agent on desktop was not being read before its machine's key went: "
                        f"{seen.get('watchingBeforeRevoking')}")
+        journey.expect(watched not in (seen.get("watchingAfterLeaving") or []),
+                       f"leaving the conversation kept reading the agent on desktop: "
+                       f"{seen.get('watchingAfterLeaving')}")
         journey.expect(watched not in (seen.get("watchingAfterRevoking") or []),
                        f"the phone is still reading the revoked machine's agent: "
                        f"{seen.get('watchingAfterRevoking')}")
         journey.expect("release-notes" not in (seen.get("fleetAfterRevoking") or []),
                        f"an agent on the revoked machine is still readable: "
                        f"{seen.get('fleetAfterRevoking')}")
-        journey.say(f"the key desktop held was read whole on the phone and revoked while one of "
-                    f"desktop's agents was open: the stream that conversation was reading was let go "
-                    f"at once, and what desktop was running left the fleet with it. Desktop's own "
+        journey.say(f"one of desktop's agents was read and its stream let go when the conversation "
+                    f"was left; the key desktop held was then read whole on the phone and revoked, "
+                    f"and what desktop was running left the fleet with it. Desktop's own "
                     f"record of this phone is desktop's to remove and it still holds "
                     f"{seen.get('desktopDevicesAfterRevoking')}: withdrawing a key ends what this "
                     f"phone can reach, not what the far side has written down.")
@@ -2322,7 +2896,8 @@ def production_startup(journey: Journey, udid: str, ready: dict) -> None:
                    and "fix-login" in connected["agents"],
                    f"the app's own startup did not reach its host and agent: {connected}")
     calls = seen["calls"]["cloud"]
-    journey.expect("signIn" in calls and "connectToken personal" in calls,
+    journey.expect(any(call.startswith("signIn ") for call in calls)
+                   and "connectToken personal" in calls,
                    f"the app did not ask its account service for a connection: {calls}")
     journey.expect(sum(call.startswith("connectToken ") for call in calls) <= 4,
                    "redrawing the app restarted its coordinator or repeatedly asked for a token")
@@ -2378,6 +2953,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
 
     pictures = {"unsigned-launch": ("first-run",), "subscribe": ("paywall",),
                 "switching": ("profiles",), "delete": ("delete",),
+                "signed-out-account": ("sign-in-mismatch",), "remove-from-phone": ("remove",),
                 "help-and-appearance": ("appearance-dark", "appearance-light")}
     driving = journey.acts
     port = free_port()
@@ -2424,16 +3000,19 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         """A phone nobody has signed in on."""
         journey.expect(seen.get("gateAtLaunch") == "signed-out",
                        f"a phone nobody had signed in on drew {seen.get('gateAtLaunch')!r}")
-        journey.expect(seen.get("homeSaysAtLaunch") == "No hosts yet"
-                       and seen.get("homeOffersAtLaunch") == "Sign In",
+        journey.expect(seen.get("homeSaysAtLaunch") == "No agents yet"
+                       and seen.get("homeOffersAtLaunch") is True
+                       and seen.get("homeOffersAccountAtLaunch") == "Sign In",
                        f"the first launch says {seen.get('homeSaysAtLaunch')!r} and offers "
-                       f"{seen.get('homeOffersAtLaunch')!r}")
+                       f"{seen.get('homeOffersAtLaunch')!r} and "
+                       f"{seen.get('homeOffersAccountAtLaunch')!r}")
         journey.expect(seen.get("accountsAtLaunch") == []
                        and seen.get("accountRowsAtLaunch") == [],
                        f"a phone with no account listed {seen.get('accountsAtLaunch')} and "
                        f"{seen.get('accountRowsAtLaunch')}")
-        journey.say("the first launch is the real home, empty, with one thing to do: no "
-                    "splash, no account, and nothing to subscribe to or sign out of")
+        journey.say("the first launch is the real home, empty, offering to pair with a machine "
+                    "first and an account second: no splash, no account, and nothing to "
+                    "subscribe to or sign out of")
 
     def sign_in() -> None:
         """Signing in, and the two ways it does not finish."""
@@ -2446,17 +3025,23 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("afterCancelling") == "ready",
                        f"cancelling left the page at {seen.get('afterCancelling')!r}")
         journey.expect(seen.get("gateAfterSigningIn") == "unsubscribed"
-                       and seen.get("homeOffersAfterSigningIn") == "Subscribe",
+                       and seen.get("homeOffersAfterSigningIn") is True,
                        f"an account with nothing bought drew {seen.get('gateAfterSigningIn')!r} "
                        f"offering {seen.get('homeOffersAfterSigningIn')!r}")
         journey.expect(seen.get("accountsAfterSigningIn")
-                       == ["ada@example.com: signed in, None"],
+                       == ["ada@example.com: signed in, Not subscribed · hosts on this network still work"],
                        f"this phone knows {seen.get('accountsAfterSigningIn')}")
+        # With no account on the phone, signing in is adding one, and amux.sh
+        # is asked for its account chooser rather than for any one account.
+        journey.expect("signIn select" in (seen.get("callsAfterSigningIn") or [])
+                       and not any(call.startswith("signIn hint")
+                                   for call in seen.get("callsAfterSigningIn") or []),
+                       f"the first sign-in asked amux.sh {seen.get('callsAfterSigningIn')}")
         journey.say(f"the hand-off names where it is sending you and never asks for a password: "
                     f"refused it says the account service's own words "
                     f"({seen.get('refusalSaid')!r}), cancelled it leaves nothing to dismiss, and "
                     f"finished it puts the account on the phone with nothing bought — the same "
-                    f"empty home with the other thing to do")
+                    f"empty home, still offering the machine to pair with rather than a purchase")
 
     def subscribe() -> None:
         """Buying it, and the three ways it does not go through."""
@@ -2530,7 +3115,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("gateAfterBuying") == "ready",
                        f"a subscribed phone drew {seen.get('gateAfterBuying')!r}")
         journey.expect(seen.get("entitlementAfterBuying")
-                       == ["ada@example.com: signed in, Active · App Store"],
+                       == ["ada@example.com: signed in, Subscribed through the App Store"],
                        f"after buying, this phone knows {seen.get('entitlementAfterBuying')}")
         bought = [call for call in seen.get("storeCalls") or [] if call.startswith("buy")]
         journey.expect("buy amux_pro_yearly" in bought and "buy amux_pro_monthly" in bought,
@@ -2587,13 +3172,13 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
     def second_account() -> None:
         """A second account, subscribed somewhere else."""
         journey.expect(seen.get("accountsAfterAdding") == [
-            "ada@example.com: signed in, Active · App Store",
-            "team@acme.example: signed in, Active · amux.sh"],
+            "ada@example.com: signed in, Subscribed through the App Store",
+            "team@acme.example: signed in, Subscribed on the web"],
             f"this phone knows {seen.get('accountsAfterAdding')}")
         journey.expect(seen.get("selectedAfterAdding") == "personal",
                        f"signing a second account in moved the phone to "
                        f"{seen.get('selectedAfterAdding')!r}")
-        journey.expect(seen.get("workSubscriptionRow") == "Active · amux.sh",
+        journey.expect(seen.get("workSubscriptionRow") == "Subscribed on the web",
                        f"the second account's subscription reads "
                        f"{seen.get('workSubscriptionRow')!r}")
         journey.expect(seen.get("workPaywallSource") == "amux.sh"
@@ -2642,18 +3227,40 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                        and len(seen.get("accountsAfterSigningOut") or []) == 2,
                        f"after signing out this phone knows "
                        f"{seen.get('accountsAfterSigningOut')}")
-        journey.expect("team@acme.example: signed out, None"
+        journey.expect("team@acme.example: signed out, Not subscribed · hosts on this network still work"
                        in (seen.get("accountsAfterSigningOut") or []),
                        f"the account signed out of reads "
                        f"{seen.get('accountsAfterSigningOut')}")
-        journey.expect(seen.get("lapsedSubscriptionRow") == "Ended · amux.sh",
+        journey.expect(seen.get("lapsedSubscriptionRow")
+                       == "Not subscribed · hosts on this network still work",
                        f"a subscription that has run out reads "
                        f"{seen.get('lapsedSubscriptionRow')!r}")
+        # Signing back in names the account it is for, so amux.sh can skip the
+        # chooser or fill the address in.
+        hinted = seen.get("callsSigningBackIn") or []
+        journey.expect(hinted and all(call == "signIn hint team@acme.example" for call in hinted),
+                       f"signing back in asked amux.sh {hinted}")
+        # Somebody else came back. Nothing is added until the person says so,
+        # and cancelling lets go of the session that sign-in left.
+        journey.expect(seen.get("mismatchSaid") == "stranger@example.com"
+                       and seen.get("mismatchOffers") == "Continue as stranger@example.com",
+                       f"a sign-in that came back as somebody else said "
+                       f"{seen.get('mismatchSaid')!r} offering {seen.get('mismatchOffers')!r}")
+        journey.expect(seen.get("accountsAfterTheMismatch") == seen.get("accountsAfterSigningOut"),
+                       f"cancelling a sign-in that came back as somebody else changed the "
+                       f"accounts from {seen.get('accountsAfterSigningOut')} to "
+                       f"{seen.get('accountsAfterTheMismatch')}")
+        journey.expect("forgetSession stranger" in (seen.get("callsCancellingTheMismatch") or []),
+                       f"cancelling kept the session of the account nobody asked for: "
+                       f"{seen.get('callsCancellingTheMismatch')}")
         journey.say("signing out of one account leaves it listed with Sign In beside it — the "
                     "address is the one thing anybody recognises, and forgetting it would make "
-                    "signing back in look like adding a stranger. Signing back in finds a "
-                    "subscription that has since ended, and the row says when it ended rather "
-                    "than that there never was one")
+                    "signing back in look like adding a stranger. Signing back in asks amux.sh "
+                    "for that account by its address; when somebody else comes back instead the "
+                    "phone says who, adds nobody, and cancelling lets go of that session. "
+                    "Signed back in, it finds a subscription that has since ended, and the row "
+                    "reads as not subscribed, saying in the same breath that hosts on this "
+                    "network still work")
 
     def delete() -> None:
         """An account given up for good."""
@@ -2672,7 +3279,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                        f"coming back from the billing found {seen.get('typedAfterComingBack')!r} "
                        f"typed")
         journey.expect(seen.get("accountsAfterDeleting")
-                       == ["ada@example.com: signed in, Active · App Store"],
+                       == ["ada@example.com: signed in, Subscribed through the App Store"],
                        f"after the deletion this phone knows "
                        f"{seen.get('accountsAfterDeleting')}")
         journey.expect(seen.get("selectedAfterDeleting") == "personal",
@@ -2688,6 +3295,42 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                     "says so, names the only place that can be stopped and offers to go there; "
                     "coming back finds the same question with the address still typed. Deleted, "
                     "the account leaves the phone and the other one is what is left")
+
+    def remove_from_phone() -> None:
+        """Accounts taken off the phone, with amux.sh left alone."""
+        journey.expect(seen.get("removeAsks") == "side@example.com"
+                       and seen.get("removeSaysAccountStays") is True,
+                       f"removing an account asked {seen.get('removeAsks')!r} without saying the "
+                       f"amux.sh account stays: {seen.get('removeSaysAccountStays')}")
+        journey.expect(seen.get("accountsBeforeRemoving") == [
+            "ada@example.com: signed in, Subscribed through the App Store",
+            "side@example.com: signed out, Not subscribed · hosts on this network still work"],
+            f"before removing, this phone knows {seen.get('accountsBeforeRemoving')}")
+        journey.expect(seen.get("accountsAfterRemovingSignedOut")
+                       == ["ada@example.com: signed in, Subscribed through the App Store"]
+                       and seen.get("selectedAfterRemovingSignedOut") == "personal",
+                       f"removing the signed-out account left {seen.get('accountsAfterRemovingSignedOut')} "
+                       f"with {seen.get('selectedAfterRemovingSignedOut')!r} on screen")
+        journey.expect(seen.get("accountsAfterRemovingTheLast") == []
+                       and seen.get("selectedAfterRemovingTheLast") is None
+                       and seen.get("gateAfterRemovingTheLast") == "signed-out",
+                       f"removing the last account left {seen.get('accountsAfterRemovingTheLast')} "
+                       f"with {seen.get('selectedAfterRemovingTheLast')!r} on screen and the home "
+                       f"at {seen.get('gateAfterRemovingTheLast')!r}")
+        removed = seen.get("callsRemoving") or []
+        journey.expect("forgetSession side" in removed and "forgetSession personal" in removed
+                       and not any(call.startswith("requestDeletion") for call in removed),
+                       f"removing two accounts asked the account service {removed}")
+        # The account deleted in the act before is one too: an account that no
+        # longer exists leaves nothing of itself on the phone either.
+        journey.expect(sorted(seen.get("forgottenByTheRuntime") or []) == ["personal", "side", "work"],
+                       f"the runtime was told to forget {seen.get('forgottenByTheRuntime')}")
+        journey.say("Remove from This Phone says the amux.sh account stays and asks nothing to be "
+                    "typed. A signed-out account is removed from its row's own menu, and the "
+                    "account on screen from its own section: each is signed out of this phone, "
+                    "dropped from the list, and handed to the runtime to delete its profile and "
+                    "caches, as the account deleted before them was, and amux.sh is never asked "
+                    "to delete anything. With the last one gone the phone is signed out")
 
     def help_and_appearance() -> None:
         """What belongs to the phone rather than to an account."""
@@ -2711,6 +3354,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         "switching": switching,
         "signed-out-account": signed_out_account,
         "delete": delete,
+        "remove-from-phone": remove_from_phone,
         "help-and-appearance": help_and_appearance,
     }
     journey.expect(journey.filtered or list(checks) == driving,
@@ -3322,7 +3966,8 @@ def prepare_writing() -> None:
         {"parser.rs": PARSER_EDITED})
 
 
-JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
+JOURNEYS = {"onramp": onramp, "free-tier": free_tier, "signed-out": signed_out,
+            "profiles": profiles, "home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
             "writing": writing, "claude-sessions": claude_sessions, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
             "production-startup": production_startup, "accounts": accounts, "reports": reports, "accessibility": accessibility}

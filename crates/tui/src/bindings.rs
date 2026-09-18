@@ -235,6 +235,7 @@ pub fn fleet_sections(eff: &Effective, entry: EntryModes, families: bool) -> Vec
         fleet.push(row("z", "open/shut a family", Tier::Plain));
     }
     fleet.extend([
+        row("h", "show hosts", Tier::Plain),
         row("r", "rename selected", Tier::Plain),
         row("d", "delete selected", Tier::Plain),
         row(

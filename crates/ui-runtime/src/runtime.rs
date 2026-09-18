@@ -18,7 +18,8 @@ use std::time::Duration;
 use artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
 use client::{Client, ClientError, FrontDoorClient, installation_rpc as rpc};
-use futures_util::{FutureExt, Stream, StreamExt};
+use futures_util::stream::BoxStream;
+use futures_util::{FutureExt, Stream, StreamExt, stream};
 use model::{
     AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, ClaudePtyIntent,
     CreateAgentRequest, HostId, ProfileId, ProtocolError, ReplayOutcome, ReplayQuery,
@@ -29,10 +30,10 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 use ui_state::codex::CodexInput;
 use ui_state::{
-    ChatCommand, ChatStreamMsg, Command, DisconnectReason, DumpReason, Effect, InputPayload, Model,
-    Msg, NOT_CONNECTED_ERROR, OpError, OpId, OpOutcome, ProfileGeneration, ReplayFactsDto,
-    ServerMsg, StoreError as DurableStoreError, StoreMsg, StoreStreamQuery, StreamCloseReason,
-    StreamEntry, StreamMsg, StructuredProtocol, update,
+    ChatCommand, ChatStreamMsg, CloudState, Command, DisconnectReason, DumpReason, Effect,
+    InputPayload, Model, Msg, NOT_CONNECTED_ERROR, OpError, OpId, OpOutcome, ProfileGeneration,
+    ReplayFactsDto, ServerMsg, StoreError as DurableStoreError, StoreMsg, StoreStreamQuery,
+    StreamCloseReason, StreamEntry, StreamMsg, StructuredProtocol, update,
 };
 use uuid::Uuid;
 
@@ -55,7 +56,6 @@ const DRAIN_BUDGET: usize = 256;
 
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
-const SUBSCRIPTION_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Maximum structured entries coalesced into one `Msg::Stream(Batch)`.
 ///
@@ -79,9 +79,6 @@ pub type ConnectFuture = Pin<Box<dyn Future<Output = Result<Client, ConnectFailu
 /// embedding client (the CLI knows how to spawn the daemon); called again
 /// after every disconnect.
 pub type Connector = Box<dyn FnMut() -> ConnectFuture + Send>;
-
-/// Reads the daemon's durable subscription-required state.
-pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Debug-only frame and trace data supplied by an embedding UI when available.
 #[derive(Clone, Debug, Default)]
@@ -209,6 +206,116 @@ impl ProfileDirectory {
                 })
             })
             .collect()
+    }
+
+    /// Follow one selected profile's status through the installation front
+    /// door. The task reconnects to the watch after a front-door restart;
+    /// the last folded state remains authoritative between observations.
+    pub fn cloud_status(socket: PathBuf, profile: ProfileId) -> BoxStream<'static, CloudState> {
+        let (tx, rx) = mpsc::channel(16);
+        tokio::spawn(async move {
+            loop {
+                let mut front = match FrontDoorClient::connect_socket(&socket).await {
+                    Ok(front) => front,
+                    Err(error) => {
+                        tracing::debug!(%error, "cloud status front door unavailable");
+                        tokio::select! {
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                        }
+                        continue;
+                    }
+                };
+                let mut watch = match front
+                    .profiles
+                    .watch_profiles(rpc::WatchProfilesRequest {})
+                    .await
+                {
+                    Ok(response) => response.into_inner(),
+                    Err(error) => {
+                        tracing::debug!(%error, "cloud status watch unavailable");
+                        tokio::select! {
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                        }
+                        continue;
+                    }
+                };
+                loop {
+                    let event = match tokio::select! {
+                        _ = tx.closed() => return,
+                        event = watch.message() => event,
+                    } {
+                        Ok(Some(event)) => event,
+                        Ok(None) => break,
+                        Err(error) => {
+                            tracing::debug!(%error, "cloud status watch ended");
+                            break;
+                        }
+                    };
+                    let state = match event.event {
+                        Some(rpc::watch_profiles_response::Event::Upserted(info))
+                            if info.id == profile.to_string() =>
+                        {
+                            cloud_state_from_profile(&info)
+                        }
+                        Some(rpc::watch_profiles_response::Event::RemovedId(id))
+                            if id == profile.to_string() =>
+                        {
+                            Some(CloudState::SignedOut)
+                        }
+                        _ => None,
+                    };
+                    if let Some(state) = state
+                        && tx.send(state).await.is_err()
+                    {
+                        return;
+                    }
+                }
+                tokio::select! {
+                    _ = tx.closed() => return,
+                    _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                }
+            }
+        });
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|state| (state, rx))
+        })
+        .boxed()
+    }
+}
+
+fn cloud_state_from_profile(info: &rpc::ProfileInfo) -> Option<CloudState> {
+    let intent = rpc::Intent::try_from(info.intent).ok()?;
+    if matches!(intent, rpc::Intent::Unbound | rpc::Intent::LoggedOut) {
+        return Some(CloudState::SignedOut);
+    }
+    if intent == rpc::Intent::Paused {
+        return Some(CloudState::Retrying);
+    }
+    if intent != rpc::Intent::Bound {
+        return None;
+    }
+    match rpc::Observed::try_from(info.observed).ok()? {
+        rpc::Observed::Local | rpc::Observed::Connecting => Some(CloudState::Connecting),
+        rpc::Observed::Connected => {
+            let tier = match rpc::Tier::try_from(info.tier).ok()? {
+                rpc::Tier::Free => model::Tier::Free,
+                rpc::Tier::Pro => model::Tier::Pro,
+                rpc::Tier::Unspecified => return None,
+            };
+            let carrier = match rpc::RelayCarrier::try_from(info.relay_carrier).ok()? {
+                rpc::RelayCarrier::Quic => model::RelayCarrier::Quic,
+                rpc::RelayCarrier::Tcp => model::RelayCarrier::Tcp,
+                rpc::RelayCarrier::Unspecified => return None,
+            };
+            Some(CloudState::Connected { tier, carrier })
+        }
+        rpc::Observed::Retrying | rpc::Observed::UpdateRequired | rpc::Observed::StartupFailed => {
+            Some(CloudState::Retrying)
+        }
+        rpc::Observed::AuthenticationRequired => Some(CloudState::AuthRequired),
+        rpc::Observed::Unspecified => None,
     }
 }
 
@@ -385,8 +492,6 @@ pub struct RuntimeOptions {
     /// Optional UI-owned capture hook for automatic reports.
     pub report_extras: Option<ReportExtrasProvider>,
     pub recorder_capacity: usize,
-    /// Provider polled while connected so marker transitions enter the reducer.
-    pub subscription_status_provider: Option<SubscriptionStatusProvider>,
     /// Called with every folded Msg, in fold order, before [`Runtime::next`]
     /// returns. The diagnostic trace uses it: a recording that reconstructs
     /// the fold order from the outside would have to guess how a drain
@@ -399,6 +504,8 @@ pub struct RuntimeOptions {
     pub artifact_cache_bound: u64,
     /// Platform opener override. Embedders normally leave this at its default.
     pub attachment_opener: AttachmentOpener,
+    /// Selected-profile cloud status supplied by the embedding shell.
+    pub cloud_status: Option<BoxStream<'static, CloudState>>,
     /// Entries retained in each store-backed chat window. Desktop callers
     /// use a small paging cache; clients without paging opt into their own
     /// larger visible-history bound.
@@ -430,7 +537,6 @@ impl Default for RuntimeOptions {
             git_sha: "unknown",
             report_extras: None,
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
-            subscription_status_provider: None,
             msg_tap: None,
             artifact_cache: None,
             artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
@@ -439,6 +545,7 @@ impl Default for RuntimeOptions {
             store_maintenance_budget: store::Budget::default(),
             store_recovery: StoreRecovery::Operator,
             store_first_frame_seen: false,
+            cloud_status: None,
         }
     }
 }
@@ -815,7 +922,7 @@ impl Runtime {
 
     fn start_on_channel(
         connector: Connector,
-        options: RuntimeOptions,
+        mut options: RuntimeOptions,
         msg_tx: mpsc::Sender<(Generation, Msg)>,
         msg_rx: mpsc::Receiver<(Generation, Msg)>,
         generation: Generation,
@@ -871,17 +978,31 @@ impl Runtime {
             startup_gate.finish_all();
         }
 
-        let subscription_status_provider = options.subscription_status_provider;
         let connection_gate = startup_gate.clone();
         let connection_task = tokio::spawn(connection_task(
             connector,
             msg_sink.clone(),
             client.clone(),
             options.local_host_id,
-            subscription_status_provider.clone(),
             options.host_inventory,
             connection_gate,
         ));
+        let cloud_status_task = options.cloud_status.take().map(|mut statuses| {
+            let tx = msg_sink.clone();
+            tokio::spawn(async move {
+                while let Some(state) = statuses.next().await {
+                    if tx
+                        .send(Msg::Server(ServerMsg::CloudState(state)))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            })
+        });
+        let mut tasks = vec![connection_task];
+        tasks.extend(cloud_status_task);
 
         let store_failure_channel_open = store_worker.is_some();
         Self {
@@ -891,7 +1012,7 @@ impl Runtime {
             msg_sink,
             msg_rx,
             client,
-            tasks: vec![connection_task],
+            tasks,
             streams: HashMap::new(),
             store_streams: HashMap::new(),
             store_worker,
@@ -2418,7 +2539,7 @@ fn disconnect_reason(error: &ClientError) -> DisconnectReason {
             detail: reason.to_string(),
         },
         error if is_auth_error(error) => DisconnectReason::AuthenticationRequired,
-        error if is_subscription_error(error) => DisconnectReason::SubscriptionRequired,
+        error if is_subscription_error(error) => DisconnectReason::PaymentRequired,
         error => DisconnectReason::TransportError {
             message: error.to_string(),
         },
@@ -2433,7 +2554,6 @@ async fn connection_task(
     tx: MsgSink,
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
-    subscription_status_provider: Option<SubscriptionStatusProvider>,
     host_inventory: Option<Arc<dyn HostInventory>>,
     startup_gate: Arc<StartupGate>,
 ) {
@@ -2446,7 +2566,7 @@ async fn connection_task(
                 let reason = if failure.auth_required {
                     DisconnectReason::AuthenticationRequired
                 } else if failure.subscription_required {
-                    DisconnectReason::SubscriptionRequired
+                    DisconnectReason::PaymentRequired
                 } else {
                     DisconnectReason::TransportError {
                         message: failure.message,
@@ -2466,14 +2586,8 @@ async fn connection_task(
         };
 
         *shared_client.lock().expect("client mutex poisoned") = Some(client.clone());
-        let session_end = pump_inventory(
-            &client,
-            &tx,
-            local_host_id,
-            subscription_status_provider.as_ref(),
-            host_inventory.as_ref(),
-        )
-        .await;
+        let session_end =
+            pump_inventory(&client, &tx, local_host_id, host_inventory.as_ref()).await;
         *shared_client.lock().expect("client mutex poisoned") = None;
 
         let Some(reason) = session_end else {
@@ -2499,7 +2613,6 @@ async fn pump_inventory(
     client: &Client,
     tx: &MsgSink,
     local_host_id: Option<HostId>,
-    subscription_status_provider: Option<&SubscriptionStatusProvider>,
     host_inventory: Option<&Arc<dyn HostInventory>>,
 ) -> Option<DisconnectReason> {
     let hosts_stream = match host_inventory {
@@ -2522,22 +2635,7 @@ async fn pump_inventory(
     {
         return None;
     }
-    let mut subscription_required = subscription_status_provider.map(|provider| provider());
-    if let Some(required) = subscription_required
-        && tx
-            .send(Msg::Server(ServerMsg::CloudSubscriptionStatus { required }))
-            .await
-            .is_err()
-    {
-        return None;
-    }
-    let mut subscription_poll = subscription_status_provider
-        .map(|_| tokio::time::interval(SUBSCRIPTION_STATUS_POLL_INTERVAL));
     let mut snapshot_agents = HashMap::new();
-    if let Some(poll) = subscription_poll.as_mut() {
-        poll.tick().await;
-    }
-
     loop {
         let events: Vec<Msg> = tokio::select! {
             event = hosts_stream.next() => match event {
@@ -2550,14 +2648,6 @@ async fn pump_inventory(
             event = agents_stream.recv() => match event {
                 Ok(event) => agent_messages(&mut snapshot_agents, event),
                 Err(error) => return Some(disconnect_reason(&error)),
-            },
-            _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
-                let required = subscription_status_provider.expect("poll requires provider")();
-                if subscription_required == Some(required) {
-                    continue;
-                }
-                subscription_required = Some(required);
-                vec![Msg::Server(ServerMsg::CloudSubscriptionStatus { required })]
             },
         };
         for event in events {
@@ -2726,12 +2816,6 @@ fn agent_messages(
             messages.push(Msg::Server(ServerMsg::HostInventory { host_id, agent_ids }));
             messages
         }
-    }
-}
-
-async fn maybe_interval_tick(interval: &mut Option<tokio::time::Interval>) {
-    if let Some(interval) = interval {
-        interval.tick().await;
     }
 }
 
@@ -3148,7 +3232,7 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
     if is_auth_error(error) {
         StreamCloseReason::AuthenticationRequired
     } else if is_subscription_error(error) {
-        StreamCloseReason::SubscriptionRequired
+        StreamCloseReason::PaymentRequired
     } else {
         StreamCloseReason::TransportError {
             message: error.to_string(),
@@ -3159,6 +3243,138 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cloud_state_profile(
+        intent: rpc::Intent,
+        observed: rpc::Observed,
+        tier: rpc::Tier,
+        carrier: rpc::RelayCarrier,
+    ) -> rpc::ProfileInfo {
+        rpc::ProfileInfo {
+            id: ProfileId::new().to_string(),
+            label: String::new(),
+            email: String::new(),
+            account_name: String::new(),
+            socket_path: String::new(),
+            host_id: String::new(),
+            intent: intent as i32,
+            observed: observed as i32,
+            revision: 0,
+            startup_error: String::new(),
+            available: true,
+            minimum_version: None,
+            tier: tier as i32,
+            relay_carrier: carrier as i32,
+        }
+    }
+
+    #[test]
+    fn cloud_state_maps_every_profile_status_transition() {
+        let cases = [
+            (
+                cloud_state_profile(
+                    rpc::Intent::Unbound,
+                    rpc::Observed::Local,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::SignedOut,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connecting,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Connecting,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connected,
+                    rpc::Tier::Free,
+                    rpc::RelayCarrier::Tcp,
+                ),
+                CloudState::Connected {
+                    tier: model::Tier::Free,
+                    carrier: model::RelayCarrier::Tcp,
+                },
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connected,
+                    rpc::Tier::Pro,
+                    rpc::RelayCarrier::Quic,
+                ),
+                CloudState::Connected {
+                    tier: model::Tier::Pro,
+                    carrier: model::RelayCarrier::Quic,
+                },
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Retrying,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Retrying,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::AuthenticationRequired,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::AuthRequired,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Paused,
+                    rpc::Observed::Local,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Retrying,
+            ),
+        ];
+        for (profile, expected) in cases {
+            assert_eq!(cloud_state_from_profile(&profile), Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_state_runtime_folds_the_shell_supplied_stream() {
+        let statuses = stream::iter([CloudState::Connected {
+            tier: model::Tier::Free,
+            carrier: model::RelayCarrier::Quic,
+        }])
+        .boxed();
+        let connector: Connector =
+            Box::new(|| Box::pin(std::future::pending::<Result<Client, ConnectFailure>>()));
+        let mut runtime = Runtime::start(
+            connector,
+            RuntimeOptions {
+                cloud_status: Some(statuses),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), runtime.next())
+            .await
+            .expect("cloud status reaches the reducer before the daemon connects");
+
+        assert_eq!(
+            runtime.model().cloud_state(),
+            &CloudState::Connected {
+                tier: model::Tier::Free,
+                carrier: model::RelayCarrier::Quic,
+            }
+        );
+    }
 
     #[test]
     fn claude_sdk_stream_wire_preserves_tail_sequence_and_json() {
@@ -3225,6 +3441,8 @@ mod tests {
     #[test]
     fn host_updates_persist_facts_before_reachability_and_model_projection() {
         let host = model::HostEntry {
+            signed_in: Some(true),
+            via: model::HostVia::Direct,
             id: HostId::from_u128(9),
             name: "remembered-host".to_owned(),
             online: false,
@@ -3353,13 +3571,10 @@ mod tests {
 
         assert!(is_subscription_error(&error));
         assert!(!is_auth_error(&error));
-        assert_eq!(
-            disconnect_reason(&error),
-            DisconnectReason::SubscriptionRequired
-        );
+        assert_eq!(disconnect_reason(&error), DisconnectReason::PaymentRequired);
         assert_eq!(
             stream_close_from_client_error(&error),
-            StreamCloseReason::SubscriptionRequired
+            StreamCloseReason::PaymentRequired
         );
     }
 
@@ -3374,6 +3589,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+            last_activity: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
             summary: None,
@@ -3395,6 +3611,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+            last_activity: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
             summary: None,
@@ -3920,6 +4137,8 @@ mod tests {
         }));
         for message in host_messages(model::HostEvent::HostUpdated {
             host: model::HostEntry {
+                signed_in: Some(true),
+                via: model::HostVia::Direct,
                 id: host,
                 name: "retention-host".to_owned(),
                 online: true,
@@ -4169,6 +4388,8 @@ mod tests {
                 generations,
                 store::FleetDelta::Host {
                     host: model::HostEntry {
+                        signed_in: Some(true),
+                        via: model::HostVia::Direct,
                         id: host,
                         name: "recovery-host".to_owned(),
                         online: true,
@@ -4481,6 +4702,8 @@ mod tests {
 
         for message in host_messages(model::HostEvent::HostUpdated {
             host: model::HostEntry {
+                signed_in: Some(true),
+                via: model::HostVia::Direct,
                 id: host,
                 name: "remembered-host".to_owned(),
                 online: true,

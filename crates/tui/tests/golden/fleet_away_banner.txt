@@ -1,0 +1,40 @@
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        5 agents    │
+│                                                                                                                      │
+│ ▎ ! fix-auth-bug          claude   nova ·direct       2m    permission                                               │
+│   ? migration-plan        claude   hetzner ·away      45s   question                                                 │
+│   ✓ nightly-refactor      codex    hetzner ·away      3m    finished                                                 │
+│   ⋯ refactor-tunnels      claude   nova ·direct       12s   working                                                  │
+│     docs-cleanup          claude   nova ·direct       1h    idle                                                     │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ⚠ hetzner is away · subscribe at amux.sh/account to reach agents from anywhere                                       │
+│ ● connected · 3 hosts  enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

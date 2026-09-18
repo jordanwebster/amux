@@ -142,7 +142,7 @@ final class AccessibilityTests: JourneyCase {
     private func aConversationAndThePatchItOffers() throws {
         try openTheConversation()
         record["conversation"] = try audited(
-            "conversation", reaching: ["conversation.drawer", "conversation.overflow",
+            "conversation", reaching: ["conversation.back", "conversation.overflow",
                                        "composer.attach"])
 
         // The patch, asked of the machine and taken hold of by dragging down
@@ -295,7 +295,7 @@ final class AccessibilityTests: JourneyCase {
     private func theMachinesThisPhoneWorksOn() throws {
         pressTab(app, "Hosts")
         waitFor(app, "hosts", "the Hosts tab drew nothing")
-        record["hosts"] = try audited("hosts", reaching: ["hosts.pair"])
+        record["hosts"] = try audited("hosts", reaching: ["hosts.row.\(desktop.identity)"])
         let listed = identifiers(app, startingWith: "hosts.row.")
         record["hostsListed"] = listed
         XCTAssertEqual(listed.count, 2,

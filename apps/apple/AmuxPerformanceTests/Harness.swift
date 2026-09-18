@@ -39,7 +39,7 @@ final class Harness {
             relay: BridgeConfiguration.Relay(
                 url: "https://127.0.0.1:1", tls: .system),
             accounts: [BridgeConfiguration.Account(id: "performance",
-                                        token: .fixed("measured"))],
+                                        token: .fixed("measured", tier: .pro))],
             active: "performance",
             logPath: data.appendingPathComponent("perf.log")))
         stores = StoreBundle(account: AccountId("performance"), clock: { Workloads.now })

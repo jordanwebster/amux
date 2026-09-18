@@ -39,18 +39,18 @@ extension Bridge {
     ///
     /// The account is part of the question: a remembered row is one account's
     /// machine and one account's agent, and a phone signed in to two of them
-    /// keeps a fleet for each.
-    public static func cachedFleet(in directory: URL, for account: AccountId) throws -> [Event] {
+    /// keeps a fleet for each. A nil account reads the signed-out profile.
+    public static func cachedFleet(in directory: URL, for account: AccountId?) throws -> [Event] {
         Signposts.emit(.storeReadBegan)
-        let json = amux_app_cached_fleet(directory.path, account.value)
+        let json = amux_app_cached_fleet(directory.path, account?.value ?? "")
         Signposts.emit(.storeReadEnded)
         guard let json else {
             throw CachedFleetFailure("The stored fleet could not be read.")
         }
         defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
-        if let events = try? AmuxJSON.decoder.decode([Event].self, from: data) {
-            return events
+        if let batch = try? Event.batch(from: data, decoder: AmuxJSON.decoder) {
+            return batch.events
         }
         struct Failure: Decodable { var error: String }
         if let failure = try? AmuxJSON.decoder.decode(Failure.self, from: data) {

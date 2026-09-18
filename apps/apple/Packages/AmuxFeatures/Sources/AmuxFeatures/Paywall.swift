@@ -185,6 +185,13 @@ public struct Paywall: View {
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(design.ink.color)
                 Explain(Self.honoured(grant))
+                // Said because it is the one thing that looks broken
+                // otherwise. This phone goes live the moment it re-reads its
+                // own standing; every other device finds out at its next
+                // re-check, and somebody staring at a laptop that still says
+                // "away" needs to know that is the wait rather than a fault.
+                Explain(Self.elsewhere)
+                    .padding(.top, 6)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 14)
@@ -192,6 +199,11 @@ public struct Paywall: View {
             .identified("paywall.subscribed", value: grant.named)
         }
     }
+
+    /// What happens on everything that is not this phone. The relay is asked
+    /// again here as soon as a purchase lands, so this device is live at once;
+    /// the others ask on their own schedule.
+    static let elsewhere = "Your other devices follow within a few minutes."
 
     /// Where the subscription was bought, in the preposition that place
     /// takes: one is a store you are in, the other a site you are on. Access

@@ -13,6 +13,7 @@
 //! claims adjacency to it — so presence reaches exactly two hops.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use model::Host;
@@ -126,6 +127,7 @@ impl RoutingState {
 pub struct RoutingCore {
     state: RwLock<RoutingState>,
     trust_store: Option<SharedTrustStore>,
+    trust_data_dir: Option<PathBuf>,
 }
 
 impl RoutingCore {
@@ -133,10 +135,23 @@ impl RoutingCore {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn with_trust_store(trust_store: SharedTrustStore) -> Self {
         Self {
             state: RwLock::new(RoutingState::default()),
             trust_store: Some(trust_store),
+            trust_data_dir: None,
+        }
+    }
+
+    pub(crate) fn with_persisted_trust_store(
+        trust_store: SharedTrustStore,
+        data_dir: PathBuf,
+    ) -> Self {
+        Self {
+            state: RwLock::new(RoutingState::default()),
+            trust_store: Some(trust_store),
+            trust_data_dir: Some(data_dir),
         }
     }
 
@@ -261,6 +276,7 @@ impl RoutingCore {
     /// Records a channel-backed direct link to `host`. Emits `NeighborUp`
     /// (and `Added` presence on first sight).
     pub(crate) async fn apply_direct_up(&self, host: Host, link: LinkId) -> RouteUpdateOutcome {
+        self.remember_signed_in(&host);
         let trusted_hosts = self.trusted_host_ids();
         let mut state = self.state.write().await;
         let host_id = host.id;
@@ -279,7 +295,12 @@ impl RoutingCore {
         if entry.links.contains(&link) {
             return RouteUpdateOutcome::AlreadyKnown;
         }
-        entry.links.push(link);
+        // Newest first, because a second link to a peer we already hold one to
+        // means a crossed dial: the link arriving now is the one both sides
+        // keep, and the one it displaced has already stopped carrying streams.
+        // Routing hears about that displacement a moment later, so preferring
+        // the older link would send calls down a link nothing can open on.
+        entry.links.insert(0, link);
         state.routing_events.emit(RoutingEvent::NeighborUp {
             host: host.clone(),
             link,
@@ -313,12 +334,13 @@ impl RoutingCore {
             link,
             last_link,
         });
-        emit_removed_if_absent(&mut state, host_id);
+        emit_removed_if_gone(&mut state, host_id);
     }
 
     /// Records a neighbor's adjacency claim: `relay` says it has a direct
     /// link to `host`.
     pub(crate) async fn apply_claim_up(&self, relay: HostId, host: Host) -> RouteUpdateOutcome {
+        self.remember_signed_in(&host);
         let trusted_hosts = self.trusted_host_ids();
         let mut state = self.state.write().await;
         let host_id = host.id;
@@ -366,7 +388,7 @@ impl RoutingCore {
     pub(crate) async fn apply_claim_down(&self, relay: HostId, host_id: HostId) {
         let mut state = self.state.write().await;
         remove_claim(&mut state, relay, host_id);
-        emit_removed_if_absent(&mut state, host_id);
+        emit_removed_if_gone(&mut state, host_id);
     }
 
     /// Withdraws every claim made by `relay` (its last link went down).
@@ -379,7 +401,7 @@ impl RoutingCore {
             .collect::<Vec<_>>();
         for host_id in claimed {
             remove_claim(&mut state, relay, host_id);
-            emit_removed_if_absent(&mut state, host_id);
+            emit_removed_if_gone(&mut state, host_id);
         }
     }
 
@@ -428,11 +450,8 @@ impl RoutingCore {
                 });
             }
         }
-        if was_direct && !state.is_present(host_id) {
-            state.client_visible_activity.remove(&host_id);
-            state
-                .host_events
-                .emit(HostReachabilityEvent::Removed { host_id });
+        if was_direct {
+            emit_removed_if_gone(&mut state, host_id);
         }
     }
 
@@ -493,6 +512,23 @@ impl RoutingCore {
         self.state.write().await.host_events.subscribe()
     }
 
+    /// Announces how a host is reached now.
+    ///
+    /// The routing table records where a host could be reached; which of those
+    /// routes is live is the connection manager's own state, and it applies
+    /// routing events on its own schedule. So a route announced from inside
+    /// the table would describe a link that has entered it but is not yet
+    /// carrying anything, and a watcher would be told about a route that is
+    /// being replaced. The manager calls this once its state has settled, and
+    /// only when what a client would be told has actually moved — acting on
+    /// one of these costs the host its inventory subscription.
+    pub(crate) async fn announce_route(&self, host_id: HostId) {
+        let mut state = self.state.write().await;
+        if state.is_present(host_id) {
+            emit_route_change(&mut state, host_id);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn subscribe_hosts_with_snapshot(
         &self,
@@ -512,6 +548,32 @@ impl RoutingCore {
 }
 
 impl RoutingCore {
+    /// The account-binding fact recorded for `host_id`, as a client listing
+    /// hosts would read it.
+    pub(crate) fn signed_in_for(&self, host_id: HostId) -> Option<bool> {
+        let trust_store = self.trust_store.as_ref()?;
+        let trust_store = trust_store.read().ok()?;
+        trust_store.entry(host_id).and_then(|entry| entry.signed_in)
+    }
+
+    fn remember_signed_in(&self, host: &Host) {
+        let Some(trust_store) = &self.trust_store else {
+            return;
+        };
+        let Ok(mut trust_store) = trust_store.write() else {
+            tracing::warn!(peer = %host.id, "failed to update signed-in state: trust store poisoned");
+            return;
+        };
+        if !trust_store.remember_signed_in(host.id, host.signed_in) {
+            return;
+        }
+        if let Some(data_dir) = &self.trust_data_dir
+            && let Err(error) = trust_store.save_in(data_dir)
+        {
+            tracing::warn!(peer = %host.id, error = %error, "failed to persist signed-in state");
+        }
+    }
+
     fn trusted_host_ids(&self) -> HashSet<HostId> {
         let Some(trust_store) = &self.trust_store else {
             return HashSet::new();
@@ -540,13 +602,32 @@ fn remove_claim(state: &mut RoutingState, relay: HostId, host_id: HostId) {
         .emit(RoutingEvent::ClaimDown { relay, host_id });
 }
 
-fn emit_removed_if_absent(state: &mut RoutingState, host_id: HostId) {
-    if !state.is_present(host_id) {
-        state.client_visible_activity.remove(&host_id);
-        state
-            .host_events
-            .emit(HostReachabilityEvent::Removed { host_id });
+/// Announces a host that has no routes left at all.
+///
+/// A host that still has one is not announced here: losing a route it was not
+/// being reached over changes nothing anybody is told, and losing the one it
+/// was is announced by whatever was carrying it, once it knows what replaced
+/// it.
+fn emit_removed_if_gone(state: &mut RoutingState, host_id: HostId) {
+    if state.is_present(host_id) {
+        return;
     }
+    state.client_visible_activity.remove(&host_id);
+    state
+        .host_events
+        .emit(HostReachabilityEvent::Removed { host_id });
+}
+
+/// Announces that a host already known to be here is now reached differently.
+///
+/// Presence did not change, so nobody would otherwise be told — and how a
+/// machine is reached is most of what is said about it, so a client holding a
+/// long-lived subscription would go on describing it by the first route it
+/// was ever reached over.
+fn emit_route_change(state: &mut RoutingState, host_id: HostId) {
+    state
+        .host_events
+        .emit(HostReachabilityEvent::RouteChanged { host_id });
 }
 
 /// Enforces [`ROUTING_HOST_CAP`] before a new untrusted host becomes
@@ -651,6 +732,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 
@@ -670,6 +752,7 @@ mod tests {
                 name: "trusted".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(1, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         trust_store
@@ -743,6 +826,9 @@ mod tests {
         assert!(
             matches!(host_rx.recv().await, Some(HostReachabilityEvent::Added { host }) if host.id == peer)
         );
+        // Presence is announced once, and the direct link that arrived beside
+        // the claim is not presence. Which route is being used is settled by
+        // whatever carries it, so the table says nothing about it here.
         assert!(host_rx.try_recv().is_err(), "presence is emitted once");
     }
 
@@ -763,7 +849,10 @@ mod tests {
 
         core.apply_direct_down(direct).await;
         assert_eq!(core.route_to(peer).await, Some(Route::Via(relay)));
-        assert!(host_rx.try_recv().is_err(), "still present via the claim");
+        assert!(
+            host_rx.try_recv().is_err(),
+            "still present via the claim, so nothing about presence changed"
+        );
 
         core.apply_claim_down(relay, peer).await;
         assert_eq!(core.route_to(peer).await, None);
@@ -865,7 +954,29 @@ mod tests {
 
         assert_eq!(core.route_to(peer).await, Some(Route::Via(relay)));
         assert!(core.host_entry(peer).await.is_some());
-        assert!(host_rx.try_recv().is_err());
+        assert!(
+            host_rx.try_recv().is_err(),
+            "the host is still here, so presence has nothing to say"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_link_to_the_same_peer_becomes_the_route_to_it() {
+        // Two links to one peer means both sides dialled at once. The one that
+        // arrives second is the one they keep; the first stopped carrying
+        // streams the instant it was displaced, and routing is told to drop it
+        // only afterwards. Calls made in between must take the live one.
+        let core = RoutingCore::new();
+        let peer = HostId::from_u128(5);
+        let crossed = link(5, 1);
+        let kept = link(5, 2);
+        core.apply_direct_up(host(5, "peer"), crossed).await;
+
+        core.apply_direct_up(host(5, "peer"), kept).await;
+
+        assert_eq!(core.route_to(peer).await, Some(Route::Direct(kept)));
+        core.apply_direct_down(crossed).await;
+        assert_eq!(core.route_to(peer).await, Some(Route::Direct(kept)));
     }
 
     #[tokio::test]

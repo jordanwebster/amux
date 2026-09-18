@@ -61,18 +61,16 @@ final class AskTests: JourneyCase {
             "the conversation offered nowhere to write")
         writing.tap()
         writing.typeText(Self.halfWritten)
-        // The keys are put down the way the app puts them down — by reaching
-        // for something else, here the fleet over the conversation — because a
-        // keyboard standing over the feed in one reading and gone in the next
+        // The keys are put down the way the app puts them down — by leaving
+        // for something else, here the Agents list and straight back — because
+        // a keyboard standing over the feed in one reading and gone in the next
         // would move every row between them for a reason that has nothing to
-        // do with any answer. The conversation underneath is not torn down, so
-        // coming back out of the drawer comes back to this one.
-        press(app, "conversation.drawer")
-        waitFor(app, "drawer.row.\(runner.agent)", "the drawer did not list this agent")
-        press(app, "drawer.row.\(runner.agent)")
-        waitForNo(app, "drawer.row.\(runner.agent)", "picking this agent left the drawer out")
+        // do with any answer. The draft belongs to the conversation's store,
+        // so coming back to it finds what was being written.
+        backToAgents(app)
+        openFromAgents(runner, app, runner.agent, "coming back did not reopen this agent")
         XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
-                       "what was being written did not survive the fleet being opened over it")
+                       "what was being written did not survive leaving the conversation")
 
         // Scrolled back until the newest row is off the screen, which is what
         // reading something that happened earlier means.
@@ -262,11 +260,9 @@ final class AskTests: JourneyCase {
         waitFor(app, "ask.allow", "the child's ask is not answerable in the child")
         answer(app, "ask.allow", "answering the child left its panel up")
 
-        // Back to the parent the way the app offers: the fleet over the
-        // conversation, which is how you go sideways from any of them.
-        press(app, "conversation.drawer")
-        waitFor(app, "drawer.row.\(runner.agent)", "the drawer did not list the parent")
-        press(app, "drawer.row.\(runner.agent)")
+        // Back to the parent the way the app offers: the child was opened on
+        // top of it, so its back chevron returns to the parent.
+        press(app, "conversation.back")
         XCTAssertEqual(try waitForValue(runner, "conversation", runner.agent), runner.agent,
                        "coming back did not come back to the parent")
         XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
@@ -276,7 +272,12 @@ final class AskTests: JourneyCase {
         try control.ask(["AgentPlay": ["agent": "mind-the-gap",
                                        "steps": [["ChildStarted": ["name": "scout"]]]]])
         waitFor(app, "facts.grow", "the provider child count offered no Started list")
-        press(app, "facts.grow")
+        // Coming back from the child is going back to the parent that was
+        // underneath it, which still has the Started list open where the child
+        // was pressed. Pressing the control again would fold it.
+        if said(try declared(runner), "facts")?.value != "open" {
+            press(app, "facts.grow")
+        }
         // A subagent is named by what it is as well as what it is called —
         // the provider reports both and two of the same name doing different
         // work are two rows — so the chip is found by what it starts with
@@ -340,14 +341,14 @@ final class AskTests: JourneyCase {
         record["place"] = kept
         photograph(app, "ask-place-after-child")
 
-        // The drawer replaces the Agents home while a conversation is open.
-        // Leave through its Hosts link and return through the ordinary Agents
-        // tab; that tab preserves the conversation stack by design.
-        press(app, "conversation.drawer")
-        waitFor(app, "drawer.hosts", "the drawer offered no route to Hosts")
-        press(app, "drawer.hosts")
+        // Out to Hosts the way the app offers — back to the Agents list, whose
+        // tab bar reaches the other tabs — and in again through the Agents tab
+        // and the row.
+        backToAgents(app)
+        pressTab(app, "Hosts")
         waitFor(app, "hosts", "leaving the conversation did not reach Hosts")
         pressTab(app, "Agents")
+        openFromAgents(runner, app, runner.agent, "coming back from Hosts did not reopen the agent")
         waitFor(app, "conversation.changes",
                 "coming back to a finished turn lost the way to review its changes")
         press(app, "conversation.changes")

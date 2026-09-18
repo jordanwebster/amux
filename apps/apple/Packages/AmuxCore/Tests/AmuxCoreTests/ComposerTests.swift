@@ -60,11 +60,11 @@ final class ComposerTests: XCTestCase {
     func testNothingThatWillNotTakeAMessageDrawsAComposer() {
         let closed: [SendGate] = [
             .claudePty(.exited), .claudePty(.readOnly), .claudePty(.replaying),
-            .claudePty(.needsYou), .claudePty(.unknown), .claudePty(.sendInFlight),
+            .claudePty(.needsYou), .claudePty(.unknown),
             .claudePty(.unavailable),
             .codex(.exited), .codex(.closed), .codex(.replaying), .codex(.needsYou),
             .codex(.observerReadOnly), .codex(.readOnly), .codex(.unknown),
-            .codex(.inputInFlight), .codex(.unavailable),
+            .codex(.unavailable),
             .unavailable,
         ]
         for gate in closed {
@@ -72,6 +72,20 @@ final class ComposerTests: XCTestCase {
                 ComposerState(gate: gate, tail: nil, elapsed: nil),
                 "\(gate) offered a composer nobody can write in")
         }
+    }
+
+    /// The box that sent a message is the box that waits for it to arrive.
+    /// Replacing it for that moment put the keyboard down mid-send.
+    func testAMessageOnItsWayKeepsTheBoxAndHoldsTheButton() {
+        for gate in [SendGate.claudePty(.sendInFlight), .claudeSdk(.inputInFlight),
+                     .codex(.inputInFlight)] {
+            let state = ComposerState(gate: gate, tail: nil, elapsed: nil)
+            XCTAssertEqual(state, .sending, "\(gate)")
+            XCTAssertEqual(state?.sends, false, "\(gate)")
+            XCTAssertEqual(state?.busy, false, "\(gate)")
+            XCTAssertEqual(state?.placeholder(agent: "refactor-auth"), "Message refactor-auth")
+        }
+        XCTAssertEqual(ComposerState.writing.sends, true)
     }
 
     func testTheEmptyFieldNamesTheAgentUntilATurnIsRunning() {
@@ -104,6 +118,33 @@ final class ComposerTests: XCTestCase {
 
     /// The elapsed time is the fleet's arithmetic. A machine that has not said
     /// when the work started gets a name and no number rather than a zero.
+    /// The line describes the turn, not the row being drawn: a status report
+    /// that reached the feed as a tool row, or an answer still streaming, is
+    /// the agent working.
+    func testOnlyThinkingAndRunningAreNamedEverythingElseIsWorking() {
+        let tails: [TranscriptRow.Kind] = [
+            .tool(name: "requesting", detail: nil, meta: nil),
+            .prose(markdown: "Hey", open: true),
+            .wrote(path: "a.rs", meta: nil),
+            .edit(path: "a.rs", added: 1, removed: 0),
+        ]
+        for kind in tails {
+            let tail = TranscriptRow(id: "t", layer: .claudeSdk, kind: kind)
+            XCTAssertEqual(
+                ComposerState(gate: .claudeSdk(.working), tail: tail, elapsed: nil)?
+                    .activity?.name,
+                "Working", "\(kind)")
+        }
+    }
+
+    /// A message on its way already shows the line, so it does not appear a
+    /// beat after the tap.
+    func testASendOnItsWayShowsTheWorkingLineButNotTheStopButton() {
+        XCTAssertEqual(ComposerState.sending.line?.name, "Working")
+        XCTAssertFalse(ComposerState.sending.busy)
+        XCTAssertNil(ComposerState.writing.line)
+    }
+
     func testAnActivityWithNoStartingTimeCarriesNoNumber() {
         let state = ComposerState(gate: .claudePty(.working), tail: nil, elapsed: nil)
         XCTAssertEqual(state?.activity?.elapsed, nil)
@@ -182,6 +223,69 @@ final class ComposerTests: XCTestCase {
             agent: agent, base: 0, append: [prompt(0, seq: 1, text: "Something else")],
             replace: [], evicted: 0)))
         XCTAssertEqual(store.unacknowledged.map(\.text), ["Run the suite"])
+        XCTAssertEqual(store.rows().count, 2)
+    }
+
+    /// A host may store a message with its whitespace spelled differently —
+    /// a trailing newline trimmed, a line ending rewritten. That is still the
+    /// message that was sent, and leaving the optimistic row up beside it
+    /// would draw it twice.
+    func testTheEchoMatchesWhateverTheWhitespace() {
+        let store = ConversationStore(agent: agent)
+        store.sent("Run the suite\n")
+        store.sent("First line\r\nsecond  line")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [
+                prompt(0, seq: 1, text: "Run the suite"),
+                prompt(1, seq: 2, text: " First line\nsecond line"),
+            ],
+            replace: [], evicted: 0)))
+        XCTAssertTrue(store.unacknowledged.isEmpty)
+        XCTAssertEqual(store.rows().map(\.id), ["claude_pty:0", "claude_pty:1"])
+    }
+
+    /// A layer may place a row and settle it into the prompt afterwards. The
+    /// prompt arriving by a rewrite is as much the echo as one appended.
+    func testAPromptArrivingByRewriteReplacesTheOptimisticOne() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [running(0, seq: 1, command: "ls")],
+            replace: [], evicted: 0)))
+        store.sent("Run the suite")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(position: 0, entry: prompt(0, seq: 1, text: "Run the suite"))],
+            evicted: 0)))
+        XCTAssertTrue(store.unacknowledged.isEmpty)
+        XCTAssertEqual(store.rows().map(\.id), ["claude_pty:0"])
+    }
+
+    /// An earlier prompt the host only settles again is not the echo of a
+    /// message sent since with the same words.
+    func testAnOldPromptRewrittenAsItselfConfirmsNothing() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [prompt(0, seq: 1, text: "yes")],
+            replace: [], evicted: 0)))
+        store.sent("yes")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(position: 0, entry: prompt(0, seq: 1, text: "yes"))],
+            evicted: 0)))
+        XCTAssertEqual(store.unacknowledged.map(\.text), ["yes"])
+    }
+
+    /// The same short answer sent twice is two messages. One echo confirms
+    /// one of them, and the other stays on screen until its own arrives.
+    func testOneEchoConfirmsOneOfTwoIdenticalSends() {
+        let store = ConversationStore(agent: agent)
+        store.sent("yes")
+        store.sent("yes")
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [prompt(0, seq: 1, text: "yes")],
+            replace: [], evicted: 0)))
+        XCTAssertEqual(store.unacknowledged.map(\.text), ["yes"])
         XCTAssertEqual(store.rows().count, 2)
     }
 

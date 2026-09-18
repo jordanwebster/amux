@@ -16,12 +16,28 @@ public final class HostsStore {
     /// takes the digits learns which.
     public private(set) var discovered: [HostEntry] = []
     public private(set) var connection = ConnectionUpdate(state: .connecting)
+    /// Whether anybody is signed in, what the link is doing and what the
+    /// account buys, as the core reports it.
+    ///
+    /// Read here rather than asked of the account service: this is the state
+    /// the link is actually in, and a screen that decides what to offer from
+    /// a separate question could offer something the link cannot do.
+    public private(set) var cloud: CloudState = .signedOut
     /// This phone and the machines it holds keys for.
     ///
     /// Nothing until the runtime has read its own trust store, and never
     /// emptied by a failed read: a section that blanked itself would invite
     /// pairing again with everything still paired.
     public private(set) var roster: DeviceRoster?
+    /// Whether the system is letting this app look at the network this phone
+    /// is on.
+    ///
+    /// A person who refused is not a person on an empty network, and the two
+    /// look identical from here: no machines either way. Only this tells them
+    /// apart, so only this can decide whether the screen says there is nothing
+    /// nearby or says why it cannot look.
+    public private(set) var localNetwork: LocalNetworkPermission = .unknown
+
     /// Whether the paired devices are being read rather than counted.
     ///
     /// A screen state rather than a route, because the list is the same
@@ -51,6 +67,50 @@ public final class HostsStore {
     public var online: [HostEntry] { hosts.filter(\.online) }
     public var offline: [HostEntry] { hosts.filter { !$0.online } }
 
+    /// The four groups, under the name the whole app knows them by.
+    ///
+    /// Spelled once outside this class because the home reads the same groups
+    /// off the same rule, and two enums that had to agree would eventually
+    /// not.
+    public typealias Reach = HostReach
+
+    /// Which of the four a machine is in, paired or merely offered.
+    ///
+    /// The tier is asked of the link rather than of the account service: what
+    /// decides whether a tunnel opens is the credential the relay holds, and a
+    /// screen that grouped by a separately fetched entitlement could promise a
+    /// machine the link will refuse. A host that says it is not signed in is
+    /// never "away": the relay is not seeing it, so nothing about it is a
+    /// question of money.
+    public func reach(of host: HostEntry) -> Reach {
+        host.reach(tier: cloud.tier)
+    }
+
+    public func hosts(_ reach: Reach) -> [HostEntry] {
+        hosts.filter { self.reach(of: $0) == reach }
+    }
+
+    /// The machines this phone has not paired with, in the same four groups.
+    /// A browser answers with machines on this network and the relay answers
+    /// with the rest, so an offer belongs where a paired machine on the same
+    /// route belongs.
+    public func candidates(_ reach: Reach) -> [HostEntry] {
+        discovered.filter { self.reach(of: $0) == reach }
+    }
+
+    /// Machines this phone can see advertising themselves on this network and
+    /// cannot open a link to.
+    ///
+    /// Two facts at once, and both are known: the browser resolved the
+    /// advertisement, and no route stands. It is worth saying because the
+    /// cause is almost never the machine — a network that passes Bonjour and
+    /// blocks the transport looks exactly like this — and a machine that is
+    /// simply switched off looks nothing like it.
+    public var foundButUnreachable: Set<HostId> {
+        let seen = Set(discovered.map(\.id))
+        return Set(hosts.filter { reach(of: $0) == .offline && seen.contains($0.id) }.map(\.id))
+    }
+
     /// When this phone saw that host go, or nothing where it never saw it.
     public func wentOffline(_ id: HostId) -> Date? { departures[id] }
 
@@ -78,8 +138,10 @@ public final class HostsStore {
             connection = update
         case .devices(let roster):
             self.roster = roster
-        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .storeFailure,
-             .attention:
+        case .cloudState(let state):
+            cloud = state
+        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .attention,
+             .forgotten, .unreadable, .storeFailure:
             break
         }
     }
@@ -89,6 +151,11 @@ public final class HostsStore {
     /// is still trusted, and the fingerprint a person compares before revoking
     /// one is not something the inventory carries.
     public var devices: [PairedDevice] { roster?.devices ?? [] }
+
+    /// What the system said about looking at this network.
+    public func sawLocalNetwork(_ permission: LocalNetworkPermission) {
+        localNetwork = permission
+    }
 
     /// Open and close the paired devices.
     public func readDevices() { readingDevices = true }

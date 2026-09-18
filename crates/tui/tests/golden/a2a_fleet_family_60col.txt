@@ -1,14 +1,14 @@
 ┌ amux ────────────────────────────────────────────────────┐
 │ /                                            8 agents    │
 │                                                          │
-│ ▎ ⋯ refactor-tunnels      claude   nova       12s        │
-│   ✓   write-the-docs      claude   nova       5m         │
-│   ⋯   test-runner         codex    nova       30s        │
-│   !     flake-hunter      codex    nova       20s        │
-│   ! fix-auth-bug          claude   nova       2m         │
-│   ? migration-plan        claude   hetzner    45s        │
-│   ✓ nightly-refactor      codex    hetzner    3m         │
-│     docs-cleanup          claude   nova       1h         │
+│ ▎ ⋯ refactor-tunnels      claude   nova ·dir… 12s        │
+│   ✓   write-the-docs      claude   nova ·dir… 5m         │
+│   ⋯   test-runner         codex    nova ·dir… 30s        │
+│   !     flake-hunter      codex    nova ·dir… 20s        │
+│   ! fix-auth-bug          claude   nova ·dir… 2m         │
+│   ? migration-plan        claude   hetzner ·… 45s        │
+│   ✓ nightly-refactor      codex    hetzner ·… 3m         │
+│     docs-cleanup          claude   nova ·dir… 1h         │
 │                                                          │
 │ ● connected · 3 hosts                                    │
 └──────────────────────────────────────────────────────────┘

@@ -43,8 +43,8 @@ pub use session::{
 };
 pub use shared::{
     AgentEvent, AgentId, AgentIdentifier, ArtifactRef, BaseIdentity, Capabilities, DebugFormat,
-    DiffBase, DiffFile, DiffResponse, Host, HostEntry, HostEvent, HostId, HostTrustStatus,
-    PeerIdentifier, ProtocolError, QrPairingPayload, SendInputRequest, SendMessageRequest,
-    SetAgentStatusRequest, ShutdownReason, SshPairingPeer, SshPairingProfile, SshTarget,
-    SubscribeSessionRequest, SupportedAgentType, public_key_fingerprint,
+    DiffBase, DiffFile, DiffResponse, Host, HostEntry, HostEvent, HostId, HostTrustStatus, HostVia,
+    PeerIdentifier, ProtocolError, QrPairingPayload, RelayCarrier, SendInputRequest,
+    SendMessageRequest, SetAgentStatusRequest, ShutdownReason, SshPairingPeer, SshPairingProfile,
+    SshTarget, SubscribeSessionRequest, SupportedAgentType, Tier, public_key_fingerprint,
 };

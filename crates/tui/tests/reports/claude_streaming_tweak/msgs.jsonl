@@ -1,10 +1,10 @@
-{"checkpoint":{"agents":{},"cloud_auth_required":false,"cloud_subscription_required":false,"remote_inventories":{},"connection":{"connection":"connecting"},"epoch":0,"finished_ops":[],"hosts":{},"invariant_warning":false,"local_host_id":null,"now":null,"op_seq":0,"pending_ops":{},"streams":{},"queues":{}},"format_version":3,"invariant_violation":false}
+{"checkpoint":{"agents":{},"remote_inventories":{},"connection":{"connection":"connecting"},"epoch":0,"finished_ops":[],"hosts":{},"invariant_warning":false,"local_host_id":null,"now":null,"op_seq":0,"pending_ops":{},"streams":{},"queues":{},"cloud_state":{"cloud":"signed_out"}},"format_version":3,"invariant_violation":false}
 {"local_host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","msg":"server","server":"connected"}
-{"msg":"server","required":false,"server":"cloud_subscription_status"}
+{"msg":"server","server":"cloud_state","cloud":"connected","tier":"pro","carrier":"tcp"}
 {"host":{"capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","last_dial_error":null,"name":"<REDACTED>_____________","online":true,"trust_status":"trusted","version":"0.6.0"},"msg":"server","server":"host_upserted"}
 {"msg":"server","server":"hosts_synchronized"}
-{"agent":{"args":[],"command":"claude","created_at":"2026-09-03T04:13:27.331Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"377203cb-638d-49ce-be9f-994550d19909","kind":{"driver":"pty","kind":"claude"},"name":"live-claude","readonly":false,"working_dir":"<MACHINE_PATH>"},"msg":"server","server":"agent_upserted"}
-{"agent":{"args":[],"command":"test-agent","created_at":"2026-09-02T23:29:20.260Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"37e20043-7250-4cde-8fab-85668704f4de","kind":{"kind":"test_agent"},"name":"live-qa","readonly":false,"working_dir":"<MACHINE_PATH>"},"msg":"server","server":"agent_upserted"}
+{"agent":{"args":[],"command":"claude","created_at":"2026-09-03T04:13:27.331Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"377203cb-638d-49ce-be9f-994550d19909","kind":{"driver":"pty","kind":"claude"},"name":"live-claude","readonly":false,"working_dir":"<MACHINE_PATH>","last_activity":"2026-09-03T04:13:27.331Z"},"msg":"server","server":"agent_upserted"}
+{"agent":{"args":[],"command":"test-agent","created_at":"2026-09-02T23:29:20.260Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"37e20043-7250-4cde-8fab-85668704f4de","kind":{"kind":"test_agent"},"name":"live-qa","readonly":false,"working_dir":"<MACHINE_PATH>","last_activity":"2026-09-02T23:29:20.260Z"},"msg":"server","server":"agent_upserted"}
 {"msg":"server","server":"agents_synchronized"}
 {"msg":"tick","now":"2026-09-03T04:14:05.688447Z"}
 {"agent":"377203cb-638d-49ce-be9f-994550d19909","event":{"event":"opened","truncated":false},"msg":"stream"}

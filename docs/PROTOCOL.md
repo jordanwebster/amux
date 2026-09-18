@@ -1,250 +1,306 @@
 # The amux protocol
 
-**Status**: current (2026-09-05). This is the protocol each profile
-speaks; it is locked in by the prose spec suite in
-`crates/amux/tests/spec/`. The system around the wire — processes,
-servers, the dispatcher, trust storage, service surfaces — is described
-in [`ARCHITECTURE.md`](./ARCHITECTURE.md); the user-facing story is
-[`HOW_IT_WORKS.md`](./HOW_IT_WORKS.md).
+**Status**: current (2026-09-11). This is protocol version 2, exercised by
+the prose spec suite in `crates/amux/tests/spec/`. The processes and service
+boundaries around it are described in [Architecture](./ARCHITECTURE.md); the
+user-facing behavior is described in [How amux works](./HOW_IT_WORKS.md).
 
 ## The mental model
 
-> **Transports carry links. Links carry frames. Tunnels carry calls.
-> One pinned mTLS handshake authenticates every tunnel, whatever it rides.**
+> **Carriers carry links. Links carry streams. Streams carry channels. One
+> pinned handshake authenticates every channel, whatever carried it.**
 
-Everything below is elaboration.
+The layers have deliberately separate jobs:
 
-## Identity and trust
+- A **carrier** provides an ordered control stream and independent
+  bidirectional byte streams.
+- A **link** is the live relationship with one adjacent node. Its control
+  stream exchanges identity, protocol version, adjacency and link lifetime.
+- A **stream** is one native QUIC stream or one yamux stream. Its first message
+  says where it is going; after admission, its bytes are opaque to a relay.
+- A **channel** is the end-to-end call connection inside that stream. Its
+  pinned TLS handshake, not its carrier or route, decides call authority.
 
-**A profile is a device on the wire.** An installation may host several
-profiles in one process, but each has an independent key, `host_id`, trust
-store, routing table and cloud link. Peers and relays see ordinary devices;
-profile UUIDs and account selection add no fields to link frames or tunnel
-calls. Pairing windows and pinned keys are per profile, so two machines using
-two accounts pair once for each account.
+The carrier may also authenticate the adjacent link: direct QUIC uses pinned
+mutual TLS, the cloud carriers use WebPKI TLS plus a token in `Hello`, and SSH
+uses the authenticated SSH channel. That outer admission never replaces the
+pinned handshake inside an ordinary peer channel.
 
-Every device has an Ed25519 keypair and a random 128-bit `host_id`, created
-on first run and retained for the profile's lifetime. **Trust is a pinned public key** in a
-local, never-shared trust store. Keys get pinned through pairing; local
-revocation (`amux unpair`) removes a pin, and deleting a profile destroys its
-whole trust store.
+## Chapter 0: Discovery
 
-**Pairing** is one protocol: SPAKE2, with the shared secret delivered
-out-of-band. Two delivery mechanisms, same wire flow: a 6-digit PIN the user
-types (no camera), or a 256-bit secret carried in a QR code (point phone at
-screen). QR contents are always the production deep link
-`amux://pair?payload=<base64url-no-padding-json>`; the decoded JSON payload
-is `{host_id, cloud_url, secret}`. The secret itself never crosses the wire
-— SPAKE2 proves possession without transmitting it — and is one-shot with a
-~5-minute window and a 5-attempt cap. The trust store also records, per
-peer, any *reachability hints* this device learned as the dialer (a TCP
-address, an SSH target); on startup the daemon re-dials them.
-Re-establishment is always the dialer's job.
+A listening profile advertises `_amux._udp` through DNS-SD. Its SRV record
+names the ephemeral or configured QUIC port; its TXT data contains only the
+protocol version and host id. Resolving it produces a name and socket-address
+dial hints. Browsing is a standing subscription: a goodbye or TTL expiry
+removes a result, while a new resolution replaces its addresses.
 
-An explicitly opened demo PIN window is reusable until its configured expiry:
-success does not consume it and failed attempts do not exhaust it. This is
-per-profile pairing policy; it uses the same SPAKE2 wire exchange. Ordinary PIN
-and QR windows retain the one-shot and attempt limits above.
+Discovery is **never trust or presence**. An unpaired result is only a pairing
+candidate. A result claiming a paired host's id is only a dial hint; the pinned
+handshake must still present that host's key. A paired host is online only
+after a link succeeds. Discovery is re-queried at startup, after a network
+change or wake, when a direct link drops, when a pairing window opens, and for
+`amux peer list`.
 
-The wire flow (`PairingService.Pair`, a bidi stream) and its crypto, for
-implementers: SPAKE2 per RFC 9382 over edwards25519, responder = B,
-initiator = A, messages exchanged B→A then A→B. Both sides hash a
-transcript — SHA-256 of the big-endian `PROTOCOL_VERSION` and the
-length-prefixed SPAKE2 messages — and derive keys with HKDF-SHA256 (salt
-`"amux-pair-spake2-v1"`): two confirmation keys (infos `kc/A`, `kc/B`),
-exchanged and checked first, and two ChaCha20-Poly1305 keys (infos
-`aead/A→B`, `aead/B→A`) that seal each side's identity — pubkey and a
-name capped at 256 bytes — with the direction and transcript bound into
-the AAD. A `PairingComplete` commits both trust stores. Every secret
-failure surfaces as the same opaque `INVALID_PIN`, whichever delivery
-carried the secret. (Pairing over SSH is simpler still: the SSH channel
-is the out-of-band trust, and the two ends exchange identities directly
-over its stdio. That SSH-specific exchange also returns the remote profile
-UUID, stored with the SSH destination so later connections run
-`amux relay --profile <UUID>` even after a profile rename. The PIN and QR
-exchanges are unchanged.)
+## Chapter 1: Profiles, identity and trust
+
+A profile is one device on the wire. An installation may run several profiles,
+but each has its own Ed25519 keypair, random 128-bit `host_id`, trust store,
+routing state and optional cloud link. A profile and its identity survive
+restart. Binding or unbinding an account does not replace them.
+
+Trust is a public-key pin in a local, never-shared store. Pairing adds pins;
+local revocation removes one. Revocation closes the peer's links and their
+streams immediately. Deleting a profile destroys its whole trust store.
+Profiles never inherit another profile's pairing window, pins, routes or
+account.
+
+Trusted peer services expose agent operations. Installation lifecycle,
+profile lifecycle, trust administration and pairing-window administration
+remain on the local installation front door or an in-process owner handle;
+they are not peer-call methods.
+
+## Chapter 2: Pairing
+
+PIN and QR pairing use one SPAKE2 exchange. The PIN is six digits. The QR
+contains JSON `{host_id, secret, addrs, cloud_url?}` inside an
+`amux://pair?payload=...` deep link; `secret` is a one-shot 256-bit value and
+`addrs` let pairing work when multicast is unavailable. A found advertisement,
+a typed address, the QR addresses, SSH, or a relay can all lead to the same
+exchange. Direct candidates are tried with a bounded QUIC handshake so a
+silent address does not prevent trying the next one.
+
+SPAKE2 follows RFC 9382 over edwards25519, responder B and initiator A, with
+messages B to A then A to B. Both sides hash the big-endian
+`PROTOCOL_VERSION` and length-prefixed SPAKE2 messages. HKDF-SHA256 with salt
+`amux-pair-spake2-v1` derives confirmation keys (`kc/A`, `kc/B`) and
+ChaCha20-Poly1305 keys (`aead/A→B`, `aead/B→A`). The sealed identity contains
+the public key and a name of at most 256 bytes, with direction and transcript
+in the additional authenticated data. `PairingComplete` commits both stores.
+Every secret failure is the same opaque `INVALID_PIN`.
+
+Before trust exists, an open pairing window lets the dispatcher admit one
+anonymous channel to `PairingService`. SPAKE2 authenticates that exchange and
+creates the pins used by later channel handshakes. Ordinary PIN and QR windows
+last about five minutes, are one-shot, and have a five-attempt cap. The init
+on-ramp's PIN lasts fifteen minutes. Explicit demo PIN windows are reusable
+until their configured expiry. SSH pairing instead exchanges identities over
+the already-authenticated SSH stream and records outbound reachability only on
+the side that knows how to dial it.
 
 Clients can pause SPAKE2 before granting trust. `begin_pair_pin` and
-`begin_pair_qr` return a `PendingPeer` with the authenticated host id, name,
-SHA-256 public-key fingerprint and expiry. The expiry travels inside the sealed
-responder identity. Neither trust store changes during this phase. The local
-profile administration handle retains the open stream behind an opaque, single-use token;
-unresolved streams expire after at most five minutes and at most 32 are retained.
-The token is a local capability, not a serializable trust decision for a UI to
-recreate from the displayed identity fields.
+`begin_pair_qr` return a `PendingPeer` carrying the authenticated host id,
+name, SHA-256 public-key fingerprint and expiry, with the expiry sealed inside
+the responder identity. Neither trust store changes during this phase. The
+local profile administration handle retains the open stream behind an opaque,
+single-use token; unresolved streams expire after at most five minutes and at
+most 32 are retained. That token is a local capability, not a serializable
+trust decision a client could recreate from the identity fields it displays.
+`confirm_pair` sends the initiator's sealed identity, waits for the
+responder's trust commit and stores the peer. `abandon_pair` sends a rejection
+and waits for `PairingAbandoned`, which the responder sends after releasing the
+attempt. Cancelling leaves existing trust unchanged and consumes no guess, and
+dropping a pending value grants no trust. Begin, confirm, abandon and device
+identity inspection are served only by `ProfileService` on the installation
+front door, never by a profile socket or a peer stream.
 
-`confirm_pair` sends the initiator's sealed identity, waits for the responder's
-trust commit and stores the peer locally. `abandon_pair` sends a rejection and
-waits for `PairingAbandoned`, which the responder sends after releasing the
-attempt. Cancellation leaves existing trust entries unchanged and does not
-consume a guess. Dropping a pending value grants no trust. Wrong, malformed,
-expired and inactive secrets all return `InvalidPin` through the two-phase
-profile API. Begin, confirm, abandon and device identity inspection are served
-only by `ProfileService` on the installation front door, never by a profile
-socket or peer tunnel.
+## Chapter 3: Presence
 
-## Links: who is my neighbor
+Presence comes from the link control protocol. `Hello` and `HelloAck` each
+carry the sender's current adjacent-neighbor snapshot. Later `NeighborUp` and
+`NeighborDown` messages are deltas from that snapshot. A cloud relay scopes
+these claims to one account; a direct or self-hosted link scopes them to that
+adjacent peer.
 
-A **link** is an authenticated connection to an adjacent node over some
-transport: TCP+mTLS to a paired peer, SSH stdio to a paired peer, or
-TCP+TLS+JWT to the cloud. The handshake (`Hello`/`HelloAck`) exchanges
-identity, protocol version, and the sender's **current neighbor list** —
-the snapshot is a field of the handshake, so everything after it is a delta
-(`NeighborUp`/`NeighborDown`) by definition. Versioning is equality, not
-negotiation: the acceptor requires its own `PROTOCOL_VERSION` in the
-Hello's supported set, and the connector requires the ack to confirm that
-same version. `LinkClose { reason }` ends a link; on the cloud link, a
-fire-and-forget `Reauth { token }` refreshes the JWT before expiry (the
-cloud's only answers are silence, or `LinkClose`).
+Presence is a derivation, not an independent assertion: a host is reachable
+through a relay when that relay says it has an adjacent link to the host. This
+can make an untrusted host a pairing candidate, but does not grant authority or
+make a discovery result online. Losing the last route leaves a trusted host in
+inventory as offline.
 
-Link authentication answers *who is my neighbor* — it makes adjacency
-claims trustworthy and keeps frames off the wire. It grants **frame
-forwarding only**, never call authority.
+A host also announces what kind of machine it is: `platform` names the
+operating system the daemon was built for, in the host's own words. It is
+optional because a host built before the field existed says nothing, and a
+machine whose kind is unknown is not the same as one claiming to be nothing in
+particular. Nothing routes or authorizes on it; it exists so a client can tell
+one device from another in a list.
 
-## Routing: two rules
+## Chapter 4: Routing and failover
 
-1. **Advertise only adjacency.** A node tells its neighbors "I have a
-   direct link to H" — never anything it learned from someone else.
-2. **Forward only to adjacency.** A frame addressed to `dst` is forwarded
-   iff the relay has a direct link to `dst`; otherwise dropped.
+Routing has two rules:
 
-A route is therefore `Direct(link)` or `Via(relay)`, where the relay is
-*any* adjacent node. One-proxy-hop-max and loop-freedom are not enforced
-rules — they are structural consequences of forwarding being non-recursive.
-Presence is a derivation, not a wire claim: H is *online* if some neighbor
-claims adjacency to H. Relays keep no routing state: forwarding consults
-only their own connection map.
+1. **Advertise only adjacency.** A node tells its neighbors only about hosts
+   to which it has a direct live link. It never repeats a neighbor learned from
+   someone else.
+2. **Forward only to adjacency.** A relay forwards a stream only when it has a
+   direct live link to the stream preface's destination.
 
-## Tunnels: who am I calling
+A route is therefore direct or via one adjacent relay. Non-recursive
+forwarding makes routes loop-free and limits them to one relay without route
+lists, hop counts or split horizon. Presence follows from the first rule; it
+is not a separate wire claim. Direct routes win over relayed routes. Route
+replacement is make-then-break for new calls; existing channels stay attached
+to their original link until that link or channel ends.
 
-Every call between peers rides a **tunnel** — an end-to-end byte stream
-over at most one relay, with the same lifecycle grammar as a link:
-`TunnelOpen { tunnel_id, src, dst }` opens it (a plain UUID id; the reply
-address travels exactly once, here), `TunnelData { tunnel_id, dst, payload }`
-frames (≤ 64 KiB) carry it, and `TunnelClose` — or link death — ends it.
-Only an Open allocates state; Data for an unknown id is a violation and is
-dropped without allocation. There is no open-ack: the mTLS handshake inside
-is the acknowledgement, and rejection is `TunnelClose`. Replies travel back
-out the link they arrived on.
+## Chapter 5: Carriers, links, streams and channels
 
-Inside **every** tunnel — even to an adjacent peer — runs an mTLS handshake
-pinned against the trust store. This is the system's single authority
-decision, made at the receiving daemon's dispatcher when a tunnel
-terminates: a pinned client cert reaches the trusted services (full peer
-authority); no cert during an active pairing window reaches the pairing
-service; anything else is closed. Relays see ciphertext.
+### Carriers
 
-Those trusted services expose agent operations, not installation lifecycle
-or trust administration. Shutdown, installation suspend/resume, profile
-lifecycle and pairing-window administration are reachable only through the
-local installation front door or an in-process owner handle; they are absent
-from profile sockets and tunnels. The service map and local discovery contract
-are in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+All carriers implement the same link interface: one control stream, open and
+accept for additional streams, finish and typed reset, and link close.
 
-Because tunnels are initiated by *sending frames*, and frames flow both
-ways on every link, **any live link is fully bidirectional at the call
-layer** — a peer that could never dial (an SSH-pairing responder, a device
-behind NAT) can still call back over the link its peer established. What
-remains asymmetric is only dialing itself.
+| Use | Carrier | Link admission | Migration |
+| --- | --- | --- | --- |
+| Direct device link | QUIC/TLS 1.3, ALPN `amux/2` | pinned mutual TLS | yes |
+| Preferred cloud link | QUIC/TLS 1.3, ALPN `amux/2` | WebPKI certificate, then hello token | yes |
+| Cloud fallback | TLS over TCP, then symmetric yamux | WebPKI certificate, then hello token | no |
+| SSH link | symmetric yamux over SSH stdio | pinned peer reached through SSH | no |
 
-## The cloud relay
+Device QUIC has session tickets, resumption and 0-RTT disabled. It permits only
+bidirectional application streams, currently at most 64 concurrently. The
+keepalive/idle pair is 20/60 seconds on iOS and 30/120 seconds elsewhere.
 
-The configured cloud authenticates accounts and assigns relay credentials.
-Its multi-tenant relay forwards frames between one user's devices, advertises
-their adjacency (scoped per user), and admits links by JWT. It is **adjacent but
-untrusted**: it has no pinned key, so it can never terminate a tunnel into
-anyone's trusted services — it cannot create agents, read traffic, or
-impersonate a device. A self-hosted relay is just an ordinary always-on
-paired peer; relaying is something every node can do.
+### Link control
 
-## The complete wire vocabulary
+The connector opens the first bidirectional stream as control. Each control
+message is protobuf encoded after a big-endian `u32` byte length and is bounded
+by `MESSAGE_SIZE_LIMIT`. The complete control vocabulary is:
 
-`Hello` / `HelloAck` · `NeighborUp` / `NeighborDown` · `TunnelOpen` ·
-`TunnelData` · `TunnelClose` · `LinkClose` · `Reauth` ·
-`PairingService.Pair` (stream). `PROTOCOL_VERSION = 1`.
+- `Hello`: supported protocol versions, this host, the current neighbor
+  snapshot, the sender's incarnation, and an authentication token only for a
+  cloud link.
+- `HelloAck`: either the accepted version plus the acceptor's host, neighbor
+  snapshot and incarnation, or an error.
+- `NeighborUp` and `NeighborDown`: adjacency deltas after the handshake.
+- `Reauth`: a fire-and-forget replacement token for a cloud link.
+- `LinkClose`: an immediate close with a reason and optional error.
 
-Agent-to-agent messaging does not add a link frame or change
-`PROTOCOL_VERSION`. `ClientService.SendMessage` resolves a human or live local
-agent as the sender; remote recipients are forwarded as daemon-authored
-envelopes through `AgentService.SendMessage` inside the same authenticated
-tunnels as every other peer call. Parent edges, work status, create/delete
-lifecycle, and provider carriers are specified in [`A2A.md`](./A2A.md).
+An incarnation is 16 random bytes a host's runtime draws when it starts and
+keeps until it stops. A process that is killed or crashes closes nothing, so
+its peers keep its direct links until QUIC's idle timeout. When two direct
+links to the same host are live, the incarnations decide which stays:
 
-## Typed agent sessions
+- A link from a different incarnation than the one already held means the host
+  restarted. The held link is dead, and the new one replaces it whichever
+  direction either was dialled in.
+- Two links from the same incarnation are a crossed dial. Both peers keep the
+  link dialled by the lower host id and refuse the other. A second link in the
+  same direction is refused too.
 
-Agent sessions use a typed wire within those calls. `AgentKind` is a closed
-protobuf `oneof`: Claude carries the required `ClaudeDriver` (`PTY` or `SDK`),
-while Codex and test-agent are distinct empty variants. Protocol availability
-is derived from that kind rather than advertised as a bag of strings:
+A dialler whose direct link closes within a second of coming up waits out that
+second before asking the local network for the peer again, so a refused link is
+not rediscovered and redialled in a loop.
 
-| agent kind | exposed protocols |
-|---|---|
-| Claude / PTY | `terminal_v1`, `claude_pty_transcript_v1` |
-| Claude / SDK | `claude_sdk_v1` |
-| Codex | `terminal_v1`, `codex_sdk_v1` |
-| test-agent | `terminal_v1`, `test_echo_v1` |
+Versioning is equality, not feature negotiation: both peers must select
+`PROTOCOL_VERSION = 3`. A failed or expired cloud token closes the link with
+`AUTH_EXPIRED`. Reauthentication is not acknowledged; success is silence and
+failure is a close.
 
-`SubscribeSessionRequest.protocol`, `SessionOutput.output`, and
-`SendInputRequest.event` are protocol-specific protobuf `oneof`s. The routed
-`ClientSubscribeSessionRequest` and `ClientSendInputRequest` mirror those same
-variants with an `AgentRef`. Inputs therefore cannot be silently interpreted
-under the wrong provider protocol, and outputs retain their protocol type all
-the way to the client. `SessionControl` is a separate closed `oneof`; today its
-only variant is terminal resize.
+### Stream preface and refusal
 
-The daemon converts each selected variant to the closed Rust `Protocol` enum
-and exhaustively asks the backend for that plane. Selecting a well-formed
-protocol that the agent kind does not expose returns `ProtocolNotExposed`,
-carrying both the typed kind and `AgentProtocol` value. There is no fallback to
-another structured plane.
+Every non-control stream starts with one length-prefixed `StreamPreface` whose
+only field is `dst`, the destination host id. There is no source, stream id,
+payload, data message or close message in the control vocabulary. The pinned
+channel handshake proves the caller. Graceful stream finish is close. A reset
+before acceptance is a refused open and carries one `StreamRefusal` code:
 
-Claude PTY input is typed one step further. `ClaudePtyTranscriptV1Input`
-carries `expected_seq` and an intent `oneof`: prompt, interrupt,
-permission-mode cycle, or an answer referencing an ask id. Only
-`TerminalV1Input` carries arbitrary bytes. Claude SDK input likewise has a
-closed prompt/interrupt/permission-decision `oneof`; Codex input has its own
-turn, steer, interrupt, and approval variants. The provider-crate ownership of
-these planes is described in [`PROVIDER_CRATES.md`](./PROVIDER_CRATES.md), and
-the semantic PTY encoding boundary in [`KEYMAPS.md`](./KEYMAPS.md).
+- `NO_ROUTE`: the destination has no adjacent live link, or the route vanished
+  while opening it.
+- `PAYMENT_REQUIRED`: a cloud-relay link at either end was admitted as free.
+- `RATE_LIMITED`: the relay refused the origin's stream-open rate.
+- `NOT_ADJACENT`: the destination is invalid, is the relay itself, or the
+  stream did not provide a valid preface.
+- `SHUTTING_DOWN`: the accepting link is closing.
+- `UNSPECIFIED`: reserved for an unknown or unmapped reset code.
 
-## What this protocol deliberately does not have
+### Channel authority and classes
 
-Route lists, link names, prepend-on-forward, split-horizon, hop caps, route
-dedup, snapshot phases, drain timeouts, acknowledgements for housekeeping,
-a second pairing protocol, transitive presence, or transitive trust. Each
-absence is a class of bugs that cannot be written.
+After the preface is accepted, the endpoints run TLS 1.3 inside the stream.
+The server reads the live trust store and the client pins the expected peer.
+This is the single authority decision for calls on direct QUIC, relay QUIC,
+relay TCP and SSH alike. Relays only copy its ciphertext.
 
-## Why it is shaped this way
+The channel pool selects a live link by peer and route, opens a stream, performs
+that handshake, and gives the result to tonic as one HTTP/2 channel. Calls and
+inventory subscriptions share a cached `Calls` channel per peer and route.
+Each agent subscription gets a fresh `Session` channel. Each artifact or diff
+fetch gets a fresh `Bulk` channel. Separate streams provide separate flow
+control, so a bulk response cannot queue behind a live session at the amux
+layer.
 
-- **Host-id routing exists for the relays.** Addressing frames to a host
-  and forwarding only to adjacency lets a relay forward with nothing but
-  its own connection map — no per-tunnel or per-route state, nothing to
-  leak, nothing to desynchronize. Source-routed lists were tried first
-  and made every relay a bookkeeper.
-- **One proxy hop is the product, not a limitation.** Every real topology
-  is "my devices, maybe one always-on box or the cloud between them."
-  Arbitrary hop counts bought loop suppression, hop caps, and dedup —
-  and no user-visible capability.
-- **Only `TunnelOpen` allocates** so that garbage can be dropped for
-  free: data for an unknown id is unambiguously a violation, rate
-  limiters meter Opens, and a stale frame cannot conjure state. And
-  there is no open-ack because the mTLS handshake inside the tunnel
-  already *is* the acknowledgement — an ack would confirm delivery to a
-  node we don't trust to say so.
-- **Housekeeping is never acknowledged.** `Reauth` is fire-and-forget
-  because the only honest answers a relay has are "carry on" (silence)
-  and "you're done" (`LinkClose`); an ack plus a timeout was a state
-  machine that could only invent new failure modes. Refresh exists at
-  all because live sessions must never break on a timer.
-- **Tunnels die with their link.** Re-pinning a tunnel to a replacement
-  link would reorder frames across links and break the TLS stream inside
-  it. Cheaper for the caller to reconnect over whatever route is now
-  best — which it must be able to do anyway.
-- **Adjacent-peer tunnels are doubly encrypted, on purpose.** Skipping
-  the inner handshake when the link is already mTLS would make call
-  authority depend on transport type — the exact coupling the design
-  removes. Uniformity beats the saved handshake.
-- **The PIN became SPAKE2's secret, and the QR token became one too.**
-  A bearer token sent through TLS authenticates whoever holds the pipe;
-  a PAKE authenticates possession without ever transmitting the secret,
-  and collapsing both deliveries onto it deleted a second wire protocol.
+## Chapter 6: Relay forwarding and entitlement
+
+A relay receives a non-control stream, validates its preface, looks up a direct
+link to `dst`, opens a stream there with the same preface, and copies bytes in
+both directions until either side ends. It does not parse channel bytes or keep
+protocol-level stream ids, sources, payload buffers or close state. Either end
+may open, so a host reached through a relay can call back on the same link, and
+one relay can pipe between QUIC and TCP carriers in either direction.
+
+Every link records how it was admitted. A tier belongs to a token-admitted
+link on the cloud relay only: `CloudToken { free | pro }`. Direct device and
+SSH links are `PinnedKey`. A self-hosted relay between paired peers therefore
+never consults an account or tier and pipes their streams normally.
+
+The cloud relay refuses an open with `PAYMENT_REQUIRED` when either its origin
+link or its destination link was token-admitted as free. Neighbor control
+continues, so a free account receives presence but no call or pairing channel.
+Reauthentication may replace a link's tier. The relay also refuses a missing
+route, its own address, malformed prefaces and excess opens with the specific
+codes above.
+
+The cloud listener serves QUIC on UDP beside the TCP fallback using the same
+WebPKI certificate and key. Devices try QUIC immediately and begin TCP after a
+300 ms fallback delay; the first completed link wins, with QUIC winning a tie.
+A TCP-only win records that relay host as UDP-blocked for one hour, suppressing
+QUIC attempts until the memory expires. The memory is process-local.
+
+The fallback's limits are honest. Yamux gives the same symmetric open/accept
+interface and per-stream windows, but all streams still share one ordered TCP
+byte stream. Packet loss can therefore cause cross-stream head-of-line
+blocking; the connection cannot migrate across a network change; and losing
+it ends every stream it carries. TCP is only a cloud-relay fallback. A direct
+LAN whose UDP is blocked is offline unless another route, such as the relay or
+SSH, is available.
+
+## Chapter 7: Agent messaging and remote sessions
+
+Agent calls use the authenticated channels above. A client may name a local
+live agent as sender, but the daemon resolves provenance before forwarding;
+arbitrary ids never become authenticated senders. Cross-device messages and
+completion notifications use the peer agent service. Parent relationships,
+work state and create/delete behavior are specified in [Agent-to-agent
+messaging](./A2A.md).
+
+Session protocols are closed protobuf variants. Claude PTY exposes
+`terminal_v1` and `claude_pty_transcript_v1`; Claude SDK exposes
+`claude_sdk_v1`; Codex exposes `terminal_v1` and `codex_sdk_v1`; the test agent
+exposes `terminal_v1` and `test_echo_v1`. Inputs and outputs retain that type
+end to end, and selecting a protocol that the agent kind does not expose fails
+as `ProtocolNotExposed`. Provider ownership is described in [Provider
+crates](./PROVIDER_CRATES.md), with PTY input semantics in
+[Keymaps](./KEYMAPS.md).
+
+## Chapter 8: Diagnostics
+
+A debug report describes current routes, adjacent links, carrier kinds, cached
+call channels, active session streams, retained output and provider state. It
+observes the protocol implementation; it creates no additional wire messages
+or authority path.
+
+## Chapter 9: Artifact routing, persistence and lifetime
+
+Artifact and diff reads use fresh `Bulk` channels, while their metadata and
+storage lifetime remain daemon service concerns. Routing an artifact never
+makes a relay understand its bytes. The stream and channel end with the fetch,
+independently of cached call channels and live sessions.
+
+## What the wire deliberately does not have
+
+There are no transitive neighbor advertisements, route lists, source routes,
+hop caps, split horizon, per-channel forwarding records, stream data messages,
+housekeeping acknowledgements, a second pairing protocol, transitive trust, or
+transitive presence. Link loss closes its streams; callers reconnect over the
+best current route instead of trying to splice byte streams between links.
+
+That small vocabulary is the point: adjacency chooses where bytes may go, the
+stream carries them, and the pinned channel handshake decides who may call.

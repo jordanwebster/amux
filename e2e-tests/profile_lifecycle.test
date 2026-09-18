@@ -33,12 +33,12 @@ terminal:
 
 @T1
 > amux login
-@@contains alice@example.test  bound /
+@@contains Signed in as alice@example.test. The relay shows which hosts are up; a subscription carries agents through it. Hosts on your network and over SSH work without either.
 
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.id  local  alice@example.test  bound / connected
+  $local.id  local  alice@example.test  bound / connected (pro, quic)
 
 > amux profile create scratch
 @@contains scratch    unbound / local
@@ -58,7 +58,7 @@ $local.id  Personal  alice@example.test  paused / local
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.id  Personal  alice@example.test  bound / connected
+  $local.id  Personal  alice@example.test  bound / connected (pro, quic)
 
 > amux --profile Personal logout
 $local.id  Personal  alice@example.test  logged_out / local

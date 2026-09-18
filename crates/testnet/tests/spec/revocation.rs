@@ -79,7 +79,7 @@ async fn revocation_closes_the_revoked_phones_live_session_over_the_relay() {
 
 #[tokio::test]
 async fn revocation_closes_the_revoked_phones_live_session_over_direct_with_relay_fallback() {
-    revoked_session(Via::Tcp).await;
+    revoked_session(Via::Direct).await;
 }
 
 async fn revoked_session(via: Via) {

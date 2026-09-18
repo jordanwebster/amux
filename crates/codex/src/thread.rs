@@ -291,6 +291,7 @@ mod tests {
                 event: TurnEvent::Warning {
                     message: method.into(),
                 },
+                replayed: false,
             }));
         }
         assert_eq!(events.next().await.unwrap().unwrap().method, "turn/started");

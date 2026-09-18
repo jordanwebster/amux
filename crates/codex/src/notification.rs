@@ -20,6 +20,10 @@ pub struct ThreadEvent {
     pub turn_id: Option<String>,
     /// Best-effort typed interpretation for callers that need semantics.
     pub event: TurnEvent,
+    /// Sent while a `thread/resume` was still being answered, which is when
+    /// the app-server replays the thread's history. Such an event describes
+    /// something that already happened, not something happening now.
+    pub replayed: bool,
 }
 
 // ── TurnEvent ────────────────────────────────────────────────────

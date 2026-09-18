@@ -4,9 +4,10 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use chrono::DateTime;
+use chrono::{DateTime, TimeZone, Utc};
 use model::{ReplayFacts, ReplayOutcome};
 use serde_json::Value;
 use tokio::sync::Notify;
@@ -219,13 +220,23 @@ impl RingPolicy {
         Self { max_bytes }
     }
 }
+/// No activity has been written yet.
+const NO_ACTIVITY: i64 = i64::MIN;
 
 /// A retained structured log that supports replay and live subscriptions.
+///
+/// It also dates the agent's activity. Not every entry is activity: a
+/// session re-reading its transcript after a restart, or amux writing its own
+/// bookkeeping rows, is not the agent doing anything, and counting those
+/// would make every agent look active the moment its daemon started. So a
+/// writer says which entries are activity, and when they happened.
 #[derive(Clone)]
 pub(crate) struct StructuredLogSource {
     buffer: MultiplexStructuredBuffer,
     publication: Arc<PublicationGate>,
     recording: Option<Arc<Mutex<File>>>,
+    /// Unix milliseconds of the latest activity written, or `NO_ACTIVITY`.
+    activity: Arc<AtomicI64>,
     recent_subscriptions: Arc<Mutex<VecDeque<SubscriptionRecord>>>,
 }
 
@@ -247,6 +258,7 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: None,
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
+            activity: Arc::new(AtomicI64::new(NO_ACTIVITY)),
         }
     }
 
@@ -267,6 +279,7 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: Some(Arc::new(Mutex::new(file))),
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
+            activity: Arc::new(AtomicI64::new(NO_ACTIVITY)),
         })
     }
 
@@ -277,6 +290,7 @@ impl StructuredLogSource {
             publication: Arc::new(PublicationGate::default()),
             recording: None,
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
+            activity: Arc::new(AtomicI64::new(NO_ACTIVITY)),
         }
     }
 
@@ -323,7 +337,26 @@ impl StructuredLogSource {
         Some((reader, replay))
     }
 
-    /// Write a structured output entry.
+    /// Write an entry that records something the agent did at `at`.
+    ///
+    /// Activity only moves forward: an entry dated earlier than the latest
+    /// one already seen, such as a transcript row re-read on a relink, leaves
+    /// it where it is.
+    pub(crate) async fn write_activity(&self, payload: Value, at: DateTime<Utc>) {
+        self.write_row(payload, Some(at.timestamp_millis()), false)
+            .await;
+    }
+
+    /// When the latest activity written to this log happened, if any has been.
+    pub(crate) fn last_activity(&self) -> Option<DateTime<Utc>> {
+        match self.activity.load(Ordering::Relaxed) {
+            NO_ACTIVITY => None,
+            millis => Utc.timestamp_millis_opt(millis).single(),
+        }
+    }
+
+    /// Write a structured output entry that is not itself activity: amux's
+    /// own bookkeeping, or history being re-read.
     pub(crate) async fn write(&self, payload: Value) {
         self.write_row(payload, None, false).await;
     }
@@ -374,6 +407,11 @@ impl StructuredLogSource {
             })
             .await
             .ok_or(LogClosed::Exhausted)?;
+        if let Some(at) = activity_at_unix_ms
+            && !historical
+        {
+            self.activity.fetch_max(at, Ordering::Relaxed);
+        }
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
         {
@@ -410,6 +448,11 @@ impl StructuredLogSource {
         else {
             return u64::MAX;
         };
+        if let Some(at) = activity_at_unix_ms
+            && !historical
+        {
+            self.activity.fetch_max(at, Ordering::Relaxed);
+        }
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
         {
@@ -470,55 +513,6 @@ impl StructuredLogSource {
         self.publication.close();
         self.buffer.close().await;
     }
-}
-
-pub(crate) fn provider_activity_at_unix_ms(payload: &Value) -> Option<i64> {
-    fn normalize_number(value: i64) -> Option<i64> {
-        if value.unsigned_abs() < 1_000_000_000_000 {
-            value.checked_mul(1_000)
-        } else {
-            Some(value)
-        }
-    }
-
-    fn parse(value: &Value) -> Option<i64> {
-        match value {
-            Value::Number(number) => number.as_i64().and_then(normalize_number),
-            Value::String(timestamp) => timestamp
-                .parse::<i64>()
-                .ok()
-                .and_then(normalize_number)
-                .or_else(|| {
-                    DateTime::parse_from_rfc3339(timestamp)
-                        .ok()
-                        .map(|timestamp| timestamp.timestamp_millis())
-                }),
-            _ => None,
-        }
-    }
-
-    fn find(value: &Value) -> Option<i64> {
-        match value {
-            Value::Object(object) => {
-                for key in [
-                    "timestamp",
-                    "updatedAt",
-                    "updated_at",
-                    "createdAt",
-                    "created_at",
-                ] {
-                    if let Some(timestamp) = object.get(key).and_then(parse) {
-                        return Some(timestamp);
-                    }
-                }
-                object.values().find_map(find)
-            }
-            Value::Array(values) => values.iter().find_map(find),
-            _ => None,
-        }
-    }
-
-    find(payload)
 }
 
 fn clip_oversized_row(payload: Value) -> Value {
@@ -1068,5 +1062,24 @@ mod tests {
         assert_eq!(records.len(), RECENT_SUBSCRIPTION_LIMIT);
         assert_eq!(records[0].query, "tail 9");
         assert_eq!(records[7].query, "tail 2");
+    }
+
+    #[tokio::test]
+    async fn only_activity_writes_date_the_log_and_never_backwards() {
+        let log_source = StructuredLogSource::new(1000);
+        log_source.write(json!({"type": "amux.ready"})).await;
+        assert_eq!(log_source.last_activity(), None);
+
+        let later = Utc.timestamp_millis_opt(1_700_000_060_000).unwrap();
+        let earlier = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        log_source
+            .write_activity(json!({"type": "user"}), later)
+            .await;
+        log_source
+            .write_activity(json!({"type": "assistant"}), earlier)
+            .await;
+        log_source.write(json!({"type": "amux.ready"})).await;
+        assert_eq!(log_source.last_activity(), Some(later));
+        assert_eq!(log_source.current_seq().await, 4);
     }
 }

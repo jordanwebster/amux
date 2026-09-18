@@ -94,6 +94,20 @@ public final class NewAgentStore {
     /// agent yet has none, and the card says the machine's default instead of
     /// offering a list made up here.
     public private(set) var codexModels: [ModelInfo] = []
+    /// What was typed into the name field, or nothing while the field is
+    /// still showing the suggestion. Kept apart from the suggestion so that
+    /// choosing another directory renames an agent nobody has named yet, and
+    /// never one somebody has.
+    public private(set) var typedName: String?
+    /// The names already taken on each machine, as the fleet reports them. A
+    /// machine refuses a second agent under a name it already has, so the
+    /// suggestion steps around them rather than walking into the refusal.
+    private var taken: [HostId: Set<String>] = [:]
+    /// Agents this store started that the fleet has not listed yet. The
+    /// machine has the name the moment it answers, while the inventory that
+    /// says so can arrive later; a second agent started in between must not be
+    /// offered the same name.
+    private var startedUnlisted: [AgentId: Agent] = [:]
     /// A request is with the machine.
     public private(set) var starting = false
     /// What the machine said when it would not start the agent. One sentence,
@@ -119,6 +133,7 @@ public final class NewAgentStore {
         directory = ""
         query = ""
         typed = ""
+        typedName = nil
         browsing = false
         provider = .claude
         model = nil
@@ -205,17 +220,41 @@ public final class NewAgentStore {
         typed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// What this agent will be called. The directory's own last component,
-    /// which is what a person calls the thing they are working on; the machine
-    /// keeps the name and the fleet redraws from what it answers.
-    public var name: String {
+    /// What this agent will be called: whatever was typed, or the suggestion.
+    /// The machine keeps the name and the fleet redraws from what it answers.
+    public var name: String { typedName ?? suggestedName }
+
+    /// The directory's own last component, which is what a person calls the
+    /// thing they are working on — made unique on the chosen machine the way
+    /// the terminal numbers a second Claude: `amux`, then `amux-2`, `amux-3`.
+    /// A machine refuses a name it already has, and every agent started in
+    /// the same repository would otherwise ask for the same one.
+    public var suggestedName: String {
         let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
         let last = trimmed.split(separator: "/").last.map(String.init)
-        return last.flatMap { $0.isEmpty ? nil : $0 } ?? "agent"
+        let base = last.flatMap { $0.isEmpty ? nil : $0 } ?? "agent"
+        let names = machine.flatMap { taken[$0] } ?? []
+        guard names.contains(base) else { return base }
+        var number = 2
+        while names.contains("\(base)-\(number)") { number += 1 }
+        return "\(base)-\(number)"
     }
 
-    /// Whether there is enough to start: a machine and a directory.
-    public var ready: Bool { machine != nil && !directory.isEmpty && !starting }
+    /// Names the agent. An empty field is a name nobody has chosen, not an
+    /// agent called nothing, so it stays empty and holds the start button
+    /// until something is written.
+    public func choose(name written: String) {
+        typedName = written
+        failure = nil
+    }
+
+    /// The name as it will be sent.
+    public var chosenName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Whether there is enough to start: a machine, a directory and a name.
+    public var ready: Bool {
+        machine != nil && !directory.isEmpty && !chosenName.isEmpty && !starting
+    }
 
     /// What the create request says about the layer.
     public var kind: NewAgentKind {
@@ -236,8 +275,23 @@ public final class NewAgentStore {
         case .opResult(let result):
             if result.op == awaitingListing { listed(result.outcome) }
             if result.op == awaitingCreate { started(result.outcome) }
-        case .feed, .fleet, .discovered, .connection, .diff, .tokenRequest, .invariant,
-             .storeFailure, .devices, .attention:
+        case .fleet(let fleet):
+            let listed = Set(fleet.agents.map(\.id))
+            startedUnlisted = startedUnlisted.filter { !listed.contains($0.key) }
+            let names = Dictionary(grouping: fleet.agents, by: \.agent.hostId)
+                .mapValues { Set($0.map { $0.agent.name ?? $0.displayName }) }
+            // Only a confirmed inventory says which names are free. A fleet
+            // the runtime has not confirmed can be missing agents that exist —
+            // on launch it arrives empty after the cache has filled the list —
+            // so its names are added and nothing is forgotten on its word.
+            if fleet.reconciled {
+                taken = names
+            } else {
+                taken.merge(names) { $0.union($1) }
+            }
+            for agent in startedUnlisted.values { remember(agent) }
+        case .feed, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
+             .attention, .cloudState, .forgotten, .unreadable, .storeFailure:
             break
         }
     }
@@ -265,12 +319,32 @@ public final class NewAgentStore {
         }
     }
 
+    /// Lets go of the name an agent this store started was holding, because
+    /// the person has deleted that agent.
+    ///
+    /// Only the hold goes. Which names a machine has is the inventory's to
+    /// say: the next confirmed one rebuilds that list without this agent, and
+    /// a delete the machine refuses brings the agent back in an inventory,
+    /// where its name is taken again. The hold exists for the gap between a
+    /// machine answering and its inventory saying so, and a person deleting
+    /// the agent closes that gap themselves.
+    public func deleted(_ agent: AgentId) {
+        startedUnlisted.removeValue(forKey: agent)
+    }
+
+    /// Holds an agent's name as taken on its machine.
+    private func remember(_ agent: Agent) {
+        taken[agent.hostId, default: []].insert(agent.name ?? agent.command)
+    }
+
     private func started(_ outcome: OpOutcome) {
         awaitingCreate = nil
         starting = false
         switch outcome {
         case .agentCreated(let agent):
             created = agent
+            startedUnlisted[agent.id] = agent
+            remember(agent)
         case .failed(let refusal):
             // The machine's own sentence where it wrote one, and the error it
             // named where it did not. A path a machine rejected is a fact only

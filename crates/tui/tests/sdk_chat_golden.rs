@@ -59,6 +59,7 @@ fn an_sdk_agent() -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: at("2026-08-12T09:00:00Z"),
+        last_activity: at("2026-08-12T09:00:00Z"),
         parent: None,
         working_on: None,
         summary: None,
@@ -103,6 +104,8 @@ fn base() -> Vec<Msg> {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: ui_state::HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: ui_state::HostVia::Direct,
+        signed_in: Some(true),
         platform: None,
     };
     vec![
@@ -244,6 +247,24 @@ fn mid_reply() -> Model {
 /// chord that reopens plans has something to reopen. Synthetic, because
 /// no recording in the corpus proposes a plan.
 fn approved_plan() -> Model {
+    answered_plan(json!({
+        "type": "tool_result",
+        "tool_use_id": "toolu_plan",
+        "content": "approved"
+    }))
+}
+
+/// The same plan, turned down: the tool answered with an error.
+fn rejected_plan() -> Model {
+    answered_plan(json!({
+        "type": "tool_result",
+        "tool_use_id": "toolu_plan",
+        "content": "The user doesn't want to proceed with this tool use.",
+        "is_error": true
+    }))
+}
+
+fn answered_plan(result: Value) -> Model {
     let mut msgs = base();
     for (index, row) in recorded("text").into_iter().enumerate() {
         msgs.push(batch(index as u64, vec![row]));
@@ -272,11 +293,7 @@ fn approved_plan() -> Model {
                 "parent_tool_use_id": null,
                 "message": {
                     "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": "toolu_plan",
-                        "content": "approved"
-                    }]
+                    "content": [result]
                 }
             }),
         ],
@@ -921,6 +938,39 @@ fn sdk_chat_ctrl_t_opens_the_accepted_plan() {
     assert!(
         text.contains("ship it") && text.contains("read the rows"),
         "the reader shows the plan: {text}"
+    );
+}
+
+/// A plan the tool answered with an error was not approved, and the feed
+/// must not say it was.
+#[test]
+fn sdk_chat_rejected_plan_is_not_called_approved() {
+    let model = rejected_plan();
+    let text = buffer_text(&render_buffer(
+        &model,
+        open_chat(&model),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        !text.contains("plan approved"),
+        "an errored plan is not an approved one: {text}"
+    );
+    assert!(
+        text.contains("✗ ExitPlanMode") && text.contains("doesn't want to proceed"),
+        "it is named as the tool that failed, with the reason: {text}"
+    );
+
+    let approved = approved_plan();
+    let text = buffer_text(&render_buffer(
+        &approved,
+        open_chat(&approved),
+        Theme::default(),
+        (WIDTH, HEIGHT),
+    ));
+    assert!(
+        text.contains("plan approved"),
+        "an accepted plan still is: {text}"
     );
 }
 

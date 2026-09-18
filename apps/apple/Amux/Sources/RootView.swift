@@ -51,14 +51,6 @@ struct RootView: View {
         #endif
     }
 
-    private var report: (@MainActor () -> Void)? {
-        #if AMUX_DEBUG_TOOLS
-        { composition.beginReport() }
-        #else
-        nil
-        #endif
-    }
-
     private var app: some View {
         Group {
             if let failure = composition.storeFailure {
@@ -73,8 +65,9 @@ struct RootView: View {
                     signIn: composition.signIn,
                     paywall: composition.paywall,
                     deletion: composition.deletion,
+                    removal: composition.removal,
                     appearance: composition.appearance,
-                    report: report,
+                    report: { composition.beginReport() },
                     recording: composition.conversations,
                     actions: { composition.handle($0) }
                 )

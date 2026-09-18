@@ -7,6 +7,13 @@ use node::installation::{
 use testnet::identity::Fault;
 use testnet::{InstallationHandle, TestNet, Via};
 
+fn connected() -> Observed {
+    Observed::Connected {
+        tier: node::Tier::Pro,
+        carrier: node::installation::RelayCarrier::Tcp,
+    }
+}
+
 fn request(installation: &InstallationHandle, user: &str, target: BindTarget) -> BindRequest {
     BindRequest {
         target,
@@ -76,7 +83,7 @@ async fn refused_rebinding_duplicate_account_and_invalid_login_preserve_the_live
     session.send("connection-survived").await;
     session.expect_output("connection-survived").await;
     a.trusts(&phone).await;
-    b.reaches_status(Observed::Connected).await;
+    b.reaches_status(connected()).await;
     // A successful subsequent refresh proves the accepted token is still usable.
     a.refresh_credentials().await.unwrap();
     println!(
@@ -131,7 +138,7 @@ async fn simultaneous_logins_select_one_profile_and_leave_one_cloud_link() {
             .count(),
         1
     );
-    a.reaches_status(Observed::Connected).await;
+    a.reaches_status(connected()).await;
     assert_eq!(a.cloud_link_ids().await.len(), 1);
     let phone = net.installation("phone").profile("personal");
     let pin = a.start_pairing().await;
@@ -170,7 +177,7 @@ async fn a_swapped_subject_on_refresh_cannot_reconnect_a_profile_into_another_ac
     assert!(a.cloud_link_ids().await.is_empty());
     assert_eq!(a.status().record.binding, record.binding);
     assert_eq!(a.identity_on_disk(), identity);
-    b.reaches_status(Observed::Connected).await;
+    b.reaches_status(connected()).await;
     assert_eq!(b.cloud_link_ids().await.len(), 1);
     a.cloud_isolated_from(&b).await;
     laptop.login("personal", "alice").await.unwrap();
@@ -303,7 +310,7 @@ async fn pairing_or_agent_creation_during_login_requires_explicit_adoption_confi
             .await
             .unwrap();
         assert_eq!(result.record.id, a.id);
-        a.reaches_status(Observed::Connected).await;
+        a.reaches_status(connected()).await;
         if pair {
             a.trusts(&phone).await;
             phone.can_call(&a).await;

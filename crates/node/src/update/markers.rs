@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
-use crate::{SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
+use crate::{UpdateInfo, UpdateReporter, UpdateStatus};
 
 #[derive(Debug, Clone)]
 pub struct MarkerFileReporter {
@@ -52,10 +52,6 @@ impl MarkerFileReporter {
         }
     }
 
-    pub fn subscription_required(&self) -> bool {
-        self.subscription_required_marker_path().is_file()
-    }
-
     pub fn is_update_dismissed(&self, minimum_version: &str) -> bool {
         match std::fs::read_to_string(self.update_dismissed_marker_path()) {
             Ok(contents) => contents.trim() == minimum_version,
@@ -79,14 +75,9 @@ impl MarkerFileReporter {
         let _ = std::fs::remove_file(self.update_dismissed_marker_path());
     }
 
-    pub fn clear_subscription_required(&self) {
-        let _ = std::fs::remove_file(self.subscription_required_marker_path());
-    }
-
     pub fn clear_all(&self) {
         self.clear_update_marker();
         self.clear_update_required();
-        self.clear_subscription_required();
     }
 
     pub fn update_marker_path(&self) -> PathBuf {
@@ -99,10 +90,6 @@ impl MarkerFileReporter {
 
     fn update_dismissed_marker_path(&self) -> PathBuf {
         self.state_dir.join("update-dismissed")
-    }
-
-    fn subscription_required_marker_path(&self) -> PathBuf {
-        self.state_dir.join("subscription-required")
     }
 
     fn write_update_marker(&self, info: &UpdateInfo) {
@@ -118,12 +105,6 @@ impl MarkerFileReporter {
             format!("{minimum_version}\n"),
         ) {
             tracing::warn!(error = %e, "failed to write update-required marker");
-        }
-    }
-
-    fn write_subscription_required(&self) {
-        if let Err(e) = std::fs::write(self.subscription_required_marker_path(), b"required\n") {
-            tracing::warn!(error = %e, "failed to write subscription-required marker");
         }
     }
 }
@@ -147,16 +128,6 @@ impl UpdateReporter for MarkerFileReporter {
                 self.write_update_required(&minimum_version);
             }
             UpdateStatus::Required(None) => self.clear_update_required(),
-        }
-    }
-}
-
-impl SubscriptionReporter for MarkerFileReporter {
-    fn report_subscription_required(&self, required: bool) {
-        if required {
-            self.write_subscription_required();
-        } else {
-            self.clear_subscription_required();
         }
     }
 }

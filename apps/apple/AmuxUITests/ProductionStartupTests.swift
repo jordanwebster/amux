@@ -23,8 +23,8 @@ final class ProductionStartupTests: JourneyCase {
         record["launchArguments"] = app.launchArguments.filter { $0.hasPrefix("-amux-") }
         defer { try? write("startup-paired.json") }
         app.launch()
-        waitFor(app, "home.empty.action", "the unsigned home did not offer sign-in")
-        press(app, "home.empty.action")
+        waitFor(app, "home.empty.signIn", "the unsigned home did not offer sign-in")
+        press(app, "home.empty.signIn")
         waitFor(app, "sign-in", "sign-in did not open")
         press(app, "sign-in.continue")
         waitFor(app, "sign-in.signed-in", "the scripted cloud did not sign in")

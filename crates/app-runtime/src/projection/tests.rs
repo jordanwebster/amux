@@ -20,6 +20,8 @@ fn host(online: bool) -> Msg {
             capabilities: None,
             trust_status: model::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: model::HostVia::Direct,
+            signed_in: None,
             platform: None,
         },
     })
@@ -36,6 +38,7 @@ fn upsert(kind: model::AgentKind) -> Msg {
             readonly: false,
             args: vec![],
             created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            last_activity: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             parent: None,
             working_on: None,
             summary: None,
@@ -266,6 +269,17 @@ fn mobile_projection_schema_snapshot() {
             paired_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
         }],
     });
+    // The link this device is on and what the account on it buys, in the one
+    // shape a paying subscriber over QUIC produces.
+    events.push(Event::CloudState(ui_state::CloudState::Connected {
+        tier: model::Tier::Pro,
+        carrier: model::RelayCarrier::Quic,
+    }));
+    // What a start reports of the removed accounts it really did get rid of,
+    // which is the only word the phone may drop a pending removal on.
+    events.push(Event::Forgotten {
+        accounts: vec!["work".into()],
+    });
     let actual = format!("{}\n", serde_json::to_string_pretty(&events).unwrap());
     if std::env::var_os("UPDATE_MOBILE_PROJECTION").is_some() {
         std::fs::write(
@@ -368,16 +382,19 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
             },
         },
     );
-    assert!(model.claude(AGENT).is_none());
+    assert!(model.claude(AGENT).is_some());
+    assert!(!model.agent(AGENT).unwrap().live);
     phone.apply_events(&collect(&mut projection, &model));
     assert_eq!(phone.rows, held, "the rows went when the machine did");
 
-    // It answers again. Recreating the live agent does not replace the stored
-    // window, and the after-cursor replay appends only the new row.
+    // Its inventory answers again without reconnecting the client's daemon
+    // link or changing the agent record. Cursor replay appends only the new row.
+    update(&mut model, host(true));
     let effects = update(
         &mut model,
-        Msg::Server(ServerMsg::Connected {
-            local_host_id: Some(PHONE),
+        Msg::Server(ServerMsg::HostInventory {
+            host_id: HOST,
+            agent_ids: vec![AGENT],
         }),
     );
     let replay_stream = effects
@@ -388,12 +405,15 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
         })
         .expect("reconnect reopens the stored chat stream");
     assert_ne!(replay_stream, stream);
-    update(&mut model, host(true));
-    update(
-        &mut model,
-        upsert(model::AgentKind::Claude {
-            driver: model::ClaudeDriver::Pty,
-        }),
+    assert!(
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::HostInventory {
+                host_id: HOST,
+                agent_ids: vec![AGENT],
+            }),
+        )
+        .is_empty()
     );
     phone.apply_events(&collect(&mut projection, &model));
     assert_eq!(
@@ -918,6 +938,56 @@ fn mobile_projection_ask_snapshot() {
     } else {
         assert_eq!(actual, include_str!("asks.json"));
     }
+}
+
+fn fleet_card(projection: &mut Projection, model: &Model) -> AgentCardDto {
+    collect(projection, model)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Fleet { agents, .. } => agents.into_iter().find(|card| card.agent.id == AGENT),
+            _ => None,
+        })
+        .expect("the fleet names the agent")
+}
+
+/// A row that needs you says what is wanted, so the fleet card carries the
+/// ask at the head of the queue — and a calm agent's card carries none.
+#[test]
+fn mobile_projection_fleet_cards_carry_the_waiting_ask() {
+    for (name, kind, fixture) in ASK_FIXTURES {
+        let mut model = self::model(*kind);
+        let mut projection = Projection::default();
+        assert_eq!(fleet_card(&mut projection, &model).ask, None, "{name}");
+        for (index, line) in fixture.lines().enumerate() {
+            row(
+                &mut model,
+                index as u64 + 1,
+                serde_json::from_str(line).unwrap(),
+            );
+            if !pending_asks(&model).is_empty() {
+                break;
+            }
+        }
+        let card = fleet_card(&mut projection, &model);
+        assert!(
+            matches!(
+                card.attention,
+                Attention::NeedsYou {
+                    why: Why::Permission | Why::Question
+                }
+            ),
+            "{name}: {:?}",
+            card.attention
+        );
+        assert_eq!(card.ask.as_ref(), pending_asks(&model).first(), "{name}");
+        let json = serde_json::to_value(&card).unwrap();
+        assert!(json["ask"]["layer"].is_string(), "{name}: {json}");
+    }
+
+    let calm = claude_model();
+    let card = fleet_card(&mut Projection::default(), &calm);
+    assert_eq!(card.ask, None);
+    assert!(serde_json::to_value(&card).unwrap().get("ask").is_none());
 }
 
 #[test]

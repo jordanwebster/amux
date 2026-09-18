@@ -76,7 +76,7 @@ pub fn handle_key(
     }
 
     match view.mode.clone() {
-        Mode::Help => {
+        Mode::Help | Mode::Hosts => {
             view.mode = Mode::Normal;
             None
         }
@@ -253,6 +253,10 @@ pub fn handle_key(
                 view.mode = Mode::Help;
                 None
             }
+            KeyCode::Char('h') => {
+                view.mode = Mode::Hosts;
+                None
+            }
             _ => None,
         },
     }
@@ -371,7 +375,7 @@ mod tests {
     #[test]
     fn ctrl_c_arms_then_a_second_press_quits_from_any_fieldless_mode() {
         let model = Model::default();
-        for mode in [Mode::Normal, Mode::Filter, Mode::Help] {
+        for mode in [Mode::Normal, Mode::Filter, Mode::Help, Mode::Hosts] {
             let mut view = ViewState {
                 mode,
                 ..ViewState::default()
@@ -429,6 +433,22 @@ mod tests {
             Some(UiAction::ListProfiles)
         );
         assert!(!view.pending_leader, "the chord consumed the leader");
+    }
+
+    #[test]
+    fn h_opens_the_host_inventory_and_the_next_key_closes_it() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Char('h')), 10, t(0)),
+            None
+        );
+        assert_eq!(view.mode, Mode::Hosts);
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Esc), 10, t(0)),
+            None
+        );
+        assert_eq!(view.mode, Mode::Normal);
     }
 
     /// An armed leader followed by anything else is that other key, not a
@@ -577,6 +597,12 @@ mod tests {
             capabilities: None,
             trust_status: ui_state::HostTrustStatus::Trusted,
             last_dial_error: (!online).then(|| "connection refused".to_string()),
+            via: if online {
+                ui_state::HostVia::Direct
+            } else {
+                ui_state::HostVia::Offline
+            },
+            signed_in: Some(true),
             platform: None,
         };
         let agent = ui_state::Agent {
@@ -589,6 +615,7 @@ mod tests {
             readonly,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
+            last_activity: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
             parent: None,
             working_on: None,
             summary: None,

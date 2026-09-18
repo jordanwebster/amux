@@ -1,19 +1,25 @@
 # How amux works
 
-amux lets your devices reach the AI coding agents and terminal sessions
+**On your network, no account needed.** amux lets your devices reach the AI coding agents and terminal sessions
 running on your other devices — your phone checking on a build your
 workstation is running, your laptop picking up a session you started at
 your desk. This page explains the model behind that, and why you can
 trust it with a door into your machines.
+
+Pairing and same-network use are free and local. An account adds discovery
+through the relay when devices are apart: an unsubscribed device can see that
+a host is **away**, but cannot use its agents through the relay. A subscription
+adds relay-carried agent access. Direct connections on your network and SSH do
+not consult the account or subscription.
 
 ## Devices and accounts
 
 An amux installation can hold several **profiles**, such as Personal and
 Work. Each profile is a complete device: its own private key, trusted peers,
 agents and cloud connection. Its key stays on your machine; no server holds
-it. A cloud account provides relay access, while **pairing** decides which
-devices may use each other's agents. Joining the same account never grants
-that trust by itself.
+it. A cloud account adds relay presence, and a subscription adds relay-carried
+agent access, while **pairing** decides which devices may use each other's
+agents. Joining the same account never grants that trust by itself.
 
 Use `amux profiles` to see your profiles and `--profile <name|UUID>` to choose
 one for a command. Each cloud account has at most one profile per installation;
@@ -26,9 +32,12 @@ paused across restarts. Deleting a profile explicitly destroys its keys, trust
 and agents. Profiles isolate amux state and routing, but do not sandbox code
 running as the same OS user.
 
-Run `amux init` to create an installation with an unbound profile, then
-`amux login` to add a cloud account. Login shows the account's name and email;
-use its UUID from `amux profiles` in
+Run `amux init` to name this host and create an installation with an unbound
+profile, then `amux login` to add a cloud account. Interactive setup suggests
+the Mac's Computer Name; scripts can use `amux init --name <NAME>`. If the
+server is already running when the name changes, restart it before expecting
+the new name to appear in discovery or pairing. Login shows the account's name
+and email; use its UUID from `amux profiles` in
 `amux --profile <UUID> profile rename Work` to give it a local label. Another
 account gets a separate profile; logging into it never changes Work's binding.
 
@@ -57,7 +66,8 @@ Under the hood both run the same password-authenticated key exchange
 (SPAKE2): the code proves to each device that the other one is the
 machine physically in front of you, *without the code itself ever
 crossing the network*. An eavesdropper learns nothing they can replay;
-codes are one-shot and expire in about five minutes.
+codes are one-shot and normally expire in about five minutes. The first
+`amux init` window lasts 15 minutes so there is time to install the phone app.
 
 For QR pairing, `amux pair --qr` renders a production `amux://pair?...`
 deep link in the terminal QR. Development builds can also print that link
@@ -82,47 +92,53 @@ no access to Work. Paired peers can operate agents, including creating and
 deleting them, but cannot administer your trust store or stop, suspend or
 resume your installation.
 
-## Talking: links and tunnels
+## Finding and talking to a host
 
-Paired devices connect however they can reach each other — a direct
-connection on your network, SSH, or through a relay when they can't
-reach each other directly (your phone on cellular, your workstation
-behind a home router). amux calls these connections **links**.
+While a host's listener is running it advertises `_amux._udp` on the local
+network. Browsing only produces candidates: finding a host neither trusts it
+nor declares it online. Pairing pins its public key. After that, a fresh
+advertisement supplies addresses to dial, and the pinned handshake decides
+whether the endpoint is really that host.
 
-Every actual conversation — attaching to a session, listing agents,
-streaming output — travels inside a **tunnel**: an end-to-end encrypted
-channel that rides whatever links are available. Before a single byte of
-your session flows, the two endpoints complete a mutual TLS handshake
-checked against their pinned keys. Both sides prove who they are, every
-time, no matter what carried the connection.
+Paired devices connect however they can reach each other: a direct QUIC link
+on your network, SSH, or a relay link when they are apart. The relay link uses
+QUIC when UDP works and a multiplexed TLS-over-TCP carrier as its fallback.
+Each operation uses a native stream on the selected link. Before any agent data
+flows, the two endpoint devices complete a mutual TLS handshake checked against
+their pinned keys. Both sides prove who they are every time, independently of
+the carrier or relay.
 
-That one rule — every call is a tunnel, every tunnel is authenticated
-end-to-end — is the heart of the security model. The transport
-underneath is just plumbing; nothing about it is trusted.
+That rule — every channel is authenticated end to end — is the heart of the
+security model. The carrier underneath is plumbing, not authority.
 
 ## What a relay can see and do
 
-When two of your devices can't reach each other directly, a relay passes
-their messages along. The amux cloud assigns a relay when a device connects.
+When two of your devices cannot reach each other directly, a relay copies
+their encrypted streams. The amux cloud assigns a relay when a signed-in
+device connects. A free account receives presence only: it can distinguish an
+away host from an offline one, but the cloud relay refuses agent and pairing
+streams. A subscription permits those streams. The rule is enforced from the
+tier on each cloud-admitted link; a self-hosted relay between paired devices
+has no account tier and never applies it.
+
 Any always-on device you've paired can also relay (a home server works fine)
 — relaying is built into every node.
 
-The cloud relay sees encrypted tunnel traffic plus metadata such as device
+The cloud relay sees encrypted channel traffic plus metadata such as device
 names, account identity, online status, delivery addresses and traffic timing.
 It cannot:
 
-- **read your sessions** — tunnel contents are encrypted end-to-end
+- **read your sessions** — channel contents are encrypted end to end
   between your devices;
 - **impersonate a device** — it holds no pinned key, so it fails the
   handshake that guards every call;
-- **create agents or run commands** — those require a tunnel that
+- **create agents or run commands** — those require a channel that
   terminates inside your trusted circle, which the cloud relay cannot form.
 
-The cloud relay has a subscription check at the door. A compromised relay
-could drop or delay packets and disrupt connectivity, but it would gain no
-authority to read sessions or operate agents. A paired device that also relays
-traffic has the agent authority you granted when pairing; it still cannot read
-the tunnels it forwards between other devices.
+A compromised relay could drop or delay packets and disrupt connectivity, but
+it would gain no authority to read sessions or operate agents. A paired device
+that also relays traffic has the agent authority you granted when pairing; it
+still cannot read channels it forwards between other devices.
 
 ## Leaving: revocation is local and immediate
 

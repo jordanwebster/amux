@@ -136,3 +136,47 @@ impl ClaudeSdkLayer {
         &self.observation
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// A reader tells a running tool from a finished one, and an edit from
+    /// any other result, by whether the field is there. Written as `null`,
+    /// every finished tool read as an empty edit and none read as running.
+    #[test]
+    fn absent_tool_results_and_edits_are_omitted_rather_than_null() {
+        let mut tool = ToolEntry {
+            tool_use_id: "toolu_1".to_string(),
+            name: "Bash".to_string(),
+            invocation: crate::claude::facts::ToolInvocation::Bash {
+                command: Some("ls".to_string()),
+                description: None,
+            },
+            input: None,
+            input_json: String::new(),
+            finality: Finality::Complete,
+            result: None,
+            group_with_previous: false,
+        };
+        let running = serde_json::to_value(&tool).unwrap();
+        assert!(running.get("result").is_none(), "{running}");
+
+        tool.result = Some(ToolResult {
+            text: "Cargo.toml".to_string(),
+            is_error: false,
+            details: None,
+            edit: None,
+        });
+        let finished = serde_json::to_value(&tool).unwrap();
+        assert_eq!(
+            finished["result"],
+            json!({"text": "Cargo.toml", "is_error": false})
+        );
+
+        let round_trip: ToolEntry = serde_json::from_value(finished).unwrap();
+        assert_eq!(round_trip, tool);
+    }
+}

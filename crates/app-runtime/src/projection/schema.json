@@ -6,6 +6,11 @@
     }
   },
   {
+    "CloudState": {
+      "cloud": "signed_out"
+    }
+  },
+  {
     "Fleet": {
       "epoch": 1,
       "agents": [
@@ -22,7 +27,8 @@
             },
             "readonly": false,
             "args": [],
-            "created_at": "2023-11-14T22:13:20Z"
+            "created_at": "2023-11-14T22:13:20Z",
+            "last_activity": "2023-11-14T22:13:20Z"
           },
           "display_name": "Fix login",
           "attention": {
@@ -44,6 +50,8 @@
             "capabilities": null,
             "trust_status": "trusted",
             "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
             "platform": null
           },
           "epoch": 1
@@ -219,7 +227,8 @@
             },
             "readonly": false,
             "args": [],
-            "created_at": "2023-11-14T22:13:20Z"
+            "created_at": "2023-11-14T22:13:20Z",
+            "last_activity": "2023-11-14T22:13:20Z"
           },
           "display_name": "Fix login",
           "attention": {
@@ -242,6 +251,8 @@
             "capabilities": null,
             "trust_status": "trusted",
             "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
             "platform": null
           },
           "epoch": 1
@@ -288,6 +299,11 @@
     }
   },
   {
+    "CloudState": {
+      "cloud": "signed_out"
+    }
+  },
+  {
     "Fleet": {
       "epoch": 1,
       "agents": [
@@ -303,7 +319,8 @@
             },
             "readonly": false,
             "args": [],
-            "created_at": "2023-11-14T22:13:20Z"
+            "created_at": "2023-11-14T22:13:20Z",
+            "last_activity": "2023-11-14T22:13:20Z"
           },
           "display_name": "Fix login",
           "attention": {
@@ -325,6 +342,8 @@
             "capabilities": null,
             "trust_status": "trusted",
             "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
             "platform": null
           },
           "epoch": 1
@@ -403,6 +422,11 @@
     }
   },
   {
+    "CloudState": {
+      "cloud": "signed_out"
+    }
+  },
+  {
     "Fleet": {
       "epoch": 1,
       "agents": [
@@ -419,7 +443,8 @@
             },
             "readonly": false,
             "args": [],
-            "created_at": "2023-11-14T22:13:20Z"
+            "created_at": "2023-11-14T22:13:20Z",
+            "last_activity": "2023-11-14T22:13:20Z"
           },
           "display_name": "Fix login",
           "attention": {
@@ -441,6 +466,8 @@
             "capabilities": null,
             "trust_status": "trusted",
             "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
             "platform": null
           },
           "epoch": 1
@@ -1077,6 +1104,20 @@
           "fingerprint": "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2",
           "paired_at": "2023-11-14T22:13:20Z"
         }
+      ]
+    }
+  },
+  {
+    "CloudState": {
+      "cloud": "connected",
+      "tier": "pro",
+      "carrier": "quic"
+    }
+  },
+  {
+    "Forgotten": {
+      "accounts": [
+        "work"
       ]
     }
   }

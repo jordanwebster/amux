@@ -1163,6 +1163,7 @@ mod diff {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
             summary: None,

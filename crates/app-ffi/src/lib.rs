@@ -84,7 +84,8 @@ pub extern "C" fn amux_app_build() -> *const c_char {
 ///
 /// The account has to be named because what a device remembers belongs to the
 /// account that saw it: a launch that opens on a second account must draw that
-/// account's machines and not the ones the first account left behind.
+/// account's machines and not the ones the first account left behind. An empty
+/// account asks for what this device remembers with nobody signed in.
 ///
 /// # Safety
 /// cache_dir and account must be readable NUL-terminated UTF-8 strings for
@@ -95,11 +96,10 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
     account: *const c_char,
 ) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
-        let directory = unsafe { read_string(cache_dir) }?;
+        let directory = std::path::Path::new(unsafe { read_string(cache_dir) }?);
         let account = unsafe { read_string(account) }?;
-        let result = blocking(app_runtime::cache::read_cached_fleet(
-            std::path::Path::new(directory),
-            account,
+        let result = blocking(app_runtime::cache::read_account_cached_fleet(
+            directory, account,
         ))?;
         match result {
             Ok(fleet) => owned(&[fleet]),
@@ -182,6 +182,16 @@ async fn serve(
     // can be routed by that identifier alone.
     let (requests, token_requests) = mpsc::channel(1);
     let mut embedded = Embedded::open(&config, requests).await?;
+    // Opening is what deletes a removed account's profile and caches, so this
+    // is where the application learns which removals it may stop asking for.
+    // One that would not delete is not named, and the next start is asked for
+    // it again.
+    let forgotten = std::mem::take(&mut embedded.forgotten);
+    if !forgotten.is_empty() {
+        callback.send(&[Event::Forgotten {
+            accounts: forgotten,
+        }]);
+    }
     let served = app_runtime::run(
         &mut embedded.sessions,
         config.frame_interval(),
@@ -290,6 +300,67 @@ pub unsafe extern "C" fn amux_app_set_active(handle: *mut Handle, active: bool) 
     }));
 }
 
+/// Hands the bridge every machine the platform's browser has resolved on this
+/// network, as a JSON array of `{"host":UUID,"name":…,"version":N,"addrs":[…]}`.
+///
+/// The whole set each time, not a change to it: a browser reports what it can
+/// currently see, and a machine that has gone is a machine missing from the
+/// set rather than an event of its own. Handing over an empty array is how the
+/// app says it can see nothing — the browser stopped, or the person refused
+/// the local network — and the machines found earlier stop being offered.
+///
+/// Only the phone browses. Nothing in this library asks the system for the
+/// network, because on iOS only the system may, so what this device has found
+/// is exactly what was last handed to it.
+///
+/// # Safety
+/// handle must be live and found_json readable and NUL-terminated for this
+/// call. Neither pointer may race stop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_app_discovered(handle: *mut Handle, found_json: *const c_char) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let json = unsafe { read_string(found_json) }?;
+        let found: Vec<FoundHostDto> = serde_json::from_str(json).ok()?;
+        let found = found
+            .into_iter()
+            .filter_map(|host| host.into_found())
+            .collect();
+        handle.commands.send(Control::Discovered(found)).ok()
+    }));
+}
+
+/// One machine as the platform's browser resolved it.
+#[derive(serde::Deserialize)]
+struct FoundHostDto {
+    host: String,
+    name: String,
+    /// The protocol version the advertisement's own record claims.
+    version: u32,
+    addrs: Vec<String>,
+}
+
+impl FoundHostDto {
+    /// The advertisement, or nothing where what was resolved cannot be dialled:
+    /// an identity that is not a host id, or no address at all.
+    fn into_found(self) -> Option<app_runtime::FoundHost> {
+        let addrs: Vec<std::net::SocketAddr> = self
+            .addrs
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .collect();
+        if addrs.is_empty() {
+            return None;
+        }
+        Some(app_runtime::FoundHost {
+            host: self.host.parse().ok()?,
+            name: self.name,
+            version: self.version,
+            addrs,
+        })
+    }
+}
+
 /// Freezes the shared reducer model as owned JSON; free with amux_app_free.
 /// Returns NULL for an unavailable worker or a five-second timeout.
 ///
@@ -304,11 +375,16 @@ pub unsafe extern "C" fn amux_app_snapshot(handle: *mut Handle) -> *mut c_char {
 /// Freezes recorder checkpoint/message lines and obtains the embedded daemon's
 /// JSON dump. The result has msgs, daemon and daemon_absent_reason fields.
 /// A failed or timed-out dump is null with its reason; msgs remains available.
-/// Free the owned result with amux_app_free. Debug-tools builds only.
+/// Free the owned result with amux_app_free.
+///
+/// In every build, not only the one with the driving tools: a person reporting
+/// a problem from an installed app sends these records to their own account,
+/// and the recorder they come from runs in every build anyway, because a
+/// release panic report is written from it. It reads what this device already
+/// holds and changes nothing, so it is no way to drive the app.
 ///
 /// # Safety
 /// handle must be live and may not race stop. Never call from an event callback.
-#[cfg(feature = "debug-tools")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amux_app_report_snapshot(handle: *mut Handle) -> *mut c_char {
     unsafe { snapshot(handle, Control::ReportSnapshot) }
@@ -684,12 +760,17 @@ pub unsafe extern "C" fn amux_app_free(string: *mut c_char) {
 struct TokenReply {
     token: Option<String>,
     expires_at: Option<u64>,
+    /// What the account service said this account buys, where the reply that
+    /// carried the token said. The bearer is opaque to this library, so this
+    /// is the only place a tier can come from; absent is treated as free.
+    tier: Option<app_runtime::Tier>,
     error: Option<String>,
 }
 
-/// Answers one TokenRequest with {"token":"…","expires_at":unix_seconds}
-/// (expiry is optional) or {"error":"…"}. Malformed replies fail that request;
-/// unknown, duplicate and expired request IDs are ignored.
+/// Answers one TokenRequest with {"token":"…","expires_at":unix_seconds,
+/// "tier":"free"|"pro"} (expiry and tier are optional) or {"error":"…"}.
+/// Malformed replies fail that request; unknown, duplicate and expired request
+/// IDs are ignored.
 ///
 /// # Safety
 /// handle must be live and token_json must be readable and NUL-terminated for
@@ -710,6 +791,7 @@ pub unsafe extern "C" fn amux_app_token_reply(
             Some(TokenReply {
                 token: Some(bearer),
                 expires_at,
+                tier,
                 error: None,
             }) if !bearer.is_empty() => {
                 let expiry = expires_at
@@ -719,6 +801,7 @@ pub unsafe extern "C" fn amux_app_token_reply(
                     _ => Ok(Token {
                         bearer,
                         expires_at: expiry.flatten(),
+                        tier,
                     }),
                 }
             }

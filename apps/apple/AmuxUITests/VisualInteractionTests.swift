@@ -29,20 +29,6 @@ final class VisualInteractionTests: JourneyCase {
         waitFor(app, "home", "Agents did not reappear")
         XCTAssertEqual(tabFrames(app), initial, "returning to Agents moved the tab bar")
         capture(app, "tabs-agents-returned")
-
-        let door = try Lines(address: "127.0.0.1:\(port)")
-        _ = try door.ask(["kind": "open", "screen": "home", "fixture": "home"])
-        _ = try door.ask(["kind": "settle"])
-        let filter = element(app, "home.filter")
-        XCTAssertTrue(filter.waitForExistence(timeout: 5), "the home fixture has no filter")
-        filter.tap()
-        let all = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "All Agents")).firstMatch
-        XCTAssertTrue(all.waitForExistence(timeout: 5), "the filter menu did not open")
-        all.tap()
-        XCTAssertTrue(waitUntil(within: 5) { !all.exists }, "the filter menu did not close")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        capture(app, "filter-dismissed")
     }
 
     @MainActor

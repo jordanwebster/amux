@@ -97,7 +97,16 @@ const STEP: Duration = Duration::from_secs(10);
 
 /// Replaces an account's store with one remembering exactly `remembered`.
 pub async fn seed(cache_dir: &Path, account: &str, remembered: Remembered) -> Result<(), String> {
-    let path = store_path(cache_dir, account);
+    let profile = crate::cache::remembered_profile(cache_dir, Some(account))
+        .unwrap_or_else(|| model::ProfileId(uuid::Uuid::new_v4()));
+    let path = store_path(cache_dir, &profile.to_string());
+    let directory = cache_dir.join("fleet").join("profiles.json");
+    let mut profiles = std::fs::read(directory)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<BTreeMap<String, model::ProfileId>>(&bytes).ok())
+        .unwrap_or_default();
+    profiles.insert(account.to_owned(), profile);
+    crate::cache::remember_profiles(cache_dir, &profiles).map_err(|error| error.to_string())?;
     for suffix in ["", "-wal", "-shm"] {
         let mut file = path.clone().into_os_string();
         file.push(suffix);
@@ -279,7 +288,13 @@ pub async fn cached_chat(
     account: &str,
     agent: AgentId,
 ) -> Result<Vec<Event>, String> {
-    let mut runtime = remembered_runtime(&store_path(cache_dir, account)).await?;
+    let mut runtime = remembered_runtime(&store_path(
+        cache_dir,
+        &crate::cache::remembered_profile(cache_dir, Some(account))
+            .ok_or("no remembered profile")?
+            .to_string(),
+    ))
+    .await?;
     runtime.open_chat(agent);
     until(&mut runtime, |runtime| {
         runtime
@@ -344,7 +359,7 @@ mod tests {
                     "host_id": "00000000-0000-0000-0000-000000000001",
                     "name": format!("agent-{id}"), "command": "claude", "working_dir": "/work",
                     "kind": {"kind": "claude", "driver": "pty"}, "readonly": false, "args": [],
-                    "created_at": "2026-09-16T12:00:00.000Z"
+                    "created_at": "2026-09-16T12:00:00.000Z", "last_activity": "2026-09-16T12:00:00.000Z"
                 })
             })
             .into();
@@ -377,7 +392,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         seed(root.path(), ACCOUNT, remembered()).await.unwrap();
 
-        let fleet = crate::cache::read_cached_fleet(root.path(), ACCOUNT)
+        let fleet = crate::cache::read_account_cached_fleet(root.path(), ACCOUNT)
             .await
             .unwrap();
         let fleet = serde_json::to_value(&fleet).unwrap();

@@ -650,10 +650,10 @@ pub struct AmbiguousAgentName {
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
-/// Host-to-host link stream envelope exchanged by LinkService.Connect.
+/// Host-to-host control envelope exchanged on the link's control stream.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
-    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 8, 9")]
     pub body: ::core::option::Option<message::Body>,
 }
 /// Nested message and enum types in `Message`.
@@ -668,12 +668,6 @@ pub mod message {
         NeighborUp(super::NeighborUp),
         #[prost(message, tag = "4")]
         NeighborDown(super::NeighborDown),
-        #[prost(message, tag = "5")]
-        TunnelOpen(super::TunnelOpen),
-        #[prost(message, tag = "6")]
-        TunnelData(super::TunnelData),
-        #[prost(message, tag = "7")]
-        TunnelClose(super::TunnelClose),
         #[prost(message, tag = "8")]
         Reauth(super::Reauth),
         #[prost(message, tag = "9")]
@@ -690,6 +684,14 @@ pub struct Hello {
     pub host: ::core::option::Option<Host>,
     #[prost(message, repeated, tag = "3")]
     pub neighbors: ::prost::alloc::vec::Vec<Host>,
+    #[prost(string, optional, tag = "4")]
+    pub auth_token: ::core::option::Option<::prost::alloc::string::String>,
+    /// 16 random bytes drawn when the sender's runtime starts and kept for its
+    /// life. A link that arrives carrying a different incarnation than an
+    /// earlier link from the same host proves that earlier link belongs to a
+    /// process that no longer exists, however healthy it still looks.
+    #[prost(bytes = "vec", tag = "5")]
+    pub incarnation: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloAck {
@@ -714,6 +716,9 @@ pub struct HelloAccepted {
     pub host: ::core::option::Option<Host>,
     #[prost(message, repeated, tag = "3")]
     pub neighbors: ::prost::alloc::vec::Vec<Host>,
+    /// The acceptor's incarnation; see `Hello.incarnation`.
+    #[prost(bytes = "vec", tag = "4")]
+    pub incarnation: ::prost::alloc::vec::Vec<u8>,
 }
 /// "I have a direct link to this host." Strictly adjacency: a node never
 /// advertises anything it learned from someone else.
@@ -730,44 +735,12 @@ pub struct NeighborDown {
     #[prost(string, optional, tag = "2")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
 }
-/// Opens a tunnel: the only frame that allocates endpoint state. The reply
-/// address (`src`) travels exactly once, here; replies leave on the link the
-/// tunnel's frames arrive on, addressed `dst = src`. There is no open-ack —
-/// the pinned mTLS handshake inside the tunnel is the acknowledgement, and
-/// rejection is TunnelClose.
+/// Written by the opener as the first bytes of every non-control stream. The
+/// destination is routing information only; the pinned handshake inside the
+/// stream establishes the caller's authority.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TunnelOpen {
-    /// A plain 16-byte UUID minted by the initiator.
+pub struct StreamPreface {
     #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    /// The initiator's host_id: where replies go.
-    #[prost(bytes = "vec", tag = "2")]
-    pub src: ::prost::alloc::vec::Vec<u8>,
-    /// The destination host_id. A relay forwards iff it has a direct link to
-    /// dst; otherwise the frame is dropped. dst == self delivers locally.
-    #[prost(bytes = "vec", tag = "3")]
-    pub dst: ::prost::alloc::vec::Vec<u8>,
-}
-/// Carries tunnel bytes (payload \<= 64 KiB). Data for an unknown tunnel_id is
-/// a protocol violation by a confused or stale peer: it is dropped without
-/// allocating anything, and the link stays up.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TunnelData {
-    #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub dst: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "3")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
-/// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
-/// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
-/// the link they are pinned to.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TunnelClose {
-    #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "2")]
     pub dst: ::prost::alloc::vec::Vec<u8>,
 }
 /// Fire-and-forget credential refresh on the cloud link, sent before the
@@ -816,6 +789,8 @@ pub struct Host {
     /// predates this field says nothing rather than guessing.
     #[prost(string, optional, tag = "5")]
     pub platform: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "6")]
+    pub signed_in: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairMessage {
@@ -946,9 +921,13 @@ pub struct HostEntry {
     /// `!online && last_dial_error` unset, derived client-side if needed.
     #[prost(string, optional, tag = "7")]
     pub last_dial_error: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "HostVia", tag = "8")]
+    pub via: i32,
+    #[prost(bool, optional, tag = "9")]
+    pub signed_in: ::core::option::Option<bool>,
     /// The machine's kind, as it announced itself in the handshake. Unset for a
     /// host that has never been adjacent, because nothing else knows it.
-    #[prost(string, optional, tag = "8")]
+    #[prost(string, optional, tag = "10")]
     pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -975,6 +954,11 @@ pub struct Agent {
     pub parent: ::core::option::Option<AgentParent>,
     #[prost(message, optional, tag = "12")]
     pub working_on: ::core::option::Option<WorkingOn>,
+    /// When the host last saw the agent do anything: a transcript row, an ask,
+    /// a tool call. Dated by the host where it happened, so every client orders
+    /// and ages agents by the same fact whether or not it reads their streams.
+    #[prost(int64, tag = "16")]
+    pub last_activity_unix_ms: i64,
     #[prost(message, optional, tag = "13")]
     pub summary: ::core::option::Option<AgentSummary>,
     #[prost(message, optional, tag = "14")]
@@ -1499,6 +1483,10 @@ pub struct ProfileInfo {
     pub available: bool,
     #[prost(string, optional, tag = "12")]
     pub minimum_version: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "Tier", tag = "13")]
+    pub tier: i32,
+    #[prost(enumeration = "RelayCarrier", tag = "14")]
+    pub relay_carrier: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListProfilesRequest {}
@@ -1597,31 +1585,31 @@ pub struct ProfilePairingStatusRequest {
     pub profile_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ProfilePairPeerRequest {
+pub struct ProfileBeginPairRequest {
     #[prost(string, tag = "1")]
     pub operation_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub profile_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
-    pub pairing: ::core::option::Option<PairPeerRequest>,
+    pub pairing: ::core::option::Option<BeginPairRequest>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ProfilePairPinCloudPeerRequest {
+pub struct ProfilePendingPairRequest {
     #[prost(string, tag = "1")]
     pub operation_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub profile_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
-    pub pairing: ::core::option::Option<PairPinCloudPeerRequest>,
+    pub pairing: ::core::option::Option<PendingPairRequest>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ProfilePairQrCloudPeerRequest {
+pub struct ProfileTrustSshPeerRequest {
     #[prost(string, tag = "1")]
     pub operation_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub profile_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "3")]
-    pub pairing: ::core::option::Option<PairQrCloudPeerRequest>,
+    pub pairing: ::core::option::Option<TrustSshPeerRequest>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProfileGetPeerRequest {
@@ -1642,9 +1630,18 @@ pub struct ProfileUnpairRequest {
     pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PairingCandidate {
+    #[prost(message, optional, tag = "1")]
+    pub host: ::core::option::Option<HostEntry>,
+    #[prost(enumeration = "PeerVia", tag = "2")]
+    pub via: i32,
+    #[prost(string, repeated, tag = "3")]
+    pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListPairingCandidatesResponse {
     #[prost(message, repeated, tag = "1")]
-    pub hosts: ::prost::alloc::vec::Vec<HostEntry>,
+    pub candidates: ::prost::alloc::vec::Vec<PairingCandidate>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProfileDebugRequest {
@@ -1978,52 +1975,11 @@ pub struct SshTarget {
     pub profile_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairPeerRequest {
-    #[prost(message, optional, tag = "1")]
-    pub peer: ::core::option::Option<PairingIdentity>,
-    #[prost(oneof = "pair_peer_request::Reachability", tags = "2, 3")]
-    pub reachability: ::core::option::Option<pair_peer_request::Reachability>,
-}
-/// Nested message and enum types in `PairPeerRequest`.
-pub mod pair_peer_request {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Reachability {
-        #[prost(message, tag = "2")]
-        SshTarget(super::SshTarget),
-        #[prost(string, tag = "3")]
-        DirectTcpAddr(::prost::alloc::string::String),
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairPeerResponse {}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairPinCloudPeerRequest {
-    #[prost(bytes = "vec", tag = "1")]
-    pub host_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(string, tag = "2")]
-    pub pin: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairPinCloudPeerResponse {
-    #[prost(message, optional, tag = "1")]
-    pub peer: ::core::option::Option<PairingIdentity>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairQrCloudPeerRequest {
-    #[prost(bytes = "vec", tag = "1")]
-    pub host_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub secret: ::prost::alloc::vec::Vec<u8>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairQrCloudPeerResponse {
-    #[prost(message, optional, tag = "1")]
-    pub peer: ::core::option::Option<PairingIdentity>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BeginPairRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, repeated, tag = "4")]
+    pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(oneof = "begin_pair_request::Secret", tags = "2, 3")]
     pub secret: ::core::option::Option<begin_pair_request::Secret>,
 }
@@ -2043,11 +1999,22 @@ pub struct PendingPairResponse {
     pub token: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub peer: ::core::option::Option<PairingIdentity>,
+    #[prost(enumeration = "PeerVia", tag = "3")]
+    pub via: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PendingPairRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub token: ::prost::alloc::vec::Vec<u8>,
+}
+/// SSH has already authenticated its peer outside the secret-based pairing
+/// protocol, so its identity commit remains a separate, SSH-only operation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TrustSshPeerRequest {
+    #[prost(message, optional, tag = "1")]
+    pub peer: ::core::option::Option<PairingIdentity>,
+    #[prost(message, optional, tag = "2")]
+    pub ssh_target: ::core::option::Option<SshTarget>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PeerRef {
@@ -2077,9 +2044,14 @@ pub mod peer_reachability {
         Cloud(super::Empty),
         #[prost(message, tag = "2")]
         SshTarget(super::SshTarget),
-        #[prost(string, tag = "3")]
-        DirectTcpAddr(::prost::alloc::string::String),
+        #[prost(message, tag = "3")]
+        Direct(super::DirectReachability),
     }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DirectReachability {
+    #[prost(string, repeated, tag = "1")]
+    pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PeerEntry {
@@ -2152,13 +2124,13 @@ pub struct ShutdownResponse {}
 pub struct StartPairingRequest {
     #[prost(enumeration = "start_pairing_request::Mode", tag = "1")]
     pub mode: i32,
-    #[prost(bool, tag = "2")]
-    pub require_lan_direct: bool,
     /// Operator-chosen reusable PIN for unattended demos. When set, `mode`
     /// must be PIN; the session lasts `ttl_seconds` instead of the one-shot
     /// window and is neither consumed by success nor locked out by failures.
     #[prost(message, optional, tag = "3")]
     pub demo: ::core::option::Option<DemoPairing>,
+    #[prost(uint64, optional, tag = "4")]
+    pub ttl_seconds: ::core::option::Option<u64>,
 }
 /// Nested message and enum types in `StartPairingRequest`.
 pub mod start_pairing_request {
@@ -2215,10 +2187,10 @@ pub struct StartPairingResponse {
     pub identity: ::core::option::Option<PairingIdentity>,
     #[prost(uint64, tag = "2")]
     pub ttl_seconds: u64,
-    #[prost(uint32, optional, tag = "3")]
-    pub tcp_port: ::core::option::Option<u32>,
-    #[prost(string, tag = "4")]
-    pub cloud_url: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "3")]
+    pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub cloud_url: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(oneof = "start_pairing_response::Secret", tags = "10, 11")]
     pub secret: ::core::option::Option<start_pairing_response::Secret>,
 }
@@ -2277,24 +2249,6 @@ pub struct ProjectEntry {
     pub name: ::prost::alloc::string::String,
     #[prost(int64, optional, tag = "3")]
     pub last_used_unix_ms: ::core::option::Option<i64>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ProfileBeginPairRequest {
-    #[prost(string, tag = "1")]
-    pub operation_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub profile_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
-    pub pairing: ::core::option::Option<BeginPairRequest>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ProfilePendingPairRequest {
-    #[prost(string, tag = "1")]
-    pub operation_id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub profile_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "3")]
-    pub pairing: ::core::option::Option<PendingPairRequest>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -2436,6 +2390,45 @@ impl ErrorCode {
         }
     }
 }
+/// A stream reset before acceptance carries one of these refusal reasons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StreamRefusal {
+    Unspecified = 0,
+    NoRoute = 1,
+    PaymentRequired = 2,
+    RateLimited = 3,
+    NotAdjacent = 4,
+    ShuttingDown = 5,
+}
+impl StreamRefusal {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "STREAM_REFUSAL_UNSPECIFIED",
+            Self::NoRoute => "NO_ROUTE",
+            Self::PaymentRequired => "PAYMENT_REQUIRED",
+            Self::RateLimited => "RATE_LIMITED",
+            Self::NotAdjacent => "NOT_ADJACENT",
+            Self::ShuttingDown => "SHUTTING_DOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STREAM_REFUSAL_UNSPECIFIED" => Some(Self::Unspecified),
+            "NO_ROUTE" => Some(Self::NoRoute),
+            "PAYMENT_REQUIRED" => Some(Self::PaymentRequired),
+            "RATE_LIMITED" => Some(Self::RateLimited),
+            "NOT_ADJACENT" => Some(Self::NotAdjacent),
+            "SHUTTING_DOWN" => Some(Self::ShuttingDown),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum LinkCloseReason {
@@ -2508,6 +2501,41 @@ impl HostTrustStatus {
             "HOST_TRUST_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
             "TRUSTED" => Some(Self::Trusted),
             "UNTRUSTED_BUT_ONLINE" => Some(Self::UntrustedButOnline),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum HostVia {
+    Unspecified = 0,
+    Direct = 1,
+    Relay = 2,
+    Ssh = 3,
+    Offline = 4,
+}
+impl HostVia {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "HOST_VIA_UNSPECIFIED",
+            Self::Direct => "HOST_VIA_DIRECT",
+            Self::Relay => "HOST_VIA_RELAY",
+            Self::Ssh => "HOST_VIA_SSH",
+            Self::Offline => "HOST_VIA_OFFLINE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "HOST_VIA_UNSPECIFIED" => Some(Self::Unspecified),
+            "HOST_VIA_DIRECT" => Some(Self::Direct),
+            "HOST_VIA_RELAY" => Some(Self::Relay),
+            "HOST_VIA_SSH" => Some(Self::Ssh),
+            "HOST_VIA_OFFLINE" => Some(Self::Offline),
             _ => None,
         }
     }
@@ -2765,7 +2793,6 @@ pub enum Observed {
     Connected = 3,
     Retrying = 4,
     AuthenticationRequired = 5,
-    SubscriptionRequired = 6,
     UpdateRequired = 7,
     StartupFailed = 8,
 }
@@ -2782,7 +2809,6 @@ impl Observed {
             Self::Connected => "OBSERVED_CONNECTED",
             Self::Retrying => "OBSERVED_RETRYING",
             Self::AuthenticationRequired => "OBSERVED_AUTHENTICATION_REQUIRED",
-            Self::SubscriptionRequired => "OBSERVED_SUBSCRIPTION_REQUIRED",
             Self::UpdateRequired => "OBSERVED_UPDATE_REQUIRED",
             Self::StartupFailed => "OBSERVED_STARTUP_FAILED",
         }
@@ -2796,9 +2822,98 @@ impl Observed {
             "OBSERVED_CONNECTED" => Some(Self::Connected),
             "OBSERVED_RETRYING" => Some(Self::Retrying),
             "OBSERVED_AUTHENTICATION_REQUIRED" => Some(Self::AuthenticationRequired),
-            "OBSERVED_SUBSCRIPTION_REQUIRED" => Some(Self::SubscriptionRequired),
             "OBSERVED_UPDATE_REQUIRED" => Some(Self::UpdateRequired),
             "OBSERVED_STARTUP_FAILED" => Some(Self::StartupFailed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum Tier {
+    Unspecified = 0,
+    Free = 1,
+    Pro = 2,
+}
+impl Tier {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TIER_UNSPECIFIED",
+            Self::Free => "TIER_FREE",
+            Self::Pro => "TIER_PRO",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "TIER_FREE" => Some(Self::Free),
+            "TIER_PRO" => Some(Self::Pro),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RelayCarrier {
+    Unspecified = 0,
+    Quic = 1,
+    Tcp = 2,
+}
+impl RelayCarrier {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RELAY_CARRIER_UNSPECIFIED",
+            Self::Quic => "RELAY_CARRIER_QUIC",
+            Self::Tcp => "RELAY_CARRIER_TCP",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RELAY_CARRIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "RELAY_CARRIER_QUIC" => Some(Self::Quic),
+            "RELAY_CARRIER_TCP" => Some(Self::Tcp),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PeerVia {
+    Unspecified = 0,
+    Direct = 1,
+    Relay = 2,
+    Ssh = 3,
+}
+impl PeerVia {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PEER_VIA_UNSPECIFIED",
+            Self::Direct => "PEER_VIA_DIRECT",
+            Self::Relay => "PEER_VIA_RELAY",
+            Self::Ssh => "PEER_VIA_SSH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PEER_VIA_UNSPECIFIED" => Some(Self::Unspecified),
+            "PEER_VIA_DIRECT" => Some(Self::Direct),
+            "PEER_VIA_RELAY" => Some(Self::Relay),
+            "PEER_VIA_SSH" => Some(Self::Ssh),
             _ => None,
         }
     }
@@ -2891,304 +3006,6 @@ impl SuspendReason {
             "SUSPEND_REASON_UPDATE" => Some(Self::Update),
             _ => None,
         }
-    }
-}
-/// Generated client implementations.
-pub mod link_service_client {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value,
-    )]
-    use tonic::codegen::*;
-    use tonic::codegen::http::Uri;
-    #[derive(Debug, Clone)]
-    pub struct LinkServiceClient<T> {
-        inner: tonic::client::Grpc<T>,
-    }
-    impl<T> LinkServiceClient<T>
-    where
-        T: tonic::client::GrpcService<tonic::body::Body>,
-        T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
-    {
-        pub fn new(inner: T) -> Self {
-            let inner = tonic::client::Grpc::new(inner);
-            Self { inner }
-        }
-        pub fn with_origin(inner: T, origin: Uri) -> Self {
-            let inner = tonic::client::Grpc::with_origin(inner, origin);
-            Self { inner }
-        }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> LinkServiceClient<InterceptedService<T, F>>
-        where
-            F: tonic::service::Interceptor,
-            T::ResponseBody: Default,
-            T: tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-                Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
-                >,
-            >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
-        {
-            LinkServiceClient::new(InterceptedService::new(inner, interceptor))
-        }
-        /// Compress requests with the given encoding.
-        ///
-        /// This requires the server to support it otherwise it might respond with an
-        /// error.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.send_compressed(encoding);
-            self
-        }
-        /// Enable decompressing responses.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.accept_compressed(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_decoding_message_size(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_encoding_message_size(limit);
-            self
-        }
-        /// Host-to-host link. The bidi stream IS the link: opening it (after
-        /// successful auth + handshake) brings the link up; closing it tears the
-        /// link down. Neighbor events and tunnel frames flow inside the Message
-        /// envelope after the handshake completes.
-        pub async fn connect(
-            &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::Message>,
-        ) -> std::result::Result<
-            tonic::Response<tonic::codec::Streaming<super::Message>>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/amux.v1.LinkService/Connect",
-            );
-            let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("amux.v1.LinkService", "Connect"));
-            self.inner.streaming(req, path, codec).await
-        }
-    }
-}
-/// Generated server implementations.
-pub mod link_service_server {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value,
-    )]
-    use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with LinkServiceServer.
-    #[async_trait]
-    pub trait LinkService: std::marker::Send + std::marker::Sync + 'static {
-        /// Server streaming response type for the Connect method.
-        type ConnectStream: tonic::codegen::tokio_stream::Stream<
-                Item = std::result::Result<super::Message, tonic::Status>,
-            >
-            + std::marker::Send
-            + 'static;
-        /// Host-to-host link. The bidi stream IS the link: opening it (after
-        /// successful auth + handshake) brings the link up; closing it tears the
-        /// link down. Neighbor events and tunnel frames flow inside the Message
-        /// envelope after the handshake completes.
-        async fn connect(
-            &self,
-            request: tonic::Request<tonic::Streaming<super::Message>>,
-        ) -> std::result::Result<tonic::Response<Self::ConnectStream>, tonic::Status>;
-    }
-    #[derive(Debug)]
-    pub struct LinkServiceServer<T> {
-        inner: Arc<T>,
-        accept_compression_encodings: EnabledCompressionEncodings,
-        send_compression_encodings: EnabledCompressionEncodings,
-        max_decoding_message_size: Option<usize>,
-        max_encoding_message_size: Option<usize>,
-    }
-    impl<T> LinkServiceServer<T> {
-        pub fn new(inner: T) -> Self {
-            Self::from_arc(Arc::new(inner))
-        }
-        pub fn from_arc(inner: Arc<T>) -> Self {
-            Self {
-                inner,
-                accept_compression_encodings: Default::default(),
-                send_compression_encodings: Default::default(),
-                max_decoding_message_size: None,
-                max_encoding_message_size: None,
-            }
-        }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
-        where
-            F: tonic::service::Interceptor,
-        {
-            InterceptedService::new(Self::new(inner), interceptor)
-        }
-        /// Enable decompressing requests with the given encoding.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.accept_compression_encodings.enable(encoding);
-            self
-        }
-        /// Compress responses with the given encoding, if the client supports it.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.send_compression_encodings.enable(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.max_decoding_message_size = Some(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.max_encoding_message_size = Some(limit);
-            self
-        }
-    }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for LinkServiceServer<T>
-    where
-        T: LinkService,
-        B: Body + std::marker::Send + 'static,
-        B::Error: Into<StdError> + std::marker::Send + 'static,
-    {
-        type Response = http::Response<tonic::body::Body>;
-        type Error = std::convert::Infallible;
-        type Future = BoxFuture<Self::Response, Self::Error>;
-        fn poll_ready(
-            &mut self,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::result::Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            match req.uri().path() {
-                "/amux.v1.LinkService/Connect" => {
-                    #[allow(non_camel_case_types)]
-                    struct ConnectSvc<T: LinkService>(pub Arc<T>);
-                    impl<T: LinkService> tonic::server::StreamingService<super::Message>
-                    for ConnectSvc<T> {
-                        type Response = super::Message;
-                        type ResponseStream = T::ConnectStream;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::ResponseStream>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<tonic::Streaming<super::Message>>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as LinkService>::connect(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ConnectSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.streaming(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
-            }
-        }
-    }
-    impl<T> Clone for LinkServiceServer<T> {
-        fn clone(&self) -> Self {
-            let inner = self.inner.clone();
-            Self {
-                inner,
-                accept_compression_encodings: self.accept_compression_encodings,
-                send_compression_encodings: self.send_compression_encodings,
-                max_decoding_message_size: self.max_decoding_message_size,
-                max_encoding_message_size: self.max_encoding_message_size,
-            }
-        }
-    }
-    /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "amux.v1.LinkService";
-    impl<T> tonic::server::NamedService for LinkServiceServer<T> {
-        const NAME: &'static str = SERVICE_NAME;
     }
 }
 /// Generated client implementations.
@@ -4986,78 +4803,6 @@ pub mod profile_service_client {
                 .insert(GrpcMethod::new("amux.v1.ProfileService", "CancelPairing"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn pair_peer(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ProfilePairPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairPeerResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/amux.v1.ProfileService/PairPeer",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("amux.v1.ProfileService", "PairPeer"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn pair_pin_cloud_peer(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ProfilePairPinCloudPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairPinCloudPeerResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/amux.v1.ProfileService/PairPinCloudPeer",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("amux.v1.ProfileService", "PairPinCloudPeer"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn pair_qr_cloud_peer(
-            &mut self,
-            request: impl tonic::IntoRequest<super::ProfilePairQrCloudPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairQrCloudPeerResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/amux.v1.ProfileService/PairQrCloudPeer",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("amux.v1.ProfileService", "PairQrCloudPeer"));
-            self.inner.unary(req, path, codec).await
-        }
         pub async fn begin_pair(
             &mut self,
             request: impl tonic::IntoRequest<super::ProfileBeginPairRequest>,
@@ -5149,6 +4894,27 @@ pub mod profile_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("amux.v1.ProfileService", "GetDeviceIdentity"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn trust_ssh_peer(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ProfileTrustSshPeerRequest>,
+        ) -> std::result::Result<tonic::Response<super::Empty>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ProfileService/TrustSshPeer",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ProfileService", "TrustSshPeer"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn list_peers(
@@ -5355,27 +5121,6 @@ pub mod profile_service_server {
             tonic::Response<super::CancelPairingResponse>,
             tonic::Status,
         >;
-        async fn pair_peer(
-            &self,
-            request: tonic::Request<super::ProfilePairPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairPeerResponse>,
-            tonic::Status,
-        >;
-        async fn pair_pin_cloud_peer(
-            &self,
-            request: tonic::Request<super::ProfilePairPinCloudPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairPinCloudPeerResponse>,
-            tonic::Status,
-        >;
-        async fn pair_qr_cloud_peer(
-            &self,
-            request: tonic::Request<super::ProfilePairQrCloudPeerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::PairQrCloudPeerResponse>,
-            tonic::Status,
-        >;
         async fn begin_pair(
             &self,
             request: tonic::Request<super::ProfileBeginPairRequest>,
@@ -5398,6 +5143,10 @@ pub mod profile_service_server {
             &self,
             request: tonic::Request<super::ProfileRequest>,
         ) -> std::result::Result<tonic::Response<super::DeviceIdentity>, tonic::Status>;
+        async fn trust_ssh_peer(
+            &self,
+            request: tonic::Request<super::ProfileTrustSshPeerRequest>,
+        ) -> std::result::Result<tonic::Response<super::Empty>, tonic::Status>;
         async fn list_peers(
             &self,
             request: tonic::Request<super::ProfileRequest>,
@@ -6043,145 +5792,6 @@ pub mod profile_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/amux.v1.ProfileService/PairPeer" => {
-                    #[allow(non_camel_case_types)]
-                    struct PairPeerSvc<T: ProfileService>(pub Arc<T>);
-                    impl<
-                        T: ProfileService,
-                    > tonic::server::UnaryService<super::ProfilePairPeerRequest>
-                    for PairPeerSvc<T> {
-                        type Response = super::PairPeerResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ProfilePairPeerRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProfileService>::pair_peer(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = PairPeerSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/amux.v1.ProfileService/PairPinCloudPeer" => {
-                    #[allow(non_camel_case_types)]
-                    struct PairPinCloudPeerSvc<T: ProfileService>(pub Arc<T>);
-                    impl<
-                        T: ProfileService,
-                    > tonic::server::UnaryService<super::ProfilePairPinCloudPeerRequest>
-                    for PairPinCloudPeerSvc<T> {
-                        type Response = super::PairPinCloudPeerResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<
-                                super::ProfilePairPinCloudPeerRequest,
-                            >,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProfileService>::pair_pin_cloud_peer(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = PairPinCloudPeerSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/amux.v1.ProfileService/PairQrCloudPeer" => {
-                    #[allow(non_camel_case_types)]
-                    struct PairQrCloudPeerSvc<T: ProfileService>(pub Arc<T>);
-                    impl<
-                        T: ProfileService,
-                    > tonic::server::UnaryService<super::ProfilePairQrCloudPeerRequest>
-                    for PairQrCloudPeerSvc<T> {
-                        type Response = super::PairQrCloudPeerResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::ProfilePairQrCloudPeerRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProfileService>::pair_qr_cloud_peer(&inner, request)
-                                    .await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = PairQrCloudPeerSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
                 "/amux.v1.ProfileService/BeginPair" => {
                     #[allow(non_camel_case_types)]
                     struct BeginPairSvc<T: ProfileService>(pub Arc<T>);
@@ -6348,6 +5958,51 @@ pub mod profile_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetDeviceIdentitySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ProfileService/TrustSshPeer" => {
+                    #[allow(non_camel_case_types)]
+                    struct TrustSshPeerSvc<T: ProfileService>(pub Arc<T>);
+                    impl<
+                        T: ProfileService,
+                    > tonic::server::UnaryService<super::ProfileTrustSshPeerRequest>
+                    for TrustSshPeerSvc<T> {
+                        type Response = super::Empty;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ProfileTrustSshPeerRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProfileService>::trust_ssh_peer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = TrustSshPeerSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

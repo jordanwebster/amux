@@ -204,6 +204,8 @@ pub enum Mode {
     ConfirmDelete { agent: AgentId, name: String },
     /// Key help overlay.
     Help,
+    /// Known trusted hosts and currently found pairing candidates.
+    Hosts,
     /// The profile switcher: the installation's other accounts, over the
     /// fleet of the one currently showing.
     Switcher(crate::switcher::SwitcherState),

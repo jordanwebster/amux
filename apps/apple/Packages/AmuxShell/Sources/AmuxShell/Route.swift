@@ -37,9 +37,9 @@ public enum Route: Hashable, Sendable {
     case newAgent
     /// Typing the six-digit code one machine printed. It carries that machine,
     /// because a code proves possession of one machine's offer and is
-    /// authenticated against it alone; nothing when this phone has not
-    /// discovered a machine to pair with, and the page says so.
-    case pairByCode(HostId?)
+    /// authenticated against it alone. There is no route without one: a
+    /// machine this phone has not found is paired by scanning its code.
+    case pairByCode(HostId)
     /// A pairing invitation that arrived as a link, waiting to be confirmed or
     /// abandoned. Arriving here pairs with nobody.
     case pairConfirmation(PairingInvitation)

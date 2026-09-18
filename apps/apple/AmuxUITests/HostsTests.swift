@@ -408,25 +408,23 @@ final class HostsTests: JourneyCase {
 
     /// The app opened by a pairing link on a phone nobody has signed in on.
     ///
-    /// Nothing can be asked of the machine yet — there is no runtime and no
-    /// account — so the invitation is held rather than spent, and the screen
-    /// says nothing has been trusted. Signing in is what puts it to the
-    /// machine, and only then is there a name and a key to read.
+    /// The invitation carries the machine's addresses on this network, so
+    /// there is nothing to wait for: it is dialled straight away and the
+    /// machine answers with its own name and the whole of its key. An account
+    /// would only buy a relay, and no relay stands between these two. Nothing
+    /// is trusted by the answer — the key is there to be read before anybody
+    /// agrees to anything.
     private func aLinkThatArrivesBeforeAnybodyHasSignedIn() throws {
         let app = launch(runner, signedIn: false, link: cast.link)
         waitFor(app, "pair-confirm", "a launch opened by a pairing link showed no confirmation")
-        XCTAssertTrue(element(app, "pair-confirm.checking").exists,
-                      "a link on a signed-out phone claimed something about the machine")
-        let beforeSigningIn = try inventory("desktop").devices
-        record["desktopDevicesBeforeSigningIn"] = beforeSigningIn.count
-        XCTAssertTrue(beforeSigningIn.isEmpty,
-                      "a link that only arrived was already trusted by desktop")
-
-        // Signing in, which is the gate this launch stopped at.
-        try door(runner, .init(kind: "connect", relay: runner.relay, token: runner.token,
-                               user: runner.user))
         waitFor(app, "pair-confirm.trust",
-                "signing in never put the held invitation to the machine")
+                "an invitation carrying this network's addresses waited for an account")
+        record["linkAnsweredWithNoAccount"] = true
+        let beforeTrusting = try inventory("desktop").devices
+        record["desktopDevicesBeforeTrusting"] = beforeTrusting.count
+        XCTAssertTrue(beforeTrusting.isEmpty,
+                      "a link that was only answered was already trusted by desktop")
+
         let offered = try declared(runner)
         let name = said(offered, "pair-confirm.name")?.value ?? ""
         let key = said(offered, "pair-confirm.fingerprint")?.value ?? ""
@@ -600,14 +598,11 @@ final class HostsTests: JourneyCase {
         /// Opens New Agent on laptop, whatever the last thing on screen was.
         func openNewAgent() {
             if element(app, "conversation").exists {
-                press(app, "conversation.drawer")
-                waitFor(app, "drawer.newAgent", "the conversation offered no way to start an agent")
-                press(app, "drawer.newAgent")
-            } else {
-                pressTab(app, "Agents")
-                waitFor(app, "home.newAgent", "the fleet offered no way to start an agent")
-                press(app, "home.newAgent")
+                backToAgents(app)
             }
+            pressTab(app, "Agents")
+            waitFor(app, "home.newAgent", "the fleet offered no way to start an agent")
+            press(app, "home.newAgent")
             waitFor(app, "new-agent", "New Agent never opened")
             press(app, "new-agent.host.\(cast.laptop)")
         }
@@ -767,11 +762,11 @@ final class HostsTests: JourneyCase {
         let app = launch(runner)
         XCTAssertTrue(waitUntil { (try? self.reconciled()) == true },
                       "the phone never reached the relay")
-        // One of desktop's agents opened and read first, so what the
-        // revocation ends is access that existed rather than a row in a list.
-        // The stream behind the conversation is read off the runtime's own
-        // model, because a screen that has been left says nothing about
-        // whether what it was reading is still open.
+        // One of desktop's agents opened and read first, so the machine about
+        // to lose this phone is one it was really reading. The stream behind
+        // the conversation is read off the runtime's own model, because a
+        // screen that has been left says nothing about whether what it was
+        // reading is still open.
         pressTab(app, "Agents")
         waitFor(app, "home.row.\(cast.desktopAgent)",
                 "the machine about to be revoked has no agent on the fleet")
@@ -782,8 +777,18 @@ final class HostsTests: JourneyCase {
         record["watchingBeforeRevoking"] = streams
         XCTAssertTrue(held, "reading desktop's agent held no stream: \(streams)")
 
-        press(app, "conversation.drawer")
-        press(app, "drawer.hosts")
+        // A conversation is left by its back chevron, and the Hosts tab is
+        // reached from the Agents list. Leaving lets the stream go: nothing
+        // is read behind a screen nobody can see.
+        backToAgents(app)
+        let released = waitUntil {
+            ((try? self.watching()) ?? [self.cast.desktopAgent]).contains(self.cast.desktopAgent)
+                == false
+        }
+        let afterLeaving = try watching()
+        record["watchingAfterLeaving"] = afterLeaving
+        XCTAssertTrue(released, "leaving desktop's agent kept its stream open: \(afterLeaving)")
+        pressTab(app, "Hosts")
         waitFor(app, "hosts.row.\(cast.desktop)", "desktop is not among the machines")
         waitFor(app, "hosts.fact.paired-devices", "the Hosts tab does not say what this phone is")
         press(app, "hosts.fact.paired-devices")
@@ -800,9 +805,7 @@ final class HostsTests: JourneyCase {
         record["machinesAfterRevoking"] = remaining
         XCTAssertTrue(gone, "revoking desktop left it on the phone: \(remaining)")
 
-        // The access that was open when the key went is closed: the stream the
-        // conversation was reading is let go, not left running behind a screen
-        // nobody can get back to.
+        // Nothing of desktop is reopened by the revocation either.
         let closed = waitUntil {
             ((try? self.watching()) ?? [self.cast.desktopAgent]).contains(self.cast.desktopAgent)
                 == false

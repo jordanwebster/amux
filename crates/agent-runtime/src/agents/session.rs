@@ -361,6 +361,21 @@ pub(crate) trait AgentBackend: Send + Sync {
         None
     }
 
+    /// When this session last saw its agent do anything, as its structured
+    /// log dated it. `None` until the agent has done something this session
+    /// saw; a session without a structured log never knows.
+    fn last_activity(&self) -> Option<DateTime<Utc>> {
+        self.attachment_log().and_then(|log| log.last_activity())
+    }
+
+    /// When this agent was last active as far as this session knows: its
+    /// latest activity, or its creation when it has done nothing yet.
+    fn active_at(&self) -> DateTime<Utc> {
+        let created_at = self.created_at();
+        self.last_activity()
+            .map_or(created_at, |at| at.max(created_at))
+    }
+
     fn spawn_inheritance(&self) -> SpawnInheritance {
         SpawnInheritance::default()
     }
@@ -410,6 +425,7 @@ pub(crate) trait AgentBackend: Send + Sync {
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),
+            last_activity: self.active_at(),
             parent: self.parent(),
             working_on: None,
             summary: None,
@@ -520,6 +536,7 @@ pub(crate) fn agent_from_suspended(
             parent,
             working_on: _,
             seal: _,
+            last_activity: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -568,6 +585,7 @@ pub(crate) fn agent_from_suspended(
             parent,
             working_on: _,
             seal: _,
+            last_activity: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -605,6 +623,7 @@ pub(crate) fn agent_from_suspended(
             parent,
             working_on: _,
             seal: _,
+            last_activity: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -851,6 +870,7 @@ mod tests {
                 parent: None,
                 working_on: None,
                 seal: None,
+                last_activity: None,
             };
 
             let deps = AgentDeps::new(
@@ -897,6 +917,7 @@ mod tests {
             parent: None,
             working_on: None,
             seal: None,
+            last_activity: None,
         };
         let deps = AgentDeps::new(
             std::env::temp_dir(),

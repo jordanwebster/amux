@@ -90,8 +90,16 @@ struct TokenTextField: UIViewRepresentable {
         let asked = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)).height
         let line = TokenTextField.font(design, typeSize).lineHeight
-        return CGSize(width: width, height: min(max(asked, line), line * CGFloat(lines)))
+        return CGSize(
+            width: width,
+            height: min(max(asked, line * Self.floorLines), line * CGFloat(lines)))
     }
+
+    /// How tall the empty field is, in lines. Two rather than one: a box one
+    /// line tall reads as a place for a word, and a message to an agent is
+    /// usually a sentence or more, so it should look like somewhere to write
+    /// one before the first character goes in.
+    static let floorLines: CGFloat = 2
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 

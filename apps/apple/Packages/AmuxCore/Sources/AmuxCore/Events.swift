@@ -32,6 +32,26 @@ public enum Event: Sendable, Equatable, Codable {
     /// answering, this says whose key has been granted access — including a
     /// machine that is away and would be trusted again the moment it returned.
     case devices(DeviceRoster)
+    /// What this device's link to the relay is doing, and what the account on
+    /// it buys. Apart from the connection because it answers a different
+    /// question: the connection says whether this phone is reachable, this
+    /// says whether anybody is signed in, on which carrier, and whether the
+    /// account pays for the relay. It is where entitlement is read from, so
+    /// nothing has to ask the account service a second time to know what to
+    /// offer.
+    case cloudState(CloudState)
+    /// The accounts a start really did remove from this phone: profile gone,
+    /// and everything cached for them gone too. Opening the profiles is what
+    /// deletes them, so this arrives once, before the stream proper. It is the
+    /// only word a pending removal may be dropped on: one the runtime could
+    /// not finish is not named here and is asked for again next start.
+    case forgotten(accounts: [String])
+    /// An event this build could not read, standing in its place in the batch.
+    ///
+    /// Never sent by the bridge: it is what reading a batch leaves where one
+    /// event would not decode, so the rest of the batch still applies and the
+    /// screen the event was for can say something is missing.
+    case unreadable(UnreadableEvent)
 
     private enum Key: String, CodingKey {
         case fleet = "Fleet"
@@ -46,6 +66,9 @@ public enum Event: Sendable, Equatable, Codable {
         case invariant = "Invariant"
         case storeFailure = "StoreFailure"
         case devices = "Devices"
+        case cloudState = "CloudState"
+        case forgotten = "Forgotten"
+        case unreadable = "Unreadable"
     }
 
     private struct RequestId: Codable, Sendable, Equatable {
@@ -64,6 +87,10 @@ public enum Event: Sendable, Equatable, Codable {
 
     private struct Detail: Codable, Sendable, Equatable {
         var detail: String
+    }
+
+    private struct Accounts: Codable, Sendable, Equatable {
+        var accounts: [String]
     }
 
     public init(from decoder: any Decoder) throws {
@@ -94,7 +121,45 @@ public enum Event: Sendable, Equatable, Codable {
             self = .storeFailure(
                 message: try container.decode(Message.self, forKey: key).message)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
+        case .cloudState: self = .cloudState(try container.decode(CloudState.self, forKey: key))
+        case .forgotten:
+            self = .forgotten(accounts: try container.decode(Accounts.self, forKey: key).accounts)
+        case .unreadable:
+            self = .unreadable(try container.decode(UnreadableEvent.self, forKey: key))
         }
+    }
+
+    /// Reads one callback's batch, event by event.
+    ///
+    /// One event this build cannot read does not cost the others. Decoding the
+    /// batch as a single array did: a fleet, a feed and a session sent in the
+    /// same moment were all dropped because one of them carried a value the
+    /// app did not expect, and the screen went on showing the moment before.
+    /// An event that will not decode is kept as ``unreadable(_:)``, in its
+    /// place, and its bytes are returned so a report can carry them.
+    ///
+    /// The whole batch is read in one pass first, because that is every batch
+    /// a matching build ever sends and a stream sends dozens a second; only a
+    /// batch that fails is read again one event at a time.
+    static func batch(
+        from data: Data, decoder: JSONDecoder
+    ) throws -> (events: [Event], unreadable: [String]) {
+        if let whole = try? decoder.decode([Event].self, from: data) { return (whole, []) }
+        let raw = try decoder.decode([JSONValue].self, from: data)
+        let encoder = JSONEncoder()
+        var events: [Event] = []
+        var unreadable: [String] = []
+        events.reserveCapacity(raw.count)
+        for value in raw {
+            let bytes = try encoder.encode(value)
+            do {
+                events.append(try decoder.decode(Event.self, from: bytes))
+            } catch {
+                unreadable.append(String(decoding: bytes, as: UTF8.self))
+                events.append(.unreadable(UnreadableEvent(value, error: error)))
+            }
+        }
+        return (events, unreadable)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -117,11 +182,42 @@ public enum Event: Sendable, Equatable, Codable {
         case .storeFailure(let message):
             try container.encode(Message(message: message), forKey: .storeFailure)
         case .devices(let roster): try container.encode(roster, forKey: .devices)
+        case .cloudState(let state): try container.encode(state, forKey: .cloudState)
+        case .forgotten(let accounts):
+            try container.encode(Accounts(accounts: accounts), forKey: .forgotten)
+        case .unreadable(let event): try container.encode(event, forKey: .unreadable)
         }
     }
 
     private struct Message: Codable, Sendable, Equatable {
         var message: String
+    }
+}
+
+/// What can still be said about an event that would not decode: which kind it
+/// was, the agent it was about where it named one, and why it was refused.
+public struct UnreadableEvent: Codable, Sendable, Equatable {
+    /// The event's own tag, such as `Session`, or a description of its shape
+    /// where it had no single tag.
+    public var kind: String
+    public var agent: AgentId?
+    public var reason: String
+
+    public init(kind: String, agent: AgentId?, reason: String) {
+        self.kind = kind
+        self.agent = agent
+        self.reason = reason
+    }
+
+    init(_ value: JSONValue, error: any Error) {
+        if case .object(let fields) = value, fields.count == 1, let (tag, body) = fields.first {
+            kind = tag
+            agent = body["agent"]?.stringValue.flatMap(AgentId.init)
+        } else {
+            kind = "an event with no single tag"
+            agent = nil
+        }
+        reason = String(describing: error)
     }
 }
 
@@ -162,6 +258,13 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
     /// row become confirmed on its own instead of the list waiting for the
     /// slowest machine on the account.
     public var awaiting: Bool
+    /// The ask at the head of this agent's queue, while it is waiting on you.
+    ///
+    /// Carried on the card so a row can say what is wanted — the question, the
+    /// command — rather than only that something is. Absent when nothing is
+    /// asked, or when this phone is not reading the agent's stream and so
+    /// cannot know.
+    public var ask: Ask?
 
     public var id: AgentId { agent.id }
 
@@ -173,6 +276,7 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         case lastActivity = "last_activity"
         case outcome
         case awaiting
+        case ask
     }
 
     /// Written out rather than synthesised because the bridge leaves
@@ -187,11 +291,13 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         lastActivity = try fields.decode(Date.self, forKey: .lastActivity)
         outcome = try fields.decodeIfPresent(TurnOutcome.self, forKey: .outcome)
         awaiting = try fields.decodeIfPresent(Bool.self, forKey: .awaiting) ?? false
+        ask = try fields.decodeIfPresent(Ask.self, forKey: .ask)
     }
 
     public init(
         agent: Agent, displayName: String, attention: Attention, phase: AgentPhase,
-        lastActivity: Date, outcome: TurnOutcome? = nil, awaiting: Bool = false
+        lastActivity: Date, outcome: TurnOutcome? = nil, awaiting: Bool = false,
+        ask: Ask? = nil
     ) {
         self.agent = agent
         self.displayName = displayName
@@ -200,6 +306,7 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         self.lastActivity = lastActivity
         self.outcome = outcome
         self.awaiting = awaiting
+        self.ask = ask
     }
 }
 
@@ -241,6 +348,10 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
     public var readonly: Bool
     public var args: [String]
     public var createdAt: Date
+    // The record's `last_activity` is deliberately not read here. The card
+    // around it carries the same fact as `AgentCard.lastActivity`, already
+    // reconciled with the live stream, and every timestamp decoded is a
+    // measurable share of confirming a fleet.
     public var parent: AgentParent?
     public var workingOn: WorkingOn?
 
@@ -454,17 +565,35 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
     /// daemon announced in the handshake. Absent for a host nothing has been
     /// adjacent to, and for one running a build from before hosts said so.
     public var platform: String?
+    /// The route a call to this machine would take right now.
+    ///
+    /// Reported rather than guessed: the phone holds several ways to reach a
+    /// machine and the one in use decides what the screen may promise. A
+    /// machine on the same network answers as fast as a local process; one on
+    /// the far side of the relay does not; and one no route reaches at all is
+    /// not a slower version of either.
+    public var via: HostVia
+    /// Whether that machine says it has an account, or nothing where it has
+    /// not said.
+    ///
+    /// It is the difference between a machine nobody can reach because the
+    /// subscription does not carry it and one nobody can reach because it
+    /// never signed in — and only one of those is worth asking anybody for
+    /// money about.
+    public var signedIn: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, online, version, capabilities, platform
+        case id, name, online, version, capabilities, platform, via
         case trustStatus = "trust_status"
         case lastDialError = "last_dial_error"
+        case signedIn = "signed_in"
     }
 
     public init(
         id: HostId, name: String, online: Bool, version: String? = nil,
         capabilities: JSONValue? = nil, trustStatus: HostTrustStatus = .trusted,
-        lastDialError: String? = nil, platform: String? = nil
+        lastDialError: String? = nil, platform: String? = nil,
+        via: HostVia = .offline, signedIn: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -474,7 +603,36 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
         self.trustStatus = trustStatus
         self.lastDialError = lastDialError
         self.platform = platform
+        self.via = via
+        self.signedIn = signedIn
     }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        id = try fields.decode(HostId.self, forKey: .id)
+        name = try fields.decode(String.self, forKey: .name)
+        online = try fields.decode(Bool.self, forKey: .online)
+        version = try fields.decodeIfPresent(String.self, forKey: .version)
+        capabilities = try fields.decodeIfPresent(JSONValue.self, forKey: .capabilities)
+        trustStatus = try fields.decode(HostTrustStatus.self, forKey: .trustStatus)
+        lastDialError = try fields.decodeIfPresent(String.self, forKey: .lastDialError)
+        platform = try fields.decodeIfPresent(String.self, forKey: .platform)
+        // Absent means no route claimed, which is what an older record and a
+        // machine nothing has reached both mean. Reading it as anything else
+        // would invent reachability out of silence.
+        via = try fields.decodeIfPresent(HostVia.self, forKey: .via) ?? .offline
+        signedIn = try fields.decodeIfPresent(Bool.self, forKey: .signedIn)
+    }
+}
+
+/// How this phone would reach a machine.
+public enum HostVia: String, Codable, Sendable, Equatable {
+    /// On the same network, with nothing in between.
+    case direct
+    case relay
+    case ssh
+    /// No route at all — which is also what a record naming no route means.
+    case offline
 }
 
 public enum HostTrustStatus: String, Codable, Sendable, Equatable {
@@ -1172,6 +1330,25 @@ public struct OpResult: Codable, Sendable, Equatable {
     }
 }
 
+/// Why an attempt at pairing ended without a machine to trust.
+///
+/// Two cases and no more. Every way a secret can be wrong — mistyped, expired,
+/// already used, never issued — is one `refused`, because telling them apart is
+/// exactly what somebody guessing codes would want. The second is not about
+/// the secret at all: the machine is only on the far side of the relay and this
+/// account may not open a tunnel to it, which nothing about the code can fix.
+public enum PairingRefusal: String, Sendable, Equatable, Codable {
+    case refused
+    case subscriptionRequired = "subscription_required"
+
+    /// An unknown reason from a newer runtime is still a refusal; reading it as
+    /// a subscription would sell something to somebody who mistyped a code.
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = PairingRefusal(rawValue: raw) ?? .refused
+    }
+}
+
 /// How a dispatched operation ended. Outcomes the app acts on are named; the
 /// rest keep their tag and body so nothing is silently swallowed.
 public enum OpOutcome: Sendable, Equatable, Codable {
@@ -1192,10 +1369,11 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case paired(host: HostId, name: String)
     /// Abandoned by the person. Nothing was written anywhere.
     case pairingAbandoned
-    /// The secret did not authenticate. Mistyped, already used, expired and
-    /// never issued all arrive here, in the same shape and with nothing else
-    /// said, because telling them apart is what guessing codes would need.
-    case pairingRefused
+    /// The attempt did not end in a machine to trust. Every way a secret can
+    /// be wrong arrives here in the same shape and with nothing else said,
+    /// because telling them apart is what guessing codes would need; the one
+    /// reason carried out is the one that is not about the secret at all.
+    case pairingRefused(reason: PairingRefusal)
     /// The attempt an answer names is not one the runtime is holding: it was
     /// answered already, or the app has been restarted since.
     case pairingLost
@@ -1226,7 +1404,7 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case other(outcome: String, body: JSONValue)
 
     private enum Key: String, CodingKey {
-        case outcome, agent, error, attachment, host, name, account
+        case outcome, agent, error, attachment, host, name, account, reason
         case recent, repositories, roots
     }
 
@@ -1249,7 +1427,10 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 host: try container.decode(HostId.self, forKey: .host),
                 name: try container.decode(String.self, forKey: .name))
         case "pairing_abandoned": self = .pairingAbandoned
-        case "pairing_refused": self = .pairingRefused
+        case "pairing_refused":
+            self = .pairingRefused(
+                reason: try container.decodeIfPresent(PairingRefusal.self, forKey: .reason)
+                    ?? .refused)
         case "pairing_lost": self = .pairingLost
         case "selected":
             self = .selected(account: try container.decode(String.self, forKey: .account))
@@ -1306,7 +1487,9 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 try container.encode(host, forKey: .host)
                 try container.encode(name, forKey: .name)
             case .pairingAbandoned: try container.encode("pairing_abandoned", forKey: .outcome)
-            case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
+            case .pairingRefused(let reason):
+                try container.encode("pairing_refused", forKey: .outcome)
+                try container.encode(reason, forKey: .reason)
             case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
             case .selected(let account):
                 try container.encode("selected", forKey: .outcome)
@@ -1636,6 +1819,79 @@ public enum DiffBase: Sendable, Equatable, Codable {
         switch self {
         case .workingTree: ""
         case .branch(let base): "branch:\(base)"
+        }
+    }
+}
+
+/// What an account pays for. Free reaches the machines on this network; pro
+/// pays for the relay that reaches the rest.
+public enum Tier: String, Codable, Sendable, Equatable {
+    case free
+    case pro
+}
+
+/// Which carrier a live relay link runs on. The dial decides it; nothing above
+/// can do better than read it.
+public enum RelayCarrier: String, Codable, Sendable, Equatable {
+    case quic
+    case tcp
+}
+
+/// This device's standing with the relay, as the core words it.
+///
+/// Not a connection state: a phone can be perfectly well connected to the
+/// machines on its own network with nobody signed in, and a signed-in phone
+/// on the free tier is connected to a relay that will not tunnel for it.
+public enum CloudState: Sendable, Equatable, Codable {
+    /// Nobody is signed in. The machines on this network still work.
+    case signedOut
+    case connecting
+    case connected(tier: Tier, carrier: RelayCarrier)
+    case retrying
+    /// The relay would not take this device's credentials. Nothing a retry
+    /// does fixes it; somebody has to sign in again.
+    case authRequired
+
+    /// The tier this device is entitled to right now, or nothing where it is
+    /// not on a relay at all. Absent is never "free": a phone that has not
+    /// linked yet has not been told.
+    public var tier: Tier? {
+        if case .connected(let tier, _) = self { return tier }
+        return nil
+    }
+
+    private enum Key: String, CodingKey {
+        case cloud, tier, carrier
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        switch try fields.decode(String.self, forKey: .cloud) {
+        case "signed_out": self = .signedOut
+        case "connecting": self = .connecting
+        case "connected":
+            self = .connected(
+                tier: try fields.decode(Tier.self, forKey: .tier),
+                carrier: try fields.decode(RelayCarrier.self, forKey: .carrier))
+        case "retrying": self = .retrying
+        case "auth_required": self = .authRequired
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "unknown cloud state \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var fields = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .signedOut: try fields.encode("signed_out", forKey: .cloud)
+        case .connecting: try fields.encode("connecting", forKey: .cloud)
+        case .connected(let tier, let carrier):
+            try fields.encode("connected", forKey: .cloud)
+            try fields.encode(tier, forKey: .tier)
+            try fields.encode(carrier, forKey: .carrier)
+        case .retrying: try fields.encode("retrying", forKey: .cloud)
+        case .authRequired: try fields.encode("auth_required", forKey: .cloud)
         }
     }
 }

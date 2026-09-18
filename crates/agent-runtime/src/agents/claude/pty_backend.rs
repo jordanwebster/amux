@@ -200,6 +200,7 @@ impl ClaudePtyBackend {
 
     fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
         let (session, hook_tx) = external_session();
+        let created_at = Utc::now();
         let record = AgentRecord {
             id: agent_id,
             host_id: Uuid::nil(),
@@ -211,7 +212,8 @@ impl ClaudePtyBackend {
             },
             readonly: true,
             args: Vec::new(),
-            created_at: Utc::now(),
+            created_at,
+            last_activity: created_at,
             parent: None,
             working_on: None,
             summary: None,
@@ -350,7 +352,6 @@ impl ClaudePtyBackend {
                     }
                     PtyEvent::Transcript { row, .. } => {
                         let value = row.into_value();
-                        let activity_at = crate::agents::provider_activity_at_unix_ms(&value);
                         version_cache.observe_transcript_row(&value);
                         if value.get("type").and_then(Value::as_str)
                             == Some("amux.transcript_ready")
@@ -366,7 +367,7 @@ impl ClaudePtyBackend {
                                 })
                                 .await;
                         }
-                        log.write_row(value, activity_at, false).await;
+                        write_transcript_row(&log, value).await;
                     }
                     PtyEvent::Hook(hook) => {
                         ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook).await;
@@ -1002,7 +1003,26 @@ async fn ingest_hook(
     if let Some(object) = value.as_object_mut() {
         object.insert("type".to_string(), json!(tag));
     }
-    log.write(value).await;
+    // A hook fires as the agent acts and is never replayed, so it is dated
+    // now.
+    log.write_activity(value, Utc::now()).await;
+}
+
+/// A transcript row is activity at the time Claude wrote on it, not when it
+/// was read: the tail re-reads a whole transcript when a session resumes or
+/// relinks, and dating those rows on arrival would make every agent look as
+/// if it had just done everything it ever did. A row that carries no time of
+/// its own (a summary, a title) is not dated at all.
+async fn write_transcript_row(log: &StructuredLogSource, value: Value) {
+    let written_at = value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|stamp| DateTime::parse_from_rfc3339(stamp).ok())
+        .map(|stamp| stamp.with_timezone(&Utc));
+    match written_at {
+        Some(at) => log.write_activity(value, at).await,
+        None => log.write(value).await,
+    }
 }
 
 fn hook_fingerprint(value: &Value) -> u64 {
@@ -1135,6 +1155,8 @@ impl Serialize for DebugView<'_, ClaudePtyBackend> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
+
     use super::*;
 
     type InjectedBackend = (
@@ -1187,6 +1209,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
             summary: None,
@@ -1479,6 +1502,73 @@ mod tests {
         tokio::time::advance(HOOK_DEDUPE_WINDOW + Duration::from_millis(1)).await;
         ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook).await;
         assert_eq!(log.current_seq().await, 2);
+    }
+
+    /// A transcript row is dated by the time Claude wrote it, so re-reading an
+    /// old transcript does not make the agent look active now; rows with no
+    /// time of their own and amux's keymap row date nothing; a hook is the
+    /// agent acting, now.
+    #[tokio::test]
+    async fn activity_is_dated_by_transcript_time_and_by_hooks() {
+        let (backend, hooks, rows, _ingest) = injected_backend();
+        let session = Uuid::new_v4();
+        hooks
+            .send(hook_payload("SessionStart", session, "/tmp/dated.jsonl"))
+            .await
+            .unwrap();
+        wait_for_session_id(&backend, session).await;
+        let created_at = backend.created_at();
+        assert_eq!(
+            backend.last_activity(),
+            None,
+            "the keymap row is not activity"
+        );
+
+        for row in [
+            json!({"type": "user", "timestamp": "2020-01-02T03:04:05.678Z"}),
+            json!({"type": "summary", "summary": "an undated row"}),
+        ] {
+            rows.send((
+                PathBuf::from("/tmp/dated.jsonl"),
+                claude::transcript::TranscriptRow::parse(row),
+            ))
+            .await
+            .unwrap();
+        }
+        wait_for_seq(&backend, 4).await;
+        let dated = Utc.timestamp_millis_opt(1_577_934_245_678).unwrap();
+        assert_eq!(backend.last_activity(), Some(dated));
+        assert_eq!(
+            backend.to_agent(Uuid::nil()).last_activity,
+            created_at,
+            "history older than the agent's creation never dates it earlier"
+        );
+
+        // Activity is kept to the millisecond, as the wire carries it.
+        let before = Utc
+            .timestamp_millis_opt(Utc::now().timestamp_millis())
+            .unwrap();
+        hooks
+            .send(hook_payload(
+                "PermissionRequest",
+                session,
+                "/tmp/dated.jsonl",
+            ))
+            .await
+            .unwrap();
+        wait_for_seq(&backend, 5).await;
+        assert!(backend.last_activity().is_some_and(|at| at >= before));
+        assert!(backend.to_agent(Uuid::nil()).last_activity >= before);
+    }
+
+    async fn wait_for_seq(backend: &ClaudePtyBackend, seq: u64) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while backend.log.current_seq().await < seq {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

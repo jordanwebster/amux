@@ -174,6 +174,15 @@ impl ThreadRegistration {
                 ThreadEventRoute::Live => return,
             }
         };
+        // Everything staged arrived before the resume was answered: the
+        // thread's history being replayed, not the thread doing anything now.
+        let staged = staged
+            .into_iter()
+            .map(|event| ThreadEvent {
+                replayed: true,
+                ..event
+            })
+            .collect();
         self.event_rx
             .lock()
             .await
@@ -411,6 +420,7 @@ impl ServerInner {
                     params: params.clone(),
                     turn_id,
                     event,
+                    replayed: false,
                 },
                 id,
                 -32000,
@@ -432,6 +442,7 @@ impl ServerInner {
                             params: params.clone(),
                             turn_id,
                             event,
+                            replayed: false,
                         },
                         id,
                         -32000,
@@ -468,6 +479,7 @@ impl ServerInner {
                 params,
                 turn_id,
                 event,
+                replayed: false,
             },
             id,
             code,
@@ -641,6 +653,7 @@ impl ServerInner {
                         params: params.clone(),
                         turn_id: turn_id(params),
                         event,
+                        replayed: false,
                     },
                 )
                 .await;
@@ -739,6 +752,7 @@ mod tests {
             event: TurnEvent::Warning {
                 message: "fill".into(),
             },
+            replayed: false,
         }
     }
 

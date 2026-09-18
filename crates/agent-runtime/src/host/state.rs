@@ -10,6 +10,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use model::ShutdownReason;
 use model::envelope::Envelope;
 use tokio::sync::RwLock;
@@ -44,6 +45,13 @@ pub(crate) struct LocalAgentContext {
     pub(crate) summarizer: Option<SummarizerHandle>,
     pub(crate) summary: Option<model::SummaryEnvelope>,
     pub(crate) progress: Option<model::Progress>,
+    /// The last activity a previous daemon recorded for this agent. A resumed
+    /// session starts with an empty log, and without this every restarted
+    /// agent would report its creation time as its last activity.
+    pub(crate) remembered_activity: Option<DateTime<Utc>>,
+    /// The last activity announced to inventory subscribers, so the activity
+    /// publisher re-announces only agents whose activity has moved since.
+    pub(crate) published_activity: DateTime<Utc>,
 }
 
 impl LocalAgentContext {
@@ -53,7 +61,16 @@ impl LocalAgentContext {
         record.inventory_revision = self.inventory_revision;
         record.summary.clone_from(&self.summary);
         record.progress.clone_from(&self.progress);
+        record.last_activity = self.last_activity();
         record
+    }
+
+    /// When this agent last did anything: the latest of its creation, what a
+    /// previous daemon remembered, and what this session has seen.
+    pub(crate) fn last_activity(&self) -> DateTime<Utc> {
+        let session = self.session.active_at();
+        self.remembered_activity
+            .map_or(session, |remembered| remembered.max(session))
     }
 }
 
@@ -118,7 +135,7 @@ impl AgentServiceState {
         agent_id: Uuid,
         session: AgentSession,
     ) -> Result<AgentEvent, String> {
-        self.register_local_agent_context_with_status(host_id, agent_id, session, None)
+        self.register_local_agent_context_with_status(host_id, agent_id, session, None, None)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -128,9 +145,15 @@ impl AgentServiceState {
         agent_id: Uuid,
         session: AgentSession,
         working_on: Option<WorkingOn>,
+        remembered_activity: Option<DateTime<Utc>>,
     ) -> Result<AgentEvent, String> {
         self.register_local_agent_context_with_summarizer(
-            host_id, agent_id, session, working_on, None,
+            host_id,
+            agent_id,
+            session,
+            working_on,
+            None,
+            remembered_activity,
         )
     }
 
@@ -141,6 +164,7 @@ impl AgentServiceState {
         session: AgentSession,
         working_on: Option<WorkingOn>,
         summarizer: Option<SummarizerHandle>,
+        remembered_activity: Option<DateTime<Utc>>,
     ) -> Result<AgentEvent, String> {
         if self.contains_agent_id(&agent_id) {
             return Err(format!("Agent already exists: {agent_id}"));
@@ -158,6 +182,9 @@ impl AgentServiceState {
         let mut record = session.to_agent(host_id);
         record.working_on.clone_from(&working_on);
         record.inventory_revision = revision;
+        record.last_activity = record
+            .last_activity
+            .max(remembered_activity.unwrap_or(record.created_at));
         self.recent_projects
             .record(&record.working_dir, record.created_at);
         let summary = summarizer.as_ref().map(|handle| {
@@ -182,6 +209,8 @@ impl AgentServiceState {
                 summarizer,
                 summary,
                 progress: None,
+                remembered_activity,
+                published_activity: record.last_activity,
             },
         );
         Ok(event)

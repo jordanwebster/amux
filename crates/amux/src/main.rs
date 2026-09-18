@@ -13,11 +13,14 @@ mod update;
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::{IsTerminal, Read, Write};
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use amux::connections::{
+    PairTarget, format_peer_list, pairing_identity_lines, pairing_success_line, parse_pair_target,
+    resolve_pairing_candidate, terminal_qr_code,
+};
 #[cfg(all(debug_assertions, feature = "diagnostics"))]
 use amux::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
@@ -25,8 +28,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use node::{AgentType, Config, PairingSecret, PairingStart};
-use qrcode::QrCode;
-use qrcode::render::unicode;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -156,38 +157,38 @@ enum Commands {
         /// Reset local setup preferences
         #[arg(long)]
         reset: bool,
+
+        /// Set the name shown to nearby devices
+        #[arg(long)]
+        name: Option<String>,
     },
 
     /// Pair this device with another amux daemon
     Pair {
+        /// Host name, IP:port, or user@host to pair through SSH
+        #[arg(value_name = "TARGET", conflicts_with_all = ["qr", "qr_payload", "listen", "demo", "cancel"])]
+        target: Option<String>,
+
         /// Display a QR pairing code for this device
-        #[arg(long, conflicts_with_all = ["listen", "connect"])]
-        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
+        #[arg(long, conflicts_with = "listen")]
         qr: bool,
+
+        /// Pair using the deep link printed by `amux pair --qr --link`
+        #[arg(long, value_name = "LINK", conflicts_with_all = ["qr", "listen", "demo", "cancel"])]
+        qr_payload: Option<String>,
 
         /// Also print the QR deep link for simulator pairing
         #[arg(long, requires = "qr")]
         #[cfg_attr(not(debug_assertions), arg(hide = true))]
         link: bool,
 
-        /// Require LAN-direct responder mode; errors when tcp_port is unset
-        #[arg(long, conflicts_with_all = ["qr", "connect"])]
-        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
+        /// Require LAN-direct responder mode; errors when the LAN listener is off
+        #[arg(long, conflicts_with = "qr")]
         listen: bool,
-
-        /// Initiate PIN pairing to a direct target or online cloud host
-        #[arg(long, value_name = "TARGET", num_args = 0..=1, conflicts_with_all = ["qr", "listen"])]
-        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
-        connect: Option<Option<String>>,
-
-        /// Pair through SSH and store the target for future SSH runtime links
-        #[cfg(unix)]
-        #[arg(long = "via-ssh", value_name = "TARGET", conflicts_with_all = ["qr", "listen", "connect", "demo"])]
-        via_ssh: Option<String>,
 
         /// Hold a reusable fixed PIN open for unattended demos (returns immediately;
         /// the daemon keeps the session until it expires or `amux pair --cancel`)
-        #[arg(long, requires_all = ["pin", "for"], conflicts_with_all = ["qr", "listen", "connect", "cancel"])]
+        #[arg(long, requires_all = ["pin", "for"], conflicts_with_all = ["qr", "listen", "cancel"])]
         demo: bool,
 
         /// Six-digit PIN for `--demo`
@@ -199,7 +200,7 @@ enum Commands {
         r#for: Option<Duration>,
 
         /// End any active pairing session on this daemon
-        #[arg(long, conflicts_with_all = ["qr", "listen", "connect", "demo"])]
+        #[arg(long, conflicts_with_all = ["qr", "listen", "demo"])]
         cancel: bool,
     },
 
@@ -421,7 +422,7 @@ async fn main() -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
         if cli.config.is_none() && !node::InstallationConfig::default_path().exists() {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         let config = profiles::local_configuration(cli.config.as_deref(), cli.profile.as_deref())?;
         config
@@ -453,7 +454,7 @@ async fn main() -> Result<ExitCode> {
 
     if let Commands::Login { name } = command {
         if cli.config.is_none() && !node::InstallationConfig::default_path().exists() {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         let installation = front_door::configuration(cli.config.as_deref())?;
         let cloud_url = match cli.config.as_deref() {
@@ -487,8 +488,8 @@ async fn main() -> Result<ExitCode> {
             .await?;
             return Ok(ExitCode::SUCCESS);
         }
-        Commands::Init { reset } => {
-            init::initialize(cli.config.as_deref(), *reset).await?;
+        Commands::Init { reset, name } => {
+            init::initialize(cli.config.as_deref(), *reset, name.as_deref()).await?;
             return Ok(ExitCode::SUCCESS);
         }
         Commands::Keymap { .. } | Commands::Update => {
@@ -571,13 +572,13 @@ async fn main() -> Result<ExitCode> {
             .config
             .as_deref()
             .context("AMUX_TUI_DIRECT_PROFILE requires --config")?;
-        Config::from_file(path)?
+        profiles::load(path)?
     } else if matches!(command, Commands::Ui | Commands::Store { .. }) {
         if matches!(command, Commands::Ui)
             && cli.config.is_none()
             && !node::InstallationConfig::default_path().exists()
         {
-            init::initialize(None, false).await?;
+            init::initialize(None, false, None).await?;
         }
         profiles::local_configuration(cli.config.as_deref(), cli.profile.as_deref())?
     } else {
@@ -740,12 +741,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         },
         Commands::Init { .. } => unreachable!("init dispatches before profile configuration"),
         Commands::Pair {
+            target,
             qr,
+            qr_payload,
             link,
             listen,
-            connect,
-            #[cfg(unix)]
-            via_ssh,
             demo,
             pin,
             r#for,
@@ -777,82 +777,102 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                 );
                 return Ok(ExitCode::SUCCESS);
             }
-            if let Some(connect_target) = connect {
-                match parse_pair_connect_target(connect_target) {
-                    PairConnectTarget::Picker => {
-                        ensure_initialized(&mut config).await?;
-                        let client =
-                            front_door::profile_admin(&config, Some("amux pair --connect")).await?;
-                        let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
-                        let host = prompt_pairing_host(&hosts)?;
-                        let peer = pair_cloud_host(&client, &host).await?;
-                        println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
-                        return Ok(ExitCode::SUCCESS);
-                    }
-                    PairConnectTarget::CloudName(target) => {
-                        ensure_initialized(&mut config).await?;
-                        let retry_command = format!("amux pair --connect {target}");
-                        let client =
-                            front_door::profile_admin(&config, Some(&retry_command)).await?;
-                        let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
-                        let host = resolve_pairing_host_by_name(&hosts, &target)?;
-                        let peer = pair_cloud_host(&client, &host).await?;
-                        println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
-                        return Ok(ExitCode::SUCCESS);
-                    }
-                    PairConnectTarget::Direct(addr) => {
-                        ensure_initialized(&mut config).await?;
-                        let retry_command = format!("amux pair --connect {addr}");
-                        let client =
-                            front_door::profile_admin(&config, Some(&retry_command)).await?;
+            if let Some(target) = target {
+                ensure_initialized(&mut config).await?;
+                let retry_command = format!("amux pair {target}");
+                let client = front_door::profile_admin(&config, Some(&retry_command)).await?;
+                match parse_pair_target(&target)? {
+                    PairTarget::Found(name) => {
+                        let candidates = client.list_pairing_hosts().await?;
+                        let candidate = resolve_pairing_candidate(&candidates, &name)?;
                         let pin = prompt_pairing_pin()?;
-                        let peer = node::pair_via_pin_direct_tcp(
-                            config.data_dir.clone(),
-                            &config.host_name,
-                            addr,
-                            &pin,
-                            &client,
-                        )
-                        .await?;
-                        println!(
-                            "Paired with {} ({}) via direct TCP.",
-                            peer.name, peer.host_id
-                        );
-                        return Ok(ExitCode::SUCCESS);
+                        let pending = client
+                            .begin_pair_pin(candidate.host.id, &pin, &candidate.addrs)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "failed to begin pairing with {} ({})",
+                                    candidate.host.name, candidate.host.id
+                                )
+                            })?;
+                        print_pairing_identity(&pending);
+                        let via = pending.via;
+                        let peer = client.confirm_pair(pending).await.with_context(|| {
+                            format!(
+                                "failed to pair with {} ({})",
+                                candidate.host.name, candidate.host.id
+                            )
+                        })?;
+                        println!("{}", pairing_success_line(&peer, via));
+                    }
+                    PairTarget::Addr(addr) => {
+                        let pin = prompt_pairing_pin()?;
+                        let pending = client
+                            .begin_pair_pin_at(addr, &pin)
+                            .await
+                            .with_context(|| format!("failed to begin pairing with {addr}"))?;
+                        print_pairing_identity(&pending);
+                        let via = pending.via;
+                        let peer = client
+                            .confirm_pair(pending)
+                            .await
+                            .with_context(|| format!("failed to confirm pairing with {addr}"))?;
+                        println!("{}", pairing_success_line(&peer, via));
+                    }
+                    PairTarget::Ssh(target) => {
+                        #[cfg(unix)]
+                        {
+                            let peer = node::pair_via_ssh_target(
+                                config.data_dir.clone(),
+                                &config.host_name,
+                                target,
+                                &client,
+                            )
+                            .await?;
+                            println!(
+                                "Paired with {} ({}) over SSH",
+                                peer.identity.name, peer.identity.host_id
+                            );
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            return Err(anyhow!("SSH pairing is not supported on this platform"));
+                        }
                     }
                 }
-            }
-
-            ensure_initialized(&mut config).await?;
-            #[cfg(unix)]
-            if let Some(target) = via_ssh {
-                let retry_command = format!("amux pair --via-ssh {target}");
-                let client = front_door::profile_admin(&config, Some(&retry_command)).await?;
-                let peer = node::pair_via_ssh_target(
-                    config.data_dir.clone(),
-                    &config.host_name,
-                    target,
-                    &client,
-                )
-                .await?;
-                println!(
-                    "Paired with {} ({}) via SSH.",
-                    peer.identity.name, peer.identity.host_id
-                );
                 return Ok(ExitCode::SUCCESS);
             }
 
+            if let Some(link) = qr_payload {
+                ensure_initialized(&mut config).await?;
+                let client =
+                    front_door::profile_admin(&config, Some("amux pair --qr-payload <LINK>"))
+                        .await?;
+                let payload = parse_qr_pairing_link(&link)?;
+                let pending = client
+                    .begin_pair_qr(&payload)
+                    .await
+                    .context("failed to begin QR pairing")?;
+                print_pairing_identity(&pending);
+                let via = pending.via;
+                let peer = client
+                    .confirm_pair(pending)
+                    .await
+                    .context("failed to confirm QR pairing")?;
+                println!("{}", pairing_success_line(&peer, via));
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            ensure_initialized(&mut config).await?;
             let retry_command = pair_start_retry_command(qr, listen);
             let client = front_door::profile_admin(&config, Some(retry_command)).await?;
-            if listen && config.tcp_port.is_none() {
+            if listen && !config.lan.listen {
                 return Err(anyhow!(
-                    "set `tcp_port` in your config, or use cloud / SSH pairing"
+                    "turn on the LAN listener in your config, or use cloud / SSH pairing"
                 ));
             }
             let pairing = if qr {
                 client.start_qr_pairing().await?
-            } else if listen {
-                client.start_lan_pin_pairing().await?
             } else {
                 client.start_pin_pairing().await?
             };
@@ -867,8 +887,12 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             let client = front_door::profile_admin(&config, None).await?;
             match command {
                 PeerCommands::List => {
+                    let candidates = client.list_pairing_hosts().await?;
                     let peers = client.list_peers().await?;
-                    print!("{}", format_peer_list(&peers));
+                    let daemon = client_common::require_running_client(&config, None).await?;
+                    let hosts = daemon.list_hosts().await?;
+                    let tier = profiles::current_tier(&config).await?;
+                    print!("{}", format_peer_list(&peers, &hosts, &candidates, tier));
                 }
                 PeerCommands::Info { peer } => {
                     let peer = client.get_peer(peer.as_str()).await?;
@@ -895,7 +919,8 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         #[cfg(unix)]
         Commands::Relay => {
-            node::relay_stdio_to_unix_socket(&config.socket_path).await?;
+            node::relay_stdio_to_unix_socket(node::adjacent_link_socket_path(&config.socket_path))
+                .await?;
         }
         Commands::Update => unreachable!("update dispatches before profile configuration"),
         #[cfg(all(debug_assertions, feature = "diagnostics"))]
@@ -951,29 +976,6 @@ fn new_agent_opens_interactively(open_mode: node::OpenMode) -> bool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PairConnectTarget {
-    Picker,
-    Direct(SocketAddr),
-    CloudName(String),
-}
-
-fn format_peer_list(peers: &[node::PeerEntry]) -> String {
-    if peers.is_empty() {
-        return "No trusted peers.\n".to_string();
-    }
-    let mut output = String::from("Trusted peers:\n");
-    for peer in peers {
-        output.push_str(&format!(
-            "  {}  {}  {}\n",
-            peer.host_id,
-            peer.name,
-            format_peer_reachabilities(&peer.reachabilities)
-        ));
-    }
-    output
-}
-
 fn format_peer_info(peer: &node::PeerEntry) -> String {
     format!(
         "Host ID: {}\nName: {}\nPaired at: {}\nPubkey: {}\nReachability: {}\n",
@@ -996,7 +998,14 @@ fn format_peer_reachabilities(reachabilities: &[node::PeerReachability]) -> Stri
             node::PeerReachability::Ssh { target, profile } => {
                 format!("ssh:{target} (profile {profile})")
             }
-            node::PeerReachability::DirectTcp { addr } => format!("direct-tcp:{addr}"),
+            node::PeerReachability::Direct { addrs } => format!(
+                "direct:{}",
+                addrs
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -1024,18 +1033,8 @@ fn confirm_unpair(peer: &node::PeerEntry) -> Result<bool> {
     ))
 }
 
-fn parse_pair_connect_target(target: Option<String>) -> PairConnectTarget {
-    match target {
-        Some(target) => match target.parse::<SocketAddr>() {
-            Ok(addr) => PairConnectTarget::Direct(addr),
-            Err(_) => PairConnectTarget::CloudName(target),
-        },
-        None => PairConnectTarget::Picker,
-    }
-}
-
 fn prompt_pairing_pin() -> Result<String> {
-    print!("PIN: ");
+    print!("Pairing code: ");
     std::io::stdout()
         .flush()
         .context("failed to flush PIN prompt")?;
@@ -1043,7 +1042,20 @@ fn prompt_pairing_pin() -> Result<String> {
     std::io::stdin()
         .read_line(&mut pin)
         .context("failed to read PIN")?;
-    Ok(pin.trim().to_string())
+    Ok(normalize_pairing_pin(&pin))
+}
+
+fn normalize_pairing_pin(input: &str) -> String {
+    let displayed_code = input.split('·').next().unwrap_or(input);
+    let digits = displayed_code
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect::<String>();
+    if digits.len() == 6 {
+        digits
+    } else {
+        input.trim().to_string()
+    }
 }
 
 fn format_pairing_ttl(seconds: u64) -> String {
@@ -1104,86 +1116,10 @@ fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
     Ok(())
 }
 
-async fn pair_cloud_host(
-    client: &client::ProfileAdminClient,
-    host: &node::HostEntry,
-) -> Result<node::SshPairingPeer> {
-    let pin = prompt_pairing_pin()?;
-    client
-        .pair_pin_cloud_peer(host.id, pin)
-        .await
-        .with_context(|| format!("failed to pair with cloud host {} ({})", host.name, host.id))
-}
-
-fn sorted_pairing_hosts(mut hosts: Vec<node::HostEntry>) -> Vec<node::HostEntry> {
-    hosts.sort_unstable_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    hosts
-}
-
-fn resolve_pairing_host_by_name(
-    hosts: &[node::HostEntry],
-    target: &str,
-) -> Result<node::HostEntry> {
-    if let Ok(id) = uuid::Uuid::parse_str(target)
-        && let Some(host) = hosts.iter().find(|host| host.id == id)
-    {
-        return Ok(host.clone());
+fn print_pairing_identity(pending: &node::PendingPeer) {
+    for line in pairing_identity_lines(pending) {
+        println!("{line}");
     }
-
-    let matches = hosts
-        .iter()
-        .filter(|host| host.name == target)
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [host] => Ok((*host).clone()),
-        [] => Err(anyhow!(
-            "no online cloud host named `{target}`. Run `amux pair --connect` to choose from currently visible hosts."
-        )),
-        _ => Err(anyhow!(
-            "multiple online cloud hosts are named {target}; use the host ID shown by `amux pair --connect`"
-        )),
-    }
-}
-
-fn prompt_pairing_host(hosts: &[node::HostEntry]) -> Result<node::HostEntry> {
-    if hosts.is_empty() {
-        return Err(anyhow!("no online cloud hosts are available for pairing"));
-    }
-
-    println!("Cloud hosts:");
-    for (index, host) in hosts.iter().enumerate() {
-        println!("  {}. {} ({})", index + 1, host.name, host.id);
-    }
-    print!("Select host: ");
-    std::io::stdout()
-        .flush()
-        .context("failed to flush host selection prompt")?;
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .context("failed to read host selection")?;
-    let selected = parse_pairing_host_selection(&input, hosts.len())?;
-    Ok(hosts[selected].clone())
-}
-
-fn parse_pairing_host_selection(input: &str, host_count: usize) -> Result<usize> {
-    if host_count == 0 {
-        return Err(anyhow!("no online cloud hosts are available for pairing"));
-    }
-    let trimmed = input.trim();
-    let selection = trimmed
-        .parse::<usize>()
-        .with_context(|| format!("invalid host selection {trimmed:?}"))?;
-    if !(1..=host_count).contains(&selection) {
-        return Err(anyhow!(
-            "host selection {selection} is out of range; choose 1-{host_count}"
-        ));
-    }
-    Ok(selection - 1)
 }
 
 fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
@@ -1194,8 +1130,16 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
                 "PIN expires in {}.",
                 format_pairing_ttl(pairing.ttl_seconds)
             );
-            if let Some(port) = pairing.tcp_port {
-                println!("LAN direct listener: tcp_port {port}");
+            if !pairing.addrs.is_empty() {
+                println!(
+                    "LAN direct addresses: {}",
+                    pairing
+                        .addrs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
         PairingSecret::QrSecret(secret) => {
@@ -1220,9 +1164,15 @@ fn qr_pairing_payload(pairing: &PairingStart, secret: &[u8]) -> Result<String> {
     Ok(format!("{QR_PAIRING_DEEP_LINK_PREFIX}{encoded}"))
 }
 
-fn terminal_qr_code(payload: &str) -> Result<String> {
-    let code = QrCode::new(payload.as_bytes()).context("failed to encode terminal QR")?;
-    Ok(code.render::<unicode::Dense1x2>().quiet_zone(true).build())
+fn parse_qr_pairing_link(link: &str) -> Result<node::QrPairingPayload> {
+    let encoded = link
+        .strip_prefix(QR_PAIRING_DEEP_LINK_PREFIX)
+        .ok_or_else(|| anyhow!("invalid pairing link"))?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .context("invalid pairing link payload")?;
+    let json = std::str::from_utf8(&decoded).context("pairing link payload is not UTF-8")?;
+    node::parse_qr_pairing_payload(json).context("invalid pairing link payload")
 }
 
 async fn wait_for_pairing_mode_to_end(
@@ -1389,13 +1339,8 @@ fn init_tracing() -> WorkerGuard {
         }
     };
 
-    let default_level = if cfg!(debug_assertions) {
-        "amux=debug"
-    } else {
-        "amux=info"
-    };
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_log_filter(cfg!(debug_assertions))));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(writer).with_ansi(false))
@@ -1403,6 +1348,31 @@ fn init_tracing() -> WorkerGuard {
         .init();
 
     guard
+}
+
+/// The log filter used when `RUST_LOG` does not name one: this workspace's
+/// crates at debug in a debug build and at info otherwise, and every
+/// dependency at warn. Transport and TLS libraries log per packet and per
+/// handshake step at debug, which would bury the daemon's own account of what
+/// it did. A workspace crate that starts logging has to be added here.
+fn default_log_filter(debug_build: bool) -> String {
+    const WORKSPACE_TARGETS: [&str; 6] = [
+        "amux",
+        "node",
+        "agent_runtime",
+        "codex",
+        "tui",
+        "ui_runtime",
+    ];
+    let level = if debug_build { "debug" } else { "info" };
+    std::iter::once("warn".to_string())
+        .chain(
+            WORKSPACE_TARGETS
+                .iter()
+                .map(|target| format!("{target}={level}")),
+        )
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Show a blocking warning if the cloud server requires a newer version.
@@ -1457,6 +1427,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_log_filter_keeps_the_connection_code_and_quiets_dependencies() {
+        #[derive(Clone, Default)]
+        struct Recorded(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Recorded {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                let metadata = event.metadata();
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} {}", metadata.level(), metadata.target()));
+            }
+        }
+
+        for (debug_build, expected) in [
+            (
+                true,
+                vec![
+                    "DEBUG node::services::reachability",
+                    "DEBUG amux::audit",
+                    "DEBUG agent_runtime::host",
+                    "INFO node::services::reachability",
+                    "WARN quinn::connection",
+                ],
+            ),
+            (
+                false,
+                vec![
+                    "INFO node::services::reachability",
+                    "WARN quinn::connection",
+                ],
+            ),
+        ] {
+            let recorded = Recorded::default();
+            let subscriber = tracing_subscriber::registry()
+                .with(recorded.clone())
+                .with(EnvFilter::new(default_log_filter(debug_build)));
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::debug!(target: "node::services::reachability", "dial");
+                tracing::debug!(target: "amux::audit", "link");
+                tracing::debug!(target: "agent_runtime::host", "spawn");
+                tracing::trace!(target: "node::services::reachability", "packet");
+                tracing::info!(target: "node::services::reachability", "established");
+                tracing::debug!(target: "quinn::connection", "packet");
+                tracing::info!(target: "rustls::client", "handshake");
+                tracing::warn!(target: "quinn::connection", "lost");
+            });
+            assert_eq!(
+                *recorded.0.lock().unwrap(),
+                expected,
+                "debug_build={debug_build}"
+            );
+        }
+    }
+
+    #[test]
     fn profile_selector_is_global_for_ui_relay_and_administration() {
         for args in [
             vec!["amux", "ui", "--profile", "Work"],
@@ -1502,6 +1531,18 @@ mod tests {
             .expect("--config arg");
         assert_eq!(arg.get_env(), Some(std::ffi::OsStr::new("AMUX_CONFIG")));
         assert!(arg.is_global_set());
+    }
+
+    #[test]
+    fn init_accepts_a_scripted_host_name() {
+        let cli = Cli::try_parse_from(["amux", "init", "--name", "Studio Mac"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Init {
+                reset: false,
+                name: Some(ref name),
+            }) if name == "Studio Mac"
+        ));
     }
 
     /// The managed Claude hook has no config flag; it reaches the right
@@ -1923,21 +1964,33 @@ mod tests {
     }
 
     #[test]
-    fn pair_connect_without_target_parses_as_interactive_request() {
-        let cli = Cli::try_parse_from(["amux", "pair", "--connect"]).unwrap();
-        let Some(Commands::Pair { connect, .. }) = cli.command else {
-            panic!("expected pair command");
-        };
-        assert_eq!(connect, Some(None));
+    fn pairing_pin_accepts_the_grouped_init_line() {
+        assert_eq!(normalize_pairing_pin("481 923"), "481923");
+        assert_eq!(
+            normalize_pairing_pin("481 923 · valid for 15 minutes"),
+            "481923"
+        );
+        assert_eq!(normalize_pairing_pin("not a code"), "not a code");
     }
 
     #[test]
-    fn pair_connect_with_target_parses_value() {
-        let cli = Cli::try_parse_from(["amux", "pair", "--connect", "127.0.0.1:4242"]).unwrap();
-        let Some(Commands::Pair { connect, .. }) = cli.command else {
+    fn pair_without_target_parses_as_responder() {
+        let cli = Cli::try_parse_from(["amux", "pair"]).unwrap();
+        let Some(Commands::Pair { target, .. }) = cli.command else {
             panic!("expected pair command");
         };
-        assert_eq!(connect, Some(Some("127.0.0.1:4242".to_string())));
+        assert_eq!(target, None);
+    }
+
+    #[test]
+    fn pair_with_positional_target_parses_value() {
+        let cli = Cli::try_parse_from(["amux", "pair", "127.0.0.1:4242"]).unwrap();
+        let Some(Commands::Pair { target, .. }) = cli.command else {
+            panic!("expected pair command");
+        };
+        assert_eq!(target.as_deref(), Some("127.0.0.1:4242"));
+        assert!(Cli::try_parse_from(["amux", "pair", "--connect", "host"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "pair", "--via-ssh", "user@host"]).is_err());
     }
 
     #[test]
@@ -1961,10 +2014,28 @@ mod tests {
     }
 
     #[test]
-    fn pair_qr_rejects_payload_argument() {
+    fn pair_qr_payload_parses_as_initiator() {
+        let cli = Cli::try_parse_from(["amux", "pair", "--qr-payload", "amux://pair?payload=e30"])
+            .unwrap();
+        let Some(Commands::Pair {
+            qr_payload,
+            qr,
+            target,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected pair command");
+        };
+        assert_eq!(qr_payload.as_deref(), Some("amux://pair?payload=e30"));
+        assert!(!qr);
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn pair_qr_rejects_positional_target() {
         let error = Cli::try_parse_from(["amux", "pair", "--qr", "{\"host_id\":\"x\"}"])
             .expect_err("QR mode should not accept external payloads");
-        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -1986,19 +2057,6 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("debug builds")
-        );
-    }
-
-    #[test]
-    fn pair_connect_target_parser_splits_direct_cloud_and_picker() {
-        assert_eq!(parse_pair_connect_target(None), PairConnectTarget::Picker);
-        assert_eq!(
-            parse_pair_connect_target(Some("127.0.0.1:4242".to_string())),
-            PairConnectTarget::Direct("127.0.0.1:4242".parse().unwrap())
-        );
-        assert_eq!(
-            parse_pair_connect_target(Some("phone".to_string())),
-            PairConnectTarget::CloudName("phone".to_string())
         );
     }
 
@@ -2033,61 +2091,12 @@ mod tests {
     }
 
     #[test]
-    fn peer_list_and_info_format_trusted_peers() {
+    fn peer_info_formats_trusted_peer() {
         let peer = test_peer(1, "phone");
-        let list = format_peer_list(std::slice::from_ref(&peer));
-        assert!(list.contains("Trusted peers:"));
-        assert!(list.contains("phone"));
-        assert!(list.contains("cloud"));
-
         let info = format_peer_info(&peer);
         assert!(info.contains("Host ID: 00000000-0000-0000-0000-000000000001"));
         assert!(info.contains("Name: phone"));
         assert!(info.contains("Pubkey: 070707"));
-    }
-
-    #[test]
-    fn cloud_pairing_host_resolution_matches_name_or_id() {
-        let phone = test_host(1, "phone");
-        let laptop = test_host(2, "laptop");
-        let hosts = vec![phone.clone(), laptop.clone()];
-
-        assert_eq!(
-            resolve_pairing_host_by_name(&hosts, "phone").unwrap(),
-            phone
-        );
-        assert_eq!(
-            resolve_pairing_host_by_name(&hosts, &laptop.id.to_string()).unwrap(),
-            laptop
-        );
-    }
-
-    #[test]
-    fn cloud_pairing_host_resolution_rejects_missing_or_ambiguous_names() {
-        let hosts = vec![test_host(1, "phone"), test_host(2, "phone")];
-
-        assert!(
-            resolve_pairing_host_by_name(&hosts, "tablet")
-                .unwrap_err()
-                .to_string()
-                .contains("no online cloud host")
-        );
-        assert!(
-            resolve_pairing_host_by_name(&hosts, "phone")
-                .unwrap_err()
-                .to_string()
-                .contains("multiple online cloud hosts")
-        );
-    }
-
-    #[test]
-    fn cloud_pairing_picker_selection_is_one_based() {
-        assert_eq!(parse_pairing_host_selection("1\n", 3).unwrap(), 0);
-        assert_eq!(parse_pairing_host_selection("3", 3).unwrap(), 2);
-        assert!(parse_pairing_host_selection("0", 3).is_err());
-        assert!(parse_pairing_host_selection("4", 3).is_err());
-        assert!(parse_pairing_host_selection("x", 3).is_err());
-        assert!(parse_pairing_host_selection("1", 0).is_err());
     }
 
     #[test]
@@ -2099,8 +2108,8 @@ mod tests {
                 name: "desktop".to_string(),
             },
             ttl_seconds: 300,
-            tcp_port: None,
-            cloud_url: "https://amux.sh".to_string(),
+            addrs: vec!["192.0.2.4:9001".parse().unwrap()],
+            cloud_url: Some("https://relay.example".to_string()),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
         let PairingSecret::QrSecret(secret) = &pairing.secret else {
@@ -2124,46 +2133,17 @@ mod tests {
         assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://amux.sh");
+        assert_eq!(parsed.cloud_url.as_deref(), Some("https://relay.example"));
+        assert_eq!(parsed.addrs, vec!["192.0.2.4:9001".parse().unwrap()]);
         assert_eq!(parsed.secret, vec![9; 32]);
         assert!(qr.lines().count() > 4);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn pair_via_ssh_parses_target() {
-        let cli = Cli::try_parse_from(["amux", "pair", "--via-ssh", "workstation"]).unwrap();
-        let Some(Commands::Pair { via_ssh, .. }) = cli.command else {
-            panic!("expected pair command");
-        };
-        assert_eq!(via_ssh.as_deref(), Some("workstation"));
-    }
-
     #[test]
     fn pair_rejects_conflicting_modes() {
-        let error = Cli::try_parse_from(["amux", "pair", "--qr", "--connect", "host"])
+        let error = Cli::try_parse_from(["amux", "pair", "--qr", "host"])
             .expect_err("conflicting pair modes should fail");
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
-
-    fn test_host(id: u128, name: &str) -> node::HostEntry {
-        let host = node::Host {
-            platform: None,
-            id: uuid::Uuid::from_u128(id),
-            name: name.to_string(),
-            version: "test".to_string(),
-            capabilities: node::Capabilities::default(),
-        };
-        node::HostEntry {
-            id: host.id,
-            name: host.name.clone(),
-            online: true,
-            version: Some(host.version.clone()),
-            capabilities: Some(host.capabilities.clone()),
-            trust_status: node::HostTrustStatus::UntrustedButOnline,
-            last_dial_error: None,
-            platform: None,
-        }
     }
 
     fn test_peer(id: u128, name: &str) -> node::PeerEntry {

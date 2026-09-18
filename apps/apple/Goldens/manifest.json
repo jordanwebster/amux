@@ -59,19 +59,6 @@
       ]
     },
     {
-      "id": "drawer",
-      "stage": 5,
-      "screen": "drawer",
-      "fixture": "drawer",
-      "origin": "added_state",
-      "reason": "the drawer is a state of the home screen the design has no capture of",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
       "id": "home",
       "stage": 5,
       "screen": "home",
@@ -449,6 +436,32 @@
       ]
     },
     {
+      "id": "hosts-groups",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "hosts-groups",
+      "origin": "added_state",
+      "reason": "the four groups the machines are read in: one on this network, one across the relay, one nowhere, and one more found here and not paired with",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "local-network-refused",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "local-network-refused",
+      "origin": "added_state",
+      "reason": "a phone nobody let look at the network it is on, which is indistinguishable from an empty network by the list alone",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "exited",
       "stage": 9,
       "screen": "exited",
@@ -514,6 +527,32 @@
       ]
     },
     {
+      "id": "code-entry",
+      "stage": 9,
+      "screen": "pin",
+      "fixture": "code-entry",
+      "origin": "added_state",
+      "reason": "the six-digit code entry screen on a phone with no account, including the destination machine and its direct route",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "pair-confirmation",
+      "stage": 9,
+      "screen": "pair-confirm",
+      "fixture": "pair-confirmation",
+      "origin": "added_state",
+      "reason": "the confirmation a scanned code lands on with no account signed in at all, which is what pairing on your own network means",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "pin",
       "stage": 9,
       "screen": "pin",
@@ -559,6 +598,19 @@
       "fixture": "first-run",
       "origin": "reference",
       "capture": "first-run",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "found-host",
+      "stage": 10,
+      "screen": "first-run",
+      "fixture": "found-host",
+      "origin": "added_state",
+      "reason": "first launch on a network that already has a host running on it: the machine is offered before anybody has typed or signed in anything",
       "simulator": "golden",
       "appearances": [
         "light",
@@ -644,6 +696,19 @@
       ]
     },
     {
+      "id": "sign-in-mismatch",
+      "stage": 10,
+      "screen": "sign-in",
+      "fixture": "sign-in-mismatch",
+      "origin": "added_state",
+      "reason": "signing back into one account and the browser answering as another, which adds nobody until the person chooses",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "you",
       "stage": 10,
       "screen": "you",
@@ -670,12 +735,12 @@
       ]
     },
     {
-      "id": "store-failure",
-      "stage": 11,
-      "screen": "store-failure",
-      "fixture": "store-failure",
+      "id": "remove-account",
+      "stage": 10,
+      "screen": "you",
+      "fixture": "remove-account",
       "origin": "added_state",
-      "reason": "an unusable SQLite store stops the runtime and replaces every cached or live screen with its cause, remedy and one relaunch action",
+      "reason": "taking an account off the phone, which says the amux.sh account stays before what the phone lets go of",
       "simulator": "golden",
       "appearances": [
         "light",
@@ -715,6 +780,19 @@
       "fixture": "upload-failed",
       "origin": "added_state",
       "reason": "a report the cloud would not take",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "report-signed-out",
+      "stage": 11,
+      "screen": "dump",
+      "fixture": "report-signed-out",
+      "origin": "added_state",
+      "reason": "a report written on a phone nobody is signed in on, which has no account to send it to and says so before Send",
       "simulator": "golden",
       "appearances": [
         "light",
@@ -800,58 +878,6 @@
       ]
     },
     {
-      "id": "cached-fleet-unreachable",
-      "stage": 13,
-      "screen": "home",
-      "fixture": "cached-fleet-unreachable",
-      "origin": "added_state",
-      "reason": "a launch drawn from the account's store while a machine is not answering: every remembered agent is listed and waits for its machine",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-fleet-removal",
-      "stage": 13,
-      "screen": "home",
-      "fixture": "cached-fleet-removal",
-      "origin": "added_state",
-      "reason": "a launch drawn from the account's store after a machine said two of its agents were gone: the store no longer remembers them",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-chat",
-      "stage": 13,
-      "screen": "run",
-      "fixture": "cached-chat",
-      "origin": "added_state",
-      "reason": "a conversation opened before anything has connected, painted from the window its store kept",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
-      "id": "cached-chat-gap",
-      "stage": 13,
-      "screen": "run",
-      "fixture": "cached-chat-gap",
-      "origin": "added_state",
-      "reason": "the same stored conversation after a reconnect that could not recover what was said in between: a rule marks the missing history between the rows before and after it",
-      "simulator": "golden",
-      "appearances": [
-        "light",
-        "dark"
-      ]
-    },
-    {
       "id": "small-home",
       "stage": 12,
       "screen": "home",
@@ -923,6 +949,162 @@
       "fixture": "dictation-unavailable",
       "origin": "added_state",
       "reason": "composer speech recognition unavailable state",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "host-away",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "host-away",
+      "origin": "added_state",
+      "reason": "an account with nothing bought whose machines the relay can see: the agents stay listed from the cache and every row says it is not live, with the one thing that would change that named above them",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-signed-out-offline",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-signed-out-offline",
+      "origin": "added_state",
+      "reason": "a phone nobody is signed into that has lost sight of one of its machines: the agents stay, the machine is named, and an account is offered as what would find it from elsewhere",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-all-reachable",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-all-reachable",
+      "origin": "added_state",
+      "reason": "every machine reachable and nothing offered, which is what makes the other two conditional rather than decorative",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-no-agents",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-no-agents",
+      "origin": "added_state",
+      "reason": "a phone paired with machines that are running nothing yet: the home says there are no agents, counts the hosts and offers New Agent rather than pairing again",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "chat-subscribe",
+      "stage": 10,
+      "screen": "run",
+      "fixture": "chat-subscribe",
+      "origin": "added_state",
+      "reason": "a conversation on a machine the relay can see and will not carry to: the transcript is the cache and the composer's place holds the one thing that would make it live",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "host-offline",
+      "stage": 10,
+      "screen": "offline",
+      "fixture": "host-offline",
+      "origin": "added_state",
+      "reason": "the same unsubscribed account on a machine that is switched off, which is never sold anything: no subscription reaches a machine that is not there",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "host-not-signed-in",
+      "stage": 10,
+      "screen": "hosts",
+      "fixture": "host-not-signed-in",
+      "origin": "added_state",
+      "reason": "a machine nothing can reach that has never had an account, which no subscription would reach either",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "store-failure",
+      "stage": 11,
+      "screen": "store-failure",
+      "fixture": "store-failure",
+      "origin": "added_state",
+      "reason": "an unusable SQLite store stops the runtime and replaces every cached or live screen with its cause, remedy and one relaunch action",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "cached-fleet-unreachable",
+      "stage": 13,
+      "screen": "home",
+      "fixture": "cached-fleet-unreachable",
+      "origin": "added_state",
+      "reason": "a launch drawn from the account's store while a machine is not answering: every remembered agent is listed and waits for its machine",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "cached-fleet-removal",
+      "stage": 13,
+      "screen": "home",
+      "fixture": "cached-fleet-removal",
+      "origin": "added_state",
+      "reason": "a launch drawn from the account's store after a machine said two of its agents were gone: the store no longer remembers them",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "cached-chat",
+      "stage": 13,
+      "screen": "run",
+      "fixture": "cached-chat",
+      "origin": "added_state",
+      "reason": "a conversation opened before anything has connected, painted from the window its store kept",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "cached-chat-gap",
+      "stage": 13,
+      "screen": "run",
+      "fixture": "cached-chat-gap",
+      "origin": "added_state",
+      "reason": "the same stored conversation after a reconnect that could not recover what was said in between: a rule marks the missing history between the rows before and after it",
       "simulator": "golden",
       "appearances": [
         "light",

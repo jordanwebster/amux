@@ -36,6 +36,17 @@ public enum DoorRequest: Sendable, Equatable {
     /// every account this phone has been given and leaves the same one on
     /// screen. Which account is read is then the switcher's to change.
     case addAccount(user: String, token: String)
+    /// Ask the link to read again what the account on screen may do.
+    ///
+    /// What a purchase leaves behind, without the purchase. A subscription is
+    /// bought at the App Store, whose sheet belongs to another process and
+    /// cannot be pressed from here; what the app does the moment one goes
+    /// through is tell its own link to re-authenticate, because the relay
+    /// reads the tier off the credential the link holds and nothing on this
+    /// device knows the money moved until somebody asks. That is the half a
+    /// driver can perform, and it is the half a machine's reachability turns
+    /// on.
+    case refreshEntitlement
     /// Deliver again, under the name of the account it answered for, the last
     /// thing that account's connection produced.
     ///
@@ -44,8 +55,14 @@ public enum DoorRequest: Sendable, Equatable {
     /// moment the race would have lost — the same batch, from the same
     /// connection, still answering for the account it was about.
     case late(account: String)
-    /// Start the shared runtime against a relay with a credential.
-    case connect(relay: String, token: String, user: String)
+    /// Start the shared runtime against a relay with a credential, and
+    /// what that credential buys.
+    ///
+    /// The tier is said because nothing below can read one out of an
+    /// opaque bearer: the account service issues it beside a real
+    /// credential, and a driver handing one over stands in for that.
+    /// Paid unless a journey is about an account that has not paid.
+    case connect(relay: String, token: String, user: String, tier: Tier)
     /// Put an account on this phone from a session somebody signed in
     /// elsewhere, and reach whatever the account service says that account may
     /// reach.
@@ -71,6 +88,9 @@ public enum DoorRequest: Sendable, Equatable {
     case awaitOffline(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
+    /// The end of what this launch's runtime wrote about what it decided.
+    /// Only a build with the driving tools writes it at all.
+    case runtimeLog(bytes: Int)
     /// Read the production conversation's projection, including its native layer.
     case conversation(agent: String)
     /// Attempt the same typed model change as the settings sheet, including
@@ -165,6 +185,13 @@ public enum DoorRequest: Sendable, Equatable {
     /// proves possession of one machine's offer, so the machine is found among
     /// the ones the relay is offering before its code is tried against it.
     case pairByCode(host: String, pin: String)
+    /// Say what the system answered when this app asked to look at the network.
+    ///
+    /// iOS asks once. A refusal cannot be provoked a second time, and a
+    /// simulator grants it silently, so the one state a person can be left in
+    /// — refused, with no way back inside the app — is unreachable by driving
+    /// the app alone.
+    case localNetwork(permission: String)
     /// Withdraw the key this phone holds for one machine, through the same
     /// store the paired devices sheet drives.
     ///
@@ -262,6 +289,9 @@ public enum DoorReply: Sendable, Equatable {
     case ack
     case state(VisibleState)
     case bridge(BridgeState)
+    /// What the runtime wrote, ending at the moment this was asked, and
+    /// empty in a build that writes none.
+    case runtimeLog(String)
     case conversation(ConversationReading)
     case signposts([SignpostMark])
     case captured(path: String, width: Int, height: Int, scale: Int)
@@ -359,11 +389,17 @@ public struct AccountsState: Codable, Sendable, Equatable {
     /// Answers refused because they were about an account that is no longer on
     /// screen.
     public let dropped: Int
+    /// Accounts removed from this phone that a runtime has since started
+    /// without, deleting their profiles and caches. Nothing on screen says it.
+    public let deletedProfiles: [String]
 
-    public init(selected: String?, accounts: [Known], dropped: Int) {
+    public init(
+        selected: String?, accounts: [Known], dropped: Int, deletedProfiles: [String] = []
+    ) {
         self.selected = selected
         self.accounts = accounts
         self.dropped = dropped
+        self.deletedProfiles = deletedProfiles
     }
 
     /// One account, as its row is drawn from.
@@ -371,9 +407,10 @@ public struct AccountsState: Codable, Sendable, Equatable {
         public let id: String
         public let email: String
         public let signedIn: Bool
-        /// What this account may do and where that came from, in the words the
-        /// subscription row says it: *Active · App Store*, *Ended · amux.sh*,
-        /// *None*.
+        /// What the relay will carry for this account and where that was
+        /// bought, in the words the You page's relay row says it: *Subscribed
+        /// through the App Store*, *Included with this account*, *Not
+        /// subscribed · hosts on this network still work*.
         public let entitlement: String
         /// How many machines this account reached, where a connection has
         /// counted them.
@@ -497,12 +534,20 @@ public struct BridgeState: Codable, Sendable, Equatable {
     /// this is the app's: together they say whether a stream still open is
     /// one nobody let go of or one the runtime kept anyway.
     public let releasedStreams: [String]
+    /// Why each machine this device knows of reads where it does: the carrier
+    /// its link is riding, whether it is answering, and the last reason a dial
+    /// at it failed. One line per machine, by name.
+    ///
+    /// A screen says a machine is away or offline without saying why, and the
+    /// reason is never on the machine's own side: a dial that never landed
+    /// leaves no trace there. So it is read off the device that tried.
+    public let reach: [String]
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
         reconciliations: Int = 0, hosts: [String], agents: [String], relayAttempts: UInt64,
         relayRetries: UInt64, discovered: [String], watching: [String] = [],
-        releasedStreams: [String] = [], failure: String? = nil
+        releasedStreams: [String] = [], reach: [String] = [], failure: String? = nil
     ) {
         self.build = build
         self.started = started
@@ -517,6 +562,7 @@ public struct BridgeState: Codable, Sendable, Equatable {
         self.discovered = discovered
         self.watching = watching
         self.releasedStreams = releasedStreams
+        self.reach = reach
     }
 }
 
@@ -563,6 +609,8 @@ extension DoorRequest: Codable {
         case attachment, name, mime, base64, host, pin
         case note, marks
         case motion, transparency
+        case permission, tier
+        case bytes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -583,13 +631,15 @@ extension DoorRequest: Codable {
             self = .addAccount(
                 user: try fields.decode(String.self, forKey: .user),
                 token: try fields.decode(String.self, forKey: .token))
+        case "refreshEntitlement": self = .refreshEntitlement
         case "late":
             self = .late(account: try fields.decode(String.self, forKey: .account))
         case "connect":
             self = .connect(
                 relay: try fields.decode(String.self, forKey: .relay),
                 token: try fields.decode(String.self, forKey: .token),
-                user: try fields.decode(String.self, forKey: .user))
+                user: try fields.decode(String.self, forKey: .user),
+                tier: try fields.decodeIfPresent(Tier.self, forKey: .tier) ?? .pro)
         case "restoreSession":
             self = .restoreSession(
                 account: try fields.decode(String.self, forKey: .account),
@@ -604,6 +654,9 @@ extension DoorRequest: Codable {
             self = .setModel(agent: try fields.decode(String.self, forKey: .agent),
                              name: try fields.decode(String.self, forKey: .name))
         case "bridge": self = .bridge
+        case "runtimeLog":
+            self = .runtimeLog(
+                bytes: try fields.decodeIfPresent(Int.self, forKey: .bytes) ?? 64_000)
         case "signposts": self = .signposts
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
@@ -652,6 +705,8 @@ extension DoorRequest: Codable {
             self = .pairByCode(
                 host: try fields.decode(String.self, forKey: .host),
                 pin: try fields.decode(String.self, forKey: .pin))
+        case "localNetwork":
+            self = .localNetwork(permission: try fields.decode(String.self, forKey: .permission))
         case "revoke":
             self = .revoke(host: try fields.decode(String.self, forKey: .host))
         case "requestChanges":
@@ -719,14 +774,17 @@ extension DoorRequest: Codable {
             try fields.encode("addAccount", forKey: .kind)
             try fields.encode(user, forKey: .user)
             try fields.encode(token, forKey: .token)
+        case .refreshEntitlement:
+            try fields.encode("refreshEntitlement", forKey: .kind)
         case .late(let account):
             try fields.encode("late", forKey: .kind)
             try fields.encode(account, forKey: .account)
-        case .connect(let relay, let token, let user):
+        case .connect(let relay, let token, let user, let tier):
             try fields.encode("connect", forKey: .kind)
             try fields.encode(relay, forKey: .relay)
             try fields.encode(token, forKey: .token)
             try fields.encode(user, forKey: .user)
+            try fields.encode(tier, forKey: .tier)
         case .restoreSession(let account, let refresh):
             try fields.encode("restoreSession", forKey: .kind)
             try fields.encode(account, forKey: .account)
@@ -746,6 +804,9 @@ extension DoorRequest: Codable {
             try fields.encode(name, forKey: .name)
         case .bridge:
             try fields.encode("bridge", forKey: .kind)
+        case .runtimeLog(let bytes):
+            try fields.encode("runtimeLog", forKey: .kind)
+            try fields.encode(bytes, forKey: .bytes)
         case .signposts:
             try fields.encode("signposts", forKey: .kind)
         case .appearance(let appearance):
@@ -806,6 +867,9 @@ extension DoorRequest: Codable {
             try fields.encode("pairByCode", forKey: .kind)
             try fields.encode(host, forKey: .host)
             try fields.encode(pin, forKey: .pin)
+        case .localNetwork(let permission):
+            try fields.encode("localNetwork", forKey: .kind)
+            try fields.encode(permission, forKey: .permission)
         case .revoke(let host):
             try fields.encode("revoke", forKey: .kind)
             try fields.encode(host, forKey: .host)
@@ -860,6 +924,7 @@ extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
         case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
+        case log
     }
 
     public init(from decoder: any Decoder) throws {
@@ -873,6 +938,8 @@ extension DoorReply: Codable {
             self = .state(try fields.decode(VisibleState.self, forKey: .state))
         case "bridge":
             self = .bridge(try fields.decode(BridgeState.self, forKey: .bridge))
+        case "runtimeLog":
+            self = .runtimeLog(try fields.decode(String.self, forKey: .log))
         case "signposts":
             self = .signposts(try fields.decode([SignpostMark].self, forKey: .marks))
         case "captured":
@@ -924,6 +991,9 @@ extension DoorReply: Codable {
         case .bridge(let state):
             try fields.encode("bridge", forKey: .kind)
             try fields.encode(state, forKey: .bridge)
+        case .runtimeLog(let log):
+            try fields.encode("runtimeLog", forKey: .kind)
+            try fields.encode(log, forKey: .log)
         case .signposts(let marks):
             try fields.encode("signposts", forKey: .kind)
             try fields.encode(marks, forKey: .marks)
@@ -1011,6 +1081,16 @@ public enum Door {
     /// accessibility frames instead, avoiding a geometry reader on every
     /// named element.
     public static let elementGeometryArgument = "amux-element-geometry"
+
+    /// `-amux-discover-only ID,ID`: the machines a driven launch's browser may
+    /// report, by host identity.
+    ///
+    /// A simulator browses the Mac's real network, so a driven app would
+    /// otherwise find every amux machine running there — the developer's own
+    /// server included — and a test would read a different screen on every
+    /// Mac. A launch that opens the door and names nothing here finds nothing
+    /// at all.
+    public static let discoverOnlyArgument = "amux-discover-only"
 
     /// `-amux-link URL`: a link the launch was opened with, handed to the app
     /// before its first frame exactly as the system hands one over.

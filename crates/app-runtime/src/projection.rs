@@ -38,6 +38,12 @@ pub struct AgentCardDto {
     /// machine on the account.
     #[serde(default, skip_serializing_if = "is_false")]
     pub awaiting: bool,
+    /// The ask at the head of the agent's queue while it is waiting on a
+    /// person, so a list row can say what is wanted: the question, the
+    /// command. Absent when nothing is asked, and whenever this device is not
+    /// folding the agent's stream and so cannot know what the ask is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskDto>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -291,6 +297,13 @@ pub enum ConnectionOutcome {
     /// anything is the connection's to decide, and whether the relay answers
     /// arrives as a connection state rather than as an answer to this.
     RetryRequested,
+    /// The account service was asked again what this account buys, and said.
+    /// The same answer also arrives as a cloud state, which is what a screen
+    /// draws from; this tells the purchase that asked that it landed.
+    EntitlementRefreshed { tier: model::Tier },
+    /// Nobody could be asked: no account is signed in, or the request did not
+    /// reach the account service. The sentence goes to the log.
+    EntitlementUnavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -328,11 +341,80 @@ pub enum PairingOutcome {
     Paired { host: model::HostId, name: String },
     /// Abandoned by the person, with nothing written anywhere.
     PairingAbandoned,
-    /// The secret did not authenticate, in the one shape every such failure has.
-    PairingRefused,
+    /// The attempt was turned down. Every way a secret can be wrong shares
+    /// one reason; a machine only a paid relay could reach names its own, so
+    /// a screen can offer the subscription rather than blaming the code.
+    PairingRefused { reason: RefusalReason },
     /// The attempt this refers to is not one this runtime is holding — it was
     /// already answered, or the app was restarted since.
     PairingLost,
+}
+
+/// Why a pairing attempt was turned down, as a screen words it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalReason {
+    Refused,
+    SubscriptionRequired,
+}
+
+impl From<crate::Refusal> for RefusalReason {
+    fn from(refusal: crate::Refusal) -> Self {
+        match refusal {
+            crate::Refusal::Refused => Self::Refused,
+            crate::Refusal::SubscriptionRequired => Self::SubscriptionRequired,
+        }
+    }
+}
+
+/// A machine this device could pair with, and how an attempt would reach it.
+///
+/// Deliberately not a host: an untrusted machine is an offer, not somewhere
+/// anything runs. What a screen needs beyond its name is the route — found on
+/// this network, or seen through the relay — because the two read differently
+/// and only one of them works without an account.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PairingCandidateDto {
+    /// The machine as it describes itself. Its own `via` is the route an
+    /// attempt would take — found on this network, or seen through the relay
+    /// — said once, because a candidate whose entry and whose attempt could
+    /// disagree about how to reach it would be two answers to one question.
+    #[serde(flatten)]
+    pub host: model::HostEntry,
+    /// Where an attempt would dial it, from what a browser resolved. Empty
+    /// for a machine only the relay can see.
+    pub addrs: Vec<String>,
+}
+
+impl PairingCandidateDto {
+    /// Where an attempt would dial this machine, as addresses again.
+    pub fn addrs(&self) -> Vec<std::net::SocketAddr> {
+        self.addrs
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .collect()
+    }
+}
+
+/// The route an attempt would take, as a host's own route.
+fn host_via(via: client::PeerVia) -> model::HostVia {
+    match via {
+        client::PeerVia::Direct => model::HostVia::Direct,
+        client::PeerVia::Relay => model::HostVia::Relay,
+        client::PeerVia::Ssh => model::HostVia::Ssh,
+    }
+}
+
+impl From<client::PairingCandidate> for PairingCandidateDto {
+    fn from(candidate: client::PairingCandidate) -> Self {
+        Self {
+            host: model::HostEntry {
+                via: host_via(candidate.via),
+                ..candidate.host
+            },
+            addrs: candidate.addrs.iter().map(ToString::to_string).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -378,7 +460,7 @@ pub enum Event {
     /// authenticating a six-digit code is done against one machine and the
     /// phone has to know which.
     Discovered {
-        hosts: Vec<model::HostEntry>,
+        hosts: Vec<PairingCandidateDto>,
     },
     Connection {
         state: ConnectionDto,
@@ -409,6 +491,16 @@ pub enum Event {
     StoreFailure {
         message: String,
     },
+    /// What this device's relay link is doing and what the account on it
+    /// buys.
+    ///
+    /// Apart from the connection state because it answers a different
+    /// question: the connection says whether this device is reachable, and
+    /// this says whether anybody is signed in, on which carrier, and whether
+    /// the account pays for the relay. It is where the app reads entitlement
+    /// from, so nothing has to ask an account service a second time to know
+    /// what to offer.
+    CloudState(ui_state::CloudState),
     /// This phone's own identity and every machine it trusts.
     ///
     /// Apart from the fleet because it answers a different question. The fleet
@@ -419,6 +511,19 @@ pub enum Event {
     Devices {
         identity: DeviceIdentityDto,
         devices: Vec<PairedDeviceDto>,
+    },
+    /// The removed accounts this start really did get rid of: each one's
+    /// profile gone — deleted here or already absent — and everything this
+    /// device cached for it gone too.
+    ///
+    /// Sent once, after the profiles were opened, because opening is what
+    /// deletes them. It is the only word on which the application may drop a
+    /// pending removal: an account whose profile or caches would not delete is
+    /// not named here, so it stays pending and the next start tries again
+    /// rather than the phone showing an account as gone while its device key
+    /// is still on it.
+    Forgotten {
+        accounts: Vec<String>,
     },
 }
 
@@ -693,10 +798,16 @@ impl FeedState {
 #[derive(Default)]
 pub struct Projection {
     fleet: Option<Event>,
-    /// The machines last reported as discovered. A plain list rather than the
-    /// event, so a phone that has discovered nothing — which is every phone
-    /// until one is found — never sends an event saying so.
+    /// The cloud state last sent, so a state that has not changed is not
+    /// repeated every frame.
+    cloud: Option<ui_state::CloudState>,
+    /// The relay-seen machines this device could pair with, as the model last
+    /// held them. Kept to notice when that set changes: what a screen is told
+    /// about candidates carries addresses the model does not have, so the
+    /// change is a reason to ask the profile again rather than an event.
     discovered: Vec<model::HostEntry>,
+    /// Whether that set has changed since anybody asked.
+    candidates_stale: bool,
     synchronized: bool,
     remote_inventories: BTreeMap<model::HostId, BTreeSet<AgentId>>,
     feeds: BTreeMap<AgentId, FeedState>,
@@ -706,6 +817,12 @@ pub struct Projection {
 }
 
 impl Projection {
+    /// Whether the machines this device could pair with may have changed
+    /// since this was last asked. Answering clears it.
+    pub fn take_candidates_stale(&mut self) -> bool {
+        std::mem::take(&mut self.candidates_stale)
+    }
+
     pub fn subscribe(&mut self, agent: AgentId) {
         self.subscribed.insert(agent);
     }
@@ -766,6 +883,14 @@ impl Projection {
         connection: &RelayConnection,
         events: &mut Vec<Event>,
     ) {
+        // Before the fleet, for the same reason the connection state is: what
+        // a row means depends on whether this device is signed in and what it
+        // is reaching its machines over.
+        let cloud = model.cloud_state();
+        if self.cloud.as_ref() != Some(cloud) {
+            self.cloud = Some(cloud.clone());
+            events.push(Event::CloudState(cloud.clone()));
+        }
         let fleet = Event::Fleet {
             epoch: model.epoch(),
             agents: model
@@ -782,13 +907,14 @@ impl Projection {
                 .map(|card| AgentCardDto {
                     agent: card.agent.clone(),
                     display_name: card.display_name(),
+                    ask: waiting_ask(model, card),
                     attention: model.fleet_attention(card),
                     phase: model.effective_phase(card),
                     last_activity: model.effective_summary_age(card),
                     outcome: None,
                     // A row the store remembered stays unconfirmed until the
                     // machine that owns it has answered for it.
-                    awaiting: card.remembered,
+                    awaiting: card.remembered || !card.live,
                 })
                 .collect(),
             hosts: model
@@ -821,8 +947,8 @@ impl Projection {
             .map(|host| host.entry.clone())
             .collect();
         if self.discovered != discovered {
-            self.discovered = discovered.clone();
-            events.push(Event::Discovered { hosts: discovered });
+            self.discovered = discovered;
+            self.candidates_stale = true;
         }
         for agent in &self.subscribed {
             let session = session(model, *agent);
@@ -917,6 +1043,40 @@ fn keeps_its_rows(model: &Model, agent: AgentId, host: Option<model::HostId>) ->
         // The machine that owned it has stopped answering. Nothing has said
         // this agent is gone, only that nobody can be asked about it.
         None => host.is_some_and(|host| !model.host_online(host)),
+    }
+}
+
+/// The ask a fleet row names, when the agent is stopped on a permission or a
+/// question. A finished turn also reads as needing you, but asks nothing.
+fn waiting_ask(model: &Model, card: &ui_state::AgentCard) -> Option<AskDto> {
+    if !matches!(
+        model.effective_attention(card),
+        Attention::NeedsYou {
+            why: Why::Permission | Why::Question
+        }
+    ) {
+        return None;
+    }
+    let agent = card.agent.id;
+    match card.structured_protocol()? {
+        StructuredProtocol::ClaudePtyTranscript => model
+            .claude(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::ClaudePty),
+        StructuredProtocol::Codex => model
+            .codex(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::Codex),
+        StructuredProtocol::ClaudeSdk => model
+            .claude_sdk(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::ClaudeSdk),
     }
 }
 

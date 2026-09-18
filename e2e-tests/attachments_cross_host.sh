@@ -117,7 +117,8 @@ write(config, {
     "installation_config": str(root / "installation.yaml"),
     "socket_path": str(root / "profiles" / (profile_id + ".sock")),
     "state_path": str(directory / "state" / "state.yaml"),
-    "data_dir": str(directory / "data"), "tcp_port": int(sys.argv[3]),
+    "data_dir": str(directory / "data"),
+    "lan": {"listen": True, "port": int(sys.argv[3])},
 })
 print(config)
 PYCONFIG
@@ -233,7 +234,7 @@ pair_from_a() {
   wait_file_text 20 "$pair_log" 'Pairing PIN:' || fail "$label did not publish a LAN PIN"
   pin=$(sed -n 's/^Pairing PIN: //p' "$pair_log" | head -n 1)
   [ -n "$pin" ] || fail "could not parse LAN PIN for $label"
-  printf '%s\n' "$pin" | timeout 60 "$amux_bin" --config "$a_config" pair --connect "127.0.0.1:$responder_port" > "$scratch/pair-$label-client.log" 2>&1 || {
+  printf '%s\n' "$pin" | timeout 60 "$amux_bin" --config "$a_config" pair "127.0.0.1:$responder_port" > "$scratch/pair-$label-client.log" 2>&1 || {
     sed -n '1,120p' "$scratch/pair-$label-client.log" >&2
     fail "LAN PIN pairing failed for $label"
   }

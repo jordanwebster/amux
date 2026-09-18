@@ -21,6 +21,7 @@ live_init() {
   scratch=$(mktemp -d /tmp/amux-live.XXXXXX)
   chmod 700 "$scratch"
   pair_pid=
+  fixture_pid=
   trap live_cleanup EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
@@ -43,6 +44,7 @@ live_cleanup() {
   live_exit=$?
   trap - EXIT HUP INT TERM
   [ -z "$pair_pid" ] || kill "$pair_pid" 2>/dev/null || true
+  [ -z "$fixture_pid" ] || kill "$fixture_pid" 2>/dev/null || true
   if [ "$live_exit" -ne 0 ]; then
     live_say "FAIL: capture exited $live_exit; incomplete evidence"
     for live_pane in $(live_tmux list-panes -a -F '#{pane_id}' 2>/dev/null); do
@@ -74,7 +76,7 @@ ui:
   color: ansi
 EOF
   if [ -n "${2:-}" ]; then
-    printf 'tcp_port: %s\n' "$2" >> "$scratch/host-$1.yaml"
+    printf 'lan:\n  listen: true\n  port: %s\n' "$2" >> "$scratch/host-$1.yaml"
   fi
 }
 

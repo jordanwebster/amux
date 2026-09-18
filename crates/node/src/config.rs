@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 pub use settings::{
-    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
-    ProfileConfig, ThemeSetting, UiSettings,
+    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LanConfig, LeaderKey,
+    OpenMode, ProfileConfig, ThemeSetting, UiSettings,
 };
 
 use crate::installation::{InstallationSettings, ProfileId, ProfilePaths};
@@ -68,7 +68,7 @@ pub(crate) fn installation_settings(config: &InstallationConfig) -> Installation
         keymaps_dir: config.keymaps_dir.clone(),
         minimum_client_versions: config.minimum_client_versions.clone(),
         update_manifest_url: config.update_manifest_url.clone(),
-        status_reporters: crate::update::StatusReporters::MarkerFiles,
+        status_reporters: crate::update::StatusReporters::UpdateMarkerFiles,
     }
 }
 

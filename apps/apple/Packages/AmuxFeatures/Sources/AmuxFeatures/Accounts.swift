@@ -9,6 +9,8 @@ public enum AccountsAction: Equatable, Sendable {
     /// Sign back into an account this phone still remembers.
     case signIn(AccountId)
     case signOut(AccountId)
+    /// Take an account off this phone, leaving it on amux.sh.
+    case remove(AccountId)
     case delete(AccountId)
     /// Open what this account has bought.
     case subscription
@@ -225,20 +227,17 @@ public struct YouScreen: View {
     private let accounts: AccountRegistry
     private let appearance: Appearance?
     private let identity: String?
-    private let debugTools: Bool
     private let actions: @MainActor (AccountsAction) -> Void
 
     public init(
         accounts: AccountRegistry,
         appearance: Appearance? = nil,
         identity: String? = nil,
-        debugTools: Bool = false,
         actions: @escaping @MainActor (AccountsAction) -> Void
     ) {
         self.accounts = accounts
         self.appearance = appearance
         self.identity = identity
-        self.debugTools = debugTools
         self.actions = actions
     }
 
@@ -253,6 +252,14 @@ public struct YouScreen: View {
                         .padding(.top, 8)
                         .identified("you.title", value: "You")
                     accountList
+                    // Offered here and nowhere above it. A phone with nobody
+                    // signed in is not a broken phone — it pairs and it runs
+                    // agents on this network — so the account is put where
+                    // somebody has come looking for one, said as the thing it
+                    // adds rather than as something missing.
+                    if !signedIn {
+                        SignInCallToAction(identifier: "you.signIn") { actions(.add) }
+                    }
                     if let entry = accounts.selectedAccount { account(entry) }
                     phone
                     help
@@ -267,6 +274,10 @@ public struct YouScreen: View {
         .identified("you", value: accounts.selectedAccount?.account.email ?? "none")
     }
 
+    /// Whether any account on this phone is signed in. An account listed with
+    /// Sign In beside it is remembered, not signed in.
+    private var signedIn: Bool { accounts.accounts.contains(where: \.signedIn) }
+
     private var accountList: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "Accounts")
@@ -275,6 +286,18 @@ public struct YouScreen: View {
                     AccountRow(
                         entry: entry, selected: entry.id == accounts.selected, actions: actions)
                         .padding(.horizontal, 14)
+                        // On the row itself, because the account's own section
+                        // below is only ever the selected account's, and an
+                        // account signed out of is the one most likely to be
+                        // taken off a phone.
+                        .contextMenu {
+                            Button(role: .destructive) { actions(.remove(entry.id)) } label: {
+                                Label("Remove from This Phone", systemImage: "minus.circle")
+                            }
+                        }
+                        .accessibilityAction(named: "Remove from This Phone") {
+                            actions(.remove(entry.id))
+                        }
                     rule(inset: 14)
                 }
                 Button { actions(.add) } label: {
@@ -302,14 +325,20 @@ public struct YouScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: entry.name)
             VStack(spacing: 0) {
+                // Headed by what it buys rather than by what it is called.
+                // A subscription is the only thing anybody pays amux for and
+                // the relay is the only thing it carries, so the row that
+                // reports one says which: an account with nothing bought is
+                // not an account with nothing working.
                 row(
-                    entry.entitlement.noun, value: entry.entitlement.summary,
-                    id: "subscription"
+                    "Relay", value: entry.entitlement.summary, id: "subscription"
                 ) {
                     actions(.subscription)
                 }
                 rule()
                 action("Sign Out", id: "signOut") { actions(.signOut(entry.id)) }
+                rule()
+                action("Remove from This Phone", id: "remove") { actions(.remove(entry.id)) }
                 rule()
                 // The one destructive thing on the page, in the colour this
                 // app keeps for exactly that.
@@ -383,13 +412,9 @@ public struct YouScreen: View {
                 glyphRow("Contact Support", glyph: "envelope", id: "support") {
                     actions(.support)
                 }
-                // Only where the tools to write one exist. A build a person
-                // installs has no report to send.
-                if debugTools {
-                    rule(inset: 14)
-                    glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
-                        actions(.report)
-                    }
+                rule(inset: 14)
+                glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
+                    actions(.report)
                 }
             }
             Text("A report includes a screenshot and available session and host records.")
@@ -410,7 +435,7 @@ public struct YouScreen: View {
         Button(action: press) {
             FieldRow(label: title, value: value, mono: mono)
         }
-        .buttonStyle(.amuxRow)
+        .buttonStyle(.amuxPush)
         .accessibilityElement(children: .combine)
         .identified("you.\(id)", label: title, value: value)
     }

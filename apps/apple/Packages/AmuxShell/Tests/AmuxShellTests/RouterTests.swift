@@ -29,6 +29,8 @@ private final class RecordingLoader: RouteLoader {
 
 @MainActor
 final class RouterTests: XCTestCase {
+    private let machine = HostId(UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!)
+
     private func agent() -> AgentId { AgentId(UUID()) }
 
     /// Leaving a page is said once, however it was left: by the app popping,
@@ -135,10 +137,10 @@ final class RouterTests: XCTestCase {
         let router = Router()
         XCTAssertEqual(router.tab, .agents)
 
-        router.open(.pairByCode(nil))
+        router.open(.pairByCode(machine))
 
         XCTAssertEqual(router.tab, .hosts)
-        XCTAssertEqual(router.path, [.pairByCode(nil)])
+        XCTAssertEqual(router.path, [.pairByCode(machine)])
         // The tab that was on show is where it was left.
         XCTAssertEqual(router.path(.agents), [])
     }
@@ -179,7 +181,7 @@ final class RouterTests: XCTestCase {
         let router = Router()
         let agent = agent()
         router.open(.conversation(agent))
-        router.open(.pairByCode(nil))
+        router.open(.pairByCode(machine))
 
         router.popToRoot()
 
@@ -219,7 +221,7 @@ final class RouterTests: XCTestCase {
         // the machine is one of three answers on the page rather than the
         // subject of it, and what it leaves behind is a conversation.
         XCTAssertEqual(Route.newAgent.tab, .agents)
-        XCTAssertEqual(Route.pairByCode(nil).tab, .hosts)
+        XCTAssertEqual(Route.pairByCode(machine).tab, .hosts)
         XCTAssertEqual(Route.host(HostId(UUID())).tab, .hosts)
         XCTAssertEqual(Route.accounts.tab, .you)
     }

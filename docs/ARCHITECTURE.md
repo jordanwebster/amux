@@ -1,17 +1,17 @@
 # The amux system architecture
 
-**Status**: current (2026-09-05). This document describes the system —
+**Status**: current (2026-09-14). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
-links, frames, tunnels, the routing rules, and the pairing flow. When this
+carriers, links, streams, channels, the routing rules, and the pairing flow. When this
 document and the code disagree, the code and the spec suite
-(`crates/amux/tests/spec/`) win.
+(`crates/testnet/tests/spec/`) win.
 
 ## Processes and deployment shapes
 
 `amux server start` runs an **installation**: one daemon process supervising
 any number of **profiles**. A profile is a complete amux device, with its own
-key, `host_id`, trust store, agents, artifacts, routing, tunnels, local socket
+key, `host_id`, trust store, agents, artifacts, routing, links, local socket
 and at most one cloud link. `Installation` (`installation/`) owns the registry,
 exclusive root lock and profile lifecycle; each `ProfileRuntime` (`profile/`)
 owns that device's services. Startup attempts every profile independently and
@@ -31,8 +31,9 @@ below describes storage, credentials and lifecycle calls. Without the
 
 `amux server start --cloud` instead runs a **cloud relay**
 (`ServerMode::CloudRelay` in `server.rs`). It mints a throwaway `host_id`, loads
-no device identity, and starts only the JWT-gated `LinkService`. Its per-user
-routing instances are forwarding infrastructure, not device profiles.
+no device identity, and accepts token-authenticated links over QUIC and a
+TLS-over-TCP fallback. Its per-user routing instances are forwarding
+infrastructure, not device profiles.
 
 Around the daemon sit its clients and consumers:
 
@@ -55,7 +56,7 @@ Around the daemon sit its clients and consumers:
 - **Test harnesses**: the `testnet` support package builds isolated embedded
   installations through public APIs and owns reusable cross-package scenarios.
   Node's own specification suite uses a private white-box harness for real
-  identities, trust stores, localhost TCP with device mTLS and an optional
+  identities, trust stores, loopback QUIC with device mTLS and an optional
   in-process cloud relay. `crates/e2e-runner` drives real compiled binaries end
   to end.
 
@@ -71,8 +72,11 @@ Logging into another account cannot rebind an existing profile. First login
 can adopt a pristine unbound profile silently; retained trust, agents or
 artifacts require confirmation before adoption.
 
-Every eligible bound profile maintains its cloud link regardless of which
-profile a client views. Logout removes its credential and cloud link but
+Every eligible bound profile maintains exactly one cloud link through
+`CloudLink`, regardless of which profile a client views. The manager owns
+connect, retry, token refresh, entitlement refresh and carrier selection, and
+publishes all changes through the profile's `Observed` status stream. Logout
+removes its credential and cloud link but
 preserves its account reservation, key, trust and agents. Logging back into
 the same account reconnects the same device. Pause retains the credential and
 survives restart; resume reconnects it. Both leave local and direct peer
@@ -93,7 +97,7 @@ the account or label, names each profile's directory and socket:
 |---|---|
 | `registry.yaml`, `lock` | Installation registry and exclusive ownership |
 | `state/last-profile` | Client-side last-used UUID; never a server-wide selection |
-| `profiles/<UUID>/config.yaml` | Profile paths, cloud URL, optional LAN `tcp_port`, absolute `installation_config` reference |
+| `profiles/<UUID>/config.yaml` | Profile paths, cloud URL, LAN listener settings, absolute `installation_config` reference |
 | `profiles/<UUID>/credentials.yaml` | Profile credential, mode `600` |
 | `profiles/<UUID>/data/` | Identity, trust, agents, artifact cache and default reports |
 | `profiles/<UUID>/state/state.yaml` | Profile runtime state |
@@ -129,9 +133,13 @@ in a bounded in-process ledger; use the same UUID when retrying the same request
 and a new UUID for a new operation. Rename and delete also carry the revision
 the caller observed.
 
-`amux init` creates the installation and an unbound profile, asking about
-keep-awake. `amux profiles` lists profiles; `--profile <name|UUID>` selects one
-for commands such as `amux --profile Work list` or
+`amux init` creates the installation and an unbound profile, asking what the
+host should be called and whether to keep it awake. In scripts,
+`amux init --name <NAME>` sets the host name without prompting. Changing the
+name with `--name` or `--reset` while the server is running requires a restart
+before the new name is advertised. `amux profiles` lists profiles, and
+`--profile <name|UUID>` selects one for commands such as
+`amux --profile Work list` or
 `amux --profile Work profile pause`. Successful client selections remember the
 UUID, so renaming does not change the default device. An explicit unknown or
 ambiguous selector fails instead of falling back. Managed agent hooks and MCP
@@ -196,8 +204,8 @@ credentials across relaunch and handle refresh rotation safely on cancellation.
 
 Obtain a profile's agent API with `installation.client(id)?` and its
 `ProfileAdmin` with `installation.admin(id).await?`. Use the admin handle for
-`start_pin_pairing`, `start_qr_pairing`, `pair_pin_cloud_peer`,
-`pair_qr_cloud_peer`, `list_peers` and `unpair`; pairing and trust administration
+`start_pin_pairing`, `start_qr_pairing`, `begin_pair_pin`, `begin_pair_qr`,
+`confirm_pair`, `abandon_pair`, `list_peers` and `unpair`; pairing and trust administration
 are separate from the screen's `Client`. Keep the installation alive while
 replacing screen clients: dropping the last client stops no profile or cloud
 connector. Lifecycle calls (`logout`, `pause`, `resume`, `rename`, `delete`)
@@ -207,7 +215,7 @@ login; deletion removes its keys, trust and agents. Clear host-owned secrets
 in the host's storage as part of signing out.
 
 Await `installation.host_suspend()` when the host becomes inactive to tear
-down every cloud link while retaining identities, trust and local API access.
+down network links while retaining identities, trust and local API access.
 Await `installation.host_resume()` on return to request fresh credentials and
 reconnect eligible profiles independently; rejected credentials in one account
 leave other accounts connected. Recreate remote subscriptions after resumption;
@@ -269,11 +277,22 @@ A Codex-session preparation mutex preserves one-spawn fanout, while the Codex
 runtime mutex is held only to snapshot or publish cache state.
 
 Each desktop profile owns a **local Unix socket** (`ProfileConfig.socket_path`,
-mode `600`) for its clients. Its **external TCP listener** (`tcp_port`) is off
-by default; LAN-direct reachability requires a separate opt-in port for each
-profile and feeds that profile's dispatcher. Outbound, each profile dials its
-cloud service (TCP + WebPKI TLS + JWT) when eligible and re-dials the direct
-reachabilities in its own trust store.
+mode `600`) for its clients. Its **LAN listener** is on by default at an
+ephemeral port (`lan.listen: true`, `lan.port: 0`), and discovery advertises the
+actual bound port while the listener is up. A profile can pin the port for a
+firewall or turn the listener off. The listener is a QUIC endpoint using the
+profile's pinned mutual-TLS identity; direct TCP does not exist. Outbound, each
+eligible profile races QUIC to its cloud relay against the TLS-over-TCP
+fallback and redials direct QUIC reachabilities from discovery and its trust
+store.
+
+Discovery (`discovery/`) advertises and browses `_amux._udp`. The SRV record's
+port is the listener's actual bound UDP port; TXT carries only protocol version
+and host id. `Found` and `Lost` maintain a candidate/address cache, never trust
+or presence. The browser is a standing subscription and re-queries on startup,
+network change, wake, a dropped direct link, a pairing window and `amux peer
+list`. Desktop profiles use mDNS; specs and the iPhone's `NWBrowser` adapter
+feed the same runtime contract through `ScriptedDiscovery`.
 
 ## Identity and the trust store
 
@@ -294,7 +313,7 @@ using two accounts pair once per account; a key pinned by one profile grants
 no authority in another profile on the same installation.
 
 The trust store (`trust.rs`) maps
-`host_id → { pubkey, name, paired_at, reachabilities }`. It is the entire
+`host_id → { pubkey, name, paired_at, reachabilities, signed_in }`. It is the entire
 trust model: a pinned pubkey is what lets a peer's mTLS handshake
 terminate into the trusted services. Entries are added only by successful
 pairing and removed by local revocation (`amux unpair`) or profile deletion.
@@ -303,19 +322,29 @@ trust. The store is local-only — never sent
 to the cloud, never synchronized between devices.
 
 `reachabilities` is not trust; it is the list of **dialer-responsibility
-markers** this device learned as an initiator: `Cloud`, `DirectTcp { addr }`
-(the listener address it dialed), or `Ssh { target, profile }` (the SSH
+markers** this device learned as an initiator: `Cloud`, `Direct { addrs }`
+(the listener addresses that have worked), or `Ssh { target, profile }` (the SSH
 destination and remote profile UUID). SSH pairing exchanges that UUID alongside
 the device identity, so reconnecting runs `amux relay --profile <UUID>` even
 after a remote rename or default-selection change. Re-establishment is always
-the dialer's job: on startup the `ReachabilityLinkConnector`
-(`services/reachability.rs`) walks the
-store and dials every `DirectTcp`/`Ssh` entry; `Cloud` entries need no
-action because the cloud connector brings up that link separately. The
+the dialer's job: the `ReachabilityLinkConnector` (`services/reachability.rs`)
+dials freshly discovered addresses before stored ones and replaces the stored
+set with the address that succeeds. It runs on startup for desktop profiles and
+while the host is in the foreground for embedded profiles. `Ssh` entries are
+dialed from storage; `Cloud` entries need no action because the cloud connector
+brings up that link separately. The
 acceptor side of a pairing records no reachability it didn't dial — an
 accepted socket's source port is not a reusable address. A trusted peer
-with an empty list is a peer we trust but have no stored way to reach;
-it shows up offline until it dials us.
+with an empty list is dialed as soon as discovery finds it. Without a current
+advertisement or another route it remains offline.
+
+`DirectDialPolicy` makes the shape-specific lifecycle explicit. `OnStart` is
+the desktop policy: subscribe, query, and maintain direct links for the daemon's
+lifetime. `WhileForeground` is the phone policy: browsing and direct links are
+active only while the app is active, direct links close on background, and
+resume queries and redials. `Never` is reserved for harnesses that must not
+dial. Listening remains independently controlled by the profile's listener
+setting.
 
 ## Servers and connection admission
 
@@ -326,7 +355,7 @@ connections. The installation serves administration separately:
 | Server | Hosts | Fed by |
 |---|---|---|
 | **Installation front door** | `ProfileService`, `InstallationService` | Installation Unix socket; in-process owner channels |
-| **Trusted Server** | `ClientService`, `AgentService`, `LinkService` | Local Unix socket; pinned-mTLS streams from the dispatcher |
+| **Trusted Server** | `ClientService`, `AgentService` | Local Unix socket; pinned-mTLS streams from the dispatcher |
 | **Pairing Server** | `PairingService` | Anonymous-TLS streams from the dispatcher, only while a pairing window is open |
 
 The front door is separate from both profile servers. The split exists so
@@ -340,11 +369,11 @@ services), as was a server-per-connection (needless lifecycle churn).
 ## The dispatcher
 
 `dispatcher.rs` is the single admission point for every inbound stream
-that needs a TLS handshake. Two sources feed it: sockets accepted on the
-external TCP listener, and inbound tunnels that terminate at this daemon
-(the `TunnelPool` hands each one over as a byte stream). Both get the
-same treatment — the dispatcher always presents the device's self-signed
-certificate and *requests* a client certificate:
+that needs a TLS handshake. Two sources feed it: native streams accepted from
+the profile's QUIC endpoint and streams addressed to this profile over an
+existing relay or SSH link. Both get the same treatment: the dispatcher
+presents the device's self-signed certificate and *requests* a client
+certificate.
 
 | Handshake outcome | Authority granted |
 |---|---|
@@ -355,7 +384,7 @@ certificate and *requests* a client certificate:
 
 The `host_id` bound at the handshake is load-bearing: a `Hello` whose
 `host_id` contradicts the mTLS-bound identity is rejected, so a paired
-peer cannot impersonate another peer at the link layer, and tunnel-borne
+peer cannot impersonate another peer at the link layer, and relayed
 calls carry the authenticated peer identity into the services.
 
 The profile's local Unix socket bypasses the dispatcher entirely: arrivals there
@@ -364,13 +393,16 @@ OS file permissions as the gate. SSH is deliberately **local-equivalent**:
 `amux relay --profile <UUID>` bridges the SSH stream into that profile's socket,
 so anyone who can SSH into the daemon's account already has what the socket
 grants — that is the existing OS trust boundary, not a new one. Peer *calls* still
-authenticate uniformly: every call rides a tunnel, and every tunnel runs
-a pinned mTLS handshake at its terminating dispatcher, whatever transport
-its frames crossed (an SSH link confers no call authority by itself).
+authenticate uniformly: every channel runs a pinned mTLS handshake at its
+terminating dispatcher, whatever carrier supplied its stream. An SSH link
+confers no call authority by itself.
 
-The external listener defends itself: TLS handshakes are rate-limited
-per source IP (10/minute, sliding window), capped at 128 concurrent, and
-timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
+The QUIC front validates a source address with a stateless retry and applies
+its per-source rate limit before accepting the connection, so neither QUIC nor
+TLS state is allocated first. Handshakes are capped at 128 concurrent and
+timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`). Once
+admitted, the first bidirectional stream is the link control stream; later
+streams are classified by their destination preface and pinned handshake.
 
 ## Service surface map
 
@@ -378,9 +410,8 @@ timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
 |---|---|---|
 | `ProfileService` | Installation front door | Local installation owners over the front-door socket / in-process |
 | `InstallationService` | Installation front door | Local installation owners over the front-door socket / in-process |
-| `ClientService` | Profile's Trusted Server | Local clients over its Unix socket / in-process; paired peers over tunnels, with the same API |
+| `ClientService` | Profile's Trusted Server | Local clients over its Unix socket / in-process; paired peers over authenticated channels, with the same API |
 | `AgentService` | Trusted Server | Local clients and paired peers (this is what remote sessions ride) |
-| `LinkService.Connect` | Trusted Server, and the cloud relay | Adjacent nodes establishing a link, over any link transport |
 | `PairingService.Pair` | Pairing Server | Anonymous-TLS callers during an open pairing window |
 
 `ProfileService` lists and watches profiles, manages their lifecycle and
@@ -390,7 +421,7 @@ pairing candidates and profile diagnostics. Each
 profile-specific request names its UUID. `InstallationService` provides
 installation info and diagnostics, shutdown, and suspend/resume across profiles
 for update. Neither service is registered on profile sockets, LAN connections
-or tunnels: a paired peer cannot shut down, suspend or resume the installation
+or remote channels: a paired peer cannot shut down, suspend or resume the installation
 or administer trust.
 
 `ClientService` is the client API: host and agent inventory and subscriptions,
@@ -400,12 +431,22 @@ including creating and deleting them. It grants no installation administration.
 
 Host inventory contains the profile's local host and trusted peers, identically
 for local and remote callers. Untrusted-but-online cloud hosts appear only in
-`ProfileService.ListPairingCandidates` on the front door. Each `HostEntry` carries
-`online` (routing-derived presence) and `last_dial_error` (the most
-recent failed dial, cleared when a route comes up); nothing probes, so
-"unknown" is simply `!online` with no recorded error.
+`ProfileService.ListPairingCandidates` on the front door. Each `HostEntry`
+carries its selected `via` route (`direct`, `relay`, `ssh`, or `offline`), the
+peer's last stated `signed_in` fact and `last_dial_error`. Presence is derived
+from routing claims rather than probes. A relay route on a free cloud link is
+shown as away; no route and no relay presence is offline.
 
-`AgentService` is what tunnels exist for: a peer lists another daemon's
+Each agent record carries `last_activity`, dated by the owning host where the
+activity happened: a Claude transcript row at its own timestamp, a hook, SDK
+conversation message or Codex turn event when it arrives. Bookkeeping amux
+writes itself, session and connection notices, and history re-read on resume
+are not activity, so a restarted daemon does not make every agent look active.
+The value is persisted with suspended agents. Clients that do not stream an
+agent learn about new activity from inventory updates, which the host sends
+for agents whose activity has moved, at most every five seconds.
+
+`AgentService` is the peer-facing API: a peer lists another daemon's
 agents, creates or deletes them, delivers daemon-authored message envelopes,
 updates work status, attaches to a session, round-trips terminal I/O, and
 serves repository discovery, artifact put/get and diff requests on the owning
@@ -418,8 +459,8 @@ described in [`A2A.md`](./A2A.md).
 `Client::list_repositories` uses the `ListRepositories` RPC on both services.
 It selects a host by identity and sends an optional
 case-insensitive path/name query and a total result limit. `ClientService` routes
-it to that host's `AgentService` over the same authenticated direct connection or
-relay tunnel used for agent operations. The host owns the search roots; callers
+it to that host's `AgentService` over the same authenticated direct or relayed
+channel used for agent operations. The host owns the search roots; callers
 cannot supply a directory to scan.
 
 Configure `repository_roots` as a list of directories in the installation's YAML
@@ -457,8 +498,8 @@ names its id, is swept after one hour if still ephemeral, and is deleted with
 the agent if pinned. A five-minute background pass visits loaded owners only.
 
 `PutArtifact`, `GetArtifact`, and `Diff` exist on both trusted services.
-`ClientService` resolves the agent and forwards a remote call through the
-ordinary tunnel to `AgentService`; artifact bytes never pass through a session
+`ClientService` resolves the agent and forwards a remote call through a fresh
+bulk channel to `AgentService`; artifact bytes never pass through a session
 subscription. `SendInput` carries only a pin list. After validating and pinning
 that list, the owning daemon writes an `amux.attachments` metadata row before
 the provider input; it replays all pinned refs when a session subscription
@@ -475,59 +516,56 @@ surfaces.
 
 ## The cloud deployment
 
-The cloud relay is multi-tenant and minimal. It serves exactly one thing:
-`LinkService.Connect` behind a JWT interceptor
-(`LinkAuthInterceptor` → `JwtCloudLinkAuthenticator`), on a TCP listener
-wrapped in ordinary WebPKI server-auth TLS (certificate and key supplied
-via `AMUX_TLS_CERT` / `AMUX_TLS_KEY`). Devices validate the relay's
-hostname certificate like any public endpoint and authenticate themselves
-with a JWT from the OAuth device flow; the fire-and-forget `Reauth`
-refresh keeps a healthy link undisturbed across token expiry.
+The cloud relay is multi-tenant and minimal. It listens on QUIC and on ordinary
+WebPKI TLS over TCP, using the same configured certificate and port number for
+UDP and TCP. QUIC is the preferred carrier. The TCP path wraps one ordered
+connection in a symmetric multiplexer so either side can open independent
+streams; it is a fallback for networks that block UDP, not a direct-device
+carrier.
 
-Tenancy is per-user by construction: `CloudLinkService` holds one
-routing-services instance (`RoutingCore` + `TunnelPool` +
-`ConnectionManager`) per authenticated `user_id`, created on first link
-and shared by that user's devices. Adjacency events fan out only within a
-user's instance, so presence is scoped per user, and frames are only ever
-forwarded between one user's devices. Two devices logged into different
-cloud users cannot see or reach each other through the relay — they can
-still pair and connect via LAN or SSH, which never involve the cloud.
+A device gets a JWT from the account service and sends it in its link `Hello`.
+The relay requires the token's account and tier claims before admitting the
+link. `Reauth` refreshes both without disturbing a healthy link. Tenancy is
+per-user by construction: one routing instance is created for an authenticated
+user and shared only by that user's devices. Neighbor changes and stream copies
+never cross user boundaries. Devices on different accounts can still pair and
+connect on the LAN or over SSH, where the cloud is absent.
 
-What the cloud structurally cannot do follows from what it doesn't have.
-It holds no device identity and is pinned in nobody's trust store, so it
-can never terminate a tunnel into anyone's trusted services: it cannot
-create agents, read session traffic, or impersonate a device. Its own
-incoming-tunnel sink discards everything
-(`spawn_discard_incoming_tunnels_task`) — there is no service behind the
-relay to tunnel into. Pairing traffic crossing the relay is opaque
-ciphertext like everything else; the cloud is never told pairing is
-happening. What it *does* see is metadata: `host_id`s, JWT-derived user
-ids, names and capabilities from handshakes it relays, online status, and
-traffic volume/timing.
+The tier belongs to a token-admitted link, not to a trusted peer. A free link
+can exchange control messages and presence, but `Piper` refuses an agent or
+pairing stream when either cloud-admitted endpoint link has tier `free`. A pro
+link may carry it. Links admitted by pinned device keys have no tier, so an
+always-on paired device acting as a relay never performs a subscription check.
 
-A device daemon bounds the blast radius of a compromised relay. Inbound
-tunnel opens arriving over the cloud link are rate-limited (30/minute,
-sliding window — excess frames are dropped while the link stays up), and
-the routing table caps untrusted hosts at 1000 with oldest-inactive
-eviction; trusted peers are exempt and never evicted
-(`resource_limits.rs`, `routing/core.rs`). A self-hosted relay needs none
-of this machinery explained separately: relaying is something every node
-can do, so an always-on paired peer is a relay with a pinned key.
+What the cloud structurally cannot do follows from what it lacks. It has no
+device identity and is pinned in nobody's trust store, so it cannot complete
+the endpoint handshake, create agents, read session traffic, or impersonate a
+device. It sees metadata: host ids, JWT-derived user ids, names and capabilities
+from link handshakes, online status, carrier, and traffic volume and timing.
+Stream opens are limited to 30 per minute per source device, and a routing
+instance caps untrusted hosts at 1000 with oldest-inactive eviction; trusted
+peers are exempt (`link/piper.rs`, `resource_limits.rs`, `routing/core.rs`).
+
+On each device, `CloudLink` is the only cloud-link manager. It obtains and
+refreshes tokens, races QUIC against TCP after a 300 ms fallback delay, remembers
+a UDP-blocked relay host for one hour, and reports `Observed::Connected { tier,
+carrier }` or the appropriate connecting, retrying, authentication, update, or
+startup state. Free links refresh their tier every three minutes; the device
+that completes a purchase requests an immediate refresh. The installation's
+profile watch feeds that same status to the CLI, TUI and phone bridge; there is
+no parallel entitlement signal.
 
 ## Internal layering
 
-Each profile owns four networking components under its services, each with
-one job. No profile shares their link, route or tunnel state with another:
+Each profile owns four networking components under its services, each with one
+job. No profile shares link, route or channel state with another:
 
 **`LinkRegistry`** (`routing/link_registry.rs`) — the daemon's live links:
-`LinkId → writer` for every established link, each writer feeding frames
-into that link's `Connect` stream. It is the single source of truth for
-*wire* adjacency, and the adjacency-only advertising rule is structural
-here: every `NeighborUp`/`NeighborDown` a peer ever receives from us is
-emitted by the registry, under one lock, in registration order — there is
-no API for broadcasting anything else. Registering a link also reconciles
-the handshake's neighbor snapshot atomically, closing the gap between
-composing a snapshot and the link going live.
+`LinkId` to its control writer, close handle, authenticated admission and native
+carrier. It is the source of truth for wire adjacency. Every
+`NeighborUp`/`NeighborDown` a peer receives is emitted here, under one lock, in
+registration order. Registering a link atomically reconciles the handshake's
+neighbor snapshot with current adjacency.
 
 **`RoutingCore`** (`routing/core.rs`) — the routing table: our own direct
 adjacency (`directs`) and our neighbors' adjacency claims (`claims`).
@@ -536,36 +574,35 @@ to it or some neighbor claims to be — which is why presence reaches
 exactly two hops. `best_route` answers `Direct(link)` or `Via(relay)` and
 nothing longer. The untrusted-host cap lives here.
 
-**`TunnelPool`** (`tunnel/pool.rs`) — endpoint state for tunnels this
-daemon initiates or hosts, plus the relay forwarding rule. Only a
-`TunnelOpen` allocates state; data for an unknown id is dropped without
-allocation; closes are sent proactively on teardown. Forwarding consults
-only the `LinkRegistry` — a frame for `dst` is forwarded iff a direct
-link to `dst` exists — and keeps no per-tunnel state for relayed traffic.
-Terminating tunnels are surfaced as byte streams to the dispatcher, which
-runs the pinned mTLS handshake inside them.
+**`LinkCarrier`** (`link/carrier.rs`) — the carrier-neutral link interface. A
+link has one length-prefixed protobuf control stream and can open or accept
+native byte streams. `QuicCarrier` provides these directly on a quinn
+connection. `MuxCarrier` provides the same symmetric interface over the
+relay's TLS-over-TCP fallback and over SSH stdio. Session resumption and 0-RTT
+are disabled.
 
-**`ConnectionPool` / `ConnectionManager`** (`connection.rs`) — outbound
-channel selection over the two route shapes. There is exactly one
-materialization path: every peer call rides a tunnel, opened over a
-direct link (`dst = peer`, zero relays) or over a relay link. The pool
-caches one tonic channel per `(peer, route)`; the manager subscribes to
-routing events, keeps one active route per peer, prefers the link itself
-over any relay path, and swaps make-then-break — a cached channel is only
-as alive as the link under it, and a broken stream is the caller's signal
-to reconnect over whatever is now best. One learned guard: a route whose
-target advertises itself as a cloud relay is recorded but never eagerly
-tunneled into, because relays discard inbound tunnels and the handshake
-could only time out.
+**`Piper`** (`link/piper.rs`) — the relay forwarding rule. It reads only a
+stream's destination preface, finds an adjacent link, applies the cloud tier and
+rate rules, opens a matching stream, and copies bytes in both directions. It
+does not parse endpoint traffic or retain per-stream routing state.
+
+**`ChannelPool` / `ConnectionManager`** (`link/channels.rs`, `connection.rs`)
+— outbound channel selection over the two route shapes. The pool opens a link
+stream, runs the pinned endpoint handshake inside it, and returns a tonic
+channel. Ordinary calls and inventory subscriptions share a channel per peer
+and route; sessions and bulk transfers get independent streams. The manager
+subscribes to routing events, prefers direct over relay, and changes routes
+make-then-break.
 
 The **dispatcher** ties the inbound half together, and `services/startup/`
 wires all of it: routing services first, then the two servers, the
-listeners, the reachability connector, and (for cloud-attached daemons)
-the cloud link connector.
+QUIC listener, reachability connector, discovery subscription and, for a bound
+profile, its one `CloudLink`.
 
 ## What is deliberately deferred
 
 Key rotation and identity recovery (today: re-pair from a surviving
 peer), finer per-peer or per-method authorization for agent operations,
-LAN auto-discovery, and OS-keychain storage for the device key. Pairing
-remains the trust boundary for all of them.
+NAT traversal, push notifications, an Android discovery adapter, and
+OS-keychain storage for the device key. Pairing remains the trust boundary for
+all of them.

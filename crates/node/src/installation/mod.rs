@@ -12,9 +12,10 @@ pub mod rpc {
     pub use wire::{
         BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
         InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
-        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RenameProfileRequest,
-        ResumeAllRequest, SuspendAllRequest, SuspendReason, installation_service_client,
-        profile_service_client,
+        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RelayCarrier,
+        RenameProfileRequest, ResumeAllRequest, SuspendAllRequest, SuspendReason, Tier,
+        WatchProfilesRequest, WatchProfilesResponse, installation_service_client,
+        profile_service_client, watch_profiles_response,
     };
 }
 
@@ -38,7 +39,7 @@ pub use supervisor::{
 };
 
 pub use crate::profile::runtime::{InstallationSettings, Listeners};
-pub use crate::profile::status::Observed;
+pub use crate::profile::status::{Observed, RelayCarrier};
 pub mod registry;
 
 use std::path::PathBuf;
@@ -49,6 +50,8 @@ pub(crate) use paths::MAX_CODEX_SOCKET_PATH_BYTES;
 pub use paths::ProfilePaths;
 #[cfg(all(test, unix))]
 pub(crate) use paths::adjacent_codex_socket_path;
+#[cfg(unix)]
+pub use paths::adjacent_link_socket_path;
 pub use registry::{Binding, InstallationRoot, ProfileLabel, ProfileRecord, Registry};
 
 #[derive(Debug, thiserror::Error)]

@@ -39,6 +39,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         net,
         listener,
         [("host".into(), "host".into())].into(),
+        ["default".into()].into(),
         agents,
     );
     let exercise = async {
@@ -50,18 +51,24 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
             .unwrap()
             .to_owned();
         let qr = node::parse_qr_pairing_payload(&qr).unwrap();
-        assert_eq!(qr.cloud_url, client.cloud_url());
+        assert_eq!(qr.cloud_url.as_deref(), Some(client.cloud_url()));
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match client
-                    .admin()
-                    .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
-                    .await
-                {
+                let admin = client.admin();
+                // The relay route may not be up yet. Transport is the only
+                // variant that says the attempt never reached a verdict, so
+                // it is the only one worth waiting out.
+                let pending = match admin.begin_pair_qr(&qr).await {
+                    Ok(pending) => pending,
+                    Err(client::PairingError::Transport(_)) => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        continue;
+                    }
+                    Err(error) => panic!("pair recorded host: {error}"),
+                };
+                match admin.confirm_pair(pending).await {
                     Ok(_) => break,
-                    Err(client::ClientError::Protocol(node::ProtocolError::Unreachable {
-                        ..
-                    })) => {
+                    Err(client::PairingError::Transport(_)) => {
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     }
                     Err(error) => panic!("pair recorded host: {error}"),
@@ -260,6 +267,7 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
         net,
         listener,
         [("studio".into(), "studio".into())].into(),
+        ["default".into()].into(),
         agents,
     );
     let exercise = async {
@@ -271,18 +279,26 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             .unwrap()
             .to_owned();
         let qr = node::parse_qr_pairing_payload(&qr).unwrap();
-        assert_eq!(qr.cloud_url, client.cloud_url());
+        assert_eq!(qr.cloud_url.as_deref(), Some(client.cloud_url()));
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match client
-                    .admin()
-                    .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
-                    .await
-                {
+                let admin = client.admin();
+                // The relay route may not be up yet. Transport is the only
+                // variant that says the attempt never reached a verdict, so
+                // it is the only one worth waiting out.
+                let pending = match admin.begin_pair_qr(&qr).await {
+                    Ok(pending) => pending,
+                    Err(client::PairingError::Transport(_)) => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        continue;
+                    }
+                    Err(error) => panic!("pair recorded host: {error}"),
+                };
+                match admin.confirm_pair(pending).await {
                     Ok(_) => break,
-                    Err(client::ClientError::Protocol(node::ProtocolError::Unreachable {
-                        ..
-                    })) => tokio::time::sleep(Duration::from_millis(20)).await,
+                    Err(client::PairingError::Transport(_)) => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
                     Err(error) => panic!("pair recorded host: {error}"),
                 }
             }

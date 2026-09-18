@@ -7,14 +7,15 @@ import SwiftUI
 /// It exists because the answer used to be spread across four places that
 /// nothing reconciled: the agent's attention, whether this build can read its
 /// provider, whether the machine that owns it has answered, and whether that
-/// machine is online at all. The list row, the drawer row and the sentence
-/// VoiceOver reads each recombined a different subset by hand, so no single
+/// machine is online at all. The list row and the sentence VoiceOver reads
+/// each recombined a different subset by hand, so no single
 /// place said what a row could be — which is how two marks in the vocabulary
 /// came to mean nothing without anybody noticing.
 ///
-/// The marks are gone. A row draws one thing, the accent disc, for the one
-/// state that is waiting on a person; everything else is said in words on the
-/// third line, where `Idle` and `Finished · 4 files · +118 −40` already were.
+/// The marks are gone. A row draws one thing, the accent dot beside its age,
+/// for the one state that is waiting on a person; everything else is said in
+/// words on the third line, where `Idle` and `Finished · 4 files · +118 −40`
+/// already were.
 /// A word is more precise than a glyph and needs no vocabulary learnt first.
 enum RowState: Equatable {
     /// Stopped and cannot continue without you. The only case with a mark.
@@ -22,6 +23,10 @@ enum RowState: Equatable {
     case working
     /// The machine that owns this agent is not answering.
     case hostOffline(String)
+    /// The relay can see the machine that owns this agent and will not carry
+    /// anything to it on this account. The row is the cache, and it stays on
+    /// the list: the agent exists, it is simply not being watched.
+    case hostAway(String)
     /// Amux no longer trusts its own guess that a turn is running, and says
     /// nothing rather than guessing again. See `word`.
     case unheard
@@ -41,13 +46,21 @@ enum RowState: Equatable {
     /// offline host's agents to `unknown` whatever they last wanted. Reading
     /// the host directly rather than only through the attention is what also
     /// catches a remembered row, which keeps the attention it was cached with.
-    init(row: AgentRow, host: HostEntry?) {
+    init(row: AgentRow, host: HostEntry?, reach: HostReach? = nil) {
         if case .unknown(let provider) = row.card.agent.kind {
             self = .unsupported(provider)
             return
         }
-        if let host, !host.online {
-            self = .hostOffline(host.name)
+        if let host, !host.online || reach == .offline {
+            self = .hostOffline(PlaceNames.host(host.name))
+            return
+        }
+        // Listed and not live. Nothing here is stale — the last thing this
+        // phone was told is still the last thing that was true — but nothing
+        // is arriving either, and a row that said "Working" about an agent no
+        // stream is reaching would be this phone guessing.
+        if let host, reach == .away {
+            self = .hostAway(PlaceNames.host(host.name))
             return
         }
         switch row.attention {
@@ -75,12 +88,13 @@ enum RowState: Equatable {
     /// doubly wrong, because the core deliberately stopped asserting it. The
     /// row already carries the honest fact: the age in its top corner.
     ///
-    /// `needsYou` says nothing either, because its mark has already said it.
+    /// `needsYou` says nothing either: its row says what is wanted instead.
     var word: String? {
         switch self {
         case .needsYou, .unheard: nil
         case .working: "Working"
         case .hostOffline(let machine): "\(machine) offline"
+        case .hostAway(let machine): "\(machine) away"
         case .unsupported(let provider): provider
         case .finished: "Finished"
         case .idle: "Idle"
@@ -95,6 +109,9 @@ enum RowState: Equatable {
         // said "Cannot be read", which named this app's own limitation and
         // left a reader with nothing to do and no idea what the agent was.
         case .unsupported: "update amux to open it"
+        // The one thing a reader needs from this row: what it says happened
+        // is remembered rather than watched.
+        case .hostAway: "not live"
         // Whatever the turn changed. An agent that has gone quiet since
         // finishing changed exactly what it changed, and the numbers are the
         // readable part; an absent count is not a zero and is never drawn as
@@ -107,15 +124,17 @@ enum RowState: Equatable {
     /// Whether the word has already named the machine, so the row does not
     /// print it again on its trailing edge.
     var namesTheHost: Bool {
-        if case .hostOffline = self { return true }
-        return false
+        switch self {
+        case .hostOffline, .hostAway: true
+        default: false
+        }
     }
 
-    /// The mark, as the vocabulary the mark view speaks. Only a demand draws
-    /// anything; everything else reserves the space and stays empty.
-    var attentionMark: Attention {
-        if case .needsYou(let why) = self { return .needsYou(why: why) }
-        return .idle
+    /// Whether the row is waiting on a person, which is the one state a row
+    /// draws in the accent colour.
+    var needsYou: Bool {
+        if case .needsYou = self { return true }
+        return false
     }
 
     /// The state said aloud, for a reader who cannot see the row. Nothing
@@ -126,6 +145,7 @@ enum RowState: Equatable {
         case .needsYou(let why): why.spoken
         case .working: "Working"
         case .hostOffline(let machine): "\(machine) is offline"
+        case .hostAway(let machine): "\(machine) is away, not live"
         case .unheard: nil
         case .unsupported(let provider): "\(provider), update amux to open it"
         case .finished: "Finished"
@@ -141,6 +161,7 @@ enum RowState: Equatable {
         case .needsYou(let why): why.spoken
         case .working: "working"
         case .hostOffline: "host-offline"
+        case .hostAway: "host-away"
         case .unheard: "unheard"
         case .unsupported: "unsupported"
         case .finished: "finished"

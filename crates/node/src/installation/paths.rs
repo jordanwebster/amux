@@ -55,6 +55,7 @@ impl ProfilePaths {
             paths.data_dir.join("host_id"),
             paths.data_dir.join("trust.json"),
             paths.socket_path.clone(),
+            adjacent_link_socket_path(&paths.socket_path),
         ] {
             reject_symlink(&path)?;
         }
@@ -92,6 +93,11 @@ pub(crate) fn adjacent_codex_socket_path(server_socket_path: &Path) -> PathBuf {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(format!("c{hash:016x}.sock"))
+}
+
+/// The native-link ingress beside a profile's local gRPC socket.
+pub fn adjacent_link_socket_path(server_socket_path: &Path) -> PathBuf {
+    server_socket_path.with_extension("link.sock")
 }
 
 pub(super) fn private_directory(path: &Path) -> Result<(), InstallationError> {
@@ -144,4 +150,18 @@ pub fn validate_socket_path(path: &Path) -> Result<(), InstallationError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_link_socket_is_beside_the_profile_socket() {
+        let profile = Path::new("/tmp/amux/profiles/1234.sock");
+        assert_eq!(
+            adjacent_link_socket_path(profile),
+            Path::new("/tmp/amux/profiles/1234.link.sock")
+        );
+    }
 }

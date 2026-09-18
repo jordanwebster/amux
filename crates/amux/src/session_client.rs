@@ -453,17 +453,65 @@ pub(crate) async fn attach_for_ui(
 pub async fn list_agents(all: bool, config: &Config) -> Result<()> {
     let rpc = require_running_client(config, Some("amux list")).await?;
     let agents = rpc.list_agents().await?;
-    if agents.is_empty() {
-        println!("No agents running.");
-    } else {
-        println!("Running agents:");
-        for line in agent_list_lines(&agents, all, Utc::now()) {
-            println!("{line}");
-        }
-    }
+    let hosts = rpc.list_hosts().await?;
+    write_agent_list(&agents, &hosts, all, Utc::now(), io::stdout(), io::stderr())?;
 
     print_update_banner(&config.state_path);
     Ok(())
+}
+
+fn write_agent_list(
+    agents: &[node::Agent],
+    hosts: &[node::HostEntry],
+    all: bool,
+    now: DateTime<Utc>,
+    mut output: impl Write,
+    mut errors: impl Write,
+) -> io::Result<()> {
+    let blocked_hosts = payment_blocked_hosts(hosts);
+    let blocked_ids = blocked_hosts
+        .iter()
+        .map(|host| host.id)
+        .collect::<HashSet<_>>();
+    let reachable_agents = agents
+        .iter()
+        .filter(|agent| !blocked_ids.contains(&agent.host_id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if reachable_agents.is_empty() {
+        writeln!(output, "No agents running.")?;
+    } else {
+        writeln!(output, "Running agents:")?;
+        for line in agent_list_lines(&reachable_agents, all, now) {
+            writeln!(output, "{line}")?;
+        }
+    }
+
+    for host in blocked_hosts {
+        writeln!(
+            errors,
+            "{}: {}",
+            host.name,
+            node::ProtocolError::PaymentRequired
+        )?;
+    }
+
+    Ok(())
+}
+
+fn payment_blocked_hosts(hosts: &[node::HostEntry]) -> Vec<&node::HostEntry> {
+    let payment_message = node::ProtocolError::PaymentRequired.to_string();
+    let mut blocked = hosts
+        .iter()
+        .filter(|host| host.last_dial_error.as_deref() == Some(payment_message.as_str()))
+        .collect::<Vec<_>>();
+    blocked.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    blocked
 }
 
 type AgentKey = (Uuid, Uuid);
@@ -1263,6 +1311,7 @@ mod attach {
     async fn embedded_client() -> (node::Installation, Client, tempfile::TempDir) {
         let root = testnet::identity::short_installation_root();
         let installation = node::Installation::open(node::InstallationOptions {
+            discovery: None,
             relocation: Default::default(),
             root: node::InstallationRoot::OnDisk(root.path().into()),
             settings: node::InstallationSettings {
@@ -1324,6 +1373,7 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
             summary: None,
@@ -1339,6 +1389,44 @@ mod attach {
             host_id: Uuid::from_u128(99),
         });
         agent
+    }
+
+    #[test]
+    fn list_prints_reachable_agents_and_names_payment_blocked_hosts() {
+        let local_agent = listed_agent(1, "local-agent");
+        let mut away_agent = listed_agent(2, "away-agent");
+        away_agent.host_id = Uuid::from_u128(200);
+        let away_host = node::HostEntry {
+            id: away_agent.host_id,
+            name: "host-b".to_string(),
+            online: true,
+            version: Some("test".to_string()),
+            capabilities: Some(node::Capabilities::default()),
+            trust_status: node::HostTrustStatus::Trusted,
+            last_dial_error: Some(node::ProtocolError::PaymentRequired.to_string()),
+            via: node::HostVia::Relay,
+            signed_in: Some(true),
+            platform: None,
+        };
+
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+        super::write_agent_list(
+            &[local_agent, away_agent],
+            &[away_host],
+            false,
+            Utc::now(),
+            &mut output,
+            &mut errors,
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let errors = String::from_utf8(errors).unwrap();
+        assert!(output.contains("local-agent"));
+        assert!(!output.contains("away-agent"));
+        assert!(errors.contains("host-b"));
+        assert!(errors.contains(&node::ProtocolError::PaymentRequired.to_string()));
     }
 
     #[test]
@@ -1779,6 +1867,8 @@ mod attach {
             capabilities: None,
             trust_status: node::HostTrustStatus::Trusted,
             last_dial_error: Some("dial tcp: connection refused".to_string()),
+            via: node::HostVia::Offline,
+            signed_in: Some(true),
             platform: None,
         };
         let agent = node::Agent {
@@ -1793,6 +1883,7 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
             summary: None,

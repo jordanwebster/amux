@@ -202,10 +202,8 @@ pub enum ServerMsg {
         /// the shell (the wire does not mark the local host).
         local_host_id: Option<HostId>,
     },
-    /// Subscription state observed from the daemon's durable status marker.
-    CloudSubscriptionStatus {
-        required: bool,
-    },
+    /// The selected profile's cloud-link state from WatchProfiles.
+    CloudState(crate::model::CloudState),
     Disconnected {
         reason: DisconnectReason,
     },
@@ -254,7 +252,7 @@ pub enum DisconnectReason {
     /// `AuthError::Unauthenticated`.
     AuthenticationRequired,
     /// Mapped from `ProtocolError::PaymentRequired`.
-    SubscriptionRequired,
+    PaymentRequired,
     ApplicationShutdown,
 }
 
@@ -460,7 +458,7 @@ pub enum StreamCloseReason {
         message: String,
     },
     AuthenticationRequired,
-    SubscriptionRequired,
+    PaymentRequired,
     /// Closed by the shell executing `Effect::CloseStream`.
     ClientClosed,
 }

@@ -6,14 +6,19 @@ import SwiftUI
 /// nothing and navigates nowhere: it says what the person did and whoever
 /// presented it takes them there.
 public enum ConversationAction: Equatable, Sendable {
-    /// The fleet, asked for from inside the conversation.
-    case openDrawer
+    /// Leave the conversation for wherever it was opened from, which is the
+    /// Agents list unless it is an agent reached from its parent.
+    case back
     /// The changes this turn made, asked for from the chip.
     case openChanges
     /// Everything a conversation can be done to rather than said to.
     case overflow
     /// Reach the machine again now, rather than waiting for the next attempt.
     case retry
+    /// Buy the relay tunnel, asked for from the machine it would reach. Not a
+    /// retry: this machine will go on not answering until the account can open
+    /// a tunnel to it, and nothing on this screen can do that.
+    case subscribe
     /// What the person told the agent that was waiting on them.
     case answer(AskPanel, AskDecision)
     /// One of the agents this one started, asked for from the list of them.
@@ -105,6 +110,15 @@ public struct ConversationSubject: Equatable, Sendable {
     /// strength of not having heard yet is the same lie in the other
     /// direction.
     public let hostReachable: Bool
+    /// Whether the relay can see the machine that owns this agent and will not
+    /// carry anything to it on this account.
+    ///
+    /// Apart from `hostReachable` because they are opposite kinds of fact. A
+    /// machine that is not answering may answer in a minute and the screen
+    /// offers to ask again; a machine the relay can see will go on not
+    /// answering until somebody subscribes, and asking again would never
+    /// change it.
+    public let hostAway: Bool
     public let readable: Bool
     /// How long ago this agent last did anything, in the shortest true unit.
     /// Absent while the fleet that knows has not arrived.
@@ -137,7 +151,8 @@ public struct ConversationSubject: Equatable, Sendable {
 
     public init(
         name: String, host: String?, directory: String,
-        hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil,
+        hostReachable: Bool = true, hostAway: Bool = false, age: String? = nil,
+        ended: Ended? = nil,
         finished: Bool = false, working: String? = nil, readable: Bool = true
     ) {
         self.name = name
@@ -145,6 +160,7 @@ public struct ConversationSubject: Equatable, Sendable {
         self.host = host
         self.directory = directory
         self.hostReachable = hostReachable
+        self.hostAway = hostAway
         self.age = age
         self.ended = ended
         self.finished = finished
@@ -166,14 +182,16 @@ public struct ConversationSubject: Equatable, Sendable {
             name: row.name, host: fleet.host(row.hostId)?.name,
             directory: row.workingDirectory,
             hostReachable: fleet.host(row.hostId)?.online ?? true,
+            hostAway: fleet.reach(ofHost: row.hostId) == .away,
             age: row.age(at: fleet.orderedAt),
             ended: ended,
             finished: row.attention == .needsYou(why: .finished),
             working: row.working(at: fleet.orderedAt), readable: row.readable)
     }
 
-    /// "Studio · ~/src/amux", or just the directory while the machine that
-    /// owns this agent has not been heard from.
+    /// "~/s/amux · Studio", or just the directory while the machine that
+    /// owns this agent has not been heard from. Written short by
+    /// ``PlaceNames``; the place sheet has both in full.
     ///
     /// A machine that has gone away says so here instead of naming the
     /// directory. The directory has not changed, but it is the least useful
@@ -181,10 +199,23 @@ public struct ConversationSubject: Equatable, Sendable {
     /// be reached, and this line is the one place a reader is already looking
     /// to find out where this conversation lives.
     public var place: String {
+        let machine = host.map(PlaceNames.host)
         guard hostReachable else {
-            return [host, "unreachable"].compactMap { $0 }.joined(separator: " · ")
+            return [machine, "unreachable"].compactMap { $0 }.joined(separator: " · ")
         }
-        return [host, directory].compactMap { $0 }.joined(separator: " · ")
+        // The same substitution for the same reason: a directory on a machine
+        // nothing will reach is the least useful true thing on the screen, and
+        // this line is where a reader is already looking to find out why.
+        if hostAway { return [machine, "away"].compactMap { $0 }.joined(separator: " · ") }
+        return PlaceNames.place(host: host, directory: directory)
+    }
+
+    /// Where this agent can be written to from elsewhere: "refactor-auth/studio".
+    /// It is what a person copies in order to write to it from another agent,
+    /// a script or a terminal, so it is the name and the machine and nothing
+    /// else.
+    public var address: String {
+        [name, host?.lowercased()].compactMap { $0 }.joined(separator: "/")
     }
 }
 
@@ -195,8 +226,9 @@ public struct ConversationSubject: Equatable, Sendable {
 /// the settings screen beside it; more to the point, a bar is a strip of screen
 /// permanently spent on a name that never changes. So the feed runs to the top
 /// of the display, the platform's own scroll edge effect frosts what passes
-/// under the chrome, and two glass controls float over it. The left one is the
-/// drawer, which is how you leave.
+/// under the chrome, and two glass controls float over it. The way out is the
+/// back chevron at the leading edge of the left one, or the platform's swipe
+/// from the edge.
 public struct Conversation: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.design) private var design
@@ -230,7 +262,19 @@ public struct Conversation: View {
     /// scroll inside what there is instead.
     @State private var pageHeight: CGFloat = 0
     @State private var footHeight: CGFloat = 0
-
+    /// Whether the sheet with the machine, directory and address in full is
+    /// up. A system sheet rather than one of the cards above: it is read and
+    /// put away, and nothing on the conversation waits on it.
+    @State private var placeOpen = false
+    /// How the composer and the feed behind it keep in step: a send takes the
+    /// feed to its foot, and a composer growing on a curve has the feed's tail
+    /// follow it on the same curve.
+    @State private var follow = TranscriptFollow()
+    /// Where the floating chrome ends and where the feed begins, both on the
+    /// display. The feed runs up behind the chrome, so the difference is how
+    /// far down its first row has to rest to be read.
+    @State private var chromeBottom: CGFloat = 0
+    @State private var feedTop: CGFloat = 0
 
     public init(
         model: ConversationStore,
@@ -307,6 +351,11 @@ public struct Conversation: View {
         // pass through an action at all. What is open is one piece of state,
         // so what is open is what is reported.
         .onChange(of: showing) { _, now in opening?(now) }
+        .sheet(isPresented: $placeOpen) {
+            PlaceSheet(subject: subject)
+                .presentationDetents([.height(PlaceSheet.height)])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     /// The feed, under the chrome rather than beside it.
@@ -317,7 +366,17 @@ public struct Conversation: View {
     /// frosting the top edge means anything.
     private var transcript: some View {
         ConversationTranscript(
-            model: model, subject: subject, resting: resting, reading: reading)
+            model: model, subject: subject, resting: resting, reading: reading,
+            follow: follow)
+        // Ignoring the top safe area below also takes away the scroll view's
+        // own inset for it, which left the first row of a transcript scrolled
+        // to its top under the clock and the pill. The space is given back to
+        // the content instead: it rests just below the chrome and still
+        // travels under the glass as it scrolls. A little more than the
+        // chrome itself, so the first row does not sit against the pill.
+        .contentMargins(
+            .top, chromeBottom > 0 ? max(0, chromeBottom - feedTop) + 16 : 0,
+            for: .scrollContent)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
@@ -325,6 +384,12 @@ public struct Conversation: View {
         // feed behind it. Extending the scroll view to the physical top lets
         // its soft edge effect fade continuously behind the status region
         // instead of starting at the chrome's lower boundary.
+        // Measured inside the modifier that extends it: outside, the frame
+        // answered is the one laid out before the extension, which begins
+        // exactly where the chrome ends.
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: {
+            feedTop = $0
+        }
         .ignoresSafeArea(edges: .top)
         .scrollEdgeEffectStyle(.soft, for: .top)
     }
@@ -379,14 +444,14 @@ public struct Conversation: View {
     @ViewBuilder
     private var standing: some View {
         ConversationStanding(
-            model: model, subject: subject, showing: $showing,
+            model: model, subject: subject, showing: $showing, follow: follow,
             naming: naming, actions: actions)
     }
 
     /// Goes somewhere else, keyboard first.
     ///
     /// The composer is often being written in when a person reaches for the
-    /// patch, a child or the fleet, and the keyboard it raised does not belong
+    /// patch, a child or the way back, and the keyboard it raised does not belong
     /// to any of those. Left standing it outlives this screen and covers the
     /// next one — including this one on the way back, which is rebuilt while
     /// the keys are already there and so is laid out as though the bottom of
@@ -397,13 +462,7 @@ public struct Conversation: View {
         actions(action)
     }
 
-    /// What this agent answers to elsewhere: "refactor-auth/studio". It is
-    /// what a person copies in order to write to it from another agent, a
-    /// script or a terminal, so it is the name and the machine and nothing
-    /// else.
-    private var address: String {
-        [subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: "/")
-    }
+    private var address: String { subject.address }
 
     /// Surfaces opened over the conversation push its page back. Growing the
     /// facts strip does not: it is part of the conversation's bottom content.
@@ -449,35 +508,40 @@ public struct Conversation: View {
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
+            chromeBottom = $0
+        }
     }
 
     /// The agent, its machine and its directory, on one floating surface with
     /// the way out on its leading edge.
     ///
-    /// The drawer control is inside the pill rather than beside it because the
+    /// The back chevron is inside the pill rather than beside it because the
     /// two belong together: the pill says which conversation you are in, and
-    /// the control is how you go to another one.
+    /// the chevron is how you leave it for the fleet. It is a bare chevron
+    /// without the name of where it goes, because the pill beside it already
+    /// spends the width on this agent's name.
     private var pill: some View {
         Group {
             if typeSize.isAccessibilitySize {
                 accessiblePill
             } else {
                 HStack(spacing: 8) {
-                    Button { leaving(.openDrawer) } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 14, weight: .semibold))
+                    Button { leaving(.back) } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(design.inkMuted.color)
                             .thumbTarget(x: 15, y: 15)
                     }
                     .buttonStyle(.amuxControl)
-                    .accessibilityLabel("Agents")
-                    .identified("conversation.drawer", label: "Agents")
+                    .accessibilityLabel("Back")
+                    .identified("conversation.back", label: "Back")
                     .reclaimingThumbTarget(x: 15, y: 15)
-                    subjectLabel
+                    placeButton(grow: 8) { subjectLabel }
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
-                .frosted(Capsule())
+                .frosted(Capsule(), as: .glass)
             }
         }
         .accessibilityElement(children: .contain)
@@ -488,21 +552,21 @@ public struct Conversation: View {
 
     private var accessiblePill: some View {
         HStack(spacing: 10) {
-            Button { leaving(.openDrawer) } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 17, weight: .medium))
+            Button { leaving(.back) } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(design.inkMuted.color)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.amuxControl)
-            .accessibilityLabel("Agents")
-            .identified("conversation.drawer", label: "Agents")
-            subjectLabel.padding(.trailing, 14)
+            .accessibilityLabel("Back")
+            .identified("conversation.back", label: "Back")
+            placeButton(grow: 0) { subjectLabel }.padding(.trailing, 14)
         }
         .padding(.leading, 2)
         .frame(minHeight: 52)
-        .frosted(Capsule(), wash: 1)
+        .frosted(Capsule(), wash: 1, as: .glass)
     }
 
     private var subjectLabel: some View {
@@ -515,8 +579,28 @@ public struct Conversation: View {
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkFaint.color)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The name and the short place, pressed for the long ones.
+    /// `grow` reaches the pill's own edges, so the whole height of the pill
+    /// beside the back chevron answers the press without the pill growing.
+    private func placeButton<Label: View>(
+        grow: CGFloat, @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button {
+            Keyboard.putDown()
+            placeOpen = true
+        } label: {
+            label().thumbTarget(y: grow)
+        }
+        .buttonStyle(.amuxControl)
+        .accessibilityLabel("\(subject.name), \(subject.place)")
+        .accessibilityHint("Shows the host, directory and address in full")
+        .identified("conversation.place", label: "\(subject.name), \(subject.place)")
+        .reclaimingThumbTarget(y: grow)
     }
 }
 
@@ -529,6 +613,7 @@ private struct ConversationStanding: View {
     let model: ConversationStore
     let subject: ConversationSubject
     @Binding var showing: ConversationOverlay?
+    let follow: TranscriptFollow
     let naming: (AgentId) -> String
     let actions: @MainActor (ConversationAction) -> Void
 
@@ -561,12 +646,14 @@ private struct ConversationStanding: View {
                 AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
             } else if let state = ConversationFootState(
                 gate: model.gate, refusal: model.refusal, subject: subject) {
-                ConversationFoot(state: state) { actions(.retry) }
+                ConversationFoot(
+                    state: state, retry: { actions(.retry) },
+                    subscribe: { actions(.subscribe) })
             } else if let composer = ComposerState(
                 gate: model.gate, tail: activityTail, elapsed: subject.working) {
                 ConversationComposerStanding(
                     model: model, subject: subject, state: composer,
-                    showing: $showing, naming: naming, actions: actions)
+                    showing: $showing, follow: follow, naming: naming, actions: actions)
             }
         }
         .moving(value: showing)
@@ -589,22 +676,117 @@ private struct ConversationStanding: View {
 /// Draft-sized invalidations stop here. The surrounding footer chooses which
 /// state exists; this view handles the state that changes with every edit.
 private struct ConversationComposerStanding: View {
+    @Environment(\.photographed) private var photographed
+    @Environment(\.reducesMotion) private var reduceMotion
     let model: ConversationStore
     let subject: ConversationSubject
     let state: ComposerState
     @Binding var showing: ConversationOverlay?
+    let follow: TranscriptFollow
     let naming: (AgentId) -> String
     let actions: @MainActor (ConversationAction) -> Void
+    /// The composer as it is drawn, which is `state` except for the moment a
+    /// turn starts or ends.
+    ///
+    /// A turn starting grows the box by the working line and a turn ending
+    /// shrinks it, and that change has to move as one piece: the line, the
+    /// placeholder, the button, the panel's shape behind them, the strip
+    /// standing on it and the space the feed keeps clear under itself. An
+    /// animation attached to the box reaches only what is inside the box; the
+    /// rest snapped to the new height in one frame while the words crossed
+    /// over it. So the change is made here, as its own animated transaction,
+    /// which carries every layout it causes and nothing else — a row arriving
+    /// in the same instant is not dragged along on the curve.
+    @State private var shown: ComposerState
+    /// When the working line last appeared, so a turn that ends almost as
+    /// soon as it began still shows its line long enough to be seen.
+    @State private var lineSince: Date?
+    /// The pending removal of the working line, which waits a moment in case
+    /// the next turn starts straight away — a held message going out as the
+    /// last turn ends — so the box does not shrink and grow back.
+    @State private var ending: Task<Void, Never>?
+
+    init(
+        model: ConversationStore, subject: ConversationSubject, state: ComposerState,
+        showing: Binding<ConversationOverlay?>, follow: TranscriptFollow,
+        naming: @escaping (AgentId) -> String,
+        actions: @escaping @MainActor (ConversationAction) -> Void
+    ) {
+        self.model = model
+        self.subject = subject
+        self.state = state
+        _showing = showing
+        self.follow = follow
+        self.naming = naming
+        self.actions = actions
+        _shown = State(initialValue: state)
+    }
 
     var body: some View {
+        let drawn = drawn
         VStack(spacing: 8) {
             strip
             ConversationDraftCommands(model: model, actions: actions)
             opened
             ConversationComposerBox(
-                model: model, state: state, agent: subject.name,
+                model: model, state: drawn, agent: subject.name,
                 showing: $showing, actions: actions)
         }
+        .onChange(of: state) { _, now in
+            let had = shown.line != nil
+            let has = now.line != nil
+            if has {
+                ending?.cancel()
+                ending = nil
+                if had {
+                    shown = now
+                } else {
+                    lineSince = .now
+                    settle(now)
+                }
+                return
+            }
+            guard had else {
+                shown = now
+                return
+            }
+            guard !photographed else {
+                settle(now)
+                return
+            }
+            // Already on its way out: the removal that is waiting settles on
+            // the latest state, which the drawn state reads anyway.
+            guard ending == nil else { return }
+            let shownFor = lineSince.map { Date.now.timeIntervalSince($0) } ?? .infinity
+            let wait = max(Self.endingGrace, Self.leastShown - shownFor)
+            ending = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(wait))
+                guard !Task.isCancelled else { return }
+                ending = nil
+                settle(now)
+            }
+        }
+        .onDisappear { ending?.cancel() }
+    }
+
+    /// How long the line waits after a turn ends before it leaves.
+    private static let endingGrace: TimeInterval = 0.5
+    /// The least time a line is on screen, however short the turn.
+    private static let leastShown: TimeInterval = 1.0
+
+    /// Moves the box to a new shape as one animated transaction.
+    private func settle(_ now: ComposerState) {
+        let curve = photographed || reduceMotion ? nil : Motion.standard
+        follow.reserving(on: curve)
+        withAnimation(curve) { shown = now }
+    }
+
+    /// Whatever the gate says, except that whether the working line is up
+    /// changes only in the animated transaction above. Until that lands this
+    /// keeps the box the shape it was drawn at; the name of what is running
+    /// and how long it has run still change the moment they arrive.
+    private var drawn: ComposerState {
+        (shown.line != nil) == (state.line != nil) ? state : shown
     }
 
     @ViewBuilder
@@ -696,9 +878,17 @@ private struct ConversationComposerBox: View {
         ComposerBox(
             state: state, agent: agent, provider: model.provider,
             draft: Bindable(model).draft, dictation: model.dictation) { action in
+                // A card opened from the footer grows above the box, and with
+                // the keyboard still up from the last message there is no
+                // conversation left to see or to press to put it away. The
+                // keyboard comes back with the next tap in the field.
                 switch action {
-                case .attach: showing = showing == .plus ? nil : .plus
-                case .openSettings: showing = showing == .settings ? nil : .settings
+                case .attach:
+                    if showing != .plus { Keyboard.putDown() }
+                    showing = showing == .plus ? nil : .plus
+                case .openSettings:
+                    if showing != .settings { Keyboard.putDown() }
+                    showing = showing == .settings ? nil : .settings
                 default: break
                 }
                 actions(action)
@@ -718,10 +908,13 @@ private struct ConversationTranscript: View {
     let subject: ConversationSubject
     let resting: TranscriptResting?
     let reading: (@MainActor (TranscriptResting) -> Void)?
+    let follow: TranscriptFollow
 
     var body: some View {
-        let rows = model.confirmedRows()
-        TranscriptContainer(resting: resting, moved: reading, tail: rows.last?.id) {
+        let rows = withUnreadable(model.confirmedRows())
+        TranscriptContainer(
+            resting: resting, moved: reading, tail: rows.last?.id, follow: follow
+        ) {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)
@@ -731,7 +924,16 @@ private struct ConversationTranscript: View {
                 // provides no context and makes both surfaces harder to read.
                 EmptyView()
             } else {
-                TranscriptFeed(rows: rows)
+                // A message this phone has sent and the host has not echoed
+                // yet is a row at the foot of the feed, after everything the
+                // host has confirmed and in the order it was sent, so it pushes
+                // the transcript up the way its confirmed row will rather than
+                // being drawn over the last thing the agent said. The pending
+                // rows are their own observation boundary: a send does not
+                // re-evaluate this view or the confirmed rows above.
+                TranscriptFeed(rows: rows) {
+                    PendingTranscriptFeed(model: model)
+                }
             }
             // A finished run is the last event in the feed, not a screen
             // state placed under it.
@@ -741,15 +943,21 @@ private struct ConversationTranscript: View {
                     .padding(.top, design.metrics.feedGap)
             }
         }
-        // A local send occupies the same bottom edge its confirmed row will
-        // inherit, without changing the lazy history merely to show one
-        // optimistic bubble. When the host echoes it, the inset disappears
-        // as the identical row arrives at the anchored tail.
-        .overlay(alignment: .bottom) {
-            if subject.readable,
-               !(typeSize.isAccessibilitySize && model.asks.panel != nil) {
-                PendingTranscriptFeed(model: model)
-            }
+        .background { SendFollower(model: model, follow: follow) }
+    }
+}
+
+extension ConversationTranscript {
+    /// The feed, with a row at its foot for each update about this agent that
+    /// could not be read. What such an update carried is missing from the
+    /// rows above, and saying so where the reader is looking is the difference
+    /// between a conversation that admits a gap and one that looks current.
+    fileprivate func withUnreadable(_ rows: [TranscriptRow]) -> [TranscriptRow] {
+        guard !model.unreadable.isEmpty else { return rows }
+        return rows + model.unreadable.enumerated().map { index, unread in
+            TranscriptRow(
+                id: "unreadable-update-\(index)", layer: rows.last?.layer ?? .claudePty,
+                kind: .unreadable(label: "\(unread.kind.lowercased()) update"))
         }
     }
 }
@@ -785,7 +993,7 @@ struct ChangesChip: View {
             // in the label's colours, which on a light ground is a black
             // capsule; a layer behind it is the frosted plate this wants.
             .frame(minWidth: 44, minHeight: 44)
-            .background { Color.clear.frosted(Capsule()) }
+            .background { Color.clear.frosted(Capsule(), as: .glass) }
             .contentShape(Capsule())
         }
         .buttonStyle(.amuxControl)

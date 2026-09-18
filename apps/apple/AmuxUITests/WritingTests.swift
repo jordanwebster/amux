@@ -177,10 +177,20 @@ final class WritingTests: JourneyCase {
         // received the message and the feed still shows exactly one of it.
         writable(app).tap()
         writable(app).typeText(Self.sent)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "writing the message raised no keyboard")
         press(app, "composer.send")
+        // The box that sent the message is the box that waits for it. It is
+        // never swapped for another surface while the message is on its way,
+        // so neither it nor the keyboard it raised goes anywhere.
+        let sentAt = Date()
+        while Date().timeIntervalSince(sentAt) < 2 {
+            XCTAssertTrue(element(app, "composer").exists, "the composer went away during a send")
+        }
         try waitUntil(runner, "sending put no message in the feed") {
             $0.contains { $0.identifier == "transcript.prompt" }
         }
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "sending put the keyboard down")
+        record["keyboardAfterSending"] = app.keyboards.firstMatch.exists
         XCTAssertEqual(try spoken(runner), "", "sending left the message in the field")
         XCTAssertTrue(
             waitUntil { self.received(control, saying: Self.sent) },
@@ -313,12 +323,8 @@ final class WritingTests: JourneyCase {
                        "a cancelled deletion left the conversation anyway")
 
         // MARK: The Codex agent, which offers what a terminal session cannot.
-        press(app, "conversation.drawer")
-        waitFor(app, "drawer.row.\(codex)", "the drawer does not hold the other agent")
-        press(app, "drawer.row.\(codex)")
-        try waitUntil(runner, "the drawer did not open the other agent's conversation") {
-            self.said($0, "conversation")?.value == codex
-        }
+        backToAgents(app)
+        openFromAgents(runner, app, codex, "the Agents list did not open the other agent's conversation")
         waitFor(app, "composer", "the Codex conversation offered nowhere to write")
 
         // MARK: A command, raised by a slash and sent as a token.

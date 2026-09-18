@@ -161,7 +161,7 @@ async fn repositories_use_direct_and_local_links_and_default_to_no_roots() {
         .daemon("viewer")
         .daemon("host")
         .repository_roots(vec![root.clone()])
-        .paired("viewer", "host", Via::Tcp)
+        .paired("viewer", "host", Via::Direct)
         .start()
         .await;
     let [viewer, host] = net.daemons(["viewer", "host"]);

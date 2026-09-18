@@ -1,7 +1,7 @@
 use wire::pb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectRole {
+pub enum ConnectRole {
     Connector,
     Acceptor,
 }
@@ -49,10 +49,12 @@ pub(crate) struct ConnectHandshake {
 }
 
 impl ConnectHandshake {
+    #[cfg(test)]
     pub(crate) fn connector() -> Self {
         Self::new(ConnectRole::Connector)
     }
 
+    #[cfg(test)]
     pub(crate) fn acceptor() -> Self {
         Self::new(ConnectRole::Acceptor)
     }
@@ -183,9 +185,6 @@ fn body_name(body: &pb::message::Body) -> &'static str {
         pb::message::Body::HelloAck(_) => "hello_ack",
         pb::message::Body::NeighborUp(_) => "neighbor_up",
         pb::message::Body::NeighborDown(_) => "neighbor_down",
-        pb::message::Body::TunnelOpen(_) => "tunnel_open",
-        pb::message::Body::TunnelData(_) => "tunnel_data",
-        pb::message::Body::TunnelClose(_) => "tunnel_close",
         pb::message::Body::Reauth(_) => "reauth",
         pb::message::Body::LinkClose(_) => "link_close",
     }
@@ -221,6 +220,8 @@ mod tests {
             supported_protocol_versions: vec![1],
             host: None,
             neighbors: Vec::new(),
+            auth_token: None,
+            incarnation: Vec::new(),
         }))
     }
 
@@ -230,6 +231,7 @@ mod tests {
                 protocol_version: 1,
                 host: None,
                 neighbors: Vec::new(),
+                incarnation: Vec::new(),
             })),
         }))
     }
@@ -277,6 +279,8 @@ mod tests {
                 supported_protocol_versions: vec![1],
                 host: None,
                 neighbors: Vec::new(),
+                auth_token: None,
+                incarnation: Vec::new(),
             })
         );
         assert!(!handshake.is_established());
@@ -361,20 +365,6 @@ mod tests {
             pb::message::Body::NeighborDown(pb::NeighborDown {
                 host_id: vec![0_u8; 16],
                 reason: None,
-            }),
-            pb::message::Body::TunnelOpen(pb::TunnelOpen {
-                tunnel_id: [2_u8; 16].to_vec(),
-                src: [1_u8; 16].to_vec(),
-                dst: [3_u8; 16].to_vec(),
-            }),
-            pb::message::Body::TunnelData(pb::TunnelData {
-                tunnel_id: [2_u8; 16].to_vec(),
-                dst: [3_u8; 16].to_vec(),
-                payload: vec![1, 2, 3],
-            }),
-            pb::message::Body::TunnelClose(pb::TunnelClose {
-                tunnel_id: [2_u8; 16].to_vec(),
-                dst: [3_u8; 16].to_vec(),
             }),
             pb::message::Body::Reauth(pb::Reauth {
                 auth_token: "new-token".to_string(),

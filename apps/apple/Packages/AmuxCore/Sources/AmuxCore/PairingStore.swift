@@ -28,6 +28,11 @@ public final class PairingStore {
         case trusted(String)
         /// It did not work. Which of the four ways is deliberately not said.
         case refused
+        /// The machine is only on the far side of the relay, and this account
+        /// may not open a tunnel to it. A separate phase from `refused`
+        /// because nothing about the code was wrong: typing another one would
+        /// fail the same way, and what is missing is a subscription.
+        case needsSubscription
     }
 
     /// How many digits a code is. The machine prints exactly this many, so an
@@ -111,6 +116,12 @@ public final class PairingStore {
         case .pairingAbandoned:
             digits = ""
             phase = .entering
+        // Not the code's fault and not fixable by typing another: the relay
+        // can see the machine and this account may not tunnel to it. The
+        // digits go, because there is nothing left to send them to.
+        case .pairingRefused(.subscriptionRequired):
+            digits = ""
+            phase = .needsSubscription
         // Mistyped, expired, already used, never issued, an answer to an
         // attempt this phone no longer holds, or the machine refusing outright.
         // One state, one sentence, and the digits go — a code that failed is

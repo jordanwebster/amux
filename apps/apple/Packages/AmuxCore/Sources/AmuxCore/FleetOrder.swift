@@ -45,6 +45,10 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     /// not said.
     public var headline: String? { card.agent.workingOn?.text }
     public var outcome: TurnOutcome? { card.outcome }
+    /// What this agent wants from you, in one line — "Asks: Which database?",
+    /// "Wants to run rm -rf build" — or nothing where the phone has not been
+    /// told what the ask is.
+    public var need: String? { needsYou ? card.ask?.panel?.need : nil }
     public var why: Why? { card.attention.why }
 
     /// The machine that owns this agent has been heard from, so the row is
@@ -112,10 +116,10 @@ public enum Elapsed {
 
 public struct FleetSection: Sendable, Equatable, Identifiable {
     public enum Kind: String, Sendable, Equatable {
-        /// Pinned: time alone will never float these back up.
-        case needsYou
-        /// One recency list. Running is not a rank.
-        case everythingElse
+        /// One recency list. Neither running nor waiting is a rank: an agent
+        /// that asks for something has just done something, so it is already
+        /// at the top of a list ordered by when agents last did anything.
+        case agents
         /// Quiet for a day. Named and reachable, never deleted from the screen.
         case older
     }
@@ -138,37 +142,26 @@ public struct FleetSection: Sendable, Equatable, Identifiable {
 
 /// The home's ordering, as one pure function.
 ///
-/// Two rules do the work. An agent that cannot continue without you is pinned,
-/// most recent first, so the newest request is easiest to reach. A finished
-/// agent belongs with completed work even when its final turn is unread.
-/// Everything else is one recency list, because running is not a rank — an
-/// agent that stopped an hour ago can matter more than one mid-command — with
-/// anything quiet for a day folded away rather than dropped. An unread agent
-/// never folds: nobody has seen what it did yet.
+/// One list, most recent activity first, because that is the order a person
+/// keeps their conversations in. There is no separate group for agents that
+/// need you: asking is something an agent does, so the host dates it like any
+/// other activity and it rises to the top by itself, and a row that needs you
+/// says so in its own colour wherever it sits. Anything quiet for a day folds
+/// away rather than being dropped, unless nobody has seen what it did yet or
+/// it is still waiting on you.
 public func fleetOrder(_ cards: [AgentCard], now: Date, unread: UnreadWeights) -> [FleetSection] {
     let rows = cards.map { AgentRow(card: $0, unread: unread.isUnread($0)) }
 
     // A tie between two identical dates still has to be an order, or the list
     // shuffles for no reason the user can see. Identity breaks it.
-    let waiting = rows.filter(\.needsYou).sorted {
-        ($0.lastActivity, $0.id.description) > ($1.lastActivity, $1.id.description)
-    }
-    let rest = rows.filter { !$0.needsYou }.sorted {
+    let sorted = rows.sorted {
         ($1.lastActivity, $1.id.description) < ($0.lastActivity, $0.id.description)
     }
     let quiet = now.addingTimeInterval(-fleetFoldAge)
-    let recent = rest.filter { $0.lastActivity > quiet || $0.unread }
-    let older = rest.filter { $0.lastActivity <= quiet && !$0.unread }
+    let recent = sorted.filter { $0.lastActivity > quiet || $0.unread || $0.needsYou }
+    let older = sorted.filter { $0.lastActivity <= quiet && !$0.unread && !$0.needsYou }
 
-    var sections: [FleetSection] = []
-    if !waiting.isEmpty {
-        sections.append(FleetSection(kind: .needsYou, title: "Needs you", rows: waiting, folded: false))
-    }
-    sections.append(FleetSection(
-        kind: .everythingElse,
-        title: waiting.isEmpty ? "Agents" : "Everything else",
-        rows: recent,
-        folded: false))
+    var sections = [FleetSection(kind: .agents, title: "Agents", rows: recent, folded: false)]
     if !older.isEmpty {
         sections.append(FleetSection(kind: .older, title: "Older", rows: older, folded: true))
     }

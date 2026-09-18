@@ -11,24 +11,23 @@ checkout. The phone does not run local agents.
 | `crates/app-runtime` | Account sessions, the projection from reducer state to presentation values, the fleet cache and the frame-coalesced event queue; links `ui-runtime` and `client`, never the node |
 | `crates/app-embedded` | Starting, credentialing and stopping the provider-free embedded node and holding its relay link; the only crate with a `debug-tools` feature |
 | `crates/app-ffi` | The C ABI: `amux_app_*` symbols, JSON in and out, callbacks, opaque handles and the generated header |
-| `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries |
+| `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries, the report store and bundle |
 | `AmuxDesign` | Light/dark tokens, bundled fonts, type scaling, glass and target geometry |
-| `AmuxFeatures` | SwiftUI screens driven by state and actions, plus registered UIKit leaves |
+| `AmuxFeatures` | SwiftUI screens driven by state and actions, including the report offer and report screen, plus registered UIKit leaves |
 | `AmuxShell` | iPhone navigation, tabs, routes, deep links and service coordination |
-| `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, report models and views |
-| `apps/apple/Amux` | App entry, platform services, debug capture and driving server |
+| `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, view-state trace |
+| `apps/apple/Amux` | App entry, platform services, report capture, and the debug driving server |
 
 The runtime streams ordered batches into Swift; Swift copies callback bytes
 before returning and applies store changes on the main actor. Feed updates
-carry deltas, not a replacement transcript on each frame. A single multiplexed
-stream per host supplies the shared projection. Navigation pushes immediately
+carry deltas, not a replacement transcript on each display update. Native link
+streams supply the shared projection. Navigation pushes immediately
 and fills from remembered state while the host reconciles. See the
 [bridge contract](../crates/app-ffi/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
-When `just ios rust` supplies its development slice at the shipping framework
-path as a stand-in, it marks and refreshes that stand-in after Rust changes;
-it never replaces a real framework produced by `just ios package`.
+When `just ios rust` stages its development slice, package unit tests link that
+current slice. `just ios package` replaces it with the shipping framework.
 
 Every app build carries the workspace's pinned SQLite library, including both
 device and simulator builds. Store open still qualifies its SQLite version,
@@ -36,14 +35,63 @@ the WAL-reset fix and required capabilities, so an accidental fallback to the
 system library is refused. Consequently, SQLite security fixes reach installed
 phones through an amux app update rather than through an iOS update.
 
-App startup restores the selected account and its cached fleet before asking
-the account service for a connect token. The runtime dials the relay named by
-that token, using system TLS. Only debug builds allow plaintext for loopback
-relays. One installation in Application Support holds a profile per account;
-fleet files live under Caches. Account names, grants and selection survive
-launch in the registry, while refresh tokens stay in the device Keychain.
-Switching accounts re-points the connection and its stores; signing out drops
-access, and backgrounding releases the relay connection.
+App startup does not require an account. With nobody signed in, the embedded
+installation opens one unbound profile and restores that profile's fleet cache.
+The first sign-in adopts the unbound profile, including its key, pairings and
+cache. A different account gets a different profile; signing out preserves the
+profile and its local relationships.
+
+Remove from This Phone (an account's own section on You, or the menu on any
+account row, including a signed-out one) takes an account off the phone and
+leaves it on amux.sh. The app lets go of the account's session, takes it off the
+list, and names it to the next runtime start, which deletes its profile before
+opening anything: its key, its trust store and the hosts it paired, with its
+fleet and artifacts caches and its `profiles.json` entry. The account stays
+pending until a start reports it really gone, so a deletion that failed is
+attempted again next launch rather than leaving a key on a phone that shows the
+account as removed. The hosts keep their
+record of the old key until it is revoked there, and adding the account back
+means pairing again. Deleting an account takes the same path. The account on
+screen, when removed, is replaced by one still signed in, or by the signed-out
+phone.
+
+Every sign-in opens amux.sh with `prompt=select_account`, which lists the
+accounts that browser has used and offers another; without it amux.sh carries on
+as whoever the browser is signed in as. Signing back into a listed account also
+sends `login_hint` with that account's address, which fills it in when a
+password is needed. The browser session is not ephemeral, because the chooser
+is made of what it remembers. When signing back in returns a different account, the
+sign-in page names both and adds nothing until the person continues as the
+returned account or cancels; cancelling lets go of that session unless the
+account is already signed in on the phone, whose token it then replaces. A
+sign-in leaves its session in memory only: the refresh token reaches the
+Keychain when the account is kept, so an account that came back and was turned
+down — or a page somebody simply left — writes nothing down.
+
+`LocalDiscovery` in `AmuxCore/Discovery.swift` is the app's only network
+browser. While the scene is active it browses `_amux._udp` with `NWBrowser`,
+resolves the advertised endpoints, and hands the complete found-host set to the
+Rust runtime. Discovery is only a source of candidates and addresses: pairing
+and the pinned handshake still establish trust. The app declares
+`_amux._udp` in `NSBonjourServices` and explains the iOS local-network
+permission as: “amux finds hosts on your network so this phone can pair and
+connect to them directly.” If access is denied, the home explains why no hosts
+can be found and offers the system Settings route.
+
+Foreground browsing is deliberate. Entering the foreground starts the browser,
+hands its latest set to the runtime and redials found addresses before stored
+ones. Backgrounding stops browsing and closes direct QUIC and relay links; the
+cached fleet remains available, but the app does not claim background network
+work or alerts. Returning to the foreground queries again and reconnects. The
+relay is dialled only for a signed-in profile; it races QUIC with its TCP
+fallback and publishes its tier and winning carrier through the same runtime
+status stream as the desktop.
+
+One installation in Application Support holds the unbound or account-bound
+profiles; fleet files live under Caches, keyed by profile. Account names,
+grants and selection survive launch in the registry, while the refresh tokens of
+accounts this phone keeps stay in the device Keychain. Switching accounts re-points the stores to the selected
+profile rather than moving its trust to another account.
 
 When an update or simulator reinstall moves the app’s data container, the mobile
 runtime rebases saved profile paths within the installation before reopening
@@ -53,8 +101,8 @@ checks a changed container, retained account and fleet, and a fresh connection.
 Core models and feature actions remain reusable for a separate future Mac UI.
 The shell belongs to iPhone; there is no Mac, Catalyst or iPad target. Debug
 support is compiled directly into Debug and Measured, with its sources and
-resources excluded from Release. Release retains Contact Support; it exposes
-neither fixture driving nor reporting.
+resources excluded from Release. Release retains Contact Support and reporting
+a problem; it exposes no fixture driving, view-state trace or replay.
 
 ## Build and simulator pins
 
@@ -222,7 +270,7 @@ just ios goldens-reference
 just ios goldens-perturb
 ```
 
-The unfiltered manifest covers 33 reference screens and 30 additional states,
+The unfiltered manifest covers 33 reference screens and 42 additional states,
 each in light and dark. The door waits for the app's view tree, then the Mac
 captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's
@@ -278,8 +326,8 @@ VoiceOver navigation, gestures, transitions or network behavior.
 The [copy standard](IOS_COPY.md) defines wording, case, terminology and the
 catalogue review process. `just ios lint` checks every Swift app/package
 literal against the English catalogue or an exact, documented non-copy
-exemption. It includes helper/model copy and debug report views. The debug
-catalogue is excluded from Release. A copy change includes its affected
+exemption. It includes helper/model copy and report views. The debug
+catalogue holds copy only the driving tools use and is excluded from Release. A copy change includes its affected
 light/dark goldens and baseline explanation.
 
 ## The app icon
@@ -362,11 +410,16 @@ recorded effect executes and no host is contacted. Client recordings do not
 reconstruct arbitrary provider history; host replay requires provider records or
 an explicitly tested conversion.
 
-Reporting freezes the app's own frame after screenshot notification, or from
-Report a Problem under Help. The system preview remains system-owned. The
-report retains rectangles, notes and available session/host records. Its
-`report.json` declares each part present or absent with a reason; this app
-cannot read its system log back, so its log part is absent. A failed upload
+Reporting is in every build, including Release. It freezes the app's own
+frame after screenshot notification, or from Report a Problem under Help;
+there is no shake gesture. The system preview remains system-owned. The report
+retains rectangles, notes and the session and host records the runtime keeps
+(`msgs.jsonl` and `daemon.json`). Its `report.json` declares each part present
+or absent with a reason: only a build with the driving tools records the
+view-state trace, so a Release report declares `trace.jsonl` absent, and this
+app cannot read its system log back, so its log part is always absent. A report
+is sent to the signed-in account on screen; with nobody signed in the report
+screen says so and Send is unavailable. A failed upload
 retains the same bytes, creation time and stamp for Retry. Sent is final.
 The build stamps its checkout revision into the app, and each report records
 that revision in `git_sha`.
@@ -383,7 +436,7 @@ and reconciliation on older supported hardware, presented-frame cadence and
 hitches on ProMotion and standard displays, and thermal and battery behavior.
 Simulator timing proxies do not mark those checks passed.
 
-- [ ] On a physical iPhone running a debug build, take a system screenshot with
+- [ ] On a physical iPhone running a Release build, take a system screenshot with
   thumbnail preview enabled. Confirm the app-owned Report prompt appears and
   opens the frozen app frame without a Share step or Photos permission.
 - [ ] Repeat with full-screen screenshot preview enabled. Return to the app and

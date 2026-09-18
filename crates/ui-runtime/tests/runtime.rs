@@ -67,6 +67,7 @@ async fn create_test_agent(client: &node::Client, working_dir: &Path) -> node::A
 async fn installation_client() -> (node::Installation, node::Client, PathBuf, tempfile::TempDir) {
     let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {
@@ -672,7 +673,7 @@ async fn switcher_rejects_late_results() {
     let bindings = ProfileBindings::new(&root, opened.clone());
     let mut runtime = Runtime::start(
         socket_connector(&personal_entry.socket),
-        bindings.options("personal", false),
+        bindings.options("personal"),
     );
     wait_for(&mut runtime, "personal synchronization", |model| {
         model.is_synchronized()
@@ -682,8 +683,6 @@ async fn switcher_rejects_late_results() {
         model.agent(personal_agent.id).is_some()
     })
     .await;
-    assert!(!runtime.model().cloud_subscription_required());
-
     // Real work for the personal account, left in flight across the switch:
     // an operation, an attachment fetch, and the inventory event the extra
     // agent raises. None of it is folded before the switch.
@@ -701,7 +700,7 @@ async fn switcher_rejects_late_results() {
     });
     let personal_edge = runtime.shell_edge();
 
-    let mut runtime = runtime.switch(&work_entry, bindings.options("work", true));
+    let mut runtime = runtime.switch(&work_entry, bindings.options("work"));
     assert_eq!(runtime.generation(), ui_runtime::Generation(1));
     // A new selection starts from nothing: no agents, not synchronized, no
     // record of any operation the previous account was running.
@@ -779,9 +778,8 @@ async fn switcher_rejects_late_results() {
     );
 
     // The new runtime is bound to the selected profile throughout, not only
-    // in its connection: its subscription status, report directory and
-    // artifact cache are the work account's.
-    assert!(runtime.model().cloud_subscription_required());
+    // in its connection: its report directory and artifact cache are the
+    // work account's.
     let report = runtime.report(ui_state::DumpReason::UserRequested).unwrap();
     assert!(
         report.starts_with(root.join("work").join("reports")),
@@ -832,7 +830,7 @@ impl ProfileBindings {
         }
     }
 
-    fn options(&self, profile: &str, subscription_required: bool) -> RuntimeOptions {
+    fn options(&self, profile: &str) -> RuntimeOptions {
         let opened = self.opened.clone();
         let profile_root = self.root.join(profile);
         std::fs::create_dir_all(profile_root.join("reports")).unwrap();
@@ -841,7 +839,6 @@ impl ProfileBindings {
             report_dir: Some(profile_root.join("reports")),
             artifact_cache: Some(profile_root.join("cache")),
             artifact_cache_bound: 1024 * 1024,
-            subscription_status_provider: Some(Arc::new(move || subscription_required)),
             attachment_opener: Arc::new(move |_meta: &artifacts::ArtifactMeta, path: &Path| {
                 opened.lock().unwrap().push(path.to_path_buf());
                 Ok(())
@@ -872,6 +869,7 @@ fn socket_connector(socket: &Path) -> ui_runtime::Connector {
 async fn socketed_installation() -> (node::Installation, tempfile::TempDir) {
     let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {

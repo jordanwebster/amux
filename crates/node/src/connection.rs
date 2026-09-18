@@ -1,10 +1,4 @@
-//! Outbound channel selection over the two route shapes.
-//!
-//! Every peer call rides a tunnel — there is exactly one materialization
-//! path. For `Route::Direct(link)` the tunnel's frames leave on that link
-//! with `dst = peer` (zero relays); for `Route::Via(relay)` they leave on
-//! the relay link. The pool caches one tonic channel per `(peer, route)`;
-//! a cached channel is only as alive as the link under it.
+//! Outbound channel selection over native link streams.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,56 +8,15 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
 use crate::HostId;
-use crate::routing::{FEATURE_CLOUD_RELAY, Host, LinkId, Route, RoutingCore, RoutingEvent};
-use crate::transport::TrustedPeerConnections;
-use crate::tunnel::{TunnelPool, TunnelPoolError};
-
-/// Key for one pooled tunnel-backed channel: the peer and the route shape
-/// its tunnel was opened over.
-type ChannelKey = (HostId, Route);
-
-#[derive(Default)]
-pub(crate) struct ConnectionPool {
-    by_key: RwLock<HashMap<ChannelKey, Channel>>,
-}
-
-impl ConnectionPool {
-    pub(crate) async fn register(&self, key: ChannelKey, channel: Channel) {
-        self.by_key.write().await.insert(key, channel);
-    }
-
-    pub(crate) async fn get(&self, key: &ChannelKey) -> Option<Channel> {
-        self.by_key.read().await.get(key).cloned()
-    }
-
-    pub(crate) async fn unregister(&self, key: &ChannelKey) {
-        self.by_key.write().await.remove(key);
-    }
-
-    async fn unregister_for_link(&self, link: LinkId) {
-        self.by_key
-            .write()
-            .await
-            .retain(|(_, route), _| *route != Route::Direct(link));
-    }
-
-    async fn unregister_for_host(&self, host_id: HostId) {
-        self.by_key
-            .write()
-            .await
-            .retain(|(target, route), _| *target != host_id && route_link_peer(*route) != host_id);
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn len(&self) -> usize {
-        self.by_key.read().await.len()
-    }
-}
+use crate::link::{ChannelClass, ChannelError, ChannelKey, ChannelPool};
+use crate::routing::{
+    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, Route, RoutingCore, RoutingEvent,
+};
+use crate::transport::{TrustedPeerConnections, pairing_channel_from_io};
 
 pub struct ConnectionManager {
     routing: Arc<RoutingCore>,
-    pool: Arc<ConnectionPool>,
-    tunnels: Arc<TunnelPool>,
+    channels: Arc<ChannelPool>,
     trusted_connections: TrustedPeerConnections,
     state: RwLock<ConnectionState>,
 }
@@ -72,26 +25,36 @@ pub struct ConnectionManager {
 struct ConnectionState {
     active: HashMap<HostId, Route>,
     reachability_errors: HashMap<HostId, String>,
+    /// What each host was last described as, so a description is sent when
+    /// the answer has moved and not merely when something happened.
+    announced: HashMap<HostId, HostDescription>,
 }
 
+/// What a client would be told about a host: the route carrying its traffic,
+/// how that reads, and the account-binding fact recorded for it.
+///
+/// The route's identity belongs here beside the way it reads, because one
+/// direct link replacing another reads the same both times and still ends
+/// every stream on the carrier that went away.
+type HostDescription = (Option<Route>, HostVia, Option<bool>);
+
 impl ConnectionManager {
-    pub(crate) fn new(routing: Arc<RoutingCore>, tunnels: Arc<TunnelPool>) -> Self {
+    pub(crate) fn new(routing: Arc<RoutingCore>, channels: Arc<ChannelPool>) -> Self {
         Self {
             routing,
-            pool: Arc::new(ConnectionPool::default()),
-            tunnels,
+            channels,
             trusted_connections: TrustedPeerConnections::default(),
             state: RwLock::new(ConnectionState::default()),
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn pool(&self) -> Arc<ConnectionPool> {
-        self.pool.clone()
-    }
-
     pub(crate) fn trusted_connections(&self) -> TrustedPeerConnections {
         self.trusted_connections.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> Arc<ChannelPool> {
+        self.channels.clone()
     }
 
     pub(crate) async fn attach_routing_events(self: Arc<Self>) -> JoinHandle<()> {
@@ -106,21 +69,64 @@ impl ConnectionManager {
         })
     }
 
-    pub async fn channel_to(&self, peer: HostId) -> Result<Channel, TunnelPoolError> {
+    pub async fn channel_to(&self, peer: HostId) -> Result<Channel, ChannelError> {
+        self.channel_to_class(peer, ChannelClass::Calls).await
+    }
+
+    pub async fn session_channel_to(
+        &self,
+        peer: HostId,
+        agent: crate::AgentId,
+    ) -> Result<Channel, ChannelError> {
+        self.channel_to_class(peer, ChannelClass::Session { agent })
+            .await
+    }
+
+    pub async fn bulk_channel_to(&self, peer: HostId) -> Result<Channel, ChannelError> {
+        self.channel_to_class(peer, ChannelClass::Bulk).await
+    }
+
+    async fn channel_to_class(
+        &self,
+        peer: HostId,
+        class: ChannelClass,
+    ) -> Result<Channel, ChannelError> {
         let route = self
             .routing
             .route_to(peer)
             .await
-            .ok_or(TunnelPoolError::NotFound { host_id: peer })?;
-        self.activate_route(peer, route).await
+            .ok_or(ChannelError::NoRoute { host_id: peer })?;
+        match self.activate_route(peer, route, class).await {
+            // When both hosts dial each other, the preferred link supersedes
+            // the other and closes it. A call that chose the losing link just
+            // before that fails while opening its stream, though routing by
+            // then names the link that replaced it: try that one, once.
+            Err(error @ ChannelError::LinkUnavailable { .. }) if route.is_direct() => {
+                match self.routing.route_to(peer).await {
+                    Some(next) if next != route => self.activate_route(peer, next, class).await,
+                    _ => Err(error),
+                }
+            }
+            result => result,
+        }
     }
 
     pub(crate) async fn cloud_pairing_channel_to(
         &self,
         peer: HostId,
-    ) -> Result<Channel, TunnelPoolError> {
+    ) -> Result<Channel, ChannelError> {
         let relay = self.cloud_relay_for(peer).await?;
-        self.tunnels.pairing_channel_via(peer, relay).await
+        let stream = self
+            .channels
+            .pairing_stream(peer, Route::Via(relay))
+            .await?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            pairing_channel_from_io(stream),
+        )
+        .await
+        .map_err(|_| ChannelError::Handshake("pairing TLS handshake timed out".into()))?
+        .map_err(|error| ChannelError::Tls(error.to_string()))
     }
 
     pub(crate) async fn has_cloud_route(&self, peer: HostId) -> bool {
@@ -131,9 +137,6 @@ impl ConnectionManager {
         self.routing.mark_client_visible_hosts(host_ids).await;
     }
 
-    /// The last failed dial attempt's outcome for `peer`, if any: the
-    /// storage behind `HostEntry.last_dial_error`. Nothing probes, so this
-    /// is everything the daemon honestly knows about an offline peer.
     pub(crate) async fn stored_reachability_error(&self, peer: HostId) -> Option<String> {
         self.state
             .read()
@@ -155,12 +158,29 @@ impl ConnectionManager {
         self.state.write().await.reachability_errors.remove(&peer);
     }
 
+    pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
+        let route = self.state.read().await.active.get(&peer).copied();
+        let route = match route {
+            Some(route) => Some(route),
+            None => self.routing.route_to(peer).await,
+        };
+        match route {
+            Some(Route::Via(_)) => HostVia::Relay,
+            Some(Route::Direct(link)) => match self.channels.link_registry().carrier(&link).await {
+                Some(LinkCarrier::Ssh) => HostVia::Ssh,
+                Some(LinkCarrier::Direct) => HostVia::Direct,
+                None => HostVia::Offline,
+            },
+            None => HostVia::Offline,
+        }
+    }
+
     pub(crate) async fn send_link_close_to_host(
         &self,
         peer: HostId,
         reason: wire::pb::LinkCloseReason,
     ) {
-        self.tunnels
+        self.channels
             .link_registry()
             .send_link_close_to_host(peer, reason)
             .await;
@@ -171,11 +191,11 @@ impl ConnectionManager {
         self.routing.remove_host(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
-        self.tunnels.link_registry().close_host(peer).await;
+        self.channels.link_registry().close_host(peer).await;
         self.remove_host_runtime_state(peer).await;
     }
 
-    /// Ends live access to `peer` — trusted streams, tunnels, links and our
+    /// Ends live access to `peer` — trusted streams, channels, links and our
     /// own routes — without forgetting the relay's word that it is online.
     /// Used when a peer is unpaired: the trust is gone and nothing of the old
     /// connection survives, but the peer stays reachable for pairing, the way
@@ -184,7 +204,7 @@ impl ConnectionManager {
         self.routing.remove_direct_links(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
-        self.tunnels.link_registry().close_host(peer).await;
+        self.channels.link_registry().close_host(peer).await;
         self.remove_host_runtime_state(peer).await;
     }
 
@@ -193,32 +213,74 @@ impl ConnectionManager {
         self.trusted_connections.finish_host_replacement(peer);
     }
 
+    /// Applies one routing event, then describes the host again if what a
+    /// client would be told about it has moved.
+    ///
+    /// The routing table knows where a host can be reached; this manager knows
+    /// which of those routes is carrying traffic, and it is the second that a
+    /// client is shown and that its inventory subscription rides on.
+    ///
+    /// The comparison is against what was last announced rather than against
+    /// the moment before this event, because the active route is not only
+    /// settled here: an outgoing call opens a channel on whatever the routing
+    /// table prefers, so a direct link can already be carrying traffic by the
+    /// time its own event arrives. Read as a difference across the handler,
+    /// that would look like nothing happening; read against what a client was
+    /// last told, it is exactly the change the client is waiting for.
     async fn handle_event(&self, event: RoutingEvent) {
+        let host_id = event.host_id();
+        // A host nobody has described yet was just announced as present by the
+        // routing table, and that announcement carried whatever was true as
+        // this event was queued. That is the client's starting point, so it is
+        // this one's: a first link that changes nothing after it is applied
+        // leaves the host correctly described and says nothing further.
+        let known = self.state.read().await.announced.get(&host_id).copied();
+        let baseline = match known {
+            Some(description) => description,
+            None => self.host_description(host_id).await,
+        };
+        self.apply_event(event).await;
+        let description = self.host_description(host_id).await;
+        self.state
+            .write()
+            .await
+            .announced
+            .insert(host_id, description);
+        if description != baseline {
+            self.routing.announce_route(host_id).await;
+        }
+    }
+
+    async fn host_description(&self, host_id: HostId) -> HostDescription {
+        let active = self.state.read().await.active.get(&host_id).copied();
+        (
+            active,
+            self.via_for(host_id).await,
+            self.routing.signed_in_for(host_id),
+        )
+    }
+
+    async fn apply_event(&self, event: RoutingEvent) {
         match event {
             RoutingEvent::NeighborUp { host, link } => {
                 self.clear_reachability_error(host.id).await;
-                // Never eagerly tunnel into a cloud relay: nobody calls the
-                // cloud through the mesh — it discards inbound tunnels, so
-                // materialization can only stall for the whole handshake
-                // timeout.
                 if host_is_cloud_relay(&host) {
                     return;
                 }
-                // The link itself beats any relay path; activate it unless
-                // an equally-direct route is already active.
                 let already_direct = matches!(
                     self.state.read().await.active.get(&host.id),
                     Some(Route::Direct(_))
                 );
                 if !already_direct
-                    && let Err(error) = self.activate_route(host.id, Route::Direct(link)).await
+                    && let Err(error) = self
+                        .activate_route(host.id, Route::Direct(link), ChannelClass::Calls)
+                        .await
                 {
                     tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
                 }
             }
             RoutingEvent::NeighborDown { host_id, link, .. } => {
-                self.pool.unregister_for_link(link).await;
-                self.tunnels.remove_link(&link).await;
+                self.channels.drop_link(link);
                 let mut state = self.state.write().await;
                 if state.active.get(&host_id) == Some(&Route::Direct(link)) {
                     state.active.remove(&host_id);
@@ -226,34 +288,25 @@ impl ConnectionManager {
             }
             RoutingEvent::ClaimUp { relay, host } => {
                 self.clear_reachability_error(host.id).await;
-                // The cloud-relay guard again: record the claim, never
-                // eagerly tunnel into the relay.
-                if host_is_cloud_relay(&host) {
-                    return;
-                }
-                // Cloud claims make untrusted hosts visible for pairing.
-                // They are not proof of trust, so do not spend a normal
-                // device-mTLS tunnel on them until a caller explicitly needs
-                // one after trust has been established. QR/PIN cloud pairing
-                // uses the separate pre-trust pairing tunnel path.
-                if self
-                    .tunnels
-                    .link_registry()
-                    .has_cloud_relay_link_to(relay)
-                    .await
+                if host_is_cloud_relay(&host)
+                    || self
+                        .channels
+                        .link_registry()
+                        .has_cloud_relay_link_to(relay)
+                        .await
                 {
                     return;
                 }
-                let has_active = self.state.read().await.active.contains_key(&host.id);
-                if !has_active
-                    && let Err(error) = self.activate_route(host.id, Route::Via(relay)).await
+                if !self.state.read().await.active.contains_key(&host.id)
+                    && let Err(error) = self
+                        .activate_route(host.id, Route::Via(relay), ChannelClass::Calls)
+                        .await
                 {
                     tracing::warn!(peer = %host.id, relay = %relay, error = %error, "failed to activate relay route");
                 }
             }
             RoutingEvent::ClaimDown { relay, host_id } => {
-                self.pool.unregister(&(host_id, Route::Via(relay))).await;
-                self.tunnels.remove_initiated_over(host_id, relay).await;
+                self.channels.drop_route(host_id, Route::Via(relay));
                 let mut state = self.state.write().await;
                 if state.active.get(&host_id) == Some(&Route::Via(relay)) {
                     state.active.remove(&host_id);
@@ -262,93 +315,63 @@ impl ConnectionManager {
         }
     }
 
-    async fn activate_route(&self, peer: HostId, route: Route) -> Result<Channel, TunnelPoolError> {
-        let channel = self.materialize(peer, route).await?;
+    async fn activate_route(
+        &self,
+        peer: HostId,
+        route: Route,
+        class: ChannelClass,
+    ) -> Result<Channel, ChannelError> {
+        let channel = self
+            .channels
+            .channel(ChannelKey { peer, route, class })
+            .await?;
         let old = {
             let mut state = self.state.write().await;
             if !self.routing.routes_to(peer).await.contains(&route) {
-                // The route raced away while we were materializing.
                 drop(state);
-                self.remove_route_runtime_state(peer, route).await;
-                return Err(TunnelPoolError::NotFound { host_id: peer });
+                self.channels.drop_host(peer);
+                return Err(ChannelError::NoRoute { host_id: peer });
             }
             match state.active.get(&peer) {
-                // A stale in-flight activation must not demote an active
-                // direct route to a relay path: serve the call on the
-                // channel we built; the active route stays as is.
                 Some(active @ Route::Direct(_)) if !route.is_direct() && *active != route => {
                     return Ok(channel);
                 }
                 _ => state.active.insert(peer, route),
             }
         };
-        if let Some(old) = old
-            && old != route
+        if let Some(old_route) = old
+            && old_route != route
         {
-            self.remove_route_runtime_state(peer, old).await;
+            self.channels.drop_route(peer, old_route);
         }
         self.clear_reachability_error(peer).await;
         Ok(channel)
     }
 
-    /// The single materialization path: open a tunnel to `peer` pinned to
-    /// the route's link, and cache the channel built on it.
-    async fn materialize(&self, peer: HostId, route: Route) -> Result<Channel, TunnelPoolError> {
-        let key = (peer, route);
-        let registry = self.tunnels.link_registry();
-        if let Some(channel) = self.pool.get(&key).await {
-            // A cached channel is only as alive as the link under it.
-            let link_alive = match route {
-                Route::Direct(link) => registry.has_link(&link).await,
-                Route::Via(relay) => registry.link_to_peer(relay).await.is_some(),
-            };
-            if !link_alive {
-                return Err(TunnelPoolError::LinkUnavailable {
-                    host_id: route_link_peer(route),
-                });
-            }
-            return Ok(channel);
-        }
-        let channel = match route {
-            Route::Direct(link) => self.tunnels.channel_on_link(peer, link).await?,
-            Route::Via(relay) => self.tunnels.channel_via(peer, relay).await?,
-        };
-        self.pool.register(key, channel.clone()).await;
-        Ok(channel)
-    }
-
-    async fn remove_route_runtime_state(&self, peer: HostId, route: Route) {
-        self.pool.unregister(&(peer, route)).await;
-        self.tunnels
-            .remove_initiated_over(peer, route_link_peer(route))
-            .await;
-    }
-
     async fn remove_host_runtime_state(&self, peer: HostId) {
-        self.state.write().await.active.remove(&peer);
-        self.pool.unregister_for_host(peer).await;
-        self.tunnels.remove_host(peer).await;
+        let mut state = self.state.write().await;
+        state.active.remove(&peer);
+        // A host that is gone is described afresh if it ever comes back.
+        state.announced.remove(&peer);
+        drop(state);
+        self.channels.drop_host(peer);
     }
 
-    /// A relay for `peer` whose link is the authenticated cloud link.
-    /// Pairing route selection keys on the link role, never on a peer's
-    /// self-asserted relay capability.
-    async fn cloud_relay_for(&self, peer: HostId) -> Result<HostId, TunnelPoolError> {
-        let registry = self.tunnels.link_registry();
+    async fn cloud_relay_for(&self, peer: HostId) -> Result<HostId, ChannelError> {
+        let registry = self.channels.link_registry();
         for relay in self.routing.relays_to(peer).await {
             if registry.has_cloud_relay_link_to(relay).await {
                 return Ok(relay);
             }
         }
-        Err(TunnelPoolError::CloudPairingUnavailable)
+        Err(ChannelError::CloudPairingUnavailable)
     }
 
     pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
         &self.routing
     }
-
-    pub(crate) fn tunnels(&self) -> &Arc<TunnelPool> {
-        &self.tunnels
+    pub(crate) fn channels(&self) -> &Arc<ChannelPool> {
+        &self.channels
     }
 
     pub async fn active_route(&self, peer: HostId) -> Option<Route> {
@@ -357,13 +380,6 @@ impl ConnectionManager {
 
     pub async fn known_routes(&self, peer: HostId) -> Vec<Route> {
         self.routing.routes_to(peer).await
-    }
-}
-
-fn route_link_peer(route: Route) -> HostId {
-    match route {
-        Route::Direct(link) => link.peer(),
-        Route::Via(relay) => relay,
     }
 }
 
@@ -376,539 +392,167 @@ fn host_is_cloud_relay(host: &Host) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
+    use futures_util::future::{self, BoxFuture};
     use tokio::sync::mpsc;
+    use uuid::Uuid;
 
     use super::*;
-    use crate::routing::{Capabilities, FEATURE_CLOUD_RELAY, Host, LinkRole, SupportedAgentType};
+    use crate::link::{ByteStream, CarrierKind, ControlSink, ControlSource, OpenError};
+    use crate::routing::{
+        Capabilities, LinkAdmission, LinkCarrier as RoutingCarrier, LinkId, LinkProperties,
+        LinkRegistry, LinkRole,
+    };
 
-    fn host(id: u128) -> Host {
+    fn peer() -> Host {
         Host {
             platform: None,
-            id: HostId::from_u128(id),
-            name: format!("host-{id}"),
+            id: Uuid::from_u128(2),
+            name: "peer".to_string(),
             version: "test".to_string(),
             capabilities: Capabilities {
                 features: Vec::new(),
-                supported_agent_types: vec![SupportedAgentType {
-                    agent_type: "test-agent".to_string(),
-                }],
-            },
-        }
-    }
-
-    fn cloud_host(id: u128) -> Host {
-        Host {
-            platform: None,
-            id: HostId::from_u128(id),
-            name: format!("cloud-{id}"),
-            version: "test".to_string(),
-            capabilities: Capabilities {
-                features: vec![FEATURE_CLOUD_RELAY.to_string()],
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         }
     }
 
-    fn test_pool(my_host_id: HostId, routing: &Arc<RoutingCore>) -> Arc<TunnelPool> {
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        Arc::new(TunnelPool::new(my_host_id, routing.clone(), incoming_tx))
+    /// A link that is superseded while a stream is being opened on it: the
+    /// replacement joins routing, this link leaves it, and the open fails the
+    /// way a closed QUIC connection fails it.
+    struct SupersededDuringOpen {
+        routing: Arc<RoutingCore>,
+        superseded: LinkId,
+        replacement: LinkId,
     }
 
-    async fn register_link(
-        tunnels: &TunnelPool,
-        peer: &Host,
-        role: LinkRole,
-    ) -> (LinkId, mpsc::Receiver<wire::pb::Message>) {
-        let (tx, rx) = mpsc::channel(64);
-        let link = LinkId::new(peer.id);
-        tunnels
-            .link_registry()
-            .register(link, peer.clone(), tx, role, &[])
-            .await;
-        (link, rx)
+    /// A link that answers every open with a refusal, recording that it was
+    /// asked.
+    #[derive(Default)]
+    struct Refusing {
+        asked: AtomicBool,
     }
 
-    fn is_tunnel_frame(message: &wire::pb::Message) -> bool {
-        use wire::pb::message::Body;
-        matches!(
-            message.body,
-            Some(Body::TunnelOpen(_)) | Some(Body::TunnelData(_)) | Some(Body::TunnelClose(_))
+    impl crate::link::LinkCarrier for SupersededDuringOpen {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::Quic
+        }
+
+        fn control(&self) -> (ControlSink, ControlSource) {
+            panic!("the test drives no control loop")
+        }
+
+        fn open_stream(
+            &self,
+            _preface: wire::pb::StreamPreface,
+        ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+            Box::pin(async move {
+                self.routing.apply_direct_up(peer(), self.replacement).await;
+                self.routing.apply_direct_down(self.superseded).await;
+                Err(OpenError::LinkClosed)
+            })
+        }
+
+        fn accept_stream(&self) -> BoxFuture<'_, Option<(wire::pb::StreamPreface, ByteStream)>> {
+            Box::pin(future::pending())
+        }
+
+        fn close(&self, _reason: wire::pb::LinkCloseReason) {}
+
+        fn closed(&self) -> BoxFuture<'_, wire::pb::LinkCloseReason> {
+            Box::pin(future::pending())
+        }
+    }
+
+    impl crate::link::LinkCarrier for Refusing {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::Quic
+        }
+
+        fn control(&self) -> (ControlSink, ControlSource) {
+            panic!("the test drives no control loop")
+        }
+
+        fn open_stream(
+            &self,
+            _preface: wire::pb::StreamPreface,
+        ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+            self.asked.store(true, Ordering::SeqCst);
+            Box::pin(async { Err(OpenError::Refused(wire::pb::StreamRefusal::ShuttingDown)) })
+        }
+
+        fn accept_stream(&self) -> BoxFuture<'_, Option<(wire::pb::StreamPreface, ByteStream)>> {
+            Box::pin(future::pending())
+        }
+
+        fn close(&self, _reason: wire::pb::LinkCloseReason) {}
+
+        fn closed(&self) -> BoxFuture<'_, wire::pb::LinkCloseReason> {
+            Box::pin(future::pending())
+        }
+    }
+
+    async fn register(
+        links: &LinkRegistry,
+        link: LinkId,
+        carrier: Arc<dyn crate::link::LinkCarrier>,
+    ) -> mpsc::Receiver<crate::routing::LinkCloseRequest> {
+        let (tx, _rx) = mpsc::channel(8);
+        links
+            .register_with_details(
+                link,
+                peer(),
+                tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: RoutingCarrier::Direct,
+                    incarnation: crate::routing::Incarnation::random(),
+                    direct_order: None,
+                },
+                &[],
+                Some(carrier),
+            )
+            .await
+            .expect("a lone link registers")
+    }
+
+    #[tokio::test]
+    async fn a_call_on_a_link_superseded_while_opening_retries_on_its_replacement() {
+        let links = Arc::new(LinkRegistry::default());
+        let routing = Arc::new(RoutingCore::new());
+        let manager =
+            ConnectionManager::new(routing.clone(), Arc::new(ChannelPool::new(links.clone())));
+        let superseded = LinkId::new(peer().id);
+        let replacement = LinkId::new(peer().id);
+        let refusing = Arc::new(Refusing::default());
+        let _superseded_close = register(
+            &links,
+            superseded,
+            Arc::new(SupersededDuringOpen {
+                routing: routing.clone(),
+                superseded,
+                replacement,
+            }),
         )
-    }
+        .await;
+        let _replacement_close = register(&links, replacement, refusing.clone()).await;
+        routing.apply_direct_up(peer(), superseded).await;
 
-    #[tokio::test]
-    async fn direct_routes_beat_relay_routes() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-
-        let _channel = manager.channel_to(peer.id).await.unwrap();
-        assert_eq!(
-            manager.active_route(peer.id).await,
-            Some(Route::Direct(direct_link))
-        );
-        // The call's tunnel is pinned to the direct link, not the relay's.
-        let active = tunnels.active_tunnels_for_test().await;
-        assert_eq!(active, vec![(peer.id, direct_link)]);
-    }
-
-    /// Cloud pairing must select the cloud link even when a direct route
-    /// exists: the pairing TLS ClientHello leaves on the cloud link.
-    #[tokio::test]
-    async fn cloud_pairing_uses_the_cloud_link_not_the_direct_route() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let peer = host(2);
-        let cloud = cloud_host(100);
-        let (_cloud_link, mut cloud_rx) =
-            register_link(&tunnels, &cloud, LinkRole::CloudRelay).await;
-        let (direct_link, mut direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-        routing.apply_claim_up(cloud.id, peer.clone()).await;
-
-        let pairing_manager = manager.clone();
-        let peer_id = peer.id;
-        let pairing =
-            tokio::spawn(async move { pairing_manager.cloud_pairing_channel_to(peer_id).await });
-
-        // Links also carry adjacency events; the assertion is about where
-        // the pairing *tunnel frames* go.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        loop {
-            let message = tokio::time::timeout_at(deadline, cloud_rx.recv())
-                .await
-                .expect("timed out waiting for pairing traffic on the cloud link")
-                .expect("cloud link closed");
-            if is_tunnel_frame(&message) {
-                break;
-            }
-        }
-        while let Ok(message) = direct_rx.try_recv() {
-            assert!(
-                !is_tunnel_frame(&message),
-                "no tunnel frame may leave on the direct link"
-            );
-        }
-        pairing.abort();
-    }
-
-    /// Regression: a claim whose target is a
-    /// cloud relay (learned through a peer before our own cloud link is up)
-    /// must be recorded but never eagerly tunneled into — relays discard
-    /// inbound tunnels, so materializing one can only stall the event loop.
-    #[tokio::test]
-    async fn relay_targets_are_recorded_but_never_eagerly_activated() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let peer = host(2);
-        let cloud = cloud_host(100);
-        let (_peer_link, _peer_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-
-        routing.apply_claim_up(peer.id, cloud.clone()).await;
-
-        tokio::task::yield_now().await;
-        assert_eq!(
-            manager.known_routes(cloud.id).await,
-            vec![Route::Via(peer.id)],
-            "the route itself is still recorded"
-        );
-        assert!(
-            manager.active_route(cloud.id).await.is_none(),
-            "relay targets must not auto-activate"
-        );
-        assert_eq!(tunnels.active_count().await, 0);
-    }
-
-    /// The same guard for the cloud link itself: NeighborUp(cloud) records
-    /// the direct route but never eagerly opens a tunnel into the relay —
-    /// nobody calls the cloud through the mesh.
-    #[tokio::test]
-    async fn the_cloud_link_itself_is_never_eagerly_tunneled_into() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let cloud = cloud_host(100);
-        let (cloud_link, _cloud_rx) = register_link(&tunnels, &cloud, LinkRole::CloudRelay).await;
-
-        routing.apply_direct_up(cloud.clone(), cloud_link).await;
-
-        tokio::task::yield_now().await;
-        assert_eq!(
-            manager.known_routes(cloud.id).await,
-            vec![Route::Direct(cloud_link)],
-            "the link is still a recorded route"
-        );
-        assert!(manager.active_route(cloud.id).await.is_none());
-        assert_eq!(tunnels.active_count().await, 0);
-    }
-
-    /// Cloud claims are discovery signals for pairing candidates, not proof
-    /// of trust. Seeing an untrusted host via the cloud must not spend a
-    /// normal trusted-device tunnel; QR/PIN pairing uses the pre-trust
-    /// pairing tunnel path explicitly.
-    #[tokio::test]
-    async fn cloud_claims_are_recorded_but_never_eagerly_activated() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let peer = host(2);
-        let cloud = cloud_host(100);
-        let (_cloud_link, _cloud_rx) = register_link(&tunnels, &cloud, LinkRole::CloudRelay).await;
-
-        routing.apply_claim_up(cloud.id, peer.clone()).await;
-
-        tokio::task::yield_now().await;
-        assert_eq!(
-            manager.known_routes(peer.id).await,
-            vec![Route::Via(cloud.id)],
-            "the cloud route is still recorded for pairing/discovery"
-        );
-        assert!(
-            manager.active_route(peer.id).await.is_none(),
-            "cloud claims must not auto-activate a trusted route"
-        );
-        assert_eq!(tunnels.active_count().await, 0);
-    }
-
-    #[tokio::test]
-    async fn cloud_pairing_rejects_spoofed_cloud_relay_capability_on_peer_link() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        // The spoofing relay advertises the cloud capability, but its link
-        // carries the ordinary Peer role.
-        let spoof = cloud_host(100);
-        let (_spoof_link, _spoof_rx) = register_link(&tunnels, &spoof, LinkRole::Peer).await;
-
-        routing.apply_claim_up(spoof.id, peer.clone()).await;
-
-        let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
-
-        assert!(matches!(error, TunnelPoolError::CloudPairingUnavailable));
-    }
-
-    #[tokio::test]
-    async fn cloud_pairing_rejects_peers_without_cloud_claims() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-
-        let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
-
-        assert!(matches!(error, TunnelPoolError::CloudPairingUnavailable));
-    }
-
-    /// The dial-error storage IS `HostEntry.last_dial_error`: a failed
-    /// attempt is recorded until a route comes up (or a clear), with no
-    /// event plumbing of its own — host listings re-read it on demand.
-    #[tokio::test]
-    async fn reachability_errors_are_stored_until_cleared() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels);
-        let peer = HostId::from_u128(2);
-
-        manager.record_reachability_error(peer, "failed").await;
-        assert_eq!(
-            manager.stored_reachability_error(peer).await,
-            Some("failed".to_string())
-        );
-
-        manager.clear_reachability_error(peer).await;
-        assert_eq!(manager.stored_reachability_error(peer).await, None);
-    }
-
-    #[tokio::test]
-    async fn channel_to_materializes_and_reuses_relay_channel() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-
-        let _first = manager.channel_to(peer.id).await.unwrap();
-        let _second = manager.channel_to(peer.id).await.unwrap();
-
-        assert_eq!(manager.pool().len().await, 1);
-        assert_eq!(
-            manager.active_route(peer.id).await,
-            Some(Route::Via(relay.id))
-        );
-        assert_eq!(tunnels.active_count().await, 1);
-    }
-
-    /// One materialization path: a Direct route's call opens a tunnel
-    /// pinned to that link, with `dst = peer` — and reuses its channel.
-    #[tokio::test]
-    async fn channel_to_materializes_and_reuses_a_tunnel_on_the_direct_link() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-
-        let _first = manager.channel_to(peer.id).await.unwrap();
-        let _second = manager.channel_to(peer.id).await.unwrap();
-
-        assert_eq!(manager.pool().len().await, 1);
-        assert_eq!(
-            manager.active_route(peer.id).await,
-            Some(Route::Direct(direct_link))
-        );
-        assert_eq!(
-            tunnels.active_tunnels_for_test().await,
-            vec![(peer.id, direct_link)]
-        );
-    }
-
-    #[tokio::test]
-    async fn channel_to_rejects_cached_relay_channel_when_relay_link_is_gone() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let relay = host(100);
-        let (relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        let _channel = manager.channel_to(peer.id).await.unwrap();
-
-        tunnels.link_registry().remove(&relay_link).await;
-        let error = manager.channel_to(peer.id).await.unwrap_err();
+        let error = manager.channel_to(peer().id).await.unwrap_err();
 
         assert!(
-            matches!(error, TunnelPoolError::LinkUnavailable { host_id } if host_id == relay.id)
+            refusing.asked.load(Ordering::SeqCst),
+            "the replacement link was never tried"
         );
-    }
-
-    #[tokio::test]
-    async fn channel_to_rejects_cached_direct_channel_when_link_is_gone() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-        let _channel = manager.channel_to(peer.id).await.unwrap();
-
-        tunnels.link_registry().remove(&direct_link).await;
-        let error = manager.channel_to(peer.id).await.unwrap_err();
-
         assert!(
-            matches!(error, TunnelPoolError::LinkUnavailable { host_id } if host_id == peer.id)
-        );
-    }
-
-    #[tokio::test]
-    async fn a_recovering_direct_link_swaps_back_and_drops_relay_tunnels() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        let old_channel = manager.channel_to(peer.id).await.unwrap();
-        assert_eq!(tunnels.active_count().await, 1);
-
-        // The direct link comes (back) up: make-then-break to a tunnel on
-        // the direct link, retiring the relay tunnel.
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if manager.active_route(peer.id).await == Some(Route::Direct(direct_link)) {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for the direct swap");
-        assert_eq!(
-            tunnels.active_tunnels_for_test().await,
-            vec![(peer.id, direct_link)],
-            "only the direct link's tunnel remains; the relay tunnel retired"
-        );
-        drop(old_channel);
-    }
-
-    #[tokio::test]
-    async fn claim_down_drops_relay_channel_and_tunnels() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        let channel = manager.channel_to(peer.id).await.unwrap();
-        assert_eq!(tunnels.active_count().await, 1);
-
-        routing.apply_claim_down(relay.id, peer.id).await;
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if manager.active_route(peer.id).await.is_none()
-                    && tunnels.active_count().await == 0
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for claim-down cleanup");
-        assert_eq!(manager.pool().len().await, 0);
-        drop(channel);
-    }
-
-    #[tokio::test]
-    async fn direct_route_down_falls_back_to_relay_claim() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
-        let _task = manager.clone().attach_routing_events().await;
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if manager.active_route(peer.id).await == Some(Route::Direct(direct_link)) {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for direct activation");
-
-        routing.apply_direct_down(direct_link).await;
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if manager.active_route(peer.id).await != Some(Route::Direct(direct_link)) {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for direct route removal");
-
-        let _fallback = manager.channel_to(peer.id).await.unwrap();
-        assert_eq!(
-            manager.active_route(peer.id).await,
-            Some(Route::Via(relay.id))
-        );
-    }
-
-    #[tokio::test]
-    async fn close_host_access_drops_the_live_connection_but_keeps_the_relays_claim() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        let registry = tunnels.link_registry();
-        let registry_for_close = registry.clone();
-        tokio::spawn(async move {
-            // Stand in for the link's connect task: honor the close request.
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            registry_for_close.remove(&direct_link).await;
-        });
-        let _tunnel_channel = manager.channel_to(peer.id).await.ok();
-        let _relay_channel = tunnels.channel_via(peer.id, relay.id).await.unwrap();
-
-        manager.close_host_access(peer.id).await;
-
-        assert_eq!(manager.pool().len().await, 0);
-        assert_eq!(tunnels.active_count().await, 0);
-        assert_eq!(manager.active_route(peer.id).await, None);
-        // The relay still says the peer is online, so a fresh pairing has a
-        // route to it, and no replacement window suppresses later updates.
-        assert_eq!(
-            manager.known_routes(peer.id).await,
-            vec![Route::Via(relay.id)]
-        );
-        assert_eq!(
-            routing.apply_claim_up(relay.id, peer.clone()).await,
-            crate::routing::RouteUpdateOutcome::AlreadyKnown
-        );
-    }
-
-    #[tokio::test]
-    async fn teardown_host_removes_routes_channels_tunnels_and_links() {
-        let routing = Arc::new(RoutingCore::new());
-        let tunnels = test_pool(HostId::from_u128(1), &routing);
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
-        let peer = host(2);
-        let relay = host(100);
-        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
-        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
-        routing.apply_direct_up(peer.clone(), direct_link).await;
-        routing.apply_claim_up(relay.id, peer.clone()).await;
-        let registry = tunnels.link_registry();
-        let registry_for_close = registry.clone();
-        tokio::spawn(async move {
-            // Stand in for the link's connect task: honor the close request.
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            registry_for_close.remove(&direct_link).await;
-        });
-        let _tunnel_channel = manager.channel_to(peer.id).await.ok();
-        let _relay_channel = tunnels.channel_via(peer.id, relay.id).await.unwrap();
-        assert!(manager.pool().len().await >= 1);
-
-        manager.teardown_host(peer.id).await;
-
-        assert!(manager.known_routes(peer.id).await.is_empty());
-        assert!(routing.host_entry(peer.id).await.is_none());
-        assert_eq!(manager.pool().len().await, 0);
-        assert_eq!(tunnels.active_count().await, 0);
-
-        // Late updates during the replacement window are suppressed…
-        assert_eq!(
-            routing.apply_claim_up(relay.id, peer.clone()).await,
-            crate::routing::RouteUpdateOutcome::Replacing
-        );
-        manager.finish_host_replacement(peer.id).await;
-        // …and flow again once the replacement completes.
-        assert_eq!(
-            routing.apply_claim_up(relay.id, peer.clone()).await,
-            crate::routing::RouteUpdateOutcome::Inserted
-        );
-        assert_eq!(
-            manager.known_routes(peer.id).await,
-            vec![Route::Via(relay.id)]
+            matches!(
+                error,
+                ChannelError::Refused(wire::pb::StreamRefusal::ShuttingDown)
+            ),
+            "the call ended on the superseded link: {error}"
         );
     }
 }

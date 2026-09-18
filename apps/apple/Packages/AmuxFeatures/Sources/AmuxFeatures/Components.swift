@@ -79,6 +79,26 @@ public struct NeedsYouMark: View {
     }
 }
 
+/// The accent dot a list row carries beside its age while its agent is
+/// waiting on you.
+///
+/// Small and on the trailing edge, where a conversation list marks what is
+/// unread, rather than a disc in front of the name: a disc there needed a slot
+/// held open on every row that had nothing to show, and a list of calm agents
+/// became a column of gaps.
+public struct NeedsYouDot: View {
+    @Environment(\.design) private var design
+
+    public init() {}
+
+    public var body: some View {
+        Circle()
+            .fill(design.accent.color)
+            .frame(width: 8, height: 8)
+            .accessibilityHidden(true)
+    }
+}
+
 extension Why {
     public var glyph: String {
         switch self {
@@ -128,7 +148,7 @@ public struct RowGroup<Item: Identifiable, Content: View>: View {
                             .padding(
                                 .leading,
                                 prominence == .subject
-                                    ? 46 : design.surfaces.separation == .rule ? 0 : 46)
+                                    ? 13 : design.surfaces.separation == .rule ? 0 : 46)
                     }
                 }
             }
@@ -296,7 +316,7 @@ public struct GlassIcon: View {
                 if prominent {
                     Circle().fill(design.accent.color)
                 } else {
-                    Color.clear.frosted(Circle())
+                    Color.clear.frosted(Circle(), as: .glass)
                 }
             }
             .contentShape(Circle())

@@ -35,12 +35,6 @@ const HOST_WIDTH: usize = 10;
 const AGE_COL: usize = 48;
 const AGE_WIDTH: usize = 5;
 const STATUS_COL: usize = 54;
-/// Room for the longest word the column is designed around (`permission`),
-/// and one clear cell before `working_on`. Not every status word is one of
-/// that closed set: an exited agent states its code, and an operating
-/// system's abort code is long enough to run through the next column, so
-/// the cell is clipped like every other one on the row.
-const STATUS_WIDTH: usize = WORKING_COL - STATUS_COL - 1;
 /// The status word is the second column to collapse on narrow terminals:
 /// shown only when the full grid fits.
 const STATUS_MIN_FRAME_WIDTH: usize = 68;
@@ -49,6 +43,9 @@ const STATUS_MIN_FRAME_WIDTH: usize = 68;
 /// most expendable cell on a cramped screen, because every other column
 /// answers a question this one only elaborates on.
 const WORKING_COL: usize = 65;
+/// Wide fleets spend eight extra cells on the host caption so its route is
+/// readable; compact layouts retain the established agent/status grid.
+const WIDE_GRID_MIN_FRAME_WIDTH: usize = 96;
 /// Enough room past `WORKING_COL` for a clipped phrase and its age.
 const WORKING_MIN_FRAME_WIDTH: usize = 78;
 /// Indent per generation for an unfolded family's descendants.
@@ -148,6 +145,7 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
             list
         }
         ScreenState::Help => help_lines(model, view, theme),
+        ScreenState::Hosts => crate::hosts::hosts_overlay_lines(model, width as u16, theme),
         ScreenState::Switcher(state) => switcher_lines(&state, width, capacity, theme),
         ScreenState::ConfirmDelete { agent } => {
             confirm_delete_lines(model, ctx, agent, width, capacity)
@@ -174,6 +172,7 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
 enum ScreenState {
     Fleet,
     Help,
+    Hosts,
     /// The installation's accounts, listed over the fleet of the one
     /// currently showing.
     Switcher(crate::switcher::SwitcherState),
@@ -194,8 +193,10 @@ fn screen_state(
     rows: &[VisibleRow<'_>],
     theme: Theme,
 ) -> ScreenState {
-    if view.mode == Mode::Help {
-        return ScreenState::Help;
+    match view.mode {
+        Mode::Help => return ScreenState::Help,
+        Mode::Hosts => return ScreenState::Hosts,
+        _ => {}
     }
     // Ahead of the connection states on purpose: a profile whose daemon is
     // unreachable is exactly the one a person wants to switch away from, so
@@ -212,15 +213,12 @@ fn screen_state(
                 DisconnectReason::AuthenticationRequired => {
                     "✗ authentication required — run `amux init`".to_string()
                 }
-                DisconnectReason::SubscriptionRequired => {
-                    "✗ subscription required — amux.sh/account".to_string()
-                }
                 DisconnectReason::ServerShutdown { detail } => {
                     format!("✗ daemon shut down: {detail}")
                 }
-                DisconnectReason::TransportError { .. } | DisconnectReason::ApplicationShutdown => {
-                    "✗ daemon unreachable".to_string()
-                }
+                DisconnectReason::TransportError { .. }
+                | DisconnectReason::PaymentRequired
+                | DisconnectReason::ApplicationShutdown => "✗ daemon unreachable".to_string(),
             };
             return ScreenState::Message(vec![
                 (detail, theme.error()),
@@ -495,6 +493,24 @@ fn fleet_row_line(
 ) -> Line<'static> {
     let theme = ctx.theme;
     let width = ctx.viewport.0 as usize;
+    let wide_grid = width >= WIDE_GRID_MIN_FRAME_WIDTH;
+    let host_width = if wide_grid {
+        HOST_WIDTH + 8
+    } else {
+        HOST_WIDTH
+    };
+    let age_col = if wide_grid { AGE_COL + 8 } else { AGE_COL };
+    let status_col = if wide_grid {
+        STATUS_COL + 8
+    } else {
+        STATUS_COL
+    };
+    let working_col = if wide_grid {
+        WORKING_COL + 8
+    } else {
+        WORKING_COL
+    };
+    let status_width = working_col - status_col - 1;
     let show_status = width >= STATUS_MIN_FRAME_WIDTH;
     let show_working = width >= WORKING_MIN_FRAME_WIDTH;
     let renaming = matches!(
@@ -550,13 +566,13 @@ fn fleet_row_line(
                 detail,
             );
             let host = model
-                .host_name(card.agent.host_id)
-                .map(str::to_string)
+                .host(card.agent.host_id)
+                .map(|state| crate::hosts::host_caption(model, &state.entry))
                 .unwrap_or_else(|| "?".to_string());
-            push_span(&mut line, HOST_COL, clip(&host, HOST_WIDTH), base);
+            push_span(&mut line, HOST_COL, clip(&host, host_width), base);
             push_span(
                 &mut line,
-                AGE_COL,
+                age_col,
                 clip(
                     &format_relative_age(ctx.now, model.effective_summary_age(card)),
                     AGE_WIDTH,
@@ -569,10 +585,10 @@ fn fleet_row_line(
                 } else {
                     model.status_label_for(card)
                 };
-                push_span(&mut line, STATUS_COL, clip(&status, STATUS_WIDTH), detail);
+                push_span(&mut line, status_col, clip(&status, status_width), detail);
             }
             if show_working {
-                let budget = width.saturating_sub(2 + WORKING_COL);
+                let budget = width.saturating_sub(2 + working_col);
                 let text = if card.remembered {
                     let standing = model.status_label_for(card);
                     Some(match working_text(card, ctx.now, budget) {
@@ -583,7 +599,7 @@ fn fleet_row_line(
                     working_text(card, ctx.now, budget)
                 };
                 if let Some(text) = text {
-                    push_span(&mut line, WORKING_COL, clip(&text, budget), detail);
+                    push_span(&mut line, working_col, clip(&text, budget), detail);
                 }
             }
         }
@@ -607,11 +623,11 @@ fn fleet_row_line(
             );
             let host = host
                 .or(model.local_host_id())
-                .and_then(|id| model.host_name(id))
-                .unwrap_or("?")
-                .to_string();
-            push_span(&mut line, HOST_COL, clip(&host, HOST_WIDTH), theme.muted());
-            push_span(&mut line, AGE_COL, "—", theme.muted());
+                .and_then(|id| model.host(id))
+                .map(|state| crate::hosts::host_caption(model, &state.entry))
+                .unwrap_or_else(|| "?".to_string());
+            push_span(&mut line, HOST_COL, clip(&host, host_width), theme.muted());
+            push_span(&mut line, age_col, "—", theme.muted());
         }
     }
     line
@@ -622,18 +638,34 @@ fn banner_line(model: &Model, width: usize, theme: Theme) -> Line<'static> {
         return invariant_warning_line(width, theme);
     }
     let mut line = new_line(theme);
-    if model.cloud_subscription_required() && model.is_connected() {
+    let away = model
+        .hosts()
+        .filter(|host| host.entry.trust_status == ui_state::HostTrustStatus::Trusted)
+        .filter(|host| host.entry.signed_in != Some(false))
+        .filter(|host| model.host_is_away(host.entry.id))
+        .min_by(|left, right| left.entry.name.cmp(&right.entry.name));
+    let signed_out_with_offline = matches!(
+        model.cloud_state(),
+        ui_state::CloudState::SignedOut | ui_state::CloudState::AuthRequired
+    ) && model.hosts().any(|host| {
+        host.entry.trust_status == ui_state::HostTrustStatus::Trusted
+            && host.entry.via == ui_state::HostVia::Offline
+    });
+    if let Some(host) = away.filter(|_| model.is_connected()) {
         push_span(
             &mut line,
             MARKER_COL,
-            "⚠ subscription required · amux.sh/account · local agents fine",
+            format!(
+                "⚠ {} is away · subscribe at amux.sh/account to reach agents from anywhere",
+                host.entry.name
+            ),
             theme.warn(),
         );
-    } else if model.cloud_auth_required() && model.is_connected() {
+    } else if signed_out_with_offline && model.is_connected() {
         push_span(
             &mut line,
             MARKER_COL,
-            "⚠ cloud: auth required — run `amux init` · local agents fine",
+            "sign in to reach your agents from anywhere · amux login",
             theme.warn(),
         );
     }
@@ -758,7 +790,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
                 DisconnectReason::AuthenticationRequired => {
                     "authentication required — run `amux init`".to_string()
                 }
-                DisconnectReason::SubscriptionRequired => {
+                DisconnectReason::PaymentRequired => {
                     "subscription required — amux.sh/account".to_string()
                 }
                 DisconnectReason::ServerShutdown { detail } => {
@@ -783,7 +815,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
         (_, Mode::Filter) => "esc nav-mode  enter open".to_string(),
         (_, Mode::Rename { .. }) => "enter apply  esc cancel".to_string(),
         (_, Mode::ConfirmDelete { .. }) => String::new(),
-        (_, Mode::Help) => "any key to close".to_string(),
+        (_, Mode::Help | Mode::Hosts) => "any key to close".to_string(),
         (_, Mode::Switcher(_)) => "j/k move  enter switch  esc close".to_string(),
     };
     if !hints.is_empty() && fits(&hints, width) {

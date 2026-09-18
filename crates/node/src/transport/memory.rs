@@ -3,10 +3,9 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
-#[cfg(test)]
-use futures_util::{Stream, stream};
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Channel, Endpoint};
@@ -43,27 +42,29 @@ pub(crate) fn managed_in_process_transport_pair() -> (
 ) {
     let (client, server) = in_process_transport_pair();
     let cancellation = CancellationToken::new();
-    let cancelled = Box::pin(cancellation.clone().cancelled_owned());
     (
         client,
-        ShutdownIo {
-            inner: server,
-            cancelled,
-        },
+        ShutdownIo::new(server, cancellation.clone()),
         InProcessConnection { cancellation },
     )
 }
 
 pub(crate) struct ShutdownIo<T> {
     inner: T,
+    _cancellation: Arc<CancellationToken>,
     cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl<T> ShutdownIo<T> {
     pub(crate) fn new(inner: T, cancellation: CancellationToken) -> Self {
+        Self::new_shared(inner, Arc::new(cancellation))
+    }
+
+    pub(crate) fn new_shared(inner: T, cancellation: Arc<CancellationToken>) -> Self {
         Self {
             inner,
-            cancelled: Box::pin(cancellation.cancelled_owned()),
+            cancelled: Box::pin(cancellation.as_ref().clone().cancelled_owned()),
+            _cancellation: cancellation,
         }
     }
 }
@@ -116,13 +117,6 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ShutdownIo<T> {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
-}
-
-#[cfg(test)]
-pub(crate) fn in_process_incoming(
-    transport: InProcessTransport,
-) -> impl Stream<Item = io::Result<InProcessTransport>> + Send + 'static {
-    stream::once(async move { Ok(transport) })
 }
 
 pub(crate) fn in_process_channel(transport: InProcessTransport) -> Channel {

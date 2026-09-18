@@ -25,11 +25,41 @@ pub enum RoutingEvent {
     ClaimDown { relay: HostId, host_id: HostId },
 }
 
+impl RoutingEvent {
+    /// The host this event is about.
+    pub(crate) fn host_id(&self) -> HostId {
+        match self {
+            Self::NeighborUp { host, .. } | Self::ClaimUp { host, .. } => host.id,
+            Self::NeighborDown { host_id, .. } | Self::ClaimDown { host_id, .. } => *host_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
 pub enum HostReachabilityEvent {
-    Added { host: Host },
-    Removed { host_id: HostId },
+    Added {
+        host: Host,
+    },
+    Removed {
+        host_id: HostId,
+    },
+    /// A host that was already present is now reached a different way — a
+    /// direct link came up beside a relay's claim, or the last one went away.
+    ///
+    /// Presence did not change, so nothing was added or removed, but how the
+    /// host is described did. A client that subscribed once and stays
+    /// subscribed learns only what it is sent, so without this it would keep
+    /// describing a machine by the route it was first reached over for the
+    /// life of its connection.
+    ///
+    /// Sent by whatever owns the live route rather than by the routing table,
+    /// which records where a host could be reached and not which of those
+    /// routes is carrying traffic. Acting on one costs a host its inventory
+    /// subscription, so it is worth sending only when the answer moved.
+    RouteChanged {
+        host_id: HostId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

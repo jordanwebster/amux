@@ -15,7 +15,7 @@ use model::{
     Agent, AgentIdentifier, AgentKind, ClaudeDriver, HostEntry, HostTrustStatus, ReplayOutcome,
     ReplayQuery, SessionArgs, SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest,
 };
-use node::{ColorSetting, Config, ThemeSetting, UiSettings};
+use node::{ColorSetting, Config, ProfileConfig, ThemeSetting, UiSettings};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -143,16 +143,14 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
         let config_path = paths.config_path.context("profile config path")?;
         std::fs::write(
             &config_path,
-            serde_yaml::to_string(&Config {
-                host_name: "perf-mac".to_owned(),
+            serde_yaml::to_string(&ProfileConfig {
+                installation_config: installation_path.clone(),
                 socket_path: paths.socket_path,
                 data_dir,
                 state_path: paths.state_path,
                 cloud_url: Config::default().cloud_url,
-                tcp_port: None,
-                prevent_idle_sleep: Some(false),
-                ui: installation.ui.clone(),
-                ..Config::default()
+                cloud_refresh_secs: None,
+                lan: Default::default(),
             })?,
         )?;
         let record = node::installation::ProfileRecord {
@@ -1105,6 +1103,8 @@ async fn seed_fleet(store: &Store, count: usize) -> Result<()> {
         capabilities: Some(Default::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: model::HostVia::Offline,
+        signed_in: Some(true),
         platform: None,
     };
     store
@@ -1138,6 +1138,8 @@ async fn seed_live_fleet(store: &Store, agent: &Agent) -> Result<()> {
                     capabilities: Some(Default::default()),
                     trust_status: HostTrustStatus::Trusted,
                     last_dial_error: None,
+                    via: model::HostVia::Direct,
+                    signed_in: Some(true),
                     platform: None,
                 },
                 revision: 1,
@@ -1324,6 +1326,7 @@ fn agent(index: usize) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: now(index as i64),
+        last_activity: now(index as i64),
         parent: None,
         working_on: None,
         summary: None,

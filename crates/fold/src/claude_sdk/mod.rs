@@ -125,6 +125,7 @@ pub struct ToolEntry {
     pub input: Option<Value>,
     pub input_json: String,
     pub finality: Finality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<ToolResult>,
     pub group_with_previous: bool,
 }
@@ -133,7 +134,9 @@ pub struct ToolEntry {
 pub struct ToolResult {
     pub text: String,
     pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit: Option<LandedEdit>,
 }
 

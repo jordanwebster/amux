@@ -145,26 +145,102 @@ final class ReviewTests: JourneyCase {
     private func select(
         _ app: XCUIApplication, _ runner: Runner, from kind: String, offset: Int, span: Int
     ) throws -> [String: String] {
-        let rows = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", kind))
-            .allElementsBoundByIndex.filter { $0.isHittable }
-        guard rows.count > offset + span else {
-            throw Lines.Failure(
-                "the patch shows \(rows.count) rows beginning \(kind), and this wanted "
-                + "\(offset + span + 1)")
+        // The least a hold that crosses those rows can end up holding: the
+        // rows themselves, and whatever the patch has between them.
+        let least = span + 1
+        var sheet: Said?
+        var held: Said?
+        for _ in 0..<3 {
+            let rows = try still(app, beginning: kind, wanting: offset + span + 1)
+            rows[offset].press(forDuration: 0.6, thenDragTo: rows[offset + span])
+            waitFor(app, "review.commentSheet", "holding a range of lines opened no sheet")
+            sheet = try settled(runner)
+            if rowsHeld(sheet) >= least {
+                held = sheet
+                break
+            }
+            // A hold that ends short of the row it was aimed at is a hold
+            // nobody took: the drag was delivered against frames the rows had
+            // already left. Let go of it and take it again from where the
+            // page is now.
+            press(app, "review.cancelComment")
+            waitForNo(app, "review.commentSheet",
+                      "letting go of a hold that fell short left the sheet open")
         }
-        rows[offset].press(forDuration: 0.6, thenDragTo: rows[offset + span])
-        waitFor(app, "review.commentSheet", "holding a range of lines opened no sheet")
-        let sheet = said(try declared(runner), "review.commentSheet")
+        guard let held else {
+            throw Lines.Failure(
+                "holding \(least) rows beginning \(kind) left the sheet saying "
+                + "\(sheet?.label ?? "nothing") at \(sheet?.value ?? "no lines")")
+        }
         // "6 lines in parser.rs": how much was taken hold of, and where. The
         // file is pulled out of it because that is what a comment is finally
         // addressed by, and the sentence is kept as the sheet said it.
-        let says = sheet?.label ?? ""
+        let says = held.label
         return [
             "says": says,
             "path": says.components(separatedBy: " in ").last ?? "",
-            "lines": sheet?.value ?? "",
+            "lines": held.value,
         ]
+    }
+
+    /// The rows of one kind on screen, once they have stopped moving.
+    ///
+    /// Adding a remark puts a thread under the range it was about and the page
+    /// scrolls that range under the chrome, both with animation. A hold
+    /// measured while that is going on is delivered against frames the rows
+    /// have already left, and lands a row short of where it was aimed.
+    private func still(
+        _ app: XCUIApplication, beginning kind: String, wanting rows: Int
+    ) throws -> [XCUIElement] {
+        var found = onScreen(app, beginning: kind)
+        var frames = found.map { $0.frame }
+        for _ in 0..<12 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            let again = onScreen(app, beginning: kind)
+            let moved = again.map { $0.frame }
+            found = again
+            if moved == frames { break }
+            frames = moved
+        }
+        guard found.count >= rows else {
+            throw Lines.Failure(
+                "the patch shows \(found.count) rows beginning \(kind), and this wanted "
+                + "\(rows)")
+        }
+        return found
+    }
+
+    /// Every row of the patch that begins with the same words, top to bottom.
+    ///
+    /// A diff row is a line of a file and carries no name of its own, so the
+    /// rows are found by what they say.
+    private func onScreen(_ app: XCUIApplication, beginning kind: String) -> [XCUIElement] {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", kind))
+            .allElementsBoundByIndex.filter { $0.isHittable }
+    }
+
+    /// What the comment sheet finally says the held range is.
+    ///
+    /// The sheet opens as soon as the range has two ends and grows with the
+    /// finger, and the rest of a hold-and-drag is still on its way to the app
+    /// when it does, so it is read until it says the same thing twice.
+    private func settled(_ runner: Runner) throws -> Said? {
+        var sheet = said(try declared(runner), "review.commentSheet")
+        for _ in 0..<8 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let again = said(try declared(runner), "review.commentSheet")
+            if again?.label == sheet?.label && again?.value == sheet?.value { return again }
+            sheet = again
+        }
+        return sheet
+    }
+
+    /// How many rows of the patch a sheet says are held, counted off the
+    /// sentence it leads with — "3 lines in parser.rs" — and none where it has
+    /// not said anything yet.
+    private func rowsHeld(_ sheet: Said?) -> Int {
+        Int(sheet?.label.components(separatedBy: " ").first ?? "") ?? 0
     }
 
 

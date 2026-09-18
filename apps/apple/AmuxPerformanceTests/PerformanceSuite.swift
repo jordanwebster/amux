@@ -323,9 +323,8 @@ final class PerformanceSuite: XCTestCase {
         ]
     }
 
-    /// The page a measured conversation is drawn on: the shipped conversation
-    /// with the fleet's drawer over it, which is what the app pushes when
-    /// somebody opens an agent.
+    /// The page a measured conversation is drawn on: the shipped conversation,
+    /// which is what the app pushes when somebody opens an agent.
     ///
     /// The session is delivered with the rows rather than left out, because
     /// the gate is what decides whether the composer is on the screen at all.
@@ -341,8 +340,6 @@ final class PerformanceSuite: XCTestCase {
     ) -> some View {
         BenchConversationScreen(
             model: model,
-            fleet: harness.stores.fleet,
-            hosts: harness.stores.hosts,
             subject: ConversationSubject(
                 name: "measured", host: "bench", directory: "~/src/amux",
                 age: "2m", working: "12s"),

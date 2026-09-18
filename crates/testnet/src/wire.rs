@@ -1,57 +1,124 @@
-//! `WirePeer`: a scripted protocol actor for wire-conformance tests.
+//! `WirePeer`: a scripted protocol-v2 actor over a real `MuxCarrier`.
 //!
-//! Where [`super::Daemon`] speaks user-meaningful verbs, `WirePeer` connects
-//! to a real daemon's *external TCP listener* through real device mTLS and
-//! drives the `LinkService.Connect` bidi stream by hand — sending raw
-//! `Message` envelopes (Hello, TunnelOpen/TunnelData/TunnelClose) and
-//! asserting on the exact replies (HelloAck, LinkClose) and on stream
-//! closure. It is the conformance lab for the adversarial cases the topology
-//! layer cannot express: oversize frames, host_id spoofing after mTLS,
-//! version mismatch, malformed frames, stale tunnel frames, and handshake
-//! rate limiting.
-//!
-//! The harness seeds a keypair + trust entry for the wire peer in the
-//! victim's live trust store (the same pinned-pubkey mTLS every real peer
-//! uses), so the victim's dispatcher routes the connection to its trusted
-//! ingress and the real `Connect` handler runs end to end.
+//! The actor drives the connector side of an in-memory ordered carrier while
+//! the victim daemon's real routing state runs the acceptor side. The acceptor
+//! context receives the peer identity established by its carrier boundary, so
+//! spoofing exercises the same Hello-to-carrier binding as a network carrier.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use futures_util::{Stream, stream};
 use node::HostId;
-use node::harness::{
-    Capabilities, Host, TrustEntry, TrustStore, host_to_wire, load_or_create_device_identity_in,
-    trusted_device_channel_tracked,
+use node::harness::link::{
+    CarrierKind, ControlSink, ControlSource, LinkCarrier, LinkCtx, MuxCarrier, MuxRole, OpenError,
+    read_message, run_link, write_message, write_raw_control_frame,
 };
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{ClientConfig, DigitallySignedStruct, Error as TlsError, SignatureScheme, version};
-use tokio::net::TcpStream;
-use tokio::sync::mpsc;
-use tokio_rustls::TlsConnector;
-use tonic::Request;
+use node::harness::{
+    AuthenticatedLinkUser, Capabilities, ConnectRole, Host, LinkRole, LinkTokenAuthenticator,
+    host_to_wire, pairing_quic_client_config,
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wire::{self, PROTOCOL_VERSION, pb};
 
 use super::TestNet;
 use super::assertions::DEFAULT_TIMEOUT;
 
-/// The LinkClose reasons the wire-conformance tests assert on. Mirrors the
-/// wire enum so the spec suite need not name the crate-private protobuf type.
+/// Exercises the native stream boundary without gRPC obscuring its lifecycle:
+/// graceful finish is EOF, while refusal remains a named reset reason.
+pub async fn native_stream_lifecycle() -> (bool, &'static str) {
+    let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
+    let connector = Arc::new(MuxCarrier::new(
+        connector_io,
+        MuxRole::Connector,
+        CarrierKind::RelayTcp,
+    ));
+    let acceptor = Arc::new(MuxCarrier::new(
+        acceptor_io,
+        MuxRole::Acceptor,
+        CarrierKind::RelayTcp,
+    ));
+    let (mut connector_sink, connector_source) = connector.control();
+    let (acceptor_sink, mut acceptor_source) = acceptor.control();
+    write_message(&mut connector_sink, &pb::Message { body: None })
+        .await
+        .expect("activate native carrier control stream");
+    read_message(&mut acceptor_source)
+        .await
+        .expect("read native carrier control stream")
+        .expect("native carrier control stream stays open");
+
+    let open = {
+        let connector = connector.clone();
+        tokio::spawn(async move {
+            connector
+                .open_stream(pb::StreamPreface { dst: vec![1; 16] })
+                .await
+        })
+    };
+    let (_, mut accepted) = acceptor
+        .accept_stream()
+        .await
+        .expect("accept stream to finish");
+    accepted
+        .write_all(b"accepted")
+        .await
+        .expect("accept native stream");
+    let mut opened = open
+        .await
+        .expect("stream-open task")
+        .expect("stream is accepted");
+    let mut marker = [0_u8; 8];
+    opened
+        .read_exact(&mut marker)
+        .await
+        .expect("read acceptance marker");
+    accepted.finish().await.expect("finish native stream");
+    let finished_reads_eof = opened
+        .read(&mut [0_u8; 1])
+        .await
+        .expect("read graceful stream finish")
+        == 0;
+
+    let refused_open = {
+        let connector = connector.clone();
+        tokio::spawn(async move {
+            connector
+                .open_stream(pb::StreamPreface { dst: vec![2; 16] })
+                .await
+        })
+    };
+    let (_, mut refused) = acceptor
+        .accept_stream()
+        .await
+        .expect("accept stream to refuse");
+    refused
+        .reset(pb::StreamRefusal::PaymentRequired)
+        .await
+        .expect("reset native stream");
+    let refusal_name = match refused_open.await.expect("refused stream-open task") {
+        Err(OpenError::Refused(pb::StreamRefusal::PaymentRequired)) => "payment_required",
+        Err(error) => panic!("expected PAYMENT_REQUIRED refusal, got {error}"),
+        Ok(_) => panic!("expected PAYMENT_REQUIRED refusal, but the stream was accepted"),
+    };
+
+    // The control handles own the link while the application streams are
+    // exercised; keep both directions alive until the observations finish.
+    drop((
+        connector_sink,
+        connector_source,
+        acceptor_sink,
+        acceptor_source,
+    ));
+    (finished_reads_eof, refusal_name)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkCloseReason {
-    /// The wire enum's zero value: no reason given.
     Unspecified,
-    /// The peer committed a link-closing protocol violation.
     ProtocolError,
-    /// The link's authentication expired without a successful Reauth.
     AuthExpired,
-    /// The user asked the daemon to shut down.
     UserShutdown,
-    /// The peer must update before the daemon will talk to it.
     UpdateRequired,
-    /// Any wire reason not modelled above, carrying its raw code.
     Other(i32),
 }
 
@@ -68,85 +135,163 @@ impl LinkCloseReason {
     }
 }
 
-/// A scripted protocol actor connected to a victim daemon's `Connect` stream.
 pub struct WirePeer {
     victim_name: String,
-    /// The wire peer's own mTLS-bound host_id (its seeded device identity).
     bound: HostId,
-    /// Pushes raw `Message` envelopes into the Connect request stream. Held
-    /// here so the request body stays open until the peer is dropped.
-    out_tx: mpsc::Sender<pb::Message>,
-    inbound: tonic::Streaming<pb::Message>,
+    carrier: Arc<MuxCarrier>,
+    sink: ControlSink,
+    source: ControlSource,
+    hello_auth_token: Option<String>,
+}
+
+#[derive(Clone)]
+struct StaticTokenAuthenticator;
+
+#[tonic::async_trait]
+impl LinkTokenAuthenticator for StaticTokenAuthenticator {
+    async fn authenticate_token(
+        &self,
+        token: &str,
+    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
+        if token != "wire-valid" {
+            return Err(tonic::Status::unauthenticated("expired wire token"));
+        }
+        Ok(AuthenticatedLinkUser {
+            user_id: uuid::Uuid::from_u128(0xfeed),
+            client_id: "wire-peer".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            tier: node::Tier::Pro,
+        })
+    }
 }
 
 impl WirePeer {
-    /// Connects to `victim`'s external TCP listener through real device mTLS,
-    /// trusted via a freshly-seeded keypair in the victim's trust store, and
-    /// opens the `LinkService.Connect` bidi stream. No Hello is sent yet.
+    pub async fn connect_runtime_pair(net: &TestNet, connector: &str, acceptor: &str) {
+        let connector_daemon = net.daemon(connector);
+        let acceptor_daemon = net.daemon(acceptor);
+        let connector_parts = connector_daemon
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("connector '{connector}' is not running"));
+        let acceptor_parts = acceptor_daemon
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("acceptor '{acceptor}' is not running"));
+        let connector_host = Host {
+            id: connector_daemon.host_id(),
+            name: connector.to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: Capabilities::default(),
+            signed_in: Some(false),
+            platform: None,
+        };
+        let acceptor_host = Host {
+            id: acceptor_daemon.host_id(),
+            name: acceptor.to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: Capabilities::default(),
+            signed_in: Some(false),
+            platform: None,
+        };
+        let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
+        let connector_carrier = Arc::new(MuxCarrier::new(
+            connector_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let acceptor_carrier = Arc::new(MuxCarrier::new(
+            acceptor_io,
+            MuxRole::Acceptor,
+            CarrierKind::RelayTcp,
+        ));
+        let connector_ctx = LinkCtx::new(
+            connector_host,
+            connector_parts.routing,
+            connector_parts.channels.link_registry(),
+        )
+        .with_expected_peer(acceptor_daemon.host_id());
+        let acceptor_ctx = LinkCtx::new(
+            acceptor_host,
+            acceptor_parts.routing,
+            acceptor_parts.channels.link_registry(),
+        )
+        .with_authenticated_peer(connector_daemon.host_id());
+
+        tokio::spawn(run_link(
+            acceptor_ctx,
+            acceptor_carrier,
+            ConnectRole::Acceptor,
+        ));
+        tokio::spawn(run_link(
+            connector_ctx,
+            connector_carrier,
+            ConnectRole::Connector,
+        ));
+    }
+
     pub async fn connect_trusted(net: &TestNet, victim: &str) -> Self {
+        Self::connect(net, victim, false).await
+    }
+
+    pub async fn connect_authenticated(net: &TestNet, victim: &str) -> Self {
+        Self::connect(net, victim, true).await
+    }
+
+    async fn connect(net: &TestNet, victim: &str, authenticated: bool) -> Self {
         let victim_daemon = net.daemon(victim);
-        let addr = victim_daemon.inner.tcp_addr.unwrap_or_else(|| {
-            panic!("WirePeer::connect_trusted: victim '{victim}' has no external TCP listener")
-        });
-        let victim_host_id = victim_daemon.host_id();
-        let (_victim_host_id, victim_pubkey) = victim_daemon.identity_on_disk();
-
-        // The wire peer's own device identity, generated in a throwaway dir.
-        let key_dir = tempfile::tempdir().expect("wire peer key dir");
-        let identity =
-            load_or_create_device_identity_in(key_dir.path()).expect("generate wire peer identity");
-
-        // Seed the victim's *live* trust store so its pinned-cert verifier
-        // accepts the wire peer (the acceptor reads the store at handshake
-        // time, so a live insert is honored).
         let victim_parts = victim_daemon
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("victim '{victim}' is not running"));
-        victim_parts
-            .trust
-            .write()
-            .expect("victim trust store poisoned")
-            .insert_for_test(
-                identity.host_id,
-                trust_entry("wire-peer", identity.public_key().to_vec()),
-            );
+        let bound = HostId::new_v4();
+        let local = Host {
+            id: victim_daemon.host_id(),
+            name: victim.to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: Capabilities::default(),
+            signed_in: Some(false),
+            platform: None,
+        };
+        let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
+        let acceptor = Arc::new(MuxCarrier::new(
+            acceptor_io,
+            MuxRole::Acceptor,
+            CarrierKind::RelayTcp,
+        ));
+        let mut acceptor_ctx = LinkCtx::new(
+            local,
+            victim_parts.routing,
+            victim_parts.channels.link_registry(),
+        )
+        .with_authenticated_peer(bound);
+        if authenticated {
+            acceptor_ctx = acceptor_ctx
+                .with_link_role(LinkRole::CloudRelay)
+                .with_token_authenticator(Arc::new(StaticTokenAuthenticator), None);
+        }
+        tokio::spawn(run_link(acceptor_ctx, acceptor, ConnectRole::Acceptor));
 
-        // The wire peer's own trust store pins the victim, so the device-TLS
-        // client verifier accepts the victim's server cert.
-        let mut peer_trust = TrustStore::default();
-        peer_trust.insert_for_test(victim_host_id, trust_entry(victim, victim_pubkey));
-        let peer_trust = Arc::new(std::sync::RwLock::new(peer_trust));
-
-        let bound = identity.host_id;
-        let channel =
-            trusted_device_channel_tracked(addr, identity, peer_trust, victim_host_id, None)
-                .expect("build wire peer device channel");
-        let mut client = wire::link_service_client::LinkServiceClient::new(channel);
-
-        let (out_tx, out_rx) = mpsc::channel::<pb::Message>(64);
-        let response = client
-            .connect(Request::new(request_stream(out_rx)))
-            .await
-            .expect("open LinkService.Connect stream");
+        let carrier = Arc::new(MuxCarrier::new(
+            connector_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let (sink, source) = carrier.control();
         Self {
             victim_name: victim.to_string(),
             bound,
-            out_tx,
-            inbound: response.into_inner(),
+            carrier,
+            sink,
+            source,
+            hello_auth_token: authenticated.then(|| "wire-valid".to_string()),
         }
     }
 
-    /// Completes the handshake honestly: sends a Hello carrying the wire
-    /// peer's own (mTLS-bound) host_id and the supported protocol version,
-    /// then asserts the victim accepts it.
     pub async fn hello(&mut self) {
         self.send_hello(self.bound, vec![PROTOCOL_VERSION]).await;
         self.expect_hello_ack_accepted().await;
     }
 
-    /// Sends a Hello whose `host_id` differs from the wire peer's mTLS-bound
-    /// identity, to exercise the N-X-9 host_id↔pubkey binding check.
     pub async fn send_hello_spoofing_host_id(&mut self) {
         let mut spoofed = HostId::new_v4();
         while spoofed == self.bound {
@@ -155,254 +300,195 @@ impl WirePeer {
         self.send_hello(spoofed, vec![PROTOCOL_VERSION]).await;
     }
 
-    /// Sends a Hello advertising only a protocol version the daemon does not
-    /// support, to exercise version negotiation.
     pub async fn send_hello_with_unsupported_version(&mut self) {
         self.send_hello(self.bound, vec![PROTOCOL_VERSION + 1])
             .await;
     }
 
-    /// Sends a structurally-empty `Message` (no body) as the stream's first
-    /// frame, where a Hello is required — the realistic "malformed frame" the
-    /// typed gRPC codec still admits.
-    pub async fn send_malformed_first_frame(&self) {
+    pub async fn send_hello_with_auth_token(&mut self, token: &str) {
+        self.hello_auth_token = Some(token.to_string());
+        self.send_hello(self.bound, vec![PROTOCOL_VERSION]).await;
+    }
+
+    pub async fn send_malformed_first_frame(&mut self) {
         self.send_message(pb::Message { body: None }).await;
     }
 
-    /// Sends a Hello with an arbitrary `host_id` and supported-version list,
-    /// for the adversarial handshake cases. The wire peer's mTLS-bound
-    /// identity is whatever its seeded cert pins; pass a different `host_id`
-    /// to exercise the N-X-9 binding check.
-    pub async fn send_hello(&mut self, host_id: HostId, supported_versions: Vec<u32>) {
+    pub async fn send_hello(&mut self, host_id: HostId, versions: Vec<u32>) {
+        self.send_hello_with_neighbors(host_id, versions, &[]).await;
+    }
+
+    pub async fn send_hello_with_neighbors(
+        &mut self,
+        host_id: HostId,
+        versions: Vec<u32>,
+        neighbors: &[(HostId, &str)],
+    ) {
         let host = Host {
             id: host_id,
             name: "wire-peer".to_string(),
             version: "0.0.0-wire".to_string(),
             capabilities: Capabilities::default(),
+            signed_in: Some(false),
             platform: None,
         };
         self.send_message(pb::Message {
             body: Some(pb::message::Body::Hello(pb::Hello {
-                supported_protocol_versions: supported_versions,
+                supported_protocol_versions: versions,
                 host: Some(host_to_wire(&host)),
-                neighbors: Vec::new(),
+                neighbors: neighbors
+                    .iter()
+                    .map(|(id, name)| {
+                        host_to_wire(&Host {
+                            id: *id,
+                            name: (*name).to_string(),
+                            version: "test".to_string(),
+                            capabilities: Capabilities::default(),
+                            signed_in: Some(false),
+                            platform: None,
+                        })
+                    })
+                    .collect(),
+                auth_token: self.hello_auth_token.clone(),
+                incarnation: uuid::Uuid::new_v4().as_bytes().to_vec(),
             })),
         })
         .await;
     }
 
-    /// The wire peer's own mTLS-bound host_id (its seeded device identity).
     pub fn host_id(&self) -> HostId {
         self.bound
     }
 
-    /// Sends a raw `Message` envelope into the Connect request stream.
-    pub async fn send_message(&self, message: pb::Message) {
-        self.out_tx
-            .send(message)
+    pub async fn send_message(&mut self, message: pb::Message) {
+        write_message(&mut self.sink, &message)
             .await
-            .expect("wire peer Connect request stream closed");
+            .expect("wire peer control stream closed");
     }
 
-    /// Sends a `TunnelOpen` addressed to `dst` under a fresh tunnel id,
-    /// with this peer's own host_id as the reply address (`src`). Returns
-    /// the id so the script can address later frames at the same tunnel.
-    pub async fn send_tunnel_open(&self, dst: HostId) -> Vec<u8> {
-        let tunnel_id = HostId::new_v4().as_bytes().to_vec();
+    pub async fn send_oversize_control_message(&mut self) {
+        write_raw_control_frame(&mut self.sink, (wire::MESSAGE_SIZE_LIMIT + 1) as u32)
+            .await
+            .expect("write oversize control frame");
+    }
+
+    pub async fn open_stream_without_preface(&self) -> pb::StreamRefusal {
+        self.carrier
+            .open_without_preface()
+            .await
+            .expect("stream without preface should be refused")
+    }
+
+    pub async fn send_neighbor_up(&mut self, host_id: HostId, name: &str) {
+        let host = Host {
+            id: host_id,
+            name: name.to_string(),
+            version: "test".to_string(),
+            capabilities: Capabilities::default(),
+            signed_in: Some(false),
+            platform: None,
+        };
         self.send_message(pb::Message {
-            body: Some(pb::message::Body::TunnelOpen(pb::TunnelOpen {
-                tunnel_id: tunnel_id.clone(),
-                src: self.bound.as_bytes().to_vec(),
-                dst: dst.as_bytes().to_vec(),
-            })),
-        })
-        .await;
-        tunnel_id
-    }
-
-    /// Sends a `TunnelData` frame addressed to `dst` for `tunnel_id`.
-    pub async fn send_tunnel_data_for(&self, dst: HostId, tunnel_id: Vec<u8>, payload: Vec<u8>) {
-        self.send_message(pb::Message {
-            body: Some(pb::message::Body::TunnelData(pb::TunnelData {
-                tunnel_id,
-                dst: dst.as_bytes().to_vec(),
-                payload,
-            })),
-        })
-        .await;
-    }
-
-    /// Sends a `TunnelData` frame addressed to `dst` under a fresh, never
-    /// opened tunnel id.
-    pub async fn send_tunnel_data(&self, dst: HostId, payload: Vec<u8>) {
-        let tunnel_id = HostId::new_v4().as_bytes().to_vec();
-        self.send_tunnel_data_for(dst, tunnel_id, payload).await;
-    }
-
-    /// Sends a `TunnelClose` addressed to `dst` for `tunnel_id`.
-    pub async fn send_tunnel_close(&self, dst: HostId, tunnel_id: Vec<u8>) {
-        self.send_message(pb::Message {
-            body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
-                tunnel_id,
-                dst: dst.as_bytes().to_vec(),
+            body: Some(pb::message::Body::NeighborUp(pb::NeighborUp {
+                host: Some(host_to_wire(&host)),
             })),
         })
         .await;
     }
 
-    /// Reads the next reply (bounded) and asserts it is an *accepted*
-    /// HelloAck.
+    pub async fn send_neighbor_down(&mut self, host_id: HostId) {
+        self.send_message(pb::Message {
+            body: Some(pb::message::Body::NeighborDown(pb::NeighborDown {
+                host_id: host_id.as_bytes().to_vec(),
+                reason: None,
+            })),
+        })
+        .await;
+    }
+
+    pub async fn send_reauth(&mut self, token: &str) {
+        self.send_message(pb::Message {
+            body: Some(pb::message::Body::Reauth(pb::Reauth {
+                auth_token: token.to_string(),
+            })),
+        })
+        .await;
+    }
+
     pub async fn expect_hello_ack_accepted(&mut self) {
         match self.recv_message().await {
             Some(pb::Message {
                 body:
                     Some(pb::message::Body::HelloAck(pb::HelloAck {
-                        outcome: Some(outcome),
+                        outcome: Some(pb::hello_ack::Outcome::Accepted(accepted)),
                     })),
-            }) => match outcome {
-                pb::hello_ack::Outcome::Accepted(_) => {}
-                pb::hello_ack::Outcome::Error(error) => panic!(
-                    "expected accepted HelloAck from '{}', got error: {}",
-                    self.victim_name, error.message
-                ),
-            },
-            other => panic!(
-                "expected accepted HelloAck from '{}', got {other:?}",
-                self.victim_name
-            ),
+            }) => assert_eq!(accepted.protocol_version, PROTOCOL_VERSION),
+            other => panic!("expected accepted HelloAck, got {other:?}"),
         }
     }
 
-    /// Reads the next reply (bounded) and asserts it is an *error* HelloAck,
-    /// returning the error so callers can inspect its code/message.
     pub async fn expect_hello_ack_error(&mut self) -> pb::Error {
         match self.recv_message().await {
             Some(pb::Message {
                 body:
                     Some(pb::message::Body::HelloAck(pb::HelloAck {
-                        outcome: Some(outcome),
+                        outcome: Some(pb::hello_ack::Outcome::Error(error)),
                     })),
-            }) => match outcome {
-                pb::hello_ack::Outcome::Error(error) => error,
-                pb::hello_ack::Outcome::Accepted(_) => panic!(
-                    "expected error HelloAck from '{}', got an accepted one",
-                    self.victim_name
-                ),
-            },
-            other => panic!(
-                "expected error HelloAck from '{}', got {other:?}",
-                self.victim_name
-            ),
+            }) => error,
+            other => panic!("expected error HelloAck, got {other:?}"),
         }
     }
 
-    /// Drains replies (bounded) until a `LinkClose` with the given reason
-    /// arrives, returning its embedded error. Intervening messages (e.g.
-    /// neighbor events) are skipped.
     pub async fn expect_link_close(&mut self, reason: LinkCloseReason) -> Option<pb::Error> {
         let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(remaining, self.inbound.message()).await {
+            match tokio::time::timeout(remaining, read_message(&mut self.source)).await {
                 Ok(Ok(Some(pb::Message {
                     body: Some(pb::message::Body::LinkClose(close)),
                 }))) => {
-                    let got = LinkCloseReason::from_wire(close.reason);
-                    assert_eq!(
-                        got, reason,
-                        "expected LinkClose({reason:?}) from '{}', got LinkClose({got:?})",
-                        self.victim_name
-                    );
+                    assert_eq!(LinkCloseReason::from_wire(close.reason), reason);
                     return close.error;
                 }
                 Ok(Ok(Some(_))) => continue,
-                Ok(Ok(None)) => panic!(
-                    "'{}' closed the Connect stream before sending LinkClose({reason:?})",
+                Ok(Ok(None)) | Ok(Err(_)) => panic!(
+                    "'{}' closed before sending LinkClose({reason:?})",
                     self.victim_name
                 ),
-                Ok(Err(status)) => panic!(
-                    "Connect stream from '{}' errored before LinkClose({reason:?}): {status}",
-                    self.victim_name
-                ),
-                Err(_) => panic!(
-                    "timed out waiting for LinkClose({reason:?}) from '{}'",
-                    self.victim_name
-                ),
+                Err(_) => panic!("timed out waiting for LinkClose({reason:?})"),
             }
         }
     }
 
-    /// Asserts the Connect stream terminates (clean end or error) within the
-    /// assertion timeout. Messages still in flight are drained first.
-    pub async fn expect_stream_closed(&mut self) {
-        let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
-        loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(remaining, self.inbound.message()).await {
-                Ok(Ok(Some(_))) => continue,
-                Ok(Ok(None)) | Ok(Err(_)) => return,
-                Err(_) => panic!(
-                    "Connect stream from '{}' stayed open; expected it to close",
-                    self.victim_name
-                ),
-            }
-        }
+    pub async fn expect_stream_closed(&self) {
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.carrier.closed())
+            .await
+            .expect("link stayed open");
     }
 
-    /// Asserts the Connect stream stays *open* for a short observation
-    /// window — no LinkClose, no closure — proving the link survived whatever
-    /// was just sent. Stray messages already in flight are tolerated.
     pub async fn expect_stream_stays_open(&mut self) {
-        const WINDOW: Duration = Duration::from_secs(1);
-        let deadline = tokio::time::Instant::now() + WINDOW;
-        loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(remaining, self.inbound.message()).await {
-                Ok(Ok(Some(pb::Message {
-                    body: Some(pb::message::Body::LinkClose(close)),
-                }))) => panic!(
-                    "'{}' sent LinkClose({:?}); expected the link to stay up",
-                    self.victim_name,
-                    LinkCloseReason::from_wire(close.reason)
-                ),
-                Ok(Ok(Some(_))) => continue,
-                Ok(Ok(None)) => panic!(
-                    "'{}' closed the Connect stream; expected the link to stay up",
-                    self.victim_name
-                ),
-                Ok(Err(status)) => panic!(
-                    "Connect stream from '{}' errored; expected the link to stay up: {status}",
-                    self.victim_name
-                ),
-                Err(_) => return, // silent for the whole window: link is up
-            }
+        const WINDOW: Duration = Duration::from_millis(200);
+        match tokio::time::timeout(WINDOW, read_message(&mut self.source)).await {
+            Err(_) => {}
+            Ok(Ok(Some(message))) => panic!("unexpected control message: {message:?}"),
+            Ok(Ok(None)) | Ok(Err(_)) => panic!("link closed unexpectedly"),
         }
     }
 
     async fn recv_message(&mut self) -> Option<pb::Message> {
-        match tokio::time::timeout(DEFAULT_TIMEOUT, self.inbound.message()).await {
-            Ok(Ok(message)) => message,
-            Ok(Err(status)) => panic!(
-                "Connect stream from '{}' errored while awaiting a reply: {status}",
-                self.victim_name
-            ),
-            Err(_) => panic!("timed out waiting for a reply from '{}'", self.victim_name),
-        }
+        tokio::time::timeout(DEFAULT_TIMEOUT, read_message(&mut self.source))
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for '{}'", self.victim_name))
+            .unwrap_or_else(|error| panic!("control stream failed: {error}"))
     }
 
-    /// Floods `victim`'s external TCP listener with anonymous TLS handshakes
-    /// from this process's source IP until the per-source rate limiter
-    /// refuses one. Early handshakes are admitted — they complete TLS, then
-    /// the dispatcher closes the anonymous stream — and once the budget is
-    /// spent, handshakes are refused before TLS. The flood stops at the first
-    /// refusal that follows at least one admitted handshake (the limiter
-    /// engaging); it panics if the limiter never engages within the attempt
-    /// budget.
+    /// Spends the victim's per-source external-QUIC handshake budget and
+    /// returns after the listener ignores a later Initial before TLS state.
     pub async fn flood_handshakes_until_rate_limited(net: &TestNet, victim: &str) {
         const MAX_FLOOD_ATTEMPTS: usize = 20;
         let mut admitted = 0;
         for _ in 0..MAX_FLOOD_ATTEMPTS {
-            if Self::anonymous_tls_handshake_succeeds(net, victim).await {
+            if Self::anonymous_quic_handshake_succeeds(net, victim).await {
                 admitted += 1;
             } else if admitted > 0 {
                 return;
@@ -414,102 +500,20 @@ impl WirePeer {
         );
     }
 
-    /// Attempts a single anonymous (no client cert) device-TLS handshake
-    /// against `victim`'s external TCP listener, returning whether the TLS
-    /// handshake completed. An admitted handshake completes on localhost in a
-    /// few milliseconds (the dispatcher then closes the anonymous stream at the
-    /// gRPC layer, which this probe does not reach); a rate-limited one is
-    /// left unanswered — the dispatcher drops it before TLS — so it never
-    /// completes and this returns `false` after a short bound.
-    async fn anonymous_tls_handshake_succeeds(net: &TestNet, victim: &str) -> bool {
-        // A rate-limited connection is dropped server-side before any TLS
-        // bytes; on localhost an admitted handshake finishes well within this
-        // bound, so a timeout reliably means "refused".
+    async fn anonymous_quic_handshake_succeeds(net: &TestNet, victim: &str) -> bool {
         const HANDSHAKE_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
-        let addr = net.daemon(victim).inner.tcp_addr.unwrap_or_else(|| {
-            panic!("anonymous_tls_handshake_succeeds: victim '{victim}' has no TCP listener")
+        let addr = net.daemon(victim).inner.direct_addr.unwrap_or_else(|| {
+            panic!("anonymous QUIC handshake probe: victim '{victim}' has no QUIC listener")
         });
-        let Ok(stream) = TcpStream::connect(addr).await else {
-            return false;
-        };
-        let _ = stream.set_nodelay(true);
-        let connector = TlsConnector::from(Arc::new(anonymous_device_client_config()));
-        let server_name =
-            ServerName::try_from("amux-device.local").expect("static device server name is valid");
-        tokio::time::timeout(
-            HANDSHAKE_PROBE_TIMEOUT,
-            connector.connect(server_name, stream),
-        )
+        let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let config = pairing_quic_client_config().unwrap();
+        tokio::time::timeout(HANDSHAKE_PROBE_TIMEOUT, async move {
+            match endpoint.connect_with(config, addr, "amux-pairing.local") {
+                Ok(connecting) => connecting.await.is_ok(),
+                Err(_) => false,
+            }
+        })
         .await
-        .map(|result| result.is_ok())
         .unwrap_or(false)
-    }
-}
-
-fn trust_entry(name: &str, pubkey: Vec<u8>) -> TrustEntry {
-    TrustEntry {
-        pubkey,
-        name: name.to_string(),
-        paired_at: chrono::Utc::now(),
-        reachabilities: Vec::new(),
-    }
-}
-
-fn request_stream(rx: mpsc::Receiver<pb::Message>) -> impl Stream<Item = pb::Message> + Send {
-    stream::unfold(
-        rx,
-        |mut rx| async move { rx.recv().await.map(|msg| (msg, rx)) },
-    )
-}
-
-fn anonymous_device_client_config() -> ClientConfig {
-    let verifier = Arc::new(NoServerVerification {
-        supported_algs: rustls::crypto::ring::default_provider().signature_verification_algorithms,
-    });
-    let mut config = ClientConfig::builder_with_protocol_versions(&[&version::TLS13])
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
-    config.alpn_protocols = vec![b"h2".to_vec()];
-    config
-}
-
-#[derive(Debug)]
-struct NoServerVerification {
-    supported_algs: WebPkiSupportedAlgorithms,
-}
-
-impl ServerCertVerifier for NoServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, TlsError> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls12_signature(message, cert, dss, &self.supported_algs)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls13_signature(message, cert, dss, &self.supported_algs)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.supported_algs.supported_schemes()
     }
 }

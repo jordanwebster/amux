@@ -48,21 +48,14 @@ public struct ProbeHomeScreen: View {
 /// The shipped conversation, put on screen so it can be measured.
 ///
 /// Not a stand-in and not a part of one: this is the page the app pushes when
-/// somebody opens an agent — the fleet's drawer over the conversation, and
-/// inside it the same chrome, the same lazy transcript, the same facts strip
-/// and the same composer, projected by the same code. An earlier bench drew
+/// somebody opens an agent — the same chrome, the same lazy transcript, the
+/// same facts strip and the same composer, projected by the same code. An earlier bench drew
 /// the feed alone inside the conversation's scroll container, which was enough
 /// to say the list was lazy but not enough to certify the product: the strip,
 /// the foot and the composer are laid out on every frame the stream causes,
 /// and a number taken without them is a number about a screen nobody uses.
-///
-/// The drawer is shut and stays shut. Shut is the state a conversation is read
-/// in, and it is still built and still laid out beside the page, so what it
-/// costs is inside the measurement rather than excluded from it.
 public struct BenchConversationScreen: View {
     private let model: ConversationStore
-    private let fleet: FleetStore
-    private let hosts: HostsStore
     private let subject: ConversationSubject
     private let identifierPrefix: String
     private let includeIdentifierGeometry: Bool
@@ -80,16 +73,12 @@ public struct BenchConversationScreen: View {
     /// measurement of the instrument watching it.
     public init(
         model: ConversationStore,
-        fleet: FleetStore,
-        hosts: HostsStore,
         subject: ConversationSubject,
         identifierPrefix: String = "transcript.",
         includeIdentifierGeometry: Bool = true,
         drew: (@Sendable ([IdentifiedElement]) -> Void)? = nil
     ) {
         self.model = model
-        self.fleet = fleet
-        self.hosts = hosts
         self.subject = subject
         self.identifierPrefix = identifierPrefix
         self.includeIdentifierGeometry = includeIdentifierGeometry
@@ -101,14 +90,7 @@ public struct BenchConversationScreen: View {
     }
 
     private var page: some View {
-        DrawerOverlay(
-            open: .constant(false),
-            drawer: AgentsDrawer(
-                model: fleet, hosts: hosts, current: model.agent) { _ in }
-        ) {
-            Conversation(
-                model: model, subject: subject) { _ in }
-        }
+        Conversation(model: model, subject: subject) { _ in }
     }
 
     @ViewBuilder

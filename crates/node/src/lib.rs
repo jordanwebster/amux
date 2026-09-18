@@ -8,10 +8,12 @@ mod auth;
 mod config;
 mod connection;
 mod debug;
+pub mod discovery;
 mod dispatcher;
 use model::envelope;
 mod identity;
 pub mod installation;
+mod link;
 mod pairing;
 mod paths;
 mod profile;
@@ -20,7 +22,6 @@ mod routing;
 mod server;
 mod services;
 mod sleep_inhibitor;
-mod subscription;
 /// The fake identity service and account fixtures shared by node's own tests
 /// and the `testnet` harness. Compiled unconditionally so the harness can use
 /// it without a feature and without a second copy of node's types.
@@ -28,7 +29,6 @@ mod subscription;
 pub mod test_fixtures;
 mod transport;
 mod trust;
-mod tunnel;
 pub mod update;
 #[doc(hidden)]
 pub mod user_state;
@@ -40,26 +40,41 @@ pub mod user_state;
 pub mod harness {
     pub use crate::agents::{AgentEvent, Protocol, SendInputRequest, agent_from_wire};
     pub use crate::auth::AuthError;
-    pub use crate::config::Config;
+    pub use crate::auth::jwt::relay_rejects_test_token_without_tier;
+    pub use crate::config::{Config, LanConfig};
     pub use crate::connection::ConnectionManager;
-    pub use crate::dispatcher::TrackedTcpConnections;
-    pub use crate::identity::{DeviceIdentity, device_key_path, load_or_create_device_identity_in};
-    pub use crate::routing::{
-        AuthenticatedLinkUser, Capabilities, Host, HostEntry, HostTrustStatus, LinkConnectorAuth,
-        LinkConnectorToken, LinkConnectorTokenRefresher, LinkTokenAuthenticator, Route,
-        RoutingCore, RoutingEvent, host_to_wire,
+    pub use crate::identity::{
+        DeviceIdentity, QUIC_ALPN, device_key_path, ed25519_public_key_from_certificate,
+        load_or_create_device_identity_in,
     };
-    pub use crate::server::ShutdownReason;
+    pub use crate::routing::{
+        AuthenticatedLinkUser, Capabilities, ConnectRole, Host, HostEntry, HostTrustStatus,
+        HostVia, LinkCarrier, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
+        LinkRole, LinkTokenAuthenticator, Route, RoutingCore, RoutingEvent, host_to_wire,
+        link_reauth_tier_probe, spawn_connector_with_establishment,
+    };
+    pub use crate::server::{ShutdownReason, TLS_HANDSHAKE_TIMEOUT};
     pub use crate::services::{
-        AgentServiceCtx, ClientService, CloudLinkService, DeviceRuntimeSecurity,
-        PeerTrustCommitContext, PeerTrustUpdate, StartedUserServices, commit_peer_trust,
-        start_user_services,
+        AgentServiceCtx, ClientService, CloudLinkServer, DeviceRuntimeSecurity,
+        FREE_TIER_REFRESH_INTERVAL, PeerTrustCommitContext, PeerTrustUpdate, StartedUserServices,
+        commit_peer_trust, start_user_services,
     };
     pub use crate::transport::{
-        InProcessConnection, TcpServerTransport, trusted_device_channel_tracked,
+        InProcessConnection, pairing_quic_client_config, relay_quic_client_config_with_roots,
+        relay_quic_server_config_from_der,
     };
     pub use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
-    pub use crate::tunnel::TunnelPool;
+
+    /// The native-stream link runtime. Separate from the flat surface because
+    /// the `link::LinkCarrier` trait shares its name with routing's enum.
+    pub mod link {
+        pub use crate::link::carrier::{AsyncStream, write_raw_control_frame};
+        pub use crate::link::{
+            CarrierKind, ChannelClass, ChannelDebug, ChannelError, ChannelPool, ControlSink,
+            ControlSource, LinkCarrier, LinkCtx, MuxCarrier, MuxRole, OpenError, QuicCarrier,
+            read_message, run_link, write_message,
+        };
+    }
 
     pub mod runtime {
         pub use crate::profile::runtime::{
@@ -76,23 +91,26 @@ pub use agents::{
     CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, SessionCloseReason,
     SubscribeSessionEvent, TerminalSize, WorkingOn,
 };
+pub use auth::claims::Tier;
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
     AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, DeviceIdentity,
-    HostEventStream, PairingError, PairingSecret, PairingStart, PeerEntry, PeerReachability,
-    PendingPeer, SessionStream,
+    HostEventStream, PairingCandidate, PairingError, PairingSecret, PairingStart, PeerEntry,
+    PeerReachability, PeerVia, PendingPeer, SessionStream,
 };
 pub use config::{
-    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
-    ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
+    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LanConfig, LeaderKey,
+    OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
 pub use identity::{device_files_ready_in, ensure_device_files_in, stored_host_id_in};
+#[cfg(unix)]
+pub use installation::adjacent_link_socket_path;
 pub use installation::{
     BindError, BindRequest, BindTarget, CloudServiceId, CredentialSource, Installation,
     InstallationError, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
-    OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
+    Observed, OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
     RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 pub use model::{
@@ -101,8 +119,7 @@ pub use model::{
     RelayConnection, SendInputRequest, SendMessageRequest, SetAgentStatusRequest,
     SubscribeSessionRequest,
 };
-pub use pairing::PairingAdmin;
-pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
+pub use pairing::pin::{PinPairingError, pair_via_pin_direct_quic};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, encode_qr_pairing_payload,
     parse_qr_pairing_payload,
@@ -113,12 +130,14 @@ pub use pairing::ssh::{
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
+pub use pairing::{ONRAMP_PAIR_MODE_TTL, PairingAdmin};
 pub use paths::{default_data_dir, default_log_path, keymap_dir};
-pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
+pub use routing::{
+    Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, HostVia, SupportedAgentType,
+};
 pub use server::{
     DaemonBuilder, EmbeddedRuntime, Server, ServerBuilder, ServerError, ShutdownReason,
 };
-pub use subscription::SubscriptionReporter;
 pub use transport::{EmbeddedRelay, RelayEndpoint, RelayRetry, TransportError};
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 pub use wire::PROTOCOL_VERSION;

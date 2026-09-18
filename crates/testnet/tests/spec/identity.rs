@@ -16,7 +16,7 @@ async fn identity_is_created_once_and_survives_restart() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -69,7 +69,7 @@ async fn trust_is_local_unpairing_one_side_keeps_the_others_entry() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);

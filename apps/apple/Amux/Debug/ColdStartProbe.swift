@@ -33,9 +33,23 @@ enum ColdStartProbe {
                 .onAppear { record() }
         } else if name == "probe-store" {
             Color.clear.onAppear { writeStore() }
+        } else if name == "journey-store" {
+            Color.clear.onAppear { writeJourneyStore() }
         } else {
             EmptyView()
         }
+    }
+
+    /// An unmeasured launch prepares the app's real cache for a cold-start journey.
+    private static func writeJourneyStore() {
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("amux", isDirectory: true)
+        let seed = cache.appendingPathComponent("journey-seed.json")
+        let result = cache.appendingPathComponent("journey-seed-result.json")
+        guard let account = UserDefaults.standard.string(forKey: "amux-seed-account"),
+              let json = try? Data(contentsOf: seed) else { return }
+        let ok = RememberedStoreBridge.seedJSON(json, in: cache, for: AccountId(account))
+        try? Data("{\"ok\":\(ok)}".utf8).write(to: result)
     }
 
     private static let storeCache = FileManager.default

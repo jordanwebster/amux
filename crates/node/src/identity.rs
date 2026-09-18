@@ -12,6 +12,7 @@ use rcgen::{
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
+use rustls::client::Resumption;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
@@ -36,6 +37,7 @@ const ED25519_PKCS8_V1_PREFIX: [u8; 16] = [
 const ED25519_SPKI_PREFIX: [u8; 12] = [
     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ];
+pub const QUIC_ALPN: &[u8] = b"amux/2";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
@@ -43,6 +45,12 @@ pub enum IdentityError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("failed to parse {path}: {source}")]
+    JsonFile {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("{field} must be {expected} bytes, got {actual}")]
     InvalidLength {
         field: &'static str,
@@ -76,8 +84,7 @@ impl DeviceIdentity {
         &self.pubkey
     }
 
-    #[cfg(test)]
-    pub(crate) fn private_key_pkcs8(&self) -> &[u8] {
+    pub fn private_key_pkcs8(&self) -> &[u8] {
         &self.private_key_pkcs8
     }
 
@@ -97,7 +104,7 @@ impl DeviceIdentity {
         })
     }
 
-    pub(crate) fn certificate_der(&self) -> Result<Vec<u8>, IdentityError> {
+    pub fn certificate_der(&self) -> Result<Vec<u8>, IdentityError> {
         let signing_key = KeyPair::from_pkcs8_der_and_sign_algo(
             &PrivatePkcs8KeyDer::from(self.private_key_pkcs8.as_slice()),
             &rcgen::PKCS_ED25519,
@@ -119,7 +126,7 @@ impl DeviceIdentity {
         Ok(cert.der().as_ref().to_vec())
     }
 
-    pub(crate) fn server_tls_config(
+    pub fn server_tls_config(
         &self,
         trust_store: SharedTrustStore,
     ) -> Result<ServerConfig, IdentityError> {
@@ -148,6 +155,66 @@ impl DeviceIdentity {
         config.alpn_protocols = vec![b"h2".to_vec()];
         Ok(config)
     }
+
+    pub fn quic_server_config(
+        &self,
+        trust_store: SharedTrustStore,
+    ) -> Result<quinn::ServerConfig, IdentityError> {
+        let mut tls = self.server_tls_config(trust_store)?;
+        tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        tls.session_storage = std::sync::Arc::new(rustls::server::NoServerSessionStorage {});
+        tls.send_tls13_tickets = 0;
+        tls.max_early_data_size = 0;
+
+        let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+            .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
+        let mut config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(crypto));
+        config.transport_config(quic_transport_config());
+        config.migration(true);
+        Ok(config)
+    }
+
+    pub(crate) fn quic_client_config_for_peer(
+        &self,
+        trust_store: SharedTrustStore,
+        peer: HostId,
+    ) -> Result<quinn::ClientConfig, IdentityError> {
+        let mut tls = self.client_tls_config_for_peer(trust_store, peer)?;
+        tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        tls.resumption = Resumption::disabled();
+        tls.enable_early_data = false;
+
+        let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+            .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
+        let mut config = quinn::ClientConfig::new(std::sync::Arc::new(crypto));
+        config.transport_config(quic_transport_config());
+        Ok(config)
+    }
+}
+
+pub(crate) fn quic_transport_config() -> std::sync::Arc<quinn::TransportConfig> {
+    #[cfg(target_os = "ios")]
+    let (keep_alive, idle_timeout) = (
+        std::time::Duration::from_secs(20),
+        std::time::Duration::from_secs(60),
+    );
+    #[cfg(not(target_os = "ios"))]
+    let (keep_alive, idle_timeout) = (
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(120),
+    );
+
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .keep_alive_interval(Some(keep_alive))
+        .max_idle_timeout(Some(
+            idle_timeout
+                .try_into()
+                .expect("QUIC idle timeout fits in a QUIC variable integer"),
+        ))
+        .max_concurrent_bidi_streams(64_u32.into())
+        .max_concurrent_uni_streams(0_u32.into());
+    std::sync::Arc::new(transport)
 }
 
 pub(crate) fn host_id_for_certificate(
@@ -464,7 +531,7 @@ fn ed25519_seed_from_pkcs8_v1(pkcs8: &[u8]) -> Result<&[u8], IdentityError> {
     Ok(&pkcs8[ED25519_PKCS8_V1_PREFIX.len()..])
 }
 
-pub(crate) fn ed25519_public_key_from_certificate(
+pub fn ed25519_public_key_from_certificate(
     cert: &CertificateDer<'_>,
 ) -> Result<[u8; ED25519_PUBKEY_LEN], IdentityError> {
     let parsed =
@@ -653,6 +720,7 @@ mod tests {
                 name: "peer".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         store

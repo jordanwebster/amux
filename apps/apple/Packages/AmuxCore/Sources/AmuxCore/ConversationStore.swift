@@ -78,6 +78,11 @@ public final class ConversationStore {
     /// A batch the bridge could not place. Kept rather than hidden: a hole in
     /// the transcript is a fact the report screen has to be able to state.
     public private(set) var invariants: [String] = []
+    /// Updates about this agent that this build could not read. Each one is
+    /// drawn at the foot of the transcript: whatever it carried is missing
+    /// from the screen, and a conversation that silently went stale would
+    /// look current.
+    public private(set) var unreadable: [UnreadableEvent] = []
 
     /// Absolute position of `entries.first`.
     public private(set) var firstPosition: UInt64 = 0
@@ -151,12 +156,12 @@ public final class ConversationStore {
     /// The transcript as a reader sees it: what the host has sent, then
     /// whatever this phone has sent and not seen come back.
     ///
-    /// The two are drawn the same, because they are the same message and a
-    /// row that changed appearance a second after it appeared would draw the
-    /// eye to the one thing on the screen nobody needs to look at. What
-    /// distinguishes them is that a pending row is named `pending-…`, so a
-    /// test can say which frame it appeared in and which frame it stopped
-    /// being pending in.
+    /// The two are drawn as the same bubble, because they are the same message
+    /// and a bubble that changed appearance a second after it appeared would
+    /// draw the eye to the one thing on the screen nobody needs to look at; a
+    /// pending one only carries a quiet "Sending" under it. A pending row is
+    /// named `pending-…`, so a test can say which frame it appeared in and
+    /// which frame it stopped being pending in.
     private var layer: FeedEntry.Layer {
         switch facts {
         case .claudeSdk: .claudeSdk
@@ -240,27 +245,63 @@ public final class ConversationStore {
             }
         case .invariant(let detail):
             invariants.append(detail)
+        case .unreadable(let unread) where unread.agent == agent:
+            unreadable.append(unread)
         case .feed, .session, .diff, .fleet, .discovered, .connection, .tokenRequest, .devices,
-             .attention, .storeFailure:
+             .attention, .cloudState, .forgotten, .unreadable, .storeFailure:
             break
         }
     }
 
-    /// Drops the optimistic row for any message the host has now sent back.
+    /// Takes the pending rows the host has now sent back off the optimistic
+    /// tail, and says whether any went.
     ///
     /// Matched on the text, because that is all the two rows share: the phone
     /// never sees the position or identity the host will give a prompt, and
     /// guessing one would put a row in the feed at a place the host disagrees
-    /// with. Only the rows that just arrived are examined, so a long feed
-    /// costs nothing.
-    private func reconcile(_ appended: [FeedEntry]) {
-        guard !unacknowledged.isEmpty else { return }
-        let arrived = Set(appended.transcriptRows().compactMap { row -> String? in
+    /// with. Only the entries this update carried are examined — appended or
+    /// rewritten in place, since a layer may first place a prompt and then
+    /// settle it — so a long feed costs nothing.
+    ///
+    /// The comparison ignores how the whitespace is spelled. What a host
+    /// records is what the provider stored, and a provider may trim a trailing
+    /// newline or turn a line ending into another; a pending row left standing
+    /// over that difference is the same message drawn twice. Each arriving
+    /// prompt takes one pending send, the oldest with its text, so the same
+    /// short answer sent twice is confirmed twice rather than both at once.
+    private func reconcile(_ arriving: [FeedEntry]) -> Bool {
+        guard !unacknowledged.isEmpty, !arriving.isEmpty else { return false }
+        var arrived: [String: Int] = [:]
+        for text in Self.prompts(arriving) {
+            arrived[Self.matching(text), default: 0] += 1
+        }
+        guard !arrived.isEmpty else { return false }
+        var waiting: [PendingSend] = []
+        for pending in unacknowledged {
+            let key = Self.matching(pending.text)
+            if let count = arrived[key], count > 0 {
+                arrived[key] = count - 1
+            } else {
+                waiting.append(pending)
+            }
+        }
+        guard waiting.count != unacknowledged.count else { return false }
+        unacknowledged = waiting
+        return true
+    }
+
+    /// The prompts these entries are drawn as, in order.
+    private static func prompts(_ entries: [FeedEntry]) -> [String] {
+        entries.transcriptRows().compactMap { row in
             guard case .prompt(let text) = row.kind else { return nil }
             return text
-        })
-        guard !arrived.isEmpty else { return }
-        unacknowledged.removeAll { arrived.contains($0.text) }
+        }
+    }
+
+    /// A message's words with every run of whitespace written as one space and
+    /// none at either end, which is the part of it a host cannot rewrite.
+    nonisolated static func matching(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     private func apply(_ update: FeedUpdate) {
@@ -275,6 +316,10 @@ public final class ConversationStore {
             entries.removeFirst(gone)
             firstPosition = update.evicted
         }
+        // Entries rewritten into a prompt they were not already. A prompt
+        // rewritten as itself — an earlier message the host is only settling —
+        // is not the echo of anything sent since.
+        var rewritten: [FeedEntry] = []
         for replacement in update.replace {
             guard replacement.position >= firstPosition else { continue }
             let index = Int(replacement.position - firstPosition)
@@ -282,12 +327,17 @@ public final class ConversationStore {
                 invariants.append("feed replacement past the end at \(replacement.position)")
                 continue
             }
+            if !unacknowledged.isEmpty,
+               Self.prompts([replacement.entry]) != Self.prompts([entries[index]]) {
+                rewritten.append(replacement.entry)
+            }
             entries[index] = replacement.entry
         }
         if !update.replace.isEmpty { Signposts.emit(.transcriptCommit) }
         guard !update.append.isEmpty else {
             if removedPrefix || !update.replace.isEmpty {
                 projectedRows = entries.transcriptRows()
+                _ = reconcile(rewritten)
                 publishProjection()
             }
             return
@@ -315,8 +365,12 @@ public final class ConversationStore {
         } else {
             projectedRows = entries.transcriptRows()
         }
-        publishProjection(coalescing: isPlainAppend)
-        reconcile(update.append)
+        // An append that confirms a pending prompt takes that prompt off the
+        // tail at once, so its confirmed row has to be on screen in the same
+        // frame. Held back for the coalescing interval, the message vanished
+        // for a frame or two and then came back.
+        let confirmedAPrompt = reconcile(rewritten + update.append)
+        publishProjection(coalescing: isPlainAppend && !confirmedAPrompt)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
     }

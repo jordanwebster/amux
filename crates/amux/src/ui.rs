@@ -6,7 +6,6 @@
 //! instantly and renders the degraded banner from Model state.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use node::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
@@ -14,11 +13,10 @@ use tui::{
     ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
     parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,
 };
-use ui_runtime::{ConnectFailure, Connector, Runtime, RuntimeOptions};
+use ui_runtime::{ConnectFailure, Connector, ProfileDirectory, Runtime, RuntimeOptions};
 
 use crate::client_common::{get_client, open_daemon};
 use crate::init::{self, InitContext};
-use crate::update::MarkerFileReporter;
 
 const GIT_SHA: &str = env!("GIT_SHA");
 
@@ -106,7 +104,7 @@ async fn run_inner(
             &config,
             #[cfg(debug_assertions)]
             trace.clone(),
-        ),
+        )?,
     );
     // A panic anywhere in the TUI leaves a report: the terminal.rs panic
     // hook calls ui_runtime::write_panic_report after restoring the
@@ -143,7 +141,7 @@ async fn run_inner(
                             &selected,
                             #[cfg(debug_assertions)]
                             trace.clone(),
-                        ),
+                        )?,
                         diagnostics: profile_diagnostics(&selected),
                     })
                 })
@@ -212,11 +210,10 @@ fn profile_diagnostics(config: &Config) -> Option<tui::DiagnosticsSource> {
 fn runtime_options(
     config: &Config,
     #[cfg(debug_assertions)] trace: Option<tui::trace::SharedTrace>,
-) -> RuntimeOptions {
+) -> Result<RuntimeOptions> {
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id(config);
-    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
@@ -226,7 +223,13 @@ fn runtime_options(
             tui::trace::record_shared(&trace, &tui::chrome::TraceEvent::Msg(msg.clone()));
         }) as ui_runtime::MsgTap
     });
-    RuntimeOptions {
+    let selected = node::load_profile_config(
+        config
+            .path
+            .as_deref()
+            .context("selected profile config is missing")?,
+    )?;
+    Ok(RuntimeOptions {
         local_host_id,
         store_path: Some(config.data_dir.join("store.sqlite")),
         report_dir: Some(config.reports_dir()),
@@ -234,13 +237,14 @@ fn runtime_options(
         git_sha: GIT_SHA,
         artifact_cache: Some(config.artifact_cache_dir()),
         artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
-        subscription_status_provider: Some(Arc::new(move || {
-            subscription_reporter.subscription_required()
-        })),
+        cloud_status: Some(ProfileDirectory::cloud_status(
+            selected.installation.front_door_socket,
+            selected.profile_id,
+        )),
         #[cfg(debug_assertions)]
         msg_tap,
         ..RuntimeOptions::default()
-    }
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

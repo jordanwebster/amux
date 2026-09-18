@@ -41,11 +41,58 @@ pub fn status_label(profile: &rpc::ProfileInfo) -> String {
     let observed = rpc::Observed::try_from(profile.observed)
         .map(|v| v.as_str_name())
         .unwrap_or("unknown");
+    let mut observed = observed
+        .trim_start_matches("OBSERVED_")
+        .to_ascii_lowercase();
+    if observed == "connected" {
+        let tier = rpc::Tier::try_from(profile.tier).unwrap_or(rpc::Tier::Unspecified);
+        let carrier = rpc::RelayCarrier::try_from(profile.relay_carrier)
+            .unwrap_or(rpc::RelayCarrier::Unspecified);
+        let mut details = Vec::new();
+        if tier != rpc::Tier::Unspecified {
+            details.push(
+                tier.as_str_name()
+                    .trim_start_matches("TIER_")
+                    .to_ascii_lowercase(),
+            );
+        }
+        if carrier != rpc::RelayCarrier::Unspecified {
+            details.push(
+                carrier
+                    .as_str_name()
+                    .trim_start_matches("RELAY_CARRIER_")
+                    .to_ascii_lowercase(),
+            );
+        }
+        if !details.is_empty() {
+            observed.push_str(&format!(" ({})", details.join(", ")));
+        }
+    }
     format!(
         "{} / {}",
         intent.trim_start_matches("INTENT_").to_ascii_lowercase(),
         observed
-            .trim_start_matches("OBSERVED_")
-            .to_ascii_lowercase()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connected_profiles_name_the_entitlement_tier() {
+        let mut profile = rpc::ProfileInfo {
+            available: true,
+            intent: rpc::Intent::Bound.into(),
+            observed: rpc::Observed::Connected.into(),
+            tier: rpc::Tier::Pro.into(),
+            relay_carrier: rpc::RelayCarrier::Tcp.into(),
+            ..Default::default()
+        };
+        assert_eq!(status_label(&profile), "bound / connected (pro, tcp)");
+
+        profile.tier = rpc::Tier::Free.into();
+        profile.relay_carrier = rpc::RelayCarrier::Quic.into();
+        assert_eq!(status_label(&profile), "bound / connected (free, quic)");
+    }
 }

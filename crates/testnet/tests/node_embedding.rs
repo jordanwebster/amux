@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use node::discovery::ScriptedDiscovery;
 use node::installation::{
     CredentialSource, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
     Listeners, OperationId, ProfilePaths,
@@ -119,7 +120,6 @@ async fn embedded_server_does_not_poll_for_updates() {
     options.settings.update_manifest_url = config.cloud_url.clone();
     options.settings.status_reporters = node::update::StatusReporters::Host {
         update: Some(Arc::new(CapturingUpdateReporter { tx })),
-        subscription: None,
     };
     let installation = Installation::open(options).await.unwrap();
     installation.create(OperationId::new(), None).await.unwrap();
@@ -355,6 +355,20 @@ async fn config_split_relay_still_requires_a_tcp_listener() {
 }
 
 #[tokio::test]
+async fn config_split_relay_also_requires_a_udp_listener() {
+    let error = Server::builder()
+        .config(Config {
+            tcp_port: Some(0),
+            ..Config::default()
+        })
+        .as_cloud_relay()
+        .run()
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cloud relay requires udp_port"));
+}
+
+#[tokio::test]
 async fn server_builder_rejects_credentials_for_cloud_relay() {
     let dir = short_tempdir();
     let config = Config {
@@ -453,6 +467,7 @@ async fn hosted_installation(config: &Config) -> (Installation, node::installati
 
 fn installation_options(config: &Config, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
+        discovery: Some(Arc::new(ScriptedDiscovery::new())),
         relocation: Default::default(),
         root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
         settings: InstallationSettings {

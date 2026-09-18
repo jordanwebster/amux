@@ -79,7 +79,9 @@ private final class OneCloud: CloudService, @unchecked Sendable {
         if let recording { throw recording }
     }
 
-    func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
+    func keepSession(_ id: AccountId) async throws(CloudError) {}
+    func forgetSession(_ id: AccountId) async throws {}
+    func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated
     }
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts {
@@ -335,24 +337,31 @@ final class PaywallStoreTests: XCTestCase {
     func testTheSourceIsSaidWhereverAnEntitlementIsShown() {
         XCTAssertEqual(
             Entitlement.active(grant: .purchased(.appStore), renews: nil).summary,
-            "Active · App Store")
+            "Subscribed through the App Store")
         XCTAssertEqual(
-            Entitlement.active(grant: .purchased(.web), renews: nil).summary, "Active · amux.sh")
-        XCTAssertEqual(
-            Entitlement.lapsed(grant: .purchased(.web), endedAt: Date()).summary, "Ended · amux.sh")
-        XCTAssertEqual(Entitlement.none.summary, "None")
+            Entitlement.active(grant: .purchased(.web), renews: nil).summary,
+            "Subscribed on the web")
     }
 
-    /// Access nobody paid for names no store and is not called a subscription:
-    /// a row headed *Subscription · amux.sh* would send somebody looking for a
-    /// billing page that does not exist for them.
-    func testAccessThatWasGivenNamesNoStore() {
-        let given = Entitlement.active(grant: .granted, renews: nil)
-        XCTAssertEqual(given.summary, "Active · Included")
-        XCTAssertEqual(given.noun, "Pro")
+    /// An account that has bought nothing has lost nothing on its own network,
+    /// and the line that says it is not subscribed says that in the same
+    /// breath. A subscription that ended reads the same way: what it ended is
+    /// the relay, not amux.
+    func testNotSubscribedSaysWhatStillWorks() {
         XCTAssertEqual(
-            Entitlement.active(grant: .purchased(.web), renews: nil).noun, "Subscription")
-        XCTAssertEqual(Entitlement.none.noun, "Subscription")
+            Entitlement.none.summary, "Not subscribed · hosts on this network still work")
+        XCTAssertEqual(
+            Entitlement.lapsed(grant: .purchased(.web), endedAt: Date()).summary,
+            "Not subscribed · hosts on this network still work")
+    }
+
+    /// Access nobody paid for names no store: a line reading *Subscribed on
+    /// the web* would send somebody looking for a billing page that does not
+    /// exist for them.
+    func testAccessThatWasGivenNamesNoStore() {
+        XCTAssertEqual(
+            Entitlement.active(grant: .granted, renews: nil).summary,
+            "Included with this account")
     }
 
     /// The paywall does not offer to sell to somebody who was given it, and

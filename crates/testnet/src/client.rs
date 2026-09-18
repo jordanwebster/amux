@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use client::Client;
 use node::ProfileAdmin;
+use node::harness::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole};
 use node::harness::{
-    Config, DeviceRuntimeSecurity, InProcessConnection, StartedUserServices, TrackedTcpConnections,
-    TrustStore, load_or_create_device_identity_in, start_user_services,
+    Config, DeviceRuntimeSecurity, InProcessConnection, StartedUserServices, TrustStore,
+    load_or_create_device_identity_in, start_user_services,
 };
 use node::user_state::ServerState;
 
@@ -20,7 +21,6 @@ pub struct UserClient {
     _services: StartedUserServices,
     _root: tempfile::TempDir,
     tasks: Vec<tokio::task::AbortHandle>,
-    sockets: TrackedTcpConnections,
 }
 
 impl std::ops::Deref for UserClient {
@@ -42,9 +42,8 @@ impl UserClient {
 
 impl Drop for UserClient {
     fn drop(&mut self) {
-        for socket in self.sockets.lock().unwrap().drain(..) {
-            let _ = socket.shutdown(std::net::Shutdown::Both);
-        }
+        // Aborting the link drops the carrier, and the carrier owns the socket
+        // it dialled, so closing it needs no separate handle on the connection.
         for task in &self.tasks {
             task.abort();
         }
@@ -86,10 +85,15 @@ pub async fn connect_user(
         DeviceRuntimeSecurity::new(identity, trust, root.path().to_owned()),
     )
     .await?;
-    let sockets: TrackedTcpConnections = Arc::default();
-    let channel = super::daemon::tracked_cloud_channel(relay, sockets.clone());
+    let stream = tokio::net::TcpStream::connect(relay).await?;
+    stream.set_nodelay(true)?;
+    let carrier: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+        stream,
+        MuxRole::Connector,
+        CarrierKind::RelayTcp,
+    ));
     let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-    let link = services.spawn_relay_link_with_bearer_token(channel, token, shutdown_rx);
+    let link = services.spawn_relay_link_with_bearer_token(carrier, token, shutdown_rx);
     let (channel, server, connection) = services.open_managed_in_process_client_channel();
     let admin = ProfileAdmin::for_test(services.client.clone());
     Ok(UserClient {
@@ -101,6 +105,5 @@ pub async fn connect_user(
         _services: services,
         _root: root,
         tasks: vec![link, server.abort_handle()],
-        sockets,
     })
 }

@@ -1,10 +1,10 @@
-//! Observed runtime state and adapters for legacy status reporters.
+//! Observed runtime state and its update-status adapter.
 
 use std::sync::Arc;
 
+pub use model::RelayCarrier;
 use tokio::sync::watch;
 
-use crate::subscription::SubscriptionReporter;
 use crate::update::{UpdateReporter, UpdateStatus};
 
 /// Connectivity observed by startup and the cloud connector, apart from intent.
@@ -12,11 +12,15 @@ use crate::update::{UpdateReporter, UpdateStatus};
 pub enum Observed {
     Local,
     Connecting,
-    Connected,
+    Connected {
+        tier: crate::Tier,
+        carrier: RelayCarrier,
+    },
     Retrying,
     AuthenticationRequired,
-    SubscriptionRequired,
-    UpdateRequired { minimum_version: Option<String> },
+    UpdateRequired {
+        minimum_version: Option<String>,
+    },
     StartupFailed,
 }
 
@@ -27,20 +31,15 @@ pub(crate) struct RuntimeStatus {
     tx: watch::Sender<Observed>,
     observer: Option<Arc<dyn Fn(Observed) + Send + Sync>>,
     update_reporter: Option<Arc<dyn UpdateReporter>>,
-    subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
 }
 
 impl RuntimeStatus {
-    pub(crate) fn new(
-        update_reporter: Option<Arc<dyn UpdateReporter>>,
-        subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
-    ) -> Self {
+    pub(crate) fn new(update_reporter: Option<Arc<dyn UpdateReporter>>) -> Self {
         let (tx, _) = watch::channel(Observed::Local);
         Self {
             tx,
             observer: None,
             update_reporter,
-            subscription_reporter,
         }
     }
 
@@ -65,21 +64,13 @@ impl RuntimeStatus {
         // Adapt synchronously: a terminal connector can finish immediately
         // after publishing, and teardown must not discard its marker update.
         match observed {
-            Observed::Local | Observed::Connected => {
+            Observed::Local | Observed::Connected { .. } => {
                 // Local operation says nothing about whether the cloud still
                 // requires an update. Clear that marker only after connecting.
-                if observed == Observed::Connected
+                if matches!(observed, Observed::Connected { .. })
                     && let Some(reporter) = &self.update_reporter
                 {
                     reporter.report(UpdateStatus::Required(None));
-                }
-                if let Some(reporter) = &self.subscription_reporter {
-                    reporter.report_subscription_required(false);
-                }
-            }
-            Observed::SubscriptionRequired => {
-                if let Some(reporter) = &self.subscription_reporter {
-                    reporter.report_subscription_required(true);
                 }
             }
             Observed::UpdateRequired {
@@ -103,7 +94,6 @@ mod tests {
     #[derive(Default)]
     struct CapturingReporter {
         updates: Mutex<Vec<UpdateStatus>>,
-        subscriptions: Mutex<Vec<bool>>,
     }
 
     impl UpdateReporter for CapturingReporter {
@@ -112,43 +102,39 @@ mod tests {
         }
     }
 
-    impl SubscriptionReporter for CapturingReporter {
-        fn report_subscription_required(&self, required: bool) {
-            self.subscriptions.lock().unwrap().push(required);
-        }
-    }
-
     #[test]
     fn profile_runtime_local_preserves_update_required_until_connected() {
         let reporter = Arc::new(CapturingReporter::default());
-        let status = RuntimeStatus::new(Some(reporter.clone()), Some(reporter.clone()));
+        let status = RuntimeStatus::new(Some(reporter.clone()));
         status.report(Observed::UpdateRequired {
             minimum_version: Some("99.0.0".into()),
         });
-        status.report(Observed::SubscriptionRequired);
         status.report(Observed::Local);
 
         assert!(matches!(
             reporter.updates.lock().unwrap().as_slice(),
             [UpdateStatus::Required(Some(version))] if version == "99.0.0"
         ));
-        assert_eq!(*reporter.subscriptions.lock().unwrap(), [true, false]);
         assert_eq!(*status.subscribe().borrow(), Observed::Local);
-        println!("Local: update-required remains; subscription-required clears");
+        println!("Local: update-required remains");
 
-        status.report(Observed::SubscriptionRequired);
-        status.report(Observed::Connected);
+        status.report(Observed::Connected {
+            tier: crate::Tier::Pro,
+            carrier: RelayCarrier::Tcp,
+        });
 
         assert!(matches!(
             reporter.updates.lock().unwrap().as_slice(),
             [UpdateStatus::Required(Some(version)), UpdateStatus::Required(None)]
                 if version == "99.0.0"
         ));
-        assert_eq!(
-            *reporter.subscriptions.lock().unwrap(),
-            [true, false, true, false]
-        );
-        assert_eq!(*status.subscribe().borrow(), Observed::Connected);
-        println!("Connected: update-required and subscription-required clear");
+        assert!(matches!(
+            *status.subscribe().borrow(),
+            Observed::Connected {
+                tier: crate::Tier::Pro,
+                carrier: RelayCarrier::Tcp
+            }
+        ));
+        println!("Connected: update-required clears");
     }
 }

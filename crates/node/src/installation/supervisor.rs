@@ -3,6 +3,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+// Read only where a development build lets a profile shorten its cloud
+// refresh, so a release build has no use for it.
+#[cfg(debug_assertions)]
+use std::time::Duration;
 
 use client::Client;
 use serde::{Deserialize, Serialize};
@@ -20,7 +24,9 @@ use crate::auth::CredentialProvider;
 use crate::config::{
     ConfigError, InstallationConfig, ProfileConfig, check_path, check_profile_paths,
 };
-use crate::profile::runtime::{self, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig};
+use crate::profile::runtime::{
+    self, DirectDialPolicy, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig,
+};
 use crate::profile::status::RuntimeStatus;
 use crate::server::ShutdownReason;
 
@@ -143,6 +149,13 @@ pub struct InstallationOptions {
     pub identity_http: reqwest::Client,
     /// Optional desktop provider composition. Embedded owners leave this unset.
     pub host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
+    /// Who browses this device's network, where the application does it.
+    ///
+    /// A phone may not browse the local network itself: the system browses and
+    /// the app is told, so the app hands the installation a discovery it feeds
+    /// and every profile reads that one. Left unset, each profile browses for
+    /// itself the way the platform allows.
+    pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
 }
 
 pub struct Installation {
@@ -156,13 +169,20 @@ pub(super) struct Inner {
     /// for accepted operations and prevents any new runtime from starting.
     lifecycle: RwLock<()>,
     root: PathBuf,
-    _temporary_root: Option<tempfile::TempDir>,
+    /// The directory an installation with nowhere to live made for itself,
+    /// removed when it shuts down rather than when the last handle to it goes.
+    /// Shutdown is when this installation is finished with its files, and a
+    /// screen that still holds a handle is not a reason to leave them behind.
+    temporary_root: Mutex<Option<tempfile::TempDir>>,
     settings: Arc<InstallationSettings>,
     config: InstallationConfig,
     listeners: Listeners,
     credentials: CredentialSource,
     identity_http: reqwest::Client,
     host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
+    /// The application's own browser, where the application browses for this
+    /// device. Shared by every profile: they are on one network.
+    discovery: Option<Arc<dyn crate::discovery::Discovery>>,
     binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
     fixtures: Option<RuntimeFixtureFactory>,
 }
@@ -434,6 +454,7 @@ impl Installation {
             credentials: CredentialSource::ProfileFiles,
             identity_http: reqwest::Client::new(),
             host_factory,
+            discovery: None,
         };
         Self::open_inner(options, Some(config), None).await
     }
@@ -517,13 +538,14 @@ impl Installation {
             }),
             lifecycle: RwLock::new(()),
             root,
-            _temporary_root: temporary_root,
+            temporary_root: Mutex::new(temporary_root),
             settings: Arc::new(options.settings),
             config,
             listeners: options.listeners,
             credentials: options.credentials,
             identity_http: options.identity_http,
             host_factory: options.host_factory,
+            discovery: options.discovery,
             binding: AsyncMutex::new(VecDeque::new()),
             fixtures,
         });
@@ -565,7 +587,7 @@ impl Installation {
     pub async fn use_test_cloud_transport(
         &self,
         id: ProfileId,
-        channel: tonic::transport::Channel,
+        address: std::net::SocketAddr,
     ) -> Result<(), InstallationError> {
         let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
         let mut runtime = slot.runtime.lock().await;
@@ -587,7 +609,7 @@ impl Installation {
         runtime
             .as_mut()
             .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
-            .test_cloud_transport = Some(channel);
+            .test_cloud_transport = Some(address);
         Ok(())
     }
 
@@ -613,6 +635,26 @@ impl Installation {
             .attach_relay(relay)
             .await;
         Ok(())
+    }
+
+    /// Ask one profile's account service again what that account buys.
+    ///
+    /// A rich client has no cloud link of its own — the application resolved
+    /// the relay and holds the credentials — so the question goes back out
+    /// through the same credential provider the relay route was given.
+    pub async fn refresh_entitlement(
+        &self,
+        id: ProfileId,
+    ) -> Result<crate::Tier, InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let runtime = slot.runtime.lock().await;
+        self.inner.state.lock().unwrap().active(id)?;
+        runtime
+            .as_ref()
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
+            .refresh_entitlement()
+            .await
+            .map_err(|error| InstallationError::Unavailable(error.to_string()))
     }
 
     /// Obtain pairing and trust administration for a running profile in process.
@@ -766,6 +808,30 @@ impl Installation {
             _ => unreachable!(),
         }
     }
+    /// Hand every profile the machines an outside browser resolved.
+    ///
+    /// One device browses once. Each profile is a whole device to the machines
+    /// it knows, but they are all on the same network, so what the platform
+    /// found is offered to all of them and each decides what it may pair with.
+    /// Returns once every profile holds the set, so a caller that asks what it
+    /// may pair with next is answered from it.
+    pub async fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
+        let slots = {
+            let state = self.inner.state.lock().unwrap();
+            state
+                .profiles
+                .values()
+                .filter(|entry| !entry.deleting)
+                .map(|entry| entry.slot.clone())
+                .collect::<Vec<_>>()
+        };
+        for slot in slots {
+            if let Some(runtime) = slot.runtime.lock().await.as_ref() {
+                runtime.hand_over_discovered(found.clone());
+            }
+        }
+    }
+
     /// Stop all cloud connectors while retaining local profiles, trust and clients.
     pub async fn host_suspend(&self) {
         let inner = self.inner.clone();
@@ -779,7 +845,13 @@ impl Installation {
     }
 
     /// Finish runtime and transport teardown asynchronously, even if this future is dropped.
-    pub async fn shutdown(self, reason: ShutdownReason) {
+    /// Stop every profile and refuse to start another.
+    ///
+    /// Takes a reference rather than ownership so an owner that shares this
+    /// handle — a rich client hands one to each profile's administration —
+    /// can still stop it. Shutting down twice is the second call finding
+    /// nothing left to stop.
+    pub async fn shutdown(&self, reason: ShutdownReason) {
         let inner = self.inner.clone();
         // The owned teardown continues if a host drops the shutdown future.
         let _ = tokio::spawn(async move { inner.shutdown(reason).await }).await;
@@ -827,16 +899,20 @@ impl Inner {
                 .collect::<Vec<_>>()
         };
         futures_util::future::join_all(slots.into_iter().map(|(id, slot)| async move {
-            let runtime = slot.runtime.lock().await;
-            if let Some(runtime) = runtime.as_ref() {
+            let mut runtime = slot.runtime.lock().await;
+            if let Some(runtime) = runtime.as_mut() {
                 if suspended {
+                    runtime.suspend_direct_links().await;
                     runtime.stop_cloud().await;
-                } else if self.cloud_eligible(id) {
-                    let store = slot.credentials.lock().unwrap().clone();
-                    if let Some(store) = store {
-                        store.refresh_after_host_resume().await;
+                } else {
+                    runtime.resume_direct_links();
+                    if self.cloud_eligible(id) {
+                        let store = slot.credentials.lock().unwrap().clone();
+                        if let Some(store) = store {
+                            store.refresh_after_host_resume().await;
+                        }
+                        let _ = runtime.start_cloud().await;
                     }
-                    let _ = runtime.start_cloud().await;
                 }
             }
         }))
@@ -920,28 +996,48 @@ impl Inner {
             {
                 store.use_host(binding, provider(id));
             }
-            let credentials: Option<Arc<dyn CredentialProvider>> = Some(store.clone());
+            let credentials: Option<Arc<dyn CredentialProvider>> = record
+                .binding
+                .as_ref()
+                .map(|_| store.clone() as Arc<dyn CredentialProvider>);
             *slot.credentials.lock().unwrap() = Some(store);
             let cloud_url = record
                 .binding
                 .as_ref()
                 .map(|binding| binding.account.service.to_string())
                 .unwrap_or_else(|| crate::config::Config::default().cloud_url);
+            let fixtures = match &self.fixtures {
+                Some(factory) => factory(id).await,
+                None => Default::default(),
+            };
+            let discovery = match fixtures
+                .discovery
+                .clone()
+                .or_else(|| self.discovery.clone())
+            {
+                Some(discovery) => discovery,
+                None => runtime::platform_discovery()
+                    .map_err(|error| InstallationError::Unavailable(error.to_string()))?,
+            };
             let mut options = ProfileRuntimeOptions {
                 paths: paths.clone(),
                 config: RuntimeConfig {
                     cloud_url,
-                    tcp_port: None,
+                    lan: Default::default(),
+                    cloud_refresh_interval: None,
                 },
                 shared: self.settings.clone(),
                 credentials,
                 host_factory: self.host_factory.clone(),
+                discovery,
+                dial: if self.listeners.has_sockets() {
+                    DirectDialPolicy::OnStart
+                } else {
+                    DirectDialPolicy::WhileForeground
+                },
 
                 listeners: self.listeners,
-                fixtures: match &self.fixtures {
-                    Some(factory) => factory(id).await,
-                    None => Default::default(),
-                },
+                fixtures,
             };
             let config_path = paths.config_path.as_ref().unwrap();
             if config_path.exists() {
@@ -949,7 +1045,12 @@ impl Inner {
                 if record.binding.is_none() {
                     options.config.cloud_url = config.cloud_url;
                 }
-                options.config.tcp_port = config.tcp_port;
+                options.config.lan = config.lan;
+                #[cfg(debug_assertions)]
+                {
+                    options.config.cloud_refresh_interval =
+                        config.cloud_refresh_secs.map(Duration::from_secs);
+                }
             } else {
                 let config = ProfileConfig {
                     installation_config: self.config.file_path(),
@@ -957,25 +1058,25 @@ impl Inner {
                     data_dir: paths.data_dir.clone(),
                     state_path: paths.state_path.clone(),
                     cloud_url: options.config.cloud_url.clone(),
-                    tcp_port: options.config.tcp_port,
+                    lan: options.config.lan,
+                    cloud_refresh_secs: None,
                 };
                 write_yaml(config_path, &config)?;
             }
             let weak = Arc::downgrade(self);
             let reporters = options.shared.status_reporters.resolve(&paths.state_path);
-            let status = RuntimeStatus::new(reporters.update, reporters.subscription)
-                .with_observer(move |observed| {
-                    if let Some(inner) = weak.upgrade() {
-                        let mut state = inner.state.lock().unwrap();
-                        if let Some(entry) = state.profiles.get_mut(&id)
-                            && !entry.deleting
-                            && entry.status.observed != observed
-                        {
-                            entry.status.observed = observed;
-                            state.publish(id);
-                        }
+            let status = RuntimeStatus::new(reporters.update).with_observer(move |observed| {
+                if let Some(inner) = weak.upgrade() {
+                    let mut state = inner.state.lock().unwrap();
+                    if let Some(entry) = state.profiles.get_mut(&id)
+                        && !entry.deleting
+                        && entry.status.observed != observed
+                    {
+                        entry.status.observed = observed;
+                        state.publish(id);
                     }
-                });
+                }
+            });
             let runtime = runtime::start_supervised(options, status, slot.operations.clone())
                 .await
                 .map_err(|error| InstallationError::Unavailable(error.to_string()))?;
@@ -1282,7 +1383,15 @@ impl Inner {
             }
         }))
         .await;
-        self.state.lock().unwrap().events.take();
+        let mut state = self.state.lock().unwrap();
+        state.events.take();
+        // Every profile is stopped, so nothing here writes again and the next
+        // owner of this directory may have it. Waiting for the last handle to
+        // this installation to be dropped would keep the root claimed for as
+        // long as anything still held one.
+        state.registry.release_root();
+        drop(state);
+        drop(self.temporary_root.lock().unwrap().take());
     }
 }
 

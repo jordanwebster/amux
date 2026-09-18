@@ -6,9 +6,9 @@ use tokio::time::Instant;
 
 pub(crate) const ROUTING_HOST_CAP: usize = 1000;
 pub(crate) const CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW: Duration = Duration::from_secs(5 * 60);
-pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT: usize = 10;
-pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
-pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
+pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT: usize = 10;
+pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
+pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_LIMIT: usize = 30;
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_WINDOW: Duration = Duration::from_secs(60);
 

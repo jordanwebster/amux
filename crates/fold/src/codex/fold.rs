@@ -1089,26 +1089,32 @@ fn fold_approval_required<C>(layer: &mut Observation<C>, seq: u64, row: &Value) 
         .get("availableDecisions")
         .cloned()
         .unwrap_or(Value::Null);
-    // `item/tool/call` is distinct from unsupported
-    // `item/tool/requestUserInput`: the former has a backend response path,
-    // but upstream supplies no availableDecisions. Preserve the null wire
-    // value and expose the backend's accepted binary choices in this layer.
-    let actions = if matches!(context, AskContext::DynamicTool { .. }) {
-        [CodexDecision::Accept, CodexDecision::Decline]
-            .into_iter()
-            .map(|decision| AskAction {
-                wire: Value::String(decision.wire_value().to_string()),
-                meaning: AskActionMeaning::Scalar { decision },
-            })
-            .collect()
-    } else {
-        available
-            .as_array()
+    let actions = match (&context, available.as_array()) {
+        // `item/tool/call` is distinct from unsupported
+        // `item/tool/requestUserInput`: the former has a backend response
+        // path, but upstream supplies no availableDecisions. Preserve the
+        // null wire value and expose the backend's accepted binary choices
+        // in this layer.
+        (AskContext::DynamicTool { .. }, _) => {
+            scalar_actions(&[CodexDecision::Accept, CodexDecision::Decline])
+        }
+        // A file-change request's parameters have no availableDecisions
+        // field at all: its answer is always one of the four
+        // `FileChangeApprovalDecision` values. Reading the missing list as
+        // "no choices" left every file-change approval unanswerable, so the
+        // request type's own decisions stand in for the list it never sends.
+        (AskContext::FileChange { .. }, None) => scalar_actions(&[
+            CodexDecision::Accept,
+            CodexDecision::AcceptForSession,
+            CodexDecision::Decline,
+            CodexDecision::Cancel,
+        ]),
+        (_, listed) => listed
             .into_iter()
             .flatten()
             .cloned()
             .map(|wire| AskAction::from_wire(wire, &context))
-            .collect()
+            .collect(),
     };
     layer.asks.retain(|ask| ask.request_id != request_id);
     layer.asks.push_back(Ask {
@@ -1125,6 +1131,16 @@ fn fold_approval_required<C>(layer: &mut Observation<C>, seq: u64, row: &Value) 
         context.item_id(),
         WorkState::AwaitingApproval { request_id },
     );
+}
+
+fn scalar_actions(decisions: &[CodexDecision]) -> Vec<AskAction> {
+    decisions
+        .iter()
+        .map(|&decision| AskAction {
+            wire: Value::String(decision.wire_value().to_string()),
+            meaning: AskActionMeaning::Scalar { decision },
+        })
+        .collect()
 }
 
 fn fold_approval_resolved<C>(layer: &mut Observation<C>, row: &Value) {

@@ -64,7 +64,7 @@ public enum TraceEvent: Sendable, Equatable {
     /// Where the person went. Written as they navigate, so a recording is the
     /// trail through the app rather than a single destination.
     case route(Place)
-    /// What was open over that place — a card, a menu, the drawer — named the
+    /// What was open over that place — a card or a menu — named the
     /// way the screen that owns it names it, or nothing when the place was
     /// showing nothing over itself.
     ///

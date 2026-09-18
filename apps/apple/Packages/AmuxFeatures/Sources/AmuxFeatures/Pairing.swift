@@ -16,6 +16,92 @@ public enum PairingAction: Equatable, Sendable {
     case abandon(PendingPeer)
     /// Left without an attempt in flight.
     case cancel
+    /// Get an account, because the machine the invitation names can only be
+    /// reached through the relay and there is no relay without one.
+    case signIn
+    /// Buy the relay tunnel, because the machine authenticated and this
+    /// account may not open one to it.
+    case subscribe
+}
+
+/// How a machine gets paired, for a screen that has no machine to offer.
+///
+/// Pairing is always with one particular machine, so it is never a button on
+/// its own: a machine on this network is offered by name where it is found,
+/// and one that is not found prints a code for the camera. The commands are
+/// set in mono because they are typed exactly as written.
+public struct PairingHint: View {
+    @Environment(\.design) private var design
+
+    public init() {}
+
+    public var body: some View {
+        Text("Run \(command("amux pair")) on a host on this network, or scan the code from \(command("amux pair --qr")) with the camera.")
+            .designFont(.detail, design)
+            .foregroundStyle(design.inkMuted.color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func command(_ text: String) -> Text {
+        Text(verbatim: text).font(design.font(.monoSmall))
+    }
+}
+
+/// A pairing invitation for a machine this phone cannot see.
+///
+/// An invitation carrying addresses is dialled on the network this phone is
+/// already on and needs nothing else. One carrying none names a machine only
+/// the relay has ever seen, and there is no relay without an account — so this
+/// is not a refusal and not a failure of the invitation: it is the one missing
+/// piece, said plainly, with the invitation kept where it was.
+public struct PairNeedsAnAccount: View {
+    @Environment(\.design) private var design
+    private let actions: @MainActor (PairingAction) -> Void
+
+    public init(actions: @escaping @MainActor (PairingAction) -> Void) {
+        self.actions = actions
+    }
+
+    public var body: some View {
+        ZStack {
+            Ground()
+            VStack(alignment: .leading, spacing: 0) {
+                Text("That host is not on this network")
+                    .designFont(.screenTitle, design)
+                    .foregroundStyle(design.ink.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 26)
+                    .identified(
+                        "pair-needs-account.title",
+                        value: "That host is not on this network")
+                Explain("""
+                    Its invitation names no address here, so it can only be reached through \
+                    the relay. Sign in and this phone can take it up.
+                    """)
+                    .padding(.top, 8)
+                Spacer(minLength: 22)
+                VStack(spacing: 10) {
+                    Button { actions(.signIn) } label: {
+                        ActionLabel("Sign In", kind: .primary, fill: true)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .identified("pair-needs-account.signIn", label: "Sign In")
+                    Button { actions(.cancel) } label: {
+                        ActionLabel("Not Now", kind: .outline, fill: true)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .identified("pair-needs-account.cancel", label: "Not Now")
+                }
+                Explain("The invitation is kept until then.")
+                    .padding(.top, 12)
+                    .padding(.bottom, 34)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, design.metrics.gutter)
+        }
+        .accessibilityElement(children: .contain)
+        .identified("pair-needs-account", value: "not on this network")
+    }
 }
 
 /// Adding a machine by the six-digit code it printed.
@@ -82,6 +168,12 @@ public struct PairByCode: View {
                 .foregroundStyle(design.inkMuted.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .identified("pin.instruction", value: instruction)
+            if let route {
+                Text(route)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .identified("pin.route", value: route)
+            }
         }
         .padding(.top, 8)
         .padding(.bottom, 22)
@@ -97,6 +189,22 @@ public struct PairByCode: View {
     private var instruction: String {
         guard let machine = model.machine else { return "Run amux pair on the host to get one." }
         return "Run amux pair on \(machine.name) to get one."
+    }
+
+    /// Where the machine this code is for was found.
+    ///
+    /// Said because it is the difference between a code that will work with no
+    /// account at all and one that is being carried across the relay: two
+    /// machines with the same name on two different routes are otherwise one
+    /// name on this screen. Nothing where no machine has been pointed at,
+    /// which is a code typed before anything was found.
+    private var route: String? {
+        switch model.machine?.via {
+        case .direct: "On this network"
+        case .relay: "Through the relay"
+        case .ssh: "Over SSH"
+        case .offline, nil: nil
+        }
     }
 
     private var boxes: some View {
@@ -145,6 +253,15 @@ public struct PairByCode: View {
     @ViewBuilder
     private var caption: some View {
         switch model.phase {
+        // The code was right. What is missing is the route: the machine is on
+        // the far side of the relay and this account may not open a tunnel to
+        // it, which no number typed here can change. So the offer stands where
+        // the expiry would, and the keypad above it goes quiet.
+        case .needsSubscription:
+            SubscribeCallToAction(
+                host: model.machine?.name, identifier: "pin.subscribe"
+            ) { actions(.subscribe) }
+                .padding(.top, 14)
         case .refused:
             // One sentence for a mistyped code, an expired code, a code
             // already used and a code nobody issued. Distinguishing them is
@@ -195,31 +312,46 @@ private struct Keypad: View {
     let type: (Int) -> Void
     let backspace: () -> Void
 
+    // The keys are one piece of glass with holes in it, not ten pieces sitting
+    // near each other. Ten points apart, each plate's shadow falls across its
+    // neighbours, and when every plate is its own surface the render server
+    // composites those overlaps in an order it does not repeat: one key came
+    // back with a heavier halo than the run before, over the whole ring around
+    // it, on a screen where nothing had changed. Declaring the group is what
+    // settles it, and it is also what the keypad was drawn as — the design's
+    // own picture has one even shadow under each key rather than the doubled
+    // edge that stacking produced. No spacing, because these keys never join.
     var body: some View {
-        VStack(spacing: 10) {
-            ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
-                HStack(spacing: 10) { ForEach(row, id: \.self) { key($0) } }
-            }
-            HStack(spacing: 10) {
-                Color.clear.frame(maxWidth: .infinity).frame(height: 52)
-                key(0)
-                Button(action: backspace) {
-                    Image(systemName: "delete.backward")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .contentShape(Rectangle())
+        GlassEffectContainer(spacing: 0) {
+            VStack(spacing: 10) {
+                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
+                    HStack(spacing: 10) { ForEach(row, id: \.self) { key($0) } }
                 }
-                .buttonStyle(.amuxControl)
-                .disabled(!enabled)
-                .accessibilityLabel("Delete")
-                .identified("pin.delete", label: "Delete", enabled: enabled)
+                HStack(spacing: 10) {
+                    Color.clear.frame(maxWidth: .infinity).frame(height: 52)
+                    key(0)
+                    Button(action: backspace) {
+                        Image(systemName: "delete.backward")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.amuxControl)
+                    .disabled(!enabled)
+                    .accessibilityLabel("Delete")
+                    .identified("pin.delete", label: "Delete", enabled: enabled)
+                }
             }
         }
         .padding(.bottom, 12)
     }
 
+    // The material goes on the key rather than behind it. Put behind, as a
+    // background of something clear, it is a surface of its own that the group
+    // above is free to draw after the digit, and the digit disappears under
+    // its own key.
     private func key(_ digit: Int) -> some View {
         Button { type(digit) } label: {
             Text("\(digit)")
@@ -227,10 +359,7 @@ private struct Keypad: View {
                 .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background {
-                    Color.clear.frosted(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
+                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous), as: .glass)
         }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)
@@ -265,6 +394,7 @@ public struct PairConfirmation: View {
                 case .confirming(let peer): offer(peer)
                 case .trusted(let name): settled(name)
                 case .refused: refused
+                case .needsSubscription: needsSubscription
                 default: checking
                 }
             }
@@ -285,8 +415,26 @@ public struct PairConfirmation: View {
         case .confirming(let peer): peer.name
         case .trusted(let name): "trusted \(name)"
         case .refused: "refused"
+        case .needsSubscription: "needs subscription"
         default: "checking"
         }
+    }
+
+    /// The invitation was good and the machine is only on the far side of the
+    /// relay. Nothing about the invitation can be retried into working, so the
+    /// screen offers the one thing that would.
+    private var needsSubscription: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SubscribeCallToAction(
+                host: nil, identifier: "pair-confirm.subscribe"
+            ) { actions(.subscribe) }
+            Button { actions(.cancel) } label: {
+                ActionLabel("Not Now", kind: .outline, fill: true)
+            }
+            .buttonStyle(.amuxControl)
+            .identified("pair-confirm.notNow", label: "Not Now")
+        }
+        .padding(.top, 26)
     }
 
     private func offer(_ peer: PendingPeer) -> some View {

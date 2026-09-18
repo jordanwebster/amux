@@ -17,16 +17,19 @@ fi
 
 echo "Releasing v${new_version} (current: v${current})"
 
-# Update version in all crate Cargo.toml files that track the release version
+# Update version in all crate Cargo.toml files that track the release version.
+# The daemon announces its own crate's version to peers and writes it into the
+# update marker, so a release that moved only the CLI would have `amux
+# --version` and the machine a person sees in their fleet disagree.
 sed -i '' "s/^version = \"${current}\"/version = \"${new_version}\"/" \
-    crates/amux/Cargo.toml
+    crates/amux/Cargo.toml crates/node/Cargo.toml
 
 # Update Cargo.lock
-cargo update --offline -p amux
+cargo update --offline -p amux -p node
 just release-check
 
 # Commit, tag, push
-git add crates/amux/Cargo.toml Cargo.lock
+git add crates/amux/Cargo.toml crates/node/Cargo.toml Cargo.lock
 git commit -m "v${new_version}"
 git tag "v${new_version}"
 git push

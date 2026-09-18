@@ -129,8 +129,8 @@ private struct Identify: ViewModifier {
                                 // The size is the one the layout gave this thing, and
                                 // the position is where it ended up. They come from
                                 // different places on purpose. A presentation can put
-                                // a whole screen through a transform — the drawer
-                                // slides the conversation aside and shrinks it — and
+                                // a whole screen through a transform — a push slides
+                                // the page in from the side — and
                                 // that transform moves and resizes what is drawn
                                 // without the layout ever hearing about it. Where a
                                 // thing is is then a fact about the transform; how big

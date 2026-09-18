@@ -19,6 +19,10 @@ public enum ConversationFootState: Equatable {
     /// The machine that owns this agent is not answering. The feed above is
     /// the last thing that was true and stays readable.
     case unreachable(host: String, since: String?)
+    /// The relay can see the machine that owns this agent and will not carry
+    /// anything to it on this account. The feed above is the cache and stays
+    /// readable; what stands here is the one thing that would change it.
+    case away(host: String?)
     /// The layer will not take a message now. `reason` is the core's own
     /// sentence when it refused one, and this build's sentence for the gate
     /// when nothing has been attempted.
@@ -39,6 +43,14 @@ public enum ConversationFootState: Equatable {
             self = .unreachable(host: host, since: subject.age)
             return
         }
+        // Before the gate, because the gate is about the layer and this is
+        // about the link: a machine no stream reaches has no gate worth
+        // reporting, and "Retry Now" over it would promise something a retry
+        // cannot deliver.
+        if subject.hostAway {
+            self = .away(host: subject.host)
+            return
+        }
         guard let sentence = Self.sentence(for: gate) else { return nil }
         // The core's own words whenever the core has spoken. A refusal
         // rewritten on the phone is a second opinion about something only the
@@ -51,41 +63,24 @@ public enum ConversationFootState: Equatable {
 
     /// What this build says about a gate nobody has tried to send through.
     ///
-    /// Only the two gates that pass on their own are worded here. A gate that
-    /// is waiting on the reader is the ask panel's to report, one that is
-    /// working is the composer's, and one that says the layer is unavailable
-    /// has nothing to add to a screen that is already empty.
+    /// Only the gate that passes on its own is worded here. A gate that is
+    /// waiting on the reader is the ask panel's to report, one that is working
+    /// or still sending is the composer's, and one that says the layer is
+    /// unavailable has nothing to add to a screen that is already empty.
     private static func sentence(for gate: SendGate) -> String? {
         switch gate {
-        case .claudePty(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .sendInFlight: inFlight
-            default: nil
-            }
-        case .claudeSdk(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .inputInFlight: inFlight
-            default: nil
-            }
-        case .codex(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .inputInFlight: inFlight
-            default: nil
-            }
-        case .unavailable: nil
+        case .claudePty(.replaying), .claudeSdk(.replaying), .codex(.replaying): replaying
+        default: nil
         }
     }
 
     private static let replaying = "This session is replaying what it missed."
-    private static let inFlight = "The last message has not been acknowledged yet."
 
     /// The line in bold.
     public var headline: String {
         switch self {
         case .unreachable(let host, _): "\(host) is unreachable"
+        case .away: SubscribeCopy.headline
         case .refused(let headline, _): headline
         }
     }
@@ -96,6 +91,7 @@ public enum ConversationFootState: Equatable {
         case .unreachable(_, let since):
             ["Reconnecting", since.map { "last update \($0) ago" }]
                 .compactMap { $0 }.joined(separator: " · ")
+        case .away(let host): SubscribeCopy.detail(host: host)
         case .refused(_, let reason): reason
         }
     }
@@ -103,15 +99,39 @@ public enum ConversationFootState: Equatable {
 
 /// The panel in the composer's place.
 ///
-/// It is the same plate the composer is — a frosted card along the bottom
-/// edge — so a conversation whose layer stops taking messages does not change
+/// It is the same plate the composer is — glass along the bottom edge — so a conversation whose layer stops taking messages does not change
 /// shape under a reader, only what is written down there.
 struct ConversationFoot: View {
     @Environment(\.design) private var design
     let state: ConversationFootState
     let retry: @MainActor () -> Void
+    let subscribe: @MainActor () -> Void
 
     var body: some View {
+        plate
+            .padding(14)
+            .frosted(
+                RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+                as: .glass)
+            .accessibilityElement(children: .contain)
+            .identified("conversation.foot", label: headline, value: detail)
+    }
+
+    /// A machine the relay can see is not a machine that failed: nothing is
+    /// wrong with it, nothing is being waited for, and the one thing that
+    /// would change it is not on this phone. So the plate carries the offer
+    /// itself rather than a sentence about a fault.
+    @ViewBuilder
+    private var plate: some View {
+        if case .away(let host) = state {
+            SubscribeCallToAction(
+                host: host, identifier: "conversation.subscribe", subscribe: subscribe)
+        } else {
+            fault
+        }
+    }
+
+    private var fault: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 10) {
                 mark
@@ -139,10 +159,6 @@ struct ConversationFoot: View {
                 .identified("conversation.retry", label: "Retry Now")
             }
         }
-        .padding(14)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .identified("conversation.foot", label: headline, value: detail)
     }
 
     /// A hollow mark for a machine whose state is genuinely unknown, and the
@@ -157,7 +173,8 @@ struct ConversationFoot: View {
     @ViewBuilder
     private var mark: some View {
         switch state {
-        case .unreachable:
+        // The offer draws no mark at all; it never reaches this.
+        case .away, .unreachable:
             Circle()
                 .strokeBorder(
                     design.inkFaint.color,

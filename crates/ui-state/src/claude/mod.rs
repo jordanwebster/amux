@@ -1258,6 +1258,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
+            last_activity: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
             parent: None,
             working_on: None,
             summary: None,
@@ -1272,6 +1273,8 @@ mod tests {
             capabilities: None,
             trust_status: model::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: model::HostVia::Direct,
+            signed_in: Some(true),
             platform: None,
         };
         let mut model = Model::default();
@@ -1326,6 +1329,7 @@ mod tests {
     #[test]
     fn keymap_and_input_result_rows_keep_a_fresh_session_out_of_replay() {
         let agent = model::Agent {
+            last_activity: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
             id: agent_id(),
             host_id: Uuid::from_u128(1),
             name: Some("fix-auth-bug".to_string()),
@@ -1344,6 +1348,8 @@ mod tests {
             inventory_revision: 0,
         };
         let host = model::HostEntry {
+            signed_in: Some(true),
+            via: model::HostVia::Direct,
             id: Uuid::from_u128(1),
             name: "nova".to_string(),
             online: true,

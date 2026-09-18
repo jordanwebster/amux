@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use node::installation::{BindTarget, Observed, ProfileStatus};
+use node::discovery::ScriptedDiscovery;
+use node::installation::{BindTarget, Observed, ProfileStatus, RelayCarrier};
 use node::{
     AccessToken, AuthError, BindRequest, Client, CredentialProvider, CredentialSource, HostId,
     HostTrustStatus, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
@@ -13,6 +14,13 @@ use node::{
 };
 use testnet::identity::{Fault, IdentityServer, TestAccount};
 use testnet::relay::CloudRelay;
+
+fn connected() -> Observed {
+    Observed::Connected {
+        tier: node::Tier::Pro,
+        carrier: RelayCarrier::Tcp,
+    }
+}
 
 struct HostCredentials {
     url: String,
@@ -44,6 +52,7 @@ type Providers = Arc<Mutex<HashMap<ProfileId, Arc<HostCredentials>>>>;
 
 fn options(name: &str, providers: Providers, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
+        discovery: Some(Arc::new(ScriptedDiscovery::new())),
         relocation: Default::default(),
         root,
         settings: InstallationSettings {
@@ -158,7 +167,7 @@ async fn wait_pairing_host(installation: &Installation, id: ProfileId, peer: Hos
         loop {
             let hosts = admin.list_pairing_hosts().await.unwrap();
             assert!(
-                hosts.iter().all(|host| host.id == peer),
+                hosts.iter().all(|candidate| candidate.host.id == peer),
                 "cross-tenant discovery: {hosts:?}"
             );
             if hosts.len() == 1 {
@@ -186,6 +195,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
                     sub: subject.into(),
                     name: Some(subject.into()),
                     email: Some(format!("{subject}@example.test")),
+                    tier: node::Tier::Pro,
                 }],
                 Some(relay.relay_addr()),
             )
@@ -225,14 +235,14 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
     assert_ne!(hosts[0], hosts[1]);
     wait_status(
         &installation,
-        &[(ids[0], Observed::Connected), (ids[1], Observed::Connected)],
+        &[(ids[0], connected()), (ids[1], connected())],
     )
     .await;
     wait_status(
         &witnesses,
         &peers
             .iter()
-            .map(|p| (p.record.id, Observed::Connected))
+            .map(|p| (p.record.id, connected()))
             .collect::<Vec<_>>(),
     )
     .await;
@@ -264,14 +274,12 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         let PairingSecret::Pin(pin) = &pairings[index].secret else {
             panic!("expected PIN")
         };
-        let paired = witnesses
-            .admin(peers[index].record.id)
-            .await
-            .unwrap()
-            .pair_pin_cloud_peer(hosts[index], pin.clone())
-            .await
-            .unwrap();
-        assert_eq!(paired, pairings[index].identity);
+        let admin = witnesses.admin(peers[index].record.id).await.unwrap();
+        let pending = admin.begin_pair_pin(hosts[index], pin, &[]).await.unwrap();
+        let paired = admin.confirm_pair(pending).await.unwrap();
+        assert_eq!(paired.host_id, pairings[index].identity.host_id);
+        assert_eq!(paired.pubkey, pairings[index].identity.pubkey);
+        assert_eq!(paired.name, pairings[index].identity.name);
         let trust = installation
             .admin(ids[index])
             .await
@@ -325,13 +333,13 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         }
         installation.host_resume().await;
         let work_status = if cycle == 0 {
-            Observed::Connected
+            connected()
         } else {
             Observed::AuthenticationRequired
         };
         wait_status(
             &installation,
-            &[(ids[0], Observed::Connected), (ids[1], work_status)],
+            &[(ids[0], connected()), (ids[1], work_status)],
         )
         .await;
         for index in 0..2 {
@@ -356,7 +364,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         .unwrap();
     wait_status(
         &installation,
-        &[(ids[0], Observed::Connected), (ids[1], Observed::Connected)],
+        &[(ids[0], connected()), (ids[1], connected())],
     )
     .await;
     assert_eq!(credentials[0].calls.load(Ordering::SeqCst), 2);

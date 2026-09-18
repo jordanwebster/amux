@@ -222,8 +222,17 @@ def profile_reaches_the_relay(journal: Journal, profile: str, seconds: int = 180
     status = "nothing"
     while time.time() < deadline:
         status = profile_status(profile)
-        if status.endswith("connected"):
-            journal.say("the daemon's profile is connected to the production relay")
+        # The daemon says how it is connected as well as that it is: a
+        # connected profile reads `bound / connected (pro, quic)`, naming the
+        # tier the relay granted and the carrier it settled on. Matching the
+        # word rather than the end of the line keeps this from failing the
+        # moment the daemon has more to say.
+        connected = re.search(r"\bconnected\b", status)
+        if connected and "not connected" not in status:
+            journal.say(
+                "the daemon's profile is connected to the production relay: "
+                f"it reads {status!r}"
+            )
             return
         if "subscription_required" in status or "authentication_required" in status:
             journal.stop(f"the relay turned this machine away: it reads {status!r}")

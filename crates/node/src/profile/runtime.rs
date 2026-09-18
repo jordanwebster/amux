@@ -9,25 +9,52 @@ use std::time::Duration;
 use client::Client;
 use host_api::{HostConfig, LocalAgentHost, LocalAgentHostFactory};
 use thiserror::Error;
-use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 
 use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
-use crate::config::{Config, ConfigError, Keybinds, UiSettings};
+use crate::config::{Config, ConfigError, Keybinds, LanConfig, UiSettings};
+use crate::discovery::{Advertisement, Discovery, DiscoveryError, FoundHosts, local_pairing_addrs};
 use crate::identity;
 use crate::server::ShutdownReason;
 use crate::services::{
-    CloudConnector, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
-    start_user_services,
+    CloudLink, CloudTransport, DeviceRuntimeSecurity, StartedUserServices, UDP_BLOCKED_MEMORY,
+    UdpBlockedMemory, establish_cloud_link, start_user_services,
 };
-use crate::subscription::SubscriptionReporter;
 use crate::transport::InProcessConnection;
 use crate::update::UpdateReporter;
 use crate::user_state::ServerState;
 
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
+
+pub(crate) fn platform_discovery() -> Result<Arc<dyn Discovery>, DiscoveryError> {
+    #[cfg(all(debug_assertions, not(target_os = "ios")))]
+    match std::env::var("AMUX_TEST_DISCOVERY_MODE").as_deref() {
+        Ok("scripted" | "disabled") => {
+            return Ok(Arc::new(crate::discovery::ScriptedDiscovery::new()));
+        }
+        Ok("mdns") | Err(std::env::VarError::NotPresent) => {}
+        Ok(mode) => {
+            return Err(DiscoveryError::Unavailable(format!(
+                "unknown test discovery mode {mode:?}"
+            )));
+        }
+        Err(error) => {
+            return Err(DiscoveryError::Unavailable(format!(
+                "invalid test discovery mode: {error}"
+            )));
+        }
+    }
+    #[cfg(any(test, target_os = "ios"))]
+    {
+        Ok(Arc::new(crate::discovery::ScriptedDiscovery::new()))
+    }
+    #[cfg(not(any(test, target_os = "ios")))]
+    {
+        Ok(Arc::new(crate::discovery::MdnsDiscovery::new()?))
+    }
+}
 
 use crate::installation::ProfilePaths;
 
@@ -35,7 +62,8 @@ use crate::installation::ProfilePaths;
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeConfig {
     pub(crate) cloud_url: String,
-    pub(crate) tcp_port: Option<u16>,
+    pub(crate) lan: LanConfig,
+    pub(crate) cloud_refresh_interval: Option<Duration>,
 }
 
 /// Installation-owned settings shared by every profile runtime.
@@ -72,19 +100,42 @@ impl Listeners {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectDialPolicy {
+    Never,
+    OnStart,
+    WhileForeground,
+}
+
 #[derive(Clone)]
 pub enum CloudFixtureAuth {
-    Bearer(String),
     Refreshing(crate::routing::LinkConnectorAuth),
+    RefreshingQuic {
+        auth: crate::routing::LinkConnectorAuth,
+        client_config: quinn::ClientConfig,
+        server_name: String,
+        quic_addr: SocketAddr,
+    },
+    RefreshingAuto {
+        auth: crate::routing::LinkConnectorAuth,
+        client_config: quinn::ClientConfig,
+        server_name: String,
+        quic_addr: SocketAddr,
+    },
 }
 
 #[derive(Default)]
 pub struct RuntimeFixtures {
-    pub listener: Option<TcpListener>,
-    pub tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
+    pub listener: Option<std::net::UdpSocket>,
+    pub quic_client_socket: Option<std::net::UdpSocket>,
+    pub advertised_addr: Option<SocketAddr>,
+    pub quic_transport: Option<Arc<quinn::TransportConfig>>,
+    pub discovery: Option<Arc<dyn Discovery>>,
     pub host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
-    pub cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    pub cloud_transport: Option<tonic::transport::Channel>,
+    pub cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
+    pub cloud_transport: Option<std::net::SocketAddr>,
+    pub cloud_refresh_interval: Option<Duration>,
+    pub udp_blocked_memory: Option<Duration>,
 }
 
 pub struct ProfileRuntimeOptions {
@@ -92,6 +143,8 @@ pub struct ProfileRuntimeOptions {
     pub(crate) config: RuntimeConfig,
     pub(crate) shared: Arc<InstallationSettings>,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
+    pub(crate) discovery: Arc<dyn Discovery>,
+    pub(crate) dial: DirectDialPolicy,
     pub(crate) host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
 
     pub(crate) listeners: Listeners,
@@ -103,8 +156,8 @@ impl ProfileRuntimeOptions {
         config: Config,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
-        subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
         listeners: Listeners,
+        discovery: Arc<dyn Discovery>,
         host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
     ) -> Self {
         let paths = ProfilePaths {
@@ -116,7 +169,8 @@ impl ProfileRuntimeOptions {
         };
         let profile = RuntimeConfig {
             cloud_url: config.cloud_url.clone(),
-            tcp_port: config.tcp_port,
+            lan: config.lan,
+            cloud_refresh_interval: None,
         };
         let shared = InstallationSettings {
             repository_roots: config.repository_roots,
@@ -129,7 +183,6 @@ impl ProfileRuntimeOptions {
             update_manifest_url: crate::InstallationConfig::default().update_manifest_url,
             status_reporters: crate::update::StatusReporters::Host {
                 update: update_reporter,
-                subscription: subscription_reporter,
             },
         };
         Self {
@@ -137,6 +190,8 @@ impl ProfileRuntimeOptions {
             config: profile,
             shared: Arc::new(shared),
             credentials,
+            discovery,
+            dial: DirectDialPolicy::OnStart,
             host_factory,
 
             listeners,
@@ -150,7 +205,9 @@ impl ProfileRuntimeOptions {
             host_name: self.shared.host_name.clone(),
             cloud_url: self.config.cloud_url.clone(),
             socket_path: self.paths.socket_path.clone(),
-            tcp_port: self.config.tcp_port,
+            tcp_port: None,
+            udp_port: None,
+            lan: self.config.lan,
             state_path: self.paths.state_path.clone(),
             data_dir: self.paths.data_dir.clone(),
             reports_dir: Some(self.paths.reports_dir.clone()),
@@ -171,6 +228,8 @@ pub enum ProfileStartError {
     Config(#[from] ConfigError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Discovery(#[from] DiscoveryError),
     #[error("profile state error: {0}")]
     State(String),
 }
@@ -182,6 +241,14 @@ pub enum CloudStartError {
 }
 
 /// All state and tasks owned by one complete device profile.
+/// The parts of an embedder's relay a profile keeps: who can obtain a token
+/// for this account, and the live link's own account of itself.
+#[derive(Clone)]
+struct AttachedRelay {
+    credentials: Arc<dyn CredentialProvider>,
+    retry: Arc<crate::RelayRetry>,
+}
+
 pub struct ProfileRuntime {
     pub host_id: crate::HostId,
     paths: ProfilePaths,
@@ -189,21 +256,32 @@ pub struct ProfileRuntime {
     pub agent_host: Option<Arc<dyn LocalAgentHost>>,
     pub services: StartedUserServices,
     pub trust: crate::trust::SharedTrustStore,
-    test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    pub test_cloud_transport: Option<tonic::transport::Channel>,
+    test_cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
+    pub test_cloud_transport: Option<std::net::SocketAddr>,
+    pub test_cloud_refresh_interval: Option<Duration>,
     client: Client,
     pub client_channel: tonic::transport::Channel,
     in_process_connection: InProcessConnection,
+    discovery: Arc<dyn Discovery>,
+    dial: DirectDialPolicy,
     background_tasks: Vec<JoinHandle<()>>,
-    cloud_connector: Mutex<Option<CloudConnector>>,
+    cloud_link: Mutex<Option<CloudLink>>,
+    udp_blocked: Arc<UdpBlockedMemory>,
     /// The embedder obtains relay credentials from the configured cloud through
     /// its own account API. Stopping the profile must also stop this link.
     relay_task: Mutex<Option<JoinHandle<()>>>,
+    /// What the attached relay left behind, so this profile can ask the same
+    /// account service for a fresh entitlement without a cloud link.
+    attached_relay: Mutex<Option<AttachedRelay>>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
     #[cfg(unix)]
+    link_accept_task: Option<JoinHandle<()>>,
+    #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
+    #[cfg(unix)]
+    link_socket_ownership: Option<SocketOwnership>,
 }
 
 /// Start local services and listeners for one profile. Cloud attachment is
@@ -213,7 +291,7 @@ pub async fn start(options: ProfileRuntimeOptions) -> Result<ProfileRuntime, Pro
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
+    let status = RuntimeStatus::new(reporters.update);
     start_observed(options, status).await
 }
 
@@ -259,7 +337,7 @@ pub(crate) async fn start_with_security(
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
+    let status = RuntimeStatus::new(reporters.update);
     let result = build(options, security, status.clone()).await;
     if result.is_err() {
         status.report(Observed::StartupFailed);
@@ -277,10 +355,40 @@ async fn build(
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let service_config = options.service_config();
+    let discovery = options
+        .fixtures
+        .discovery
+        .take()
+        .unwrap_or_else(|| options.discovery.clone());
+
+    let mut service_config = options.service_config();
     service_config.validate()?;
 
-    let mut bound = BoundListeners::bind(&options).await?;
+    let mut quic_server_config = security
+        .quic_server_config()
+        .map_err(|error| ProfileStartError::State(error.to_string()))?;
+    if let Some(transport) = options.fixtures.quic_transport.clone() {
+        quic_server_config.transport_config(transport);
+    }
+    let mut bound = BoundListeners::bind(&options, quic_server_config.clone()).await?;
+    let mut lan_endpoint = bound.quic_endpoint.take();
+    if let Some(socket) = options.fixtures.listener.take() {
+        socket.set_nonblocking(true)?;
+        lan_endpoint = Some(quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(quic_server_config),
+            socket,
+            Arc::new(quinn::TokioRuntime),
+        )?);
+    }
+    let lan_addr = lan_endpoint
+        .as_ref()
+        .map(quinn::Endpoint::local_addr)
+        .transpose()?;
+    let advertised_lan_addr = options.fixtures.advertised_addr.or(lan_addr);
+    if let Some(addr) = advertised_lan_addr {
+        service_config.lan.port = addr.port();
+    }
 
     let host_id = security.host_id();
     let state = Arc::new(RwLock::new(ServerState::new(
@@ -289,7 +397,6 @@ async fn build(
         options.credentials.clone(),
         reporters.update.clone(),
     )));
-    state.write().await.subscription_reporter = reporters.subscription.clone();
 
     let host_factory: Option<Arc<dyn LocalAgentHostFactory>> = options
         .fixtures
@@ -322,42 +429,79 @@ async fn build(
         .await
         .map_err(|error| ProfileStartError::State(error.to_string()))?;
 
+    let found_hosts = Arc::new(FoundHosts::default());
+    let direct_endpoint = match &lan_endpoint {
+        Some(endpoint) => endpoint.clone(),
+        None => {
+            if let Some(socket) = options.fixtures.quic_client_socket.take() {
+                socket.set_nonblocking(true)?;
+                quinn::Endpoint::new(
+                    quinn::EndpointConfig::default(),
+                    None,
+                    socket,
+                    Arc::new(quinn::TokioRuntime),
+                )?
+            } else {
+                quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?
+            }
+        }
+    };
+    services.configure_reachability(
+        options.paths.data_dir.clone(),
+        discovery.clone(),
+        found_hosts,
+        direct_endpoint,
+    );
+    services.set_test_quic_transport(options.fixtures.quic_transport.clone());
+
     #[cfg(unix)]
     let unix_accept_task = bound.unix_listener.take().map(|listener| {
         let task = services.serve_client_service_on_unix_listener(listener);
         tracing::info!(path = %options.paths.socket_path.display(), "listening on profile ClientService");
         task
     });
-    if let Some(listener) = bound.tcp_listener.take() {
-        let addr = listener.local_addr()?;
-        services.serve_external_tcp_listener(listener);
-        tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
-    }
-
-    if let Some(tracked) = &options.fixtures.tracked_tcp {
-        if let Some(listener) = options.fixtures.listener.take() {
-            services.serve_external_tcp_listener_tracked(listener, tracked.clone());
-        }
-        services
-            .reachability_link_connector()
-            .track_dialed_tcp(tracked.clone());
+    #[cfg(unix)]
+    let link_accept_task = bound.link_listener.take().map(|listener| {
+        let task = services.serve_link_on_unix_listener(listener);
+        tracing::info!(
+            path = %crate::installation::adjacent_link_socket_path(&options.paths.socket_path).display(),
+            "listening on profile native links"
+        );
+        task
+    });
+    if let Some(endpoint) = lan_endpoint {
+        let addr = advertised_lan_addr.expect("LAN listener address captured before serving");
+        let addrs = if addr.ip().is_unspecified() {
+            local_pairing_addrs(addr.port())
+        } else {
+            vec![addr]
+        };
+        discovery.advertise(Advertisement {
+            host_id,
+            name: options.shared.host_name.clone(),
+            version: crate::PROTOCOL_VERSION,
+            addrs,
+        })?;
+        services.serve_external_quic_endpoint(endpoint);
+        tracing::info!(addr = %addr, "listening on profile direct dispatcher QUIC");
     }
 
     let mut background_tasks = Vec::new();
-    if options.listeners == Listeners::Sockets {
+    if options.dial != DirectDialPolicy::Never {
+        let events = discovery.browse();
+        background_tasks.push(services.spawn_dial_on_found(events));
         background_tasks.extend(services.spawn_reachability_links());
-        if let Some(task) = crate::server::spawn_periodic_update_check(
+        discovery.requery();
+    }
+    if options.listeners.has_sockets()
+        && let Some(task) = crate::server::spawn_periodic_update_check(
             reporters.update.clone(),
             options.shared.update_manifest_url.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
             Duration::from_secs(3600),
-        ) {
-            background_tasks.push(task);
-        }
-    }
-
-    if options.listeners != Listeners::Sockets && options.fixtures.tracked_tcp.is_some() {
-        background_tasks.extend(services.spawn_reachability_links());
+        )
+    {
+        background_tasks.push(task);
     }
 
     let (client_channel, client_task, in_process_connection) =
@@ -365,6 +509,16 @@ async fn build(
     services.push_task(client_task);
     let client = Client::from_channel(client_channel.clone());
     status.report(Observed::Local);
+
+    #[cfg(unix)]
+    let (socket_ownership, link_socket_ownership) = bound.disarm_socket_cleanup();
+
+    let udp_blocked = Arc::new(UdpBlockedMemory::new(
+        options
+            .fixtures
+            .udp_blocked_memory
+            .unwrap_or(UDP_BLOCKED_MEMORY),
+    ));
 
     Ok(ProfileRuntime {
         host_id,
@@ -375,23 +529,65 @@ async fn build(
         trust,
         test_cloud: options.fixtures.cloud,
         test_cloud_transport: options.fixtures.cloud_transport,
+        test_cloud_refresh_interval: options
+            .fixtures
+            .cloud_refresh_interval
+            .or(options.config.cloud_refresh_interval),
         client,
         client_channel,
         in_process_connection,
+        discovery,
+        dial: options.dial,
         background_tasks,
-        cloud_connector: Mutex::new(None),
+        cloud_link: Mutex::new(None),
+        udp_blocked,
         relay_task: Mutex::new(None),
+        attached_relay: Mutex::new(None),
         status,
         #[cfg(unix)]
         unix_accept_task,
         #[cfg(unix)]
-        socket_ownership: bound.disarm_socket_cleanup(),
+        link_accept_task,
+        #[cfg(unix)]
+        socket_ownership,
+        #[cfg(unix)]
+        link_socket_ownership,
     })
 }
 
 impl ProfileRuntime {
     pub fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    pub fn rebind_direct_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        socket.set_nonblocking(true)?;
+        self.services.rebind_direct_quic(socket)
+    }
+
+    /// Hands this profile the machines an outside browser resolved.
+    ///
+    /// Recorded as this profile's found set at once and offered to discovery,
+    /// which is what dials the new ones. Both, because a caller that hands a
+    /// set over and immediately asks what it may pair with must be answered
+    /// from the set it just gave rather than from whatever the browse task
+    /// has caught up with.
+    pub fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
+        self.services.hand_over_found(found.clone());
+        self.discovery.hand_over(found);
+    }
+
+    pub async fn suspend_direct_links(&self) {
+        if self.dial == DirectDialPolicy::WhileForeground {
+            self.services.close_direct_links().await;
+        }
+    }
+
+    pub fn resume_direct_links(&mut self) {
+        if self.dial == DirectDialPolicy::WhileForeground {
+            self.background_tasks
+                .extend(self.services.resume_direct_links());
+        }
     }
 
     pub fn report_status_for_test(&self, observed: Observed) {
@@ -405,8 +601,32 @@ impl ProfileRuntime {
 
     /// Attach an embedder's relay route without changing the configured cloud.
     /// One profile holds one relay; attaching a second replaces the first.
+    /// What a relay link of this profile dials on: the profile's own QUIC
+    /// endpoint and its memory of networks that ate UDP, so the relay races the
+    /// same two carriers the configured cloud link does.
+    pub(crate) fn relay_transport(&self) -> crate::transport::RelayTransport {
+        crate::transport::RelayTransport {
+            quic_endpoint: self.services.quic_endpoint(),
+            udp_blocked: self.udp_blocked.clone(),
+        }
+    }
+
     pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
-        let task = relay.spawn(self.services.link_connector_ctx());
+        let attached = AttachedRelay {
+            credentials: relay.credentials.clone(),
+            retry: relay.retry.clone(),
+        };
+        let task = relay.spawn(
+            self.services.link_connector_ctx(),
+            self.relay_transport(),
+            self.status.clone(),
+        );
+        *self.attached_relay.lock().await = Some(attached);
+        // A relay route belongs to an account, so a profile that has one is
+        // signed in as far as anything it greets is concerned: that is what
+        // tells a machine on the other side this device can be reached when
+        // it is not on the same network.
+        self.services.set_signed_in(true);
         if let Some(previous) = self.relay_task.lock().await.replace(task) {
             previous.abort();
             let _ = previous.await;
@@ -417,6 +637,10 @@ impl ProfileRuntime {
         if let Some(task) = self.relay_task.lock().await.take() {
             task.abort();
             let _ = task.await;
+            self.status.report(Observed::Local);
+        }
+        if self.attached_relay.lock().await.take().is_some() {
+            self.services.set_signed_in(false);
         }
     }
 
@@ -425,10 +649,12 @@ impl ProfileRuntime {
         cloud_url: String,
         credentials: Option<Arc<dyn CredentialProvider>>,
     ) {
+        let signed_in = credentials.is_some();
         let mut state = self.state.write().await;
         state.config.cloud_url = cloud_url;
 
         state.credentials = credentials;
+        self.services.set_signed_in(signed_in);
     }
 
     /// Called while the supervisor holds the same gate as agent and trust mutations.
@@ -458,8 +684,9 @@ impl ProfileRuntime {
     }
 
     pub async fn start_cloud(&self) -> Result<(), CloudStartError> {
-        if let Some((channel, auth)) = &self.test_cloud {
-            let mut connector = self.cloud_connector.lock().await;
+        let signed_in = self.state.read().await.credentials.is_some();
+        if let Some((address, auth)) = &self.test_cloud {
+            let mut connector = self.cloud_link.lock().await;
             if connector
                 .as_ref()
                 .is_some_and(|connector| !connector.is_finished())
@@ -469,29 +696,62 @@ impl ProfileRuntime {
             if let Some(finished) = connector.take() {
                 finished.stop().await;
             }
-            let ctx = self.services.link_connector_ctx();
+            let ctx = self.services.link_connector_ctx_with_signed_in(signed_in);
             *connector = Some(match auth {
-                CloudFixtureAuth::Bearer(token) => CloudConnector::testnet_bearer(
+                CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
                     ctx,
-                    channel.clone(),
-                    token.clone(),
-                    self.status.clone(),
-                ),
-                CloudFixtureAuth::Refreshing(auth) => CloudConnector::testnet_with_auth(
-                    ctx,
-                    channel.clone(),
+                    *address,
                     auth.clone(),
                     self.status.clone(),
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Tcp,
+                    self.udp_blocked.clone(),
+                ),
+                CloudFixtureAuth::RefreshingQuic {
+                    auth,
+                    client_config,
+                    server_name,
+                    quic_addr,
+                } => CloudLink::testnet_with_auth(
+                    ctx,
+                    *address,
+                    auth.clone(),
+                    self.status.clone(),
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Quic {
+                        client_config: client_config.clone(),
+                        server_name: server_name.clone(),
+                        quic_addr: *quic_addr,
+                    },
+                    self.udp_blocked.clone(),
+                ),
+                CloudFixtureAuth::RefreshingAuto {
+                    auth,
+                    client_config,
+                    server_name,
+                    quic_addr,
+                } => CloudLink::testnet_with_auth(
+                    ctx,
+                    *address,
+                    auth.clone(),
+                    self.status.clone(),
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Auto {
+                        client_config: client_config.clone(),
+                        server_name: server_name.clone(),
+                        quic_addr: *quic_addr,
+                    },
+                    self.udp_blocked.clone(),
                 ),
             });
             return Ok(());
         }
-        if self.state.read().await.credentials.is_none() {
+        if !signed_in {
             self.status.report(Observed::AuthenticationRequired);
             return Err(CloudStartError::MissingCredentials);
         }
 
-        let mut connector = self.cloud_connector.lock().await;
+        let mut connector = self.cloud_link.lock().await;
         if connector
             .as_ref()
             .is_some_and(|connector| !connector.is_finished())
@@ -502,16 +762,51 @@ impl ProfileRuntime {
             finished.stop().await;
         }
 
-        let config = self.state.read().await.config.clone();
+        let state = self.state.read().await;
+        let config = state.config.clone();
+        drop(state);
         self.status.report(Observed::Connecting);
-        *connector = Some(establish_cloud_connection(
+        *connector = Some(establish_cloud_link(
             config,
             self.state.clone(),
-            self.services.link_connector_ctx(),
+            self.services.link_connector_ctx_with_signed_in(signed_in),
             self.status.clone(),
-            self.test_cloud_transport.clone(),
+            CloudTransport::new(
+                self.services.quic_endpoint(),
+                self.udp_blocked.clone(),
+                self.test_cloud_transport,
+                self.test_cloud_refresh_interval,
+            ),
         ));
         Ok(())
+    }
+
+    /// Ask the account service what this account buys, now.
+    ///
+    /// A daemon asks its own cloud link. A rich client has none — its relay
+    /// route was resolved by the application, which is also the only thing
+    /// that can obtain a token — so the question goes back out through that
+    /// application, and the answer is re-reported so a screen already showing
+    /// the old tier follows without waiting for the link to be rebuilt.
+    pub async fn refresh_entitlement(&self) -> Result<crate::Tier, crate::auth::cloud::CloudError> {
+        if let Some(connector) = self.cloud_link.lock().await.as_ref() {
+            return connector.refresh_entitlement().await;
+        }
+        let attached = self.attached_relay.lock().await.clone().ok_or_else(|| {
+            crate::auth::cloud::CloudError::Connection("no relay is attached".into())
+        })?;
+        let token = attached
+            .credentials
+            .access_token()
+            .await
+            .map_err(|error| crate::auth::cloud::CloudError::Connection(error.to_string()))?;
+        let tier = token.tier.unwrap_or(crate::Tier::Free);
+        // Only a live link has a carrier to name, and a state that claimed one
+        // while nothing was connected would be a worse answer than silence.
+        if let Some(carrier) = attached.retry.carrier() {
+            self.status.report(Observed::Connected { tier, carrier });
+        }
+        Ok(tier)
     }
 
     pub async fn set_test_cloud_auth(&mut self, auth: CloudFixtureAuth) {
@@ -520,7 +815,7 @@ impl ProfileRuntime {
     }
 
     pub async fn stop_cloud(&self) {
-        let mut connector = self.cloud_connector.lock().await;
+        let mut connector = self.cloud_link.lock().await;
         if let Some(connector) = connector.take() {
             connector.stop().await;
         }
@@ -533,18 +828,21 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
+        self.discovery.withdraw();
+        self.services.stop_accepting_external_links().await;
         self.stop_accepting_local_clients().await;
+        self.services
+            .channels
+            .link_registry()
+            .send_link_close_to_all(link_close_reason(reason))
+            .await;
+        self.services.close_direct_links().await;
         self.stop_cloud().await;
         self.stop_relay().await;
 
         if let Some(host) = &self.agent_host {
             host.notify_shutdown(reason).await;
         }
-        self.services
-            .tunnels
-            .link_registry()
-            .send_link_close_to_all(link_close_reason(reason))
-            .await;
         if let Some(host) = &self.agent_host {
             host.stop_all().await;
         }
@@ -560,7 +858,14 @@ impl ProfileRuntime {
                 task.abort();
                 let _ = task.await;
             }
+            if let Some(task) = self.link_accept_task.take() {
+                task.abort();
+                let _ = task.await;
+            }
             if let Some(ownership) = self.socket_ownership.take() {
+                ownership.remove_if_owned();
+            }
+            if let Some(ownership) = self.link_socket_ownership.take() {
                 ownership.remove_if_owned();
             }
         }
@@ -584,8 +889,13 @@ impl ProfileRuntime {
 
 impl Drop for ProfileRuntime {
     fn drop(&mut self) {
+        self.discovery.withdraw();
         #[cfg(unix)]
         if let Some(task) = &self.unix_accept_task {
+            task.abort();
+        }
+        #[cfg(unix)]
+        if let Some(task) = &self.link_accept_task {
             task.abort();
         }
         if let Ok(task) = self.relay_task.try_lock()
@@ -618,22 +928,33 @@ fn link_close_reason(reason: ShutdownReason) -> wire::pb::LinkCloseReason {
 }
 
 struct BoundListeners {
-    tcp_listener: Option<TcpListener>,
+    quic_endpoint: Option<quinn::Endpoint>,
     #[cfg(unix)]
     unix_listener: Option<tokio::net::UnixListener>,
     #[cfg(unix)]
+    link_listener: Option<tokio::net::UnixListener>,
+    #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
+    #[cfg(unix)]
+    link_socket_ownership: Option<SocketOwnership>,
 }
 
 impl BoundListeners {
-    async fn bind(options: &ProfileRuntimeOptions) -> std::io::Result<Self> {
+    async fn bind(
+        options: &ProfileRuntimeOptions,
+        quic_server_config: quinn::ServerConfig,
+    ) -> std::io::Result<Self> {
         if options.listeners == Listeners::InProcessOnly {
             return Ok(Self {
-                tcp_listener: None,
+                quic_endpoint: None,
                 #[cfg(unix)]
                 unix_listener: None,
                 #[cfg(unix)]
+                link_listener: None,
+                #[cfg(unix)]
                 socket_ownership: None,
+                #[cfg(unix)]
+                link_socket_ownership: None,
             });
         }
 
@@ -641,26 +962,57 @@ impl BoundListeners {
         let unix_listener = crate::transport::bind_unix_listener(&options.paths.socket_path)?;
         #[cfg(unix)]
         let socket_ownership = Some(SocketOwnership::capture(options.paths.socket_path.clone())?);
+        #[cfg(unix)]
+        let link_path = crate::installation::adjacent_link_socket_path(&options.paths.socket_path);
+        #[cfg(unix)]
+        let link_listener = match crate::transport::bind_unix_listener(&link_path) {
+            Ok(listener) => listener,
+            Err(error) => {
+                if let Some(ownership) = socket_ownership {
+                    ownership.remove_if_owned();
+                }
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        let link_socket_ownership = match SocketOwnership::capture(link_path.clone()) {
+            Ok(ownership) => Some(ownership),
+            Err(error) => {
+                if let Some(ownership) = socket_ownership {
+                    ownership.remove_if_owned();
+                }
+                let _ = std::fs::remove_file(link_path);
+                return Err(error);
+            }
+        };
 
         let mut bound = Self {
-            tcp_listener: None,
+            quic_endpoint: None,
             #[cfg(unix)]
             unix_listener: Some(unix_listener),
             #[cfg(unix)]
+            link_listener: Some(link_listener),
+            #[cfg(unix)]
             socket_ownership,
+            #[cfg(unix)]
+            link_socket_ownership,
         };
-        if options.listeners == Listeners::Sockets
-            && let Some(port) = options.config.tcp_port
-        {
-            bound.tcp_listener =
-                Some(TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?);
+        if options.listeners == Listeners::Sockets && options.config.lan.listen {
+            let port = options.config.lan.port;
+            bound.quic_endpoint = Some(quinn::Endpoint::server(
+                quic_server_config,
+                SocketAddr::from(([0, 0, 0, 0], port)),
+            )?);
         }
         Ok(bound)
     }
 
     #[cfg(unix)]
-    fn disarm_socket_cleanup(&mut self) -> Option<SocketOwnership> {
-        self.socket_ownership.take()
+    fn disarm_socket_cleanup(&mut self) -> (Option<SocketOwnership>, Option<SocketOwnership>) {
+        (
+            self.socket_ownership.take(),
+            self.link_socket_ownership.take(),
+        )
     }
 }
 
@@ -668,6 +1020,9 @@ impl BoundListeners {
 impl Drop for BoundListeners {
     fn drop(&mut self) {
         if let Some(ownership) = self.socket_ownership.take() {
+            ownership.remove_if_owned();
+        }
+        if let Some(ownership) = self.link_socket_ownership.take() {
             ownership.remove_if_owned();
         }
     }
@@ -716,8 +1071,16 @@ mod tests {
 
     use model::ProtocolError;
     use tempfile::tempdir;
+    use tokio::net::TcpListener;
 
     use super::*;
+
+    fn connected() -> Observed {
+        Observed::Connected {
+            tier: crate::Tier::Pro,
+            carrier: crate::profile::status::RelayCarrier::Tcp,
+        }
+    }
 
     fn options(root: &std::path::Path, listeners: Listeners) -> ProfileRuntimeOptions {
         let data_dir = root.join("profile-data");
@@ -731,7 +1094,8 @@ mod tests {
             },
             config: RuntimeConfig {
                 cloud_url: "http://127.0.0.1:1".to_string(),
-                tcp_port: None,
+                lan: LanConfig::default(),
+                cloud_refresh_interval: None,
             },
             shared: Arc::new(InstallationSettings {
                 repository_roots: Vec::new(),
@@ -745,6 +1109,8 @@ mod tests {
                 status_reporters: Default::default(),
             }),
             credentials: None,
+            discovery: Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            dial: DirectDialPolicy::Never,
             host_factory: None,
 
             listeners,
@@ -773,6 +1139,60 @@ mod tests {
         assert!(weak_state.upgrade().is_none());
     }
 
+    #[tokio::test]
+    async fn profile_reports_legacy_direct_tcp_trust_file_by_name() {
+        let root = tempdir().unwrap();
+        let runtime_options = options(root.path(), Listeners::InProcessOnly);
+        std::fs::create_dir_all(&runtime_options.paths.data_dir).unwrap();
+        let peer = crate::HostId::from_u128(2);
+        let json = format!(
+            r#"{{
+  "{peer}": {{
+    "pubkey": [{}],
+    "name": "old peer",
+    "paired_at": "1970-01-01T00:00:00Z",
+    "reachabilities": [{{ "type": "direct_tcp", "addr": "127.0.0.1:9000" }}]
+  }}
+}}"#,
+            std::iter::repeat_n("7", 32).collect::<Vec<_>>().join(", ")
+        );
+        crate::identity::create_private_file(
+            &runtime_options.paths.data_dir.join("trust.json"),
+            json.as_bytes(),
+        )
+        .unwrap();
+
+        let error = match start(runtime_options).await {
+            Ok(_) => panic!("legacy direct_tcp trust unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("trust.json"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_advertises_interface_addresses_not_the_unspecified_listener() {
+        let root = tempdir().unwrap();
+        let discovery = Arc::new(crate::discovery::ScriptedDiscovery::new());
+        let mut browser = discovery.browse();
+        let mut runtime_options = options(root.path(), Listeners::Sockets);
+        runtime_options.discovery = discovery;
+
+        let runtime = start(runtime_options).await.unwrap();
+        let advert = match browser.recv().await.unwrap() {
+            crate::discovery::DiscoveryEvent::Found(advert) => advert,
+            crate::discovery::DiscoveryEvent::Lost { host_id } => {
+                panic!("listener unexpectedly withdrew {host_id}")
+            }
+        };
+        let port = runtime.state.read().await.config.lan.port;
+
+        assert!(!advert.addrs.is_empty());
+        assert!(advert.addrs.iter().all(|addr| addr.port() == port));
+        assert!(advert.addrs.iter().all(|addr| !addr.ip().is_unspecified()));
+
+        runtime.stop(ShutdownReason::UserRequested).await;
+    }
+
     struct StaticCredentials;
 
     #[async_trait::async_trait]
@@ -781,6 +1201,7 @@ mod tests {
             Ok(crate::auth::AccessToken {
                 bearer: "test-token".into(),
                 expires_at: None,
+                tier: None,
             })
         }
         fn invalidate(&self, _token: &crate::auth::AccessToken) {}
@@ -803,7 +1224,7 @@ mod tests {
         // retry loop. Subscribe only after startup to prove retained state.
         for (response, expected) in [
             ("401 Unauthorized", Observed::AuthenticationRequired),
-            ("403 Forbidden", Observed::SubscriptionRequired),
+            ("403 Forbidden", Observed::AuthenticationRequired),
             ("503 Service Unavailable", Observed::Retrying),
         ] {
             let root = tempdir().unwrap();
@@ -844,8 +1265,23 @@ mod tests {
     #[cfg(test)]
     #[tokio::test]
     async fn profile_runtime_reports_status_from_relay_and_outlives_cloud_clients() {
-        use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
-        use crate::services::CloudLinkService;
+        use crate::routing::{
+            AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorToken,
+            LinkConnectorTokenRefresher, LinkTokenAuthenticator,
+        };
+
+        struct StaticRelayToken;
+        #[tonic::async_trait]
+        impl LinkConnectorTokenRefresher for StaticRelayToken {
+            async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
+                Ok(LinkConnectorToken {
+                    token: "runtime-token".into(),
+                    expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
+                })
+            }
+        }
+        use crate::services::CloudLinkServer;
 
         struct RelayAuth {
             user: uuid::Uuid,
@@ -864,6 +1300,7 @@ mod tests {
                     user_id: self.user,
                     client_id: "runtime-test".into(),
                     expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
                 })
             }
         }
@@ -880,18 +1317,23 @@ mod tests {
             None,
         )));
         state.write().await.is_cloud_server = true;
-        let relay = CloudLinkService::with_authenticator(state, auth.clone());
+        let relay = CloudLinkServer::with_authenticator(state, auth.clone());
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let channel = tonic::transport::Endpoint::from_shared(format!(
-            "http://{}",
-            listener.local_addr().unwrap()
-        ))
-        .unwrap()
-        .connect_lazy();
+        let relay_addr = listener.local_addr().unwrap();
         let server = relay.serve_on_tcp_listener(listener);
         let root = tempdir().unwrap();
         let mut options = options(root.path(), Listeners::InProcessOnly);
-        options.fixtures.cloud = Some((channel, CloudFixtureAuth::Bearer("runtime-token".into())));
+        options.fixtures.cloud = Some((
+            relay_addr,
+            CloudFixtureAuth::Refreshing(LinkConnectorAuth::new(
+                LinkConnectorToken {
+                    token: "runtime-token".into(),
+                    expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
+                },
+                Arc::new(StaticRelayToken),
+            )),
+        ));
 
         let runtime = start(options).await.unwrap();
         let host_id = runtime.state.read().await.host_id();
@@ -906,14 +1348,14 @@ mod tests {
         };
         runtime.start_cloud().await.unwrap();
         assert_eq!(*runtime.status().borrow(), Observed::Connecting);
-        wait_for_status(&runtime, Observed::Connected).await;
+        wait_for_status(&runtime, connected()).await;
         let client = runtime.client();
         client.list_agents().await.unwrap();
         drop(client);
         tokio::task::yield_now().await;
         assert!(relay.user_has_link_to(auth.user, host_id).await);
         runtime.client().list_agents().await.unwrap();
-        assert_eq!(*runtime.status().borrow(), Observed::Connected);
+        assert_eq!(*runtime.status().borrow(), connected());
         println!("last cloud client dropped: Connected; relay link and local calls survive");
         runtime.stop_cloud().await;
         wait_for_relay_detach().await;
@@ -925,7 +1367,7 @@ mod tests {
             ),
             (
                 wire::protocol_status(ProtocolError::PaymentRequired),
-                Observed::SubscriptionRequired,
+                Observed::AuthenticationRequired,
             ),
             (
                 wire::protocol_status(ProtocolError::UpdateRequired {
@@ -938,11 +1380,12 @@ mod tests {
             ),
             (
                 tonic::Status::failed_precondition("amux update required"),
-                Observed::UpdateRequired {
-                    minimum_version: None,
-                },
+                Observed::AuthenticationRequired,
             ),
-            (tonic::Status::unavailable("try again"), Observed::Retrying),
+            (
+                tonic::Status::unavailable("try again"),
+                Observed::AuthenticationRequired,
+            ),
         ] {
             *auth.rejection.lock().unwrap() = Some(error);
             runtime.start_cloud().await.unwrap();
@@ -955,7 +1398,7 @@ mod tests {
         }
         *auth.rejection.lock().unwrap() = None;
         runtime.start_cloud().await.unwrap();
-        wait_for_status(&runtime, Observed::Connected).await;
+        wait_for_status(&runtime, connected()).await;
         let weak_state = runtime.weak_state();
         runtime.stop(ShutdownReason::UserRequested).await;
         assert!(weak_state.upgrade().is_none());
@@ -1001,14 +1444,18 @@ mod tests {
             let root = tempdir().unwrap();
             let opts = options(root.path(), Listeners::Sockets);
             let config = opts.service_config();
+            let link_socket = crate::installation::adjacent_link_socket_path(&config.socket_path);
             let runtime = start(opts).await.unwrap();
             let channel = client::connect_socket(&config.socket_path).await.unwrap();
             let client = Client::from_channel(channel);
             client.list_agents().await.unwrap();
+            UnixStream::connect(&link_socket).unwrap();
             runtime.stop(ShutdownReason::UserRequested).await;
             assert!(client.list_agents().await.is_err());
             assert!(UnixStream::connect(&config.socket_path).is_err());
             assert!(!config.socket_path.exists());
+            assert!(UnixStream::connect(&link_socket).is_err());
+            assert!(!link_socket.exists());
             let replacement = crate::transport::bind_unix_listener(&config.socket_path).unwrap();
             UnixStream::connect(&config.socket_path).unwrap();
             println!("Owned stop completed: client closed and a fresh socket bind succeeds");
@@ -1074,11 +1521,11 @@ mod tests {
     async fn profile_runtime_start_failure_removes_its_bound_socket() {
         let root = tempdir().unwrap();
         let socket_path = root.path().join("profile.sock");
-        let occupied = TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
+        let occupied = std::net::UdpSocket::bind(("0.0.0.0", 0)).unwrap();
         let mut options = options(root.path(), Listeners::Sockets);
-        options.config.tcp_port = Some(occupied.local_addr().unwrap().port());
+        options.config.lan.port = occupied.local_addr().unwrap().port();
 
-        let status = RuntimeStatus::new(None, None);
+        let status = RuntimeStatus::new(None);
         let result = start_observed(options, status.clone()).await;
 
         assert!(result.is_err());

@@ -56,6 +56,8 @@ pub fn a_host(name: &str) -> HostEntry {
         capabilities: Some(Capabilities::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: ui_state::HostVia::Direct,
+        signed_in: Some(true),
         platform: None,
     }
 }
@@ -70,6 +72,8 @@ pub fn an_offline_host(name: &str) -> HostEntry {
         capabilities: None,
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: Some("dial tcp: connection refused".to_string()),
+        via: ui_state::HostVia::Offline,
+        signed_in: Some(true),
         platform: None,
     }
 }
@@ -88,6 +92,7 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
         summary: None,
@@ -108,6 +113,7 @@ pub fn a_codex_agent(name: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
         summary: None,
@@ -520,6 +526,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::queue::sequences());
     sequences.extend(crate::sdk_integration::sequences());
     sequences.extend(crate::connection::sequences());
+    sequences.extend(crate::cloud_state::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());
     sequences.extend(crate::sessions::sequences());

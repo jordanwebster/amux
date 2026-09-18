@@ -6,6 +6,7 @@ public protocol AppRuntime: AnyObject {
     var events: AsyncStream<[Event]> { get }
     @discardableResult func dispatch(_ command: BridgeCommand) -> OpId?
     @discardableResult func attach(_ picked: PickedAttachment, bytes: Data) -> OpId?
+    func discovered(_ hosts: [FoundHost])
     func setActive(_ active: Bool)
     func stop()
 }
@@ -26,7 +27,30 @@ public final class RuntimeCoordinator {
     /// The one fatal state the application replaces its whole shell with.
     public private(set) var storeFailure: String?
     public var storeFailureChanged: (@MainActor (String?) -> Void)?
+    /// Every removed account a runtime this launch has reported gone from the
+    /// device: its profile and everything cached for it deleted. Diagnostic,
+    /// for the driving door.
+    public private(set) var deletedProfiles: [String] = []
     public let deviceName: String
+    /// The browser whose findings this hands on, where the app gave it one.
+    /// It runs only while somebody is looking at the phone, so it is started
+    /// and stopped with the scene rather than with the connection.
+    public var discovery: LocalDiscovery? {
+        didSet {
+            discovery?.permissionChanged = { [weak self] permission in
+                self?.localNetwork(permission)
+            }
+        }
+    }
+    /// The stores a phone with nobody signed in draws from.
+    ///
+    /// A phone without an account still finds the machines on its own network,
+    /// pairs with them and reaches them, so it still has a connection and
+    /// still has somewhere to put what that connection says. Held apart from
+    /// the registry's, which belong to accounts.
+    public var signedOutStores: StoreBundle? {
+        didSet { signedOutStores?.hosts.sawLocalNetwork(permission) }
+    }
     public var storesChanged: (@MainActor (StoreBundle) -> Void)?
     public var unsubscribed: (@MainActor (AgentId) -> Void)?
 
@@ -44,8 +68,18 @@ public final class RuntimeCoordinator {
     private var starting: Task<Void, Never>?
     private var generation = 0
     private var active = true
+    /// What the browser last saw, kept so a runtime started afterwards — a
+    /// sign-in, a switch, a retry — is told without waiting for the browser to
+    /// notice the same machines a second time.
+    private var found: [FoundHost] = []
+    /// What the system last said about letting this app look at the network.
+    private var permission: LocalNetworkPermission = .unknown
     private var overrideRelay: URL?
     private var overrideTokens: [String: String] = [:]
+    /// What a driver said those credentials buy. The account service says
+    /// it in the same reply that issues a real one, and a link that
+    /// reported nothing would report free.
+    private var overrideTier: Tier?
 
     public init(
         registry: AccountRegistry, cloud: any CloudService, support: URL, cache: URL,
@@ -76,28 +110,27 @@ public final class RuntimeCoordinator {
     private func accountsChanged() {
         generation += 1
         starting?.cancel()
-        let replaced = wired !== registry.stores
+        let replaced = wired !== visible
         unwire()
+        // A different set of accounts is a different runtime, and so is an
+        // account removed: only a starting runtime can delete its profile.
         if let configured,
-           configured.accounts.map(\.id) != registry.accounts.filter(\.signedIn).map({ $0.id.value }) {
+           configured.accounts.map(\.id) != listed.map(\.value)
+            || configured.forget != registry.forgotten.map(\.value) {
             stopRuntime()
         }
         // A launch and an account switch both land here, so this is the one
         // read of what that account saw last time: every row arrives marked
         // as remembered and goes solid when its machine answers.
-        if replaced, let stores = registry.stores {
+        if replaced, let stores = visible {
             do {
-                stores.apply(try Bridge.cachedFleet(in: cache, for: stores.account))
+                stores.apply(try Bridge.cachedFleet(in: cache, for: registry.selected))
                 setStoreFailure(nil)
             } catch {
                 failStore(detail: String(describing: error))
                 return
             }
             storesChanged?(stores)
-        }
-        guard registry.selectedAccount?.signedIn == true else {
-            stopRuntime()
-            return
         }
         let expected = generation
         starting = Task { [weak self] in
@@ -117,14 +150,21 @@ public final class RuntimeCoordinator {
         registry.select(account)
         overrideRelay = nil
         overrideTokens = [:]
+        overrideTier = nil
         return await reconnect()
     }
 
     /// Launch-time credentials supplied by a debug driver use the same installation,
     /// profiles, event pump and store wiring as credentials issued by the service.
-    public func override(relay: URL, tokens: [String: String]) async -> Bool {
+    ///
+    /// - Parameter tier: what those credentials buy, which the relay will
+    ///   enforce from the token's own claim and every screen reads off the
+    ///   link. A driver says it because nothing here can read it out of an
+    ///   opaque bearer.
+    public func override(relay: URL, tokens: [String: String], tier: Tier? = nil) async -> Bool {
         overrideRelay = relay
         overrideTokens = tokens
+        overrideTier = tier
         return await reconnect()
     }
 
@@ -137,25 +177,30 @@ public final class RuntimeCoordinator {
 
     private func connect(generation expected: Int) async -> Bool {
         guard expected == generation, !Task.isCancelled else { return false }
-        guard let account = registry.selected, registry.selectedAccount?.signedIn == true else {
-            stopRuntime()
-            return false
-        }
+        // A phone nobody has signed in on still runs. It reaches no relay and
+        // answers for no account, and everything it finds on its own network
+        // it finds and dials itself.
+        let account = registry.selectedAccount?.signedIn == true ? registry.selected : nil
         do {
-            let relay: URL
-            if let overrideRelay {
-                relay = overrideRelay
-            } else {
-                let credential = try await cloud.connectToken(account)
-                guard let address = credential.relay else { throw CloudError.refused("The relay has no address") }
-                relay = address
+            var relay: URL?
+            if let account {
+                if let overrideRelay {
+                    relay = overrideRelay
+                } else {
+                    let credential = try await cloud.connectToken(account)
+                    guard let address = credential.relay else {
+                        throw CloudError.refused("The relay has no address")
+                    }
+                    relay = address
+                }
             }
-            guard expected == generation, registry.selected == account,
-                  registry.selectedAccount?.signedIn == true else { return false }
+            guard expected == generation, registry.selected == account || account == nil,
+                  (registry.selectedAccount?.signedIn == true) == (account != nil) else { return false }
             let configuration = try configuration(relay: relay, account: account)
             if let current = configured, let runtime,
-               current.relay == configuration.relay, current.accounts == configuration.accounts {
-                if current.active != account.value {
+               current.relay == configuration.relay, current.accounts == configuration.accounts,
+               current.forget == configuration.forget {
+                if let account, current.active != account.value {
                     runtime.dispatch(.selectAccount(account.value))
                     configured?.active = account.value
                 }
@@ -174,6 +219,7 @@ public final class RuntimeCoordinator {
             configured = configuration
             runtimeAccount = account
             client.setActive(active)
+            if !found.isEmpty { client.discovered(found) }
             wireSelected(to: client)
             pump = Task { [weak self] in
                 for await batch in client.events {
@@ -193,11 +239,11 @@ public final class RuntimeCoordinator {
     private func fail(detail: String, reason: OfflineReason) {
         stopRuntime()
         failure = detail
-        guard let stores = registry.stores else { return }
+        guard let stores = visible else { return }
         stores.apply(.connection(.init(state: .disconnected, reason: reason)))
         wired = stores
         stores.dispatch = { [weak self, weak stores] command in
-            guard let self, let stores, self.registry.stores === stores,
+            guard let self, let stores, self.visible === stores,
                   command == .retryNow else { return nil }
             self.start()
             return OpId(UUID().uuidString)
@@ -222,29 +268,70 @@ public final class RuntimeCoordinator {
         start()
     }
 
-    private func configuration(relay: URL, account: AccountId) throws -> BridgeConfiguration {
-        guard let host = relay.host, relay.port != nil else { throw BridgeError.didNotStart }
-        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        let loopback = host == "localhost" || host == "::1" || host == "[::1]"
-            || octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
-        let plain = allowPlainLoopback && loopback
-        guard plain || relay.scheme == "https" else { throw BridgeError.didNotStart }
-        var address = URLComponents(url: relay, resolvingAgainstBaseURL: false)!
-        if plain {
-            address.scheme = "http"
-            if host == "localhost" { address.host = "127.0.0.1" }
+    /// The stores the app is drawing: the selected account's, or — with nobody
+    /// signed in — the ones a phone without an account draws from.
+    private var visible: StoreBundle? {
+        registry.selectedAccount?.signedIn == true ? registry.stores : signedOutStores
+    }
+
+    /// The accounts a configuration may list.
+    ///
+    /// Every account this phone is signed in to while one of them is on
+    /// screen, so the switcher can say that an account nobody is looking at
+    /// has something waiting. None at all with nobody on screen, even when
+    /// another account is still signed in: an account is reached through the
+    /// relay, the relay address comes with the on-screen account's credential,
+    /// and a connection that listed an account it has no route for is refused
+    /// outright — which would leave a phone whose other account happens to be
+    /// signed in with no connection at all, and so no way to find or reach the
+    /// machines on its own network.
+    private var listed: [AccountId] {
+        guard registry.selectedAccount?.signedIn == true else { return [] }
+        return registry.accounts.filter(\.signedIn).map(\.id)
+    }
+
+    private func configuration(relay: URL?, account: AccountId?) throws -> BridgeConfiguration {
+        var endpoint: BridgeConfiguration.Relay?
+        if let relay {
+            guard let host = relay.host, relay.port != nil else { throw BridgeError.didNotStart }
+            let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+            let loopback = host == "localhost" || host == "::1" || host == "[::1]"
+                || octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
+            let plain = allowPlainLoopback && loopback
+            guard plain || relay.scheme == "https" else { throw BridgeError.didNotStart }
+            var address = URLComponents(url: relay, resolvingAgainstBaseURL: false)!
+            if plain {
+                address.scheme = "http"
+                if host == "localhost" { address.host = "127.0.0.1" }
+            }
+            endpoint = .init(url: address.url!.absoluteString, tls: plain ? .plainLoopback : .system)
         }
         return BridgeConfiguration(
             dataDirectory: support, cacheDirectory: cache, deviceName: deviceName,
-            relay: .init(url: address.url!.absoluteString, tls: plain ? .plainLoopback : .system),
-            accounts: registry.accounts.filter(\.signedIn).map {
-                .init(id: $0.id.value,
-                      token: overrideTokens[$0.id.value].map { .fixed($0) } ?? .callback)
-            }, active: account.value, logPath: support.appendingPathComponent("runtime.log"))
+            relay: endpoint,
+            accounts: listed.map { id in
+                .init(id: id.value,
+                      token: overrideTokens[id.value]
+                          .map { .fixed($0, tier: overrideTier) } ?? .callback)
+            },
+            // With nobody signed in, the account last on screen: its profile
+            // and the machines it paired with stay where they were rather than
+            // the app emptying itself the moment somebody signs out.
+            active: (account ?? registry.selected)?.value,
+            forget: registry.forgotten.map(\.value),
+            logPath: runtimeLogPath)
     }
 
+    /// Where a runtime of this device writes what it decided.
+    ///
+    /// One file for the whole installation rather than one per profile: what
+    /// is worth reading here is the order things happened in across every
+    /// runtime a launch started. Only a build with the driving tools writes
+    /// anything to it.
+    public var runtimeLogPath: URL { support.appendingPathComponent("runtime.log") }
+
     private func wireSelected(to client: any AppRuntime) {
-        guard let stores = registry.stores else { return }
+        guard let stores = visible else { return }
         unwire()
         wired = stores
         stores.watch = { [weak client] in client?.dispatch(.subscribe(agent: $0)) }
@@ -253,13 +340,14 @@ public final class RuntimeCoordinator {
             client?.dispatch(.unsubscribe(agent: agent))
         }
         stores.dispatch = { [weak client, weak self, weak stores] command in
-            guard let self, let stores, self.registry.stores === stores else { return nil }
+            guard let self, let stores, self.visible === stores else { return nil }
             return client?.dispatch(command)
         }
         stores.store = { [weak client, weak self, weak stores] picked, bytes in
-            guard let self, let stores, self.registry.stores === stores else { return nil }
+            guard let self, let stores, self.visible === stores else { return nil }
             return client?.attach(picked, bytes: bytes)
         }
+        stores.hosts.sawLocalNetwork(permission)
         for agent in stores.streamingAgents { client.dispatch(.subscribe(agent: agent)) }
         storesChanged?(stores)
     }
@@ -273,13 +361,21 @@ public final class RuntimeCoordinator {
     }
 
     private func receive(_ batch: [Event]) {
-        guard var answering = runtimeAccount else { return }
+        // A runtime with nobody signed in answers for no account. What it says
+        // goes to the stores a signed-out phone draws from, and the registry —
+        // whose whole job is keeping one account's answers off another
+        // account's screen — has nothing to decide about it.
+        var answering = runtimeAccount
         var pending: [Event] = []
         var failed = false
         func deliver() {
             guard !pending.isEmpty else { return }
-            lastBatch[answering] = pending
-            registry.deliver(pending, for: answering)
+            if let answering {
+                lastBatch[answering] = pending
+                registry.deliver(pending, for: answering)
+            } else {
+                signedOutStores?.apply(pending)
+            }
             pending = []
         }
         for event in batch {
@@ -288,7 +384,12 @@ public final class RuntimeCoordinator {
                 invariant = detail
                 if !initialized { failed = true }
             case .connection(let update):
-                if update.state == .disconnected && update.reason == .stopped {
+                // A runtime with no relay says it is stopped because it is not
+                // on one, which is the truth about a phone nobody has signed
+                // in on rather than a worker that died. Only a runtime that
+                // was given a relay can report having stopped reaching it.
+                if update.state == .disconnected && update.reason == .stopped,
+                   configured?.relay != nil {
                     failed = true
                 } else {
                     initialized = true
@@ -297,6 +398,19 @@ public final class RuntimeCoordinator {
                 deliver()
                 failStore(detail: message)
                 return
+            case .forgotten(let accounts):
+                // Only the runtime that deleted a removed account's profile
+                // and caches can say this phone is rid of it, and it names
+                // just the ones it finished. Anything it could not finish
+                // stays pending here and in the registry, so nothing reads
+                // the change as a reason to start another runtime and the
+                // next start is asked for it again.
+                let deleted = (configured?.forget ?? []).filter(accounts.contains)
+                if !deleted.isEmpty {
+                    configured?.forget.removeAll(where: deleted.contains)
+                    deletedProfiles += deleted
+                    registry.forgottenDeleted(deleted.map(AccountId.init))
+                }
             default: break
             }
             if case .opResult(let result) = event,
@@ -318,14 +432,45 @@ public final class RuntimeCoordinator {
         }
     }
 
+    /// Every machine the phone's browser can currently see.
+    ///
+    /// Remembered as well as passed on, because the connection and the browser
+    /// have separate lives: the runtime is replaced on a sign-in or a switch,
+    /// and the machines on this network did not go anywhere when it was.
+    public func discovered(_ hosts: [FoundHost]) {
+        found = hosts
+        runtime?.discovered(hosts)
+    }
+
+    /// What the system has said about letting this app look at the network
+    /// this phone is on.
+    ///
+    /// Kept here rather than on the browser, because a screen that explains a
+    /// refusal outlives every browser this phone starts: browsing stops when
+    /// the app is put away and the refusal does not go away with it.
+    public func localNetwork(_ permission: LocalNetworkPermission) {
+        // Stopping the browser forgets what it was told; a refusal already
+        // heard is not withdrawn by that, and re-announcing it as unknown
+        // would take the explanation off a screen nobody had fixed anything
+        // on.
+        guard permission != .unknown else { return }
+        self.permission = permission
+        visible?.hosts.sawLocalNetwork(permission)
+    }
+
     public func setActive(_ active: Bool) {
         self.active = active
         runtime?.setActive(active)
+        // Browsing belongs to the foreground. Put away, the browser stops; the
+        // machines it found are kept, so coming back dials them at once
+        // instead of showing an empty network until the browser catches up.
+        if active { discovery?.start() } else { discovery?.stop() }
         if active && runtime == nil { start() }
     }
 
     public func stop() {
         generation += 1
+        discovery?.stop()
         starting?.cancel()
         starting = nil
         stopRuntime()

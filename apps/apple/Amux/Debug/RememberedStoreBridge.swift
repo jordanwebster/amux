@@ -33,6 +33,10 @@ enum RememberedStoreBridge {
     /// `remembered`, answering whether it was written.
     static func seed(_ remembered: Remembered, in cache: URL, for account: AccountId) -> Bool {
         guard let json = try? remembered.json() else { return false }
+        return seedJSON(json, in: cache, for: account)
+    }
+
+    static func seedJSON(_ json: Data, in cache: URL, for account: AccountId) -> Bool {
         let text = String(decoding: json, as: UTF8.self)
         return call({ amux_app_seed_store(cache.path, account.value, text) }) != nil
     }

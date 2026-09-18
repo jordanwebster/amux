@@ -55,18 +55,15 @@ final class GoldenManifestTests: XCTestCase {
         let entries = try manifest().screens
         let references = Set(entries.filter { $0.origin == "reference" }.map(\.id))
         XCTAssertEqual(references.count, 33)
-        // The catalogue is every screen of the app; three of its cases are
+        // The catalogue is every screen of the app; two of its cases are
         // owed as added states rather than as references. The probe is the
-        // harness's own target. The drawer is a state of the home screen the
-        // design has no preserved capture of. The pairing confirmation is
+        // harness's own target. The pairing confirmation is
         // where a link lands, and the design catalogue pictured the code entry
         // without picturing the second phase the protocol requires — so there
         // is nothing preserved to compare it against. The notification screen
         // is out of scope and is not a case at all.
         let catalogue = Set(Screen.allCases.map(\.rawValue))
-        XCTAssertEqual(
-            catalogue.subtracting(references),
-            ["probe", "drawer", "pair-confirm", "store-failure"])
+        XCTAssertEqual(catalogue.subtracting(references), ["probe", "pair-confirm", "store-failure"])
         XCTAssertTrue(references.isSubset(of: catalogue))
     }
 

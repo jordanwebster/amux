@@ -1,9 +1,11 @@
-use crate::parser::{Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep};
+use crate::parser::{
+    AccountConfig, AccountTier, Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep,
+};
 
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,7 +43,12 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     };
 
     match subcommand {
-        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" | "update" => true,
+        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" | "update" | "peer" => {
+            true
+        }
+        "pair" => command.args[index + 1..]
+            .iter()
+            .any(|arg| arg == "--cancel" || arg == "--demo" || arg == "--qr-payload"),
         "profile" => {
             command
                 .args
@@ -60,11 +67,16 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     }
 }
 
-fn run_oneshot_command(
+struct OneShotOutput {
+    text: String,
+    exit_code: i32,
+}
+
+fn run_oneshot_command_outcome(
     command: &ResolvedCommand,
     cwd: &Path,
     env: &HashMap<String, String>,
-) -> Result<String, String> {
+) -> Result<OneShotOutput, String> {
     let output = Command::new(&command.program)
         .args(&command.args)
         .current_dir(cwd)
@@ -75,20 +87,32 @@ fn run_oneshot_command(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !output.status.success() {
-        return Err(format!(
-            "Command exited with {}:\n{stdout}{stderr}",
-            output.status
-        ));
-    }
-
-    Ok(if stderr.is_empty() {
+    let text = if stderr.is_empty() {
         stdout
     } else if stdout.is_empty() {
         stderr
     } else {
         format!("{}{}", stdout, stderr)
+    };
+    Ok(OneShotOutput {
+        text,
+        exit_code: output.status.code().unwrap_or(1),
     })
+}
+
+fn run_oneshot_command(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+) -> Result<String, String> {
+    let output = run_oneshot_command_outcome(command, cwd, env)?;
+    if output.exit_code != 0 {
+        return Err(format!(
+            "Command exited with code {}:\n{}",
+            output.exit_code, output.text
+        ));
+    }
+    Ok(output.text)
 }
 
 fn retry_oneshot_until_expected(
@@ -110,6 +134,68 @@ fn retry_oneshot_until_expected(
     }
 
     Ok(actual)
+}
+
+fn retry_oneshot_until_contains(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    expected: &str,
+    policy: RetryPolicy,
+    first_output: OneShotOutput,
+) -> Result<OneShotOutput, String> {
+    let started = Instant::now();
+    let timeout = Duration::from_millis(policy.timeout_ms);
+    let interval = Duration::from_millis(policy.interval_ms);
+    let mut actual = first_output;
+
+    while !actual.text.contains(expected) && started.elapsed() < timeout {
+        thread::sleep(interval);
+        actual = run_oneshot_command_outcome(command, cwd, env)?;
+    }
+
+    Ok(actual)
+}
+
+fn multicast_skip_reason() -> Option<String> {
+    if std::env::var_os("AMUX_E2E_DISABLE_MULTICAST").is_some() {
+        return Some("multicast disabled by AMUX_E2E_DISABLE_MULTICAST".to_string());
+    }
+    if !matches!(std::env::consts::OS, "macos" | "linux") {
+        return Some(format!(
+            "real multicast e2e is unsupported on {}",
+            std::env::consts::OS
+        ));
+    }
+
+    let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+        Ok(socket) => socket,
+        Err(error) => return Some(format!("cannot bind multicast probe: {error}")),
+    };
+    let group = Ipv4Addr::new(239, 255, 42, 99);
+    if let Err(error) = socket.join_multicast_v4(&group, &Ipv4Addr::UNSPECIFIED) {
+        return Some(format!("cannot join multicast probe group: {error}"));
+    }
+    if let Err(error) = socket.set_multicast_loop_v4(true) {
+        return Some(format!("cannot enable multicast loopback: {error}"));
+    }
+    if let Err(error) = socket.set_read_timeout(Some(Duration::from_millis(500))) {
+        return Some(format!("cannot time out multicast probe: {error}"));
+    }
+    let marker = b"amux-e2e-multicast-probe";
+    let port = match socket.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(error) => return Some(format!("cannot inspect multicast probe socket: {error}")),
+    };
+    if let Err(error) = socket.send_to(marker, (group, port)) {
+        return Some(format!("cannot send multicast probe: {error}"));
+    }
+    let mut received = [0_u8; 64];
+    match socket.recv_from(&mut received) {
+        Ok((length, _)) if received[..length] == marker[..] => None,
+        Ok(_) => Some("multicast probe received an unexpected datagram".to_string()),
+        Err(error) => Some(format!("multicast loopback unavailable: {error}")),
+    }
 }
 
 fn append_config_logs(
@@ -175,6 +261,7 @@ fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> P
 pub struct TestResult {
     pub passed: bool,
     pub error: Option<String>,
+    pub skipped: Option<String>,
 }
 
 /// Configuration for the executor
@@ -212,6 +299,8 @@ struct VariableContext {
     configs: HashMap<String, PathBuf>,
     /// config name -> tcp_port
     tcp_ports: HashMap<String, u16>,
+    /// config name -> LAN listener port
+    lan_ports: HashMap<String, u16>,
     /// captured output variable name -> value
     captures: HashMap<String, String>,
 }
@@ -346,6 +435,7 @@ struct RoutingClaims<'a> {
     port: u16,
     exp: u64,
     aud: &'a str,
+    tier: &'a str,
 }
 
 fn allocate_local_port() -> Result<u16, String> {
@@ -405,7 +495,7 @@ impl CloudFixture {
     fn start(
         routing_host: String,
         routing_port: u16,
-        accounts: &[String],
+        accounts: &[AccountConfig],
         update_version: Option<&str>,
         executable: &Path,
     ) -> Result<Self, String> {
@@ -476,26 +566,110 @@ impl CloudFixture {
     }
 }
 
+pub(crate) fn run_free_tier_fixture(
+    state_dir: &Path,
+    routing_port: u16,
+    executable: &Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(state_dir).map_err(|error| error.to_string())?;
+    let fixture = CloudFixture::start(
+        "relay".to_string(),
+        routing_port,
+        &[AccountConfig::Detailed {
+            name: "alice".to_string(),
+            tier: AccountTier::Free,
+        }],
+        None,
+        executable,
+    )?;
+    let ca = state_dir.join("cloud-routing-ca.pem");
+    let cert = state_dir.join("cloud-routing-cert.pem");
+    let key = state_dir.join("cloud-routing-key.pem");
+    std::fs::copy(&fixture.routing_tls_ca, &ca).map_err(|error| error.to_string())?;
+    std::fs::copy(&fixture.routing_tls_cert, &cert).map_err(|error| error.to_string())?;
+    std::fs::copy(&fixture.routing_tls_key, &key).map_err(|error| error.to_string())?;
+    std::fs::write(
+        state_dir.join("fixture.env"),
+        format!(
+            "CLOUD_URL='{}'\nAMUX_CLOUD_TLS_CA='{}'\nAMUX_TLS_CERT='{}'\nAMUX_TLS_KEY='{}'\n",
+            fixture.url,
+            ca.display(),
+            cert.display(),
+            key.display()
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(state_dir.join("tier-current"), "free\n").map_err(|error| error.to_string())?;
+    std::fs::write(state_dir.join("ready"), "ready\n").map_err(|error| error.to_string())?;
+
+    let mut tier = AccountTier::Free;
+    loop {
+        if state_dir.join("stop").exists() {
+            return Ok(());
+        }
+        if let Ok(requested) = std::fs::read_to_string(state_dir.join("tier")) {
+            let requested = match requested.trim() {
+                "free" => AccountTier::Free,
+                "pro" => AccountTier::Pro,
+                other => return Err(format!("unknown requested fixture tier {other:?}")),
+            };
+            if requested != tier {
+                fixture
+                    .identity
+                    .lock()
+                    .map_err(|_| "cloud identity fixture is poisoned")?
+                    .set_tier("alice", requested)?;
+                tier = requested;
+                let label = if tier == AccountTier::Free {
+                    "free"
+                } else {
+                    "pro"
+                };
+                std::fs::write(state_dir.join("tier-current"), format!("{label}\n"))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[derive(Clone, Copy)]
 struct FixtureAccount {
+    name: &'static str,
     sub: &'static str,
     display: &'static str,
     email: &'static str,
+    tier: AccountTier,
 }
 
 fn fixture_account(name: &str) -> Result<FixtureAccount, String> {
     match name {
         "alice" => Ok(FixtureAccount {
+            name: "alice",
             sub: E2E_USER_ID,
             display: "Alice Example",
             email: "alice@example.test",
+            tier: AccountTier::Pro,
         }),
         "bob" => Ok(FixtureAccount {
+            name: "bob",
             sub: "22222222-2222-4222-8222-222222222222",
             display: "Bob Example",
             email: "bob@example.test",
+            tier: AccountTier::Pro,
         }),
         _ => Err(format!("Unknown fixture account {name:?}")),
+    }
+}
+
+fn configured_fixture_account(config: &AccountConfig) -> Result<FixtureAccount, String> {
+    match config {
+        AccountConfig::Name(name) => fixture_account(name),
+        AccountConfig::Detailed { name, tier } => {
+            let mut account = fixture_account(name)?;
+            account.tier = *tier;
+            Ok(account)
+        }
     }
 }
 
@@ -508,10 +682,10 @@ struct IdentityState {
 }
 
 impl IdentityState {
-    fn new(accounts: &[String]) -> Result<Self, String> {
+    fn new(accounts: &[AccountConfig]) -> Result<Self, String> {
         let accounts = accounts
             .iter()
-            .map(|name| fixture_account(name))
+            .map(configured_fixture_account)
             .collect::<Result<VecDeque<_>, _>>()?;
         Ok(Self {
             fallback: accounts
@@ -523,6 +697,42 @@ impl IdentityState {
             refresh: HashMap::new(),
             access: HashMap::new(),
         })
+    }
+
+    fn set_tier(&mut self, name: &str, tier: AccountTier) -> Result<(), String> {
+        fixture_account(name)?;
+        let mut found = false;
+        for account in self
+            .accounts
+            .iter_mut()
+            .chain(std::iter::once(&mut self.fallback))
+            .chain(self.devices.values_mut())
+            .chain(self.refresh.values_mut())
+            .chain(self.access.values_mut())
+        {
+            if account.name == name {
+                account.tier = tier;
+                found = true;
+            }
+        }
+        found
+            .then_some(())
+            .ok_or_else(|| format!("Fixture account {name:?} is not configured"))
+    }
+
+    fn queue_account(&mut self, name: &str) -> Result<(), String> {
+        let account = self
+            .accounts
+            .iter()
+            .chain(std::iter::once(&self.fallback))
+            .chain(self.devices.values())
+            .chain(self.refresh.values())
+            .chain(self.access.values())
+            .find(|account| account.name == name)
+            .copied()
+            .ok_or_else(|| format!("Fixture account {name:?} is not configured"))?;
+        self.accounts.push_front(account);
+        Ok(())
     }
 
     fn tokens(&mut self, account: FixtureAccount) -> serde_json::Value {
@@ -599,7 +809,7 @@ impl IdentityState {
                 } else {
                     (
                         "200 OK",
-                        serde_json::json!({"host": "localhost", "port": routing_port, "token": routing_token(routing_host, routing_port, account.sub), "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339()}),
+                        serde_json::json!({"host": "localhost", "port": routing_port, "token": routing_token(routing_host, routing_port, account.sub, account.tier), "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(), "tier": account.tier}),
                     )
                 }
             }
@@ -687,6 +897,15 @@ fn handle_cloud_request(
     let form = url::form_urlencoded::parse(&request[headers_end..headers_end + content_length])
         .into_owned()
         .collect();
+    if path == "/api/connect" && !relay_quic_is_listening(routing_port) {
+        let body = serde_json::json!({"error": "relay_starting"}).to_string();
+        let response = format!(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        return;
+    }
     let (status, body) = identity.respond(path, &form, bearer, routing_host, routing_port);
     let body = body.to_string();
     let response = format!(
@@ -696,7 +915,25 @@ fn handle_cloud_request(
     let _ = stream.write_all(response.as_bytes());
 }
 
-fn routing_token(routing_host: &str, routing_port: u16, subject: &str) -> String {
+/// The fixture models a control plane assigning only a relay that is ready to
+/// receive both preferred QUIC and fallback TCP traffic. Binding the relay's
+/// UDP address is the last startup step relevant to a device dial.
+fn relay_quic_is_listening(port: u16) -> bool {
+    match UdpSocket::bind((Ipv4Addr::LOCALHOST, port)) {
+        Ok(socket) => {
+            drop(socket);
+            false
+        }
+        Err(error) => error.kind() == std::io::ErrorKind::AddrInUse,
+    }
+}
+
+fn routing_token(
+    routing_host: &str,
+    routing_port: u16,
+    subject: &str,
+    tier: AccountTier,
+) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(E2E_JWT_KID.to_string());
     let claims = RoutingClaims {
@@ -706,6 +943,10 @@ fn routing_token(routing_host: &str, routing_port: u16, subject: &str) -> String
         port: routing_port,
         exp: (Utc::now() + ChronoDuration::hours(1)).timestamp() as u64,
         aud: "amux_token",
+        tier: match tier {
+            AccountTier::Free => "free",
+            AccountTier::Pro => "pro",
+        },
     };
     encode(
         &header,
@@ -722,13 +963,14 @@ impl VariableContext {
             directories: HashMap::new(),
             configs: HashMap::new(),
             tcp_ports: HashMap::new(),
+            lan_ports: HashMap::new(),
             captures: HashMap::new(),
         }
     }
 
     /// Substitute variables in a string.
     /// Supports: $name.path (for directories), $name.socket_path and
-    /// $name.tcp_port (for configs)
+    /// $name.tcp_port (for relays), and $name.lan_port (for profiles)
     fn substitute(&self, input: &str) -> String {
         let mut result = input.to_string();
 
@@ -749,6 +991,11 @@ impl VariableContext {
             result = result.replace(&var, &tcp_port.to_string());
         }
 
+        for (name, lan_port) in &self.lan_ports {
+            let var = format!("${}.lan_port", name);
+            result = result.replace(&var, &lan_port.to_string());
+        }
+
         for (name, value) in &self.captures {
             let var = format!("${name}");
             result = result.replace(&var, value);
@@ -763,6 +1010,13 @@ pub struct Executor {
     pub config: ExecutorConfig,
 }
 
+struct StepEnvironment<'a> {
+    terminal_configs: &'a HashMap<String, (String, PathBuf, bool)>,
+    config_paths: &'a HashMap<String, PathBuf>,
+    config_envs: &'a HashMap<String, HashMap<String, String>>,
+    cloud_fixture: Option<&'a CloudFixture>,
+}
+
 impl Executor {
     pub fn new(config: ExecutorConfig) -> Self {
         Self { config }
@@ -770,6 +1024,23 @@ impl Executor {
 
     /// Run a test case
     pub fn run_test(&self, test_case: &TestCase) -> TestResult {
+        if test_case.configs.iter().any(|config| config.lan_discovery)
+            && let Some(reason) = multicast_skip_reason()
+        {
+            if let Some(directory) = &self.config.transcript_dir {
+                let _ = std::fs::create_dir_all(directory).and_then(|()| {
+                    std::fs::write(
+                        directory.join(format!("{}.txt", test_case.name)),
+                        format!("[skipped] {reason}\n\nResult: SKIP\n"),
+                    )
+                });
+            }
+            return TestResult {
+                passed: true,
+                error: None,
+                skipped: Some(reason),
+            };
+        }
         let result = if test_case
             .configs
             .iter()
@@ -794,10 +1065,12 @@ impl Executor {
             Ok(()) => TestResult {
                 passed: true,
                 error: None,
+                skipped: None,
             },
             Err(e) => TestResult {
                 passed: false,
                 error: Some(e),
+                skipped: None,
             },
         }
     }
@@ -862,6 +1135,12 @@ impl Executor {
         let mut config_envs: HashMap<String, HashMap<String, String>> = HashMap::new();
 
         for (index, cfg) in configs.iter().enumerate() {
+            if cfg.lan_discovery && cfg.multicast_blocked {
+                return Err(format!(
+                    "config {} cannot enable lan_discovery and multicast_blocked together",
+                    cfg.name
+                ));
+            }
             // Determine socket path
             let socket_path = match &cfg.socket_path {
                 Some(p) if p != "auto" => PathBuf::from(p),
@@ -872,7 +1151,12 @@ impl Executor {
             #[cfg(unix)]
             let _ = std::fs::remove_file(&socket_path);
 
-            let tcp_port = match cfg.tcp_port {
+            let configured_port = if cfg.cloud_relay {
+                cfg.tcp_port
+            } else {
+                cfg.lan_port
+            };
+            let listener_port = match configured_port {
                 Some(0) => Some(allocate_local_port()?),
                 Some(port) => Some(port),
                 None => None,
@@ -916,7 +1200,8 @@ impl Executor {
                     &serde_json::json!({
                         "host_name": host_name, "socket_path": socket_path,
                         "state_path": state_path, "data_dir": root.join("data"),
-                        "tcp_port": tcp_port, "cloud_url": cloud_url, "prevent_idle_sleep": false,
+                        "tcp_port": listener_port, "udp_port": listener_port,
+                        "cloud_url": cloud_url, "prevent_idle_sleep": false,
                     }),
                 )?;
                 (path, socket_path)
@@ -993,14 +1278,21 @@ impl Executor {
                         std::fs::create_dir_all(dir.join("state")).map_err(|e| e.to_string())?;
                         let path = dir.join("config.yaml");
                         let socket = root.join("profiles").join(format!("{profile_id}.sock"));
-                        write_fixture_yaml(
-                            &path,
-                            &serde_json::json!({
-                                "installation_config": installation_path, "socket_path": socket,
-                                "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
-                                "cloud_url": cloud_url, "tcp_port": if profile_index == 0 { tcp_port } else { None },
-                            }),
-                        )?;
+                        let mut profile = serde_json::json!({
+                            "installation_config": installation_path, "socket_path": socket,
+                            "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
+                            "lan": {
+                                "listen": true,
+                                "port": if profile_index == 0 { listener_port.unwrap_or(0) } else { 0 },
+                            },
+                        });
+                        if let Some(cloud_url) = &cfg.cloud_url {
+                            profile["cloud_url"] = serde_json::Value::String(cloud_url.clone());
+                        }
+                        if let Some(seconds) = cfg.cloud_refresh_secs {
+                            profile["cloud_refresh_secs"] = seconds.into();
+                        }
+                        write_fixture_yaml(&path, &profile)?;
                         if profile_index == 0
                             && let Some(name) = &cfg.suspended_agent
                         {
@@ -1078,7 +1370,21 @@ impl Executor {
                     "AMUX_LOG".to_string(),
                     log_path.to_string_lossy().to_string(),
                 ),
+                (
+                    "AMUX_TEST_DISCOVERY_MODE".to_string(),
+                    if cfg.lan_discovery {
+                        "mdns"
+                    } else if cfg.multicast_blocked {
+                        "disabled"
+                    } else {
+                        "scripted"
+                    }
+                    .to_string(),
+                ),
             ]);
+            if cfg.udp_blocked {
+                env.insert("AMUX_TEST_RELAY_UDP_BLOCKED".to_string(), "1".to_string());
+            }
             if let Some(fixture) = &cloud_fixture {
                 env.insert(
                     "AMUX_CLOUD_TLS_CA".to_string(),
@@ -1097,8 +1403,12 @@ impl Executor {
             }
             config_envs.insert(cfg.name.clone(), env);
             var_ctx.configs.insert(cfg.name.clone(), socket_path);
-            if let Some(tcp_port) = tcp_port {
-                var_ctx.tcp_ports.insert(cfg.name.clone(), tcp_port);
+            if let Some(listener_port) = listener_port {
+                if cfg.cloud_relay {
+                    var_ctx.tcp_ports.insert(cfg.name.clone(), listener_port);
+                } else {
+                    var_ctx.lan_ports.insert(cfg.name.clone(), listener_port);
+                }
             }
         }
 
@@ -1140,9 +1450,12 @@ impl Executor {
             .and_then(|()| {
                 self.execute_steps(
                     &test_case.steps,
-                    &terminal_configs,
-                    &config_paths,
-                    &config_envs,
+                    &StepEnvironment {
+                        terminal_configs: &terminal_configs,
+                        config_paths: &config_paths,
+                        config_envs: &config_envs,
+                        cloud_fixture: cloud_fixture.as_ref(),
+                    },
                     &mut var_ctx,
                     &mut transcript,
                 )
@@ -1205,15 +1518,20 @@ impl Executor {
             let env = config_envs
                 .get(&cfg.name)
                 .ok_or_else(|| format!("Missing env for config: {}", cfg.name))?;
-            let mut commands = vec![vec!["init".to_string()]];
+            // Explicit init now leaves the fresh-install pairing window open.
+            // General e2e fixtures start from a neutral pairing state; tests of
+            // the on-ramp invoke init themselves after this setup cancellation.
+            let mut commands = vec![
+                vec!["init".to_string()],
+                vec!["pair".to_string(), "--cancel".to_string()],
+            ];
             if let Some(account) = &cfg.cloud_account {
                 fixture
                     .ok_or("login requires cloud fixture")?
                     .identity
                     .lock()
                     .unwrap()
-                    .accounts
-                    .push_front(fixture_account(account)?);
+                    .queue_account(account)?;
                 commands.push(vec!["login".to_string()]);
             }
             for args in commands {
@@ -1239,14 +1557,13 @@ impl Executor {
     fn execute_steps(
         &self,
         steps: &[TestStep],
-        terminal_configs: &HashMap<String, (String, PathBuf, bool)>,
-        config_paths: &HashMap<String, PathBuf>,
-        config_envs: &HashMap<String, HashMap<String, String>>,
+        environment: &StepEnvironment<'_>,
         var_ctx: &mut VariableContext,
         transcript: &mut String,
     ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
+        let mut oneshot_failures: HashMap<String, i32> = HashMap::new();
         let mut last_oneshot_commands: HashMap<
             String,
             (ResolvedCommand, PathBuf, HashMap<String, String>),
@@ -1256,6 +1573,17 @@ impl Executor {
 
         for step in steps {
             match step {
+                TestStep::SetTier { account, tier } => {
+                    let fixture = environment
+                        .cloud_fixture
+                        .ok_or("@@tier requires a cloud fixture")?;
+                    fixture
+                        .identity
+                        .lock()
+                        .map_err(|_| "cloud identity fixture is poisoned")?
+                        .set_tier(account, *tier)?;
+                    transcript.push_str(&format!("[tier {account} {tier:?}]\n"));
+                }
                 TestStep::ProcessExited(pid) => {
                     let pid: i32 = var_ctx
                         .substitute(pid)
@@ -1290,23 +1618,68 @@ impl Executor {
                 }
                 TestStep::ExpectContains(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let output = oneshot_outputs
-                        .get(term_name)
-                        .ok_or("@@contains requires a completed one-shot command")?;
                     let expected = var_ctx.substitute(expected);
+                    let retry_policy = retry_next_expect.take();
+                    let first_output = oneshot_outputs
+                        .remove(term_name)
+                        .ok_or("@@contains requires a completed one-shot command")?;
+                    let output = if let Some(policy) = retry_policy {
+                        let (command, cwd, env) = last_oneshot_commands
+                            .get(term_name)
+                            .ok_or("Retry directive requires a previous one-shot amux command")?;
+                        let outcome = retry_oneshot_until_contains(
+                            command,
+                            cwd,
+                            env,
+                            &expected,
+                            policy,
+                            OneShotOutput {
+                                text: first_output,
+                                exit_code: oneshot_failures.get(term_name).copied().unwrap_or(0),
+                            },
+                        )?;
+                        if outcome.exit_code == 0 {
+                            oneshot_failures.remove(term_name);
+                        } else {
+                            oneshot_failures.insert(term_name.clone(), outcome.exit_code);
+                        }
+                        outcome.text
+                    } else {
+                        first_output
+                    };
+                    if retry_policy.is_some() && !transcript.ends_with(&output) {
+                        transcript.push_str("[retry result]\n");
+                        transcript.push_str(&output);
+                    }
                     if !output.contains(&expected) {
                         return Err(format!("Expected {expected:?} in output:\n{output}"));
                     }
+                    oneshot_outputs.insert(term_name.clone(), output);
                 }
                 TestStep::Exit(code) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    if let Some(mut terminal) = active_terminals.remove(term_name) {
+                        terminal
+                            .wait_exit(*code, Duration::from_secs(5))
+                            .map_err(|e| e.to_string())?;
+                    } else if let Some(actual) = oneshot_failures.remove(term_name) {
+                        if actual != *code as i32 {
+                            return Err(format!(
+                                "one-shot command exited {actual}, expected {code}"
+                            ));
+                        }
+                    } else {
+                        return Err("@@exit requires a PTY or failed one-shot command".into());
+                    }
+                    transcript.push_str(&format!("[exit {code}]\n"));
+                }
+                TestStep::Terminate => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
                     let mut terminal = active_terminals
                         .remove(term_name)
-                        .ok_or("@@exit requires a PTY command")?;
-                    terminal
-                        .wait_exit(*code, Duration::from_secs(5))
-                        .map_err(|e| e.to_string())?;
-                    transcript.push_str(&format!("[exit {code}]\n"));
+                        .ok_or("@@terminate requires an active PTY command")?;
+                    terminal.terminate().map_err(|e| e.to_string())?;
+                    transcript.push_str("[terminated]\n");
                 }
                 TestStep::SwitchTerminal(name) => {
                     transcript.push_str(&format!("\n@{name}\n"));
@@ -1360,15 +1733,53 @@ impl Executor {
                     }
                     var_ctx.captures.insert(name.clone(), value);
                 }
+                TestStep::CaptureContainingOutput { name, prefix } => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let prefix_substituted = var_ctx.substitute(prefix);
+                    let actual = if let Some(output) = oneshot_outputs.get(term_name) {
+                        output
+                            .lines()
+                            .find(|line| line.starts_with(&prefix_substituted))
+                            .map(str::to_string)
+                            .ok_or_else(|| {
+                                format!(
+                                    "Capture search in terminal {term_name} found no line starting with {prefix_substituted:?} in:\n{output}"
+                                )
+                            })?
+                    } else {
+                        let terminal = active_terminals
+                            .get_mut(term_name)
+                            .ok_or(format!("Terminal {} not initialized", term_name))?;
+                        loop {
+                            let line = terminal
+                                .read_line(self.config.timeout)
+                                .map_err(|e| format!("Failed to search output: {e}"))?;
+                            transcript.push_str(&format!("{line}\n"));
+                            if line.starts_with(&prefix_substituted) {
+                                break line;
+                            }
+                        }
+                    };
+                    let value = actual[prefix_substituted.len()..].trim().to_string();
+                    if value.is_empty() {
+                        return Err(format!(
+                            "Capture {name} in terminal {term_name} produced an empty value"
+                        ));
+                    }
+                    var_ctx.captures.insert(name.clone(), value);
+                }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let (config_name, cwd, installation) = terminal_configs
+                    let (config_name, cwd, installation) = environment
+                        .terminal_configs
                         .get(term_name)
                         .ok_or(format!("Unknown terminal: {}", term_name))?;
-                    let config_path = config_paths
+                    let config_path = environment
+                        .config_paths
                         .get(config_name)
                         .ok_or(format!("Unknown config: {}", config_name))?;
-                    let env = config_envs
+                    let env = environment
+                        .config_envs
                         .get(config_name)
                         .ok_or(format!("Missing env for config: {}", config_name))?;
 
@@ -1379,6 +1790,11 @@ impl Executor {
                         || input_substituted.starts_with("e2e-runner client ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
+                        if let Some(code) = oneshot_failures.remove(term_name) {
+                            return Err(format!(
+                                "previous one-shot command exited {code}; assert it with `@@exit {code}` before starting another command"
+                            ));
+                        }
                         oneshot_outputs.remove(term_name);
                         last_oneshot_commands.remove(term_name);
                         let transformed = self.transform_command(
@@ -1387,11 +1803,14 @@ impl Executor {
                         )?;
 
                         if is_oneshot_amux_command(&transformed) {
-                            let combined = run_oneshot_command(&transformed, cwd, env)?;
-                            transcript.push_str(&combined);
+                            let output = run_oneshot_command_outcome(&transformed, cwd, env)?;
+                            transcript.push_str(&output.text);
+                            if output.exit_code != 0 {
+                                oneshot_failures.insert(term_name.clone(), output.exit_code);
+                            }
                             last_oneshot_commands
                                 .insert(term_name.clone(), (transformed, cwd.clone(), env.clone()));
-                            oneshot_outputs.insert(term_name.clone(), combined);
+                            oneshot_outputs.insert(term_name.clone(), output.text);
                         } else {
                             let terminal = TestTerminal::spawn(
                                 &transformed.program,
@@ -1468,6 +1887,11 @@ impl Executor {
             }
         }
 
+        if let Some((terminal, code)) = oneshot_failures.into_iter().next() {
+            return Err(format!(
+                "one-shot command in terminal {terminal} exited {code} without a matching `@@exit {code}`"
+            ));
+        }
         Ok(())
     }
 
@@ -1501,6 +1925,11 @@ impl Executor {
                 worktree: false,
                 cloud_url: None,
                 tcp_port: None,
+                lan_port: None,
+                lan_discovery: false,
+                multicast_blocked: false,
+                udp_blocked: false,
+                cloud_refresh_secs: None,
                 cloud_relay: false,
                 update_version: None,
                 suspended_agent: None,
@@ -1561,6 +1990,55 @@ impl Executor {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn one_shot_failures_keep_their_output_for_an_expected_exit_assertion() {
+        let command = ResolvedCommand {
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "printf 'payment required\\n' >&2; exit 7".into(),
+            ],
+        };
+        let output = run_oneshot_command_outcome(
+            &command,
+            &std::env::current_dir().unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.text, "payment required\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn contains_retry_can_match_an_expected_failed_command() {
+        let command = ResolvedCommand {
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "printf 'payment required\\n' >&2; exit 7".into(),
+            ],
+        };
+        let output = retry_oneshot_until_contains(
+            &command,
+            &std::env::current_dir().unwrap(),
+            &HashMap::new(),
+            "payment required",
+            RetryPolicy {
+                timeout_ms: 100,
+                interval_ms: 1,
+            },
+            OneShotOutput {
+                text: "not ready\n".into(),
+                exit_code: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.text, "payment required\n");
+    }
+
     #[test]
     fn cloud_fixture_reads_fragmented_requests_on_accepted_nonblocking_streams() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -1591,6 +2069,15 @@ mod tests {
         received.unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
         assert!(response.contains("device_code"), "{response}");
+    }
+
+    #[test]
+    fn cloud_fixture_assigns_the_relay_only_after_its_quic_socket_is_bound() {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        assert!(relay_quic_is_listening(port));
+        drop(socket);
+        assert!(!relay_quic_is_listening(port));
     }
 
     #[test]
@@ -1677,5 +2164,45 @@ mod tests {
             .0,
             "401 Unauthorized"
         );
+    }
+
+    #[test]
+    fn cloud_fixture_mints_each_accounts_current_tier_in_body_and_token() {
+        let mut state = IdentityState::new(&[AccountConfig::Detailed {
+            name: "alice".into(),
+            tier: AccountTier::Free,
+        }])
+        .unwrap();
+        let account = configured_fixture_account(&AccountConfig::Detailed {
+            name: "alice".into(),
+            tier: AccountTier::Free,
+        })
+        .unwrap();
+        state.access.insert("access".into(), account);
+
+        for expected in [AccountTier::Free, AccountTier::Pro] {
+            state.set_tier("alice", expected).unwrap();
+            let (status, response) = state.respond(
+                "/api/connect",
+                &HashMap::new(),
+                Some("access"),
+                "relay",
+                1234,
+            );
+            assert_eq!(status, "200 OK");
+            assert_eq!(response["tier"], serde_json::json!(expected));
+
+            let token = response["token"].as_str().unwrap();
+            let mut validation = jsonwebtoken::Validation::new(Algorithm::RS256);
+            validation.set_audience(&["amux_token"]);
+            let claims = jsonwebtoken::decode::<serde_json::Value>(
+                token,
+                &jsonwebtoken::DecodingKey::from_rsa_components(E2E_JWK_N, E2E_JWK_E).unwrap(),
+                &validation,
+            )
+            .unwrap()
+            .claims;
+            assert_eq!(claims["tier"], serde_json::json!(expected));
+        }
     }
 }

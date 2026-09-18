@@ -33,6 +33,8 @@ fn id(value: u128) -> model::AgentId {
 
 fn host(name: &str, online: bool) -> HostEntry {
     HostEntry {
+        signed_in: Some(true),
+        via: model::HostVia::Direct,
         id: id(HOST),
         name: name.into(),
         online,
@@ -46,6 +48,7 @@ fn host(name: &str, online: bool) -> HostEntry {
 
 fn agent(agent_id: u128, name: &str, revision: u64) -> Agent {
     Agent {
+        last_activity: Utc.timestamp_opt(1_700_000_000, 123_000_000).unwrap(),
         id: id(agent_id),
         host_id: id(HOST),
         name: Some(name.into()),

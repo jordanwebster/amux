@@ -92,8 +92,9 @@ pub struct SshTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QrPairingPayload {
     pub host_id: HostId,
-    pub cloud_url: String,
     pub secret: Vec<u8>,
+    pub addrs: Vec<std::net::SocketAddr>,
+    pub cloud_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -247,12 +248,43 @@ pub struct Host {
     pub name: String,
     pub version: String,
     pub capabilities: Capabilities,
+    /// Whether this host's profile is bound to an account.
+    pub signed_in: Option<bool>,
     /// What kind of machine this is, in its own words: the operating system
     /// the daemon was built for. A peer built before this field existed says
     /// nothing, which is why it is optional — a machine whose kind is unknown
     /// is not the same as one that claims to be nothing in particular.
     #[serde(default)]
     pub platform: Option<String>,
+}
+
+/// The live route selected for new calls to a host.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HostVia {
+    Direct,
+    Relay,
+    Ssh,
+    /// Also what a record that names no route means: saying nothing claims no
+    /// reachability, which is the only reading that cannot invent one.
+    #[default]
+    Offline,
+}
+
+/// Account tier carried by cloud connection tokens.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Free,
+    Pro,
+}
+
+/// Which carrier a relay link currently runs on.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayCarrier {
+    Quic,
+    Tcp,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -271,6 +303,13 @@ pub struct HostEntry {
     pub capabilities: Option<Capabilities>,
     pub trust_status: HostTrustStatus,
     pub last_dial_error: Option<String>,
+    /// The live route selected for new calls to this host. Defaulted so a
+    /// record written before routes were reported still reads back.
+    #[serde(default)]
+    pub via: HostVia,
+    /// The last account-binding fact this host announced.
+    #[serde(default)]
+    pub signed_in: Option<bool>,
     /// The peer's operating system as it reported it. Older hosts report
     /// nothing, which is why it is optional: a machine whose kind is unknown
     /// is not the same as one that claims to be nothing in particular.

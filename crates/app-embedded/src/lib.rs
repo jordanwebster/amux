@@ -18,16 +18,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use app_runtime::{
-    AccountAdmin, HostEventStreamFuture, HostInventory, Link, Places, Session, Sessions, Token,
-    TokenError, TokenRequest,
+    AccountAdmin, CloudState, FoundHost, HostEventStreamFuture, HostInventory, Link, Places,
+    Refusal, Session, Sessions, Tier, Token, TokenError, TokenRequest,
 };
 use client::{Client, DeviceIdentity, PeerEntry, PendingPeer};
 use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
 use node::{
     AccessToken, AuthError, CredentialProvider, CredentialSource, EmbeddedRelay, HostId,
-    Installation, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
-    OperationId, ProfileAdmin, ProfileId, RelayConnection, RelayEndpoint, RelayRetry,
+    Installation, InstallationOptions, InstallationRoot, InstallationSettings, Listeners, Observed,
+    OperationId, ProfileAdmin, ProfileEvent, ProfileId, RelayConnection, RelayEndpoint, RelayRetry,
     RelocationPolicy, ShutdownReason,
 };
 use serde::Deserialize;
@@ -40,14 +40,36 @@ pub struct StartConfig {
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub device_name: String,
-    pub relay: RelayConfig,
+    /// The relay the application resolved, where there is one. A device with
+    /// nobody signed in has none: it reaches the machines on its own network
+    /// directly, and a relay is what an account adds.
+    #[serde(default)]
+    pub relay: Option<RelayConfig>,
     /// Every account this device is signed in to, in the order the app lists
     /// them. One of them is on screen; the rest are still connected while the
     /// app is in front of somebody, which is what lets the switcher say that
-    /// an account nobody is looking at has something waiting.
+    /// an account nobody is looking at has something waiting. Empty is a
+    /// device nobody has signed in on, which is a device that works.
+    #[serde(default)]
     pub accounts: Vec<AccountConfig>,
-    /// Which account is on screen. Must name one of the accounts above.
-    pub active: String,
+    /// Which account is on screen. Must name one of the accounts above where
+    /// there are any. With none, it names the account this device was last
+    /// signed in as, so signing out leaves that account's machines on screen
+    /// rather than emptying the app.
+    #[serde(default)]
+    pub active: Option<String>,
+    /// Accounts somebody removed from this device. Each one's profile is
+    /// deleted before anything is opened — its key, its trust store and the
+    /// machines it paired with, with the fleet and artifacts it cached — so
+    /// nothing of that account keeps running here.
+    ///
+    /// Said on every start rather than once, because a profile can only be
+    /// deleted by the installation that owns it and a start is when that
+    /// installation exists: a runtime still holding the account when it was
+    /// removed cannot be the one to delete it. Naming an account that has no
+    /// profile any more is not an error.
+    #[serde(default)]
+    pub forget: Vec<String>,
     pub log_path: PathBuf,
     #[serde(default = "default_frame_interval_ns")]
     pub frame_interval_ns: u64,
@@ -83,7 +105,13 @@ pub enum RelayTls {
 
 #[derive(Clone, Deserialize)]
 pub enum TokenSource {
-    Static(String),
+    /// A bearer the application already holds, and what it says the account
+    /// buys. A driving fixture: a real token expires and is asked for again.
+    Static {
+        bearer: String,
+        #[serde(default)]
+        tier: Option<Tier>,
+    },
     Callback,
 }
 
@@ -125,8 +153,9 @@ impl StartConfig {
         self.data_dir.join("installation")
     }
 
-    /// The relay this configuration names, or why it is not one.
-    pub fn endpoint(&self) -> Result<RelayEndpoint, String> {
+    /// The relay this configuration names, nothing where it names none, or
+    /// why what it named is not one.
+    pub fn endpoint(&self) -> Result<Option<RelayEndpoint>, String> {
         if self.frame_interval_ns == 0 || self.frame_interval_ns > 1_000_000_000 {
             return Err("frame_interval_ns must be between 1 and 1000000000".into());
         }
@@ -137,31 +166,58 @@ impl StartConfig {
         {
             return Err("paths must be absolute and device name must be nonempty".into());
         }
-        if self.accounts.is_empty() {
-            return Err("a client runs at least one account".into());
-        }
         let mut seen = std::collections::BTreeSet::new();
         for account in &self.accounts {
             if account.id.is_empty() || !seen.insert(account.id.as_str()) {
                 return Err("account identifiers must be nonempty and distinct".into());
             }
         }
-        if !seen.contains(self.active.as_str()) {
+        // Signed in, the account on screen has to be one of them. Signed out,
+        // the name is a memory of the account this device last read, and the
+        // profile it points at may well still be here.
+        if !self.accounts.is_empty()
+            && !self
+                .active
+                .as_deref()
+                .is_some_and(|active| seen.contains(active))
+        {
             return Err("the active account must be one of the accounts".into());
         }
-        match self.relay.tls {
-            RelayTls::System => RelayEndpoint::system(&self.relay.url).map_err(|e| e.to_string()),
+        // An account being removed is not one to open, and not the one whose
+        // machines a signed-out device keeps on screen either.
+        if self.forget.iter().any(|forgotten| {
+            seen.contains(forgotten.as_str()) || self.active.as_deref() == Some(forgotten)
+        }) {
+            return Err("an account being forgotten cannot also be opened".into());
+        }
+        // Nobody signed in means no relay to dial, and a configuration that
+        // named one anyway would be a route for an account that does not
+        // exist.
+        if self.accounts.is_empty() && self.relay.is_some() {
+            return Err("a relay belongs to an account".into());
+        }
+        if !self.accounts.is_empty() && self.relay.is_none() {
+            return Err("a signed-in client needs a relay".into());
+        }
+        let Some(relay) = &self.relay else {
+            return Ok(None);
+        };
+        match relay.tls {
+            RelayTls::System => RelayEndpoint::system(&relay.url)
+                .map(Some)
+                .map_err(|e| e.to_string()),
             RelayTls::PlainLoopback => {
                 #[cfg(feature = "debug-tools")]
                 {
-                    let address = self
-                        .relay
+                    let address = relay
                         .url
                         .strip_prefix("http://")
                         .ok_or("plaintext relay must use http://")?
                         .parse()
                         .map_err(|_| "plaintext relay must be a literal socket address")?;
-                    RelayEndpoint::plain_loopback(address).map_err(|e| e.to_string())
+                    RelayEndpoint::plain_loopback(address)
+                        .map(Some)
+                        .map_err(|e| e.to_string())
                 }
                 #[cfg(not(feature = "debug-tools"))]
                 Err("plaintext relay requires debug-tools".into())
@@ -200,9 +256,10 @@ struct Credentials {
 impl CredentialProvider for Credentials {
     async fn access_token(&self) -> Result<AccessToken, AuthError> {
         match &self.source {
-            TokenSource::Static(bearer) => Ok(AccessToken {
+            TokenSource::Static { bearer, tier } => Ok(AccessToken {
                 bearer: bearer.clone(),
                 expires_at: None,
+                tier: *tier,
             }),
             TokenSource::Callback => {
                 let (reply, receive) = oneshot::channel();
@@ -220,7 +277,15 @@ impl CredentialProvider for Credentials {
                     .map_err(|_| AuthError::Provider("token request timed out".into()))?
                     .map_err(|_| AuthError::Unauthenticated)?;
                 match reply {
-                    Ok(Token { bearer, expires_at }) => Ok(AccessToken { bearer, expires_at }),
+                    Ok(Token {
+                        bearer,
+                        expires_at,
+                        tier,
+                    }) => Ok(AccessToken {
+                        bearer,
+                        expires_at,
+                        tier,
+                    }),
                     Err(TokenError::Unauthenticated) => Err(AuthError::Unauthenticated),
                     Err(TokenError::Provider(detail)) => Err(AuthError::Provider(detail)),
                 }
@@ -266,23 +331,76 @@ impl Link for RelayLink {
     }
 }
 
+/// The link of a device nobody has signed in on: there is none.
+///
+/// A screen can ask any session to dial now or to put itself away, and the
+/// honest answer here is that nothing happens, because nothing is connected.
+/// Not an error and not a silent no-op elsewhere: the absence of a relay is a
+/// state this device runs in, not a fault in it.
+///
+/// It holds the connection state nobody publishes so that state stays
+/// readable. A screen watching a closed channel would be told the connection
+/// monitor had failed, which is a different thing from a device that is
+/// simply not on a relay.
+struct NoLink(#[allow(dead_code)] watch::Sender<RelayConnection>);
+
+impl Link for NoLink {
+    fn retry_now(&self) {}
+    fn set_active(&self, _active: bool) {}
+    fn attempts(&self) -> u64 {
+        0
+    }
+    fn shortened(&self) -> u64 {
+        0
+    }
+}
+
 /// One profile's administration, as the app layer is allowed to ask it.
 ///
 /// The node-backed answer to the app layer's traits, for any process that
 /// holds a profile's admin handle: the embedded installation this crate
 /// opens, or a daemon running in the same process.
-pub struct AdminSeat(ProfileAdmin);
+pub struct AdminSeat {
+    admin: ProfileAdmin,
+    /// The installation this profile belongs to, where this process owns one.
+    /// What an account buys is not a question about a profile's trust store:
+    /// it goes back out through the credentials the relay route was given, and
+    /// only the installation that was handed those can ask.
+    ///
+    /// Held weakly. This seat outlives the installation — a screen holds it
+    /// until the app puts the screen down — and an installation that is still
+    /// referenced is an installation still holding its root, which the next
+    /// one to open it would be refused for.
+    entitlement: Option<(std::sync::Weak<Installation>, ProfileId)>,
+}
 
 impl AdminSeat {
+    /// Administration for a profile of a daemon this process attached to. The
+    /// daemon owns its own account service; nothing here can ask on its behalf.
     pub fn new(admin: ProfileAdmin) -> Self {
-        Self(admin)
+        Self {
+            admin,
+            entitlement: None,
+        }
+    }
+
+    /// Administration for a profile of the installation this process started.
+    pub fn embedded(
+        admin: ProfileAdmin,
+        installation: &Arc<Installation>,
+        profile: ProfileId,
+    ) -> Self {
+        Self {
+            admin,
+            entitlement: Some((Arc::downgrade(installation), profile)),
+        }
     }
 }
 
 impl HostInventory for AdminSeat {
     fn subscribe_hosts(&self) -> HostEventStreamFuture<'_> {
         Box::pin(async move {
-            self.0
+            self.admin
                 .subscribe_hosts()
                 .await
                 .map(|stream| stream.boxed() as app_runtime::HostEventStream)
@@ -292,41 +410,101 @@ impl HostInventory for AdminSeat {
 
 impl AccountAdmin for AdminSeat {
     fn device_identity(&self) -> BoxFuture<'_, Result<DeviceIdentity, String>> {
-        Box::pin(async move { self.0.device_identity().await.map_err(|e| e.to_string()) })
+        Box::pin(async move {
+            self.admin
+                .device_identity()
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
     fn list_peers(&self) -> BoxFuture<'_, Result<Vec<PeerEntry>, String>> {
-        Box::pin(async move { self.0.list_peers().await.map_err(|e| e.to_string()) })
+        Box::pin(async move { self.admin.list_peers().await.map_err(|e| e.to_string()) })
     }
     fn unpair(&self, host: HostId, reason: String) -> BoxFuture<'_, Result<PeerEntry, String>> {
-        Box::pin(async move { self.0.unpair(host, reason).await.map_err(|e| e.to_string()) })
+        Box::pin(async move {
+            self.admin
+                .unpair(host, reason)
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
     fn begin_pair_pin(
         &self,
         host: HostId,
         pin: String,
-    ) -> BoxFuture<'_, Result<PendingPeer, String>> {
+        addrs: Vec<std::net::SocketAddr>,
+    ) -> BoxFuture<'_, Result<PendingPeer, Refusal>> {
         Box::pin(async move {
-            self.0
-                .begin_pair_pin(host, &pin)
+            self.admin
+                .begin_pair_pin(host, &pin, &addrs)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(refusal)
         })
     }
-    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, String>> {
+    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, Refusal>> {
         Box::pin(async move {
             // A link that will not parse is refused in the same words a wrong
             // code is: what an unreadable link proves about the machine that
             // issued it is nothing.
-            let payload = node::parse_qr_pairing_payload(&payload).map_err(|e| e.to_string())?;
-            self.0
-                .begin_pair_qr(&payload)
+            let payload = node::parse_qr_pairing_payload(&payload).map_err(|_| Refusal::Refused)?;
+            self.admin.begin_pair_qr(&payload).await.map_err(refusal)
+        })
+    }
+    fn pairing_candidates(&self) -> BoxFuture<'_, Result<Vec<client::PairingCandidate>, String>> {
+        Box::pin(async move {
+            self.admin
+                .list_pairing_hosts()
                 .await
                 .map_err(|e| e.to_string())
         })
     }
+    fn set_foreground(&self, active: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            // The relay link is the session's own business and is put away
+            // separately; what this reaches is the links to the machines on
+            // this network, which only an installation this process owns has.
+            let Some((installation, _)) = &self.entitlement else {
+                return;
+            };
+            let Some(installation) = installation.upgrade() else {
+                return;
+            };
+            match active {
+                true => installation.host_resume().await,
+                false => installation.host_suspend().await,
+            }
+        })
+    }
+    fn hand_over_discovered(&self, found: Vec<FoundHost>) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            // Only a device this process browses for has a browser to hand a
+            // set to. A profile of a daemon this process attached to browses
+            // the network itself, and a set found here would be a second
+            // opinion it never asked for.
+            let Some((installation, _)) = &self.entitlement else {
+                return;
+            };
+            let Some(installation) = installation.upgrade() else {
+                return;
+            };
+            installation
+                .hand_over_discovered(
+                    found
+                        .into_iter()
+                        .map(|host| node::discovery::Advertisement {
+                            host_id: host.host,
+                            name: host.name,
+                            version: host.version,
+                            addrs: host.addrs,
+                        })
+                        .collect(),
+                )
+                .await;
+        })
+    }
     fn confirm_pair(&self, pending: PendingPeer) -> BoxFuture<'_, Result<PeerEntry, String>> {
         Box::pin(async move {
-            self.0
+            self.admin
                 .confirm_pair(pending)
                 .await
                 .map_err(|e| e.to_string())
@@ -334,17 +512,39 @@ impl AccountAdmin for AdminSeat {
     }
     fn abandon_pair(&self, pending: PendingPeer) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            self.0
+            self.admin
                 .abandon_pair(pending)
                 .await
                 .map_err(|e| e.to_string())
         })
     }
+    fn refresh_entitlement(&self) -> BoxFuture<'_, Result<Tier, String>> {
+        Box::pin(async move {
+            let (installation, profile) = self
+                .entitlement
+                .as_ref()
+                .ok_or("this client holds no account service")?;
+            let installation = installation.upgrade().ok_or("the device has stopped")?;
+            installation
+                .refresh_entitlement(*profile)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
     fn pair_link_now(&self, payload: String) -> BoxFuture<'_, Result<String, String>> {
         Box::pin(async move {
             let payload = node::parse_qr_pairing_payload(&payload).map_err(|e| e.to_string())?;
-            self.0
-                .pair_qr_cloud_peer(payload.host_id, payload.secret)
+            // Authenticate the link, then commit trust in the same breath.
+            // Pairing has only the two-phase form, so standing in for the
+            // person means answering the pending peer immediately rather
+            // than calling a one-shot the protocol no longer offers.
+            let pending = self
+                .admin
+                .begin_pair_qr(&payload)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.admin
+                .confirm_pair(pending)
                 .await
                 .map(|peer| peer.name)
                 .map_err(|e| e.to_string())
@@ -352,14 +552,105 @@ impl AccountAdmin for AdminSeat {
     }
 }
 
+/// What a pairing failure is worth saying to a screen.
+///
+/// A machine only a relay could reach, on an account that has not paid for
+/// one, is the single failure a person can do something about; every other
+/// way an attempt can end tells somebody guessing codes nothing.
+fn refusal(error: client::PairingError) -> Refusal {
+    match error {
+        client::PairingError::PaymentRequired => Refusal::SubscriptionRequired,
+        _ => Refusal::Refused,
+    }
+}
+
 /// The installation this process created, and the sessions it opened on it.
+/// Writes what this runtime decides to the log a report reads.
+///
+/// A device's runtime had no tracing sink of any kind, so the only account of
+/// what it did — which address it dialled, why a link never came up — was
+/// discarded as it was written, and every report's log tail was empty. Only
+/// the build with the driving tools does this: on a device nobody is
+/// debugging, a file that grows for the life of an installation buys nothing,
+/// and the report is written from a recording rather than from prose.
+///
+/// Once per process, and the file starts empty: a driver reads this run.
+#[cfg(feature = "debug-tools")]
+fn write_tracing_to(log_path: &std::path::Path) {
+    use tracing_subscriber::EnvFilter;
+
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let mut installed = false;
+    INSTALLED.get_or_init(|| installed = true);
+    if !installed {
+        return;
+    }
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(file) = std::fs::File::create(log_path) else {
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("warn,node=debug,app_runtime=debug,app_embedded=debug")
+        }))
+        .with_writer(move || file.try_clone().expect("clone the runtime log handle"))
+        .try_init();
+}
+
+#[cfg(not(feature = "debug-tools"))]
+fn write_tracing_to(_log_path: &std::path::Path) {}
+
 pub struct Embedded {
     pub sessions: Sessions,
-    installation: Option<Installation>,
+    /// The removed accounts this open really did get rid of: the profile gone
+    /// and everything cached for it gone too.
+    ///
+    /// Only these may be dropped from the application's own list of accounts
+    /// awaiting removal. One whose profile or caches would not delete is
+    /// absent, so the next start is asked to try again rather than the phone
+    /// showing an account as gone while its key is still on the device.
+    pub forgotten: Vec<String>,
+    installation: Option<Arc<Installation>>,
+    /// Turns each profile's own account of its cloud link into the states a
+    /// screen words. Stopped with this crate's installation.
+    statuses: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// One profile this process opened, before it became a session.
+struct Opened {
+    account: Option<String>,
+    id: ProfileId,
+    relay: Option<(watch::Receiver<RelayConnection>, Arc<RelayRetry>)>,
+}
+
+/// What a screen says about a profile's link, from what the profile observed.
+///
+/// Nobody signed in is signed out whatever the link is doing, because there is
+/// no link: a device with no account reaches the machines on its own network
+/// and nothing else.
+fn cloud_state(observed: &Observed, signed_in: bool) -> CloudState {
+    if !signed_in {
+        return CloudState::SignedOut;
+    }
+    match observed {
+        Observed::Local | Observed::Connecting => CloudState::Connecting,
+        Observed::Connected { tier, carrier } => CloudState::Connected {
+            tier: *tier,
+            carrier: *carrier,
+        },
+        Observed::Retrying | Observed::UpdateRequired { .. } | Observed::StartupFailed => {
+            CloudState::Retrying
+        }
+        Observed::AuthenticationRequired => CloudState::AuthRequired,
+    }
 }
 
 impl Embedded {
-    /// Open one profile per account and put the named one on screen.
+    /// Open one profile per account and put the named one on screen, or open
+    /// the one profile a device with nobody signed in runs.
     ///
     /// Token requests for every account go out on `requests`, each naming
     /// the account it is for.
@@ -367,8 +658,12 @@ impl Embedded {
         config: &StartConfig,
         requests: mpsc::Sender<TokenRequest>,
     ) -> Result<Self, String> {
-        config.endpoint()?;
+        let endpoint = config.endpoint()?;
+        write_tracing_to(&config.log_path);
         let next_id = Arc::new(AtomicU64::new(1));
+        // What this device has found is whatever the application last handed
+        // over, so the browser is the app's and every profile reads it.
+        let discovery = Arc::new(node::discovery::ScriptedDiscovery::new());
         // Which provider belongs to which profile is settled after the profile
         // exists, so the installation reads it out of this map rather than
         // being handed a provider it would have to guess an owner for.
@@ -390,96 +685,125 @@ impl Embedded {
             })),
             identity_http: reqwest::Client::new(),
             host_factory: None,
+            // The application browses this device's network; nothing here
+            // asks the system for it, because on a phone only the system may.
+            discovery: Some(discovery.clone()),
         })
         .await
         .map_err(|error| error.to_string())?;
+        // Shared with each profile's administration, which has to be able to
+        // ask the account service a question the profile itself cannot.
+        let installation = Arc::new(installation);
+        // Before any profile is chosen: a removed account's profile must not
+        // be adopted, reopened or left running beside the ones that are.
+        let mut forgotten = Vec::new();
+        let mut unfinished = Vec::new();
+        for account in &config.forget {
+            match forget_profile(&installation, account, &config.cache_dir).await {
+                None => forgotten.push(account.clone()),
+                Some(left) => unfinished.push((account.clone(), left)),
+            }
+        }
 
-        // A device that has run before already has its profiles; the account
-        // list names them, so an account is matched to the profile that was
-        // labelled with it and only an account with none gets a new one.
-        let mut existing: HashMap<String, ProfileId> = installation
-            .profiles()
-            .into_iter()
-            .filter_map(|profile| {
-                Some((
-                    profile.record.label.override_name.clone()?,
-                    profile.record.id,
-                ))
-            })
-            .collect();
-        let mut sessions = Vec::with_capacity(config.accounts.len());
-        for account in &config.accounts {
-            let provider: Arc<dyn CredentialProvider> = Arc::new(Credentials {
-                account: account.id.clone(),
-                source: account.token.clone(),
-                requests: requests.clone(),
-                next_id: next_id.clone(),
-            });
-            let id = match existing.remove(&account.id) {
-                Some(id) => id,
-                None => {
-                    let profile = installation
-                        .create(OperationId::new(), Some(account.id.clone()))
-                        .await
-                        .map_err(|error| format!("create {}: {error}", account.id))?;
-                    if !profile.available {
-                        return Err(format!(
-                            "create {}: {}",
-                            account.id,
-                            profile
-                                .startup_error
-                                .unwrap_or_else(|| "unavailable".into())
-                        ));
-                    }
-                    profile.record.id
+        let opened = match config.accounts.is_empty() {
+            true => vec![signed_out_profile(&installation, config.active.as_deref()).await?],
+            false => {
+                let mut opened = Vec::with_capacity(config.accounts.len());
+                for account in &config.accounts {
+                    opened.push(
+                        signed_in_profile(
+                            &installation,
+                            account,
+                            endpoint.as_ref().expect("a signed-in client has a relay"),
+                            &providers,
+                            &requests,
+                            &next_id,
+                        )
+                        .await?,
+                    );
                 }
-            };
-            providers
-                .lock()
-                .expect("credential providers poisoned")
-                .insert(id, provider.clone());
-            let (connection, relay) = watch::channel(RelayConnection::Connecting);
-            let retry = Arc::new(RelayRetry::default());
-            installation
-                .use_embedded_relay(
-                    id,
-                    EmbeddedRelay {
-                        endpoint: config.endpoint()?,
-                        credentials: provider,
-                        connection,
-                        retry: retry.clone(),
-                    },
-                )
-                .await
-                .map_err(|error| format!("relay for {}: {error}", account.id))?;
+                opened
+            }
+        };
+
+        // Each profile's link state, as the screen words it, before any of
+        // them has been reported: a session that has not been told anything
+        // yet says what is true of it rather than nothing at all.
+        let mut clouds = HashMap::new();
+        let mut sessions = Vec::with_capacity(opened.len());
+        for profile in &opened {
+            let (state, cloud) =
+                watch::channel(cloud_state(&Observed::Local, profile.account.is_some()));
+            clouds.insert(profile.id, (state, profile.account.is_some()));
             let status = installation
                 .profiles()
                 .into_iter()
-                .find(|profile| profile.record.id == id)
-                .ok_or("profile vanished after it was created")?;
-            let admin = Arc::new(AdminSeat(
+                .find(|status| status.record.id == profile.id)
+                .ok_or("profile vanished after it was opened")?;
+            let admin = Arc::new(AdminSeat::embedded(
                 installation
-                    .admin(id)
+                    .admin(profile.id)
                     .await
-                    .map_err(|error| format!("admin for {}: {error}", account.id))?,
+                    .map_err(|error| format!("admin for {}: {error}", profile.id))?,
+                &installation,
+                profile.id,
             ));
+            let (relay, link): (watch::Receiver<RelayConnection>, Arc<dyn Link>) =
+                match &profile.relay {
+                    Some((relay, retry)) => (relay.clone(), Arc::new(RelayLink(retry.clone()))),
+                    // Nobody signed in has no link to report on and nothing to
+                    // ask of one. Saying so is the honest answer to a screen
+                    // that draws a connection: this device is not disconnected
+                    // from a relay, it is not on one.
+                    None => {
+                        let (state, relay) = watch::channel(RelayConnection::Disconnected {
+                            reason: node::DisconnectReason::Stopped,
+                        });
+                        (relay, Arc::new(NoLink(state)))
+                    }
+                };
             sessions.push(Session {
-                account: account.id.clone(),
-                profile: id,
+                account: profile.account.clone(),
+                profile: profile.id,
                 host: status.host_id,
                 relay,
-                link: Arc::new(RelayLink(retry)),
+                cloud,
+                link,
                 client: installation
-                    .client(id)
-                    .map_err(|error| format!("client for {}: {error}", account.id))?,
+                    .client(profile.id)
+                    .map_err(|error| format!("client for {}: {error}", profile.id))?,
                 inventory: admin.clone(),
                 admin,
             });
         }
-        let sessions = Sessions::open(sessions, &config.active, config.places())?;
+        let statuses = watch_profiles(&installation, clouds);
+        let sessions = Sessions::open(
+            sessions,
+            config
+                .active
+                .as_deref()
+                .filter(|_| !config.accounts.is_empty()),
+            config.places(),
+        )?;
+        // Where each account's remembered fleet is, for the launch after this
+        // one: a launch has rows to draw before it has started anything, and
+        // profile identifiers are the installation's to make.
+        let mut directory: std::collections::BTreeMap<String, ProfileId> = sessions
+            .sessions
+            .iter()
+            .filter_map(|session| Some((session.account.clone()?, session.profile)))
+            .collect();
+        directory.insert(String::new(), sessions.active_profile());
+        // A removed account whose profile or caches would not delete keeps its
+        // entry, because a profile that is already gone can be found again
+        // only by the identifier this directory holds.
+        directory.extend(unfinished);
+        let _ = app_runtime::cache::remember_profiles(&config.cache_dir, &directory);
         Ok(Self {
             sessions,
+            forgotten,
             installation: Some(installation),
+            statuses: Some(statuses),
         })
     }
 
@@ -491,8 +815,209 @@ impl Embedded {
     /// Stop the installation this process created. Nothing else is stopped:
     /// every view and subscription is the app layer's to close.
     pub async fn shutdown(&mut self) {
+        if let Some(statuses) = self.statuses.take() {
+            statuses.abort();
+        }
         if let Some(installation) = self.installation.take() {
             installation.shutdown(ShutdownReason::UserRequested).await;
         }
     }
+}
+
+/// The profile a device with nobody signed in runs on.
+///
+/// Preferably the one the account last on screen was labelled with, so signing
+/// out leaves that account's machines where they were rather than emptying the
+/// app. Otherwise the unbound profile — the one carrying no account's label —
+/// which is the profile a phone that has never been signed in pairs on, and
+/// the one the first account will adopt.
+async fn signed_out_profile(
+    installation: &Installation,
+    last: Option<&str>,
+) -> Result<Opened, String> {
+    let profiles = installation.profiles();
+    let remembered = last.and_then(|last| {
+        profiles
+            .iter()
+            .find(|profile| profile.record.label.override_name.as_deref() == Some(last))
+    });
+    let unbound = profiles
+        .iter()
+        .find(|profile| profile.record.label.override_name.is_none());
+    let id = match remembered.or(unbound) {
+        Some(profile) => profile.record.id,
+        None => {
+            let created = installation
+                .create(OperationId::new(), None)
+                .await
+                .map_err(|error| format!("create the first profile: {error}"))?;
+            available(&created)?;
+            created.record.id
+        }
+    };
+    Ok(Opened {
+        account: None,
+        id,
+        relay: None,
+    })
+}
+
+/// The profile one account runs on, and its relay link.
+///
+/// An account that has been on this device before has a profile labelled with
+/// it. An account signing in for the first time adopts the unbound profile if
+/// there is one — that is what keeps the machines a phone paired with before
+/// anybody signed in — and otherwise gets a profile of its own. A profile
+/// already labelled with somebody is never relabelled: a second account is a
+/// second device as far as the machines either of them knows are concerned.
+async fn signed_in_profile(
+    installation: &Installation,
+    account: &AccountConfig,
+    endpoint: &RelayEndpoint,
+    providers: &Arc<std::sync::Mutex<HashMap<ProfileId, Arc<dyn CredentialProvider>>>>,
+    requests: &mpsc::Sender<TokenRequest>,
+    next_id: &Arc<AtomicU64>,
+) -> Result<Opened, String> {
+    let profiles = installation.profiles();
+    let labelled = profiles
+        .iter()
+        .find(|profile| profile.record.label.override_name.as_deref() == Some(&account.id));
+    let id = match labelled {
+        Some(profile) => profile.record.id,
+        None => match profiles
+            .iter()
+            .find(|profile| profile.record.label.override_name.is_none())
+        {
+            // Adoption: the same profile, now under a name. Its key, its
+            // trust store and the fleet it remembers are the ones this device
+            // already had, because it is the same device.
+            Some(profile) => {
+                let adopted = installation
+                    .rename(
+                        OperationId::new(),
+                        profile.record.id,
+                        profile.record.revision,
+                        Some(account.id.clone()),
+                    )
+                    .await
+                    .map_err(|error| format!("adopt for {}: {error}", account.id))?;
+                available(&adopted)?;
+                adopted.record.id
+            }
+            None => {
+                let created = installation
+                    .create(OperationId::new(), Some(account.id.clone()))
+                    .await
+                    .map_err(|error| format!("create {}: {error}", account.id))?;
+                available(&created)?;
+                created.record.id
+            }
+        },
+    };
+    let provider: Arc<dyn CredentialProvider> = Arc::new(Credentials {
+        account: account.id.clone(),
+        source: account.token.clone(),
+        requests: requests.clone(),
+        next_id: next_id.clone(),
+    });
+    providers
+        .lock()
+        .expect("credential providers poisoned")
+        .insert(id, provider.clone());
+    let (connection, relay) = watch::channel(RelayConnection::Connecting);
+    let retry = Arc::new(RelayRetry::default());
+    installation
+        .use_embedded_relay(
+            id,
+            EmbeddedRelay {
+                endpoint: endpoint.clone(),
+                credentials: provider,
+                connection,
+                retry: retry.clone(),
+            },
+        )
+        .await
+        .map_err(|error| format!("relay for {}: {error}", account.id))?;
+    Ok(Opened {
+        account: Some(account.id.clone()),
+        id,
+        relay: Some((relay, retry)),
+    })
+}
+
+/// Delete the profile one removed account ran on, and everything this device
+/// cached for it, and say whether the device is genuinely rid of it: `None`
+/// when nothing of the account is left, or the profile still holding something
+/// when part of it would not delete.
+///
+/// A failure is written to the log and the start carries on. Removing an
+/// account is already done as far as the person is concerned — the app has let
+/// go of it — and a device that refused to start over a directory it could not
+/// delete would take every other account down with it. What the failure costs
+/// is the report: the account is not named as forgotten, so the app keeps it
+/// pending and the next start tries again.
+async fn forget_profile(
+    installation: &Installation,
+    account: &str,
+    cache_dir: &std::path::Path,
+) -> Option<ProfileId> {
+    let labelled = installation
+        .profiles()
+        .into_iter()
+        .find(|profile| profile.record.label.override_name.as_deref() == Some(account));
+    // An earlier start that deleted the profile and could not delete its
+    // caches left no label to find them by, so the directory this device
+    // writes is asked instead.
+    let id = match &labelled {
+        Some(profile) => profile.record.id,
+        None => app_runtime::cache::remembered_profile(cache_dir, Some(account))?,
+    };
+    let mut left = None;
+    if let Some(profile) = labelled
+        && let Err(error) = installation
+            .delete(OperationId::new(), id, profile.record.revision)
+            .await
+    {
+        tracing::warn!(%id, %error, "could not delete a removed account's profile");
+        left = Some(id);
+    }
+    if let Err(error) = app_runtime::cache::forget_profile(cache_dir, id) {
+        tracing::warn!(%id, %error, "could not delete a removed account's caches");
+        left = Some(id);
+    }
+    left
+}
+
+fn available(profile: &node::ProfileStatus) -> Result<(), String> {
+    match profile.available {
+        true => Ok(()),
+        false => Err(profile
+            .startup_error
+            .clone()
+            .unwrap_or_else(|| "unavailable".into())),
+    }
+}
+
+/// Turn every profile's own account of its link into the state its session
+/// publishes, for as long as the installation runs.
+fn watch_profiles(
+    installation: &Installation,
+    clouds: HashMap<ProfileId, (watch::Sender<CloudState>, bool)>,
+) -> tokio::task::JoinHandle<()> {
+    let mut watch = installation.watch();
+    tokio::spawn(async move {
+        while let Some(event) = watch.recv().await {
+            let ProfileEvent::Upserted { profile, .. } = event else {
+                continue;
+            };
+            if let Some((state, signed_in)) = clouds.get(&profile.record.id) {
+                state.send_if_modified(|held| {
+                    let next = cloud_state(&profile.observed, *signed_in);
+                    let changed = *held != next;
+                    *held = next;
+                    changed
+                });
+            }
+        }
+    })
 }

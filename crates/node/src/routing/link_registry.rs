@@ -17,17 +17,13 @@ use model::Host;
 use tokio::sync::{Notify, RwLock, mpsc};
 use wire::pb;
 
+use crate::link::LinkCarrier as NativeLinkCarrier;
 use crate::routing::types::LinkId;
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
-use crate::{HostId, audit};
+use crate::routing::{ConnectRole, Incarnation};
+use crate::{HostId, Tier, audit};
 
 pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
-
-#[derive(Debug, thiserror::Error)]
-#[error("no live link to host {host_id}")]
-pub struct LinkUnavailable {
-    pub(crate) host_id: HostId,
-}
 
 #[derive(Default)]
 pub struct LinkRegistry {
@@ -46,6 +42,53 @@ pub enum LinkRole {
     CloudRelay,
 }
 
+/// The physical carrier underneath a direct routing link. Relay routes are
+/// identified by `Route::Via`; direct routes use this tag to distinguish SSH
+/// from a network connection.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum LinkCarrier {
+    Direct,
+    Ssh,
+}
+
+/// How this daemon authenticated a live link. Only token-admitted links
+/// carry entitlement: pinned device links are independent of any account.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LinkAdmission {
+    PinnedKey,
+    CloudToken { tier: Tier },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct LinkProperties {
+    pub(crate) role: LinkRole,
+    pub(crate) admission: LinkAdmission,
+    pub(crate) carrier: LinkCarrier,
+    /// The life of the peer's runtime this link was opened by.
+    pub(crate) incarnation: Incarnation,
+    pub(crate) direct_order: Option<DirectLinkOrder>,
+}
+
+/// Stable ordering for crossed direct dials. A fallback remains valid when it
+/// is the only connection; when both directions connect, both peers retain the
+/// same preferred physical link.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DirectLinkOrder {
+    Preferred,
+    Fallback,
+}
+
+impl DirectLinkOrder {
+    pub(crate) fn for_hosts(local: HostId, peer: HostId, role: ConnectRole) -> Self {
+        let local_opens_preferred = local < peer;
+        if local_opens_preferred == (role == ConnectRole::Connector) {
+            Self::Preferred
+        } else {
+            Self::Fallback
+        }
+    }
+}
+
 #[derive(Clone)]
 struct LinkWriter {
     host: Host,
@@ -53,6 +96,11 @@ struct LinkWriter {
     close_tx: mpsc::Sender<LinkCloseRequest>,
     closed: Arc<Notify>,
     role: LinkRole,
+    admission: LinkAdmission,
+    carrier: LinkCarrier,
+    incarnation: Incarnation,
+    direct_order: Option<DirectLinkOrder>,
+    native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
 }
 
 /// A local request for the link's connect task to close the link. Distinct
@@ -61,6 +109,18 @@ struct LinkWriter {
 pub(crate) enum LinkCloseRequest {
     OutgoingQueueFull,
     TrustReplaced,
+    Superseded,
+}
+
+/// A link the registry accepted.
+pub(crate) struct Registration {
+    /// Receives the registry's requests to close this link.
+    pub(crate) close_rx: mpsc::Receiver<LinkCloseRequest>,
+    /// Direct links to the same peer this one superseded. They are gone from
+    /// the registry already and are asked to close, but their own tasks take
+    /// time to finish; whoever routes over links has to forget them now, or a
+    /// call in that gap picks a link nothing can open a stream on.
+    pub(crate) displaced: Vec<LinkId>,
 }
 
 impl LinkRegistry {
@@ -76,10 +136,21 @@ impl LinkRegistry {
         ids
     }
 
+    pub async fn cloud_relay_carrier(&self) -> Option<Arc<dyn NativeLinkCarrier>> {
+        self.state
+            .read()
+            .await
+            .writers
+            .values()
+            .find(|writer| writer.role == LinkRole::CloudRelay)
+            .and_then(|writer| writer.native_carrier.clone())
+    }
+
     /// Registers a live link and runs the adjacency discipline atomically:
     /// other links learn `NeighborUp(peer)` if this is the first link to the
     /// peer, and this link receives the diff between `advertised_snapshot`
     /// (the neighbor set its handshake carried) and the current one.
+    #[cfg(test)]
     pub(crate) async fn register(
         &self,
         link: LinkId,
@@ -88,6 +159,93 @@ impl LinkRegistry {
         role: LinkRole,
         advertised_snapshot: &[HostId],
     ) -> mpsc::Receiver<LinkCloseRequest> {
+        self.register_with_details(
+            link,
+            host,
+            outgoing_tx,
+            LinkProperties {
+                role,
+                admission: LinkAdmission::PinnedKey,
+                carrier: LinkCarrier::Direct,
+                incarnation: crate::routing::Incarnation::random(),
+                direct_order: None,
+            },
+            advertised_snapshot,
+            None,
+        )
+        .await
+        .expect("test registration has no ordered direct duplicate")
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn register_with_admission(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        role: LinkRole,
+        admission: LinkAdmission,
+        advertised_snapshot: &[HostId],
+    ) -> mpsc::Receiver<LinkCloseRequest> {
+        self.register_with_details(
+            link,
+            host,
+            outgoing_tx,
+            LinkProperties {
+                role,
+                admission,
+                carrier: LinkCarrier::Direct,
+                incarnation: crate::routing::Incarnation::random(),
+                direct_order: None,
+            },
+            advertised_snapshot,
+            None,
+        )
+        .await
+        .expect("test registration has no ordered direct duplicate")
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn register_with_details(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        properties: LinkProperties,
+        advertised_snapshot: &[HostId],
+        native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
+    ) -> Option<mpsc::Receiver<LinkCloseRequest>> {
+        self.register_displacing(
+            link,
+            host,
+            outgoing_tx,
+            properties,
+            advertised_snapshot,
+            native_carrier,
+        )
+        .await
+        .map(|registration| registration.close_rx)
+    }
+
+    /// Registers a link and names the direct links it superseded, or refuses
+    /// it where the same incarnation of the peer already holds a direct link
+    /// that wins against it.
+    pub(crate) async fn register_displacing(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        properties: LinkProperties,
+        advertised_snapshot: &[HostId],
+        native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
+    ) -> Option<Registration> {
+        let LinkProperties {
+            role,
+            admission,
+            carrier,
+            incarnation,
+            direct_order,
+        } = properties;
         let (close_tx, close_rx) = mpsc::channel(1);
         let closed = Arc::new(Notify::new());
         let mut state = self.state.write().await;
@@ -96,6 +254,38 @@ impl LinkRegistry {
             .values()
             .any(|writer| writer.host.id == host.id);
 
+        let mut displaced = Vec::new();
+        if role == LinkRole::Peer
+            && carrier == LinkCarrier::Direct
+            && let Some(order) = direct_order
+        {
+            let duplicates = state
+                .writers
+                .iter()
+                .filter(|(_, writer)| {
+                    writer.host.id == host.id
+                        && writer.role == LinkRole::Peer
+                        && writer.carrier == LinkCarrier::Direct
+                        && writer.direct_order.is_some()
+                })
+                .map(|(id, writer)| (*id, writer.direct_order.unwrap(), writer.incarnation))
+                .collect::<Vec<_>>();
+            // A duplicate from the same incarnation is the same live process:
+            // a crossed dial, settled by keeping the preferred link. One from
+            // another incarnation belongs to a process that has since died, so
+            // it is replaced whichever direction either link was dialled in.
+            if duplicates.iter().any(|(_, existing, from)| {
+                *from == incarnation
+                    && (*existing == DirectLinkOrder::Preferred || *existing == order)
+            }) {
+                return None;
+            }
+            for (id, _, _) in duplicates {
+                if let Some(writer) = state.writers.remove(&id) {
+                    displaced.push((id, writer));
+                }
+            }
+        }
         // Reconcile the new link's view: the handshake snapshot plus this
         // diff equals the registry's neighbor set at this instant.
         let advertised: HashSet<HostId> = advertised_snapshot.iter().copied().collect();
@@ -131,15 +321,29 @@ impl LinkRegistry {
                 close_tx,
                 closed,
                 role,
+                admission,
+                carrier,
+                incarnation,
+                direct_order,
+                native_carrier,
             },
         );
         drop(state);
+        let displaced_ids = displaced.iter().map(|(id, _)| *id).collect();
+        for (id, writer) in displaced {
+            let _ = writer.close_tx.try_send(LinkCloseRequest::Superseded);
+            writer.closed.notify_waiters();
+            audit::link_down(writer.host.id, &id, "superseded");
+        }
         if let Some(old) = old {
             old.closed.notify_waiters();
             audit::link_down(old.host.id, &link, "replaced");
         }
         audit::link_up(host.id, &link, role);
-        close_rx
+        Some(Registration {
+            close_rx,
+            displaced: displaced_ids,
+        })
     }
 
     /// Removes a link; if it was the last link to its peer, other links
@@ -213,21 +417,109 @@ impl LinkRegistry {
         closing.into_iter().map(|(link, _)| link).collect()
     }
 
-    /// The writer for one specific link.
-    pub(crate) async fn outgoing_tx(&self, link: &LinkId) -> Result<LinkOutputTx, LinkUnavailable> {
+    /// Requests closure of every device-to-device link and waits until each
+    /// has left the registry. Cloud relay links remain available.
+    pub async fn close_peer_links(&self) -> Vec<LinkId> {
+        let closing = {
+            let state = self.state.read().await;
+            state
+                .writers
+                .iter()
+                .filter(|(_, writer)| writer.role == LinkRole::Peer)
+                .map(|(link, writer)| {
+                    let _ = writer.close_tx.try_send(LinkCloseRequest::TrustReplaced);
+                    (*link, writer.closed.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        for (link, closed) in &closing {
+            loop {
+                let notified = closed.notified();
+                if !self.state.read().await.writers.contains_key(link) {
+                    break;
+                }
+                notified.await;
+            }
+        }
+        closing.into_iter().map(|(link, _)| link).collect()
+    }
+
+    pub(crate) async fn admission(&self, link: &LinkId) -> Option<LinkAdmission> {
         self.state
             .read()
             .await
             .writers
             .get(link)
-            .map(|writer| writer.tx.clone())
-            .ok_or(LinkUnavailable {
-                host_id: link.peer(),
+            .map(|writer| writer.admission)
+    }
+
+    pub(crate) async fn carrier(&self, link: &LinkId) -> Option<LinkCarrier> {
+        self.state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .map(|writer| writer.carrier)
+    }
+
+    pub(crate) async fn native_carrier(&self, link: &LinkId) -> Option<Arc<dyn NativeLinkCarrier>> {
+        self.state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .and_then(|writer| writer.native_carrier.clone())
+    }
+
+    pub async fn native_carrier_to_peer(
+        &self,
+        peer: HostId,
+    ) -> Option<(LinkId, Arc<dyn NativeLinkCarrier>)> {
+        self.state
+            .read()
+            .await
+            .writers
+            .iter()
+            .find_map(|(link, writer)| {
+                (writer.host.id == peer)
+                    .then(|| {
+                        writer
+                            .native_carrier
+                            .clone()
+                            .map(|carrier| (*link, carrier))
+                    })
+                    .flatten()
             })
     }
 
-    pub(crate) async fn has_link(&self, link: &LinkId) -> bool {
-        self.state.read().await.writers.contains_key(link)
+    pub(crate) async fn native_route_to_peer(
+        &self,
+        peer: HostId,
+    ) -> Option<(LinkId, Arc<dyn NativeLinkCarrier>, LinkAdmission)> {
+        self.state
+            .read()
+            .await
+            .writers
+            .iter()
+            .find_map(|(link, writer)| {
+                if writer.host.id != peer {
+                    return None;
+                }
+                writer
+                    .native_carrier
+                    .clone()
+                    .map(|carrier| (*link, carrier, writer.admission))
+            })
+    }
+
+    pub(crate) async fn update_cloud_tier(&self, link: &LinkId, tier: Tier) {
+        let mut state = self.state.write().await;
+        let Some(writer) = state.writers.get_mut(link) else {
+            return;
+        };
+        if matches!(writer.admission, LinkAdmission::CloudToken { .. }) {
+            writer.admission = LinkAdmission::CloudToken { tier };
+        }
     }
 
     /// A writer for any live link to `peer` — the forwarding rule's "do I
@@ -242,40 +534,17 @@ impl LinkRegistry {
             .map(|(link, writer)| (*link, writer.tx.clone()))
     }
 
-    /// Rule 2's action: enqueue `message` on any live link to `peer`,
-    /// applying the full-queue close policy — forwarding never awaits a
-    /// congested link (a slow peer must not stall the origin link's
-    /// inbound processing). Returns false when no direct link to `peer`
-    /// exists.
-    pub(crate) async fn forward_to_peer(&self, peer: HostId, message: pb::Message) -> bool {
-        let state = self.state.read().await;
-        let Some(writer) = state.writers.values().find(|writer| writer.host.id == peer) else {
-            return false;
-        };
-        try_send_or_request_close(&writer.tx, &writer.close_tx, message);
-        true
-    }
-
-    /// Best-effort enqueue on one specific link (proactive `TunnelClose`):
-    /// never awaits a full queue inline and never escalates — a close the
-    /// peer misses is recovered by the unknown-id drop rule or link death.
-    pub(crate) async fn send_best_effort(&self, link: &LinkId, message: pb::Message) {
-        let outgoing = self
-            .state
-            .read()
-            .await
-            .writers
-            .get(link)
-            .map(|writer| writer.tx.clone());
-        if let Some(outgoing_tx) = outgoing {
-            try_send_or_spawn(outgoing_tx, message);
-        }
-    }
-
-    pub(crate) async fn is_cloud_relay(&self, link: &LinkId) -> bool {
-        self.link_role(link)
-            .await
-            .is_some_and(|role| role == LinkRole::CloudRelay)
+    /// Whether a live network link already serves this peer directly.
+    ///
+    /// Link registration precedes routing-table publication. Discovery can
+    /// arrive in that interval, so a dial guard that consults routes alone can
+    /// open a second connection back to the peer that just connected.
+    pub(crate) async fn has_direct_peer_link_to(&self, peer: HostId) -> bool {
+        self.state.read().await.writers.values().any(|writer| {
+            writer.host.id == peer
+                && writer.role == LinkRole::Peer
+                && writer.carrier == LinkCarrier::Direct
+        })
     }
 
     pub(crate) async fn link_role(&self, link: &LinkId) -> Option<LinkRole> {
@@ -332,17 +601,6 @@ impl LinkRegistry {
         for outgoing_tx in outgoing {
             try_send_or_spawn(outgoing_tx, message.clone());
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn outgoing_writers(&self) -> Vec<LinkOutputTx> {
-        self.state
-            .read()
-            .await
-            .writers
-            .values()
-            .map(|writer| writer.tx.clone())
-            .collect()
     }
 }
 
@@ -413,6 +671,7 @@ mod tests {
                 features: Vec::new(),
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         }
     }
 
@@ -536,6 +795,175 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn crossed_direct_dials_converge_on_the_same_physical_link() {
+        let registry = LinkRegistry::default();
+        let peer = host(2);
+        let fallback = link(2, 1);
+        let preferred = link(2, 2);
+        let life = crate::routing::Incarnation::random();
+
+        let (fallback_tx, _) = mpsc::channel(8);
+        let mut fallback_close = registry
+            .register_with_details(
+                fallback,
+                peer.clone(),
+                fallback_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: LinkCarrier::Direct,
+                    incarnation: life,
+                    direct_order: Some(DirectLinkOrder::Fallback),
+                },
+                &[],
+                None,
+            )
+            .await
+            .expect("a lone fallback link is usable");
+
+        let (preferred_tx, _) = mpsc::channel(8);
+        let registration = registry
+            .register_displacing(
+                preferred,
+                peer.clone(),
+                preferred_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: LinkCarrier::Direct,
+                    incarnation: life,
+                    direct_order: Some(DirectLinkOrder::Preferred),
+                },
+                &[],
+                None,
+            )
+            .await
+            .expect("a preferred link supersedes a fallback");
+        assert_eq!(registration.displaced, vec![fallback]);
+        assert_eq!(
+            fallback_close.recv().await,
+            Some(LinkCloseRequest::Superseded)
+        );
+        assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+
+        let (late_fallback_tx, _) = mpsc::channel(8);
+        assert!(
+            registry
+                .register_with_details(
+                    link(2, 3),
+                    peer,
+                    late_fallback_tx,
+                    LinkProperties {
+                        role: LinkRole::Peer,
+                        admission: LinkAdmission::PinnedKey,
+                        carrier: LinkCarrier::Direct,
+                        incarnation: life,
+                        direct_order: Some(DirectLinkOrder::Fallback),
+                    },
+                    &[],
+                    None,
+                )
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            registry.links_per_peer().await,
+            vec![(Uuid::from_u128(2), 1)]
+        );
+    }
+
+    fn direct(order: DirectLinkOrder, incarnation: Incarnation) -> LinkProperties {
+        LinkProperties {
+            role: LinkRole::Peer,
+            admission: LinkAdmission::PinnedKey,
+            carrier: LinkCarrier::Direct,
+            incarnation,
+            direct_order: Some(order),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_link_from_a_new_incarnation_replaces_the_old_one_in_either_direction() {
+        use DirectLinkOrder::{Fallback, Preferred};
+        for (held, arriving) in [
+            (Fallback, Fallback),
+            (Fallback, Preferred),
+            (Preferred, Fallback),
+            (Preferred, Preferred),
+        ] {
+            let registry = LinkRegistry::default();
+            let peer = host(2);
+            let dead = link(2, 1);
+            let (dead_tx, _) = mpsc::channel(8);
+            let mut dead_close = registry
+                .register_with_details(
+                    dead,
+                    peer.clone(),
+                    dead_tx,
+                    direct(held, Incarnation::random()),
+                    &[],
+                    None,
+                )
+                .await
+                .expect("a lone link is usable");
+
+            let (restarted_tx, _) = mpsc::channel(8);
+            let registration = registry
+                .register_displacing(
+                    link(2, 2),
+                    peer.clone(),
+                    restarted_tx,
+                    direct(arriving, Incarnation::random()),
+                    &[],
+                    None,
+                )
+                .await
+                .unwrap_or_else(|| panic!("{arriving:?} from a restart was refused by {held:?}"));
+            assert_eq!(registration.displaced, vec![dead]);
+            assert_eq!(dead_close.recv().await, Some(LinkCloseRequest::Superseded));
+            assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn one_incarnation_keeps_its_first_link_in_each_direction() {
+        for order in [DirectLinkOrder::Fallback, DirectLinkOrder::Preferred] {
+            let registry = LinkRegistry::default();
+            let peer = host(2);
+            let life = Incarnation::random();
+            let (first_tx, _) = mpsc::channel(8);
+            registry
+                .register_with_details(
+                    link(2, 1),
+                    peer.clone(),
+                    first_tx,
+                    direct(order, life),
+                    &[],
+                    None,
+                )
+                .await
+                .expect("a lone link is usable");
+
+            let (second_tx, _) = mpsc::channel(8);
+            assert!(
+                registry
+                    .register_with_details(
+                        link(2, 2),
+                        peer.clone(),
+                        second_tx,
+                        direct(order, life),
+                        &[],
+                        None
+                    )
+                    .await
+                    .is_none(),
+                "a second {order:?} link from the same process was accepted"
+            );
+            assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+        }
+    }
+
+    #[tokio::test]
     async fn a_neighbor_is_never_told_about_itself() {
         let registry = LinkRegistry::default();
         let (peer_tx, mut peer_rx) = mpsc::channel(8);
@@ -642,6 +1070,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cloud_admission_tier_updates_without_changing_pinned_links() {
+        let registry = LinkRegistry::default();
+        let cloud = link(1, 1);
+        let pinned = link(2, 1);
+        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        registry
+            .register_with_admission(
+                cloud,
+                host(1),
+                cloud_tx,
+                LinkRole::CloudRelay,
+                LinkAdmission::CloudToken { tier: Tier::Free },
+                &[],
+            )
+            .await;
+        let (pinned_tx, _pinned_rx) = mpsc::channel(8);
+        registry
+            .register(pinned, host(2), pinned_tx, LinkRole::Peer, &[])
+            .await;
+
+        registry.update_cloud_tier(&cloud, Tier::Pro).await;
+        registry.update_cloud_tier(&pinned, Tier::Free).await;
+
+        assert_eq!(
+            registry.admission(&cloud).await,
+            Some(LinkAdmission::CloudToken { tier: Tier::Pro })
+        );
+        assert_eq!(
+            registry.admission(&pinned).await,
+            Some(LinkAdmission::PinnedKey)
+        );
+    }
+
+    #[tokio::test]
     async fn cloud_relay_role_is_tracked_per_link() {
         let registry = LinkRegistry::default();
         let (cloud_tx, _cloud_rx) = mpsc::channel(1);
@@ -653,8 +1115,11 @@ mod tests {
             .register(link(2, 1), host(2), peer_tx, LinkRole::Peer, &[])
             .await;
 
-        assert!(registry.is_cloud_relay(&link(1, 1)).await);
-        assert!(!registry.is_cloud_relay(&link(2, 1)).await);
+        assert_eq!(
+            registry.link_role(&link(1, 1)).await,
+            Some(LinkRole::CloudRelay)
+        );
+        assert_eq!(registry.link_role(&link(2, 1)).await, Some(LinkRole::Peer));
         assert!(registry.has_cloud_relay_link_to(Uuid::from_u128(1)).await);
         assert!(!registry.has_cloud_relay_link_to(Uuid::from_u128(2)).await);
     }

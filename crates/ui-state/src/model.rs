@@ -10,7 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use model::{Agent, AgentId, AgentParent, HostEntry, HostId, WorkingOn};
+use model::{
+    Agent, AgentId, AgentParent, HostEntry, HostId, HostVia, RelayCarrier, Tier, WorkingOn,
+};
 pub use model::{AgentPhase, Attention, StructuredProtocol, Why};
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +46,29 @@ pub enum Connection {
     Disconnected {
         reason: DisconnectReason,
     },
+}
+
+/// The selected profile's one cloud-link state, supplied by the installation
+/// status stream rather than inferred from unrelated request failures.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "cloud", rename_all = "snake_case")]
+pub enum CloudState {
+    #[default]
+    SignedOut,
+    Connecting,
+    Connected {
+        tier: Tier,
+        carrier: RelayCarrier,
+    },
+    Retrying,
+    AuthRequired,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountPrompt {
+    SignIn,
+    Subscribe,
 }
 
 /// Typed per-agent state. Exhaustive dispatch is deliberate: a new agent
@@ -203,13 +228,17 @@ impl AgentLayer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentCard {
     pub agent: Agent,
+    /// Whether this agent was reconciled while its host was reachable.
+    #[serde(default = "agent_live_by_default")]
+    pub live: bool,
     /// Adapter-translated provider label. Nothing populates it in V1 (the
     /// naming translation cleanup is deferred); the display fallback already
     /// consults it.
     pub provider_label: Option<String>,
     pub attention: Attention,
-    /// Recency for fleet ranking: stream activity when observed, otherwise
-    /// the creation time.
+    /// Recency for fleet ranking: the host's date for the agent's last
+    /// activity, raised by live stream entries this client sees before the
+    /// host next announces it. Replayed history never raises it.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
     /// Loaded from the local store and not yet confirmed by this connection's
@@ -222,9 +251,13 @@ pub struct AgentCard {
     /// Typed native layer state. `None` until the structured stream
     /// produces evidence; unsupported agents honestly stay `Unknown`.
     pub(crate) layer: Option<AgentLayer>,
-    /// Epoch of the last upsert; entities from older epochs are pruned when
-    /// a reconnect snapshot completes.
+    /// Epoch of the last inventory reconciliation. Unreachable-host cards
+    /// advance with the snapshot that deliberately retains them.
     pub(crate) epoch: u64,
+}
+
+fn agent_live_by_default() -> bool {
+    true
 }
 
 impl AgentCard {
@@ -548,12 +581,9 @@ pub struct Model {
     pub(crate) connection: Connection,
     pub(crate) epoch: u64,
     pub(crate) local_host_id: Option<HostId>,
-    /// Cloud auth expired or missing: render the degraded banner, keep local
-    /// agents fully usable. Never a blocking screen.
-    pub(crate) cloud_auth_required: bool,
-    /// Cloud subscription missing: render the degraded banner while local
-    /// agents remain fully usable.
-    pub(crate) cloud_subscription_required: bool,
+    /// Cloud connectivity for the selected profile, from WatchProfiles.
+    #[serde(default)]
+    pub(crate) cloud_state: CloudState,
     /// The runtime observed structural incoherence this session. This is a
     /// sticky renderer fact, not an invariant derivation: views may format
     /// the warning but must never recompute the violation.
@@ -561,12 +591,18 @@ pub struct Model {
     pub(crate) hosts: BTreeMap<HostId, HostState>,
     pub(crate) agents: BTreeMap<AgentId, AgentCard>,
     /// Last authoritative remote membership; disconnection does not mean deletion.
+    /// Defaulted like the other later arrivals so a report recorded before it
+    /// existed still replays: no membership recorded is no membership known.
+    #[serde(default)]
     pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
     /// User-opened conversations outlive the temporary inventory removal of
     /// an unreachable host. Its next inventory re-establishes these streams.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) attached: BTreeMap<AgentId, HostId>,
+    /// Defaulted for the same reason as `remote_inventories`: a recording made
+    /// before held drafts existed has none, which is what an empty map says.
+    #[serde(default)]
     pub(crate) queues: BTreeMap<AgentId, crate::QueuedMessage>,
     pub(crate) pending_ops: BTreeMap<OpId, PendingOp>,
     pub(crate) finished_ops: Vec<FinishedOp>,
@@ -583,8 +619,7 @@ impl Default for Model {
             connection: Connection::Connecting,
             epoch: 0,
             local_host_id: None,
-            cloud_auth_required: false,
-            cloud_subscription_required: false,
+            cloud_state: CloudState::SignedOut,
             invariant_warning: false,
             hosts: BTreeMap::new(),
             agents: BTreeMap::new(),
@@ -703,12 +738,64 @@ impl Model {
         self.epoch
     }
 
-    pub fn cloud_auth_required(&self) -> bool {
-        self.cloud_auth_required
+    pub fn cloud_state(&self) -> &CloudState {
+        &self.cloud_state
     }
 
-    pub fn cloud_subscription_required(&self) -> bool {
-        self.cloud_subscription_required
+    pub fn host_via(&self, id: HostId) -> HostVia {
+        self.hosts
+            .get(&id)
+            .map_or(HostVia::Offline, |host| host.entry.via)
+    }
+
+    /// A host is away only when its selected route is the relay and the
+    /// selected profile's live relay link is free.
+    pub fn host_is_away(&self, id: HostId) -> bool {
+        self.host_via(id) == HostVia::Relay
+            && matches!(
+                self.cloud_state,
+                CloudState::Connected {
+                    tier: Tier::Free,
+                    ..
+                }
+            )
+    }
+
+    /// The account action that could restore unreachable trusted hosts.
+    /// Reachable direct and SSH hosts never produce an account prompt.
+    pub fn needs_account_prompt(&self) -> Option<AccountPrompt> {
+        let blocked = self.hosts.values().filter(|host| {
+            host.entry.via == HostVia::Offline
+                || (host.entry.via == HostVia::Relay
+                    && !matches!(
+                        self.cloud_state,
+                        CloudState::Connected {
+                            tier: Tier::Pro,
+                            ..
+                        }
+                    ))
+        });
+        let blocked = blocked.collect::<Vec<_>>();
+        if blocked.is_empty() {
+            return None;
+        }
+        if blocked
+            .iter()
+            .any(|host| host.entry.signed_in == Some(false))
+        {
+            return Some(AccountPrompt::SignIn);
+        }
+        match self.cloud_state {
+            CloudState::SignedOut | CloudState::AuthRequired => Some(AccountPrompt::SignIn),
+            CloudState::Connected {
+                tier: Tier::Free, ..
+            } => Some(AccountPrompt::Subscribe),
+            CloudState::Connecting
+            | CloudState::Retrying
+            | CloudState::Connected {
+                tier: Tier::Pro, ..
+            } => None,
+        }
     }
 
     /// Whether the runtime has observed any Model invariant violation this
@@ -1537,6 +1624,8 @@ mod tests {
             capabilities: Some(Capabilities::default()),
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: model::HostVia::Direct,
+            signed_in: Some(true),
             platform: None,
         }
     }
@@ -1554,6 +1643,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: t0(),
+            last_activity: t0(),
             parent: None,
             working_on: None,
             summary: None,

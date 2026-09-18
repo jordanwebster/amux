@@ -44,6 +44,7 @@ final class AccountsTests: JourneyCase {
     private enum Who {
         static let personal = (id: "personal", email: "ada@example.com", name: "Ada")
         static let work = (id: "work", email: "team@acme.example", name: "Acme")
+        static let side = (id: "side", email: "side@example.com", name: "Side")
     }
 
     private var runner: Runner!
@@ -94,6 +95,7 @@ final class AccountsTests: JourneyCase {
                 shortcut: { try self.selectAccount(Who.work) }),
             Act("delete", givingAnAccountUpForGood,
                 shortcut: { try self.selectAccount(Who.personal) }),
+            Act("remove-from-phone", takingAccountsOffThePhone),
             Act("help-and-appearance", theThingsThatBelongToThePhone),
         ]
     }
@@ -161,12 +163,14 @@ final class AccountsTests: JourneyCase {
     private func aPhoneNobodyHasSignedInOn() throws {
         waitFor(app, "home", "the home never appeared")
         record["gateAtLaunch"] = try says("home")
-        record["homeOffersAtLaunch"] = try called("home.empty.action")
-        record["homeSaysAtLaunch"] = try says("home.empty.title")
-        // One action, because there is one thing to do. New Agent needs a
-        // host, a host needs pairing and pairing needs an account, so the
-        // header does not draw it until the gate in front of it is open —
-        // offering it here would be offering a door that opens onto nothing.
+        // Pairing is offered as how to do it, not as a button: a code is typed
+        // for a machine this phone has found, and there is none yet.
+        record["homeOffersAtLaunch"] = element(app, "home.empty.howToPair").exists
+        record["homeOffersAccountAtLaunch"] = try called("home.empty.signIn")
+        record["homeSaysAtLaunch"] = try says("home.empty.firstRun")
+        // New Agent needs a machine to start one on, and this phone has not
+        // paired with any, so the header does not draw it — offering it here
+        // would be offering a door that opens onto nothing.
         record["homeNewAgentAtLaunch"] = element(app, "home.newAgent").exists
         XCTAssertFalse(element(app, "home.newAgent").exists,
                        "the signed-out home offered New Agent beside Sign In")
@@ -185,7 +189,7 @@ final class AccountsTests: JourneyCase {
 
     /// Signing in, and the two ways it does not finish.
     private func signingInAndTheTwoWaysItDoesNot() throws {
-        press(app, "home.empty.action")
+        press(app, "home.empty.signIn")
         waitFor(app, "sign-in", "Sign In did not lead to the sign-in page")
         record["signInOpens"] = try says("sign-in.opens")
         record["signInOffers"] = try called("sign-in.continue")
@@ -211,21 +215,25 @@ final class AccountsTests: JourneyCase {
         try signIn(as: Who.personal, entitlement: "none")
         waitFor(app, "home", "signing in did not come back to the home")
         record["gateAfterSigningIn"] = try waitForValue(runner, "home", "unsubscribed")
-        record["homeOffersAfterSigningIn"] = try called("home.empty.action")
+        // Pairing, not subscribing. An account with nothing bought has lost
+        // nothing on the network this phone is on, so the empty home offers
+        // the machine it would pair with and never a purchase.
+        record["homeOffersAfterSigningIn"] = element(app, "home.empty.howToPair").exists
         record["homeNewAgentAfterSigningIn"] = element(app, "home.newAgent").exists
         XCTAssertFalse(element(app, "home.newAgent").exists,
-                       "the home offered New Agent to an account with nothing bought")
+                       "the home offered New Agent with no machine to start one on")
         record["accountsAfterSigningIn"] = try accountsKnown()
+        record["callsAfterSigningIn"] = try cloudCalls()
     }
 
     /// Buying the subscription: what it costs, the three ways it does not go
     /// through, and the one that does.
     private func buyingTheSubscription() throws {
-        // The paywall is reached from the home, which is where the one thing
-        // left to do is drawn.
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        // The paywall is reached from the row that says what the relay will
+        // carry for this account, which is the one place the subscription is
+        // named as a thing somebody owns rather than as a thing in the way.
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         let offered = try declared(runner)
         record["paywallOffers"] = ["paywall.monthly", "paywall.yearly"].compactMap { id in
             said(offered, id).map { "\($0.label) \($0.value)" }
@@ -345,9 +353,8 @@ final class AccountsTests: JourneyCase {
         // nothing is bought; the App Store says otherwise; and putting it back
         // goes through the account service rather than around it.
         try signIn(as: Who.personal, entitlement: "none")
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         try scriptStore(["restore": "bought"])
         try scriptCloud([
             "recordPurchase": "accepted", "entitlement": "active", "source": "appStore",
@@ -437,10 +444,10 @@ final class AccountsTests: JourneyCase {
         ])
         waitFor(app, "ask.allow", "the agent's question never reached the phone")
         record["waitingWhileOnScreen"] = try called("ask.allow")
-        // Out of the conversation the way the app offers: the fleet over it,
-        // and the foot of that leads everywhere else.
-        press(app, "conversation.drawer")
-        press(app, "drawer.you")
+        // Out of the conversation the way the app offers: back to the Agents
+        // list, whose tab bar leads everywhere else.
+        backToAgents(app)
+        pressTab(app, "You")
 
         // Now the other account is on screen, and the work one is not.
         try selectAccount(Who.personal)
@@ -491,7 +498,32 @@ final class AccountsTests: JourneyCase {
         // ended, which the row says rather than pretending it never existed.
         press(app, "account.\(Who.work.email)")
         waitFor(app, "sign-in", "the signed-out account did not lead to the sign-in page")
+        let beforeSigningBackIn = try cloudCalls()
+
+        // Somebody else comes back — the browser was signed in as another
+        // account. The phone says who, and adds nobody until told to.
+        try scriptCloud([
+            "signIn": "succeeds", "account": "stranger", "email": "stranger@example.com",
+            "displayName": "Stranger", "entitlement": "none",
+        ])
+        press(app, "sign-in.continue")
+        waitFor(app, "sign-in.mismatch", "signing back in as somebody else said nothing")
+        record["mismatchSaid"] = try says("sign-in.mismatch")
+        record["mismatchOffers"] = try called("sign-in.continue")
+        photograph(app, "sign-in-mismatch")
+        let beforeCancelling = try cloudCalls()
+        press(app, "sign-in.discard")
+        _ = try waitForValue(runner, "sign-in", "ready")
+        XCTAssertTrue(
+            waitUntil { ((try? self.cloudCalls()) ?? []).contains("forgetSession stranger") },
+            "cancelling kept the session of the account nobody asked for")
+        record["accountsAfterTheMismatch"] = try accountsKnown()
+        record["callsCancellingTheMismatch"] = Array(
+            (try cloudCalls()).dropFirst(beforeCancelling.count))
+
         try signIn(as: Who.work, entitlement: "lapsed", source: "web")
+        record["callsSigningBackIn"] = Array((try cloudCalls()).dropFirst(beforeSigningBackIn.count))
+            .filter { $0.hasPrefix("signIn") }
         record["accountsAfterSigningBackIn"] = try accountsKnown()
         try selectAccount(Who.work)
         record["lapsedSubscriptionRow"] = try says("you.subscription")
@@ -535,6 +567,59 @@ final class AccountsTests: JourneyCase {
         waitForNo(app, "delete", "the account was deleted and the question stayed on screen")
         record["accountsAfterDeleting"] = try accountsKnown()
         record["selectedAfterDeleting"] = try selectedAccount()
+    }
+
+    /// Accounts taken off the phone, with nothing asked of amux.sh but to let
+    /// go of this phone's sessions.
+    private func takingAccountsOffThePhone() throws {
+        // A third account, signed out of and not on screen: the one only its
+        // row can remove, because the account section is the selected one's.
+        try signIn(as: Who.side, entitlement: "none")
+        try selectAccount(Who.side)
+        press(app, "you.signOut")
+        try selectAccount(Who.personal)
+        record["accountsBeforeRemoving"] = try accountsKnown()
+        let before = try cloudCalls()
+
+        let row = element(app, "account.\(Who.side.email)")
+        XCTAssertTrue(row.waitForExistence(timeout: waiting), "the signed-out account has no row")
+        row.press(forDuration: 1.2)
+        // The menu's own item. The account section on the page has a row of
+        // the same name, and that one removes the account on screen instead.
+        let remove = app.collectionViews.buttons["Remove from This Phone"].firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: waiting),
+                      "the signed-out account's row offered no way to remove it")
+        remove.tap()
+        waitFor(app, "remove", "Remove from This Phone asked nothing")
+        record["removeAsks"] = try says("remove")
+        record["removeSaysAccountStays"] = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "amux.sh account and subscription stay")
+        ).firstMatch.exists
+        photograph(app, "remove")
+        press(app, "remove.confirm")
+        waitForNo(app, "remove", "the account was removed and the question stayed on screen")
+        record["accountsAfterRemovingSignedOut"] = try accountsKnown()
+        record["selectedAfterRemovingSignedOut"] = try selectedAccount()
+
+        // The account on screen, from its own section.
+        press(app, "you.remove")
+        waitFor(app, "remove", "Remove from This Phone asked nothing")
+        press(app, "remove.confirm")
+        waitForNo(app, "remove", "the account was removed and the question stayed on screen")
+        record["accountsAfterRemovingTheLast"] = try accountsKnown()
+        record["selectedAfterRemovingTheLast"] = try selectedAccount()
+        pressTab(app, "Agents")
+        record["gateAfterRemovingTheLast"] = try waitForValue(runner, "home", "signed-out")
+
+        let forgotten = ["forgetSession \(Who.side.id)", "forgetSession \(Who.personal.id)"]
+        XCTAssertTrue(
+            waitUntil { forgotten.allSatisfy { ((try? self.cloudCalls()) ?? []).contains($0) } },
+            "removing accounts did not let go of their sessions")
+        record["callsRemoving"] = Array((try cloudCalls()).dropFirst(before.count))
+        XCTAssertTrue(
+            waitUntil(within: 60) { ((try? self.deletedProfiles()) ?? []).count >= 2 },
+            "no runtime started without the removed accounts")
+        record["forgottenByTheRuntime"] = try deletedProfiles()
     }
 
     /// The things that belong to the phone rather than to any account.
@@ -586,7 +671,7 @@ final class AccountsTests: JourneyCase {
     ) throws {
         if !element(app, "sign-in").exists {
             pressTab(app, "You")
-            press(app, element(app, "you.add").exists ? "you.add" : "home.empty.action")
+            press(app, element(app, "you.add").exists ? "you.add" : "home.empty.signIn")
         }
         waitFor(app, "sign-in", "there was no sign-in page to sign in on")
         try scriptCloud([
@@ -605,15 +690,23 @@ final class AccountsTests: JourneyCase {
     /// Buys the subscription with none of the outcomes the act it stands in
     /// for exists to show.
     private func subscribeTheShortWay() throws {
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         try scriptStore(["purchase": "bought"])
         try scriptCloud(["entitlement": "active", "source": "appStore"])
         press(app, "paywall.buy")
         waitFor(app, "paywall.subscribed", "the purchase did not go through")
         press(app, "paywall.buy")
         _ = try waitForValue(runner, "home", "ready")
+    }
+
+    /// Opens the subscription from the You page's relay row, which is where
+    /// this account's standing with the relay is reported and the only place
+    /// in the app that offers to buy one without a machine prompting it.
+    private func openTheRelayRow() {
+        pressTab(app, "You")
+        waitFor(app, "you", "the You page never appeared")
+        press(app, "you.subscription")
     }
 
     /// Puts an account on screen, from wherever the app is.
@@ -705,6 +798,13 @@ final class AccountsTests: JourneyCase {
             let signedIn = (account["signedIn"] as? Bool ?? false) ? "signed in" : "signed out"
             return "\(email): \(signedIn), \(account["entitlement"] as? String ?? "?")"
         }
+    }
+
+    /// The removed accounts a runtime has started without, which is when
+    /// their profiles were deleted.
+    private func deletedProfiles() throws -> [String] {
+        let answer = try door(runner, .init(kind: "accounts"))
+        return (answer["known"] as? [String: Any])?["deletedProfiles"] as? [String] ?? []
     }
 
     private func selectedAccount() throws -> String? {

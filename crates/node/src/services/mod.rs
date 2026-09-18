@@ -10,9 +10,11 @@ mod startup;
 
 pub use agent::AgentServiceCtx;
 pub use client::ClientService;
-pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_initiator};
+pub(crate) use pairing::{LocalPairingIdentity, PairingService};
 pub use reachability::ReachabilityLinkConnector;
-pub(crate) use startup::{CloudConnector, establish_cloud_connection};
 pub use startup::{
-    CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, start_user_services,
+    CloudLink, CloudLinkServer, CloudTransport, DeviceRuntimeSecurity, FREE_TIER_REFRESH_INTERVAL,
+    StartedUserServices, TestCloudTransport, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
+    establish_cloud_link, start_user_services,
 };
+pub(crate) use startup::{TCP_FALLBACK_DELAY, select_cloud_carrier};
