@@ -143,6 +143,22 @@ impl<T> Components<T> {
     pub fn is_clipped(&self) -> bool {
         self.clipped
     }
+
+    /// Drop the oldest retained component, preserving final-replacement
+    /// provenance so later amendments still merge against the same cut.
+    pub(crate) fn drop_oldest(&mut self) -> bool {
+        let Some((index, _)) = self
+            .values
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, component)| (&component.observed_at, &component.source))
+        else {
+            return false;
+        };
+        self.values.remove(index);
+        self.clipped = true;
+        true
+    }
 }
 
 impl<T: Clone + Eq> Components<T> {

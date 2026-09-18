@@ -497,6 +497,8 @@ pub fn select_summary(
 }
 
 fn fill_unknowns(mut winner: Summary, loser: &Summary) -> Summary {
+    let takes_attention = winner.unknown.contains(&SummaryField::Attention)
+        && !loser.unknown.contains(&SummaryField::Attention);
     for field in winner.unknown.clone() {
         if loser.unknown.contains(&field) {
             continue;
@@ -508,7 +510,8 @@ fn fill_unknowns(mut winner: Summary, loser: &Summary) -> Summary {
             SummaryField::Todo => winner.todo = loser.todo.clone(),
             SummaryField::Context => winner.context = loser.context.clone(),
             SummaryField::Model => winner.model = loser.model.clone(),
-            SummaryField::Outstanding => {}
+            SummaryField::Outstanding if takes_attention => {}
+            SummaryField::Outstanding => continue,
         }
         winner.unknown.retain(|unknown| *unknown != field);
     }
@@ -1696,6 +1699,27 @@ mod tests {
         assert_eq!(ahead.summary.context, host.summary.context);
         assert!(!ahead.summary.unknown.contains(&SummaryField::Context));
         assert!(!ahead.stale);
+    }
+
+    #[test]
+    fn summary_selection_only_fills_outstanding_with_the_losers_attention() {
+        let mut winner = sample_summary();
+        winner.attention = Attention::Working;
+        winner.unknown = vec![SummaryField::Outstanding];
+        let mut loser = sample_summary();
+        loser.attention = Attention::Idle;
+        loser.unknown.clear();
+
+        let filled = fill_unknowns(winner.clone(), &loser);
+        assert_eq!(filled.attention, Attention::Working);
+        assert!(filled.unknown.contains(&SummaryField::Outstanding));
+
+        winner.attention = Attention::Unknown;
+        winner.unknown = vec![SummaryField::Outstanding, SummaryField::Attention];
+        let filled = fill_unknowns(winner, &loser);
+        assert_eq!(filled.attention, Attention::Idle);
+        assert!(!filled.unknown.contains(&SummaryField::Attention));
+        assert!(!filled.unknown.contains(&SummaryField::Outstanding));
     }
 
     #[test]

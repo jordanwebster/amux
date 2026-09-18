@@ -215,14 +215,57 @@ impl Entry for CodexEntry {
         Ok(())
     }
     fn clip(&mut self, budget: usize) {
+        let clipped_fields = self.components.values().len() > 256
+            || self
+                .components
+                .values()
+                .iter()
+                .map(|component| {
+                    component.value.len()
+                        + component.after.capacity() * size_of::<ComponentSource>()
+                })
+                .sum::<usize>()
+                > budget / 2
+            || self
+                .text
+                .value()
+                .is_some_and(|value| value.len() > TEXT_MAX)
+            || self
+                .details
+                .value()
+                .is_some_and(|value| value.0.len() > VALUE_MAX);
         self.components.clip_by(256, budget / 2, |component| {
             component.value.len() + component.after.capacity() * size_of::<ComponentSource>()
         });
         truncate_string(&mut self.text, TEXT_MAX);
         truncate_bytes(&mut self.details, VALUE_MAX);
         self.rebuild();
-        if self.bytes() > budget {
-            self.rendered_text = clipped(&self.rendered_text, budget / 4);
+        if clipped_fields || self.bytes() > budget {
+            mark_clipped(
+                &mut self.clipped,
+                self.kind.revision().or(self.body.revision()),
+            );
+        }
+        while self.bytes() > budget && self.components.drop_oldest() {
+            self.rebuild();
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_string_by(&mut self.rendered_text, excess) {
+                break;
+            }
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_versioned_bytes_by(&mut self.details, excess) {
+                break;
+            }
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_versioned_string_by(&mut self.text, excess) {
+                break;
+            }
         }
     }
     fn bytes(&self) -> usize {
@@ -1202,6 +1245,51 @@ fn truncate_bytes(field: &mut VersionedField<JsonBytes>, max: usize) {
     }
 }
 
+fn mark_clipped(field: &mut VersionedField<bool>, revision: Option<Revision>) {
+    if let Some(value) = field.value_mut() {
+        *value = true;
+    } else {
+        let _ = field.merge(
+            "clipped",
+            &Patch::set(true, revision.unwrap_or(Revision::row(0))),
+        );
+    }
+}
+
+fn shrink_string_by(value: &mut String, bytes: usize) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let mut end = value.len().saturating_sub(bytes.max(1));
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    true
+}
+
+fn shrink_versioned_string_by(field: &mut VersionedField<String>, bytes: usize) -> bool {
+    field
+        .value_mut()
+        .is_some_and(|value| shrink_string_by(value, bytes))
+}
+
+fn shrink_versioned_bytes_by(field: &mut VersionedField<JsonBytes>, _bytes: usize) -> bool {
+    let Some(value) = field.value_mut() else {
+        return false;
+    };
+    if value.0 == b"null" {
+        return false;
+    }
+    let marker = format!("{{\"clipped\":true,\"bytes\":{}}}", value.0.len()).into_bytes();
+    value.0 = if marker.len() < value.0.len() {
+        marker
+    } else {
+        b"null".to_vec()
+    };
+    true
+}
+
 impl crate::private::Sealed for CodexEntryKind {
     fn assert_fields_are_postcard_safe() {
         let _ = |v: CodexEntryKind| match v {
@@ -1504,6 +1592,62 @@ mod tests {
             .into_iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
+    }
+
+    #[test]
+    fn codex_clip_fits_a_combined_large_entry() {
+        let revision = Revision::row(1);
+        let large = "x".repeat(96 * 1024);
+        let components = (0..8)
+            .map(|slot| Component {
+                source: ComponentSource::Sequence {
+                    seq: u64::from(slot) + 1,
+                    slot,
+                },
+                observed_at: u64::from(slot) + 1,
+                after: Vec::new(),
+                value: large.clone(),
+            })
+            .collect();
+        let partial = CodexPartial {
+            kind: Patch::set(CodexEntryKind::Work, revision),
+            body: Patch::set(
+                CodexBody::Item {
+                    item_id: "kept-item".into(),
+                    item_type: "commandExecution".into(),
+                },
+                revision,
+            ),
+            text: Patch::set(large.clone(), revision),
+            components,
+            finality: Patch::set("final".into(), revision),
+            state: Patch::set("running".into(), revision),
+            details: Patch::set(JsonBytes(large.into_bytes()), revision),
+            ..CodexPartial::default()
+        };
+        let budget = 16 * 1024;
+        let mut oracle = MutationOracle::new(1, budget);
+        oracle
+            .apply(&[upsert(
+                EntryKey::new("item:kept-item").unwrap(),
+                1,
+                0,
+                revision,
+                partial,
+            )])
+            .expect("clipped entry is accepted");
+
+        let entry = &oracle.entries()[0].entry;
+        assert!(entry.bytes() <= budget);
+        assert_eq!(
+            entry.body(),
+            Some(&CodexBody::Item {
+                item_id: "kept-item".into(),
+                item_type: "commandExecution".into()
+            })
+        );
+        assert_eq!(entry.state(), Some("running"));
+        assert!(entry.is_clipped());
     }
 
     #[test]

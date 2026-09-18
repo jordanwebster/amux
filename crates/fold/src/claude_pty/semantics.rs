@@ -243,6 +243,30 @@ impl Entry for ClaudeEntry {
     }
 
     fn clip(&mut self, budget: usize) {
+        let clipped_fields = self.components.values().len() > 256
+            || self
+                .components
+                .values()
+                .iter()
+                .map(|component| {
+                    component.value.len()
+                        + component.after.capacity() * size_of::<ComponentSource>()
+                        + component_source_bytes(&component.source)
+                })
+                .sum::<usize>()
+                > budget / 2
+            || self
+                .text
+                .value()
+                .is_some_and(|value| value.len() > 64 * 1024)
+            || self
+                .tool_input
+                .value()
+                .is_some_and(|value| value.0.len() > 64 * 1024)
+            || self
+                .tool_outcome
+                .value()
+                .is_some_and(|value| value.0.len() > 64 * 1024);
         self.components.clip_by(256, budget / 2, |component| {
             component.value.len()
                 + component.after.capacity() * size_of::<ComponentSource>()
@@ -252,14 +276,44 @@ impl Entry for ClaudeEntry {
         truncate_versioned_bytes(&mut self.tool_input, 64 * 1024);
         truncate_versioned_bytes(&mut self.tool_outcome, 64 * 1024);
         self.rebuild_text();
-        if self.bytes() > budget {
+        if clipped_fields || self.bytes() > budget {
             let revision = self
                 .kind
                 .revision()
                 .or(self.body.revision())
                 .unwrap_or(Revision::row(0));
             let _ = self.clipped.merge("clipped", &Patch::set(true, revision));
-            self.rendered_text = clipped_head(&self.rendered_text, budget / 4);
+        }
+
+        // Independent field caps can still exceed the whole-entry ceiling
+        // when several large fields coexist. Finish in the contract's loss
+        // order while leaving identity and obligation state untouched.
+        while self.bytes() > budget && self.components.drop_oldest() {
+            self.rebuild_text();
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_string_by(&mut self.rendered_text, excess) {
+                break;
+            }
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_versioned_bytes_by(&mut self.tool_input, excess) {
+                break;
+            }
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_versioned_bytes_by(&mut self.tool_outcome, excess) {
+                break;
+            }
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_versioned_string_by(&mut self.text, excess) {
+                break;
+            }
         }
     }
 
@@ -1128,6 +1182,7 @@ impl ClaudeFold {
             } else {
                 Patch::Unchanged
             },
+            message_final: Patch::set(true, revision),
             ..ClaudePartial::default()
         };
         mutations.push(upsert(key, seq, slot, revision, patch));
@@ -1675,6 +1730,40 @@ fn truncate_versioned_bytes(field: &mut VersionedField<JsonBytes>, max: usize) {
         value.0 = serde_json::to_vec(&serde_json::json!({"clipped":true,"bytes":value.0.len()}))
             .expect("marker serializes");
     }
+}
+
+fn shrink_string_by(value: &mut String, bytes: usize) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let mut end = value.len().saturating_sub(bytes.max(1));
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    true
+}
+
+fn shrink_versioned_string_by(field: &mut VersionedField<String>, bytes: usize) -> bool {
+    field
+        .value_mut()
+        .is_some_and(|value| shrink_string_by(value, bytes))
+}
+
+fn shrink_versioned_bytes_by(field: &mut VersionedField<JsonBytes>, _bytes: usize) -> bool {
+    let Some(value) = field.value_mut() else {
+        return false;
+    };
+    if value.0 == b"null" {
+        return false;
+    }
+    let marker = format!("{{\"clipped\":true,\"bytes\":{}}}", value.0.len()).into_bytes();
+    value.0 = if marker.len() < value.0.len() {
+        marker
+    } else {
+        b"null".to_vec()
+    };
+    true
 }
 
 impl crate::private::Sealed for ClaudeEntryKind {
@@ -2295,6 +2384,90 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
             .find(|entry| entry.key.as_str() == "tool:tool-0")
             .unwrap();
         assert!(stored.entry.tool_outcome().is_some());
+        assert!(stored.entry.message_final());
+    }
+
+    #[test]
+    fn claude_pty_result_only_cut_marks_the_tool_message_final() {
+        let mut fold = ClaudeFold::default();
+        fold.begin(1, Baseline::Truncated { from: 2 });
+        let mut oracle = MutationOracle::default();
+        let result = serde_json::to_vec(&json!({
+            "type":"user",
+            "uuid":"result",
+            "message":{"content":[{
+                "type":"tool_result",
+                "tool_use_id":"tool-before-cut",
+                "content":"resolved"
+            }]}
+        }))
+        .unwrap();
+
+        apply_row(&mut fold, &mut oracle, 2, &result);
+
+        let stored = oracle
+            .entries()
+            .into_iter()
+            .find(|entry| entry.key.as_str() == "tool:tool-before-cut")
+            .expect("result-only tool is materialised");
+        assert!(stored.entry.tool_outcome().is_some());
+        assert!(stored.entry.message_final());
+    }
+
+    #[test]
+    fn claude_pty_clip_fits_a_combined_large_entry() {
+        let revision = Revision::row(1);
+        let large = "x".repeat(96 * 1024);
+        let components = (0..8)
+            .map(|slot| Component {
+                source: ComponentSource::Native {
+                    id: format!("row-{slot}"),
+                    slot,
+                },
+                observed_at: u64::from(slot) + 1,
+                after: Vec::new(),
+                value: large.clone(),
+            })
+            .collect();
+        let partial = ClaudePartial {
+            kind: Patch::set(ClaudeEntryKind::Tool, revision),
+            body: Patch::set(
+                ClaudeBody::Tool {
+                    tool_use_id: "kept-id".into(),
+                },
+                revision,
+            ),
+            text: Patch::set(large.clone(), revision),
+            components,
+            finality: Patch::set("resolved".into(), revision),
+            tool_name: Patch::set("Read".into(), revision),
+            tool_input: Patch::set(JsonBytes(large.as_bytes().to_vec()), revision),
+            tool_outcome: Patch::set(JsonBytes(large.into_bytes()), revision),
+            message_final: Patch::set(true, revision),
+            ..ClaudePartial::default()
+        };
+        let budget = 16 * 1024;
+        let mut oracle = MutationOracle::new(1, budget);
+        oracle
+            .apply(&[upsert(
+                EntryKey::new("tool:kept-id").unwrap(),
+                1,
+                0,
+                revision,
+                partial,
+            )])
+            .expect("clipped entry is accepted");
+
+        let entry = &oracle.entries()[0].entry;
+        assert!(entry.bytes() <= budget);
+        assert_eq!(
+            entry.body(),
+            Some(&ClaudeBody::Tool {
+                tool_use_id: "kept-id".into()
+            })
+        );
+        assert!(entry.message_final());
+        assert!(entry.is_clipped());
     }
 
     #[test]

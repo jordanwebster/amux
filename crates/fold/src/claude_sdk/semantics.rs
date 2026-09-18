@@ -367,20 +367,88 @@ impl Entry for ClaudeSdkEntry {
     }
 
     fn clip(&mut self, budget: usize) {
+        let clipped_fields = self.components.values().len() > 256
+            || self
+                .components
+                .values()
+                .iter()
+                .map(|component| {
+                    component.value.len()
+                        + component.after.capacity() * size_of::<ComponentSource>()
+                })
+                .sum::<usize>()
+                > budget / 2
+            || string_field_exceeds(&self.text, TEXT_MAX_BYTES)
+            || string_field_exceeds(&self.parent_tool_use_id, 512)
+            || string_field_exceeds(&self.tool_name, TEXT_MAX_BYTES)
+            || bytes_field_exceeds(&self.tool_input, VALUE_MAX_BYTES)
+            || bytes_field_exceeds(&self.tool_outcome, VALUE_MAX_BYTES)
+            || string_field_exceeds(&self.task_description, TEXT_MAX_BYTES)
+            || string_field_exceeds(&self.task_tool_use_id, 512)
+            || string_field_exceeds(&self.task_subagent, 512)
+            || string_field_exceeds(&self.task_last_tool, TEXT_MAX_BYTES)
+            || string_field_exceeds(&self.task_summary, TEXT_MAX_BYTES)
+            || bytes_field_exceeds(&self.task_usage, VALUE_MAX_BYTES);
         self.components.clip_by(256, budget / 2, |component| {
             component.value.len() + component.after.capacity() * size_of::<ComponentSource>()
         });
         truncate_versioned_string(&mut self.text, TEXT_MAX_BYTES);
         truncate_versioned_string(&mut self.parent_tool_use_id, 512);
+        truncate_versioned_string(&mut self.tool_name, TEXT_MAX_BYTES);
         truncate_versioned_bytes(&mut self.tool_input, VALUE_MAX_BYTES);
         truncate_versioned_bytes(&mut self.tool_outcome, VALUE_MAX_BYTES);
         truncate_versioned_string(&mut self.task_description, TEXT_MAX_BYTES);
         truncate_versioned_string(&mut self.task_tool_use_id, 512);
+        truncate_versioned_string(&mut self.task_subagent, 512);
+        truncate_versioned_string(&mut self.task_last_tool, TEXT_MAX_BYTES);
         truncate_versioned_string(&mut self.task_summary, TEXT_MAX_BYTES);
+        truncate_versioned_bytes(&mut self.task_usage, VALUE_MAX_BYTES);
         self.rebuild_text();
-        if self.bytes() > budget {
-            self.rendered_text = clipped_text(&self.rendered_text, budget / 4);
+        if clipped_fields || self.bytes() > budget {
+            mark_clipped(
+                &mut self.clipped,
+                self.kind.revision().or(self.body.revision()),
+            );
         }
+
+        while self.bytes() > budget && self.components.drop_oldest() {
+            self.rebuild_text();
+        }
+        while self.bytes() > budget {
+            let excess = self.bytes().saturating_sub(budget);
+            if !shrink_string_by(&mut self.rendered_text, excess) {
+                break;
+            }
+        }
+        macro_rules! shrink_bytes_field {
+            ($field:expr) => {
+                while self.bytes() > budget {
+                    let excess = self.bytes().saturating_sub(budget);
+                    if !shrink_versioned_bytes_by($field, excess) {
+                        break;
+                    }
+                }
+            };
+        }
+        shrink_bytes_field!(&mut self.tool_input);
+        shrink_bytes_field!(&mut self.tool_outcome);
+        shrink_bytes_field!(&mut self.task_usage);
+
+        macro_rules! shrink_text_field {
+            ($field:expr) => {
+                while self.bytes() > budget {
+                    let excess = self.bytes().saturating_sub(budget);
+                    if !shrink_versioned_string_by($field, excess) {
+                        break;
+                    }
+                }
+            };
+        }
+        shrink_text_field!(&mut self.text);
+        shrink_text_field!(&mut self.task_description);
+        shrink_text_field!(&mut self.task_summary);
+        shrink_text_field!(&mut self.tool_name);
+        shrink_text_field!(&mut self.task_last_tool);
     }
 
     fn bytes(&self) -> usize {
@@ -2123,6 +2191,14 @@ fn truncate_versioned_string(field: &mut VersionedField<String>, max: usize) {
     }
 }
 
+fn string_field_exceeds(field: &VersionedField<String>, max: usize) -> bool {
+    field.value().is_some_and(|value| value.len() > max)
+}
+
+fn bytes_field_exceeds(field: &VersionedField<JsonBytes>, max: usize) -> bool {
+    field.value().is_some_and(|value| value.0.len() > max)
+}
+
 fn truncate_versioned_bytes(field: &mut VersionedField<JsonBytes>, max: usize) {
     if let Some(value) = field.value_mut()
         && value.0.len() > max
@@ -2130,6 +2206,51 @@ fn truncate_versioned_bytes(field: &mut VersionedField<JsonBytes>, max: usize) {
         value.0 = serde_json::to_vec(&serde_json::json!({"clipped":true,"bytes":value.0.len()}))
             .expect("marker serializes");
     }
+}
+
+fn mark_clipped(field: &mut VersionedField<bool>, revision: Option<Revision>) {
+    if let Some(value) = field.value_mut() {
+        *value = true;
+    } else {
+        let _ = field.merge(
+            "clipped",
+            &Patch::set(true, revision.unwrap_or(Revision::row(0))),
+        );
+    }
+}
+
+fn shrink_string_by(value: &mut String, bytes: usize) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let mut end = value.len().saturating_sub(bytes.max(1));
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    true
+}
+
+fn shrink_versioned_string_by(field: &mut VersionedField<String>, bytes: usize) -> bool {
+    field
+        .value_mut()
+        .is_some_and(|value| shrink_string_by(value, bytes))
+}
+
+fn shrink_versioned_bytes_by(field: &mut VersionedField<JsonBytes>, _bytes: usize) -> bool {
+    let Some(value) = field.value_mut() else {
+        return false;
+    };
+    if value.0 == b"null" {
+        return false;
+    }
+    let marker = format!("{{\"clipped\":true,\"bytes\":{}}}", value.0.len()).into_bytes();
+    value.0 = if marker.len() < value.0.len() {
+        marker
+    } else {
+        b"null".to_vec()
+    };
+    true
 }
 
 impl crate::private::Sealed for TaskState {
@@ -2785,6 +2906,67 @@ unrecognized=000001070000010b066675747572650573686170650000000000000000000000000
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn claude_sdk_clip_fits_a_combined_large_entry() {
+        let revision = Revision::row(1);
+        let large = "x".repeat(96 * 1024);
+        let components = (0..8)
+            .map(|slot| Component {
+                source: ComponentSource::Sequence {
+                    seq: u64::from(slot) + 1,
+                    slot,
+                },
+                observed_at: u64::from(slot) + 1,
+                after: Vec::new(),
+                value: large.clone(),
+            })
+            .collect();
+        let partial = ClaudeSdkPartial {
+            kind: Patch::set(ClaudeSdkEntryKind::Task, revision),
+            body: Patch::set(
+                ClaudeSdkBody::Task {
+                    task_id: "kept-task".into(),
+                },
+                revision,
+            ),
+            text: Patch::set(large.clone(), revision),
+            components,
+            finality: Patch::set("final".into(), revision),
+            tool_name: Patch::set(large.clone(), revision),
+            tool_input: Patch::set(JsonBytes(large.as_bytes().to_vec()), revision),
+            tool_outcome: Patch::set(JsonBytes(large.as_bytes().to_vec()), revision),
+            task_description: Patch::set(large.clone(), revision),
+            task_subagent: Patch::set(large.clone(), revision),
+            task_state: Patch::set(TaskState::Running, revision),
+            task_last_tool: Patch::set(large.clone(), revision),
+            task_summary: Patch::set(large.clone(), revision),
+            task_usage: Patch::set(JsonBytes(large.into_bytes()), revision),
+            ..ClaudeSdkPartial::default()
+        };
+        let budget = 16 * 1024;
+        let mut oracle = MutationOracle::new(1, budget);
+        oracle
+            .apply(&[upsert(
+                EntryKey::new("task:kept-task").unwrap(),
+                1,
+                0,
+                revision,
+                partial,
+            )])
+            .expect("clipped entry is accepted");
+
+        let entry = &oracle.entries()[0].entry;
+        assert!(entry.bytes() <= budget);
+        assert_eq!(
+            entry.body(),
+            Some(&ClaudeSdkBody::Task {
+                task_id: "kept-task".into()
+            })
+        );
+        assert_eq!(entry.task_state(), Some(&TaskState::Running));
+        assert_eq!(entry.clipped.value(), Some(&true));
     }
 
     #[test]

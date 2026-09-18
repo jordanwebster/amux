@@ -1,3 +1,10 @@
+2026-09-18 — **Provider folds enforce their whole-entry ceiling.** After the
+per-field caps, every provider now trims combined oversized entries in a fixed
+order until their encoded bodies fit the store budget, retaining identity,
+finality and obligation state. PTY result-only tools are final even when the
+observer joined after their invocation, and summary selection keeps outstanding
+work unknown unless it also adopts the observation's attention.
+
 2026-09-18 — **Provider observation no longer rebuilds discarded feeds.**
 The Claude PTY reducer facade now derives only its running facts and
 obligations, while the Claude SDK observer retains only session, turn, task and
