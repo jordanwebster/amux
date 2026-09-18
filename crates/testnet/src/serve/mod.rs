@@ -67,6 +67,9 @@ pub struct DaemonDecl {
     pub name: String,
     pub user: String,
     pub repository_roots: Vec<PathBuf>,
+    /// Run this host as a profile behind the production installation front door.
+    #[serde(default)]
+    pub installation: bool,
     /// Provider transport for every SDK session this host creates, including
     /// requests that arrive later from a paired client.
     #[serde(default)]
@@ -482,12 +485,25 @@ impl AgentProvider {
 type Agents = HashMap<String, ScriptedAgent>;
 
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
-    let mut builder = TestNet::builder().cloud_url(&topology.cloud_url).identity();
+    let mut builder = if topology.daemons.iter().any(|daemon| daemon.installation) {
+        TestNet::builder().cloud().identity()
+    } else {
+        TestNet::builder().cloud_url(&topology.cloud_url).identity()
+    };
     for daemon in &topology.daemons {
-        builder = builder
-            .daemon(&daemon.name)
-            .cloud_user(&daemon.user)
-            .repository_roots(daemon.repository_roots.clone());
+        builder = if daemon.installation {
+            builder
+                .installation(&daemon.name)
+                .profile(&daemon.name)
+                .front_door()
+                .cloud_user(&daemon.user)
+                .repository_roots(daemon.repository_roots.clone())
+        } else {
+            builder
+                .daemon(&daemon.name)
+                .cloud_user(&daemon.user)
+                .repository_roots(daemon.repository_roots.clone())
+        };
     }
     for (a, b, via) in &topology.paired {
         builder = builder.paired(
@@ -500,8 +516,24 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         );
     }
     let net = builder.start().await;
+    let daemon_names = topology
+        .daemons
+        .iter()
+        .map(|daemon| {
+            (
+                daemon.name.clone(),
+                if daemon.installation {
+                    format!("{}/{}", daemon.name, daemon.name)
+                } else {
+                    daemon.name.clone()
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
     for (name, script) in &topology.sdk_scripts {
-        net.daemon(name).script_sdk_sessions(script.clone()).await;
+        net.daemon(&daemon_names[name])
+            .script_sdk_sessions(script.clone())
+            .await;
     }
     let users = topology
         .users
@@ -519,20 +551,20 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         .daemons
         .iter()
         .map(|decl| {
-            let daemon = net.daemon(&decl.name);
+            let daemon = net.daemon(&daemon_names[&decl.name]);
             let (host_id, public_key) = daemon.identity_on_disk();
             DaemonIdentity {
                 name: decl.name.clone(),
                 host_id,
                 fingerprint: format!("{:x}", Sha256::digest(public_key)),
-                profile_config: daemon.inner.data_dir.join("config.yaml"),
+                profile_config: daemon.profile_config_path(),
             }
         })
         .collect();
     let mut agents = Vec::new();
     let mut scripted = HashMap::new();
     for decl in &topology.agents {
-        let daemon = net.daemon(&decl.daemon);
+        let daemon = net.daemon(&daemon_names[&decl.daemon]);
         let (agent, provider) = match &decl.provider {
             ScriptedProvider::ClaudeSdk { model } => {
                 let agent = daemon
@@ -617,13 +649,15 @@ struct Request {
 
 async fn apply(
     net: &TestNet,
-    names: &HashSet<String>,
+    names: &HashMap<String, String>,
     agents: &mut Agents,
     control: Control,
 ) -> Result<Reply> {
     let daemon = |name: &str| -> Result<Daemon> {
-        ensure!(names.contains(name), "unknown daemon: {name}");
-        Ok(net.daemon(name))
+        let runtime_name = names
+            .get(name)
+            .with_context(|| format!("unknown daemon: {name}"))?;
+        Ok(net.daemon(runtime_name))
     };
     let pair = |a: &str, b: &str| -> Result<(Daemon, Daemon)> {
         ensure!(a != b, "a host cannot be its own peer");
@@ -659,6 +693,9 @@ async fn apply(
         Control::RestartSdkDaemon { name } => {
             let host = daemon(&name)?;
             net.restart_daemon(&host).await;
+            if host.is_installation_profile() {
+                return Ok(reply);
+            }
             let names = agents
                 .iter()
                 .filter(|(_, agent)| agent.daemon == name)
@@ -779,7 +816,7 @@ async fn apply(
                         .or_else(|| agent.parse().ok())
                         .context("SDK observation needs an agent name or UUID")?;
                     let mut found = None;
-                    for name in names {
+                    for name in names.keys() {
                         if let Some(inputs) = daemon(name)?.observed_sdk_inputs(id).await {
                             ensure!(found.is_none(), "SDK identity exists on more than one host");
                             found = Some(inputs);
@@ -936,7 +973,18 @@ async fn serve(topology: Topology) -> Result<()> {
     serve_net(
         net,
         listener,
-        topology.daemons.into_iter().map(|d| d.name).collect(),
+        topology
+            .daemons
+            .into_iter()
+            .map(|daemon| {
+                let runtime = if daemon.installation {
+                    format!("{}/{}", daemon.name, daemon.name)
+                } else {
+                    daemon.name.clone()
+                };
+                (daemon.name, runtime)
+            })
+            .collect(),
         agents,
     )
     .await
@@ -945,7 +993,7 @@ async fn serve(topology: Topology) -> Result<()> {
 async fn serve_net(
     net: TestNet,
     listener: TcpListener,
-    names: HashSet<String>,
+    names: HashMap<String, String>,
     mut agents: Agents,
 ) -> Result<()> {
     #[cfg(unix)]
@@ -1089,7 +1137,9 @@ mod tests {
         let server = serve_net(
             net,
             listener,
-            ["a", "b", "c"].map(String::from).into(),
+            ["a", "b", "c"]
+                .map(|name| (name.to_owned(), name.to_owned()))
+                .into(),
             HashMap::new(),
         );
         let exercise = async {

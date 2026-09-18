@@ -105,7 +105,12 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             ..Default::default()
         },
     );
-    let server = serve_net(net, listener, ["host".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        [("host".into(), "host".into())].into(),
+        agents,
+    );
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control

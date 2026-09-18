@@ -1,3 +1,13 @@
+2026-09-18 — **The desktop paints its selected profile before discovery.**
+Bare `amux`, `amux ui`, and store inspection now resolve UUID, label,
+remembered, and single-profile selection from the durable installation
+registry and open that profile's SQLite store before the installation front
+door or profile socket is awaited. The release cold-start workload uses the
+same split installation layout and supported invocation. The warm-start
+journey seeds from a captured real Claude Code session, holds the profile
+socket open without answering, proves the remembered card and closed composer
+gate, then restores the socket and observes confirmation in the same TUI.
+
 2026-09-18 — **In-process PTY protocol checks honor the explicit-start
 boundary.** The provider-plane helper now starts its inert scripted Claude PTY
 with a throwaway event channel before opening either exposed plane, then aborts

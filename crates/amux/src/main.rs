@@ -423,7 +423,7 @@ async fn main() -> Result<ExitCode> {
         if cli.config.is_none() && !node::InstallationConfig::default_path().exists() {
             init::initialize(None, false).await?;
         }
-        let config = profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?;
+        let config = profiles::local_configuration(cli.config.as_deref(), cli.profile.as_deref())?;
         config
             .validate()
             .map_err(|e| anyhow!("invalid config: {e}"))?;
@@ -572,13 +572,15 @@ async fn main() -> Result<ExitCode> {
             .as_deref()
             .context("AMUX_TUI_DIRECT_PROFILE requires --config")?;
         Config::from_file(path)?
-    } else {
+    } else if matches!(command, Commands::Ui | Commands::Store { .. }) {
         if matches!(command, Commands::Ui)
             && cli.config.is_none()
             && !node::InstallationConfig::default_path().exists()
         {
             init::initialize(None, false).await?;
         }
+        profiles::local_configuration(cli.config.as_deref(), cli.profile.as_deref())?
+    } else {
         profiles::configuration(cli.config.as_deref(), cli.profile.as_deref()).await?
     };
     run_command(command, config).await

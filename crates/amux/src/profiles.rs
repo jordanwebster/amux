@@ -1,5 +1,6 @@
 //! Resolve a command's profile from the installation directory.
 
+use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,7 @@ use clap::Subcommand;
 use client::FrontDoorClient;
 use node::installation::rpc;
 use node::{Config, InstallationConfig};
+use serde::Deserialize;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
@@ -187,6 +189,100 @@ pub async fn configuration(path: Option<&Path>, selector: Option<&str>) -> Resul
         );
     }
     config.socket_path = info.socket_path.into();
+    config.validate()?;
+    Ok(config)
+}
+
+#[derive(Deserialize)]
+struct RegistrySnapshot {
+    profiles: Vec<node::installation::ProfileRecord>,
+    #[serde(default)]
+    deleting: BTreeSet<node::installation::ProfileId>,
+}
+
+fn clean_label(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn local_directory(installation: &InstallationConfig) -> Result<Vec<rpc::ProfileInfo>> {
+    let path = installation.root.join("registry.yaml");
+    let snapshot: RegistrySnapshot = serde_yaml::from_slice(&std::fs::read(&path)?)
+        .with_context(|| format!("cannot read profile registry {}", path.display()))?;
+    Ok(snapshot
+        .profiles
+        .into_iter()
+        .filter(|record| !snapshot.deleting.contains(&record.id))
+        .map(|record| {
+            let email = clean_label(record.label.email.as_deref().unwrap_or_default());
+            let account_name =
+                clean_label(record.label.account_name.as_deref().unwrap_or_default());
+            let label = record
+                .label
+                .override_name
+                .as_deref()
+                .map(clean_label)
+                .filter(|label| !label.is_empty())
+                .or_else(|| (!account_name.is_empty()).then(|| account_name.clone()))
+                .or_else(|| (!email.is_empty()).then(|| email.clone()))
+                .unwrap_or_else(|| {
+                    record
+                        .binding
+                        .as_ref()
+                        .map(|binding| {
+                            clean_label(&binding.account.subject)
+                                .chars()
+                                .take(8)
+                                .collect()
+                        })
+                        .filter(|label: &String| !label.is_empty())
+                        .unwrap_or_else(|| record.id.to_string()[..8].into())
+                });
+            rpc::ProfileInfo {
+                id: record.id.to_string(),
+                label,
+                email,
+                account_name,
+                revision: record.revision,
+                ..Default::default()
+            }
+        })
+        .collect())
+}
+
+/// Resolve the initial fleet profile from durable installation state only.
+///
+/// Runtime discovery still uses the front door once the TUI is running. Keeping
+/// this first choice local lets the store paint even when neither socket can
+/// answer, without giving label or remembered-profile selection a second set of
+/// rules.
+pub fn local_configuration(path: Option<&Path>, selector: Option<&str>) -> Result<Config> {
+    let installation = crate::front_door::configuration(path)?;
+    let explicit = path
+        .map(std::fs::canonicalize)
+        .transpose()?
+        .map(|path| node::load_profile_config(&path))
+        .transpose()?
+        .map(|config| config.profile_id.to_string());
+    let directory = local_directory(&installation)?;
+    let remembered = match selector.or(explicit.as_deref()) {
+        Some(_) => None,
+        None => match std::fs::read_to_string(last_used(&installation)) {
+            Ok(value) => Some(value),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).context("cannot read last-profile"),
+        },
+    };
+    let info = select(
+        &directory,
+        selector.or(explicit.as_deref()),
+        remembered.as_deref(),
+    )?;
+    let config = load(&config_path(&installation, &info)?)?;
     config.validate()?;
     Ok(config)
 }
@@ -562,5 +658,73 @@ mod tests {
                 .id,
             a.id
         );
+    }
+
+    #[test]
+    fn local_configuration_selects_from_disk_without_either_socket() {
+        use node::installation::{ProfileId, ProfileLabel, ProfilePaths, ProfileRecord};
+
+        let dir = testnet::identity::short_installation_root();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let installation_path = root.join("installation.yaml");
+        let installation = node::InstallationConfig {
+            root: root.clone(),
+            front_door_socket: root.join("front-door.sock"),
+            repository_roots: vec![root.join("repositories")],
+            prevent_idle_sleep: Some(false),
+            ..Default::default()
+        };
+        std::fs::write(
+            &installation_path,
+            serde_yaml::to_string(&installation).unwrap(),
+        )
+        .unwrap();
+
+        let records =
+            [("Personal", ProfileId::new()), ("Work", ProfileId::new())].map(|(name, id)| {
+                let paths = ProfilePaths::for_id(&root, id).unwrap();
+                let config_path = paths.config_path.clone().unwrap();
+                std::fs::write(
+                    &config_path,
+                    serde_yaml::to_string(&node::ProfileConfig {
+                        installation_config: installation_path.clone(),
+                        socket_path: paths.socket_path,
+                        state_path: paths.state_path,
+                        data_dir: paths.data_dir,
+                        cloud_url: node::Config::default().cloud_url,
+                        tcp_port: None,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+                (
+                    ProfileRecord {
+                        id,
+                        label: ProfileLabel {
+                            override_name: Some(name.into()),
+                            ..Default::default()
+                        },
+                        binding: None,
+                        paused: false,
+                        revision: 1,
+                    },
+                    config_path,
+                )
+            });
+        std::fs::write(
+            root.join("registry.yaml"),
+            serde_yaml::to_string(&serde_json::json!({
+                "profiles": records.iter().map(|(record, _)| record).collect::<Vec<_>>()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let explicit = local_configuration(Some(&records[0].1), None).unwrap();
+        assert_eq!(explicit.path.as_deref(), Some(records[0].1.as_path()));
+        let selected = local_configuration(Some(&records[0].1), Some("Work")).unwrap();
+        assert_eq!(selected.path.as_deref(), Some(records[1].1.as_path()));
+        assert!(!installation.front_door_socket.exists());
+        assert!(!selected.socket_path.exists());
     }
 }

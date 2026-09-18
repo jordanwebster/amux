@@ -543,6 +543,7 @@ impl TestNetBuilder {
         self.installations.push(installation::InstallationSpec {
             name,
             persistent: false,
+            front_door: false,
             profiles: Vec::new(),
         });
         self.selecting_profile = true;
@@ -566,8 +567,18 @@ impl TestNetBuilder {
             name,
             cloud_user: None,
             cloud_only: false,
+            repository_roots: Vec::new(),
         });
         self.selecting_profile = true;
+        self
+    }
+
+    /// Serve the most recent fixture installation through its production socket.
+    pub fn front_door(mut self) -> Self {
+        self.installations
+            .last_mut()
+            .expect(".front_door() must follow .installation()")
+            .front_door = true;
         self
     }
 
@@ -622,7 +633,17 @@ impl TestNetBuilder {
 
     /// Declares the directories searched for repositories by the most recent daemon.
     pub fn repository_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
-        self.last_daemon("repository_roots").repository_roots = roots;
+        if self.selecting_profile {
+            self.installations
+                .last_mut()
+                .unwrap()
+                .profiles
+                .last_mut()
+                .expect("repository_roots requires a profile")
+                .repository_roots = roots;
+        } else {
+            self.last_daemon("repository_roots").repository_roots = roots;
+        }
         self
     }
 

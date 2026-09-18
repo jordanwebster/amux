@@ -35,7 +35,12 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
             ..Default::default()
         },
     );
-    let server = serve_net(net, listener, ["host".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        [("host".into(), "host".into())].into(),
+        agents,
+    );
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control
@@ -251,7 +256,12 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             ..Default::default()
         },
     );
-    let server = serve_net(net, listener, ["studio".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        [("studio".into(), "studio".into())].into(),
+        agents,
+    );
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control

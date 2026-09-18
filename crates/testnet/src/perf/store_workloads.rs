@@ -93,9 +93,20 @@ pub(super) fn run_store() -> Result<Vec<MetricRun>> {
 async fn cold_start() -> Result<Vec<MetricRun>> {
     let mut runs = Vec::new();
     for agents in [40_usize, 200] {
-        let temp = TempDir::new().context("cold-start store directory")?;
-        let data_dir = temp.path().join("data");
-        std::fs::create_dir_all(&data_dir)?;
+        let temp = tempfile::Builder::new()
+            .prefix("amux-cold-start-")
+            .tempdir_in("/tmp")
+            .context("cold-start installation directory")?;
+        let installation_root = temp.path().join("installation");
+        std::fs::create_dir_all(&installation_root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&installation_root, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let profile_id = node::installation::ProfileId::new();
+        let paths = node::installation::ProfilePaths::for_id(&installation_root, profile_id)?;
+        let data_dir = paths.data_dir.clone();
         let path = data_dir.join("store.sqlite");
         let store = Store::open(&path).await?;
         seed_fleet(&store, agents).await?;
@@ -107,21 +118,51 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
         }
 
         node::ensure_device_files_in(&data_dir)?;
-        let config_path = temp.path().join("config.yaml");
-        let config = Config {
+        let installation_path = installation_root.join("installation.yaml");
+        let installation = node::InstallationConfig {
+            root: installation_root.clone(),
             host_name: "perf-mac".to_owned(),
-            socket_path: temp.path().join("daemon-unreachable.sock"),
-            state_path: temp.path().join("state.yaml"),
-            data_dir,
+            front_door_socket: installation_root.join("front-door-unreachable.sock"),
             prevent_idle_sleep: Some(false),
             ui: UiSettings {
                 theme: ThemeSetting::Dark,
                 color: ColorSetting::Ansi,
                 ..UiSettings::default()
             },
-            ..Config::default()
+            ..node::InstallationConfig::default()
         };
-        std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+        std::fs::write(&installation_path, serde_yaml::to_string(&installation)?)?;
+        let config_path = paths.config_path.context("profile config path")?;
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&node::ProfileConfig {
+                installation_config: installation_path,
+                socket_path: paths.socket_path,
+                data_dir,
+                state_path: paths.state_path,
+                cloud_url: Config::default().cloud_url,
+                tcp_port: None,
+            })?,
+        )?;
+        let record = node::installation::ProfileRecord {
+            id: profile_id,
+            label: node::installation::ProfileLabel {
+                override_name: Some("Performance".into()),
+                ..Default::default()
+            },
+            binding: None,
+            paused: false,
+            revision: 1,
+        };
+        std::fs::write(
+            installation_root.join("registry.yaml"),
+            serde_yaml::to_string(&serde_json::json!({ "profiles": [record] }))?,
+        )?;
+        std::fs::create_dir_all(installation_root.join("state"))?;
+        std::fs::write(
+            installation_root.join("state/last-profile"),
+            profile_id.to_string(),
+        )?;
 
         let executable = std::env::current_exe()
             .context("resolve performance executable")?
@@ -227,7 +268,6 @@ fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
     command.arg("--config");
     command.arg(config_path);
     command.arg("ui");
-    command.env("AMUX_TUI_DIRECT_PROFILE", "1");
     command.env("TERM", "xterm-256color");
     command.env_remove("AMUX_CONFIG");
 

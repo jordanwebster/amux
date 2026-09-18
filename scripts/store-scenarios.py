@@ -24,6 +24,11 @@ AMUX = ROOT / "target/debug/amux"
 TESTNET = ROOT / "target/debug/testnet"
 WRITING = ROOT / "e2e-tests/scripts/writing.json"
 SDK_SCRIPT = ROOT / "e2e-tests/scripts/sdk-sessions.json"
+REAL_PROVIDER_SESSION = (
+    ROOT
+    / "crates/claude-specs/fixtures/sdk/multi_turn/sessions"
+    / "5651c630-6550-4233-8837-517f88ab245c.jsonl"
+)
 SCENARIOS = ("warm-start", "chat", "two-terminal", "gap", "sdk-resume")
 
 
@@ -125,7 +130,13 @@ def chat_subscription_count(value: object, agent_name: str) -> int:
 
 
 class Journey:
-    def __init__(self, name: str, output: Path, agents: list[tuple[str, str]]):
+    def __init__(
+        self,
+        name: str,
+        output: Path,
+        agents: list[tuple[str, str]],
+        production_profile: bool = False,
+    ):
         self.name = name
         self.output = output
         if output.exists():
@@ -143,6 +154,7 @@ class Journey:
         self.config = Path()
         self.store = Path()
         self.ids: dict[str, str] = {}
+        self.production_profile = production_profile
         self._start(agents)
 
     def _start(self, agents: list[tuple[str, str]]) -> None:
@@ -167,6 +179,8 @@ class Journey:
             "user": "alice",
             "repository_roots": [str(ROOT)],
         }
+        if self.production_profile:
+            daemon["installation"] = True
         if sdk:
             daemon["sdk_script"] = str(SDK_SCRIPT)
         topology = {
@@ -193,7 +207,15 @@ class Journey:
         self.control = ready["control"]
         daemon_ready = next(item for item in ready["daemons"] if item["name"] == "host")
         self.config = Path(daemon_ready["profile_config"])
-        self.store = self.config.parent / "store.sqlite"
+        data_dir = next(
+            (
+                Path(line.split(": ", 1)[1])
+                for line in self.config.read_text().splitlines()
+                if line.startswith("data_dir: ")
+            ),
+            self.config.parent,
+        )
+        self.store = data_dir / "store.sqlite"
         self.ids = {item["name"]: item["agent_id"] for item in ready["agents"]}
         self.actions.append(
             f"daemon ready; profile={self.config}; agents={json.dumps(self.ids, sort_keys=True)}"
@@ -257,7 +279,7 @@ class Journey:
             [
                 "env",
                 "TERM=xterm-256color",
-                "AMUX_TUI_DIRECT_PROFILE=1",
+                *([] if self.production_profile else ["AMUX_TUI_DIRECT_PROFILE=1"]),
                 "RUST_LOG=amux=debug,ui_runtime=debug",
                 f"AMUX_LOG={shlex.quote(str(self.scratch / f'{session}.log'))}",
                 shlex.quote(str(AMUX)),
@@ -364,7 +386,8 @@ class Journey:
 
     def dump(self, agent: str) -> str:
         env = os.environ.copy()
-        env["AMUX_TUI_DIRECT_PROFILE"] = "1"
+        if not self.production_profile:
+            env["AMUX_TUI_DIRECT_PROFILE"] = "1"
         result = subprocess.run(
             [str(AMUX), "--config", str(self.config), "store", "dump", self.ids[agent]],
             cwd=ROOT,
@@ -459,24 +482,71 @@ class Journey:
 
 
 def warm_start(output: Path) -> None:
-    journey = Journey("warm-start", output, [("remembered-agent", "sdk")])
+    journey = Journey(
+        "warm-start",
+        output,
+        [("remembered-agent", "pty")],
+        production_profile=True,
+    )
+    profile_socket = None
+    hidden_socket = None
+    blackhole = None
+    accepted: list[socket.socket] = []
     try:
+        historical = [
+            json.loads(line)
+            for line in REAL_PROVIDER_SESSION.read_text().splitlines()
+            if line.strip()
+        ]
+        journey.actions.append(
+            "warm-start seed: captured Claude Code provider session "
+            + str(REAL_PROVIDER_SESSION)
+        )
+        journey.emit("remembered-agent", historical)
+
         pane = journey.launch("seed")
         journey.open_chat(pane, "remembered-agent")
-        journey.wait_frame(pane, "enter send", timeout=90)
-        journey.send(pane, "Persist this standing.")
-        journey.wait_frame(pane, "The SDK session received your prompt.", timeout=90)
+        journey.wait_frame(pane, "ALBATROSS", timeout=90)
         seed = journey.fleet(pane)
-        journey.frame(pane, "online seed", seed)
-        journey.wait_dump(
-            "remembered-agent", "The SDK session received your prompt.", timeout=90
-        )
+        journey.frame(pane, "online seed from a real Claude Code session", seed)
+        journey.wait_dump("remembered-agent", "ALBATROSS", timeout=90)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            with sqlite3.connect(journey.store) as database:
+                stored_agents = database.execute(
+                    "SELECT count(*) FROM agent "
+                    "WHERE name='remembered-agent' AND membership=0"
+                ).fetchone()[0]
+            if stored_agents == 1:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("the real-session seed never reached the fleet store")
         journey.kill("seed")
-        journey.control_request({"StopDaemon": {"name": "host"}}, 120)
-        pane = journey.launch("warm-client")
-        remembered = journey.wait_frame(
-            pane, "remembered-agent", "remembered", "last finished", "daemon unreachable"
+
+        profile_socket = Path(
+            next(
+                line.split(": ", 1)[1]
+                for line in journey.config.read_text().splitlines()
+                if line.startswith("socket_path: ")
+            )
         )
+        hidden_socket = profile_socket.with_name(profile_socket.name + ".live")
+        profile_socket.rename(hidden_socket)
+        blackhole = socket.socket(socket.AF_UNIX)
+        blackhole.bind(str(profile_socket))
+        blackhole.listen()
+
+        def hold_profile_connection() -> None:
+            try:
+                connection, _ = blackhole.accept()
+                accepted.append(connection)
+            except OSError:
+                pass
+
+        threading.Thread(target=hold_profile_connection, daemon=True).start()
+        pane = journey.launch("warm-client")
+        remembered = journey.wait_frame(pane, "remembered-agent", "remembered")
         before = journey.dump("remembered-agent")
         remembered_row = next(
             (line for line in remembered.splitlines() if "remembered-agent" in line), ""
@@ -485,10 +555,12 @@ def warm_start(output: Path) -> None:
             raise RuntimeError(
                 f"remembered fleet row omitted its host or standing age: {remembered_row!r}"
             )
-        journey.frame(pane, "same client paints remembered standing while daemon is stopped", remembered)
+        journey.frame(
+            pane,
+            "same client paints remembered standing while the profile socket does not answer",
+            remembered,
+        )
 
-        if "o chat" in remembered or "enter chat" in remembered:
-            raise RuntimeError("the remembered offline card exposed a send-capable chat action")
         journey.tmux("send-keys", "-t", pane, "o")
         refused = journey.wait_frame(pane, "Type a message", "chat input unavailable")
         journey.tmux("send-keys", "-t", pane, "-l", "must-not-send")
@@ -498,13 +570,20 @@ def warm_start(output: Path) -> None:
             raise RuntimeError("the unavailable offline composer accepted a send")
         journey.frame(
             pane,
-            "daemon-stopped remembered chat shows its send gate is unavailable",
+            "unreachable-profile remembered chat shows its send gate is unavailable",
             refused,
         )
         journey.tmux("send-keys", "-t", pane, "C-a", "s")
-        journey.wait_frame(pane, "remembered-agent", "daemon unreachable")
+        journey.wait_frame(pane, "remembered-agent", "remembered")
 
-        journey.control_request({"RestartSdkDaemon": {"name": "host"}}, 120)
+        blackhole.close()
+        blackhole = None
+        for connection in accepted:
+            connection.close()
+        accepted.clear()
+        profile_socket.unlink()
+        hidden_socket.rename(profile_socket)
+        hidden_socket = None
         deadline = time.monotonic() + 90
         confirmed = ""
         while time.monotonic() < deadline:
@@ -520,7 +599,7 @@ def warm_start(output: Path) -> None:
                 "the same client did not replace remembered standing with confirmation:\n"
                 + confirmed[-4000:]
             )
-        journey.frame(pane, "same client confirms the card after daemon restart", confirmed)
+        journey.frame(pane, "same client confirms the card after the socket is restored", confirmed)
         diagnostics = journey.diagnostics()
         after = journey.dump("remembered-agent")
         journey.finish(
@@ -528,9 +607,10 @@ def warm_start(output: Path) -> None:
             after,
             diagnostics,
             [
-                "one TUI process stayed alive across the daemon stop and restart",
-                "the stopped-daemon frame showed host, age, and last finished standing",
-                "the stopped-daemon chat showed an unavailable send gate and persisted no attempted send",
+                "the remembered store was seeded from the recorded real Claude Code multi-turn session",
+                "one TUI process stayed alive while the profile socket accepted without answering",
+                "the unreachable-profile frame showed host, age, and its last standing",
+                "the unreachable-profile chat showed an unavailable send gate and persisted no attempted send",
                 "the same process replaced remembered state with a confirmed card",
                 "dump-before and dump-after came from separate boundary reads",
             ],
@@ -539,6 +619,13 @@ def warm_start(output: Path) -> None:
         journey.fail(error)
         raise
     finally:
+        if blackhole is not None:
+            blackhole.close()
+        for connection in accepted:
+            connection.close()
+        if profile_socket is not None and hidden_socket is not None and hidden_socket.exists():
+            profile_socket.unlink(missing_ok=True)
+            hidden_socket.rename(profile_socket)
         journey.close()
 
 

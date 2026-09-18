@@ -19,6 +19,7 @@ use crate::identity::IdentityServer;
 pub(super) struct InstallationSpec {
     pub name: String,
     pub persistent: bool,
+    pub front_door: bool,
     pub profiles: Vec<ProfileSpec>,
 }
 
@@ -26,6 +27,7 @@ pub(super) struct ProfileSpec {
     pub name: String,
     pub cloud_user: Option<String>,
     pub cloud_only: bool,
+    pub repository_roots: Vec<PathBuf>,
 }
 
 struct ProfileFixture {
@@ -58,6 +60,39 @@ pub(crate) struct ProfileOwner {
 }
 
 impl ProfileOwner {
+    pub(crate) async fn is_running(&self) -> bool {
+        self.runtime()
+            .await
+            .is_some_and(|runtime| runtime.as_ref().is_some())
+    }
+
+    pub(crate) async fn pause(&self) {
+        self.installation
+            .upgrade()
+            .expect("installation dropped")
+            .current()
+            .pause(OperationId::new(), self.id)
+            .await
+            .expect("pause fixture profile");
+    }
+
+    pub(crate) async fn resume(&self) {
+        self.installation
+            .upgrade()
+            .expect("installation dropped")
+            .current()
+            .resume(OperationId::new(), self.id)
+            .await
+            .expect("resume fixture profile");
+    }
+
+    pub(crate) fn config_path(&self) -> PathBuf {
+        self.paths
+            .config_path
+            .clone()
+            .expect("fixture profile config path")
+    }
+
     pub(crate) async fn installation_admin(&self) -> node::installation::ProfileAdmin {
         self.installation
             .upgrade()
@@ -92,11 +127,14 @@ impl ProfileOwner {
 struct InstallationInner {
     name: String,
     current: RwLock<Option<Arc<Installation>>>,
+    front_door: bool,
+    front_door_listener: tokio::sync::Mutex<Option<node::installation::FrontDoorListener>>,
     profiles: BTreeMap<String, (ProfileId, Arc<DaemonInner>)>,
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
     relay_addr: Option<SocketAddr>,
     root: PathBuf,
+    repository_roots: Vec<PathBuf>,
     persistent: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
     _disk_root: Option<tempfile::TempDir>,
@@ -185,15 +223,29 @@ impl InstallationHandle {
             options(
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
+                self.inner.repository_roots.clone(),
             ),
             fixture_factory(self.inner.fixtures.clone(), self.inner.relay_addr),
         )
         .await
         .expect("reopen installation");
-        *self.inner.current.write().unwrap() = Some(Arc::new(installation));
+        let installation = Arc::new(installation);
+        let listener = self.inner.front_door.then(|| {
+            node::installation::FrontDoor::new(
+                installation.clone(),
+                Some(self.inner.root.join("amux.sock")),
+            )
+            .listen()
+            .expect("restart fixture front door")
+        });
+        *self.inner.current.write().unwrap() = Some(installation);
+        *self.inner.front_door_listener.lock().await = listener;
     }
 
     pub async fn stop(&self) {
+        if let Some(listener) = self.inner.front_door_listener.lock().await.take() {
+            listener.stop().await;
+        }
         let current = self.inner.current.write().unwrap().take();
         if let Some(current) = current {
             current.stop_for_test().await;
@@ -268,6 +320,7 @@ impl InstallationHandle {
         Installation::open(options(
             &self.inner.name,
             InstallationRoot::OnDisk(self.inner.root.clone()),
+            self.inner.repository_roots.clone(),
         ))
         .await
     }
@@ -474,7 +527,11 @@ impl WatchProbe {
     }
 }
 
-fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
+fn options(
+    name: &str,
+    root: InstallationRoot,
+    repository_roots: Vec<PathBuf>,
+) -> InstallationOptions {
     InstallationOptions {
         relocation: Default::default(),
         root,
@@ -483,7 +540,7 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
         identity_http: reqwest::Client::new(),
         host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
-            repository_roots: Vec::new(),
+            repository_roots,
             host_name: name.into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -563,12 +620,21 @@ pub(super) async fn start(
             .map(|profile| profile.cloud_only)
             .collect(),
     }));
-    let installation = Installation::open_for_test(
-        options(&spec.name, root),
-        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.relay_addr())),
-    )
-    .await
-    .expect("start production installation");
+    let repository_roots = spec
+        .profiles
+        .iter()
+        .flat_map(|profile| profile.repository_roots.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let installation = Arc::new(
+        Installation::open_for_test(
+            options(&spec.name, root, repository_roots.clone()),
+            fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.relay_addr())),
+        )
+        .await
+        .expect("start production installation"),
+    );
     let root = installation.test_root();
     let mut records = Vec::new();
     for profile in &spec.profiles {
@@ -632,11 +698,18 @@ pub(super) async fn start(
             })
             .collect(),
         name: spec.name,
-        current: RwLock::new(Some(Arc::new(installation))),
+        current: RwLock::new(Some(installation.clone())),
+        front_door: spec.front_door,
+        front_door_listener: tokio::sync::Mutex::new(spec.front_door.then(|| {
+            node::installation::FrontDoor::new(installation, Some(root.join("amux.sock")))
+                .listen()
+                .expect("start fixture front door")
+        })),
         identity,
         fixtures,
         relay_addr: cloud.map(|cloud| cloud.relay_addr()),
         root,
+        repository_roots,
         persistent: spec.persistent,
         _disk_root: Some(disk_root),
         lifecycle: tokio::sync::Mutex::new(()),

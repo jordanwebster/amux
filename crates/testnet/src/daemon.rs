@@ -871,10 +871,11 @@ impl Daemon {
     /// `wait_until_peers_see_us_down` would deadlock the failure dump,
     /// which queries this daemon's host table through the same lock.
     pub async fn stop(&self) {
-        assert!(
-            self.inner.installation.is_none(),
-            "stop profiles through their installation"
-        );
+        if let Some(owner) = &self.inner.installation {
+            owner.pause().await;
+            self.wait_until_peers_see_us_down().await;
+            return;
+        }
         let runtime = self.inner.runtime.lock().await.take();
         if let Some(runtime) = runtime {
             runtime.stop().await;
@@ -892,6 +893,14 @@ impl Daemon {
     /// re-established from stored reachabilities before the cloud is
     /// reattached (see [`start_daemon_runtime`]).
     pub async fn restart(&self) {
+        if let Some(owner) = &self.inner.installation {
+            if owner.is_running().await {
+                owner.pause().await;
+                self.wait_until_peers_see_us_down().await;
+            }
+            owner.resume().await;
+            return;
+        }
         // Stop first so the old runtime's tasks abort and the TCP listener
         // port is released before the new runtime rebinds it.
         self.stop().await;
@@ -901,6 +910,17 @@ impl Daemon {
             runtime.spawn_cloud_connector(&self.inner).await;
         }
         *self.inner.runtime.lock().await = Some(runtime);
+    }
+
+    pub(crate) fn is_installation_profile(&self) -> bool {
+        self.inner.installation.is_some()
+    }
+
+    pub(crate) fn profile_config_path(&self) -> PathBuf {
+        self.inner.installation.as_ref().map_or_else(
+            || self.inner.data_dir.join("config.yaml"),
+            |owner| owner.config_path(),
+        )
     }
 
     /// Suspend every local agent through the production seal boundary, restart
