@@ -31,7 +31,7 @@ test *ARGS:
 
 # Run tests for one named workspace crate.
 test-crate CRATE *ARGS:
-    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
+    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; if [ "$crate" = store ]; then {{bounded}} 1200 cargo build --locked -p store --bin store-family-v2-fixture --features bundled,family-definition-v2-fixture; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
 # Exercise the shared merge algebra and provider folds.
 test-fold *ARGS:
@@ -39,7 +39,7 @@ test-fold *ARGS:
 
 # Exercise the shared SQLite lifecycle and materialisation contract.
 test-store *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
+    set -e; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked -p store --bin store-family-v2-fixture --features bundled,family-definition-v2-fixture; scripts/python -B scripts/sqlite_linkage.py target/debug/store-family-v2-fixture; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
 
 # Cross-compile every store test and run it against bundled SQLite on the
 # leased, booted iOS simulator, including linkage and runtime identity proof.

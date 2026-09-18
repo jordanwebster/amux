@@ -15,6 +15,19 @@ TRIPLE = "aarch64-apple-ios-sim"
 EXPECTED_TESTS = {"store", "budgets", "chat", "fleet", "lifecycle"}
 
 
+def build_family_fixture() -> Path:
+    command = [
+        "cargo", "build", "--locked", "-p", "store", "--target", TRIPLE,
+        "--bin", "store-family-v2-fixture",
+        "--features", "bundled,family-definition-v2-fixture",
+    ]
+    subprocess.run(command, check=True, timeout=1800)
+    fixture = Path("target") / TRIPLE / "debug" / "store-family-v2-fixture"
+    if not fixture.exists():
+        raise RuntimeError(f"missing separately compiled family fixture: {fixture}")
+    return fixture
+
+
 def build_tests() -> dict[str, Path]:
     command = [
         "cargo", "test", "--locked", "-p", "store", "--target", TRIPLE,
@@ -59,9 +72,11 @@ def build_tests() -> dict[str, Path]:
     return executables
 
 
-def run_on_simulator(udid: str, executable: Path) -> None:
+def run_on_simulator(udid: str, executable: Path, family_fixture: Path) -> None:
     command = [
-        "xcrun", "simctl", "spawn", udid, str(executable.resolve()), "--nocapture",
+        "xcrun", "simctl", "spawn", udid, "env",
+        f"AMUX_STORE_FAMILY_V2_BIN={family_fixture.resolve()}",
+        str(executable.resolve()), "--nocapture",
     ]
     print(f"\nRunning {executable.name} on {udid}", flush=True)
     completed = subprocess.run(
@@ -75,7 +90,9 @@ def run_on_simulator(udid: str, executable: Path) -> None:
 
 
 def main() -> None:
+    family_fixture = build_family_fixture()
     executables = build_tests()
+    print(sqlite_linkage.inspect(family_fixture).render(), end="", flush=True)
     for name in sorted(executables):
         report = sqlite_linkage.inspect(executables[name])
         if name == "store":
@@ -85,7 +102,7 @@ def main() -> None:
     ios_simulators.run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
     print(f"iOS store suite: {ios_simulators.device_name('golden')} ({udid})", flush=True)
     for name in sorted(executables):
-        run_on_simulator(udid, executables[name])
+        run_on_simulator(udid, executables[name], family_fixture)
 
 
 if __name__ == "__main__":

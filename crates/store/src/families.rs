@@ -1,6 +1,9 @@
 use fold::ProviderFold;
 
 pub const FLEET_SHAPE: u32 = 2;
+#[cfg(feature = "family-definition-v2-fixture")]
+pub const CHAT_SHAPE: u32 = 2;
+#[cfg(not(feature = "family-definition-v2-fixture"))]
 pub const CHAT_SHAPE: u32 = 3;
 
 #[derive(Clone, Copy, Debug)]

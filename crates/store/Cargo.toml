@@ -8,6 +8,14 @@ publish = false
 [features]
 default = ["bundled"]
 bundled = ["rusqlite/bundled"]
+family-definition-v2-fixture = ["dep:tokio"]
+
+[[bin]]
+name = "store-family-v2-fixture"
+path = "src/bin/store-family-v2-fixture.rs"
+required-features = ["family-definition-v2-fixture"]
+test = false
+bench = false
 
 [dependencies]
 chrono = { workspace = true }
@@ -19,6 +27,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
@@ -1193,20 +1194,40 @@ fn chat_alias_delete_and_canonical_results_match_oracle() {
     });
 }
 
+fn family_v2_fixture() -> PathBuf {
+    if let Some(path) = std::env::var_os("AMUX_STORE_FAMILY_V2_BIN") {
+        return PathBuf::from(path);
+    }
+    let deps = std::env::current_exe()
+        .expect("test executable")
+        .parent()
+        .expect("test executable directory")
+        .to_path_buf();
+    let debug = deps.parent().expect("target debug directory");
+    debug.join(format!(
+        "store-family-v2-fixture{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
+
 #[test]
-fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_shape() {
+fn chat_different_binary_rebuild_moves_generation_and_preserves_durable_view() {
     runtime().block_on(async {
         let temp = TempDir::new().unwrap();
         let path = database(&temp);
-        let store = Store::open(&path).await.unwrap();
-        let generations = store_generations(&store);
+        let current = Store::open(&path).await.unwrap();
+        current
+            .view_set("fixture", "durable", "survives-family-rebuild")
+            .await
+            .unwrap();
+        let generations = store_generations(&current);
         let mut fold = ClaudeSdkFold::default();
         fold.begin(1, Baseline::Start);
         let mutations = fold_rows(
             &mut fold,
             &[(1, "u1", "one"), (2, "u2", "two"), (3, "u3", "three")],
         );
-        let expected = match store
+        let expected = match current
             .commit(
                 agent_id(),
                 generations,
@@ -1219,9 +1240,9 @@ fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_
             .await
         {
             CommitOutcome::Committed(result) => result.expected,
-            _ => panic!("seed commit failed"),
+            _ => panic!("seed current chat failed"),
         };
-        let before = store
+        let before = current
             .load::<ClaudeSdkFold>(
                 agent_id(),
                 WindowBudget {
@@ -1234,14 +1255,29 @@ fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_
             .unwrap();
         let stale_page = before.first_page.expect("older stored entries");
 
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute("UPDATE family_shape SET shape=0 WHERE family='chat'", [])
+        // This stands in for a store last written by family definition v1.
+        // The separate v2 executable below performs the actual open/rebuild.
+        Connection::open(&path)
+            .unwrap()
+            .execute("UPDATE family_shape SET shape=1 WHERE family='chat'", [])
             .unwrap();
-        drop(connection);
-        run_open_helper(&path, "success");
+        let fixture = family_v2_fixture();
+        assert!(fixture.exists(), "missing v2 family fixture at {fixture:?}");
+        let mut owner = Command::new(&fixture)
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn v2 family owner");
+        let mut owner_stdout = BufReader::new(owner.stdout.take().expect("fixture stdout"));
+        let mut ready = String::new();
+        owner_stdout
+            .read_line(&mut ready)
+            .expect("read v2 owner readiness");
+        assert!(ready.starts_with("READY shape=2 generation=2"), "{ready}");
 
-        let moved = store
+        let moved = current
             .commit(
                 agent_id(),
                 generations,
@@ -1256,7 +1292,7 @@ fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_
             moved,
             CommitOutcome::Refused(StoreError::GenerationMoved)
         ));
-        let reloaded = store
+        let reloaded = current
             .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(7))
             .await
             .unwrap();
@@ -1264,96 +1300,100 @@ fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_
         assert!(reloaded.generations.provider > generations.provider);
         assert!(matches!(reloaded.head, HeadState::None));
         assert_eq!(
-            store
+            current
                 .page::<ClaudeSdkFold>(agent_id(), stale_page, 2)
                 .await,
             Err(StoreError::GenerationMoved)
         );
+        assert_eq!(
+            current
+                .view_get("fixture", "durable")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("survives-family-rebuild")
+        );
 
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute(
-                "UPDATE family_shape SET shape=?1 WHERE family='chat'",
-                [i64::from(store::CHAT_SHAPE + 1)],
-            )
-            .unwrap();
-        let generation_before_refusal: i64 = connection
-            .query_row(
-                "SELECT generation FROM family_shape WHERE family='chat'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        drop(connection);
-        run_open_helper(&path, "unsupported");
-        assert!(matches!(
-            store
-                .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(7))
-                .await,
-            Err(StoreError::UnsupportedFormat)
-        ));
-        let connection = Connection::open(&path).unwrap();
-        let generation_after_refusal: i64 = connection
-            .query_row(
-                "SELECT generation FROM family_shape WHERE family='chat'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let first_retirement_exists: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_state_old_1')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let later_retirements: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name LIKE '%_old_2'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(generation_after_refusal, generation_before_refusal);
-        assert!(first_retirement_exists);
-        assert_eq!(later_retirements, 0);
-        store.close().await;
-    });
-}
+        owner
+            .stdin
+            .as_mut()
+            .expect("fixture stdin")
+            .write_all(b"CLOSE_FOR_UPGRADE\n")
+            .expect("ask v2 owner to release its store");
+        let mut closed = String::new();
+        owner_stdout
+            .read_line(&mut closed)
+            .expect("read v2 close acknowledgement");
+        assert!(closed.starts_with("CLOSED shape=2 generation=2"), "{closed}");
 
-fn run_open_helper(path: &Path, expected: &str) {
-    let output = Command::new(std::env::current_exe().expect("test executable"))
-        .args([
-            "--ignored",
-            "--exact",
-            "chat_helper_opens_store",
-            "--nocapture",
-        ])
-        .env("AMUX_STORE_HELPER_DB", path)
-        .env("AMUX_STORE_HELPER_EXPECT", expected)
-        .output()
-        .expect("spawn store opener");
-    assert!(
-        output.status.success(),
-        "store opener failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+        let upgraded = Store::open(&path)
+            .await
+            .expect("current family definition rebuilds v2 chat");
+        let upgraded_generations = store_generations(&upgraded);
+        assert!(upgraded_generations.chat > reloaded.generations.chat);
+        assert!(upgraded_generations.provider > reloaded.generations.provider);
+        assert_eq!(
+            upgraded
+                .view_get("fixture", "durable")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("survives-family-rebuild")
+        );
 
-#[test]
-#[ignore = "spawned by chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_shape"]
-fn chat_helper_opens_store() {
-    let path = PathBuf::from(std::env::var_os("AMUX_STORE_HELPER_DB").expect("database path"));
-    let expected = std::env::var("AMUX_STORE_HELPER_EXPECT").expect("expected outcome");
-    match (expected.as_str(), runtime().block_on(Store::open(&path))) {
-        ("success", Ok(store)) => runtime().block_on(store.close()),
-        ("unsupported", Err(StoreError::UnsupportedFormat)) => {}
-        (expected, Ok(store)) => {
-            runtime().block_on(store.close());
-            panic!("store unexpectedly opened while expecting {expected}");
+        owner
+            .stdin
+            .as_mut()
+            .expect("fixture stdin")
+            .write_all(b"CHECK_NEWER\n")
+            .expect("ask v2 binary to refuse v3 store");
+        let mut checked = String::new();
+        owner_stdout
+            .read_line(&mut checked)
+            .expect("read stale owner result");
+        let status = owner.wait().expect("wait for v2 owner");
+        if !status.success() {
+            let mut stderr = String::new();
+            owner
+                .stderr
+                .take()
+                .expect("fixture stderr")
+                .read_to_string(&mut stderr)
+                .expect("read fixture stderr");
+            panic!("v2 family owner failed: {stderr}");
         }
-        (expected, Err(error)) => panic!("expected {expected}, got {error:?}"),
-    }
+        assert!(
+            checked.starts_with("CHECKED reopen=UnsupportedFormat shape=3"),
+            "{checked}"
+        );
+
+        let connection = Connection::open(&path).unwrap();
+        let (shape, generation): (u32, i64) = connection
+            .query_row(
+                "SELECT shape,generation FROM family_shape WHERE family='chat'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(shape, store::CHAT_SHAPE);
+        assert_eq!(
+            u64::try_from(generation).unwrap(),
+            upgraded_generations.chat
+        );
+        eprintln!(
+            "two-binary-family-rebuild fixture={} stale=GenerationMoved reload_chat={} reload_provider={} current_shape={} current_generation={} durable=survives-family-rebuild\n{}{}{}",
+            fixture.display(),
+            reloaded.generations.chat,
+            reloaded.generations.provider,
+            shape,
+            generation,
+            ready,
+            closed,
+            checked
+        );
+        upgraded.close().await;
+        current.close().await;
+    });
 }
 
 #[test]

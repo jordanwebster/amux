@@ -1,3 +1,11 @@
+2026-09-18 — **Store rebuild proof uses two compiled family definitions.**
+The store suite now keeps a process built with the supported chat-family v2
+fixture live while the current v3 test binary opens and rebuilds the same
+database. The stale owner proves its commit and page are fenced by generation,
+reloads the empty rebuilt family, retains the durable view, and refuses to
+reopen the newer format without changing its shape or generation. Desktop and
+iOS recipes build the separate fixture and print bundled-SQLite linkage proof.
+
 2026-09-18 — **Suspend crash cuts preserve the sealed sequence contract.**
 The daemon protocol specification now abandons a live emitting test agent at
 each durable cut, builds a fresh host over only the surviving suspend files,
