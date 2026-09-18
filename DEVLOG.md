@@ -1,3 +1,12 @@
+2026-09-18 — **The phone's remembered fleet goldens show each agent's stored
+standing.** Store seeding now accepts the standing each machine last published
+and stores it as that machine's summary, so the cached-fleet captures draw the
+permission request and question in the header, working and finished rows with
+their real ages, and only the offline machine's agent without a standing. The
+offline machine in those captures is now air rather than Studio, so the agent
+asking for permission is on a machine the phone last knew was answering; the
+cached conversation captures keep Studio away and are unchanged.
+
 2026-09-18 — **Mac14,6 has a qualified ten-minute soak baseline.** On macOS
 26.5.2 with the release `bundled,perf` build, `just perf soak --baseline`
 recorded 13.313 MiB client peak, 1.049 MiB per idle daemon agent and 16.572 MiB

@@ -10,7 +10,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use model::{Agent, AgentId, DisconnectReason, HostEntry, HostId, RelayConnection};
+use chrono::{DateTime, Utc};
+use model::{
+    Agent, AgentId, AgentKind, AgentPhase, Attention, ClaudeDriver, DisconnectReason, HostEntry,
+    HostId, RelayConnection, StructuredProtocol, Summary, SummaryEnvelope,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use store::{FleetDelta, Store};
@@ -40,6 +44,51 @@ pub struct Remembered {
     /// so the store holds a break in that conversation's history.
     #[serde(default)]
     pub after_gap: BTreeMap<AgentId, Vec<Value>>,
+    /// The standing each agent's machine last published for it, stored as
+    /// that machine's summary so a launch draws it with its age.
+    #[serde(default)]
+    pub standings: BTreeMap<AgentId, Standing>,
+}
+
+/// What an agent's machine last said about it.
+#[derive(Debug, Deserialize)]
+pub struct Standing {
+    pub attention: Attention,
+    pub phase: AgentPhase,
+    pub last_activity: DateTime<Utc>,
+}
+
+/// `agent` carrying `standing` as the summary its machine published.
+fn with_standing(mut agent: Agent, standing: &Standing) -> Result<Agent, String> {
+    let protocol = match agent.kind {
+        AgentKind::Claude {
+            driver: ClaudeDriver::Pty,
+        } => StructuredProtocol::ClaudePtyTranscript,
+        AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        } => StructuredProtocol::ClaudeSdk,
+        AgentKind::Codex => StructuredProtocol::Codex,
+        AgentKind::TestAgent => {
+            return Err(format!("{} publishes no summary", agent.id));
+        }
+    };
+    agent.summary = Some(SummaryEnvelope {
+        through: 1,
+        producer_version: fold::AgentFold::for_protocol(protocol).tip_version(),
+        observed_at: standing.last_activity,
+        stale: false,
+        revision: agent.inventory_revision,
+        summary: Summary {
+            attention: standing.attention,
+            phase: standing.phase.clone(),
+            last_activity: Some(standing.last_activity),
+            todo: None,
+            context: None,
+            model: None,
+            unknown: vec![],
+        },
+    });
+    Ok(agent)
 }
 
 /// How long any one step of writing or reading a store may take before the
@@ -74,10 +123,18 @@ pub async fn seed(cache_dir: &Path, account: &str, remembered: Remembered) -> Re
     }
     for agent in &remembered.agents {
         revision += 1;
-        deltas.push(FleetDelta::AgentUp {
-            agent: agent.clone(),
-            revision,
-        });
+        let agent = match remembered.standings.get(&agent.id) {
+            Some(standing) => with_standing(agent.clone(), standing)?,
+            None => agent.clone(),
+        };
+        deltas.push(FleetDelta::AgentUp { agent, revision });
+    }
+    if let Some(id) = remembered
+        .standings
+        .keys()
+        .find(|id| !remembered.agents.iter().any(|agent| agent.id == **id))
+    {
+        return Err(format!("{id} has a standing but was never remembered"));
     }
     for id in &remembered.removed {
         let agent = remembered

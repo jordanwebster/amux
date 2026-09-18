@@ -352,6 +352,149 @@ mod tests {
         assert_eq!(hosts(&fleet), [1]);
     }
 
+    /// A remembered agent is drawn with the standing its machine last
+    /// published and that standing's own age, not the agent's creation time.
+    /// Only a machine last known to be offline withholds its agents' standing.
+    #[tokio::test]
+    async fn remembered_agents_keep_their_stored_standing_and_age() {
+        let created = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        // Three days after the agents were created, as a launch would read them.
+        let minutes = |minutes: i64| {
+            created + chrono::TimeDelta::days(3) - chrono::TimeDelta::minutes(minutes)
+        };
+        let standing = |id: u128, host: u128, attention, phase, at| {
+            let mut agent = agent(id, host, 1);
+            agent.kind = model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
+            };
+            agent.created_at = created;
+            agent.summary = Some(model::SummaryEnvelope {
+                through: 1,
+                producer_version: fold::AgentFold::for_protocol(
+                    model::StructuredProtocol::ClaudePtyTranscript,
+                )
+                .tip_version(),
+                observed_at: at,
+                stale: false,
+                revision: 1,
+                summary: model::Summary {
+                    attention,
+                    phase,
+                    last_activity: Some(at),
+                    todo: None,
+                    context: None,
+                    model: None,
+                    unknown: vec![],
+                },
+            });
+            FleetDelta::AgentUp {
+                agent,
+                revision: id as u64,
+            }
+        };
+        let mut away = host(2, model::HostTrustStatus::Trusted);
+        away.online = false;
+        let root = tempfile::tempdir().unwrap();
+        seeded(
+            root.path(),
+            "owner",
+            vec![
+                FleetDelta::Host {
+                    host: host(1, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+                FleetDelta::Host {
+                    host: away,
+                    revision: 0,
+                },
+                standing(
+                    11,
+                    1,
+                    model::Attention::NeedsYou {
+                        why: model::Why::Permission,
+                    },
+                    model::AgentPhase::Running,
+                    minutes(2),
+                ),
+                standing(
+                    12,
+                    1,
+                    model::Attention::Working,
+                    model::AgentPhase::Running,
+                    minutes(1),
+                ),
+                standing(
+                    13,
+                    1,
+                    model::Attention::Idle,
+                    model::AgentPhase::Exited { exit_code: Some(0) },
+                    minutes(14),
+                ),
+                standing(
+                    21,
+                    2,
+                    model::Attention::Working,
+                    model::AgentPhase::Running,
+                    minutes(30),
+                ),
+            ],
+        )
+        .await;
+
+        let Event::Fleet { agents, .. } = read_cached_fleet(root.path(), "owner").await.unwrap()
+        else {
+            panic!("Fleet expected")
+        };
+        let mut drawn: Vec<_> = agents
+            .iter()
+            .map(|card| {
+                (
+                    card.agent.id.as_u128(),
+                    card.attention,
+                    card.phase.clone(),
+                    card.last_activity,
+                    card.awaiting,
+                )
+            })
+            .collect();
+        drawn.sort_by_key(|(id, ..)| *id);
+        assert_eq!(
+            drawn,
+            [
+                (
+                    11,
+                    model::Attention::NeedsYou {
+                        why: model::Why::Permission
+                    },
+                    model::AgentPhase::Running,
+                    minutes(2),
+                    true,
+                ),
+                (
+                    12,
+                    model::Attention::Working,
+                    model::AgentPhase::Running,
+                    minutes(1),
+                    true,
+                ),
+                (
+                    13,
+                    model::Attention::Idle,
+                    model::AgentPhase::Exited { exit_code: Some(0) },
+                    minutes(14),
+                    true,
+                ),
+                (
+                    21,
+                    model::Attention::Unknown,
+                    model::AgentPhase::Running,
+                    minutes(30),
+                    true,
+                ),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn an_authoritative_removal_is_not_remembered() {
         let root = tempfile::tempdir().unwrap();

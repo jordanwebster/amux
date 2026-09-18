@@ -21,6 +21,17 @@ final class RememberedStoreTests: XCTestCase {
         XCTAssertEqual(Set(rows.map(\.id)), Set(Scenario.agents.map(\.id)))
         XCTAssertTrue(rows.allSatisfy(\.card.awaiting), "a remembered row was confirmed")
         XCTAssertFalse(stores.fleet.reconciled)
+        for card in Scenario.agents {
+            let drawn = rows.first { $0.id == card.id }?.card
+            // Only the machine that is not answering withholds its agents'
+            // standing; every other row keeps what its machine last said.
+            let attention: Attention = card.agent.hostId == Scenario.air ? .unknown : card.attention
+            XCTAssertEqual(drawn?.attention, attention, card.displayName)
+            XCTAssertEqual(drawn?.phase, card.phase, card.displayName)
+            XCTAssertEqual(
+                drawn?.lastActivity.timeIntervalSince1970 ?? 0,
+                card.lastActivity.timeIntervalSince1970, accuracy: 0.001, card.displayName)
+        }
     }
 
     func testAnAgentItsMachineRemovedIsNotRemembered() async {

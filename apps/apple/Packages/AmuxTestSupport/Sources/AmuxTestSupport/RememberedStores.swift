@@ -35,11 +35,14 @@ public struct Remembered: Sendable {
     /// Rows a later connection delivered for a conversation in `chats` after
     /// its machine could no longer serve the rows in between.
     public var afterGap: [AgentId: [String]]
+    /// What each agent's machine last published about it, stored as that
+    /// machine's summary.
+    public var standings: [AgentId: Standing]
 
     public init(
         local: HostId = Scenario.phone, hosts: [HostEntry], agents: [Agent],
         removed: [AgentId] = [], chats: [AgentId: [String]] = [:],
-        afterGap: [AgentId: [String]] = [:]
+        afterGap: [AgentId: [String]] = [:], standings: [AgentId: Standing] = [:]
     ) {
         self.local = local
         self.hosts = hosts
@@ -47,6 +50,25 @@ public struct Remembered: Sendable {
         self.removed = removed
         self.chats = chats
         self.afterGap = afterGap
+        self.standings = standings
+    }
+
+    /// The standing a machine publishes for one agent.
+    public struct Standing: Encodable, Sendable {
+        public var attention: Attention
+        public var phase: AgentPhase
+        public var lastActivity: Date
+
+        public init(_ card: AgentCard) {
+            attention = card.attention
+            phase = card.phase
+            lastActivity = card.lastActivity
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case attention, phase
+            case lastActivity = "last_activity"
+        }
     }
 
     /// The JSON the bridge's seeding entry point reads.
@@ -73,21 +95,27 @@ public struct Remembered: Sendable {
         }
         object["chats"] = try rows(chats)
         object["after_gap"] = try rows(afterGap)
+        var standings: [String: Any] = [:]
+        for (agent, standing) in self.standings {
+            standings[agent.description] = try JSONSerialization.jsonObject(
+                with: AmuxJSON.encoder.encode(standing))
+        }
+        object["standings"] = standings
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 }
 
 extension Remembered {
-    /// The morning's fleet as this phone last saw it, with Studio no longer
-    /// answering: every agent is still listed, waiting for its machine.
+    /// The morning's fleet as this phone last saw it, with air no longer
+    /// answering: every agent is still listed, waiting for its machine, and
+    /// each is drawn with the standing its machine last published and how
+    /// long ago that was.
     public static var unreachable: Remembered {
         Remembered(
-            hosts: Scenario.hosts.map { host in
-                var entry = host.entry
-                if entry.id == Scenario.studio { entry.online = false }
-                return entry
-            },
-            agents: Scenario.agents.map(\.agent))
+            hosts: Scenario.hosts.map(\.entry),
+            agents: Scenario.agents.map(\.agent),
+            standings: Dictionary(
+                uniqueKeysWithValues: Scenario.agents.map { ($0.id, Standing($0)) }))
     }
 
     /// The same fleet after Studio said two of its agents were gone before the
@@ -98,9 +126,21 @@ extension Remembered {
         return remembered
     }
 
+    /// The fleet with Studio, where the conversation this app opens on runs,
+    /// no longer answering.
+    static var studioAway: Remembered {
+        Remembered(
+            hosts: Scenario.hosts.map { host in
+                var entry = host.entry
+                if entry.id == Scenario.studio { entry.online = false }
+                return entry
+            },
+            agents: Scenario.agents.map(\.agent))
+    }
+
     /// The fleet with the conversation this app opens on kept in the store.
     public static var chat: Remembered {
-        var remembered = unreachable
+        var remembered = studioAway
         remembered.chats = [Scenario.focus: rememberedTranscript]
         return remembered
     }

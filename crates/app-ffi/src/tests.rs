@@ -1119,6 +1119,105 @@ fn a_seeded_store_is_what_a_launch_and_a_cached_conversation_read() {
     );
 }
 
+/// A remembered agent's standing written through the C boundary reads back
+/// through the cached-fleet entry point with its attention, phase and age,
+/// while an agent whose machine was last known offline is drawn without one.
+#[test]
+fn a_seeded_standing_is_what_a_launch_draws_for_each_remembered_agent() {
+    let root = test_root();
+    let studio = uuid::Uuid::from_u128(1);
+    let air = uuid::Uuid::from_u128(2);
+    let agent = |id: u128, host: uuid::Uuid| {
+        json!({"id": uuid::Uuid::from_u128(id), "host_id": host, "name": format!("agent-{id}"),
+               "command": "claude", "working_dir": "/work",
+               "kind": {"kind": "claude", "driver": "pty"}, "readonly": false, "args": [],
+               "created_at": "2026-09-13T09:00:00Z"})
+    };
+    let remembered = json!({
+        "local": uuid::Uuid::from_u128(9),
+        "hosts": [
+            {"id": studio, "name": "Studio", "online": true, "trust_status": "trusted"},
+            {"id": air, "name": "air", "online": false, "trust_status": "trusted"}
+        ],
+        "agents": [agent(11, studio), agent(12, studio), agent(13, studio), agent(21, air)],
+        "standings": {
+            uuid::Uuid::from_u128(11).to_string(): {
+                "attention": {"attention": "needs_you", "why": "permission"},
+                "phase": {"phase": "running"}, "last_activity": "2026-09-16T08:58:00Z"},
+            uuid::Uuid::from_u128(12).to_string(): {
+                "attention": {"attention": "working"},
+                "phase": {"phase": "running"}, "last_activity": "2026-09-16T08:59:00Z"},
+            uuid::Uuid::from_u128(13).to_string(): {
+                "attention": {"attention": "idle"},
+                "phase": {"phase": "running"}, "last_activity": "2026-09-16T08:46:00Z"},
+            uuid::Uuid::from_u128(21).to_string(): {
+                "attention": {"attention": "working"},
+                "phase": {"phase": "running"}, "last_activity": "2026-09-16T08:30:00Z"}
+        }
+    });
+    let directory = CString::new(root.path().to_str().unwrap()).unwrap();
+    let account = CString::new("personal").unwrap();
+    let json = CString::new(remembered.to_string()).unwrap();
+    assert_eq!(
+        owned_json(unsafe {
+            amux_app_seed_store(directory.as_ptr(), account.as_ptr(), json.as_ptr())
+        }),
+        json!({"ok": true})
+    );
+
+    let fleet = cached_fleet(root.path(), "personal");
+    let mut drawn: Vec<_> = fleet["Fleet"]["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|card| {
+            (
+                card["agent"]["name"].as_str().unwrap().to_owned(),
+                card["attention"].clone(),
+                card["phase"].clone(),
+                card["last_activity"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    drawn.sort_by(|left, right| left.0.cmp(&right.0));
+    let at = |text: &str| {
+        chrono::DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let expected = [
+        (
+            "agent-11",
+            json!({"attention": "needs_you", "why": "permission"}),
+            "2026-09-16T08:58:00Z",
+        ),
+        (
+            "agent-12",
+            json!({"attention": "working"}),
+            "2026-09-16T08:59:00Z",
+        ),
+        (
+            "agent-13",
+            json!({"attention": "idle"}),
+            "2026-09-16T08:46:00Z",
+        ),
+        (
+            "agent-21",
+            json!({"attention": "unknown"}),
+            "2026-09-16T08:30:00Z",
+        ),
+    ];
+    assert_eq!(drawn.len(), expected.len(), "{fleet}");
+    for ((name, attention, phase, age), (want_name, want_attention, want_age)) in
+        drawn.iter().zip(expected)
+    {
+        assert_eq!(name, want_name, "{fleet}");
+        assert_eq!(attention, &want_attention, "{name}: {fleet}");
+        assert_eq!(phase, &json!({"phase": "running"}), "{name}: {fleet}");
+        assert_eq!(at(age), at(want_age), "{name}: {fleet}");
+    }
+}
+
 #[test]
 fn mobile_cache_missing_is_empty_but_unusable_stores_report_the_remedy() {
     let root = test_root();

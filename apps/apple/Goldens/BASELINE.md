@@ -321,11 +321,11 @@ Added state using the `home-offline` fixture. The two row states an ordinary fle
 
 ## cached-fleet-unreachable
 
-Added state using the `cached-fleet-unreachable` fixture. A launch drawn from the account's SQLite store while Studio is not answering: every remembered agent is listed, unconfirmed and waiting for its machine, and nothing can be sent until it answers. It follows the same visual system as its parent screen.
+Added state using the `cached-fleet-unreachable` fixture. A launch drawn from the account's SQLite store while air is not answering: every remembered agent is listed, unconfirmed and waiting for its machine, and nothing can be sent until it answers. Each row draws the standing its machine last published and that standing's age, so the header counts the agents that needed attention when the phone last heard; air's agent says its machine is offline instead of guessing at a standing. It follows the same visual system as its parent screen.
 
 ## cached-fleet-removal
 
-Added state using the `cached-fleet-removal` fixture. The same launch after Studio said two of its agents were gone before the phone lost its connection: the store no longer remembers them, so they are not drawn. It follows the same visual system as its parent screen.
+Added state using the `cached-fleet-removal` fixture. The same launch after Studio said two of its agents were gone before the phone lost its connection: the store no longer remembers them, so they are not drawn. The remaining rows keep their stored standing and age. It follows the same visual system as its parent screen.
 
 ## cached-chat
 

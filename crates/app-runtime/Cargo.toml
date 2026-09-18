@@ -9,11 +9,12 @@ publish = false
 default = ["bundled"]
 bundled = ["store/bundled"]
 # Writes remembered states into a store so a driving build can open them.
-debug-tools = []
+debug-tools = ["dep:fold"]
 
 [dependencies]
 artifacts = { workspace = true }
 client = { workspace = true }
+fold = { workspace = true, optional = true }
 model = { workspace = true }
 store = { workspace = true }
 ui-runtime = { workspace = true }
