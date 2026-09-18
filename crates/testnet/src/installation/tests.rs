@@ -2,7 +2,7 @@ use futures_util::FutureExt;
 
 use super::*;
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn profile_fixture_waits_for_its_previous_listener_to_release() {
     let fixtures = Arc::new(Mutex::new(FixturePlan::default()));
     let factory = fixture_factory(fixtures.clone(), None);

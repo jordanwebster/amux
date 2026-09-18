@@ -1,3 +1,10 @@
+2026-09-18 — **The listener-release regression waits on the OS clock.** The
+test still proves a profile restart yields while its previous listener owns
+the address, but its retry deadline now advances in real time. A transient
+reuse of the just-freed ephemeral port can therefore clear before the test
+exhausts the production-sized retry window; the separate permanently occupied
+case keeps fast simulated-time coverage of the deadline.
+
 2026-09-18 — **The authenticated agent journey follows authoritative fleet
 removal.** Its exit-code assertion now observes the session-close stream
 directly while the runtime independently confirms the agent leaves the fleet,
