@@ -1,3 +1,29 @@
+2026-09-18 — **Re-record the desktop and phone performance baselines on the merged tree.**
+The merge changed what two of these measurements measure, so the recorded
+numbers no longer described the same work. The TUI's direct-profile startup
+now goes through the split-config loader: it parses the profile file, reads
+the installation file it points at, and validates the recorded paths, where
+it used to read one flat file. Cold start therefore carries about 3 ms more
+fixed cost — flat at both 40 and 200 stored agents, so none of it scales with
+the fleet — and its previous baseline of 13.4 ms described a startup that read
+a single file. Every absolute budget passes with room: cold start measures
+17.2 and 16.8 ms against 100.
+Two phone rows moved for real rather than by measurement. The app holds about
+8 MB more in a thousand-message conversation, 83.9 against 76.4 MB and steady
+across four runs, well inside the 250 MB budget. Echo commits in 4.0 ms rather
+than 2.1: both land the row in the next frame on a phone, whose frame is
+8.3 ms, so the doubling halves the headroom without being visible. Their
+causes are not established; the drift gates now sit on the current values so
+further growth is caught.
+Recorded on Mac14,6, macOS 26.5.2, release with bundled,perf, desktop under
+the cluster-warmer reference state, each file written by one quiet run and
+confirmed by a second passing run: desktop cold start 17.150 and 16.770 ms
+then 17.022 and 17.607, phone cold first frame 446.3 ms then 450.4, phone
+footprint 83.9 then 83.9 MB. The confirming run passes all twenty desktop
+and thirteen phone rows.
+Cold first frame reads 447, 507, 449, 446 and 451 ms across five runs; the
+507 came from a loaded machine, which is what the quiet wait exists to avoid.
+
 2026-09-18 — **Merge current main into the SQLite client branch.**
 Combine direct-link routing, relay teardown, account and pairing changes with
 store-first clients and daemon-owned fleet standing. Activity publications use

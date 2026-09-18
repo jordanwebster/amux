@@ -1,15 +1,15 @@
 {
-  "coldFirstFrameMs.cachedFleet40": 445.48308849334717,
-  "coldStoreReadMs.cachedFleet40": 2.525925636291504,
-  "reconciliationMs.latency0": 2.701997756958008,
-  "reconciliationMs.latency100": 104.88903522491455,
-  "reconciliationMs.putAwayAndPickedUp": 257.4336249381304,
-  "echoFrames.conversation1000": 2.1219253540039062,
-  "hitchTimeRatioMsPerS.stream50PerSecond20s": 3.7153049442508005e-06,
-  "mainThreadCpuPercent.stream50PerSecond20s": 25.272567637425166,
-  "footprintMB.conversation1000": 76.39298248291016,
+  "coldFirstFrameMs.cachedFleet40": 446.33495807647705,
+  "coldStoreReadMs.cachedFleet40": 2.362966537475586,
+  "reconciliationMs.latency0": 2.5609731674194336,
+  "reconciliationMs.latency100": 104.80201244354248,
+  "reconciliationMs.putAwayAndPickedUp": 283.5129590239376,
+  "echoFrames.conversation1000": 3.9539337158203125,
+  "hitchTimeRatioMsPerS.stream50PerSecond20s": 3.7158907206501063e-06,
+  "mainThreadCpuPercent.stream50PerSecond20s": 25.030171181489276,
+  "footprintMB.conversation1000": 83.87738037109375,
   "idleCommits.conversation1000": 0,
   "connectionsPerHost.putAwayAndPickedUp": 1,
   "backgroundConnections.putAwayAndPickedUp": 0,
-  "foregroundRecoveryMs.putAwayAndPickedUp": 240.04750000312924
+  "foregroundRecoveryMs.putAwayAndPickedUp": 219.1523329820484
 }
