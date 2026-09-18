@@ -167,4 +167,4 @@ ci: check lint fmt-check codegen-check dependency-policy test doctest release-ch
 # lease and prepares the pinned device. Pass --baseline to record the current
 # release medians after every absolute budget passes.
 perf *ARGS:
-    set -e; export AMUX_NORMAL_PRIORITY=1; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p amux --bin amux --features bundled,perf; {{bounded}} 1200 cargo build --locked --release -p testnet --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != soak ] && [ "$mode" != --only ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf -- "$@"; fi
+    set -e; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p amux --bin amux --features bundled,perf; {{bounded}} 1200 cargo build --locked --release -p testnet --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != soak ] && [ "$mode" != --only ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf -- "$@"; fi

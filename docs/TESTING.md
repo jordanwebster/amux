@@ -162,13 +162,6 @@ new expectation. Baseline recording is qualification work, so do it only on
 an otherwise idle reference machine and review the complete reports before
 committing the files.
 
-On macOS, `just perf` also refuses to measure release work under an inherited
-positive nice value. Agent hosts commonly lower their whole process tree to
-nice 5; the recipe relaunches each bounded qualification command through the
-interactive user's launchd domain at nice 0, matching the scheduling class in
-which the reference baselines were recorded. The report states each such
-relaunch. This changes neither the workload nor the drift gate.
-
 The soak holds ten chat windows and the daemon state for 200 idle plus 20
 active structured agents for ten minutes. It samples the platform's named
 memory measure every five seconds, excludes the first two minutes from linear
