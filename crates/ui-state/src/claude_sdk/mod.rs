@@ -14,7 +14,7 @@ pub(crate) mod update;
 use std::collections::VecDeque;
 
 pub use ::fold::claude_sdk::{
-    AgentMessageEntry, AskKind, AskWhy, BlockId, BoundaryEntry, CompactionEntry, ElicitationField,
+    AgentMessageEntry, AskKind, AskWhy, BoundaryEntry, CompactionEntry, ElicitationField,
     ElicitationFieldKind, ElicitationForm, FeedEntry, FeedEntryKind, Finality, MessageEntry,
     PromptEntry, StatusEntry, TaskEntry, TaskState, TaskUsage, ThinkingEntry, TokenUsage,
     ToolEntry, ToolResult, TurnEntry, UnrecognizedEntry,
@@ -83,14 +83,12 @@ impl ClaudeSdkLayer {
     }
 
     pub(crate) fn observe_exit(&mut self) {
-        self.observation.interrupt_streams();
         self.exited = true;
         self.asks.clear();
         self.clear_inputs("session stream closed");
     }
 
     pub(crate) fn invalidate(&mut self) {
-        self.observation.interrupt_streams();
         self.stale = true;
         self.clear_inputs("session stream closed");
     }

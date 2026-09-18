@@ -670,6 +670,8 @@ pub enum AttentionObservation {
     TurnInterrupted { fresh: bool },
 }
 
+const IDLE_FACT_DECAY_SECS: i64 = 60;
+
 pub fn observe_attention(
     input: AttentionInput,
     now: Option<DateTime<Utc>>,
@@ -705,7 +707,7 @@ pub fn observe_attention(
             TurnClosure::Authority { at } | TurnClosure::Interrupt { at } => at,
         };
         let fresh = match (now, at) {
-            (Some(now), Some(at)) => now - at <= TimeDelta::seconds(60),
+            (Some(now), Some(at)) => now - at <= TimeDelta::seconds(IDLE_FACT_DECAY_SECS),
             _ => true,
         };
         match closed {

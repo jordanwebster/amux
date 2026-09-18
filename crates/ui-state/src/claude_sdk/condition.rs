@@ -163,7 +163,6 @@ fn classify(
         turn: layer.observation().turn(),
         ask,
     }) {
-        AttentionObservation::Unavailable => SdkConditionState::Unavailable,
         AttentionObservation::Exited => SdkConditionState::Exited,
         AttentionObservation::Replaying => SdkConditionState::Replaying,
         AttentionObservation::Unknown => SdkConditionState::Unknown,

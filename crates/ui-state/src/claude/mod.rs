@@ -83,10 +83,6 @@ pub enum ClaudeCommand {
     },
 }
 
-/// Message upsert index bound (B2). Main-session files burst-write whole
-/// messages, so only recent message ids ever receive late rows.
-pub(crate) const MESSAGES_RETAINED: usize = 64;
-
 /// Unpaired `tool_use` index bound (B4). This index outlives feed eviction —
 /// it is the structure Phase 2's obligations-outlive-eviction rule builds
 /// on — so it is bounded separately from the feed.
@@ -564,9 +560,6 @@ struct TurnState {
     /// An arrival-ordered `hook.stop` said the turn ended; awaiting the
     /// in-transcript `turn_duration` authority.
     stop_presignal: bool,
-    /// Timestamp of the previous uuid row in file order — the thinking
-    /// duration chain. Cleared across interrupts and compaction.
-    last_row_at: Option<DateTime<Utc>>,
     /// A human prompt opened a turn and no turn-end signal closed it (the
     /// phase's working input). Distinct from `prompt_at`, which duration
     /// inference rides and a compaction boundary clears — an auto-compact
@@ -582,29 +575,11 @@ struct TurnState {
     error_live: bool,
 }
 
-/// Message upsert slot (B2).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct MessageSlot {
-    id: String,
-    state: SlotState,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SlotState {
-    Open,
-    /// Non-null `stop_reason` seen (FACT — wins over any inference).
-    FinalFact,
-    /// Closed as abandoned/interrupted (INFERRED).
-    ClosedInferred,
-}
-
 /// One unpaired `tool_use`, indexed for pairing. Lives outside the feed
 /// window: evicting content never evicts this (the ask-obligation seam).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct OpenTool {
     tool_use_id: String,
-    message_id: Option<String>,
     plan: Option<String>,
 }
 
@@ -634,7 +609,6 @@ pub struct ClaudeLayer {
     session: SessionFacts,
     todos: todos::ClaudeTodos,
     turn: TurnState,
-    messages: VecDeque<MessageSlot>,
     open_tools: VecDeque<OpenTool>,
     plans: Vec<AcceptedPlan>,
     /// Pending asks in arrival order (C). Store-window eviction never touches
@@ -894,7 +868,6 @@ impl ClaudeLayer {
     /// counts, and arithmetic — never content.
     pub(crate) fn check_invariants(&self, agent: model::AgentId, out: &mut Vec<Violation>) {
         for (store, len, cap) in [
-            ("messages", self.messages.len(), MESSAGES_RETAINED),
             ("open-tools", self.open_tools.len(), OPEN_TOOLS_RETAINED),
             ("plans", self.plans.len(), PLANS_RETAINED),
             ("asks", self.asks.len(), ASKS_RETAINED),

@@ -1,3 +1,9 @@
+2026-09-18 — **Provider observation no longer rebuilds discarded feeds.**
+The Claude PTY reducer facade now derives only its running facts and
+obligations, while the Claude SDK observer retains only session, turn, task and
+todo state. Drawable entries remain owned by the durable folds, eliminating
+per-row construction of a throwaway SDK feed and no-op PTY entry sinks.
+
 2026-09-18 — **Development iOS builds refresh their shipping-path stand-in.**
 `just ios rust` marks the shipping framework only when it supplies the
 development slice as a placeholder, and restages that placeholder whenever
