@@ -294,12 +294,12 @@ pub fn run_soak(machine: Machine, recording: bool) -> Result<()> {
     let recorded = if config.diagnostic {
         None
     } else {
-        Baselines::read(&baseline_path, &machine)?
+        Baselines::read(&baseline_path, &machine, None)?
     };
     let report = if config.diagnostic {
         Report::evaluate_diagnostic(machine, runs)?
     } else {
-        Report::evaluate(machine, runs, recorded.as_ref(), recording)?
+        Report::evaluate_soak(machine, runs, recorded.as_ref(), recording)?
     };
     report.print();
     if recording {

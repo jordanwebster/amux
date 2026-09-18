@@ -7,6 +7,7 @@ use thiserror::Error;
 
 const BASELINE_SCHEMA: u32 = 1;
 const BASELINE_ROOT: &str = "crates/testnet/perf/baselines";
+pub const DESKTOP_REFERENCE_STATE: &str = "one busy core (cluster warmer)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,11 +127,17 @@ pub struct Baselines {
     pub machine_model: String,
     profile: String,
     features: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_state: Option<String>,
     pub medians: BTreeMap<String, Option<f64>>,
 }
 
 impl Baselines {
-    pub fn read(path: &Path, machine: &Machine) -> Result<Option<Self>, PerfError> {
+    pub fn read(
+        path: &Path,
+        machine: &Machine,
+        reference_state: Option<&str>,
+    ) -> Result<Option<Self>, PerfError> {
         if !path.is_file() {
             return Ok(None);
         }
@@ -158,6 +165,14 @@ impl Baselines {
                 value.features
             )));
         }
+        if value.reference_state.as_deref() != reference_state {
+            return Err(PerfError::Baseline(format!(
+                "{} records reference state {}, but this run uses {}",
+                path.display(),
+                display_reference_state(value.reference_state.as_deref()),
+                display_reference_state(reference_state),
+            )));
+        }
         Ok(Some(value))
     }
 
@@ -175,9 +190,14 @@ impl Baselines {
             machine_model: self.machine_model.clone(),
             profile: self.profile.clone(),
             features: self.features.clone(),
+            reference_state: self.reference_state.clone(),
             medians,
         })
     }
+}
+
+fn display_reference_state(reference_state: Option<&str>) -> &str {
+    reference_state.unwrap_or("unspecified")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -231,6 +251,7 @@ pub struct Report {
     pub features: &'static str,
     pub verdicts: Vec<Verdict>,
     pub runs: Vec<MetricRun>,
+    reference_state: Option<&'static str>,
     diagnostic: bool,
 }
 
@@ -241,11 +262,27 @@ impl Report {
         baselines: Option<&Baselines>,
         recording: bool,
     ) -> Result<Self, PerfError> {
-        Self::evaluate_mode(machine, runs, baselines, recording, false)
+        Self::evaluate_mode(
+            machine,
+            runs,
+            baselines,
+            recording,
+            Some(DESKTOP_REFERENCE_STATE),
+            false,
+        )
+    }
+
+    pub fn evaluate_soak(
+        machine: Machine,
+        runs: Vec<MetricRun>,
+        baselines: Option<&Baselines>,
+        recording: bool,
+    ) -> Result<Self, PerfError> {
+        Self::evaluate_mode(machine, runs, baselines, recording, None, false)
     }
 
     pub fn evaluate_diagnostic(machine: Machine, runs: Vec<MetricRun>) -> Result<Self, PerfError> {
-        Self::evaluate_mode(machine, runs, None, false, true)
+        Self::evaluate_mode(machine, runs, None, false, None, true)
     }
 
     fn evaluate_mode(
@@ -253,6 +290,7 @@ impl Report {
         runs: Vec<MetricRun>,
         baselines: Option<&Baselines>,
         recording: bool,
+        reference_state: Option<&'static str>,
         diagnostic: bool,
     ) -> Result<Self, PerfError> {
         let metric_names = runs
@@ -326,6 +364,7 @@ impl Report {
             features: "bundled,perf",
             verdicts,
             runs,
+            reference_state,
             diagnostic,
         })
     }
@@ -348,6 +387,9 @@ impl Report {
             "machine: {} ({}) · OS: {} · profile: {} · features: {}",
             self.machine.name, self.machine.model, self.machine.os, self.profile, self.features
         );
+        if let Some(reference_state) = self.reference_state {
+            println!("reference state: {reference_state}");
+        }
         if self.diagnostic {
             println!("drift: not applied to diagnostic runs");
         }
@@ -416,6 +458,7 @@ impl Report {
             machine_model: self.machine.model.clone(),
             profile: self.profile.to_owned(),
             features: self.features.to_owned(),
+            reference_state: self.reference_state.map(str::to_owned),
             medians: self
                 .runs
                 .iter()
@@ -594,6 +637,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([("fixture".to_owned(), Some(10.0))]),
         };
         let report = Report::evaluate(
@@ -616,6 +660,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([
                 ("fixture".to_owned(), Some(10.0)),
                 ("other".to_owned(), Some(20.0)),
@@ -644,6 +689,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([("fixture".to_owned(), Some(10.0))]),
         };
         let report = Report::evaluate(
@@ -675,6 +721,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([("fixture".to_owned(), Some(0.001))]),
         };
         let report = Report::evaluate(
@@ -691,7 +738,7 @@ mod tests {
 
     #[test]
     fn soak_baseline_records_null_for_slope_rows() {
-        let report = Report::evaluate(
+        let report = Report::evaluate_soak(
             machine(),
             vec![
                 named_run("slope", Unit::MegabytesPerMinute, Statistic::Worst, &[0.2]),
@@ -704,7 +751,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("Mac14,6-soak.json");
         report.write_baseline(&path).unwrap();
-        let baseline = Baselines::read(&path, &machine()).unwrap().unwrap();
+        let baseline = Baselines::read(&path, &machine(), None).unwrap().unwrap();
+        assert_eq!(baseline.reference_state, None);
         assert_eq!(baseline.medians["slope"], None);
         assert_eq!(baseline.medians["peak"], Some(12.0));
     }
@@ -741,8 +789,34 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("Mac14,6.json");
         report.write_baseline(&path).unwrap();
-        let read = Baselines::read(&path, &machine()).unwrap().unwrap();
+        let read = Baselines::read(&path, &machine(), Some(DESKTOP_REFERENCE_STATE))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            read.reference_state.as_deref(),
+            Some(DESKTOP_REFERENCE_STATE)
+        );
         assert_eq!(read.medians["fixture"], Some(2.0));
+    }
+
+    #[test]
+    fn perf_baseline_refuses_a_different_reference_state() {
+        let report = Report::evaluate(
+            machine(),
+            vec![run(Unit::Milliseconds, Statistic::Median, &[1.0])],
+            None,
+            true,
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Mac14,6.json");
+        report.write_baseline(&path).unwrap();
+
+        let error = Baselines::read(&path, &machine(), Some("idle machine"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(DESKTOP_REFERENCE_STATE), "{error}");
+        assert!(error.contains("idle machine"), "{error}");
     }
 
     #[test]
@@ -771,6 +845,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::new(),
         };
         let error = Report::evaluate(
@@ -790,6 +865,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::from([("fixture".to_owned(), None)]),
         };
         let passing = Report::evaluate(
@@ -823,6 +899,7 @@ mod tests {
             machine_model: "Mac14,6".to_owned(),
             profile: "release".to_owned(),
             features: "bundled,perf".to_owned(),
+            reference_state: Some(DESKTOP_REFERENCE_STATE.to_owned()),
             medians: BTreeMap::new(),
         };
         let report = Report::evaluate(

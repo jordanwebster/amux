@@ -182,6 +182,11 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
             "release amux binary is missing at {}; run through `just perf`",
             executable.display()
         );
+        let mut daemon = InstallationDaemonGuard::new(
+            &executable,
+            &config_path,
+            &installation.front_door_socket,
+        );
         run_release_tui(&executable, &config_path)?;
         let started_at = Utc::now();
         let mut samples = Vec::with_capacity(7);
@@ -216,8 +221,64 @@ async fn cold_start() -> Result<Vec<MetricRun>> {
             started_at,
             &samples,
         ));
+        daemon.stop()?;
     }
     Ok(runs)
+}
+
+struct InstallationDaemonGuard {
+    executable: PathBuf,
+    config_path: PathBuf,
+    front_door_socket: PathBuf,
+    stopped: bool,
+}
+
+impl InstallationDaemonGuard {
+    fn new(executable: &Path, config_path: &Path, front_door_socket: &Path) -> Self {
+        Self {
+            executable: executable.to_owned(),
+            config_path: config_path.to_owned(),
+            front_door_socket: front_door_socket.to_owned(),
+            stopped: false,
+        }
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.front_door_socket.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if !self.front_door_socket.exists() {
+            self.stopped = true;
+            return Ok(());
+        }
+        let output = std::process::Command::new(&self.executable)
+            .arg("--config")
+            .arg(&self.config_path)
+            .args(["server", "stop"])
+            .output()
+            .context("stop cold-start installation daemon")?;
+        ensure!(
+            output.status.success(),
+            "cold-start installation daemon did not stop: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        ensure!(
+            !self.front_door_socket.exists(),
+            "cold-start installation daemon left its front-door socket behind"
+        );
+        self.stopped = true;
+        Ok(())
+    }
+}
+
+impl Drop for InstallationDaemonGuard {
+    fn drop(&mut self) {
+        if !self.stopped {
+            let _ = self.stop();
+        }
+    }
 }
 
 fn run_release_tui(executable: &Path, config_path: &Path) -> Result<f64> {
@@ -632,7 +693,7 @@ fn paint_runtime_chat(
     terminal: &mut Terminal<TestBackend>,
 ) -> Result<()> {
     let mut chat = ChatView::open(model, agent, 'a', false).context("open stored chat view")?;
-    chat.reconcile(&model);
+    chat.reconcile(model);
     let view = ViewState {
         chat: Some(chat),
         ..ViewState::default()
@@ -642,7 +703,7 @@ fn paint_runtime_chat(
         theme: Theme::default(),
         now: Utc::now(),
     };
-    terminal.draw(|frame| render(&model, &view, &context, frame))?;
+    terminal.draw(|frame| render(model, &view, &context, frame))?;
     Ok(())
 }
 

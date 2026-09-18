@@ -137,12 +137,14 @@ desktop frame loop, store-backed cold start and chat attachment, fold bounds,
 SQLite commit and maintenance work, summarizer cost, and reconnect wire size.
 The report names the enrolled hardware and OS, profile and features, workload
 seed, identity-growth mode, warm-up, sample count, timestamps, statistic,
-budget, committed baseline and drift. It fails on an absolute budget miss, on
-time drift above 15%, or on memory drift above 10%. On a Mac with Xcode, the
-same invocation also runs `just ios perf` under its own simulator lease; that
-recipe prepares the pinned simulator, and a failure there fails the combined
-recipe. A desktop build or measurement failure stops the recipe before the
-phone suite starts.
+budget, committed baseline and drift. The desktop report also names its
+reference state: one child process keeps one core busy for the qualification,
+so the CPU cluster remains active without adding its CPU time or memory to the
+measured process. It fails on an absolute budget miss, on time drift above 15%,
+or on memory drift above 10%. On a Mac with Xcode, the same invocation also
+runs `just ios perf` under its own simulator lease; that recipe prepares the
+pinned simulator, and a failure there fails the combined recipe. A desktop
+build or measurement failure stops the recipe before the phone suite starts.
 
 ```sh
 just perf
@@ -158,9 +160,21 @@ soak baselines live separately at
 recorded machine model, release profile and feature set. An unknown hardware
 model is refused. `--baseline` records the complete workload it accompanies
 while still enforcing every absolute budget; it never turns a miss into the
-new expectation. Baseline recording is qualification work, so do it only on
-an otherwise idle reference machine and review the complete reports before
-committing the files.
+new expectation. A baseline also records the reference state, and a report is
+comparable only with a baseline recorded in that same state; a mismatch is
+refused just like a different machine model.
+
+An otherwise idle Apple Silicon machine is not a stable latency reference for
+these bursty workloads. When no core is active, the cluster can remain in a
+low-power state between wakeups and produce wall-clock results several times
+slower and with wider spread, even though the work itself has not changed.
+The absolute budgets hold both when the machine is idle and when the cluster
+warmer is active. The warmer defines the repeatable state used for relative
+drift; it does not change any workload, statistic, budget or drift limit.
+Baseline recording is qualification work, so wait for unrelated builds,
+simulator runs and performance harnesses to finish, then review the complete
+reports before committing the files. `just perf soak` remains a memory-only
+qualification and does not start the cluster warmer.
 
 The soak holds ten chat windows and the daemon state for 200 idle plus 20
 active structured agents for ten minutes. It samples the platform's named

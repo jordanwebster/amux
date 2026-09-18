@@ -1,3 +1,11 @@
+2026-09-18 — **Desktop performance drift uses a defined CPU-cluster state.**
+The release performance harness now keeps one core busy in a re-exec child for
+the complete desktop qualification, ties that child to a parent-owned pipe and
+reaps it after the report. Reports and desktop baselines name the reference
+state and reject mismatches, while the memory-only soak remains unchanged.
+Cold-start teardown also stops and waits for the installation daemon launched
+by the measured client, so repeated qualification leaves no detached server.
+
 2026-09-18 — **Store rebuild proof uses two compiled family definitions.**
 The store suite now keeps a process built with the supported chat-family v2
 fixture live while the current v3 test binary opens and rebuilds the same

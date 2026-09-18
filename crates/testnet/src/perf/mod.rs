@@ -10,8 +10,8 @@ mod store_workloads;
 #[cfg(feature = "perf")]
 mod workloads;
 pub use report::{
-    Baselines, Machine, Metric, MetricRun, PerfError, Report, Sample, Statistic, Unit, Verdict,
-    Workload,
+    Baselines, DESKTOP_REFERENCE_STATE, Machine, Metric, MetricRun, PerfError, Report, Sample,
+    Statistic, Unit, Verdict, Workload,
 };
 #[cfg(feature = "perf")]
 pub use soak::{run_soak, soak_child};
