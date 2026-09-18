@@ -110,7 +110,7 @@ impl TestAgentSession {
         Self {
             agent_id,
             name,
-            command: "test-echo".to_string(),
+            command: io::TEST_ECHO_COMMAND.to_string(),
             working_dir: std::env::temp_dir(),
             parent: None,
             pty: Some(PtyHandle::test_echo()),

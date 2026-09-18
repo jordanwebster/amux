@@ -1,3 +1,11 @@
+2026-09-18 — **Suspend crash cuts preserve the sealed sequence contract.**
+The daemon protocol specification now abandons a live emitting test agent at
+each durable cut, builds a fresh host over only the surviving suspend files,
+and proves the subscriber saw every numbered pre-seal row. A saved but
+unconsumed seal resumes the same identity at its watermark with the documented
+continuous, reset, and truncated cursor outcomes; a consumed seal, including
+one followed by a resumed publication, recreates the agent at sequence one.
+
 2026-09-18 — **The desktop paints its selected profile before discovery.**
 Bare `amux`, `amux ui`, and store inspection now resolve UUID, label,
 remembered, and single-profile selection from the durable installation

@@ -350,6 +350,13 @@ impl StructuredLogSource {
         self.publish(permit, payload, None, false).await
     }
 
+    /// Publish like a provider ingestion task, waiting behind a suspend seal.
+    #[cfg(test)]
+    pub(crate) async fn write_waiting_for_test(&self, payload: Value) -> Result<u64, LogClosed> {
+        let permit = self.publication.enter_waiting().await?;
+        self.publish(permit, payload, None, false).await
+    }
+
     async fn publish(
         &self,
         _permit: PublicationPermit<'_>,

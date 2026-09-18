@@ -1702,8 +1702,14 @@ mod summarizer_registration_tests {
 
 #[cfg(test)]
 mod suspend_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
     use super::*;
-    use crate::agents::{AgentBackend, TestAgentSession};
+    use crate::agents::{
+        AgentBackend, MultiplexStructuredReader, SequencedReplayQuery, StructuredLogSource,
+        SummarizerHandle, TestAgentSession,
+    };
     use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
     fn host(root: &Path) -> Arc<AgentRuntime> {
@@ -1717,6 +1723,27 @@ mod suspend_tests {
         .unwrap();
         AgentRuntime::new_with_mcp_launch_route(route, root.join("keymaps"), root.join("data"))
             .unwrap()
+    }
+
+    fn crash_host(root: &Path, name: &str, state_path: &Path) -> Arc<AgentRuntime> {
+        let data = root.join(name);
+        std::fs::create_dir(&data).unwrap();
+        let route = McpLaunchRoute::new(
+            std::env::current_exe().unwrap(),
+            None,
+            data.join("amux.sock"),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        AgentRuntime::new_with_artifact_clock(
+            route,
+            data.join("keymaps"),
+            data,
+            Some(state_path.to_path_buf()),
+            Arc::new(artifacts::SystemClock),
+            Vec::new(),
+        )
+        .unwrap()
     }
 
     fn record(id: Uuid, name: &str) -> SuspendedAgent {
@@ -1735,6 +1762,120 @@ mod suspend_tests {
                 Box::new(TestAgentSession::echo_for_tests(id, Some("live".into()))),
             )
             .unwrap();
+    }
+
+    async fn agent_log(host: &AgentRuntime, id: Uuid) -> StructuredLogSource {
+        host.state
+            .read()
+            .await
+            .local_agents
+            .get(&id)
+            .unwrap()
+            .session
+            .attachment_log()
+            .unwrap()
+    }
+
+    async fn only_agent_id(host: &AgentRuntime) -> Uuid {
+        let state = host.state.read().await;
+        assert_eq!(state.local_agents.len(), 1);
+        *state.local_agents.keys().next().unwrap()
+    }
+
+    struct EmittingAgent {
+        log: StructuredLogSource,
+        reader: MultiplexStructuredReader,
+        last_returned: Arc<AtomicU64>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn emitting_agent(host: &AgentRuntime, id: Uuid) -> EmittingAgent {
+        register(host, id).await;
+        let log = agent_log(host, id).await;
+        let (reader, initial) = log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(initial.through, 0);
+        let last_returned = Arc::new(AtomicU64::new(0));
+        let emitted = last_returned.clone();
+        let emitting_log = log.clone();
+        let task = tokio::spawn(async move {
+            let mut row = 0_u64;
+            loop {
+                row += 1;
+                let Ok(returned) = emitting_log
+                    .write_waiting_for_test(serde_json::json!({"type": "scripted-row", "row": row}))
+                    .await
+                else {
+                    break;
+                };
+                emitted.store(returned, Ordering::Release);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while last_returned.load(Ordering::Acquire) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("scripted agent emits before the cut");
+        EmittingAgent {
+            log,
+            reader,
+            last_returned,
+            task,
+        }
+    }
+
+    async fn assert_emission_cut(emitting: &mut EmittingAgent, through: u64) -> Vec<u64> {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while emitting.last_returned.load(Ordering::Acquire) < through {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("last completed publication is recorded");
+        assert_eq!(emitting.last_returned.load(Ordering::Acquire), through);
+        let mut observed = Vec::new();
+        for expected in 1..=through {
+            let row = tokio::time::timeout(Duration::from_secs(1), emitting.reader.read())
+                .await
+                .expect("subscriber observes every pre-seal row")
+                .expect("emitting log remains open");
+            assert_eq!(row.seq, expected);
+            observed.push(row.seq);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(emitting.log.current_seq().await, through);
+        assert!(
+            !emitting.task.is_finished(),
+            "publisher is held at the seal"
+        );
+        observed
+    }
+
+    async fn stop_emitter(emitting: EmittingAgent) {
+        emitting.log.close().await;
+        emitting.task.await.unwrap();
+    }
+
+    async fn loaded_agent(state_path: &Path) -> SuspendedAgent {
+        let saved = suspend::load_suspended(state_path).unwrap();
+        assert_eq!(saved.agents.len(), 1);
+        saved.agents.into_iter().next().unwrap()
+    }
+
+    fn print_cut(
+        name: &str,
+        old_id: Uuid,
+        resumed_id: Option<Uuid>,
+        seal: crate::agents::SealedAt,
+        observed: &[u64],
+        outcomes: &[(&str, model::ReplayOutcome)],
+    ) {
+        eprintln!(
+            "cut={name} old_agent={old_id} resumed_agent={resumed_id:?} seal_through={} observed={:?} replay={outcomes:?}",
+            seal.through, observed
+        );
     }
 
     #[tokio::test]
@@ -1841,6 +1982,278 @@ mod suspend_tests {
 
         assert_eq!(host.prepare_suspend(state_path).await.unwrap(), 0);
         assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_cut_after_park_before_save_loses_no_published_row() {
+        let root = tempfile::tempdir().unwrap();
+        let state_path = root.path().join("durable").join("state.yaml");
+        let original = crash_host(root.path(), "cut-1-live", &state_path);
+        let original_id = Uuid::new_v4();
+        let mut emitting = emitting_agent(&original, original_id).await;
+
+        let seal = emitting.log.prepare_suspend().await.unwrap();
+        let observed = assert_emission_cut(&mut emitting, seal.through).await;
+        assert!(
+            suspend::load_suspended(&state_path)
+                .unwrap()
+                .agents
+                .is_empty(),
+            "the cut happens before the suspend record is saved"
+        );
+
+        // The original runtime remains alive and untouched, modelling the
+        // memory that a process kill discards. Only disk is shared here.
+        let fresh = crash_host(root.path(), "cut-1-fresh", &state_path);
+        let operations = host_api::OperationGate::default();
+        assert_eq!(
+            fresh.resume(state_path.clone(), &operations).await.unwrap(),
+            (0, 0)
+        );
+        assert_eq!(fresh.agent_count().await, 0);
+        print_cut(
+            "after-park-before-save",
+            original_id,
+            None,
+            seal,
+            &observed,
+            &[],
+        );
+        eprintln!("cut=after-park-before-save fresh_resume=(0, 0)");
+
+        stop_emitter(emitting).await;
+        fresh.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_cut_after_save_continues_at_the_watermark() {
+        let root = tempfile::tempdir().unwrap();
+        let state_path = root.path().join("durable").join("state.yaml");
+        let original = crash_host(root.path(), "cut-2-live", &state_path);
+        let original_id = Uuid::new_v4();
+        let mut emitting = emitting_agent(&original, original_id).await;
+
+        assert_eq!(
+            original.prepare_suspend(state_path.clone()).await.unwrap(),
+            1
+        );
+        let saved = loaded_agent(&state_path).await;
+        let seal = saved.seal().unwrap();
+        assert_eq!(saved.agent_id(), original_id);
+        assert!(seal.through >= 3);
+        let observed = assert_emission_cut(&mut emitting, seal.through).await;
+
+        let fresh = crash_host(root.path(), "cut-2-fresh", &state_path);
+        let operations = host_api::OperationGate::default();
+        assert_eq!(
+            fresh.resume(state_path.clone(), &operations).await.unwrap(),
+            (1, 0)
+        );
+        assert_eq!(only_agent_id(&fresh).await, original_id);
+        let resumed = agent_log(&fresh, original_id).await;
+
+        let (publisher, _publications) = mpsc::unbounded_channel();
+        let summarizer = SummarizerHandle::attach(
+            original_id,
+            model::StructuredProtocol::ClaudePtyTranscript,
+            resumed.clone(),
+            publisher,
+        )
+        .await
+        .unwrap();
+        assert_eq!(summarizer.snapshot().through, seal.through);
+
+        let (mut at_reader, at) = resumed
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: seal.through,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(at.outcome, model::ReplayOutcome::Continuous);
+        assert_eq!(at.selected_from, 0);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), at_reader.read())
+                .await
+                .is_err(),
+            "the resumed ring has no rows after the exact watermark"
+        );
+        let (_, ahead) = resumed
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: seal.through + 5,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            ahead.outcome,
+            model::ReplayOutcome::Reset {
+                reason: "ahead".into()
+            }
+        );
+        let (_, behind) = resumed
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: seal.through - 2,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            behind.outcome,
+            model::ReplayOutcome::Truncated {
+                missing_after: seal.through - 2
+            }
+        );
+        let first_resumed = resumed
+            .try_write(serde_json::json!({"type": "first-after-resume"}))
+            .await
+            .unwrap();
+        assert_eq!(first_resumed, seal.through + 1);
+        print_cut(
+            "after-save-before-commit",
+            original_id,
+            Some(original_id),
+            seal,
+            &observed,
+            &[
+                ("at", at.outcome),
+                ("ahead", ahead.outcome),
+                ("behind", behind.outcome),
+            ],
+        );
+        eprintln!(
+            "cut=after-save-before-commit summarizer_through={} first_resumed_seq={first_resumed}",
+            summarizer.snapshot().through
+        );
+
+        stop_emitter(emitting).await;
+        fresh.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_cut_after_consume_recreates_the_agent() {
+        let root = tempfile::tempdir().unwrap();
+        let state_path = root.path().join("durable").join("state.yaml");
+        let original = crash_host(root.path(), "cut-3-live", &state_path);
+        let original_id = Uuid::new_v4();
+        let mut emitting = emitting_agent(&original, original_id).await;
+
+        assert_eq!(
+            original.prepare_suspend(state_path.clone()).await.unwrap(),
+            1
+        );
+        let saved = loaded_agent(&state_path).await;
+        let seal = saved.seal().unwrap();
+        let observed = assert_emission_cut(&mut emitting, seal.through).await;
+        assert!(
+            suspend::consume_seals(&state_path, std::slice::from_ref(&saved))
+                .unwrap()
+                .is_empty()
+        );
+
+        let fresh = crash_host(root.path(), "cut-3-fresh", &state_path);
+        let operations = host_api::OperationGate::default();
+        assert_eq!(
+            fresh.resume(state_path.clone(), &operations).await.unwrap(),
+            (1, 0)
+        );
+        let replacement = only_agent_id(&fresh).await;
+        assert_ne!(replacement, original_id);
+        assert!(!fresh.state.read().await.contains_agent_id(&original_id));
+        let replacement_log = agent_log(&fresh, replacement).await;
+        let replacement_first = replacement_log
+            .try_write(serde_json::json!({"type": "replacement-first"}))
+            .await
+            .unwrap();
+        assert_eq!(replacement_first, 1);
+        print_cut(
+            "after-consume-before-publisher-start",
+            original_id,
+            Some(replacement),
+            seal,
+            &observed,
+            &[],
+        );
+        eprintln!(
+            "cut=after-consume-before-publisher-start replacement_first_seq={replacement_first}"
+        );
+
+        stop_emitter(emitting).await;
+        fresh.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_cut_after_first_resumed_row_never_continues_twice() {
+        let root = tempfile::tempdir().unwrap();
+        let state_path = root.path().join("durable").join("state.yaml");
+        let original = crash_host(root.path(), "cut-4-live", &state_path);
+        let original_id = Uuid::new_v4();
+        let mut emitting = emitting_agent(&original, original_id).await;
+
+        assert_eq!(
+            original.prepare_suspend(state_path.clone()).await.unwrap(),
+            1
+        );
+        let saved = loaded_agent(&state_path).await;
+        let seal = saved.seal().unwrap();
+        let observed = assert_emission_cut(&mut emitting, seal.through).await;
+
+        // Resume through the production lifecycle but deliberately omit its
+        // record cleanup, modelling a crash immediately after publication.
+        let first_resume = crash_host(root.path(), "cut-4-first-resume", &state_path);
+        let operations = host_api::OperationGate::default();
+        let first = resume_agents(
+            first_resume.state(),
+            first_resume.event_tx(),
+            vec![saved],
+            first_resume.host_id(),
+            &operations,
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!((first.resumed_count, first.failed_count), (1, 0));
+        assert_eq!(only_agent_id(&first_resume).await, original_id);
+        let first_log = agent_log(&first_resume, original_id).await;
+        let first_resumed = first_log
+            .try_write(serde_json::json!({"type": "first-resumed-row"}))
+            .await
+            .unwrap();
+        assert_eq!(first_resumed, seal.through + 1);
+        assert_eq!(loaded_agent(&state_path).await.agent_id(), original_id);
+
+        let further = crash_host(root.path(), "cut-4-further-resume", &state_path);
+        let further_operations = host_api::OperationGate::default();
+        assert_eq!(
+            further
+                .resume(state_path.clone(), &further_operations)
+                .await
+                .unwrap(),
+            (1, 0)
+        );
+        let replacement = only_agent_id(&further).await;
+        assert_ne!(replacement, original_id);
+        assert!(!further.state.read().await.contains_agent_id(&original_id));
+        let replacement_log = agent_log(&further, replacement).await;
+        let replacement_first = replacement_log
+            .try_write(serde_json::json!({"type": "replacement-first"}))
+            .await
+            .unwrap();
+        assert_eq!(replacement_first, 1);
+        print_cut(
+            "after-first-resumed-publication",
+            original_id,
+            Some(replacement),
+            seal,
+            &observed,
+            &[],
+        );
+        eprintln!(
+            "cut=after-first-resumed-publication first_resumed_seq={first_resumed} replacement_first_seq={replacement_first}"
+        );
+
+        stop_emitter(emitting).await;
+        further.stop_all().await;
     }
 
     #[tokio::test]
