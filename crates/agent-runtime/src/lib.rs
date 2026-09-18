@@ -70,7 +70,7 @@ pub mod test_support {
             initial_prompt: None,
         };
         let deps = host.state().read().await.deps.clone();
-        let session: AgentSession = match kind {
+        let mut session: AgentSession = match kind {
             AgentKind::Claude {
                 driver: ClaudeDriver::Pty,
             } => Box::new(crate::agents::claude::ClaudeSession::scripted_for_testnet(
@@ -90,7 +90,28 @@ pub mod test_support {
                 })?
             }
         };
-        session.plane(protocol).map(|_| ())
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(8);
+        let ingest = if matches!(
+            kind,
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty
+            }
+        ) {
+            Some(
+                session
+                    .start(&event_tx)
+                    .map_err(|error| ProtocolError::ServerError {
+                        message: error.to_string(),
+                    })?,
+            )
+        } else {
+            None
+        };
+        let result = session.plane(protocol).map(|_| ());
+        if let Some(ingest) = ingest {
+            ingest.abort();
+        }
+        result
     }
 
     /// Prove the SDK composition can construct its backend without launching it.

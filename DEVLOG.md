@@ -1,3 +1,14 @@
+2026-09-18 — **In-process PTY protocol checks honor the explicit-start
+boundary.** The provider-plane helper now starts its inert scripted Claude PTY
+with a throwaway event channel before opening either exposed plane, then aborts
+the ingestion task. The downstream `test-tui`, `test-ui`, doctest,
+`release-check`, `embedded-check`, and `mobile-check` CI legs pass; the four
+Codex streaming and scrolled-back expected frames now match the existing
+store-backed fold projection, which presents the reasoning text without the
+legacy synthetic `summary:` prefix. None of these legs needs loopback access;
+the encompassing CI run still leaves its listener-bearing testnet checks to an
+authorized driver.
+
 2026-09-18 — **Claude SDK derivation replays follow prompt identity.** The
 immutable real-session captures still describe the provider versions that
 produced them, while the replay harness overlays the deterministic prompt UUIDs
