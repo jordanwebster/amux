@@ -366,7 +366,7 @@ impl Entry for ClaudeSdkEntry {
         Ok(())
     }
 
-    fn clip(&mut self, budget: usize) {
+    fn clip(&mut self, budget: usize) -> usize {
         let clipped_fields = self.components.values().len() > 256
             || self
                 .components
@@ -455,6 +455,7 @@ impl Entry for ClaudeSdkEntry {
         shrink_text_field!(&mut self.task_summary);
         shrink_text_field!(&mut self.tool_name);
         shrink_text_field!(&mut self.task_last_tool);
+        encoded_bytes
     }
 
     fn bytes(&self) -> usize {

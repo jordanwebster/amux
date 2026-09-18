@@ -1812,8 +1812,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
         let stored = self.load_entry(&canonical)?;
         let stored = if let Some(mut stored) = stored {
             stored.entry.merge(patch).map_err(merge_error)?;
-            stored.entry.clip(DESKTOP_ENTRY_MAX_BYTES);
-            if stored.entry.bytes() > DESKTOP_ENTRY_MAX_BYTES {
+            if stored.entry.clip(DESKTOP_ENTRY_MAX_BYTES) > DESKTOP_ENTRY_MAX_BYTES {
                 return Err(StoreError::OverBudget);
             }
             Stored {
@@ -1822,8 +1821,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
             }
         } else {
             let mut entry = E::from_partial(patch).map_err(merge_error)?;
-            entry.clip(DESKTOP_ENTRY_MAX_BYTES);
-            if entry.bytes() > DESKTOP_ENTRY_MAX_BYTES {
+            if entry.clip(DESKTOP_ENTRY_MAX_BYTES) > DESKTOP_ENTRY_MAX_BYTES {
                 return Err(StoreError::OverBudget);
             }
             Stored {
@@ -1943,8 +1941,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
             )
             .map_err(map_sqlite_error)?;
         if let Some(mut merged) = merged {
-            merged.entry.clip(DESKTOP_ENTRY_MAX_BYTES);
-            if merged.entry.bytes() > DESKTOP_ENTRY_MAX_BYTES {
+            if merged.entry.clip(DESKTOP_ENTRY_MAX_BYTES) > DESKTOP_ENTRY_MAX_BYTES {
                 return Err(StoreError::OverBudget);
             }
             if self
