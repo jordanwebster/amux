@@ -1,3 +1,14 @@
+2026-09-19 — **Let two store tests finish on a slow disk.**
+With CI's test job no longer stopping at the first failing binary, Windows
+reported exactly two failures across the workspace. Both ran out of time
+rather than getting a wrong answer. The large-store budget test gave
+maintenance thirty seconds to evict 96,000 entries and Windows managed
+60,000; the deadline is now five minutes, since the test is about what
+maintenance reports once nothing evictable is left. The phone cold-start test
+seeded 512 small entries that the worker's single 100 ms maintenance pass
+could not reclaim on a slow disk; it now seeds the same two megabytes as
+eight larger entries, as its app-ffi sister test already does.
+
 2026-09-19 — **Name the store-backed phone goldens in the baseline.**
 The database branch added five golden states with their images: the store
 failure screen, two launches drawn from a remembered fleet, and a cached

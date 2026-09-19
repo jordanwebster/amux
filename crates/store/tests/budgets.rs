@@ -884,13 +884,16 @@ fn large_store_opens_without_data_proportional_work_and_refuses_writes_at_reserv
         runtime().block_on(store.view_set("ui", "selected", "agent")),
         Err(StoreError::DiskFull)
     );
+    // The deadline only has to outlast evicting every entry: this asserts
+    // what maintenance reports once nothing evictable is left, and a slow
+    // CI disk needs most of a minute to get there.
     assert_eq!(
         runtime().block_on(store.maintain(
             Budget {
                 store_target_bytes: 128 * 1024 * 1024,
                 ..Budget::default()
             },
-            Duration::from_secs(30),
+            Duration::from_secs(300),
         )),
         Err(StoreError::OverBudget)
     );

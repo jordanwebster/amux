@@ -740,12 +740,15 @@ mod tests {
             [&id],
         )
         .unwrap();
+        // Few large entries: the worker's single short maintenance pass must
+        // be able to reclaim them on a slow disk, which hundreds of small
+        // rows do not allow.
         raw.execute(
-            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<512)
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<8)
              INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
                 revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
-             SELECT ?1,printf('cold-%05d',x),1,x,0,x,0,0,'prompt',NULL,4096,
-                zeroblob(4096) FROM n",
+             SELECT ?1,printf('cold-%05d',x),1,x,0,x,0,0,'prompt',NULL,262144,
+                zeroblob(262144) FROM n",
             [&id],
         )
         .unwrap();
