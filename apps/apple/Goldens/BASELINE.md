@@ -519,3 +519,41 @@ that has never had an account. It is not a subscription away and never was: no
 relay is seeing it, so the row says both facts rather than leaving it looking
 like a machine money would fix. It follows the same visual system as its parent
 screen.
+
+## store-failure
+
+Added state using the `store-failure` fixture. The account's store cannot be
+used, so the runtime has stopped and nothing cached or live is drawn in its
+place. The screen names the store and says why, in the store's own words with
+its remedy, and offers one action, Relaunch. It follows the same visual system
+as its parent screen.
+
+## cached-fleet-unreachable
+
+Added state using the `cached-fleet-unreachable` fixture. A launch drawn from
+the account's store while one machine is not answering. Every remembered agent
+is listed; the machine that is silent is named above the list, and its agents
+keep their rows without claiming a standing nobody has confirmed. It follows
+the same visual system as its parent screen.
+
+## cached-fleet-removal
+
+Added state using the `cached-fleet-removal` fixture. The same launch after a
+machine said two of its agents were gone. The store no longer remembers them,
+so the list and its count are two shorter rather than showing agents that no
+longer exist. It follows the same visual system as its parent screen.
+
+## cached-chat
+
+Added state using the `cached-chat` fixture. A conversation opened before
+anything has connected, painted from the window its store kept. The transcript
+is readable at once and the composer's place says the machine is unreachable,
+offering to retry. It follows the same visual system as its parent screen.
+
+## cached-chat-gap
+
+Added state using the `cached-chat-gap` fixture. The same stored conversation
+after a reconnect that could not recover what was said in between. A rule
+labelled missing history sits between the rows before and after the gap, so
+the transcript does not read as continuous when it is not. It follows the same
+visual system as its parent screen.

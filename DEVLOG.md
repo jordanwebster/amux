@@ -1,3 +1,11 @@
+2026-09-19 — **Name the store-backed phone goldens in the baseline.**
+The database branch added five golden states with their images: the store
+failure screen, two launches drawn from a remembered fleet, and a cached
+conversation with and without a missing-history rule. It never gave them the
+baseline entries the manifest check requires, and that check was the next
+failure in the phone gate. Each state now has an entry describing what it
+draws. The full phone unit stage passes locally.
+
 2026-09-19 — **Make a corrupt client store quarantine on Windows.**
 Windows cannot open a directory as a file, so the store's quarantine failed
 at its final directory flush every time and told the user another amux
