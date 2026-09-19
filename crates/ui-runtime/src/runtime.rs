@@ -4954,6 +4954,8 @@ mod tests {
         );
     }
 
+    // Makes the data directory unwritable with Unix permission bits.
+    #[cfg(unix)]
     #[tokio::test]
     async fn store_open_permission_failure_ends_before_connecting() {
         use std::os::unix::fs::PermissionsExt;

@@ -133,8 +133,8 @@ final class SchemaTests: XCTestCase {
     /// A break in stored history arrives as a row of its own, drawn as a rule.
     func testABreakInStoredHistoryDecodesAsItsOwnRow() throws {
         let events = try pinnedEvents()
-        guard case .feed(let stored) = events[21] else {
-            return XCTFail("expected a stored feed with a break, got \(events[21])")
+        guard case .feed(let stored) = events[22] else {
+            return XCTFail("expected a stored feed with a break, got \(events[22])")
         }
         XCTAssertEqual(stored.append.count, 1)
         XCTAssertEqual(stored.append[0].layer, .history)

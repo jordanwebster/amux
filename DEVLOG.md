@@ -1,3 +1,14 @@
+2026-09-19 — **Clear the CI failures the first repair uncovered.**
+The first repair got each failing job further, to breaks its earlier failure
+had hidden. On Windows the UI runtime's store-permission test used Unix
+permission bits unguarded; it is now Unix-only, and the socket validator's
+re-export is gated with the only caller that uses it. In the phone gate, the
+merge placed the attention event ahead of the stored history break in the
+pinned projection schema, so the Swift test reading the break by position now
+reads position 22. A full workspace type-check for Windows, with every target
+and a stub C compiler standing in for the MSVC toolchain, now passes locally,
+which is what CI's Windows test job compiles.
+
 2026-09-19 — **Repair CI after the database merge.**
 Three deterministic breaks. The testnet daemons began binding a real client
 socket for a two-terminal proof, and under the phone loopback smoke, which

@@ -52,6 +52,7 @@ pub use paths::ProfilePaths;
 pub(crate) use paths::adjacent_codex_socket_path;
 #[cfg(unix)]
 pub use paths::adjacent_link_socket_path;
+#[cfg(unix)]
 pub(crate) use paths::validate_socket_path;
 pub use registry::{Binding, InstallationRoot, ProfileLabel, ProfileRecord, Registry};
 
