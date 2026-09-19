@@ -71,7 +71,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - name: Run workspace tests
-        run: just test
+        # Report every failing test binary, not only the first: a platform
+        # that stops early hides the failures behind it until the next run.
+        run: just test -- --no-fail-fast
       - name: Run doctests
         run: just doctest
 

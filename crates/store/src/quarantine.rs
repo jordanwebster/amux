@@ -1,5 +1,7 @@
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -422,10 +424,18 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), StoreError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(map_io)
+}
+
+/// Windows cannot open a directory as a file to flush it, and NTFS journals
+/// the rename itself, so there is nothing further to make durable.
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), StoreError> {
+    Ok(())
 }
 
 fn unique_id() -> String {

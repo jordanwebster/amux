@@ -3431,6 +3431,8 @@ async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it
 
 /// What the switcher says about an account nobody is looking at is a count of
 /// real work, read from that account's own live subscription.
+// The ask arrives through Claude's hook socket, which only Unix provides.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_screen() {
     use testnet::script::{Reaction, Script, ScriptAsk, Step, Trigger};

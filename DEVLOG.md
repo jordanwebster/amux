@@ -1,3 +1,13 @@
+2026-09-19 — **Make a corrupt client store quarantine on Windows.**
+Windows cannot open a directory as a file, so the store's quarantine failed
+at its final directory flush every time and told the user another amux
+process still held the store. The directory flush is now Unix-only, as the
+artifact index already has it; NTFS journals the rename itself. The phone
+attention test that waits for a Claude terminal ask is Unix-only, because
+that ask arrives through Claude's hook socket. CI's test job now runs with
+`--no-fail-fast`: stopping at the first failing binary hid the store crate
+and everything after it on Windows, one push at a time.
+
 2026-09-19 — **Clear the CI failures the first repair uncovered.**
 The first repair got each failing job further, to breaks its earlier failure
 had hidden. On Windows the UI runtime's store-permission test used Unix
