@@ -1,3 +1,13 @@
+2026-09-19 — **Judge phone cold-start maintenance by what it evicted.**
+Seeding fewer, larger entries did not make the phone cold-start test pass on
+Windows, so running out of time was the wrong diagnosis; that fixture change
+is reverted. The test waited for the store's files to shrink, and on Windows
+they stay at size past its deadline even though maintenance ran. It now waits
+for the stored entries' total to fall, as its app-ffi sister test already
+does, and still fails when the first frame does not enable maintenance.
+Whether desktop store maintenance gives disk back promptly on Windows is not
+established by any test.
+
 2026-09-19 — **Let two store tests finish on a slow disk.**
 With CI's test job no longer stopping at the first failing binary, Windows
 reported exactly two failures across the workspace. Both ran out of time

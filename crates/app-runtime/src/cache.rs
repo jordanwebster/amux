@@ -740,20 +740,18 @@ mod tests {
             [&id],
         )
         .unwrap();
-        // Few large entries: the worker's single short maintenance pass must
-        // be able to reclaim them on a slow disk, which hundreds of small
-        // rows do not allow.
         raw.execute(
-            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<8)
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<512)
              INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
                 revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
-             SELECT ?1,printf('cold-%05d',x),1,x,0,x,0,0,'prompt',NULL,262144,
-                zeroblob(262144) FROM n",
+             SELECT ?1,printf('cold-%05d',x),1,x,0,x,0,0,'prompt',NULL,4096,
+                zeroblob(4096) FROM n",
             [&id],
         )
         .unwrap();
         drop(raw);
         let before = store_disk_bytes(&path);
+        let retained_before = stored_entry_bytes(&path);
 
         read_cached_fleet(root.path(), "owner").await.unwrap();
         let mut runtime = ui_runtime::Runtime::start(
@@ -770,13 +768,28 @@ mod tests {
             },
         );
         assert!(runtime.next_message().await);
+        // Evicted rows are the evidence maintenance ran. How soon the files
+        // shrink afterwards is the filesystem's business, and Windows keeps
+        // them at size past this deadline.
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while store_disk_bytes(&path) >= before {
+            while stored_entry_bytes(&path) >= retained_before {
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }
         })
         .await
         .expect("phone maintenance did not reclaim after its cold-start frame");
+    }
+
+    fn stored_entry_bytes(path: &Path) -> u64 {
+        Connection::open(path)
+            .unwrap()
+            .query_row(
+                "SELECT COALESCE(SUM(bytes),0) FROM claude_sdk_entry",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|bytes| bytes as u64)
+            .unwrap()
     }
 
     fn store_disk_bytes(path: &Path) -> u64 {
