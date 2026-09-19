@@ -1,3 +1,21 @@
+2026-09-19 — **Repair CI after the database merge.**
+Three deterministic breaks. The testnet daemons began binding a real client
+socket for a two-terminal proof, and under the phone loopback smoke, which
+nests the testnet's temp root inside its own, that socket's path reached 108
+bytes against macOS's 104. Sockets now live apart from data: a testnet keeps
+one short root under `/tmp`, the same choice the node test fixtures already
+make for installation sockets, and each standalone daemon's config points its
+socket there. The Unix bind helper validates the path first, so an over-long
+path is reported by name instead of as the kernel's SUN_LEN complaint. The
+proof itself is gone: it set an eager-subscription knob the product removed
+the same afternoon and failed on the profile config schema by now, and what
+it claimed is covered by the summarizer, fold, runtime and golden tests. The
+direct-profile hook and the served config path stay for a future desktop
+journey tier. On Windows, the testnet fixture's front-door listener is now
+Unix-only like the front door it wraps, and the release policy check prefers
+`amux.exe` when it exists, because Git Bash runs the bare name transparently
+while the Python linkage inspector cannot find it.
+
 2026-09-18 — **Re-record the desktop and phone performance baselines on the merged tree.**
 The merge changed what two of these measurements measure, so the recorded
 numbers no longer described the same work. The TUI's direct-profile startup

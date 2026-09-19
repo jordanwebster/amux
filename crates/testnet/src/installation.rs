@@ -126,7 +126,10 @@ impl ProfileOwner {
 struct InstallationInner {
     name: String,
     current: RwLock<Option<Arc<Installation>>>,
+    /// Whether the fixture serves a front-door socket. Only Unix has one.
+    #[cfg(unix)]
     front_door: bool,
+    #[cfg(unix)]
     front_door_listener: tokio::sync::Mutex<Option<node::installation::FrontDoorListener>>,
     profiles: BTreeMap<String, (ProfileId, Arc<DaemonInner>)>,
     identity: Arc<IdentityServer>,
@@ -238,6 +241,7 @@ impl InstallationHandle {
         .await
         .expect("reopen installation");
         let installation = Arc::new(installation);
+        #[cfg(unix)]
         let listener = self.inner.front_door.then(|| {
             node::installation::FrontDoor::new(
                 installation.clone(),
@@ -247,10 +251,14 @@ impl InstallationHandle {
             .expect("restart fixture front door")
         });
         *self.inner.current.write().unwrap() = Some(installation);
-        *self.inner.front_door_listener.lock().await = listener;
+        #[cfg(unix)]
+        {
+            *self.inner.front_door_listener.lock().await = listener;
+        }
     }
 
     pub async fn stop(&self) {
+        #[cfg(unix)]
         if let Some(listener) = self.inner.front_door_listener.lock().await.take() {
             listener.stop().await;
         }
@@ -699,6 +707,7 @@ pub(super) async fn start(
                     name: format!("{}/{}", spec.name, profile.name),
                     host_id: record.host_id,
                     data_dir: paths.data_dir.clone(),
+                    socket_path: paths.socket_path.clone(),
                     repository_roots: Vec::new(),
                     artifact_clock: fixture.clock.clone(),
                     direct_addr: fixture.direct_addr,
@@ -734,7 +743,9 @@ pub(super) async fn start(
             .collect(),
         name: spec.name,
         current: RwLock::new(Some(installation.clone())),
+        #[cfg(unix)]
         front_door: spec.front_door,
+        #[cfg(unix)]
         front_door_listener: tokio::sync::Mutex::new(spec.front_door.then(|| {
             node::installation::FrontDoor::new(installation, Some(root.join("amux.sock")))
                 .listen()

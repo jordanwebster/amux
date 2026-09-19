@@ -110,6 +110,8 @@ pub(crate) struct DaemonInner {
     pub(crate) name: String,
     pub(crate) host_id: HostId,
     pub(crate) data_dir: PathBuf,
+    /// Where this daemon's profile ClientService listens.
+    pub(crate) socket_path: PathBuf,
     pub(crate) repository_roots: Vec<PathBuf>,
     pub(crate) artifact_clock: Arc<TestArtifactClock>,
     /// Direct QUIC listener address; stable across restarts so stored
@@ -2128,7 +2130,7 @@ pub(super) fn write_daemon_config(inner: &DaemonInner, cloud_url: &str) {
         host_name: inner.name.clone(),
         cloud_url: cloud_url.into(),
         repository_roots: inner.repository_roots.clone(),
-        socket_path: inner.data_dir.join("amux.sock"),
+        socket_path: inner.socket_path.clone(),
         state_path: inner.data_dir.join("state.yaml"),
         data_dir: inner.data_dir.clone(),
         lan: node::harness::LanConfig {

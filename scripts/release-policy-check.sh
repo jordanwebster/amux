@@ -29,7 +29,9 @@ else
     binary="target/release/amux"
 fi
 # Windows products carry an extension whether or not a --target was given.
-if [ ! -x "$binary" ] && [ -x "$binary.exe" ]; then
+# Prefer it when it exists: Git Bash finds and runs amux.exe when asked for
+# amux, but the Python inspector below uses Win32 names and does not.
+if [ -e "$binary.exe" ]; then
     binary="$binary.exe"
 fi
 

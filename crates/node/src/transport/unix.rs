@@ -13,6 +13,10 @@ use super::GrpcIo;
 pub(crate) type UnixClientTransport = GrpcIo<UnixStream>;
 
 pub(crate) fn bind_unix_listener(socket_path: &Path) -> io::Result<UnixListener> {
+    // Name the path up front: the OS only says "path must be shorter than
+    // SUN_LEN", from whichever layer happened to bind.
+    crate::installation::validate_socket_path(socket_path)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
     if let Some(parent) = socket_path.parent()
         && !parent.exists()
     {
@@ -157,6 +161,18 @@ mod tests {
 
         assert!(bind_unix_listener(&path).is_err());
         assert_eq!(std::fs::read_link(path).unwrap(), target);
+    }
+
+    #[test]
+    fn over_long_socket_path_is_reported_by_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("x".repeat(120)).with_extension("sock");
+
+        let error = bind_unix_listener(&path).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains(&path.display().to_string()));
+        assert!(!path.parent().unwrap().join("x").exists());
     }
 
     #[tokio::test]

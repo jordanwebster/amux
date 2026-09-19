@@ -166,6 +166,11 @@ pub(crate) struct NetInner {
     discovery_events: StdMutex<tokio::sync::broadcast::Receiver<DiscoveryEvent>>,
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
+    /// Owns every standalone daemon's client socket. Sockets live apart from
+    /// data because a Unix socket path is limited to about a hundred bytes and
+    /// a data dir under macOS's TMPDIR, nested by whichever harness runs the
+    /// net, is not.
+    _socket_root: tempfile::TempDir,
 }
 
 /// How long [`TestNet::cloud_relay_cannot_call`] gives the relay's doomed
@@ -971,6 +976,7 @@ impl TestNetBuilder {
             .prefix("amux-spec")
             .tempdir()
             .expect("create testnet data root");
+        let socket_root = crate::identity::short_installation_root();
         let discovery = ScriptedDiscovery::new();
         let discovery_events = discovery.browse();
         let udp_proxy = self
@@ -1151,6 +1157,7 @@ impl TestNetBuilder {
                 name: spec.name.clone(),
                 host_id: prep.identity.host_id,
                 data_dir: prep.data_dir,
+                socket_path: socket_root.path().join(format!("{}.sock", spec.name)),
                 repository_roots: spec.repository_roots.clone(),
                 artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
                 direct_addr: prep.direct_addr,
@@ -1284,6 +1291,7 @@ impl TestNetBuilder {
             udp_proxy,
             discovery_events: StdMutex::new(discovery_events),
             _data_root: data_root,
+            _socket_root: socket_root,
         });
         let net = TestNet { inner };
         // Staggered bring-up: direct links first, then the cloud relay (see
