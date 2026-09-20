@@ -72,20 +72,50 @@ pub(crate) async fn consistently_for<C, D>(
 {
     let deadline = Instant::now() + duration;
     loop {
+        if Instant::now() >= deadline {
+            return;
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         match tokio::time::timeout(remaining, check()).await {
             Ok(true) => {}
-            Ok(false) => {
+            Ok(false) | Err(_) => {
                 let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
                     .await
                     .unwrap_or_else(|_| "<state dump timed out>".to_string());
                 panic!("spec assertion failed during {duration:?}: {assertion}\n{dump}");
             }
-            Err(_) => return,
         }
         if Instant::now() >= deadline {
             return;
         }
         tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn consistency_predicate_timeout_is_a_failure() {
+        let duration = Duration::from_millis(100);
+        let assertion = tokio::spawn(consistently_for(
+            "the state stays valid",
+            duration,
+            async || std::future::pending::<bool>().await,
+            async { "current state".to_string() },
+        ));
+
+        let failure = assertion.await.expect_err("hung predicate must fail");
+        let panic = failure.into_panic();
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic message");
+
+        assert!(message.contains("spec assertion failed during 100ms"));
+        assert!(message.contains("the state stays valid"));
+        assert!(message.contains("current state"));
     }
 }

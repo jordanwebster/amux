@@ -1,3 +1,11 @@
+2026-09-20 — **Make a hung stability predicate fail with evidence.**
+Stability assertions no longer accept a condition future that consumes the
+rest of its observation window without resolving. They now fail through the
+same state-dump path as a condition that returns false, while a window that
+has already ended does not start a synthetic zero-time poll. A paused-time
+regression test proves a never-resolving predicate fails at its deadline and
+includes the assertion and current-state dump.
+
 2026-09-20 — **Let the interrupted integrity check find its deadline.**
 The phone cold-start test passes on Windows now that it counts evicted rows.
 Behind it was a flake that had passed in the two previous Windows runs: the
