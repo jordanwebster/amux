@@ -1,12 +1,17 @@
 //! Tonic channels carried by independent native link streams.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
+use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
 use tokio_util::sync::CancellationToken;
@@ -22,6 +27,8 @@ use crate::trust::SharedTrustStore;
 use crate::{AgentId, HostId};
 
 const CHANNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP2_FRAME_HEADER_LEN: usize = 9;
+const HTTP2_DATA_FRAME: u8 = 0;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,6 +84,56 @@ pub struct ChannelPool {
     links: Arc<LinkRegistry>,
     security: Option<ChannelSecurity>,
     handshake_timeout: Duration,
+    bulk_response_holds: std::sync::Mutex<HashMap<HostId, PendingBulkResponseHold>>,
+}
+
+pub struct BulkResponseHold {
+    entered: oneshot::Receiver<()>,
+    release: Option<oneshot::Sender<()>>,
+}
+
+impl BulkResponseHold {
+    pub async fn entered(&mut self) -> Result<(), oneshot::error::RecvError> {
+        (&mut self.entered).await
+    }
+
+    pub fn release(mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+impl Drop for BulkResponseHold {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+struct PendingBulkResponseHold {
+    entered: Option<oneshot::Sender<()>>,
+    release: oneshot::Receiver<()>,
+}
+
+impl PendingBulkResponseHold {
+    fn has_entered(&self) -> bool {
+        self.entered.is_none()
+    }
+
+    fn enter(&mut self) {
+        if let Some(entered) = self.entered.take() {
+            let _ = entered.send(());
+        }
+    }
+
+    fn poll_release(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        match Pin::new(&mut self.release).poll(cx) {
+            Poll::Ready(_) => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 impl ChannelPool {
@@ -87,6 +144,7 @@ impl ChannelPool {
             links,
             security: None,
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
+            bulk_response_holds: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -104,6 +162,28 @@ impl ChannelPool {
                 trust_store,
             }),
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
+            bulk_response_holds: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn hold_next_bulk_response_for_test(&self, peer: HostId) -> BulkResponseHold {
+        let (entered_tx, entered) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let previous = self
+            .bulk_response_holds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                peer,
+                PendingBulkResponseHold {
+                    entered: Some(entered_tx),
+                    release: release_rx,
+                },
+            );
+        assert!(previous.is_none(), "a bulk stream hold is already armed");
+        BulkResponseHold {
+            entered,
+            release: Some(release),
         }
     }
 
@@ -300,11 +380,21 @@ impl ChannelPool {
         .await
         .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
         .map_err(|error| ChannelError::Tls(error.to_string()))?;
-        Ok(channel_from_single_io(
-            configure_tonic_endpoint_keepalive(Endpoint::from_static("https://peer")),
-            "native link channel",
-            tls,
-        ))
+        let endpoint = configure_tonic_endpoint_keepalive(Endpoint::from_static("https://peer"));
+        let hold = (key.class == ChannelClass::Bulk).then(|| {
+            self.bulk_response_holds
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&key.peer)
+        });
+        Ok(match hold.flatten() {
+            Some(hold) => channel_from_single_io(
+                endpoint,
+                "held native link channel",
+                HoldAfterFirstDataFrame::new(tls, hold),
+            ),
+            None => channel_from_single_io(endpoint, "native link channel", tls),
+        })
     }
 
     fn cancel_where(&self, predicate: impl Fn(&ChannelKey) -> bool) {
@@ -333,6 +423,136 @@ impl ChannelPool {
             Route::Direct(link) => self.links.native_carrier(&link).await.is_some(),
             Route::Via(relay) => self.links.native_carrier_to_peer(relay).await.is_some(),
         }
+    }
+}
+
+enum Http2ReadState {
+    Header {
+        bytes: [u8; HTTP2_FRAME_HEADER_LEN],
+        filled: usize,
+    },
+    Payload {
+        frame_type: u8,
+        remaining: usize,
+    },
+}
+
+struct HoldAfterFirstDataFrame<T> {
+    inner: T,
+    hold: Option<PendingBulkResponseHold>,
+    state: Http2ReadState,
+}
+
+impl<T> HoldAfterFirstDataFrame<T> {
+    fn new(inner: T, hold: PendingBulkResponseHold) -> Self {
+        Self {
+            inner,
+            hold: Some(hold),
+            state: Http2ReadState::Header {
+                bytes: [0; HTTP2_FRAME_HEADER_LEN],
+                filled: 0,
+            },
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for HoldAfterFirstDataFrame<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if this.hold.as_ref().is_some_and(|hold| hold.has_entered()) {
+            ready!(this.hold.as_mut().expect("hold exists").poll_release(cx));
+            this.hold = None;
+        }
+        if output.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let boundary = match &this.state {
+            Http2ReadState::Header { filled, .. } => HTTP2_FRAME_HEADER_LEN - filled,
+            Http2ReadState::Payload { remaining, .. } => *remaining,
+        };
+        let before = output.filled().len();
+        let (poll, initialized, read) = {
+            let mut limited = output.take(boundary);
+            let poll = Pin::new(&mut this.inner).poll_read(cx, &mut limited);
+            (poll, limited.initialized().len(), limited.filled().len())
+        };
+        // SAFETY: `limited` covered exactly this prefix of `output`'s
+        // unfilled storage and reported it initialized by the inner reader.
+        unsafe { output.assume_init(initialized) };
+        output.advance(read);
+        match poll {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Ready(Ok(())) => {}
+        }
+        if read == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let bytes = &output.filled()[before..before + read];
+        match &mut this.state {
+            Http2ReadState::Header {
+                bytes: header,
+                filled,
+            } => {
+                header[*filled..*filled + read].copy_from_slice(bytes);
+                *filled += read;
+                if *filled == HTTP2_FRAME_HEADER_LEN {
+                    let length = usize::from(header[0]) << 16
+                        | usize::from(header[1]) << 8
+                        | usize::from(header[2]);
+                    if length == 0 {
+                        this.state = Http2ReadState::Header {
+                            bytes: [0; HTTP2_FRAME_HEADER_LEN],
+                            filled: 0,
+                        };
+                    } else {
+                        this.state = Http2ReadState::Payload {
+                            frame_type: header[3],
+                            remaining: length,
+                        };
+                    }
+                }
+            }
+            Http2ReadState::Payload {
+                frame_type,
+                remaining,
+            } => {
+                *remaining -= read;
+                if *remaining == 0 {
+                    let is_data = *frame_type == HTTP2_DATA_FRAME;
+                    this.state = Http2ReadState::Header {
+                        bytes: [0; HTTP2_FRAME_HEADER_LEN],
+                        filled: 0,
+                    };
+                    if is_data && let Some(hold) = &mut this.hold {
+                        hold.enter();
+                    }
+                }
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for HoldAfterFirstDataFrame<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }
 

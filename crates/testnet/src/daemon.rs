@@ -10,7 +10,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use client::Client;
 use host_api::LocalAgentHost;
 use node::discovery::{Discovery, ScriptedDiscovery};
-use node::harness::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, QuicCarrier};
+use node::harness::link::{
+    BulkResponseHold, CarrierKind, ChannelPool, MuxCarrier, MuxRole, QuicCarrier,
+};
 use node::harness::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
@@ -24,7 +26,7 @@ use node::{AccessToken, AuthError, CredentialProvider, HostId};
 use tokio::sync::Mutex;
 
 use super::NetInner;
-use super::assertions::eventually;
+use super::assertions::{DEFAULT_TIMEOUT, eventually};
 use super::relay::{RegisteredToken, TokenRegistry, UserTierRegistry};
 use super::udp_proxy::UdpProxy;
 
@@ -334,6 +336,23 @@ pub struct Daemon {
     pub(crate) net: Weak<NetInner>,
 }
 
+pub struct BulkTransferHold {
+    inner: BulkResponseHold,
+}
+
+impl BulkTransferHold {
+    pub async fn entered(&mut self) {
+        tokio::time::timeout(DEFAULT_TIMEOUT, self.inner.entered())
+            .await
+            .expect("bulk transfer did not reach its first data chunk")
+            .expect("bulk transfer ended before reaching its first data chunk");
+    }
+
+    pub fn release(self) {
+        self.inner.release();
+    }
+}
+
 pub(crate) enum RuntimeGuard<'a> {
     Daemon(tokio::sync::MutexGuard<'a, Option<DaemonRuntime>>),
     Profile(Option<tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>>),
@@ -609,6 +628,16 @@ impl Daemon {
             .expect("profile is running")
             .channels
             .active_session_agents(other.host_id())
+    }
+
+    /// Holds the next bulk response after its first data chunk reaches this daemon.
+    pub async fn hold_next_bulk_transfer_to(&self, other: &Daemon) -> BulkTransferHold {
+        let parts = self.try_parts().await.expect("profile is running");
+        BulkTransferHold {
+            inner: parts
+                .channels
+                .hold_next_bulk_response_for_test(other.host_id()),
+        }
     }
 
     /// Waits until a bulk channel is live on the link from this daemon to

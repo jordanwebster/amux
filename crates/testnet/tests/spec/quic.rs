@@ -3,7 +3,7 @@
 use node::ArtifactKind;
 use testnet::{TestNet, Via, WirePeer};
 
-const LARGE_ARTIFACT_SIZE: usize = 32 * 1024 * 1024;
+const HELD_ARTIFACT_SIZE: usize = 64 * 1024;
 
 #[tokio::test]
 async fn a_direct_quic_link_carries_a_session() {
@@ -35,11 +35,11 @@ async fn a_client_that_rebinds_its_socket_keeps_its_link_channels_and_open_sessi
 }
 
 #[tokio::test]
-async fn a_large_artifact_fetch_beside_a_live_session_does_not_stall_it() {
+async fn a_held_artifact_fetch_beside_a_live_session_does_not_stall_it() {
     let net = direct_pair().await;
     let [phone, host] = net.daemons(["phone", "host"]);
     let agent = host.spawn_echo_agent("worker").await;
-    let bytes = vec![0x5a; LARGE_ARTIFACT_SIZE];
+    let bytes = vec![0x5a; HELD_ARTIFACT_SIZE];
     let artifact = host
         .put_artifact_on(
             &host,
@@ -51,19 +51,17 @@ async fn a_large_artifact_fetch_beside_a_live_session_does_not_stall_it() {
         )
         .await
         .expect("store large artifact");
-    let mut session = phone.attach_via_profile(&host, "worker").await;
+    let mut session = phone.attach(&host, "worker").await;
 
+    let mut hold = phone.hold_next_bulk_transfer_to(&host).await;
     let fetch = phone
         .fetch_artifact_via_profile(&host, &agent, &artifact.id)
         .await;
-    phone.expects_active_bulk_stream_to(&host).await;
-    assert!(
-        !fetch.is_finished(),
-        "bulk transfer finished before overlap proof"
-    );
+    hold.entered().await;
     session.send("responsive-beside-bulk").await;
     session.expect_output("responsive-beside-bulk").await;
 
+    hold.release();
     let (fetched, fetched_bytes) = fetch
         .await
         .expect("bulk fetch task")

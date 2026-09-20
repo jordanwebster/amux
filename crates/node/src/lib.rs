@@ -69,6 +69,7 @@ pub mod harness {
     /// the `link::LinkCarrier` trait shares its name with routing's enum.
     pub mod link {
         pub use crate::link::carrier::{AsyncStream, write_raw_control_frame};
+        pub use crate::link::channels::BulkResponseHold;
         pub use crate::link::{
             CarrierKind, ChannelClass, ChannelDebug, ChannelError, ChannelPool, ControlSink,
             ControlSource, LinkCarrier, LinkCtx, MuxCarrier, MuxRole, OpenError, QuicCarrier,

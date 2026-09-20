@@ -102,8 +102,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use assertions::eventually;
+pub use daemon::{BulkTransferHold, Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
 use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
-pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
 use node::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscovery};
 use node::harness::{
     DeviceIdentity, Reachability, TrustEntry, TrustStore, load_or_create_device_identity_in,

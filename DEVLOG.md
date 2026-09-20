@@ -1,3 +1,11 @@
+2026-09-20 — **Hold bulk overlap at an acknowledged stream boundary.**
+The direct-QUIC overlap specification no longer guesses that a 32 MiB
+artifact remains in flight at one scheduler instant. The harness can hold the
+next bulk response after its first HTTP/2 data frame reaches the receiver and
+release it explicitly. The specification holds a 64 KiB artifact, proves a
+separate live session advances, releases the transfer, and verifies the
+complete artifact bytes.
+
 2026-09-20 — **Finish recorded PTY derivation at acknowledged EOF.**
 Claude PTY derived-row generation no longer guesses completion from three
 unchanged sequence polls, aborts ingestion, or closes its log by hand. Strict
