@@ -135,12 +135,6 @@ journey *ARGS: build tools
 accessibility: build
     scripts/with iphone -- {{bounded}} 2400 {{python}} -B scripts/ios-accessibility.py
 
-# Exercise small visual states that exist only after interaction, without
-# paying for the full verification suite.
-# Capture the small visual states that exist only after interaction.
-visual-interactions: build
-    scripts/with iphone -- {{bounded}} 600 {{python}} -B scripts/ios-visual-interactions.py
-
 # The measured run: the pinned workloads against the budgets in
 # docs/IOS_PERFORMANCE.md, on a machine that document has a row for. The
 # measured build links the driving slice; the release size it also records

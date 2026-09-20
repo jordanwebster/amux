@@ -1,3 +1,13 @@
+2026-09-20 — **Run every retained check on a deliberate lane.**
+The iOS gate now runs the repository's Python script tests, including the
+live SDK row predicates moved beside their matcher. The capture lane now
+proves golden sensitivity, runs the store suite on iOS, and redraws both
+committed phone report bundles. A weekly workflow exercises the workspace
+with external networking disabled. The visual-interaction probe and two A2A
+wrapper scripts are gone: the probe only captured screenshots without
+asserting them, while the wrappers only selected tests already run by the
+workspace suite. The catalogue now describes the 55 retained suites.
+
 2026-09-20 — **Make the test inventory executable.**
 The repository now has one catalogue for 56 suites and workload groups,
 including all 90 Cargo library, binary and standalone test targets, all nine

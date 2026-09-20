@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
 // Ordering matters: build the bridge and app before simulator checks. Destructive
-// baseline updates and deliberate-failure probes are separate developer commands.
-// Each entry is a `just` invocation; a leading `ios` names the phone module.
+// baseline updates are separate developer commands. Each entry is a `just`
+// invocation; a leading `ios` names the phone module.
 
 /// The Rust workspace the phone's bridge is cut from.
 ///
@@ -27,6 +27,7 @@ const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec"];
 const GATE: &[&str] = &[
     "mobile-check",
     "ios lint",
+    "ios script-tests",
     "ios graph-check",
     "ios rust",
     "ios simulator golden",
@@ -47,15 +48,20 @@ const GATE: &[&str] = &[
 /// release cannot be cut without them.
 const SHIPPING: &[&str] = &["ios package", "ios scope-audit"];
 
-/// Everything that drives a running app and judges what it drew.
+/// Everything that drives a running app or validates its recorded state.
 ///
 /// This is the slow half and the environment-sensitive half, and they are the
-/// same half for one reason: a photograph of a simulator records the machine
-/// that took it as well as the app. Kept apart from the gate so that a change
-/// to the app is not held up by a difference between two Macs.
+/// same half for one reason: they validate the app beyond what compilation and
+/// unit tests can settle. A photograph of a simulator records the machine that
+/// took it as well as the app. Kept apart from the gate so that a change to the
+/// app is not held up by a difference between two Macs.
 const CAPTURES: &[&str] = &[
     "ios door-smoke",
     "ios goldens",
+    "ios goldens-perturb",
+    "test-store-ios",
+    "ios replay apps/apple/Fixtures/reports/sample",
+    "ios replay apps/apple/Fixtures/reports/conversation",
     "ios journey",
     "ios accessibility",
     "ios perf",
@@ -435,13 +441,12 @@ mod tests {
                     recipes(phases, &root, &ios)
                         .unwrap_err()
                         .to_string()
-                        .contains(recipe)
+                        .contains(recipe_name(recipe))
                 );
             }
         }
         for excluded in [
             "ios verify",
-            "ios goldens-perturb",
             "ios ci-gate",
             "ios ci-observe",
             "ios qa-cloud-signin",

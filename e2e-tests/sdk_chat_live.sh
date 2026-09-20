@@ -55,7 +55,7 @@ sdk_wait() {
   sdk_deadline=$(($(date +%s) + 180))
   while [ "$(date +%s)" -lt "$sdk_deadline" ]; do
     sdk_rows "$sdk_agent" "$sdk_file"
-    if sdk_match=$(python3 "$repo_root/e2e-tests/sdk_chat_rows.py" "$evidence_dir/$sdk_file" "$sdk_since" "$@"); then
+    if sdk_match=$(python3 "$repo_root/scripts/tests/sdk_chat_rows.py" "$evidence_dir/$sdk_file" "$sdk_since" "$@"); then
       live_say "Observed $sdk_agent: $* (row/request $sdk_match)"
       return 0
     fi
@@ -67,7 +67,7 @@ parent_rows=claude_sdk_v1.rows.jsonl
 child_rows=child.claude_sdk_v1.rows.jsonl
 sdk_prompt() {
   sdk_rows chat-parent "$parent_rows"
-  since=$(python3 "$repo_root/e2e-tests/sdk_chat_rows.py" "$evidence_dir/$parent_rows" 0 cursor)
+  since=$(python3 "$repo_root/scripts/tests/sdk_chat_rows.py" "$evidence_dir/$parent_rows" 0 cursor)
   live_wait_pane 30 chat 'enter send · ctrl+j newline'
   live_say "Prompt: $1"
   live_tmux send-keys -t chat -l -- "$1"
@@ -81,7 +81,7 @@ sdk_prompt() {
     live_tmux send-keys -t chat Enter
     sleep 1
     sdk_rows chat-parent "$parent_rows"
-    if prompt_seq=$(python3 "$repo_root/e2e-tests/sdk_chat_rows.py" "$evidence_dir/$parent_rows" "$since" prompt "$1"); then
+    if prompt_seq=$(python3 "$repo_root/scripts/tests/sdk_chat_rows.py" "$evidence_dir/$parent_rows" "$since" prompt "$1"); then
       since=$prompt_seq
       live_say "Prompt accepted at row $since."
       return 0

@@ -755,22 +755,6 @@ update = ""
 cases = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift"]
 
 [[suite]]
-name = "phone-visual-interactions"
-contract = "Small phone states that exist only after native interaction are captured from a running app."
-paths = ["apps/apple/AmuxUITests/VisualInteractionTests.swift", "scripts/ios-visual-interactions.py"]
-recipe = "just ios visual-interactions"
-boundary = "Native presentation"
-oracle = "Successful native interactions and captured screenshots for manual inspection."
-real = ["built phone app", "XCTest", "iOS simulator"]
-substituted = ["model state", "network"]
-time = "real"
-capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
-lane = "journey"
-evidence = "target/ios/visual-interactions"
-update = ""
-cases = ["apps/apple/AmuxUITests/VisualInteractionTests.swift"]
-
-[[suite]]
 name = "phone-report-replay"
 contract = "A recorded phone report redraws the same model and view state without executing recorded effects."
 paths = ["scripts/ios-replay.py", "apps/apple/Fixtures/reports"]
@@ -784,7 +768,7 @@ capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
 lane = "journey"
 evidence = "target/ios/replay"
 update = ""
-cases = ["scripts/ios-replay.py"]
+cases = ["apps/apple/Fixtures/reports/sample", "apps/apple/Fixtures/reports/conversation"]
 
 [[suite]]
 name = "phone-door-smoke"
