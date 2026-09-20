@@ -1,3 +1,16 @@
+2026-09-20 — **Record the local CI baseline and its platform gap.**
+One `just --time ci` run recorded: update-flag guard 0.035s, check 10.651s,
+lint 1.734s, format check 1.844s, codegen check 1.367s, dependency policy
+0.099s, catalogue check 0.152s, migration check 0.034s and workspace tests
+167.652s. The run stopped in the workspace tests with 37 app-FFI tests passing
+and one failure: the inactive-profile attention test timed out waiting for its
+attention projection after the account switch. This is a pre-existing
+observation race: the whole workspace passed immediately before this task and
+the failed test passed alone in 0.93s without a change. No test reported a
+skip before the stop; doctests, release checks, end-to-end tests, embedded
+checks and mobile checks were not reached. The catalogue now states the two
+Windows-only ConPTY teardown skips on the node embedding suite.
+
 2026-09-20 — **Give every legacy end-to-end workload a destination.**
 Every top-level end-to-end script now records the behavior it alone proves,
 its intended disposition and the named test, journey or qualification check

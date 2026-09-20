@@ -489,7 +489,10 @@ oracle = "Service calls, process identity, socket ownership, and clean shutdown.
 real = ["processes", "local sockets", "files"]
 substituted = ["cloud account", "provider"]
 time = "real"
-capabilities = ["desktop"]
+capabilities = [
+  "desktop",
+  "Windows gap: embedded_shutdown_stops_agents_and_closes_server_tasks and embedded_suspend_stops_agents_and_closes_server_tasks skip because agent PTY teardown hangs under ConPTY",
+]
 lane = "fast"
 evidence = ""
 update = ""
