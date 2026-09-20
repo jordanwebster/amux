@@ -308,20 +308,34 @@ fn lifecycle_interrupted_quick_check_is_incomplete_not_corrupt() {
         .expect("seed enough pages to interrupt quick check");
     drop(connection);
 
-    let started = Instant::now();
-    let report = runtime()
-        .block_on(store.maintain(
-            Budget {
-                retired_rows_per_table: 0,
-                vacuum_steps: 0,
-                ..Budget::default()
-            },
-            Duration::from_millis(25),
-        ))
-        .expect("an interrupted integrity statement is incomplete, not corrupt");
-    assert!(started.elapsed() >= Duration::from_millis(25));
-    assert!(report.deadline_reached);
-    assert!(report.quick_check_started);
+    // The deadline has to outlast the work before the integrity statement
+    // and still cut the statement short. Where that sits depends on how fast
+    // the disk is, so start at the shortest and give way to a slower one
+    // until the statement runs at all.
+    let mut deadline = Duration::from_millis(25);
+    let report = loop {
+        let started = Instant::now();
+        let report = runtime()
+            .block_on(store.maintain(
+                Budget {
+                    retired_rows_per_table: 0,
+                    vacuum_steps: 0,
+                    ..Budget::default()
+                },
+                deadline,
+            ))
+            .expect("an interrupted integrity statement is incomplete, not corrupt");
+        assert!(started.elapsed() >= deadline);
+        assert!(report.deadline_reached);
+        if report.quick_check_started {
+            break report;
+        }
+        deadline *= 2;
+        assert!(
+            deadline <= Duration::from_secs(4),
+            "maintenance never reached its integrity statement: {report:?}"
+        );
+    };
     assert!(!report.quick_check_complete);
     runtime().block_on(store.close());
 }

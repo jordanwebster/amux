@@ -1,3 +1,12 @@
+2026-09-20 — **Let the interrupted integrity check find its deadline.**
+The phone cold-start test passes on Windows now that it counts evicted rows.
+Behind it was a flake that had passed in the two previous Windows runs: the
+test that an interrupted `PRAGMA quick_check` reports incomplete rather than
+corrupt gave maintenance 25 ms, which on a loaded runner can be spent before
+the statement runs at all, leaving nothing interrupted to observe. The test
+now doubles its deadline until the statement starts, up to four seconds, and
+then holds it to being cut short.
+
 2026-09-19 — **Judge phone cold-start maintenance by what it evicted.**
 Seeding fewer, larger entries did not make the phone cold-start test pass on
 Windows, so running out of time was the wrong diagnosis; that fixture change
