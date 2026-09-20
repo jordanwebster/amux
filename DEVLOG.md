@@ -1,3 +1,13 @@
+2026-09-20 — **Finish recorded PTY derivation at acknowledged EOF.**
+Claude PTY derived-row generation no longer guesses completion from three
+unchanged sequence polls, aborts ingestion, or closes its log by hand. Strict
+replay now closes every recorded input, joins the recording pumps and event
+forwarders before publishing process exit, and lets the backend drain and join
+normally. Specification cleanup consumes the acknowledged tail concurrently so
+tails larger than the transport buffers cannot deadlock. A regression delays
+the final transcript row beyond the retired polling window and proves it is
+still emitted; every committed derived-row fixture remains byte-identical.
+
 2026-09-20 — **Make a hung stability predicate fail with evidence.**
 Stability assertions no longer accept a condition future that consumes the
 rest of its observation window without resolving. They now fail through the

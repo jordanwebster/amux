@@ -275,10 +275,20 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
     } else {
         Ok(())
     };
-    let shutdown = tokio::time::timeout(
-        Duration::from_secs(5),
-        session.control.stop(pty_host::Terminate::Kill),
-    )
+    let shutdown = tokio::time::timeout(Duration::from_secs(5), async {
+        let stop = session.control.stop(pty_host::Terminate::Kill);
+        tokio::pin!(stop);
+        loop {
+            tokio::select! {
+                status = &mut stop => break status,
+                event = session.events.recv() => {
+                    if event.is_none() {
+                        break stop.await;
+                    }
+                }
+            }
+        }
+    })
     .await;
     let stall_diagnostic = if claim.is_err() {
         capture

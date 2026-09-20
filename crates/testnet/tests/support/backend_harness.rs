@@ -60,25 +60,7 @@ impl ClaudePtyBackendHarness {
     }
 
     pub async fn finish(mut self) -> Result<Vec<Value>> {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            let mut last_seq = self.backend.claude_pty_sequence().await?;
-            let mut stable = 0;
-            while stable < 3 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                let current = self.backend.claude_pty_sequence().await?;
-                if current == last_seq {
-                    stable += 1;
-                } else {
-                    last_seq = current;
-                    stable = 0;
-                }
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .context("timed out waiting for the Claude PTY backend rows to quiesce")??;
-        self.backend.abort_ingest();
-        self.backend.close_claude_pty_log().await?;
+        wait_for_ingest(&self.backend, "Claude PTY").await?;
         self.backend.join_ingest().await;
         while let Some(row) = self.backend.read_row().await {
             self.rows.push(row);
@@ -234,3 +216,64 @@ async fn wait_for_ingest(backend: &StructuredBackendAdapter, provider: &str) -> 
 
 pub type ClaudeSdkV1Input = ClaudeSdkFixtureInput;
 pub type CodexSdkV1Input = CodexFixtureInput;
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use claude::pty::{DelaySource, HookSource, PtySource, Sources, TranscriptSource};
+    use claude::transcript::TranscriptRow;
+    use serde_json::json;
+    use tokio::sync::{mpsc, oneshot};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn pty_finish_keeps_a_final_row_delayed_past_three_polls() {
+        let (_output_tx, output) = mpsc::channel(1);
+        let (hooks, hook_tx) = HookSource::channel(1);
+        drop(hook_tx);
+        let (transcript, row_tx, _paths) = TranscriptSource::channel(1);
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let session = claude::pty::from_sources(
+            Sources {
+                pty: PtySource {
+                    output,
+                    writer: Box::new(tokio::io::sink()),
+                    handle: None,
+                    exit: Box::pin(async move {
+                        exit_rx.await.unwrap_or_else(|_| {
+                            pty_host::ExitStatus::with_signal("test source closed")
+                        })
+                    }),
+                },
+                hooks,
+                transcript,
+                version: "2.1.251".parse().expect("fixed Claude version"),
+                delays: DelaySource::live(),
+            },
+            &claude::pty::keymap::KeymapSources::default(),
+        );
+        let harness = ClaudePtyBackendHarness::with_session(session, Uuid::from_u128(1))
+            .await
+            .expect("start PTY backend harness");
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            row_tx
+                .send((
+                    PathBuf::from("recording/delayed.jsonl"),
+                    TranscriptRow::parse(json!({"type": "delayed-final"})),
+                ))
+                .await
+                .expect("send delayed final row");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            exit_tx
+                .send(pty_host::ExitStatus::with_exit_code(0))
+                .expect("finish delayed session");
+        });
+
+        let rows = harness.finish().await.expect("finish PTY derivation");
+        assert!(rows.iter().any(|row| row["type"] == "delayed-final"));
+    }
+}

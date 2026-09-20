@@ -1186,6 +1186,10 @@ async fn derive_claude_pty(spec: &str, recording: &Recording) -> Result<Vec<u8>>
     controller
         .finish()
         .with_context(|| format!("strict Claude PTY replay accounting failed for {spec}"))?;
+    controller
+        .close_reads()
+        .await
+        .with_context(|| format!("close Claude PTY recording streams for {spec}"))?;
     encode_rows(&harness.finish().await?)
 }
 

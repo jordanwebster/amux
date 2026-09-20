@@ -569,11 +569,6 @@ impl ClaudePtyBackend {
     pub(crate) async fn current_seq_for_derived_rows(&self) -> u64 {
         self.log.current_seq().await
     }
-
-    #[allow(dead_code)] // Consumed only by the opt-in derived-row recorder.
-    pub(crate) async fn close_log_for_derived_rows(&self) {
-        self.log.close().await;
-    }
 }
 
 #[async_trait]

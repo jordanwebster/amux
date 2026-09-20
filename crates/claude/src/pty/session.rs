@@ -12,7 +12,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+#[cfg(test)]
+use tokio::sync::oneshot;
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::hooks::{HookPayload, HookReceiver};
 use crate::launch::{Launch, pty_spawn_args};
@@ -111,6 +113,7 @@ pub struct TranscriptSource {
     pub rows: mpsc::Receiver<(PathBuf, TranscriptRow)>,
     pub relink: Relink,
     task: Option<tokio::task::JoinHandle<()>>,
+    drain_before_exit: bool,
 }
 
 impl TranscriptSource {
@@ -131,6 +134,7 @@ impl TranscriptSource {
                 rows,
                 relink,
                 task: None,
+                drain_before_exit: false,
             },
             row_tx,
             path_rx,
@@ -177,6 +181,7 @@ impl TranscriptSource {
             rows,
             relink,
             task: Some(task),
+            drain_before_exit: false,
         }
     }
 
@@ -185,6 +190,7 @@ impl TranscriptSource {
             rows,
             relink: Arc::new(|_| {}),
             task: None,
+            drain_before_exit: true,
         }
     }
 }
@@ -737,6 +743,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
         mut rows,
         relink,
         task,
+        drain_before_exit,
     } = transcript;
     let (event_tx, events) = mpsc::channel(CHANNEL_CAPACITY);
     let (confirmation_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
@@ -763,7 +770,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     let tx = event_tx.clone();
     let semantic_for_hooks = semantic.clone();
     let keymaps = keymaps.clone();
-    tokio::spawn(async move {
+    let hook_forwarder = tokio::spawn(async move {
         let _receiver = receiver;
         let mut current_path = None;
         while let Some(hook) = payloads.recv().await {
@@ -815,7 +822,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     let tx = event_tx.clone();
     let confirmations = confirmation_tx.clone();
     let semantic_for_rows = semantic.clone();
-    tokio::spawn(async move {
+    let transcript_forwarder = tokio::spawn(async move {
         let _task = task;
         while let Some((path, row)) = rows.recv().await {
             let _ = confirmations.send(row.as_value().clone());
@@ -839,6 +846,14 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     let tx = event_tx.clone();
     tokio::spawn(async move {
         let status = exit.await;
+        if drain_before_exit {
+            // Recorded sources close together at replay EOF. Joining both
+            // forwarders acknowledges that every queued hook and transcript
+            // row reached the common event stream before process exit can end
+            // backend ingestion.
+            let _ = hook_forwarder.await;
+            let _ = transcript_forwarder.await;
+        }
         exit_tx.send_replace(Some(status.clone()));
         let _ = tx.send(PtyEvent::Exited(status)).await;
     });
@@ -879,18 +894,16 @@ pub fn from_recording(
         .remove("transcript")
         .ok_or(SpawnError::MissingTransport("transcript"))?;
     let (output_tx, output) = mpsc::channel(CHANNEL_CAPACITY);
-    let (exit_tx, exit_rx) = oneshot::channel();
-    tokio::spawn(async move {
+    let pty_pump = tokio::spawn(async move {
         pump_recorded_bytes(pty.reader, output_tx).await;
-        let _ = exit_tx.send(pty_host::ExitStatus::with_exit_code(0));
     });
     let (hook_source, hook_tx) = HookSource::channel(CHANNEL_CAPACITY);
-    tokio::spawn(async move {
+    let hook_pump = tokio::spawn(async move {
         pump_hooks(hooks.reader, hook_tx).await;
     });
     let (row_tx, rows) = mpsc::channel(CHANNEL_CAPACITY);
     let fallback = PathBuf::from(format!("recording/{}.jsonl", manifest.spec));
-    tokio::spawn(async move {
+    let transcript_pump = tokio::spawn(async move {
         pump_transcript(transcript.reader, row_tx, fallback).await;
     });
     Ok(from_sources(
@@ -900,9 +913,10 @@ pub fn from_recording(
                 writer: Box::new(RecordingFrameWriter::new(pty.writer)),
                 handle: None,
                 exit: Box::pin(async move {
-                    exit_rx
-                        .await
-                        .unwrap_or_else(|_| pty_host::ExitStatus::with_signal("replay closed"))
+                    let _ = pty_pump.await;
+                    let _ = hook_pump.await;
+                    let _ = transcript_pump.await;
+                    pty_host::ExitStatus::with_exit_code(0)
                 }),
             },
             hooks: hook_source,

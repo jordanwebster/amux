@@ -187,12 +187,6 @@ impl StructuredBackendAdapter {
             .is_none_or(tokio::task::JoinHandle::is_finished)
     }
 
-    pub fn abort_ingest(&self) {
-        if let Some(ingest) = &self.ingest {
-            ingest.abort();
-        }
-    }
-
     pub async fn join_ingest(&mut self) {
         if let Some(ingest) = self.ingest.take() {
             let _ = ingest.await;
@@ -201,21 +195,6 @@ impl StructuredBackendAdapter {
 
     pub async fn stop(&self) {
         self.backend.as_backend().stop(StopPolicy::Interrupt).await;
-    }
-
-    pub async fn claude_pty_sequence(&self) -> Result<u64> {
-        let Backend::ClaudePty(backend) = &self.backend else {
-            bail!("sequence requested from a non-PTY backend");
-        };
-        Ok(backend.current_seq_for_derived_rows().await)
-    }
-
-    pub async fn close_claude_pty_log(&self) -> Result<()> {
-        let Backend::ClaudePty(backend) = &self.backend else {
-            bail!("PTY log close requested from another provider backend");
-        };
-        backend.close_log_for_derived_rows().await;
-        Ok(())
     }
 }
 
