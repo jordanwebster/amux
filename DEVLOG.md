@@ -1,3 +1,10 @@
+2026-09-20 — **Refuse fixture update flags in asserted CI runs.**
+CI now fails before testing when any `UPDATE_*` environment variable is set,
+including an explicitly empty one. The cross-platform workspace test job, the
+iOS gate, and the local `just ci` sequence all run the same portable guard
+before any asserted checks, so fixture-regeneration modes cannot silently turn
+verification into baseline replacement.
+
 2026-09-20 — **Hold bulk overlap at an acknowledged stream boundary.**
 The direct-QUIC overlap specification no longer guesses that a 32 MiB
 artifact remains in flight at one scheduler instant. The harness can hold the
