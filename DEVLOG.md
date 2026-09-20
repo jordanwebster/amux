@@ -1,3 +1,11 @@
+2026-09-20 — **Give every legacy end-to-end workload a destination.**
+Every top-level end-to-end script now records the behavior it alone proves,
+its intended disposition and the named test, journey or qualification check
+that must take responsibility for it. CI rejects an unlisted legacy file, an
+incomplete disposition or replacement, and a pending row whose source has
+disappeared. The already-moved SDK row matcher remains recorded as completed
+history so its destination is explicit.
+
 2026-09-20 — **Run every retained check on a deliberate lane.**
 The iOS gate now runs the repository's Python script tests, including the
 live SDK row predicates moved beside their matcher. The capture lane now

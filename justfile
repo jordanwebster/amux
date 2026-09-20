@@ -167,13 +167,17 @@ tests-list:
 tests-check:
     {{bounded}} 120 scripts/python -B scripts/tests-catalog.py check
 
+# Validate every top-level legacy end-to-end file has a migration disposition.
+migration-check:
+    {{bounded}} 60 scripts/migration-check.sh
+
 # Refuse fixture-regeneration flags before any asserted CI check runs.
 [private]
 no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check test doctest release-check e2e embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check migration-check test doctest release-check e2e embedded-check embedded-test mobile-check
 
 # Qualify desktop performance on an enrolled machine and include the phone
 # suite whenever Xcode is available. The phone recipe takes its own simulator
