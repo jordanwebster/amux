@@ -128,6 +128,11 @@ Reference-backed capture of `ask-question` using the `ask-question` fixture. No 
 
 Added state using the `ask-permission-codex` fixture. The same ask in Codex's vocabulary rather than Claude's. It follows the same visual system as its parent screen.
 
+Routine variant coverage moved to native `ask.approval` component snapshots
+in both appearances on 2026-09-20. The canonical permission/question/plan
+screens retain full-screen ask composition coverage. This historical capture
+remains available by explicit ID or `just ios goldens --all`.
+
 ## comment
 
 Reference-backed capture of `comment` using the `comment` fixture. No visual departure is accepted.
@@ -177,6 +182,11 @@ Reference-backed capture of `queued` using the `queued` fixture. No visual depar
 
 Added state using the `send-refused` fixture. A send the gate refuses, which the design does not picture. It follows the same visual system as its parent screen.
 
+Routine variant coverage moved to native `status.refused` component snapshots
+in both appearances on 2026-09-20. The refusal headline and reason remain
+covered; canonical conversation captures retain the surrounding composition.
+The historical full-screen baseline is still available explicitly.
+
 ## settings
 
 Reference-backed capture of `settings` using the `settings` fixture. No visual departure is accepted.
@@ -188,6 +198,12 @@ Reference-backed capture of `slash-typing` using the `slash-typing` fixture. No 
 ## strip
 
 Added state using the `strip` fixture. The facts strip under a conversation. It follows the same visual system as its parent screen.
+
+Routine variation coverage moved to native `facts.combined-open` and
+`facts.combined-folded` component snapshots in both appearances on 2026-09-20.
+They exercise the actual strip with tasks, child attention and a queued
+message. The canonical queued conversation still checks the strip/composer
+composition; this historical capture remains available explicitly.
 
 Re-approved on 2026-09-14. The picture is of the strip and the few lines of feed
 beside it, and those are unchanged; what changed is that the feed no longer
@@ -457,6 +473,11 @@ Added state using the `dictation-permission` fixture. Composer speech recognitio
 ## dictation-denied
 
 Added state using the `dictation-denied` fixture. Composer speech recognition denied state. It follows the same visual system as its parent screen.
+
+Routine variant coverage moved to native `composer.dictation-denied` component
+snapshots in both appearances on 2026-09-20, preserving the denied-state copy
+and draft. Other dictation states and the keyboard-bearing typing composition
+retain full-screen captures. This historical baseline remains available explicitly.
 
 ## dictation-unavailable
 

@@ -1,3 +1,37 @@
+2026-09-20 — **Put native visual variations behind fast component tests.**
+The Debug component catalogue renders 28 typed states of production controls,
+asks, composer, facts and status views. Its Xcode gallery and separate hosted
+snapshot target share the same examples; the suite captures both appearances
+without starting the application's stores or runtime. Explicit markdown
+readiness avoids recording a plan before its asynchronous parser has drawn it.
+The normal command builds current sources, a deliberate warm mode reuses the
+test bundle, recording is explicit, and a negative control must detect a
+visible change. The gate now runs these snapshots on pull requests and uploads
+their comparisons and timings.
+
+Four duplicate full-screen variants now point at component examples checked
+by the snapshot suite. The routine display catalogue is 78 states instead of
+82; canonical composition, keyboard, narrow-phone, large-text and glass checks
+remain. Explicit IDs and `--all` retain the historical captures. Full-screen
+PNG comparisons skip identical normalized buffers and only construct marked
+images on failure, with unchanged pixel tolerances and chrome exclusions;
+capture and comparison timings are reported separately.
+
+Real journeys build their XCTest bundle once per command and reuse it across
+acts, retaining real input, topology isolation, fresh-phone setup and the
+runner-kill-only retry. Successful logs now retain phase durations. The
+loopback smoke uses the same optimized debug-tools bridge as the app instead
+of rebuilding an otherwise identical dev-profile library, while still staging
+and linking its own copy. The text-clear behavior test waits for native text,
+draft state and the updated element layout instead of repeatedly encoding
+screenshots. These are local test-path changes, not a claim that the complete
+CI jobs now finish in under ten minutes.
+
+2026-09-20 — **Restore capture timing experiments.**
+The capture experiment now reads its device type from the simulator role
+metadata. The role-name collection is a tuple, so indexing it by role name
+previously stopped measurements immediately after installing the app.
+
 2026-09-20 — **Let the interrupted integrity check find its deadline.**
 The phone cold-start test passes on Windows now that it counts evicted rows.
 Behind it was a flake that had passed in the two previous Windows runs: the

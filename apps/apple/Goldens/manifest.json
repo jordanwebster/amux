@@ -190,6 +190,7 @@
     },
     {
       "id": "codex-approval",
+      "component_snapshots": ["ask.approval"],
       "stage": 7,
       "screen": "ask-permission",
       "fixture": "ask-permission-codex",
@@ -333,6 +334,7 @@
     },
     {
       "id": "send-refused",
+      "component_snapshots": ["status.refused"],
       "stage": 8,
       "screen": "working",
       "fixture": "send-refused",
@@ -372,6 +374,7 @@
     },
     {
       "id": "strip",
+      "component_snapshots": ["facts.combined-open", "facts.combined-folded"],
       "stage": 8,
       "screen": "run",
       "fixture": "strip",
@@ -931,6 +934,7 @@
     },
     {
       "id": "dictation-denied",
+      "component_snapshots": ["composer.dictation-denied"],
       "stage": 8,
       "screen": "typing",
       "fixture": "dictation-denied",

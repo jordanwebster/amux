@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -109,6 +109,11 @@ pub struct GoldenScreen {
     pub flaky: Option<GoldenFlake>,
     pub simulator: String,
     pub appearances: Vec<Appearance>,
+    /// Native component examples that now own this state's visual variations.
+    /// The historical full-screen capture remains available through `--all`
+    /// or its explicit ID, but is not repeated in the routine display suite.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub component_snapshots: Vec<String>,
 }
 
 impl GoldenScreen {
@@ -296,11 +301,16 @@ fn read_png(path: &Path) -> Result<Image, GoldenError> {
             )));
         }
     };
-    let mut pixels = Vec::with_capacity((info.width * info.height * 4) as usize);
-    for chunk in buffer.chunks_exact(channels) {
-        pixels.extend_from_slice(&chunk[..3]);
-        pixels.push(if channels == 4 { chunk[3] } else { 255 });
-    }
+    let pixels = if channels == 4 {
+        buffer
+    } else {
+        let mut pixels = Vec::with_capacity((info.width * info.height * 4) as usize);
+        for chunk in buffer.chunks_exact(3) {
+            pixels.extend_from_slice(chunk);
+            pixels.push(255);
+        }
+        pixels
+    };
     Ok(Image {
         width: info.width,
         height: info.height,
@@ -363,51 +373,62 @@ pub fn diff(
         });
     }
 
-    // The difference image marks every pixel that differs at all, in red, over
-    // a dimmed copy of the capture, so what changed is legible at a glance.
-    // Pixels under system chrome are washed blue instead, differing or not:
-    // a reviewer should be able to see what was not compared.
-    let mut marked = Image {
-        width: taken.width,
-        height: taken.height,
-        pixels: taken.pixels.clone(),
-    };
-    let mut differing = 0u64;
-    let mut first = None;
-    for index in 0..(taken.width * taken.height) as usize {
-        let at = index * 4;
-        let (x, y) = (index as u32 % taken.width, index as u32 / taken.width);
-        if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
-            marked.pixels[at] /= 4;
-            marked.pixels[at + 1] = marked.pixels[at + 1] / 4 + 40;
-            marked.pixels[at + 2] = marked.pixels[at + 2] / 4 + 150;
-            marked.pixels[at + 3] = 255;
+    // Most captures agree exactly. Compare the normalized bytes first; neither
+    // tolerance nor excluded chrome can turn identical pixels into a failure.
+    if baseline.pixels == taken.pixels {
+        return Ok(GoldenVerdict::Same);
+    }
+    let mut differences = Vec::new();
+    for (index, (expected, actual)) in baseline
+        .pixels
+        .chunks_exact(4)
+        .zip(taken.pixels.chunks_exact(4))
+        .enumerate()
+    {
+        if expected == actual {
             continue;
         }
-        let apart = (0..4)
-            .map(|channel| baseline.pixels[at + channel].abs_diff(taken.pixels[at + channel]))
-            .max()
-            .unwrap_or(0);
-        if apart > tolerance {
-            differing += 1;
-            if first.is_none() {
-                first = Some((x, y));
-            }
-            marked.pixels[at] = 255;
-            marked.pixels[at + 1] = 32;
-            marked.pixels[at + 2] = 32;
-            marked.pixels[at + 3] = 255;
-        } else {
-            for channel in 0..3 {
-                marked.pixels[at + channel] = marked.pixels[at + channel] / 3 + 40;
-            }
+        let (x, y) = (index as u32 % taken.width, index as u32 / taken.width);
+        if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
+            continue;
+        }
+        if expected[0].abs_diff(actual[0]) > tolerance
+            || expected[1].abs_diff(actual[1]) > tolerance
+            || expected[2].abs_diff(actual[2]) > tolerance
+            || expected[3].abs_diff(actual[3]) > tolerance
+        {
+            differences.push(index);
         }
     }
-    if differing > max_differing_pixels {
+    if differences.len() as u64 > max_differing_pixels {
+        // Only failures need a picture. Red marks changed pixels; blue marks
+        // system chrome that was excluded, whether or not it changed.
+        let mut marked = Image {
+            width: taken.width,
+            height: taken.height,
+            pixels: taken.pixels,
+        };
+        for (index, pixel) in marked.pixels.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (index as u32 % taken.width, index as u32 / taken.width);
+            if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
+                pixel[0] /= 4;
+                pixel[1] = pixel[1] / 4 + 40;
+                pixel[2] = pixel[2] / 4 + 150;
+                pixel[3] = 255;
+            } else {
+                for channel in &mut pixel[..3] {
+                    *channel = *channel / 3 + 40;
+                }
+            }
+        }
+        for index in &differences {
+            marked.pixels[index * 4..index * 4 + 4].copy_from_slice(&[255, 32, 32, 255]);
+        }
         write_png(&out.join("diff.png"), &marked)?;
+        let first = differences[0] as u32;
         return Ok(GoldenVerdict::Different {
-            pixels: differing,
-            first: first.expect("a differing pixel has a position"),
+            pixels: differences.len() as u64,
+            first: (first % taken.width, first / taken.width),
         });
     }
     Ok(GoldenVerdict::Same)
@@ -516,6 +537,7 @@ pub fn run(
     }
 
     let mut outcomes = Vec::new();
+    let mut timings = Vec::new();
     for (device, screens) in by_simulator {
         let mut requests: Vec<Value> = Vec::new();
         let mut planned = Vec::new();
@@ -559,7 +581,12 @@ pub fn run(
         // The manifest names the device each screen belongs on; the one this
         // run was pointed at is only the default.
         let _ = simulator;
+        let capture_started = Instant::now();
         let replies = door::door(device, bundle_id, requests, Duration::from_secs(300))?;
+        let capture_seconds = capture_started.elapsed().as_secs_f64();
+        let capture_count = planned.len();
+        eprintln!("goldens: {device}: {capture_count} captures in {capture_seconds:.3}s");
+        let comparison_started = Instant::now();
 
         // Which screens the door refused, and why. A refusal belongs to the
         // screen it was about, so an unimplemented screen is named rather than
@@ -621,7 +648,18 @@ pub fn run(
                 rewritten,
             });
         }
+        let comparison_seconds = comparison_started.elapsed().as_secs_f64();
+        eprintln!("goldens: {device}: comparisons in {comparison_seconds:.3}s");
+        timings.push(json!({
+            "simulator": device, "captures": capture_count,
+            "capture_seconds": capture_seconds, "comparison_seconds": comparison_seconds,
+        }));
     }
+    std::fs::create_dir_all(out)?;
+    std::fs::write(
+        out.join("timings.json"),
+        serde_json::to_vec_pretty(&timings).unwrap(),
+    )?;
     Ok(outcomes)
 }
 
@@ -709,7 +747,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             eprintln!(
                 "usage: xtask golden <run [--simulator NAME] [--bundle-id ID] [--install APP] \
-                 [--update] [--built] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
+                 [--update] [--built] [--all] [IDS...]|perturb [--simulator NAME] [--bundle-id ID] \
                  [--token NAME] [IDS...]|diff --expected PNG --actual PNG --out DIR|\
                  reference --captures DIR [--out DIR]>"
             );
@@ -761,6 +799,17 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
+    if ids.is_empty() && !arguments.iter().any(|argument| argument == "--all") {
+        ids = manifest
+            .screens
+            .iter()
+            .filter(|screen| screen.component_snapshots.is_empty())
+            .map(|screen| screen.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return Err("the manifest must retain full-screen composition coverage".into());
+        }
+    }
     let out = Path::new(OUT);
     let outcomes = run(
         &manifest,
@@ -997,6 +1046,45 @@ fn reference_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A local throughput sample, deliberately separate from correctness tests.
+    /// Use the committed images so decoding costs match the real catalogue.
+    #[test]
+    #[ignore = "manual full-resolution image comparison timing"]
+    fn compare_full_resolution_samples() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let manifest = GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json"))
+            .expect("the committed manifest");
+        for id in ["home", "typing", "ax-composer"] {
+            let path = PathBuf::from(format!("../../apps/apple/Goldens/{id}.light.png"));
+            let baseline = read_png(&path).expect("the committed image");
+            let tolerated = room.path().join(format!("{id}.png"));
+            let mut pixels = baseline.pixels.clone();
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel[0] = pixel[0].saturating_add(1);
+            }
+            write_png(&tolerated, &Image { pixels, ..baseline }).expect("a tolerated image");
+            for (kind, actual) in [("identical", &path), ("tolerated", &tolerated)] {
+                for round in 0..3 {
+                    let started = std::time::Instant::now();
+                    let verdict = diff(
+                        &path,
+                        actual,
+                        &room.path().join("out"),
+                        2,
+                        64,
+                        manifest.system_chrome(manifest.screen(id).unwrap()),
+                    )
+                    .expect("a comparison");
+                    assert_eq!(verdict, GoldenVerdict::Same);
+                    println!(
+                        "{id} {kind} round={round} seconds={:.6}",
+                        started.elapsed().as_secs_f64()
+                    );
+                }
+            }
+        }
+    }
 
     fn write(path: &Path, width: u32, height: u32, colour: [u8; 4]) {
         let image = Image {

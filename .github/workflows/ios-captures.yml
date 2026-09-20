@@ -1,22 +1,8 @@
-# The half of iPhone verification that drives a running app and judges what it
-# drew: the door smoke, the golden catalogue, the journeys, the accessibility
-# sweep and the measured run.
-#
-# It is not on the push path, for two reasons that point the same way. It is
-# the slow half — the gate answers in half an hour, this takes hours — and it
-# is the half that photographs a simulator, so it reports on the machine
-# holding the camera as well as on the app. A change to the app should not
-# wait on either.
-#
-# The nightly run is the golden catalogue alone; the rest is on demand. For a
-# while the catalogue was red on every runner and green on every Mac, and the
-# reason was the home indicator, the bar a Face ID iPhone draws for swiping up
-# to the home screen: SpringBoard withdraws it once backboardd's attention
-# timer fires, and on a runner with both pinned devices booted that timer's
-# event is delivered to a stale client, so the bar never leaves. The
-# comparison now looks past the bar's rectangle, which the golden manifest
-# declares for the device, and a runner's captures match a developer's Mac
-# pixel for pixel.
+# Component snapshots also run on pull requests. This workflow adds the slower
+# full-display composition checks nightly, and the real interaction journeys,
+# accessibility sweep and performance qualification when dispatched by hand.
+# The manifest names the component coverage replacing redundant display states;
+# `just ios goldens --all` still runs the historical full-screen catalogue.
 name: iOS captures
 
 on:
@@ -55,7 +41,9 @@ jobs:
         run: brew install xcodegen
       - name: Boot both pinned simulators
         run: just ios simulator
-      - name: Compare the golden catalogue
+      - name: Compare native component snapshots
+        run: just ios component-snapshots
+      - name: Compare full-screen composition goldens
         if: github.event_name == 'schedule'
         run: just ios goldens
       - name: Run the capture suites
@@ -86,5 +74,6 @@ jobs:
           path: |
             target/ios/goldens
             target/ios/journeys
+            target/ios/component-snapshots
           if-no-files-found: warn
           retention-days: 7

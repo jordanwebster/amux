@@ -1,6 +1,66 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Asks": {
+      "comment": "Debug component gallery family heading.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asks"
+          }
+        }
+      }
+    },
+    "Composer": {
+      "comment": "Debug component gallery family heading.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Composer"
+          }
+        }
+      }
+    },
+    "Controls": {
+      "comment": "Debug component gallery family heading.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Controls"
+          }
+        }
+      }
+    },
+    "Conversation facts": {
+      "comment": "Debug component gallery family heading.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversation facts"
+          }
+        }
+      }
+    },
+    "Conversation status": {
+      "comment": "Debug component gallery family heading.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversation status"
+          }
+        }
+      }
+    },
     "LOCAL FLEET": {
       "comment": "English app copy. Used in DesignVariant.swift.",
       "extractionState": "manual",

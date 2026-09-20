@@ -267,7 +267,7 @@ def capture(record, args):
                 if (APP / "Amux.debug.dylib").exists() else None,
                 simulator=udid, simulator_name=args.simulator,
                 runtime=ios_simulators.RUNTIME,
-                device_type=ios_simulators.DEVICES[args.simulator],
+                device_type=ios_simulators.KINDS[args.simulator]["device_type"],
                 build_time_excluded=True)
     rows = []
     for method in args.methods:

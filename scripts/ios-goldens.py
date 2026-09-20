@@ -9,6 +9,7 @@ the wrong clock.
 """
 
 from pathlib import Path
+from argparse import ArgumentParser
 import json
 import subprocess
 import sys
@@ -24,9 +25,21 @@ BUNDLE_ID = "sh.amux.app"
 
 def selected(arguments: list[str]) -> list[dict]:
     screens = json.loads(MANIFEST.read_text())["screens"]
-    ids = [argument for argument in arguments if not argument.startswith("--")]
+    parser = ArgumentParser(add_help=False)
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--update", action="store_true")
+    parser.add_argument("--built", action="store_true")
+    for flag in ("--simulator", "--bundle-id", "--install"):
+        parser.add_argument(flag)
+    parser.add_argument("ids", nargs="*")
+    options = parser.parse_intermixed_args(arguments)
+    ids = options.ids
     if not ids:
-        return screens
+        selected_screens = [screen for screen in screens
+                            if options.all or not screen.get("component_snapshots")]
+        if not selected_screens:
+            raise SystemExit("The manifest must retain full-screen composition coverage")
+        return selected_screens
     known = {screen["id"] for screen in screens}
     missing = [id for id in ids if id not in known]
     if missing:

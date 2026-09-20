@@ -413,6 +413,36 @@ def film(process: subprocess.Popen, udid: str, name: str, destination: Path) -> 
 RUNNER_WAS_KILLED = ("crashed with signal kill", "Early unexpected exit")
 
 
+def xcodebuild_arguments(udid: str, action: str) -> list[str]:
+    """The build identity shared by preparing and running the UI tests."""
+    return [
+        "xcodebuild", action,
+        "-project", "apps/apple/Amux.xcodeproj",
+        "-scheme", "Amux",
+        "-configuration", "Debug",
+        "-destination", f"id={udid}",
+        "-derivedDataPath", str(DERIVED_DATA.resolve()),
+    ]
+
+
+def build_for_testing(udid: str, log: Path) -> float:
+    """Builds the UI test bundle once, ready for every journey in this run."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    began = time.monotonic()
+    with log.open("w") as sink:
+        built = subprocess.run([
+            *xcodebuild_arguments(udid, "build-for-testing"),
+            "-only-testing", "AmuxUITests",
+            "-quiet",
+        ], text=True, stdout=sink, stderr=subprocess.STDOUT, timeout=1800)
+    elapsed = time.monotonic() - began
+    if built.returncode != 0:
+        raise SystemExit(
+            f"the journey UI tests did not build; their output is in {log}")
+    log.write_text(f"AmuxUITests: built for testing in {elapsed:.1f}s\n")
+    return elapsed
+
+
 def run_once(
     udid: str, test: str, log: Path, result: Path,
     environment: dict[str, str], filming: Path | None,
@@ -425,12 +455,7 @@ def run_once(
     # runs while xcodebuild does, and a pipe nobody is draining would stop it.
     with log.open("w") as sink:
         started = subprocess.Popen([
-            "xcodebuild", "test",
-            "-project", "apps/apple/Amux.xcodeproj",
-            "-scheme", "Amux",
-            "-configuration", "Debug",
-            "-destination", f"id={udid}",
-            "-derivedDataPath", str(DERIVED_DATA.resolve()),
+            *xcodebuild_arguments(udid, "test-without-building"),
             "-only-testing", test,
             "-resultBundlePath", str(result.resolve()),
             "-quiet",
@@ -482,6 +507,7 @@ def perform(
     # not by this script.
     environment = os.environ | {f"TEST_RUNNER_{key}": value
                                 for key, value in (telling or {}).items()}
+    began = time.monotonic()
     for runs_left in (1, 0):
         returned, details = run_once(udid, test, log, result, environment, filming)
         if returned == 0 or runs_left == 0:
@@ -492,9 +518,12 @@ def perform(
                     f"{test} could finish; running it again")
     if returned == 0:
         # Passing journeys need neither the sizeable bundle nor its build
-        # chatter; the ordinary journey record is their evidence.
+        # chatter; retain its duration in both the log and ordinary journey
+        # record so a successful run still explains where its time went.
+        elapsed = time.monotonic() - began
         shutil.rmtree(result, ignore_errors=True)
-        log.write_text(f"{test}: passed\n")
+        log.write_text(f"{test}: passed in {elapsed:.1f}s\n")
+        journey.say(f"{test} passed in {elapsed:.1f}s")
     journey.expect(returned == 0, f"{test} failed; its output is in {log}")
     container = test_container(udid)
     for name, destination in collecting.items():
@@ -4016,6 +4045,7 @@ def chosen_acts(argv: list[str]) -> tuple[list[str], list[str]]:
 
 
 def main() -> None:
+    command_began = time.monotonic()
     wanted, acts = chosen_acts(sys.argv[1:])
     plans = declared()
     known = {plan["id"] for plan in plans}
@@ -4042,7 +4072,10 @@ def main() -> None:
         acts = [name for name in declares if name in acts]
 
     udid = ios_simulators.ready(SIMULATOR)
+    built_in = build_for_testing(udid, OUTPUT / "build-for-testing.log")
+    print(f"journeys: UI tests built in {built_in:.1f}s", flush=True)
     for plan in chosen:
+        journey_began = time.monotonic()
         # An act's run leaves its findings somewhere of its own: the journey's
         # evidence is what a whole run wrote, and a partial one must not be
         # able to overwrite it and pass for it.
@@ -4064,7 +4097,12 @@ def main() -> None:
             print(f"{plan['id']}: {', '.join(acts)} ran; the journey has not passed — "
                   f"run it with no --act to prove it", flush=True)
         else:
+            print(f"{plan['id']}: journey took "
+                  f"{time.monotonic() - journey_began:.1f}s", flush=True)
+            # The verifier deliberately recognizes this exact final line as
+            # the journey's pass contract. Timings belong beside it, not in it.
             print(f"{plan['id']}: passed", flush=True)
+    print(f"journeys: finished in {time.monotonic() - command_began:.1f}s", flush=True)
 
 
 if __name__ == "__main__":
