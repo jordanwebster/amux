@@ -96,8 +96,12 @@ file; directories must
 exist. Invalid declarations fail before network startup. Empty lists are
 allowed, including users without a daemon.
 
-The runner starts real daemons, a loopback relay and a fake identity service
-with isolated identities, trust stores and temporary data directories. The
+The runner starts production daemon runtimes, a loopback relay and a fake
+identity service with isolated identities, trust stores and temporary data
+directories. They are runtimes inside the runner's one process, not
+independently killable daemon binaries: a served network proves client
+integration and protocol behaviour, and a claim that an agent outlives a
+killed daemon needs a real-process test instead. The
 first and only stdout line is JSON containing `cloud_url`, `identity`,
 `relay`, `control`, per-user bearer credentials, daemon identities and agent
 identities. `identity` is the URL of the fake identity service, reported
@@ -146,12 +150,14 @@ may connect; operations execute in arrival order. Each request returns one
 `Ack` after its operation settles, or an `Error` with a message. An error does
 not undo an operation that has already started.
 
-Every request below is a verb the in-process harness also has, under the
-same name: `CloudOffline` is `TestNet::cloud_offline`, `StartQrPairing` is
+Every request below maps to a capability the in-process harness also has:
+`CloudOffline` is `TestNet::cloud_offline`, `StartQrPairing` is
 `Daemon::start_qr_pairing`, `AgentEmit` is `script::Provider::emit`, and so
-on. The `testnet` crate documentation carries the full table. A phone journey
-driving the door and a Rust spec calling the harness therefore say the same
-sentence, and adding a verb means adding the method first.
+on. Some verbs deliberately compose two capabilities or add an effect only
+the door has, such as `Announce` also publishing over real mDNS; the mapping
+is explicit and checked by a test rather than implied by matching names. A
+phone journey driving the door and a Rust spec calling the harness say the
+same sentence, and adding a verb means adding the capability first.
 
 | Request | Effect |
 | --- | --- |

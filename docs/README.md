@@ -33,8 +33,10 @@ subject; when two overlap, the owner named here wins.
   graduation and committed fixtures.
 - [Build](BUILD.md) — toolchain and profile choices, reproducible tasks,
   committed protobuf output, and warm worktree snapshots.
-- `TESTING.md` — workspace test commands, focused target selection, and
-  choosing protocol or subprocess boundaries for tests.
+- `TESTING.md` — what each kind of test proves: boundaries and suites, the
+  three clocks, fixtures, journeys, lanes and the suite catalogue.
+- `PERFORMANCE.md` — the qualified performance harness, budgets, baselines
+  and the measurement decisions behind them.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
   planes a codex agent exposes, the structured row vocabulary, and the
   client-side layer that folds it.
