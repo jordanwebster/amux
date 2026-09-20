@@ -1,3 +1,12 @@
+2026-09-20 — **Make the test inventory executable.**
+The repository now has one catalogue for 56 suites and workload groups,
+including all 90 Cargo library, binary and standalone test targets, all nine
+Swift test targets, every declared phone journey, the phone golden manifest
+and all performance baselines. `just tests-list` prints the inventory with
+its boundary, lane, clock and focused command. `just tests-check` rejects
+missing or duplicate targets, unknown features or recipes, stale selectors,
+missing assets and zero-match cases, and now gates local and hosted CI.
+
 2026-09-20 — **Refuse fixture update flags in asserted CI runs.**
 CI now fails before testing when any `UPDATE_*` environment variable is set,
 including an explicitly empty one. The cross-platform workspace test job, the

@@ -1,0 +1,965 @@
+version = 1
+
+[[suite]]
+name = "desktop-cli-system"
+contract = "The built CLI preserves profile isolation, MCP routing, and pairing output across real process boundaries."
+paths = ["crates/amux/tests"]
+recipe = "just test -- -p amux"
+boundary = "System composition"
+oracle = "Exact process output, exit status, persisted configuration, and service observations."
+real = ["processes", "Unix sockets", "temporary files"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["desktop", "Unix for process integration targets"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "amux", kind = "lib", targets = ["amux"], features = ["bundled"] },
+  { package = "amux", kind = "bin", targets = ["amux"], features = ["bundled"] },
+  { package = "amux", targets = ["config_split", "mcp_route_isolation", "pairing_output"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "embedded-client-ownership"
+contract = "Embedded clients keep account views, cached state, and daemon ownership isolated across attach, close, and removal."
+paths = ["crates/app-embedded/tests"]
+recipe = "just test -- -p app-embedded"
+boundary = "Store, effects, bridge"
+oracle = "Public embedded API results, persisted profile state, and live daemon observations."
+real = ["embedded daemon", "SQLite store", "temporary files"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "app-embedded", kind = "lib", targets = ["app_embedded"], features = ["bundled"] },
+  { package = "app-embedded", targets = ["attach", "forget", "views"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "claude-sdk-boundary-policy"
+contract = "The Claude SDK adapter remains an event-stream and control-handle boundary without callback objects."
+paths = ["crates/claude/tests/boundary.rs", "crates/claude/src/sdk"]
+recipe = "just test -- -p claude"
+boundary = "Provider adapter"
+oracle = "Source-boundary assertions over the public adapter modules."
+real = ["repository source"]
+substituted = ["Claude process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "tool"
+evidence = ""
+update = ""
+cargo = [
+  { package = "claude", kind = "lib", targets = ["claude"], features = [] },
+  { package = "claude", kind = "bin", targets = ["claude-hook"], features = [] },
+  { package = "claude", targets = ["boundary"], features = [] },
+]
+
+[[suite]]
+name = "claude-recorded-adapter"
+contract = "Recorded Claude PTY and SDK traffic replays completely and remains tied to its keymap and wire provenance."
+paths = ["crates/claude-specs/tests", "crates/claude-specs/fixtures"]
+recipe = "just test -- -p claude-specs"
+boundary = "Provider adapter"
+oracle = "Strict replay consumption, expected writes, corpus manifests, and provenance assertions."
+real = ["recorded provider bytes"]
+substituted = ["live Claude process", "wall clock"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/claude-specs/fixtures"
+update = "Run the relevant claude-probe capture and review its manifest."
+cargo = [
+  { package = "claude-specs", kind = "lib", targets = ["claude_specs"], features = [] },
+  { package = "claude-specs", kind = "bin", targets = ["claude-probe"], features = [] },
+  { package = "claude-specs", targets = ["keymap_provenance", "sdk_boundary", "spec_replay"], features = [] },
+]
+
+[[suite]]
+name = "codex-daemon-transport"
+contract = "The Codex app-server transport preserves JSON message framing and large bidirectional frames over its Unix socket."
+paths = ["crates/codex/tests/daemon_transport.rs"]
+recipe = "just test -- -p codex"
+boundary = "Provider adapter"
+oracle = "Exact JSON-RPC frames observed at both ends of a real local socket."
+real = ["Unix socket", "WebSocket framing"]
+substituted = ["Codex app-server process"]
+time = "real"
+capabilities = ["Unix"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "codex", kind = "lib", targets = ["codex"], features = [] },
+  { package = "codex", targets = ["daemon_transport"], features = [] },
+]
+
+[[suite]]
+name = "codex-recorded-adapter"
+contract = "Every registered Codex provider recording replays strictly with complete corpus provenance."
+paths = ["crates/codex-specs/tests/spec_replay.rs", "crates/codex-specs/fixtures"]
+recipe = "just test -- -p codex-specs --test spec_replay"
+boundary = "Provider adapter"
+oracle = "Strict replay consumption, expected writes, and recording manifest validation."
+real = ["recorded provider bytes"]
+substituted = ["live Codex process", "wall clock"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/codex-specs/fixtures"
+update = "Run codex-probe for the selected scenario and review its manifest."
+cargo = [
+  { package = "codex-specs", kind = "lib", targets = ["codex_specs"], features = [] },
+  { package = "codex-specs", kind = "bin", targets = ["codex-probe"], features = [] },
+  { package = "codex-specs", targets = ["spec_replay"], features = [] },
+]
+
+[[suite]]
+name = "strict-recording-replay"
+contract = "Recorded transports reject missing, reordered, mismatched, or trailing traffic and acknowledge EOF and completion."
+paths = ["crates/replay-support/tests/strict_replay.rs"]
+recipe = "just test -- -p replay-support --test strict_replay"
+boundary = "Provider adapter"
+oracle = "Typed replay results and exact read/write consumption."
+real = ["in-memory asynchronous IO"]
+substituted = ["provider process", "wall clock"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "replay-support", kind = "lib", targets = ["replay_support"], features = [] },
+  { package = "replay-support", targets = ["strict_replay"], features = [] },
+]
+
+[[suite]]
+name = "sqlite-store-contract"
+contract = "The SQLite store preserves chat, fleet, lifecycle, and budget contracts across concurrency and failure cuts."
+paths = ["crates/store/tests"]
+recipe = "just test-store"
+boundary = "Single daemon"
+oracle = "Persisted rows, fold-oracle equality, SQLite errors, ownership, and bounded maintenance outcomes."
+real = ["bundled SQLite", "files", "process locks"]
+substituted = ["provider", "network"]
+time = "real"
+capabilities = ["desktop", "bundled SQLite"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "store", kind = "lib", targets = ["store"], features = ["bundled"] },
+  { package = "store", targets = ["budgets", "chat", "fleet", "lifecycle"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "daemon-library-units"
+contract = "Daemon-side libraries preserve their local parsing, state, routing, lifecycle, persistence, and wire invariants."
+paths = ["crates/agent-runtime/src", "crates/artifacts/src", "crates/client/src", "crates/host-api/src", "crates/node/src", "crates/settings/src", "crates/wire/src", "crates/test-agent/src"]
+recipe = "just test -- -p agent-runtime -p artifacts -p client -p host-api -p node -p settings -p wire -p test-agent"
+boundary = "Single daemon"
+oracle = "Value assertions, explicit state transitions, wire round trips, and owned-resource observations."
+real = ["temporary files and local sockets in integration-shaped unit cases"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "agent-runtime", kind = "lib", targets = ["agent_runtime"], features = [] },
+  { package = "artifacts", kind = "lib", targets = ["artifacts"], features = [] },
+  { package = "client", kind = "lib", targets = ["client"], features = [] },
+  { package = "host-api", kind = "lib", targets = ["host_api"], features = [] },
+  { package = "node", kind = "lib", targets = ["node"], features = [] },
+  { package = "settings", kind = "lib", targets = ["settings"], features = [] },
+  { package = "wire", kind = "lib", targets = ["wire"], features = [] },
+  { package = "test-agent", kind = "bin", targets = ["test-agent"], features = [] },
+]
+
+[[suite]]
+name = "client-model-library-units"
+contract = "Model, fold, and app-runtime units preserve provider interpretation, client state transitions, and projection delivery."
+paths = ["crates/app-runtime/src", "crates/fold/src", "crates/model/src"]
+recipe = "just test -- -p app-runtime -p fold -p model"
+boundary = "Client model"
+oracle = "Explicit values, effects, invariants, checkpoint equality, and stable serialized shapes."
+real = []
+substituted = ["network", "store", "providers", "wall clock"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = "UPDATE_MOBILE_PROJECTION=1 just test -- -p app-runtime"
+cargo = [
+  { package = "app-runtime", kind = "lib", targets = ["app_runtime"], features = ["bundled"] },
+  { package = "fold", kind = "lib", targets = ["fold"], features = [] },
+  { package = "model", kind = "lib", targets = ["model"], features = [] },
+]
+
+[[suite]]
+name = "phone-bridge-library-units"
+contract = "The Rust phone bridge preserves its C boundary, mobile lifecycle, cache, and callback contracts."
+paths = ["crates/app-ffi/src"]
+recipe = "just test -- -p app-ffi"
+boundary = "Store, effects, bridge"
+oracle = "C-boundary results, callback records, runtime state, and persisted cache observations."
+real = ["embedded runtime", "SQLite", "temporary files"]
+substituted = ["Swift caller", "cloud account", "providers"]
+time = "real"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "app-ffi", kind = "lib", targets = ["app_ffi"], features = ["bundled"] }]
+
+[[suite]]
+name = "provider-io-library-units"
+contract = "PTY ownership and capture redaction preserve process, signal, byte, and sanitization contracts."
+paths = ["crates/pty-host/src", "crates/redaction/src"]
+recipe = "just test -- -p pty-host -p redaction"
+boundary = "Provider adapter"
+oracle = "Process-group observations, byte streams, exit status, and exact sanitized values."
+real = ["PTY child processes"]
+substituted = ["provider programs"]
+time = "real"
+capabilities = ["Unix PTY"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "pty-host", kind = "lib", targets = ["pty_host"], features = [] },
+  { package = "redaction", kind = "lib", targets = ["redaction"], features = [] },
+]
+
+[[suite]]
+name = "testnet-harness-units"
+contract = "The test network harness preserves scripts, controls, latency proxies, performance reporting, and deterministic assertions."
+paths = ["crates/testnet/src"]
+recipe = "just test-crate testnet -- --lib --bins"
+boundary = "Many daemons"
+oracle = "Harness values, event observations, scripted controls, and report calculations."
+real = ["loopback sockets and child processes in integration-shaped unit cases"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "testnet", kind = "lib", targets = ["testnet"], features = ["bundled"] },
+  { package = "testnet", kind = "bin", targets = ["testnet"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "a2a-recorded-fixtures"
+contract = "Recorded agent-to-agent payloads decode and drive the same delivery, stop, and tool behavior as live backend rows."
+paths = ["crates/testnet/tests/a2a_fixtures.rs", "crates/testnet/tests/a2a_fixtures", "crates/testnet/fixtures/a2a"]
+recipe = "just test-crate testnet -- --test a2a_fixtures"
+boundary = "Provider adapter"
+oracle = "Exact decoded fixture values and backend delivery observations."
+real = ["recorded provider rows"]
+substituted = ["live providers"]
+time = "driven"
+capabilities = ["Unix for process-backed cases"]
+lane = "fast"
+evidence = "crates/testnet/fixtures/a2a"
+update = "Regenerate only the named A2A fixture with its explicit fixture command."
+cargo = [{ package = "testnet", targets = ["a2a_fixtures"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-pty-live-compatibility"
+contract = "A real Claude PTY session still initializes, converses, accepts semantic controls, and records inspectable evidence."
+paths = ["crates/testnet/tests/claude_pty_live.rs", "crates/testnet/tests/claude_pty_live"]
+recipe = "just claude-pty-live -- all"
+boundary = "Provider adapter"
+oracle = "Structural session rows, provider side effects, process exits, and captured PTY evidence."
+real = ["Claude CLI", "PTY", "operator login"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = "target/claude-pty-live"
+update = "Use the live suite's redaction workflow for an explicitly selected capture."
+cargo = [{ package = "testnet", targets = ["claude_pty_live"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-pty-live-selection"
+contract = "The Claude PTY live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
+paths = ["crates/testnet/tests/claude_pty_live_args.rs", "crates/testnet/tests/claude_pty_live/args.rs"]
+recipe = "just test-crate testnet -- --test claude_pty_live_args"
+boundary = "Provider adapter"
+oracle = "Exact selected scenario indices and typed selection errors."
+real = []
+substituted = ["Claude process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["claude_pty_live_args"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-pty-live-redaction"
+contract = "Claude PTY captures redact bridge identities while retaining scenario identity and verifiable output."
+paths = ["crates/testnet/tests/claude_pty_live_redact.rs", "crates/testnet/tests/claude_pty_live/redact.rs"]
+recipe = "just test-crate testnet -- --test claude_pty_live_redact"
+boundary = "Provider adapter"
+oracle = "Exact sanitized JSON and a scan for surviving sensitive identifiers."
+real = ["authored capture-shaped data"]
+substituted = ["live Claude process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = "Set AMUX_REDACT_INPUT, AMUX_REDACT_OUTPUT, and AMUX_REDACT_SCRATCH for the ignored rewrite case."
+cargo = [{ package = "testnet", targets = ["claude_pty_live_redact"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-sdk-live-compatibility"
+contract = "A real Claude SDK session still initializes, exchanges structured turns and controls, and shuts down cleanly."
+paths = ["crates/testnet/tests/claude_sdk_live.rs", "crates/testnet/tests/claude_sdk_live"]
+recipe = "just claude-sdk-live -- all"
+boundary = "Provider adapter"
+oracle = "Structural session rows, provider side effects, and captured process evidence."
+real = ["Claude SDK process", "operator login"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = "target/claude-sdk-live"
+update = "Capture through the named live scenario and graduate it deliberately."
+cargo = [{ package = "testnet", targets = ["claude_sdk_live"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-sdk-live-selection"
+contract = "The Claude SDK live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
+paths = ["crates/testnet/tests/claude_sdk_live_args.rs", "crates/testnet/tests/claude_sdk_live/args.rs"]
+recipe = "just test-crate testnet -- --test claude_sdk_live_args"
+boundary = "Provider adapter"
+oracle = "Exact selected scenario indices and typed selection errors."
+real = []
+substituted = ["Claude process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["claude_sdk_live_args"], features = ["bundled"] }]
+
+[[suite]]
+name = "codex-live-compatibility"
+contract = "A real Codex session still initializes, handles turns and decisions, interrupts, and resumes through app-server."
+paths = ["crates/testnet/tests/codex_live.rs", "crates/testnet/tests/codex_live"]
+recipe = "just codex-live -- all"
+boundary = "Provider adapter"
+oracle = "Structural app-server events, provider side effects, and captured protocol evidence."
+real = ["Codex CLI", "operator login"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "Codex credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = "target/codex-live"
+update = "Capture through the named live scenario and graduate it deliberately."
+cargo = [{ package = "testnet", targets = ["codex_live"], features = ["bundled"] }]
+
+[[suite]]
+name = "codex-live-selection"
+contract = "The Codex live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
+paths = ["crates/testnet/tests/codex_live_args.rs", "crates/testnet/tests/codex_live/args.rs"]
+recipe = "just test-crate testnet -- --test codex_live_args"
+boundary = "Provider adapter"
+oracle = "Exact selected scenario indices and typed selection errors."
+real = []
+substituted = ["Codex process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["codex_live_args"], features = ["bundled"] }]
+
+[[suite]]
+name = "codex-live-build-freshness"
+contract = "Codex live qualification refuses a missing or stale binary by reading its real dependency file."
+paths = ["crates/testnet/tests/codex_live_depfile.rs"]
+recipe = "just test-crate testnet -- --test codex_live_depfile"
+boundary = "System composition"
+oracle = "Dependency-file parsing and exact stale-input diagnostics."
+real = ["temporary dependency files"]
+substituted = ["Codex process"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["codex_live_depfile"], features = ["bundled"] }]
+
+[[suite]]
+name = "codex-model-effort-recording"
+contract = "Recorded Codex model and effort choices reach the backend and derived rows without changing fixture bytes unexpectedly."
+paths = ["crates/testnet/tests/codex_model_effort.rs", "crates/testnet/tests/fixtures/codex/model_effort.md"]
+recipe = "just test-crate testnet -- --test codex_model_effort"
+boundary = "Provider adapter"
+oracle = "Exact provider settings, backend inputs, and committed derived rows."
+real = ["recorded Codex traffic"]
+substituted = ["live Codex process"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/testnet/tests/fixtures/codex"
+update = "UPDATE_MODEL_EFFORT=1 just test-crate testnet -- --test codex_model_effort"
+cargo = [{ package = "testnet", targets = ["codex_model_effort"], features = ["bundled"] }]
+
+[[suite]]
+name = "codex-provider-command-recording"
+contract = "Recorded Codex provider commands are discovered, tokenized, and delivered through the backend exactly once."
+paths = ["crates/testnet/tests/codex_provider_commands.rs", "crates/testnet/tests/fixtures/codex/provider_commands.md"]
+recipe = "just test-crate testnet -- --test codex_provider_commands"
+boundary = "Provider adapter"
+oracle = "Exact command facts, tokens, backend inputs, and committed derived rows."
+real = ["recorded Codex traffic"]
+substituted = ["live Codex process"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/testnet/tests/fixtures/codex"
+update = "UPDATE_PROVIDER_COMMANDS=1 just test-crate testnet -- --test codex_provider_commands"
+cargo = [{ package = "testnet", targets = ["codex_provider_commands"], features = ["bundled"] }]
+
+[[suite]]
+name = "provider-derived-rows"
+contract = "Claude PTY, Claude SDK, and Codex recordings produce the reviewed row fixtures byte for byte."
+paths = ["crates/testnet/tests/derived_rows.rs", "crates/claude-specs/fixtures/claude-pty", "crates/claude-specs/fixtures/claude-sdk", "crates/codex-specs/fixtures/codex"]
+recipe = "just test-crate testnet -- --test derived_rows"
+boundary = "Provider adapter"
+oracle = "Byte-for-byte comparison with committed derived-row fixtures after acknowledged drain and join."
+real = ["recorded provider traffic", "production backends"]
+substituted = ["live provider processes"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = "crates/claude-specs/fixtures"
+update = "UPDATE_DERIVED_ROWS=1 just test-crate testnet -- --test derived_rows"
+cargo = [{ package = "testnet", targets = ["derived_rows"], features = ["bundled"] }]
+
+[[suite]]
+name = "embedded-public-boundary"
+contract = "The public embedded owner starts, persists, isolates, suspends, and shuts down without leaking host internals."
+paths = ["crates/testnet/tests/embedding.rs"]
+recipe = "just embedded-test"
+boundary = "Store, effects, bridge"
+oracle = "Public API results, persisted state, live service calls, and teardown observations."
+real = ["embedded runtime", "SQLite", "temporary files"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["embedding"], features = ["bundled"] }]
+
+[[suite]]
+name = "cloud-identity-fixture"
+contract = "The scripted identity service drives device refresh and user-info flows through the production authentication boundary."
+paths = ["crates/testnet/tests/identity_fixture.rs"]
+recipe = "just test-crate testnet -- --test identity_fixture"
+boundary = "System composition"
+oracle = "Exact authentication requests, replies, and resulting device identity state."
+real = ["HTTP client/server stack"]
+substituted = ["production identity service"]
+time = "real"
+capabilities = ["loopback network"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["identity_fixture"], features = ["bundled"] }]
+
+[[suite]]
+name = "node-embedding-system"
+contract = "Embedded and daemon entry points build real services, enforce configuration, and release their owned processes and sockets."
+paths = ["crates/testnet/tests/node_embedding.rs"]
+recipe = "just test-crate testnet -- --test node_embedding"
+boundary = "System composition"
+oracle = "Service calls, process identity, socket ownership, and clean shutdown."
+real = ["processes", "local sockets", "files"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["node_embedding"], features = ["bundled"] }]
+
+[[suite]]
+name = "claude-sdk-runtime-integration"
+contract = "The real SDK backend and UI runtime round-trip queue, settings, commands, and recorded model choices."
+paths = ["crates/testnet/tests/sdk_integration.rs"]
+recipe = "just test-crate testnet -- --test sdk_integration"
+boundary = "Store, effects, bridge"
+oracle = "Backend observations and the resulting runtime model after each command."
+real = ["production backend", "runtime reducer"]
+substituted = ["Claude process via recording"]
+time = "driven"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["sdk_integration"], features = ["bundled"] }]
+
+[[suite]]
+name = "many-daemon-protocol-spec"
+contract = "Production daemons enforce discovery, trust, routing, entitlement, revocation, session, and artifact contracts."
+paths = ["crates/testnet/tests/spec"]
+recipe = "just spec"
+boundary = "Many daemons"
+oracle = "Typed topology observations, protocol events, refusals, and state dumps at bounded deadlines."
+real = ["daemon runtimes", "loopback QUIC and TCP", "TLS", "files"]
+substituted = ["cloud account", "provider", "multicast discovery"]
+time = "real"
+capabilities = ["loopback network", "desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["spec"], features = ["bundled"] }]
+
+[[suite]]
+name = "served-testnet-process"
+contract = "The served test network announces readiness, accepts control, and tears down every owned process and listener."
+paths = ["crates/testnet/tests/testnet_serve.rs"]
+recipe = "just test-crate testnet -- --test testnet_serve"
+boundary = "System composition"
+oracle = "Exact readiness and control records, exit status, and resource cleanup."
+real = ["child process", "TCP listener", "files"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["desktop", "loopback network"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["testnet_serve"], features = ["bundled"] }]
+
+[[suite]]
+name = "typed-provider-protocols"
+contract = "Each provider kind exposes only its supported typed protocol planes and refuses every other plane."
+paths = ["crates/testnet/tests/typed_protocols.rs"]
+recipe = "just test-crate testnet -- --test typed_protocols"
+boundary = "Provider adapter"
+oracle = "Typed open results and exact protocol-not-exposed errors."
+real = ["production backend constructors"]
+substituted = ["provider processes"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["typed_protocols"], features = ["bundled"] }]
+
+[[suite]]
+name = "terminal-native-presentation"
+contract = "Terminal views render stable semantic cells and dispatch the commands promised by their visible controls."
+paths = ["crates/tui/tests", "crates/tui/src/fixtures"]
+recipe = "just test-tui"
+boundary = "Native presentation"
+oracle = "Text and semantic-style goldens, command assertions, replayed reports, invariants, and deterministic work budgets."
+real = ["production terminal renderer"]
+substituted = ["terminal device", "network", "provider"]
+time = "none"
+capabilities = ["fixtures feature"]
+lane = "fast"
+evidence = "crates/tui/tests/goldens"
+update = "UPDATE_GOLDENS=1 just test-tui"
+cargo = [
+  { package = "tui", kind = "lib", targets = ["tui"], features = ["fixtures"] },
+  { package = "tui", targets = ["a2a_chat", "backend_vocabulary", "chat_golden", "codex_chat_golden", "component_golden", "golden", "no_claude_key_bytes", "perf", "reports", "sdk_ask_golden", "sdk_chat_golden", "switcher_frames"], features = ["fixtures"] },
+]
+
+[[suite]]
+name = "terminal-evidence-tools"
+contract = "Terminal evidence tools render deterministic PNG and GIF artifacts and preserve scripted review flows."
+paths = ["crates/shot/src"]
+recipe = "just test -- -p shot"
+boundary = "Native presentation"
+oracle = "Byte-stable images, exact dimensions, scripted frames, and manifest membership."
+real = ["font rasterizer", "temporary image files"]
+substituted = ["interactive terminal"]
+time = "none"
+capabilities = ["Rust toolchain", "vendored fonts"]
+lane = "tool"
+evidence = "target/tui-evidence"
+update = ""
+cargo = [
+  { package = "shot", kind = "lib", targets = ["shot"], features = ["bundled"] },
+  { package = "shot", kind = "bin", targets = ["amux-shot"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "client-runtime-effects"
+contract = "The client runtime connects effects to real services and replays report bundles into the same model as live input."
+paths = ["crates/ui-runtime/tests"]
+recipe = "just test -- -p ui-runtime"
+boundary = "Store, effects, bridge"
+oracle = "Model equality, service-side command records, report verdicts, and effect outcomes."
+real = ["embedded server", "runtime tasks", "temporary files"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["desktop"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "ui-runtime", kind = "lib", targets = ["ui_runtime"], features = ["bundled"] },
+  { package = "ui-runtime", targets = ["replay_report", "runtime"], features = ["bundled"] },
+]
+
+[[suite]]
+name = "client-model-spec"
+contract = "Ordered messages reduce to the documented client model and remain equivalent across replay and checkpoint cuts."
+paths = ["crates/ui-state/tests"]
+recipe = "just spec"
+boundary = "Client model"
+oracle = "Explicit model and effect assertions, invariants, and differential replay at every registered prefix."
+real = []
+substituted = ["network", "store", "provider", "wall clock"]
+time = "none"
+capabilities = ["Rust toolchain"]
+lane = "fast"
+evidence = ""
+update = ""
+cargo = [
+  { package = "ui-state", kind = "lib", targets = ["ui_state"], features = [] },
+  { package = "ui-state", targets = ["attachments_docs", "spec"], features = [] },
+]
+
+[[suite]]
+name = "ci-tool-boundary"
+contract = "CI status, observation, and iOS verification commands reject incomplete or mismatched external results."
+paths = ["crates/xtask/tests/ci_cli.rs"]
+recipe = "just test -- -p xtask"
+boundary = "System composition"
+oracle = "Exact command exits, recorded results, and scripted GitHub and Xcode process interactions."
+real = ["child processes", "temporary files"]
+substituted = ["GitHub", "Xcode", "network"]
+time = "real"
+capabilities = ["Unix"]
+lane = "tool"
+evidence = ""
+update = ""
+cargo = [
+  { package = "xtask", kind = "lib", targets = ["xtask"], features = [] },
+  { package = "xtask", kind = "bin", targets = ["xtask"], features = [] },
+  { package = "xtask", targets = ["ci_cli"], features = [] },
+]
+
+[[suite]]
+name = "legacy-desktop-e2e"
+contract = "Built desktop binaries complete the retained command-line scenarios through real processes and terminal sessions."
+paths = ["e2e-tests", "crates/e2e-runner"]
+recipe = "just e2e"
+boundary = "System composition"
+oracle = "Expected terminal text, command exits, captured values, and teardown directives."
+real = ["built binaries", "processes", "PTYs", "local sockets"]
+substituted = ["cloud account", "providers where scripted"]
+time = "real"
+capabilities = ["Unix"]
+lane = "system"
+evidence = ""
+update = ""
+cases = ["e2e-tests/*.test"]
+cargo = [{ package = "e2e-runner", kind = "bin", targets = ["e2e-runner"], features = [] }]
+
+[[suite]]
+name = "phone-unit-tests"
+contract = "Swift packages and the app-hosted suite preserve bridge schemas, stores, features, design tokens, shell navigation, and test fixtures."
+paths = ["apps/apple/Packages/*/Tests", "apps/apple/AmuxAppTests"]
+recipe = "just ios unit"
+boundary = "Store, effects, bridge"
+oracle = "Swift Testing and XCTest assertions over production package and app-hosted behavior."
+real = ["built Swift packages", "Rust bridge", "signed simulator app for app-hosted tests"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "iOS 26.5 golden simulator"]
+lane = "fast"
+evidence = "target/ios/DerivedData"
+update = ""
+swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests", "AmuxShellTests", "AmuxTestSupportTests", "InstrumentationTests"]
+
+[[suite]]
+name = "phone-journeys"
+contract = "A person can complete every declared phone story through the real app and production amux path against a served topology."
+paths = ["apps/apple/AmuxUITests", "apps/apple/Journeys/manifest.json", "scripts/ios-journey.py"]
+recipe = "just ios journey"
+boundary = "Journeys"
+oracle = "Declared acts, independent door and host observations, screenshots, exits, and teardown evidence."
+real = ["built phone app", "iOS simulator", "daemon runtimes", "relay", "network stack"]
+substituted = ["providers", "cloud account", "StoreKit where declared"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "iOS 26.5 golden simulator"]
+lane = "journey"
+evidence = "target/ios/journeys"
+update = ""
+swift = ["AmuxUITests"]
+journey_manifest = "apps/apple/Journeys/manifest.json"
+journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review", "writing", "claude-sessions", "hosts-lifecycle", "hosts", "accounts", "reports", "accessibility", "production-startup", "free-tier", "signed-out", "profiles"]
+
+[[suite]]
+name = "phone-goldens"
+contract = "Every catalogued phone fixture screen matches its reviewed image baseline in each declared appearance."
+paths = ["apps/apple/Goldens", "scripts/ios-goldens.py"]
+recipe = "just ios goldens"
+boundary = "Native presentation"
+oracle = "Pixel comparison with declared tolerance and system-chrome masks."
+real = ["built phone app", "iOS simulator", "platform rendering"]
+substituted = ["model state", "network", "providers"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden and small iOS simulators"]
+lane = "journey"
+evidence = "target/ios/goldens"
+update = "Use the explicit phone golden update mode and review every image diff."
+golden_manifests = ["apps/apple/Goldens/manifest.json"]
+
+[[suite]]
+name = "phone-golden-sensitivity"
+contract = "The phone golden comparator rejects a deliberate one-token visual perturbation."
+paths = ["scripts/ios-goldens-perturb.py"]
+recipe = "just ios goldens-perturb"
+boundary = "Native presentation"
+oracle = "An intentional pixel change must produce a failing comparison and difference image."
+real = ["built phone app", "iOS simulator", "golden comparator"]
+substituted = ["model state", "network"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "journey"
+evidence = "target/ios/goldens-perturb"
+update = ""
+cases = ["scripts/ios-goldens-perturb.py"]
+
+[[suite]]
+name = "phone-accessibility-audit"
+contract = "Every drawn phone state gives controls readable VoiceOver names and at least forty-four-point hit targets."
+paths = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift", "scripts/ios-accessibility.py"]
+recipe = "just ios accessibility"
+boundary = "Native presentation"
+oracle = "Accessibility tree names, frames, and hit-target geometry."
+real = ["built phone app", "XCTest", "iOS accessibility system"]
+substituted = ["model state", "network"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "journey"
+evidence = "target/ios/accessibility"
+update = ""
+cases = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift"]
+
+[[suite]]
+name = "phone-visual-interactions"
+contract = "Small phone states that exist only after native interaction are captured from a running app."
+paths = ["apps/apple/AmuxUITests/VisualInteractionTests.swift", "scripts/ios-visual-interactions.py"]
+recipe = "just ios visual-interactions"
+boundary = "Native presentation"
+oracle = "Successful native interactions and captured screenshots for manual inspection."
+real = ["built phone app", "XCTest", "iOS simulator"]
+substituted = ["model state", "network"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "journey"
+evidence = "target/ios/visual-interactions"
+update = ""
+cases = ["apps/apple/AmuxUITests/VisualInteractionTests.swift"]
+
+[[suite]]
+name = "phone-report-replay"
+contract = "A recorded phone report redraws the same model and view state without executing recorded effects."
+paths = ["scripts/ios-replay.py", "apps/apple/Fixtures/reports"]
+recipe = "just ios replay"
+boundary = "Store, effects, bridge"
+oracle = "Replayed store and trace state rendered into captured phone frames."
+real = ["built phone app", "iOS simulator", "recorded report bundle"]
+substituted = ["network", "providers", "effect execution"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "journey"
+evidence = "target/ios/replay"
+update = ""
+cases = ["scripts/ios-replay.py"]
+
+[[suite]]
+name = "phone-door-smoke"
+contract = "The debug app launches, accepts driving-door commands, reads its screen, captures it, and connects to a served relay."
+paths = ["scripts/ios-door-smoke.py"]
+recipe = "just ios door-smoke"
+boundary = "System composition"
+oracle = "Door replies, screen reads, screenshot creation, and relay observations."
+real = ["built phone app", "iOS simulator", "served relay", "network stack"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "system"
+evidence = "target/ios/door-smoke"
+update = ""
+cases = ["scripts/ios-door-smoke.py"]
+
+[[suite]]
+name = "phone-loopback-smoke"
+contract = "A bare Swift executable links the driving bridge and reads a served relay through the public phone boundary."
+paths = ["apps/apple/Tools/loopback_smoke.py", "apps/apple/Tools/LoopbackSmoke.swift"]
+recipe = "just ios loopback-smoke"
+boundary = "Store, effects, bridge"
+oracle = "Executable output and served-relay inventory."
+real = ["Swift compiler", "Rust bridge", "iOS simulator", "served relay"]
+substituted = ["phone UI", "cloud account", "providers"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "system"
+evidence = "target/ios/loopback-smoke"
+update = ""
+cases = ["apps/apple/Tools/test_loopback_smoke.py"]
+
+[[suite]]
+name = "repository-script-tests"
+contract = "The test catalogue and phone build, simulator, journey, golden, performance, release, and QA scripts preserve their command contracts."
+paths = ["scripts/tests", "apps/apple/Tools"]
+recipe = "just ios script-tests"
+boundary = "System composition"
+oracle = "Python unittest assertions over commands, files, parsers, and scripted process results."
+real = ["temporary files", "script parsers"]
+substituted = ["Xcode", "simulators", "network", "external services"]
+time = "none"
+capabilities = ["Python 3"]
+lane = "tool"
+evidence = ""
+update = ""
+cases = ["scripts/tests/*_test.py", "apps/apple/Tools/*test*.py"]
+
+[[suite]]
+name = "store-on-ios"
+contract = "Every store test cross-compiles and runs against bundled SQLite on the leased iOS simulator."
+paths = ["scripts/ios-store-test.py", "crates/store/tests"]
+recipe = "just test-store-ios"
+boundary = "Single daemon"
+oracle = "The complete Rust store test suite plus linkage and runtime SQLite identity proof."
+real = ["bundled SQLite", "iOS simulator", "Rust test binaries"]
+substituted = ["provider", "network"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
+lane = "system"
+evidence = "target/ios/store-test"
+update = ""
+cases = ["scripts/ios-store-test.py"]
+
+[[suite]]
+name = "desktop-performance-qualification"
+contract = "Desktop user-outcome and soak workloads stay within absolute budgets and reviewed drift on enrolled hardware."
+paths = ["crates/testnet/src/perf", "crates/testnet/src/bin/perf.rs", "crates/testnet/perf/baselines"]
+recipe = "just perf"
+boundary = "System composition"
+oracle = "Measured statistics against absolute budgets and machine-specific reviewed baselines."
+real = ["release binaries", "SQLite", "processes", "machine clock and memory counters"]
+substituted = ["providers", "cloud account"]
+time = "real"
+capabilities = ["enrolled Mac14,6", "quiet machine", "release toolchain"]
+lane = "qualification"
+evidence = "target/perf"
+update = "just perf --baseline; just perf soak --baseline"
+baselines = ["crates/testnet/perf/baselines/Mac14,6.json", "crates/testnet/perf/baselines/Mac14,6-soak.json"]
+cargo = [{ package = "testnet", kind = "bin", targets = ["perf"], features = ["perf"] }]
+
+[[suite]]
+name = "phone-performance-qualification"
+contract = "Phone launch, bridge, rendering, interaction, and memory workloads stay within budgets and reviewed drift on the enrolled simulator host."
+paths = ["apps/apple/AmuxPerformanceTests", "apps/apple/Perf", "scripts/ios-perf.py"]
+recipe = "just ios perf"
+boundary = "Native presentation"
+oracle = "Measured XCTest signposts and resource samples against the pinned-Mac baseline and documented budgets."
+real = ["measured phone app", "iOS simulator", "host clock and memory counters"]
+substituted = ["providers", "cloud account"]
+time = "real"
+capabilities = ["enrolled pinned Mac", "macOS", "Xcode 26.6", "quiet golden simulator"]
+lane = "qualification"
+evidence = "target/ios/perf"
+update = "just ios perf -- --baseline"
+swift = ["AmuxPerformanceTests"]
+baselines = ["apps/apple/Perf/baselines/pinned-mac.json"]
+
+[[suite]]
+name = "phone-source-policy"
+contract = "Phone source obeys the registered leaf, platform-conditional, spinner, and localized-copy policies."
+paths = ["apps/apple/Tools/feature-lint.sh", "apps/apple/Tools/strings-lint.sh"]
+recipe = "just ios lint"
+boundary = "Native presentation"
+oracle = "Static source scans and the English string catalogue."
+real = ["repository source"]
+substituted = ["compiler", "phone app"]
+time = "none"
+capabilities = ["POSIX shell", "Python 3"]
+lane = "tool"
+evidence = ""
+update = ""
+cases = ["apps/apple/Tools/strings_lint_test.py"]
+
+[[suite]]
+name = "phone-shipping-scope-audit"
+contract = "The packaged phone framework and app exclude provider, host, debug, and unsupported-platform surfaces."
+paths = ["scripts/ios-scope-audit.py"]
+recipe = "just ios scope-audit"
+boundary = "System composition"
+oracle = "Binary symbols, linked libraries, bundle contents, architectures, sizes, and deployment metadata."
+real = ["release XCFramework", "built app bundle", "Apple binary tools"]
+substituted = ["App Store upload"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6"]
+lane = "tool"
+evidence = "target/ios/scope-audit"
+update = ""
+cases = ["scripts/ios-scope-audit.py"]
+
+[[suite]]
+name = "production-cloud-signin-qualification"
+contract = "A real QA account signs in to production and reports the entitlement and relay credential the service issues."
+paths = ["scripts/qa-cloud-signin.py"]
+recipe = "just ios qa-cloud-signin"
+boundary = "System composition"
+oracle = "Production account response, entitlement, and relay credential metadata."
+real = ["production account service", "production relay authorization", "login keychain"]
+substituted = ["phone UI"]
+time = "real"
+capabilities = ["macOS", "QA credentials", "network"]
+lane = "qualification"
+evidence = "target/ios/qa-cloud-signin"
+update = ""
+cases = ["scripts/qa-cloud-signin.py"]
+
+[[suite]]
+name = "sandbox-purchase-qualification"
+contract = "A real App Store sandbox purchase reaches the account service and changes the QA account entitlement."
+paths = ["scripts/qa-sandbox-purchase.py"]
+recipe = "just ios qa-sandbox-purchase -- --preflight"
+boundary = "Journeys"
+oracle = "StoreKit transaction identity and the production account service's resulting entitlement."
+real = ["physical iPhone", "App Store sandbox", "production account service"]
+substituted = []
+time = "real"
+capabilities = ["macOS", "physical iPhone", "sandbox Apple Account", "QA credentials", "network", "may create sandbox transactions"]
+lane = "qualification"
+evidence = "target/ios/qa-sandbox-purchase"
+update = ""
+cases = ["scripts/qa-sandbox-purchase.py"]
+
+[[suite]]
+name = "production-live-phone-journey"
+contract = "The phone reaches a real local daemon through the production cloud and completes one real Claude conversation."
+paths = ["scripts/qa-live-journey.py"]
+recipe = "just ios qa-live-journey"
+boundary = "Journeys"
+oracle = "Production account, relay, daemon, provider, phone-screen, and teardown observations."
+real = ["phone app", "production account service", "production relay", "local daemon", "Claude provider"]
+substituted = []
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "QA credentials", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = "target/ios/qa-live-journey"
+update = ""
+cases = ["scripts/qa-live-journey.py"]

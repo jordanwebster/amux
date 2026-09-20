@@ -159,13 +159,21 @@ dependency-policy:
 # Warm the product and ordinary test build graphs used by new worktrees.
 warm: build test-build
 
+# Print the suite catalogue with its boundaries, lanes and focused recipes.
+tests-list:
+    scripts/python -B scripts/tests-catalog.py list
+
+# Validate every catalogued recipe, target, feature, manifest and baseline.
+tests-check:
+    {{bounded}} 120 scripts/python -B scripts/tests-catalog.py check
+
 # Refuse fixture-regeneration flags before any asserted CI check runs.
 [private]
 no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check dependency-policy test doctest release-check e2e embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check test doctest release-check e2e embedded-check embedded-test mobile-check
 
 # Qualify desktop performance on an enrolled machine and include the phone
 # suite whenever Xcode is available. The phone recipe takes its own simulator
