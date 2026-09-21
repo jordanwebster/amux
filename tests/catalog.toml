@@ -531,6 +531,22 @@ update = ""
 cargo = [{ package = "testnet", targets = ["spec"], features = ["bundled"] }]
 
 [[suite]]
+name = "real-time-transport"
+contract = "Production QUIC links declare a silently unreachable direct peer offline when the real transport idle timeout expires."
+paths = ["crates/testnet/tests/transport.rs"]
+recipe = "just test-crate testnet -- --test transport"
+boundary = "Many daemons"
+oracle = "Direct-link and peer-presence observations after the loopback proxy drops every datagram."
+real = ["daemon runtimes", "loopback QUIC", "TLS", "transport clock"]
+substituted = ["cloud account", "provider", "multicast discovery"]
+time = "real"
+capabilities = ["loopback network", "desktop"]
+lane = "system"
+evidence = ""
+update = ""
+cargo = [{ package = "testnet", targets = ["transport"], features = ["bundled"] }]
+
+[[suite]]
 name = "served-testnet-process"
 contract = "The served test network announces readiness, accepts control, and tears down every owned process and listener."
 paths = ["crates/testnet/tests/testnet_serve.rs"]

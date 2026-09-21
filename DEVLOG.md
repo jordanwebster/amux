@@ -1,3 +1,10 @@
+2026-09-21 — **Keep real transport time out of the fast specifications.**
+The one daemon case that deliberately waits for QUIC to declare a silent peer
+idle now lives in a dedicated real-time transport test binary. Its topology and
+offline assertions are unchanged, while the suite catalogue makes the system
+lane and real socket clock explicit; the fast daemon specifications no longer
+wait for a transport timer.
+
 2026-09-21 — **Drive product-policy time without slowing the specifications.**
 Node runtimes now receive an explicit policy clock while transport timers and
 harness deadlines remain on real time. TestNet advances one shared driven clock

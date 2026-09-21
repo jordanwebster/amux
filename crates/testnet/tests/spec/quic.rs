@@ -122,19 +122,6 @@ async fn a_session_survives_five_percent_loss_and_two_hundred_milliseconds_of_la
     phone.connects_to_via_direct_quic(&host).await;
 }
 
-#[tokio::test]
-async fn a_host_whose_udp_is_blocked_is_offline_to_its_direct_peers() {
-    let net = direct_pair().await;
-    let [phone, host] = net.daemons(["phone", "host"]);
-    phone.connects_to_via_direct_quic(&host).await;
-    host.sees(&phone).await;
-
-    net.udp_blocked(&host, true);
-
-    phone.cannot_see(&host).await;
-    host.cannot_see(&phone).await;
-}
-
 async fn direct_pair() -> TestNet {
     TestNet::builder()
         .daemon("phone")
