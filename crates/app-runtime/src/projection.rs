@@ -173,6 +173,8 @@ pub struct SessionDto {
     pub agent: AgentId,
     pub gate: GateDto,
     pub phase: PhaseDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_phase: Option<model::AgentPhase>,
     pub stream: Option<StreamPhase>,
     pub asks: Vec<AskDto>,
     pub facts: FactsDto,
@@ -1181,6 +1183,16 @@ fn session(model: &Model, agent: AgentId) -> SessionDto {
         agent,
         gate,
         phase,
+        terminal_phase: model
+            .agent(agent)
+            .map(|card| card.phase.clone())
+            .or_else(|| {
+                model
+                    .chat(agent)
+                    .and_then(|chat| chat.head.as_ref())
+                    .map(|head| head.summary().phase.clone())
+            })
+            .filter(|phase| matches!(phase, model::AgentPhase::Exited { .. })),
         stream: model.stream(agent).map(|s| s.phase.clone()),
         asks,
         facts,

@@ -13,6 +13,7 @@ public final class ConversationStore {
     @ObservationIgnored public private(set) var entries: [FeedEntry] = []
     public private(set) var gate: SendGate = .unavailable
     public private(set) var phase: LayerPhase = .unavailable
+    public private(set) var terminalPhase: AgentPhase?
     public private(set) var stream: StreamPhase?
     public private(set) var asks: [Ask] = []
     public private(set) var facts: SessionFacts = .unavailable
@@ -38,6 +39,11 @@ public final class ConversationStore {
     /// frame the finger is lifted in, drawn as the prompt it will become, and
     /// the host's own row replaces it when it arrives.
     public private(set) var unacknowledged: [PendingSend] = []
+    /// The last fleet identity seen while this conversation was open. Exited
+    /// agents leave the global inventory, but the screen already being read
+    /// still needs to name whose transcript and exit status it is showing.
+    public private(set) var lastKnownRow: AgentRow?
+    public private(set) var lastKnownHost: HostEntry?
 
     /// One sent message, waiting to be replaced by the host's own row.
     public struct PendingSend: Identifiable, Equatable, Sendable {
@@ -116,6 +122,11 @@ public final class ConversationStore {
 
     public init(agent: AgentId) {
         self.agent = agent
+    }
+
+    public func remember(row: AgentRow, host: HostEntry?) {
+        lastKnownRow = row
+        if let host { lastKnownHost = host }
     }
 
     /// This conversation has dispatched an operation and the result carrying
@@ -211,6 +222,7 @@ public final class ConversationStore {
         case .session(let session) where session.agent == agent:
             gate = session.gate
             phase = session.phase
+            terminalPhase = session.terminalPhase
             stream = session.stream
             asks = session.asks
             facts = session.facts

@@ -1619,16 +1619,17 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    "losing the machine emptied the transcript on screen")
     journey.say(f"while the machine was unreachable the feed on screen still held "
                 f"{', '.join(stale)}")
-    journey.expect(seen.get("feedAfterRestored") == ["transcript.prose"],
-                   "the host's new transcript did not replace the rows retained during the outage")
+    restored_feed = set(seen.get("feedAfterRestored") or [])
+    journey.expect(restored_feed == {"transcript.prose", "transcript.history-break"},
+                   "the host's reset did not retain history behind one transcript boundary")
     journey.expect(seen.get("replayedText") ==
                    "A fresh transcript, started on the host while the phone was away.",
                    "the open conversation never showed the transcript replayed by the host")
     journey.expect(seen.get("liveAfterRestored") ==
                    "The next row arrived after the connection returned.",
                    "rows sent after reconnection did not reach the open conversation")
-    journey.say(f"without reopening the conversation, the host's replay replaced the retained "
-                f"rows with {seen['replayedText']!r}; its next live row read "
+    journey.say(f"without reopening the conversation, the host's replay began a new segment "
+                f"with {seen['replayedText']!r}; its next live row read "
                 f"{seen['liveAfterRestored']!r}")
 
     # The one message that was meant to arrive, and the three that were not.

@@ -101,6 +101,14 @@ public final class StoreBundle {
         if let started = newAgent.created, started.id != startedBefore {
             fleet.created(started)
         }
+        // Keep identity local to conversations that have actually been
+        // opened. An exited agent still leaves the fleet; only its already
+        // open transcript retains enough context to name itself.
+        for (agent, store) in conversations {
+            if let row = fleet.rows.first(where: { $0.id == agent }) {
+                store.remember(row: row, host: fleet.host(row.hostId))
+            }
+        }
         switch event {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
@@ -123,11 +131,18 @@ public final class StoreBundle {
     /// means a subscription there.
     @discardableResult
     public func conversation(_ agent: AgentId) -> ConversationStore {
-        if let existing = conversations[agent] { return existing }
-        let store = ConversationStore(agent: agent)
-        conversations[agent] = store
-        streaming.insert(agent)
-        watch?(agent)
+        let store: ConversationStore
+        if let existing = conversations[agent] {
+            store = existing
+        } else {
+            store = ConversationStore(agent: agent)
+            conversations[agent] = store
+            streaming.insert(agent)
+            watch?(agent)
+        }
+        if let row = fleet.rows.first(where: { $0.id == agent }) {
+            store.remember(row: row, host: fleet.host(row.hostId))
+        }
         return store
     }
 

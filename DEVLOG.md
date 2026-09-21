@@ -1,3 +1,14 @@
+2026-09-21 — **Keep an open conversation truthful through exit and reset.**
+An exited agent still leaves the global fleet, while its open session projection
+retains the terminal phase and the phone keeps the last identity local to that
+conversation. The screen therefore continues to name the run and report its
+real exit code without keeping dead agents in inventory. The scripted Claude
+provider now exposes `/clear` as its authentic `SessionStart` semantic reset,
+and the reconnect journey uses that boundary instead of treating a changed row
+session identifier as replacement. Focused runtime, provider and phone tests
+cover fleet removal, exit code retention, clear relinking and the new session
+identity; the phone feature suite and copy lint pass.
+
 2026-09-21 — **Keep stored phone conversations grouped and live after compaction.**
 Consecutive native read/search rows now retain their exploration grouping when
 projected from stored Claude PTY and SDK conversations. The projection computes

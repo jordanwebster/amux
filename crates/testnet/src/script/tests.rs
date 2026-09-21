@@ -211,6 +211,8 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
         Step::Unknown { raw: raw.clone() },
         Step::EndTurn,
         Step::EndTurn,
+        Step::Clear,
+        markdown("after clear"),
         Step::Exit { code: 17 },
         markdown("unreachable"),
     ];
@@ -280,6 +282,32 @@ async fn every_step_reaches_the_real_session_and_exit_closes_it() {
     );
     assert!(rows.iter().any(|r| r["isApiErrorMessage"] == true));
     assert!(rows.iter().any(|r| r["subtype"] == "compact_boundary"));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        PtyEvent::Relink {
+            reason: claude::pty::RelinkReason::Clear,
+            ..
+        }
+    )));
+    let before_clear = rows
+        .iter()
+        .find(|row| {
+            row.pointer("/message/content/0/text")
+                .and_then(Value::as_str)
+                == Some("# Hello\n\nA real transcript.")
+        })
+        .and_then(|row| row.get("sessionId"));
+    let after_clear = rows
+        .iter()
+        .find(|row| {
+            row.pointer("/message/content/0/text")
+                .and_then(Value::as_str)
+                == Some("after clear")
+        })
+        .and_then(|row| row.get("sessionId"));
+    assert!(before_clear.is_some());
+    assert!(after_clear.is_some());
+    assert_ne!(before_clear, after_clear);
     let turns: Vec<_> = rows
         .iter()
         .filter(|r| r["subtype"] == "turn_duration")

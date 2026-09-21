@@ -171,17 +171,24 @@ public struct ConversationSubject: Equatable, Sendable {
     /// facts. A conversation opened before the fleet has arrived names itself
     /// with the identity it was opened with rather than with nothing.
     @MainActor
-    public init(agent: AgentId, in fleet: FleetStore) {
-        guard let row = fleet.rows.first(where: { $0.id == agent }) else {
+    public init(
+        agent: AgentId, in fleet: FleetStore,
+        retaining conversation: ConversationStore? = nil
+    ) {
+        guard let row = fleet.rows.first(where: { $0.id == agent })
+            ?? conversation?.lastKnownRow
+        else {
             self.init(name: agent.description, host: nil, directory: "")
             return
         }
         var ended: Ended?
-        if case .exited(let code) = row.phase { ended = Ended(code: code) }
+        let lifecycle = conversation?.terminalPhase ?? row.phase
+        if case .exited(let code) = lifecycle { ended = Ended(code: code) }
+        let host = fleet.host(row.hostId) ?? conversation?.lastKnownHost
         self.init(
-            name: row.name, host: fleet.host(row.hostId)?.name,
+            name: row.name, host: host?.name,
             directory: row.workingDirectory,
-            hostReachable: fleet.host(row.hostId)?.online ?? true,
+            hostReachable: host?.online ?? true,
             hostAway: fleet.reach(ofHost: row.hostId) == .away,
             age: row.age(at: fleet.orderedAt),
             ended: ended,

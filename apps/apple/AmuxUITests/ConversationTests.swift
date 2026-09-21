@@ -419,14 +419,14 @@ final class ConversationTests: XCTestCase {
             kind: "send", agent: runner.agent, text: "sent while unreachable"))
         record["whileUnreachable"] = whileUnreachable
 
-        // The host starts a new transcript while the phone cannot hear it.
-        // Replaying this must replace the retained rows, not append to them.
+        // The host starts a new transcript segment while the phone cannot
+        // hear it. Replaying it keeps the prior readable history across an
+        // explicit boundary; the new segment must arrive exactly once.
         try control.ask(["AgentPlay": ["agent": "carry-on", "steps": [
-            // The synthetic streaming rows omit sessionId. A provider-written
-            // row establishes the old identity in the host's replay window,
-            // so the next identity is a change rather than its first evidence.
-            ["Markdown": ["text": "The previous transcript ended while the phone was away."]],
-            Self.recoveryRow(Self.replayed, id: "replayed"),
+            // `/clear` is a semantic provider reset. A different sessionId on
+            // an ordinary row is only decoration and must not replace history.
+            "Clear",
+            Self.recoveryStep(Self.replayed),
         ]]])
         XCTAssertFalse(app.staticTexts[Self.replayed].exists,
                        "a disconnected phone already shows the host's new transcript")
@@ -468,24 +468,27 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(recovered,
                       "the open conversation never received the host's replay")
         guard recovered else { throw Lines.Failure("the host's replay did not arrive") }
-        let replayedRows = readWholeFeed(app)
-        XCTAssertEqual(replayedRows, ["transcript.prose"],
-                       "the host's new transcript kept rows from the old one")
-        let prose = app.descendants(matching: .any).matching(identifier: "transcript.prose")
-        XCTAssertEqual(prose.count, 1, "the replay did not replace the retained transcript")
-        record["feedAfterRestored"] = Array(replayedRows).sorted()
-        record["replayedText"] = app.staticTexts[Self.replayed].label
+        let replayed = app.staticTexts.matching(
+            NSPredicate(format: "label == %@", Self.replayed))
+        XCTAssertEqual(replayed.count, 1, "the replayed row was duplicated")
+        XCTAssertTrue(element(app, "transcript.history-break").waitForExistence(timeout: waiting),
+                      "the provider reset was not drawn as a new transcript segment")
+        record["feedAfterRestored"] = transcriptRows(app)
+        record["replayedText"] = replayed.firstMatch.label
         photograph(app, "conversation-restored")
 
         try control.ask(["AgentPlay": ["agent": "carry-on", "steps": [
-            Self.recoveryRow(Self.afterRecovery, id: "live"),
+            Self.recoveryStep(Self.afterRecovery),
         ]]])
-        XCTAssertTrue(app.staticTexts[Self.afterRecovery].waitForExistence(timeout: waiting),
+        let afterRecovery = app.staticTexts.matching(
+            NSPredicate(format: "label == %@", Self.afterRecovery))
+        XCTAssertTrue(afterRecovery.firstMatch.waitForExistence(timeout: waiting),
                       "the replay arrived but new rows no longer reach the open conversation")
         XCTAssertTrue(app.staticTexts[Self.replayed].exists,
                       "the live row replaced the replay instead of following it")
-        XCTAssertEqual(prose.count, 2, "the live transcript lost or duplicated a row")
-        record["liveAfterRestored"] = app.staticTexts[Self.afterRecovery].label
+        XCTAssertEqual(replayed.count, 1, "the retained replay was duplicated by the live row")
+        XCTAssertEqual(afterRecovery.count, 1, "the live row was duplicated")
+        record["liveAfterRestored"] = afterRecovery.firstMatch.label
         photograph(app, "conversation-reconnected-live")
         _ = try door(runner, .init(kind: "report", agent: runner.agent, path: runner.report))
         try? app.debugDescription.write(
@@ -516,13 +519,8 @@ final class ConversationTests: XCTestCase {
     private static let replayed = "A fresh transcript, started on the host while the phone was away."
     private static let afterRecovery = "The next row arrived after the connection returned."
 
-    private static func recoveryRow(_ text: String, id: String) -> [String: Any] {
-        ["Rows": ["jsonl": [
-            ["type": "assistant", "uuid": "recovery-\(id)",
-             "sessionId": "9210b4e1-2fb1-4c30-9ca7-490332330127",
-             "message": ["id": "recovery-\(id)", "role": "assistant",
-                         "content": [["type": "text", "text": text]]]],
-        ]]]
+    private static func recoveryStep(_ text: String) -> [String: Any] {
+        ["Markdown": ["text": text]]
     }
 
     /// The filmed turn, in batches: ten of them, twelve rows each, so that the

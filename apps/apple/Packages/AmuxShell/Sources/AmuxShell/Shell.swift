@@ -292,9 +292,10 @@ private struct ConversationPage: View {
     }
 
     var body: some View {
+        let model = stores.conversation(agent)
         Conversation(
-            model: stores.conversation(agent),
-            subject: ConversationSubject(agent: agent, in: stores.fleet),
+            model: model,
+            subject: ConversationSubject(agent: agent, in: stores.fleet, retaining: model),
             showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
             resting: recording?.reading[agent],
             opening: recording.map { recording in

@@ -479,6 +479,44 @@ fn mobile_projection_keeps_the_feed_of_an_agent_whose_host_has_gone_away() {
     );
 }
 
+/// Exited agents leave the global inventory, while an already-open
+/// conversation retains the terminal fact it needs to explain why it cannot
+/// be written to.
+#[test]
+fn mobile_projection_retains_exit_status_for_an_open_conversation() {
+    let (mut model, stream) = stored_model(
+        model::AgentKind::Claude {
+            driver: model::ClaudeDriver::Pty,
+        },
+        vec![message(0, "finished")],
+    );
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::Closed {
+                at: DateTime::from_timestamp(1_700_000_001, 0).unwrap(),
+                reason: ui_state::StreamCloseReason::AgentExited { exit_code: Some(7) },
+            },
+        },
+    );
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
+    );
+
+    let events = collect(&mut subscribed(), &model);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Fleet { agents, .. } if agents.iter().all(|card| card.agent.id != AGENT)
+    )));
+    assert_eq!(
+        session(&model, AGENT).terminal_phase,
+        Some(model::AgentPhase::Exited { exit_code: Some(7) })
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn mobile_projection_streaming_bench_1000_rows_at_50_per_second() {
     // Virtual time pins the rate and cadence without conflating the bridge

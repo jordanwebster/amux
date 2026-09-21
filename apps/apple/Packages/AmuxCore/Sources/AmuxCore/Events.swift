@@ -726,6 +726,9 @@ public struct SessionSnapshot: Codable, Sendable, Equatable {
     public var agent: AgentId
     public var gate: SendGate
     public var phase: LayerPhase
+    /// A terminal lifecycle fact retained with an open conversation after the
+    /// exited agent has correctly left the fleet inventory.
+    public var terminalPhase: AgentPhase?
     public var stream: StreamPhase?
     public var asks: [Ask]
     public var facts: SessionFacts
@@ -736,6 +739,7 @@ public struct SessionSnapshot: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case agent, gate, phase, stream, asks, facts, provider
+        case terminalPhase = "terminal_phase"
         case settingsGate = "settings_gate"
         case queue, family
     }
@@ -743,11 +747,13 @@ public struct SessionSnapshot: Codable, Sendable, Equatable {
     public init(
         agent: AgentId, gate: SendGate, phase: LayerPhase, stream: StreamPhase?,
         asks: [Ask], facts: SessionFacts, provider: ProviderFacts,
-        settingsGate: SettingsGate, queue: QueuedMessage?, family: [FamilyMember]
+        settingsGate: SettingsGate, queue: QueuedMessage?, family: [FamilyMember],
+        terminalPhase: AgentPhase? = nil
     ) {
         self.agent = agent
         self.gate = gate
         self.phase = phase
+        self.terminalPhase = terminalPhase
         self.stream = stream
         self.asks = asks
         self.facts = facts

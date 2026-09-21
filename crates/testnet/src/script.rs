@@ -116,6 +116,9 @@ pub enum Step {
     },
     EndTurn,
     Compaction,
+    /// Claude's `/clear`: a new semantic transcript segment in the same PTY
+    /// session, announced through the provider's SessionStart hook.
+    Clear,
     ApiError {
         message: String,
     },
@@ -916,6 +919,14 @@ impl Player {
                     self.rows(vec![row]).await?;
                     self.hook("SessionStart", json!({"source":"compact"}))
                         .await?;
+                }
+                Step::Clear => {
+                    self.session_id = Uuid::new_v4();
+                    self.duration_ms = 0;
+                    self.message_count = 0;
+                    self.turn_open = false;
+                    self.turn_ended = false;
+                    self.hook("SessionStart", json!({"source":"clear"})).await?;
                 }
                 Step::ApiError { message } => {
                     let row = self.row("assistant", json!({"isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":message}]}}));

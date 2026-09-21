@@ -204,6 +204,43 @@ final class ConversationFootTests: XCTestCase {
         XCTAssertNil(ConversationSubject(agent: agent, in: fleet(phase: .running)).ended)
     }
 
+    /// Leaving the inventory is correct for an exited run, but the open
+    /// conversation keeps the name, place and exit code it was already
+    /// showing instead of falling back to a UUID and an empty composer.
+    func testAnOpenConversationRetainsIdentityAndExitAfterFleetRemoval() {
+        let bundle = StoreBundle(account: AccountId("test"), clock: { self.now })
+        bundle.apply(.fleet(Fleet(
+            epoch: 1,
+            agents: [AgentCard(
+                agent: Agent(
+                    id: agent, hostId: host, name: "refactor-auth", command: "claude",
+                    workingDir: "~/src/amux", kind: .claude(driver: .pty),
+                    createdAt: now.addingTimeInterval(-3600)),
+                displayName: "refactor-auth", attention: .idle, phase: .running,
+                lastActivity: now.addingTimeInterval(-840))],
+            hosts: [HostState(
+                entry: HostEntry(id: host, name: "Studio", online: true), epoch: 1)],
+            reconciled: true)))
+        let conversation = bundle.conversation(agent)
+        bundle.apply(.fleet(Fleet(
+            epoch: 2, agents: [],
+            hosts: [HostState(
+                entry: HostEntry(id: host, name: "Studio", online: true), epoch: 2)],
+            reconciled: true)))
+        bundle.apply(.session(SessionSnapshot(
+            agent: agent, gate: .unavailable, phase: .unavailable, stream: nil,
+            asks: [], facts: .unavailable, provider: ProviderFacts(),
+            settingsGate: .unavailable, queue: nil, family: [],
+            terminalPhase: .exited(exitCode: 7))))
+
+        let subject = ConversationSubject(
+            agent: agent, in: bundle.fleet, retaining: conversation)
+        XCTAssertEqual(subject.name, "refactor-auth")
+        XCTAssertEqual(subject.place, "~/s/amux · Studio")
+        XCTAssertEqual(subject.ended?.code, 7)
+        XCTAssertTrue(bundle.fleet.rows.isEmpty)
+    }
+
     private func fleet(phase: AgentPhase, online: Bool = true) -> FleetStore {
         let store = FleetStore(now: now)
         store.apply(.fleet(Fleet(
