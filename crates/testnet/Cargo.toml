@@ -34,6 +34,7 @@ futures-util = { workspace = true }
 host-api = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
+node-test-support = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }
 model = { workspace = true }

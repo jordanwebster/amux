@@ -26,7 +26,7 @@ fn options(root: InstallationRoot, listeners: Listeners) -> InstallationOptions 
     }
 }
 async fn installation() -> (Installation, tempfile::TempDir) {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(
         InstallationRoot::OnDisk(root.path().into()),
         Listeners::InProcessOnly,
@@ -246,7 +246,7 @@ async fn watch_snapshot_ordered_changes_removed_and_lagged() {
 
 #[tokio::test]
 async fn pause_survives_restart_and_preserves_identity_and_local_calls() {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let open = || {
         Installation::open(options(
             InstallationRoot::OnDisk(root.path().into()),
@@ -282,7 +282,7 @@ async fn pause_survives_restart_and_preserves_identity_and_local_calls() {
 #[cfg(unix)]
 #[tokio::test]
 async fn startup_failure_leaves_other_profile_serving_and_delete_closes_socket_clients() {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let first = ProfileId::new();
     let second = ProfileId::new();
     {
@@ -379,7 +379,7 @@ async fn cancelling_a_caller_does_not_cancel_or_duplicate_its_mutation() {
 
 #[tokio::test]
 async fn failed_delete_remains_unavailable_after_restart_and_cleanup_is_retryable() {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let open = || {
         Installation::open(options(
             InstallationRoot::OnDisk(root.path().into()),
@@ -521,7 +521,7 @@ async fn bound_profiles_start_independently_and_pause_cancels_only_its_connector
         .await
         .unwrap();
     }
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let ids = [ProfileId::new(), ProfileId::new()];
     {
         let mut registry = Registry::open(InstallationRoot::OnDisk(root.path().into())).unwrap();
@@ -651,7 +651,7 @@ mod mobile_profiles_relocation_refuses_foreign_paths_before_rewriting_any_config
         let second = create(&installation, "work").await;
         let old = installation.root().to_owned();
         installation.shutdown(ShutdownReason::UserRequested).await;
-        let moved = crate::test_fixtures::short_installation_root();
+        let moved = node_test_support::short_installation_root();
         std::fs::remove_dir(moved.path()).unwrap();
         std::fs::rename(root.path(), moved.path()).unwrap();
         let paths = ProfilePaths::allocated(moved.path(), first.record.id);
@@ -703,7 +703,7 @@ async fn mobile_profiles_desktop_refuses_a_moved_installation() {
     let (installation, root) = installation().await;
     create(&installation, "personal").await;
     installation.shutdown(ShutdownReason::UserRequested).await;
-    let moved = crate::test_fixtures::short_installation_root();
+    let moved = node_test_support::short_installation_root();
     std::fs::remove_dir(moved.path()).unwrap();
     std::fs::rename(root.path(), moved.path()).unwrap();
     let error = Installation::open(options(
@@ -747,7 +747,7 @@ mod mobile_profiles_relocation_refuses_symlinks {
         let (installation, root) = installation().await;
         let profile = create(&installation, "personal").await;
         installation.shutdown(ShutdownReason::UserRequested).await;
-        let moved = crate::test_fixtures::short_installation_root();
+        let moved = node_test_support::short_installation_root();
         std::fs::remove_dir(moved.path()).unwrap();
         std::fs::rename(root.path(), moved.path()).unwrap();
         let directory = moved

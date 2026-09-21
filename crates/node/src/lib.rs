@@ -23,11 +23,6 @@ mod routing;
 mod server;
 mod services;
 mod sleep_inhibitor;
-/// The fake identity service and account fixtures shared by node's own tests
-/// and the `testnet` harness. Compiled unconditionally so the harness can use
-/// it without a feature and without a second copy of node's types.
-#[doc(hidden)]
-pub mod test_fixtures;
 mod transport;
 mod trust;
 pub mod update;

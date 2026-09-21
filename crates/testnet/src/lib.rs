@@ -94,13 +94,28 @@ mod clock;
 pub use clock::DrivenClock;
 mod daemon;
 /// The fake identity service (token minting, relay assignment) that stands in
-/// for amux.sh. It lives in node so node's unit tests and this harness share
-/// one implementation; the relay is the other, separate half of the cloud.
+/// for amux.sh. Node's tests and this harness share the same support crate.
 pub mod identity {
-    pub use node::test_fixtures::*;
+    pub use node_test_support::{
+        Fault, IdentityClock, IdentityRequestHold, IdentityServer, TestAccount, Tier, relay_token,
+        short_installation_root,
+    };
+
+    /// Injects a connector observation through the installation's production
+    /// status adapter without requiring a particular transport failure.
+    pub async fn report_profile_status(
+        installation: &node::Installation,
+        id: node::ProfileId,
+        observed: node::Observed,
+    ) {
+        let runtime = installation.test_runtime(id).await.expect("profile exists");
+        runtime
+            .as_ref()
+            .expect("profile is running")
+            .report_status_for_test(observed);
+    }
 }
 mod installation;
-mod latency;
 pub mod relay;
 pub use installation::{
     InstallationHandle, Profile, RetainedProfileWork, UpdatePreparationHold, WatchProbe,
@@ -1250,7 +1265,7 @@ impl TestNetBuilder {
                             name: Some(format!("{sub} Example")),
                             email: Some(format!("{sub}@example.test")),
                             sub,
-                            tier: node::Tier::Pro,
+                            tier: identity::Tier::Pro,
                         })
                         .collect(),
                     cloud.as_ref().map(|cloud| cloud.relay_addr()),

@@ -1,3 +1,14 @@
+2026-09-21 — **Put shared network fixtures behind a test-only boundary.**
+Identity accounts, the short installation root and the fully capable cloud
+relay now live in `node-test-support`. Node sees that crate only while its
+tests compile, while TestNet uses the same relay normally for TCP and QUIC,
+token TTLs, tiers, latency and hard outages. The former node relay and TestNet
+relay-user registration duplicates are gone; focused authentication, link and
+installation tests remain beside their units, and whole-installation behavior
+continues to run in TestNet. The node's normal dependency graph contains no
+test-support crate; the full workspace and 434-test specification suites,
+catalogue checks, lint, formatting and the iOS graph boundary all pass.
+
 2026-09-21 — **Make served controls prove their harness parity.**
 Every control variant now has one code-owned mapping to the in-process
 capability it invokes, including composed operations and host-only effects.

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::time::Sleep;
 
-pub(super) struct Delayed<T> {
+pub(crate) struct Delayed<T> {
     inner: T,
     millis: Arc<AtomicU64>,
     bytes: Vec<u8>,
@@ -20,7 +20,7 @@ pub(super) struct Delayed<T> {
 }
 
 impl<T> Delayed<T> {
-    pub(super) fn new(inner: T, millis: Arc<AtomicU64>) -> Self {
+    pub(crate) fn new(inner: T, millis: Arc<AtomicU64>) -> Self {
         Self {
             inner,
             millis,

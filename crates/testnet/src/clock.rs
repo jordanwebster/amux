@@ -81,6 +81,12 @@ impl Clock for DrivenClock {
     }
 }
 
+impl node_test_support::IdentityClock for DrivenClock {
+    fn system_now(&self) -> SystemTime {
+        <Self as Clock>::system_now(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

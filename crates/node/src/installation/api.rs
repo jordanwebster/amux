@@ -46,7 +46,7 @@ fn options(root: &std::path::Path) -> InstallationOptions {
 
 #[tokio::test]
 async fn background_profiles_outlive_every_screen_client() {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(root.path())).await.unwrap();
     let saved =
         crate::InstallationConfig::from_file(&installation.root().join("config.yaml")).unwrap();
@@ -99,7 +99,7 @@ async fn background_profiles_outlive_every_screen_client() {
 #[cfg(test)]
 #[tokio::test]
 async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(root.path())).await.unwrap();
     let profile = installation.create(OperationId::new(), None).await.unwrap();
     let client = installation.client(profile.record.id).unwrap();
@@ -137,20 +137,21 @@ async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
 #[cfg(test)]
 #[tokio::test]
 async fn login_and_profile_resume_cannot_wake_a_suspended_host() {
+    use node_test_support::{IdentityServer, TestAccount};
+
     use crate::installation::{BindTarget, Intent, Observed};
-    use crate::test_fixtures::{IdentityServer, TestAccount};
 
     let identity = IdentityServer::start(
         vec![TestAccount {
             sub: "work".into(),
             name: Some("Work".into()),
             email: Some("work@example.test".into()),
-            tier: crate::Tier::Pro,
+            tier: node_test_support::Tier::Pro,
         }],
         None,
     )
     .await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(root.path())).await.unwrap();
     installation.host_suspend().await;
     let profile = installation.create(OperationId::new(), None).await.unwrap();

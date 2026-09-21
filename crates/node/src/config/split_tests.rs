@@ -20,7 +20,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let temp = crate::test_fixtures::short_installation_root();
+        let temp = node_test_support::short_installation_root();
         let root = std::fs::canonicalize(temp.path()).unwrap();
         let installation = InstallationConfig {
             root: root.clone(),

@@ -27,7 +27,7 @@ fn op() -> String {
     OperationId::new().0.to_string()
 }
 async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Arc::new(
         Installation::open(InstallationOptions {
             discovery: None,
@@ -228,15 +228,15 @@ async fn profile_status_carries_connected_tier_and_carrier_over_grpc() {
     let mut client = client(&front);
     let profile = create(&mut client, "free").await;
     let id = crate::ProfileId(profile.id.parse().unwrap());
-    crate::test_fixtures::report_profile_status(
-        &front.installation,
-        id,
-        crate::installation::Observed::Connected {
+    let runtime = front.installation.test_runtime(id).await.unwrap();
+    runtime
+        .as_ref()
+        .unwrap()
+        .report_status_for_test(crate::installation::Observed::Connected {
             tier: crate::Tier::Free,
             carrier: crate::installation::RelayCarrier::Tcp,
-        },
-    )
-    .await;
+        });
+    drop(runtime);
 
     let profiles = client
         .list_profiles(wire::ListProfilesRequest {})
@@ -643,7 +643,7 @@ async fn unix_front_door_discovers_profile_socket_and_refuses_socket_theft() {
 
 #[tokio::test]
 async fn binding_reports_identity_labels_and_named_account_refusals_over_grpc() {
-    use crate::test_fixtures::{IdentityServer, TestAccount};
+    use node_test_support::{IdentityServer, TestAccount};
     let identity = IdentityServer::start(
         ["alice", "bob"]
             .into_iter()
@@ -651,7 +651,7 @@ async fn binding_reports_identity_labels_and_named_account_refusals_over_grpc() 
                 sub: sub.into(),
                 name: Some(format!("{sub} Example")),
                 email: Some(format!("{sub}@example.test")),
-                tier: crate::Tier::Pro,
+                tier: node_test_support::Tier::Pro,
             })
             .collect(),
         None,
@@ -876,13 +876,13 @@ async fn suspend_resume_wire_reports_agents_and_replays_across_connections() {
 
 #[tokio::test]
 async fn front_door_adoption_response_identifies_confirmation_and_retries_staged_token() {
-    use crate::test_fixtures::{IdentityServer, TestAccount};
+    use node_test_support::{IdentityServer, TestAccount};
     let identity = IdentityServer::start(
         vec![TestAccount {
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
-            tier: crate::Tier::Pro,
+            tier: node_test_support::Tier::Pro,
         }],
         None,
     )

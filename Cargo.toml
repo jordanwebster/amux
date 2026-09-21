@@ -7,6 +7,7 @@ members = [
     "crates/app-ffi",
     "crates/app-runtime",
     "crates/node",
+    "crates/node-test-support",
     "crates/shot",
     "crates/tui",
     "crates/ui-runtime",
@@ -42,6 +43,7 @@ app-embedded = { path = "crates/app-embedded" }
 app-ffi = { path = "crates/app-ffi" }
 app-runtime = { path = "crates/app-runtime" }
 node = { path = "crates/node" }
+node-test-support = { path = "crates/node-test-support" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 host-api = { path = "crates/host-api" }

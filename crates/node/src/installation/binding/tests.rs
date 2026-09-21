@@ -30,6 +30,8 @@ fn canonicalization_accepts_only_origins() {
 
 use std::sync::Arc;
 
+use node_test_support::{Fault, IdentityServer, TestAccount};
+
 use crate::auth::{AuthError, CredentialProvider, oauth};
 use crate::installation::credentials::{ProfileCredentialStore, ValidatedCredential};
 use crate::installation::{
@@ -37,7 +39,6 @@ use crate::installation::{
     Intent, Listeners, OperationId,
 };
 use crate::server::ShutdownReason;
-use crate::test_fixtures::{Fault, IdentityServer, TestAccount};
 
 async fn identity() -> IdentityServer {
     IdentityServer::start(
@@ -47,7 +48,7 @@ async fn identity() -> IdentityServer {
                 sub: sub.into(),
                 name: Some(format!("{sub} Example")),
                 email: Some(format!("{sub}@example.test")),
-                tier: crate::Tier::Pro,
+                tier: node_test_support::Tier::Pro,
             })
             .collect(),
         None,
@@ -93,7 +94,7 @@ fn accept(
 #[tokio::test]
 async fn staged_not_committed_preserves_accepted_credentials_across_reopen() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let path = root.path().join("credentials.yaml");
     let binding = binding(&identity, "alice");
     let store =
@@ -169,7 +170,7 @@ async fn rotated_refresh_is_serialized_and_checked_against_binding() {
 async fn clear_invalidates_stages_and_in_flight_refresh_without_recreating_files() {
     let identity = identity().await;
     let binding = binding(&identity, "alice");
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let path = root.path().join("credentials.yaml");
     let store = Arc::new(
         ProfileCredentialStore::open(Some(path.clone()), reqwest::Client::new(), None, None)
@@ -268,7 +269,7 @@ async fn create(installation: &Installation) -> crate::installation::ProfileStat
 #[tokio::test]
 async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_label() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -327,7 +328,7 @@ async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_labe
 #[tokio::test]
 async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share_one_profile() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -363,7 +364,7 @@ async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share
 #[tokio::test]
 async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();
@@ -411,7 +412,7 @@ async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
 async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect() {
     for delete in [false, true] {
         let identity = identity().await;
-        let root = crate::test_fixtures::short_installation_root();
+        let root = node_test_support::short_installation_root();
         let installation = Arc::new(
             Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
                 .await
@@ -465,7 +466,7 @@ async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect(
 #[tokio::test]
 async fn adoption_confirmation_reuses_staged_rotation_and_rechecks_local_state() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Arc::new(
         Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
             .await
@@ -548,7 +549,7 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
         store.access_token().await,
         Err(AuthError::AccountMismatch)
     ));
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let id = ProfileId::new();
     {
         let mut registry =
@@ -576,7 +577,7 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
 #[tokio::test]
 async fn registry_write_failure_does_not_activate_staged_login() {
     let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
+    let root = node_test_support::short_installation_root();
     let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
         .await
         .unwrap();

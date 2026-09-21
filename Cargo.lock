@@ -2424,6 +2424,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "model",
+ "node-test-support",
  "oauth2",
  "prost",
  "quinn",
@@ -2453,6 +2454,31 @@ dependencies = [
  "windows-sys 0.61.2",
  "wire",
  "yamux",
+]
+
+[[package]]
+name = "node-test-support"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "node",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tracing",
+ "uuid",
+ "wire",
 ]
 
 [[package]]
@@ -4388,6 +4414,7 @@ dependencies = [
  "model",
  "nix 0.31.3",
  "node",
+ "node-test-support",
  "portable-pty",
  "prost",
  "pty-host",

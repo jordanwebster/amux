@@ -4,7 +4,7 @@ use crate::installation::ProfilePaths;
 use crate::installation::paths::validate_socket_path;
 
 fn root() -> tempfile::TempDir {
-    crate::test_fixtures::short_installation_root()
+    node_test_support::short_installation_root()
 }
 
 fn open(path: &Path) -> Registry {

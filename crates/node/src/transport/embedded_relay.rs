@@ -590,7 +590,7 @@ mod tests {
     /// QUIC front — on UDP at the same port, which is how the product's relay
     /// presents itself. Holds what it accepts: a dial has to complete, and a
     /// dropped connection would fail the dial it is standing in for.
-    struct TestRelay {
+    struct RelayEndpoints {
         addr: SocketAddr,
         server_name: String,
         quic_client: quinn::ClientConfig,
@@ -598,7 +598,7 @@ mod tests {
         _quic: Option<quinn::Endpoint>,
     }
 
-    async fn relay_answering(quic: bool) -> TestRelay {
+    async fn relay_answering(quic: bool) -> RelayEndpoints {
         let rcgen::CertifiedKey { cert, signing_key } =
             rcgen::generate_simple_self_signed(vec!["relay.test".to_string()]).unwrap();
         let mut roots = rustls::RootCertStore::empty();
@@ -647,7 +647,7 @@ mod tests {
             }));
         }
 
-        TestRelay {
+        RelayEndpoints {
             addr,
             server_name: "relay.test".into(),
             quic_client,
