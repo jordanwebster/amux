@@ -665,6 +665,41 @@ impl StoredFeed {
             converted.insert(key, (entry.clone(), restored));
         }
         self.converted = converted;
+        // Grouping depends on the visible neighbours, including history
+        // boundaries. Recompute it even for cached entries: paging or eviction
+        // can change the predecessor without changing the durable entry.
+        let mut previous_exploration = None;
+        for item in &history {
+            let exploration = match item {
+                ui_state::WindowItem::Entry(entry) => {
+                    match &mut self.converted.get_mut(entry.key()).unwrap().1 {
+                        Restored::Claude(entry) => match &mut entry.kind {
+                            claude::FeedEntryKind::Tool(tool) => {
+                                let exploration = tool.invocation.is_exploration();
+                                tool.group_with_previous = exploration
+                                    && previous_exploration
+                                        == Some(StructuredProtocol::ClaudePtyTranscript);
+                                exploration.then_some(StructuredProtocol::ClaudePtyTranscript)
+                            }
+                            _ => None,
+                        },
+                        Restored::ClaudeSdk(entry) => match &mut entry.kind {
+                            claude_sdk::FeedEntryKind::Tool(tool) => {
+                                let exploration = entry.parent_tool_use_id.is_none()
+                                    && tool.invocation.is_exploration();
+                                tool.group_with_previous = exploration
+                                    && previous_exploration == Some(StructuredProtocol::ClaudeSdk);
+                                exploration.then_some(StructuredProtocol::ClaudeSdk)
+                            }
+                            _ => None,
+                        },
+                        Restored::Codex(_) => None,
+                    }
+                }
+                ui_state::WindowItem::Boundary(_) => None,
+            };
+            previous_exploration = exploration;
+        }
         let rows = history
             .iter()
             .enumerate()

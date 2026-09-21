@@ -1166,6 +1166,11 @@ final class ConversationTests: XCTestCase {
     private func chooseConversation(
         _ runner: Runner, _ app: XCUIApplication, _ agent: String, _ complaint: String
     ) {
+        // Recorded activity can place the conversation in the folded Older
+        // section when returning to the list.
+        if !element(app, "home.row.\(agent)").exists && element(app, "home.fold.older").exists {
+            press(app, "home.fold.older")
+        }
         press(app, "home.row.\(agent)")
         var showing = ""
         XCTAssertTrue(

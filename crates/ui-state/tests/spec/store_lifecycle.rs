@@ -1280,6 +1280,46 @@ fn painted_catching_up_live_loss_and_exit_follow_the_stream_rows() {
 }
 
 #[test]
+fn a_store_stream_reset_reopens_without_waiting_for_fleet_reconnection() {
+    let mut model = inventory_model();
+    let (_, stream) = live_empty(&mut model);
+    let closed = Msg::ChatStream {
+        agent: agent_id("stored"),
+        attempt: stream,
+        event: ChatStreamMsg::Closed {
+            at: t0_plus(2),
+            reason: StreamCloseReason::Reset,
+        },
+    };
+    let effects = update(&mut model, closed.clone());
+    let next = stream_attempt(&effects);
+    assert_ne!(next, stream);
+    assert!(
+        update(&mut model, closed).is_empty(),
+        "a late close must not reopen twice"
+    );
+    update(
+        &mut model,
+        Msg::Chat(ChatCommand::Close {
+            agent: agent_id("stored"),
+            now: t0_plus(3),
+        }),
+    );
+    let effects = update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: next,
+            event: ChatStreamMsg::Closed {
+                at: t0_plus(4),
+                reason: StreamCloseReason::Reset,
+            },
+        },
+    );
+    assert!(effects.is_empty(), "a closed conversation must stay closed");
+}
+
+#[test]
 fn truncated_fresh_open_and_reconnect_remain_visible_states() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);

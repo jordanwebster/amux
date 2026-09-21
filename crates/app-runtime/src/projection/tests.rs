@@ -1064,6 +1064,54 @@ fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
         rows,
     )
 }
+
+#[test]
+fn stored_exploration_runs_group_and_break_at_history_gaps() {
+    let tool = |id: usize, name: &str, input: Value| {
+        json!({"type":"assistant", "uuid":format!("row-{id}"),
+            "message":{"id":format!("message-{id}"), "role":"assistant",
+                "content":[{"type":"tool_use", "id":format!("tool-{id}"),
+                    "name":name, "input":input}]}})
+    };
+    for driver in [model::ClaudeDriver::Pty, model::ClaudeDriver::Sdk] {
+        let (model, _) = stored_model(
+            model::AgentKind::Claude { driver },
+            vec![
+                tool(0, "Read", json!({"file_path":"parser.rs"})),
+                tool(1, "Grep", json!({"pattern":"split"})),
+                message(2, "An explanation separates the runs."),
+                tool(3, "Read", json!({"file_path":"wire.rs"})),
+                tool(4, "Grep", json!({"pattern":"token"})),
+            ],
+        );
+        let mut projection = subscribed();
+        let mut phone = PhoneFeed::default();
+        let groups = |phone: &PhoneFeed| -> Vec<bool> {
+            phone
+                .rows
+                .values()
+                .filter_map(|row| {
+                    let kind = &row["row"]["kind"];
+                    kind["group_with_previous"]
+                        .as_bool()
+                        .or_else(|| kind["entry"]["group_with_previous"].as_bool())
+                })
+                .collect()
+        };
+        phone.apply_events(&collect(&mut projection, &model));
+        assert_eq!(groups(&phone), [false, true, false, true], "{driver:?}");
+
+        let broken = after_a_gap(&model, 1);
+        phone.apply_events(&collect(&mut projection, &broken));
+        assert_eq!(groups(&phone), [false, false, false, true], "{driver:?}");
+        let mut fresh = PhoneFeed::default();
+        fresh.apply_events(&collect(&mut subscribed(), &broken));
+        assert_eq!(
+            phone.rows.values().collect::<Vec<_>>(),
+            fresh.rows.values().collect::<Vec<_>>()
+        );
+    }
+}
 /// A conversation with any provider opened through the store, holding the
 /// entries its chat stream folded from `rows`.
 fn stored_model(kind: model::AgentKind, rows: Vec<Value>) -> (Model, ui_state::StreamAttempt) {

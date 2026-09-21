@@ -1,3 +1,18 @@
+2026-09-21 — **Keep stored phone conversations grouped and live after compaction.**
+Consecutive native read/search rows now retain their exploration grouping when
+projected from stored Claude PTY and SDK conversations. The projection computes
+grouping from the visible history, so prose and missing-history boundaries split
+runs even when the entries themselves are cached. A provider stream reset now
+opens a replacement subscription while the host remains connected; previously
+compaction left the conversation without live updates or a usable send gate.
+Focused regressions cover both Claude drivers, a changed history boundary,
+reset reopening, late reset messages and closing the conversation. The phone
+journey also opens the Older section before revisiting recorded conversations
+whose activity dates put them there.
+The workspace tests, specifications and lint pass. The phone run now passes
+expansion, sending, streaming and draft restoration; it exposes remaining
+exit-display and transcript-recovery failures before golden comparison.
+
 2026-09-21 — **Drive terminal stories through the real front door.**
 Two declared terminal journeys now start a served installation, operate the
 real 120×40 TUI through tmux, assert the host's independent observations and

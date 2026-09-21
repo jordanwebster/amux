@@ -1877,6 +1877,7 @@ fn closed(
     at: DateTime<Utc>,
     reason: StreamCloseReason,
 ) -> Vec<Effect> {
+    let reset = reason == StreamCloseReason::Reset;
     let mutations = {
         let Some(chat) = state.chats.get_mut(&agent) else {
             return Vec::new();
@@ -1901,7 +1902,14 @@ fn closed(
             }
         }
     };
-    mutations.map_or_else(Vec::new, |mutations| enqueue(state, agent, mutations))
+    let mut effects = mutations.map_or_else(Vec::new, |mutations| enqueue(state, agent, mutations));
+    // A provider reset ends this subscription while its host stays connected;
+    // no fleet reconnection will arrive to reopen the conversation. The next
+    // open's replay facts establish the replacement history boundary.
+    if reset {
+        effects.extend(reconnect_chat(state, agent));
+    }
+    effects
 }
 
 pub(crate) fn page_older(state: &mut StoreState, agent: AgentId, n: usize) -> Vec<Effect> {
