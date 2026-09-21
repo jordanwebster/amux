@@ -45,7 +45,7 @@ async fn testnet_sdk_creation_and_inputs_use_the_real_backend_over_the_relay() {
 async fn exercise() {
     let store = tempfile::tempdir().unwrap();
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../e2e-tests/topologies/claude-sessions.json");
+        .join("../../journeys/topologies/claude-sessions.json");
     let topology = Topology::load(&path).unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let (net, ready, agents) = start(&topology, listener.local_addr().unwrap())

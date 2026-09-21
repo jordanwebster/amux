@@ -57,7 +57,7 @@ SECTIONS = ["cold", "reconciliation", "echo", "streaming", "lifecycle"]
 # The machines a lifecycle audit is taken against. How many connections a host
 # is holding is a fact about the far end of the network, so it is read off a
 # relay and daemons that are really running rather than off the phone.
-TOPOLOGY = "e2e-tests/topologies/home-fleet.json"
+TOPOLOGY = "journeys/topologies/home-fleet.json"
 # What the phone is put behind when it is put away. Settings is on every
 # simulator and is not this app, which is the whole requirement.
 ELSEWHERE = "com.apple.Preferences"

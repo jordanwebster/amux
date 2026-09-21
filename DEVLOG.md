@@ -10,6 +10,15 @@ The companion lifecycle journey exposes a separate missing stream after
 foregrounding, which also failed a diagnostic wait at the existing deadline;
 that recovery failure remains unresolved.
 
+2026-09-21 — **Give phone and terminal journeys one home.**
+The journey manifest, served-network topologies, authored provider scripts and
+recordings now live together under `journeys/`. Every existing story declares
+the phone as its client, the standalone scripted provider sits with the other
+provider scripts, and the unreferenced standing topology is gone. Phone tools,
+served-network tests, documentation and the suite catalogue all resolve the
+shared paths. The complete phone hosts story and the focused served-network
+tests pass from their new home.
+
 2026-09-20 — **Record the local CI baseline and its platform gap.**
 One `just --time ci` run recorded: update-flag guard 0.035s, check 10.651s,
 lint 1.734s, format check 1.844s, codegen check 1.367s, dependency policy

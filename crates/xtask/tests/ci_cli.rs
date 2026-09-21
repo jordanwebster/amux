@@ -351,11 +351,12 @@ exec "$XTASK" ci-status --wait 0
 
 fn ios_verify_fixture() -> tempfile::TempDir {
     let dir = commands();
-    std::fs::create_dir_all(dir.path().join("apps/apple/Journeys")).unwrap();
+    std::fs::create_dir_all(dir.path().join("journeys")).unwrap();
+    std::fs::create_dir_all(dir.path().join("apps/apple")).unwrap();
     std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
     std::fs::write(
-        dir.path().join("apps/apple/Journeys/manifest.json"),
-        include_str!("../../../apps/apple/Journeys/manifest.json"),
+        dir.path().join("journeys/manifest.json"),
+        include_str!("../../../journeys/manifest.json"),
     )
     .unwrap();
     // The two justfiles the runner validates its stages against, declaring

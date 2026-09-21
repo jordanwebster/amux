@@ -367,7 +367,7 @@ carries no 120×120 `AppIcon60x60@2x.png`.
 ## Journeys and replay
 
 `just ios journey NAME` runs a group from
-`apps/apple/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
+`journeys/manifest.json`; omit NAME to run every group. Groups include home,
 conversation, asks, review, writing, hosts, claude-sessions, accounts,
 production-startup and reports.
 The recipe starts declared topologies, runs accessibility-driven XCUITests,

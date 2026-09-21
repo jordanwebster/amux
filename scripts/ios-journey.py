@@ -49,7 +49,7 @@ import ios_simulators
 from ios_testnet import answer, free_port, runner
 from loopback_smoke import control
 
-MANIFEST = Path("apps/apple/Journeys/manifest.json")
+MANIFEST = Path("journeys/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/journeys")

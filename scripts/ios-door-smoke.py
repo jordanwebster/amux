@@ -48,7 +48,7 @@ PANELS = [
 BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
-TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
+TOPOLOGY = "journeys/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
 # That a shipping build carries neither this text nor the driving symbols is
 # the scope audit's check, made against the packaged shipping library.

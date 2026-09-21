@@ -24,7 +24,7 @@ Build the harness with `just ios tools`, then start the served network
 with a topology file:
 
 ```sh
-target/debug/testnet serve --topology e2e-tests/topologies/two-hosts.json
+target/debug/testnet serve --topology journeys/topologies/two-hosts.json
 ```
 
 The daemons are ordinary runtimes and say nothing unless asked. Setting
@@ -33,13 +33,13 @@ how a driver outside this process watches them decide:
 
 ```sh
 RUST_LOG=warn,node::services::reachability=debug target/debug/testnet serve \
-  --topology e2e-tests/topologies/two-hosts.json
+  --topology journeys/topologies/two-hosts.json
 ```
 
 A topology is a JSON object with a `cloud_url` and four required lists, plus
 an optional `tiers`.
 Omitting `cloud_url` uses the installation default, `https://amux.sh`. For example,
-`e2e-tests/topologies/two-hosts.json` contains:
+`journeys/topologies/two-hosts.json` contains:
 
 ```json
 {
@@ -60,7 +60,7 @@ A daemon may declare `"lan": true`, which puts it on the network when the
 topology starts, so a device that browses before sending any control verb
 finds it there. A simulator browses the Mac's own network instead, where a
 machine appears only once `Announce` puts it there.
-`e2e-tests/topologies/onramp.json` is the smallest such network: one machine
+`journeys/topologies/onramp.json` is the smallest such network: one machine
 on this network, nobody signed in anywhere.
 
 ```json
@@ -77,7 +77,7 @@ on this network, nobody signed in anywhere.
 
 `tiers` says what an account buys where it is not the paid default, and is
 applied before anything can ask for a token — so a device signing in with that
-account is admitted on it. `e2e-tests/topologies/free-tier.json` is one account
+account is admitted on it. `journeys/topologies/free-tier.json` is one account
 that has not paid for the relay, with one machine on it.
 
 User labels are unique. A daemon names a declared user, or names none at all,
@@ -260,7 +260,7 @@ Run `just test-crate testnet -- testnet_script -- --nocapture` to see the parsed
 transcript and hook capture along with checks for asks, deferred prompts,
 turn boundaries and cleanup.
 
-Use `e2e-tests/topologies/scripted-agents.json` for a runnable scripted topology.
+Use `journeys/topologies/scripted-agents.json` for a runnable scripted topology.
 Claude script paths, working directories and repository roots resolve relative
 to the topology file. Scripts are parsed before any network resources start.
 Codex recording directories resolve relative to the topology file as well.
@@ -293,7 +293,7 @@ child asks, invalid controls, exit and restart cleanup.
 
 ## Scripted Claude SDK sessions
 
-`e2e-tests/topologies/claude-sessions.json` runs SDK and PTY agents on the same
+`journeys/topologies/claude-sessions.json` runs SDK and PTY agents on the same
 host. A daemon's optional `sdk_script` names a JSON file with the SDK
 `initialization` response and a `reply` string. An agent declared as
 `{"ClaudeSdk":{"model":"sonnet"}}` uses that host's script. Missing scripts
@@ -350,7 +350,7 @@ Codex recordings require a Unix host, matching the daemon's Codex backend.
 On Windows the runner rejects a Codex topology before starting the network;
 Claude scripts and the network controls remain available.
 
-`e2e-tests/topologies/codex-recording.json` declares a Codex agent backed by
+`journeys/topologies/codex-recording.json` declares a Codex agent backed by
 `crates/codex-specs/fixtures/runtime/approval_allow`. Recording manifests and content hashes
 are checked before startup. The runner uses the recorded client handshake and
 thread-start parameters, then hands the real Codex session to the daemon's

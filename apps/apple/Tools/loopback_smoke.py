@@ -66,7 +66,7 @@ def round_trip(executable: Path, device: str) -> str:
         root = Path(temporary)
         environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
         runner = subprocess.Popen([
-            *bridge.TESTNET_SERVE, "--topology", "e2e-tests/topologies/two-hosts.json",
+            *bridge.TESTNET_SERVE, "--topology", "journeys/topologies/two-hosts.json",
         ], env=environment, stdout=subprocess.PIPE, text=True)
         try:
             ready = read_ready(runner)

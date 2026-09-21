@@ -3,7 +3,8 @@
     {
       "id": "onramp",
       "stage": 4,
-      "topology": "e2e-tests/topologies/onramp.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/onramp.json",
       "acts": [
         "first-run",
         "found-host",
@@ -17,55 +18,64 @@
     {
       "id": "home-coldstart",
       "stage": 5,
-      "topology": "e2e-tests/topologies/two-hosts.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/two-hosts.json",
       "claim": "A launch draws the fleet this phone remembers before it has reached anything, every remembered row visible and nothing spinning, and a real connection to two hosts reconciles it. This launch is paired with neither machine, so neither host confirms the remembered agents and reconciliation leaves the list empty. The home journey separately proves a paired phone’s cached rows going solid in place as their hosts answer."
     },
     {
       "id": "home",
       "stage": 5,
-      "topology": "e2e-tests/topologies/home-fleet.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/home-fleet.json",
       "claim": "Six agents on two machines the runner is running, on a phone that pairs with both of them through the protocol itself: before it has reached anything the phone draws the ones it remembers, the request that needs an answer at the top, ahead of finished and recent work; a real connection reaches both machines and every remembered row is confirmed in place as its own machine answers for it, a turn emitted by one of them changes nothing about the order, and taking the relay away leaves every row on screen under the one line that says the phone is offline; a phone that remembers nothing shows the home empty; and opening the row at the top leads to its conversation, whose back chevron and the platform's edge swipe each come back to the same list."
     },
     {
       "id": "conversation",
       "stage": 6,
-      "topology": "e2e-tests/topologies/conversation.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/conversation.json",
       "claim": "A phone paired with the machine that holds them opens one of its agents and reads what it says: every kind of step the scripted provider can play arrives over the relay and is drawn, and the walk down the feed photographs each kind of row where a reader can actually read it — clear of the pill and the strips that float over the feed — a folded run of reads opens when it is pressed, a diff the host computed puts the changes chip on screen and it leads to the changes, and an agent that ends while somebody is reading it states its code and offers nowhere to write. Losing the machine says so where the composer will go, with a way to ask again. Three messages tried where the conversation will not take one — in the moment it opens and the layer is still catching up, while the machine is unreachable, and while the last one is unanswered — are refused on the phone with the reason on screen, and the host confirms it received only the single message that was allowed through."
     },
     {
       "id": "asks",
       "stage": 7,
-      "topology": "e2e-tests/topologies/asks.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/asks.json",
       "claim": "Everything an agent can be waiting to be told, answered on the phone against a machine the runner is really running: a permission refused and another allowed, the standing grant the host itself offered taken by the name the host gave it, the agent's own question answered with one of the agent's own answers, a plan read out and approved and a second sent back with what should change, a plan judged earlier reopened onto the document that was judged, an agent this one started answered in its own conversation and the provider's own subagent saying why it has none, and a finished turn deferred and then read. A sentence started and never sent, and a feed scrolled back off its newest row, are both exactly as they were after a panel has been answered over them — including after the excursion to the child. The host is asked afterwards what it received, and every answer is exactly what was pressed."
     },
     {
       "id": "review",
       "stage": 7,
-      "topology": "e2e-tests/topologies/review.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/review.json",
       "claim": "A patch a real host froze across three files, taller than the phone, read and written about with a finger: the list every file heading opens reaching a file further down, that file folded away and opened again, the wheel down the right edge dragged to the last file and back to the first, ranges taken by holding a line and dragging, three remarks added and a fourth cancelled before it was said, and the whole review attached and sent with a remark about the change as a whole. The host received one message carrying that patch's identity, those ranges, what was said about each of them and the patch pinned to it — and nothing about the remark that was cancelled."
     },
     {
       "id": "writing",
       "stage": 8,
-      "topology": "e2e-tests/topologies/writing.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/writing.json",
       "claim": "Writing to two agents the runner is really running. A paragraph typed over two lines; a long paste, a stored photograph, a stored file and a patch the machine computed each standing in that sentence as one token at the caret; one backspace taking a whole token entire, and one token taken from between two others and put in front of both — whole, as the one character it is in the sentence. That move goes through the field's own draft rather than a finger: the gesture that performs it on a device is the text view's own text drag, which the system begins from drawn text and no driver outside the process can start. One message sent, drawn before the machine answered for it and still one row once it had. One message held while a turn ran, replaced by a second, taken back into the field, and a third that survived the turn being stopped and was delivered when the turn ended — the machine's own account says it received exactly those two and nothing that was replaced or withdrawn. The cross empties the field and leaves the turn running; Stop is offered only where there is nothing to send, so no press does both. The address copied, a rename cancelled and then kept by the machine, a deletion cancelled and later confirmed. And on the session that offers them: a command raised by a slash, sent as a token and answered, and a model and an effort changed and read back off the chip the machine's own facts relabel."
     },
     {
       "id": "claude-sessions",
       "stage": 9,
-      "topology": "e2e-tests/topologies/claude-sessions.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/claude-sessions.json",
       "claim": "New Agent creates Claude on the SDK driver, confirmed by the daemon inventory with no PTY agent created. The created SDK agent and pre-existing SDK and PTY agents open under their original identities, render through their own projections, and each round-trip a prompt observed by the host. A typed model change reaches the SDK session; the PTY gate refuses it with no extra input. A creation the host refuses leaves a designed failure state and creates nothing."
     },
     {
       "id": "hosts-lifecycle",
       "stage": 9,
-      "topology": "e2e-tests/topologies/home-fleet.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/home-fleet.json",
       "claim": "What this phone's link to two machines the runner is running does over time: a relay taken away and put back is recovered from with nobody pressing anything; each machine holds one connection however many conversations are open, and nothing is asked of them while the phone sits idle; pressing Retry Now reaches the link before the relay is back, which is the only thing that could have; putting the phone away releases the link so the machines see it leave, and bringing it back confirms the fleet again; and the conversation closed before any of it holds no stream after all of it."
     },
     {
       "id": "hosts",
       "stage": 9,
-      "topology": "e2e-tests/topologies/hosts.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/hosts.json",
       "acts": [
         "link-before-sign-in",
         "link-agreed-second-time",
@@ -80,7 +90,8 @@
     {
       "id": "accounts",
       "stage": 10,
-      "topology": "e2e-tests/topologies/accounts.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/accounts.json",
       "acts": [
         "unsigned-launch",
         "sign-in",
@@ -97,7 +108,8 @@
     {
       "id": "reports",
       "stage": 11,
-      "topology": "e2e-tests/topologies/reports.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/reports.json",
       "acts": [
         "screenshot-thumbnail",
         "screenshot-full-screen",
@@ -110,7 +122,8 @@
     {
       "id": "accessibility",
       "stage": 12,
-      "topology": "e2e-tests/topologies/accessibility.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/accessibility.json",
       "acts": [
         "home",
         "conversation",
@@ -124,25 +137,29 @@
     {
       "id": "production-startup",
       "stage": 13,
-      "topology": "e2e-tests/topologies/accounts.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/accounts.json",
       "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Reinstalling the same build moves the app container while preserving its files. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
     },
     {
       "id": "free-tier",
       "stage": 14,
-      "topology": "e2e-tests/topologies/free-tier.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/free-tier.json",
       "claim": "A phone signed in to an account that has never paid for the relay, against three machines the runner is really running. On its own network it pairs with one of them and runs its agent, which is what an account with nothing bought is entitled to and all it needs. Both machines then leave that network: the one signed in to this account is still visible to the relay, which will carry nothing to it, so the phone says it is away, keeps its agent on the list saying in words that nothing is arriving, and names it in the one line above the list; the machine signed in to nobody says that instead, because what is in the way is on the machine and no money moves it. Opening the away machine's agent shows the last thing it said with the offer where the composer would be, naming the machine it would reach. Six digits a third machine printed — a machine only the relay has ever seen — authenticate and still do not pair, and the keypad answers with the same offer rather than calling a correct code wrong. Then the account service starts saying the account is subscribed and the phone asks its own link to read that again: the machine is through the relay and its agent is live at once, and the offer of a tunnel is gone from the line above the list. The App Store is never reached and the account service is a double the app is handed at launch, which is what makes an unpaid account a state a finger can reach; the relay, the machines and the credential they are all admitted on are real."
     },
     {
       "id": "signed-out",
       "stage": 14,
-      "topology": "e2e-tests/topologies/onramp.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/onramp.json",
       "claim": "A phone nobody has signed in on, following the machine it paired with off its own network and back. Paired by the code that machine printed and reading what it runs, it is left with neither when the machine says goodbye and stops answering — and keeps all of it: the agents stay on the list as what they are, the machine reads offline, and the one line above the list offers an account as the thing that would reach it from somewhere else. The machine announces itself again, the phone reaches it with nobody pressing anything, and that offer goes away with the thing it was for: a phone that can reach everything it owns is never asked for an account. No account, no relay and no subscription exist anywhere in this story."
     },
     {
       "id": "profiles",
       "stage": 14,
-      "topology": "e2e-tests/topologies/profiles.json",
+      "clients": ["phone"],
+      "topology": "journeys/topologies/profiles.json",
       "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
     }
   ]

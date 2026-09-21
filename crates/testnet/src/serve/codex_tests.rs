@@ -13,7 +13,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
     let store = tempfile::tempdir().unwrap();
     let topology = Topology::load(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../e2e-tests/topologies/codex-recording.json"),
+            .join("../../journeys/topologies/codex-recording.json"),
     )
     .unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -245,7 +245,7 @@ async fn testnet_codex_recording_unrecorded_answer_fails_without_hanging() {
 async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client() {
     let store = tempfile::tempdir().unwrap();
     let topology = Topology::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/codex-offers.json"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../journeys/topologies/codex-offers.json"),
     )
     .unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

@@ -80,7 +80,7 @@ pub(super) async fn succeeded(runtime: &mut Runtime, command: UiCommand) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../e2e-tests/topologies/scripted-agents.json");
+        .join("../../journeys/topologies/scripted-agents.json");
     let mut topology = Topology::load(&path).unwrap();
     topology.cloud_url = "https://accounts.testnet.example".into();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

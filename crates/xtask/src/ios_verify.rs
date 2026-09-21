@@ -275,9 +275,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &std::fs::read_to_string("apps/apple/justfile")?,
     )?;
     if phases.drives_journeys() {
-        check_journeys(&std::fs::read_to_string(
-            "apps/apple/Journeys/manifest.json",
-        )?)?;
+        check_journeys(&std::fs::read_to_string("journeys/manifest.json")?)?;
         eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     }
     eprintln!("iOS verification: {}", selected.join(", "));
@@ -552,7 +550,7 @@ mod tests {
 
     #[test]
     fn ios_verify_requires_every_journey_to_exist_and_report_a_full_pass() {
-        let manifest = include_str!("../../../apps/apple/Journeys/manifest.json");
+        let manifest = include_str!("../../../journeys/manifest.json");
         check_journeys(manifest).unwrap();
         let all: BTreeSet<_> = REQUIRED_JOURNEYS
             .iter()

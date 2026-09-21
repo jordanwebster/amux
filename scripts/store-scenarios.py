@@ -22,8 +22,8 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 AMUX = ROOT / "target/debug/amux"
 TESTNET = ROOT / "target/debug/testnet"
-WRITING = ROOT / "e2e-tests/scripts/writing.json"
-SDK_SCRIPT = ROOT / "e2e-tests/scripts/sdk-sessions.json"
+WRITING = ROOT / "journeys/scripts/writing.json"
+SDK_SCRIPT = ROOT / "journeys/scripts/sdk-sessions.json"
 REAL_PROVIDER_SESSION = (
     ROOT
     / "crates/claude-specs/fixtures/sdk/multi_turn/sessions"

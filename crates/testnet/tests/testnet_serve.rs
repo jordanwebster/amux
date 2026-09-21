@@ -24,7 +24,7 @@ fn lifecycle(signal: bool) {
             .args(["serve", "--topology"])
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../e2e-tests/topologies/two-hosts.json"),
+                    .join("../../journeys/topologies/two-hosts.json"),
             )
             .env("TMPDIR", root.path())
             .env("TMP", root.path())
@@ -153,7 +153,7 @@ fn testnet_serve_rejects_codex_without_starting_on_unsupported_hosts() {
             .args(["serve", "--topology"])
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../e2e-tests/topologies/codex-recording.json"),
+                    .join("../../journeys/topologies/codex-recording.json"),
             )
             .env("TMPDIR", root.path())
             .env("TMP", root.path())

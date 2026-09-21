@@ -1601,7 +1601,7 @@ mod tests {
     fn topology(name: &str) -> Topology {
         Topology::load(
             &Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(format!("../../e2e-tests/topologies/{name}")),
+                .join(format!("../../journeys/topologies/{name}")),
         )
         .unwrap()
     }
@@ -1649,7 +1649,7 @@ mod tests {
     #[tokio::test]
     async fn testnet_serve_starts_real_pairings_agents_and_user_credentials() {
         let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e-tests/topologies/two-hosts.json");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../journeys/topologies/two-hosts.json");
         let topology = Topology::load(&path).unwrap();
         let (net, ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
             .await
