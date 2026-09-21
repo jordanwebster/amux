@@ -1,3 +1,12 @@
+2026-09-21 — **Put scenario assertions where their behavior is specified.**
+Agent messaging, family deletion, lifecycle, work-status and suspend/resume
+specifications now show their own actions and expected outcomes instead of
+delegating whole stories to TestNet methods. The harness retains only resource
+owners, fault controls, verbs and observations. Relay-token and link-reauth
+probes likewise moved out of the shipping node crate into integration-test
+support, with narrow hidden seams exposing the production mechanisms they
+exercise.
+
 2026-09-21 — **Keep real transport time out of the fast specifications.**
 The one daemon case that deliberately waits for QUIC to declare a silent peer
 idle now lives in a dedicated real-time transport test binary. Its topology and

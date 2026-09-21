@@ -20,7 +20,7 @@ use crate::{Clock, WallClock};
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Error)]
-pub(crate) enum JwtError {
+pub enum JwtError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -69,7 +69,7 @@ struct Jwk {
 }
 
 /// JWT validator with JWKS caching
-pub(crate) struct JwtValidator {
+pub struct JwtValidator {
     jwks_url: String,
     http_client: Client,
     keys: Arc<RwLock<HashMap<String, DecodingKey>>>,
@@ -79,7 +79,7 @@ pub(crate) struct JwtValidator {
 
 impl JwtValidator {
     /// Create a new validator for the given cloud URL
-    pub(crate) fn new(cloud_url: &str) -> Self {
+    pub fn new(cloud_url: &str) -> Self {
         Self::new_with_clock(cloud_url, Arc::new(WallClock))
     }
 
@@ -94,7 +94,7 @@ impl JwtValidator {
     }
 
     /// Validate a connection token
-    pub(crate) async fn validate(
+    pub async fn validate(
         &self,
         token: &str,
         expected_host: &str,
@@ -196,50 +196,6 @@ impl JwtValidator {
         *self.last_fetch.write().await = Some(Instant::now());
         Ok(())
     }
-}
-
-pub async fn relay_rejects_test_token_without_tier() -> bool {
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-    use serde::Serialize;
-
-    #[derive(Serialize)]
-    struct Claims<'a> {
-        sub: &'a str,
-        client_id: &'a str,
-        host: &'a str,
-        port: u16,
-        exp: u64,
-        aud: &'a str,
-    }
-
-    let secret = b"testnet-tier-claim";
-    let validator = JwtValidator::new("http://cloud.test");
-    validator
-        .keys
-        .write()
-        .await
-        .insert("test-key".to_string(), DecodingKey::from_secret(secret));
-    *validator.last_fetch.write().await = Some(Instant::now());
-    let mut header = Header::new(Algorithm::HS256);
-    header.kid = Some("test-key".to_string());
-    let token = encode(
-        &header,
-        &Claims {
-            sub: "00000000-0000-0000-0000-000000000001",
-            client_id: "spec",
-            host: "relay",
-            port: 9443,
-            exp: 4_102_444_800,
-            aud: "amux_token",
-        },
-        &EncodingKey::from_secret(secret),
-    )
-    .expect("encode testnet routing token");
-
-    matches!(
-        validator.validate(&token, "relay", 9443).await,
-        Err(JwtError::MissingTier)
-    )
 }
 
 #[cfg(test)]

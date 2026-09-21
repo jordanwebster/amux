@@ -119,17 +119,6 @@ use tokio::sync::Mutex;
 use udp_proxy::UdpProxy;
 pub use wire::{LinkCloseReason, WirePeer, native_stream_lifecycle};
 
-/// Exercises the production JWT validator used at the relay boundary.
-pub async fn relay_refuses_token_without_tier() -> bool {
-    node::harness::relay_rejects_test_token_without_tier().await
-}
-
-/// Reports the entitlement seen by one cloned live-link session before and
-/// after same-user reauthentication replaces its claims.
-pub async fn link_tier_across_reauth() -> (node::Tier, node::Tier) {
-    node::harness::link_reauth_tier_probe().await
-}
-
 /// How a pre-paired fixture pair reaches each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {

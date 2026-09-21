@@ -20,6 +20,9 @@
 //! daemon with real TLS); anything exercising a shared rate limiter gets
 //! its own `TestNet`.
 
+#[path = "../support/entitlement.rs"]
+mod entitlement_support;
+
 // Chapter 0 — Discovery
 mod discovery;
 

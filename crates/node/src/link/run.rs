@@ -70,20 +70,20 @@ where
 }
 
 #[derive(Clone)]
-pub(crate) struct LinkAuthSession {
+pub struct LinkAuthSession {
     user: Arc<StdRwLock<AuthenticatedLinkUser>>,
     authenticator: Arc<dyn LinkTokenAuthenticator>,
     minimum_client_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ReauthError {
-    pub(crate) original_user_id: Uuid,
-    pub(crate) reauth_user_id: Uuid,
+pub struct ReauthError {
+    pub original_user_id: Uuid,
+    pub reauth_user_id: Uuid,
 }
 
 impl LinkAuthSession {
-    pub(crate) fn new<T>(
+    pub fn new<T>(
         user: AuthenticatedLinkUser,
         authenticator: T,
         minimum_client_version: Option<String>,
@@ -98,11 +98,11 @@ impl LinkAuthSession {
         }
     }
 
-    pub(crate) fn tier(&self) -> crate::Tier {
+    pub fn tier(&self) -> crate::Tier {
         self.user().tier
     }
 
-    pub(crate) fn apply_reauth(&self, user: AuthenticatedLinkUser) -> Result<(), ReauthError> {
+    pub fn apply_reauth(&self, user: AuthenticatedLinkUser) -> Result<(), ReauthError> {
         let mut current = self
             .user
             .write()
@@ -1277,43 +1277,6 @@ pub(crate) fn spawn_connector_with_bearer_token(
     token: String,
 ) -> ConnectorTask {
     spawn_connector(ctx, carrier, Some(bearer_token_auth(token)), None, None).0
-}
-
-pub async fn link_reauth_tier_probe() -> (crate::Tier, crate::Tier) {
-    #[derive(Clone)]
-    struct TierAuthenticator(AuthenticatedLinkUser);
-    #[tonic::async_trait]
-    impl LinkTokenAuthenticator for TierAuthenticator {
-        async fn authenticate_token(
-            &self,
-            _token: &str,
-        ) -> Result<AuthenticatedLinkUser, tonic::Status> {
-            Ok(self.0.clone())
-        }
-    }
-
-    let user_id = Uuid::new_v4();
-    let initial = AuthenticatedLinkUser {
-        user_id,
-        client_id: "testnet".into(),
-        expires_at: SystemTime::now() + Duration::from_secs(60),
-        tier: crate::Tier::Free,
-    };
-    let refreshed = AuthenticatedLinkUser {
-        user_id,
-        client_id: "testnet".into(),
-        expires_at: SystemTime::now() + Duration::from_secs(3600),
-        tier: crate::Tier::Pro,
-    };
-    let session = LinkAuthSession::new(initial, TierAuthenticator(refreshed), None);
-    let before = session.tier();
-    let user = session
-        .authenticator
-        .authenticate_token("refreshed")
-        .await
-        .unwrap();
-    session.apply_reauth(user).unwrap();
-    (before, session.tier())
 }
 
 #[cfg(test)]

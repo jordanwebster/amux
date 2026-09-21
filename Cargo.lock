@@ -4383,6 +4383,7 @@ dependencies = [
  "gethostname",
  "host-api",
  "hyper-util",
+ "jsonwebtoken",
  "libc",
  "model",
  "nix 0.31.3",

@@ -14,8 +14,7 @@ use agent_runtime::test_support::TEST_ECHO_COMMAND;
 use client::{Client, ClientError};
 use node::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
-    DiffBase, DiffResponse, ProtocolError, SendInputRequest, SendMessageRequest,
-    SubscribeSessionEvent,
+    DiffBase, DiffResponse, ProtocolError, SendInputRequest, SubscribeSessionEvent,
 };
 use uuid::Uuid;
 
@@ -140,7 +139,9 @@ impl Daemon {
                     self.name()
                 )
             });
-        assert_eq!(agent.name.as_deref(), Some(name));
+        if agent.name.as_deref() != Some(name) {
+            panic!("spawned echo agent did not retain the requested name '{name}'");
+        }
         agent
     }
 
@@ -423,17 +424,19 @@ impl Daemon {
         }
     }
 
-    /// Spawns an echo child and proves its first input is an authenticated
-    /// message from the parent after the child backend is available.
+    /// Spawns an echo child with an initial prompt after its backend is
+    /// available. The session replay retains that prompt for the caller to
+    /// observe.
     pub async fn spawn_echo_child_with_prompt(
         &self,
         parent: &Agent,
         name: &str,
         prompt: &str,
     ) -> Agent {
-        assert_eq!(parent.host_id, self.host_id());
-        let child = self
-            .admin_client()
+        if parent.host_id != self.host_id() {
+            panic!("an echo child's parent must belong to the creating daemon");
+        }
+        self.admin_client()
             .await
             .create_agent(CreateAgentRequest {
                 agent_id: Uuid::new_v4(),
@@ -452,35 +455,16 @@ impl Daemon {
                 initial_prompt: Some(prompt.to_string()),
             })
             .await
-            .unwrap_or_else(|error| panic!("spawn echo child '{name}': {error}"));
-
-        assert_eq!(child.parent.map(|edge| edge.agent_id), Some(parent.id));
-        assert_eq!(child.working_dir, parent.working_dir);
-
-        let mut stream = self
-            .admin_client()
-            .await
-            .subscribe_session(node::SubscribeSessionRequest {
-                agent: child.id.into(),
-                args: model::SessionArgs::TestEchoV1,
-            })
-            .await
-            .unwrap_or_else(|error| panic!("subscribe to echo child '{name}': {error}"));
-        let encoded = echoed_envelope(&mut stream, name, "an initial child prompt").await;
-        let parsed = model::envelope::parse(&encoded)
-            .unwrap_or_else(|error| panic!("initial child prompt did not parse: {error}"));
-        assert_eq!(parsed.from_id, Some(parent.id));
-        assert_eq!(parsed.from_kind.as_deref(), Some(parent.kind.provider()));
-        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
-        assert_eq!(parsed.text, prompt);
-        child
+            .unwrap_or_else(|error| panic!("spawn echo child '{name}': {error}"))
     }
 
     /// Spawns an echo child on `owner` while preserving a parent local to the
     /// calling daemon. This exercises the same remote create route used by a
     /// model-facing spawn.
     pub async fn spawn_echo_child_on(&self, owner: &Daemon, parent: &Agent, name: &str) -> Agent {
-        assert_eq!(parent.host_id, self.host_id());
+        if parent.host_id != self.host_id() {
+            panic!("an echo child's parent must belong to the creating daemon");
+        }
         if owner.host_id() != self.host_id() {
             // The daemon dispatches this create over its own link to the
             // owner, and answers with whatever that dispatch met. Waiting for
@@ -512,199 +496,59 @@ impl Daemon {
             })
     }
 
-    /// Deletes a family through the raw client RPC so the cascade result can
-    /// be asserted before higher-level clients choose how to present it.
-    pub async fn cascade_delete_family(&self, parent: &Agent, expected_children: &[&Agent]) {
-        let expected_ids: std::collections::HashSet<_> =
-            expected_children.iter().map(|agent| agent.id).collect();
+    /// Waits until this daemon's local client has observed every named agent,
+    /// then returns those observations in the requested order.
+    pub async fn observes_agents(&self, ids: &[Uuid]) -> Vec<Agent> {
+        let client = self.admin_client().await;
+        let mut observed = None;
         eventually(
-            "deleting daemon mirrors the complete family",
+            "daemon observes the requested agents",
             async || {
-                let Some(parts) = self.try_parts().await else {
+                let Ok(agents) = client.list_agents().await else {
                     return false;
                 };
-                let ids: std::collections::HashSet<_> = parts
-                    .client
-                    .list_agents()
-                    .await
-                    .into_iter()
-                    .map(|agent| agent.id)
-                    .collect();
-                ids.contains(&parent.id) && expected_ids.is_subset(&ids)
+                if ids
+                    .iter()
+                    .all(|id| agents.iter().any(|agent| agent.id == *id))
+                {
+                    observed = Some(agents);
+                    true
+                } else {
+                    false
+                }
             },
             self.failure_dump(),
         )
         .await;
-
-        let guard = self.runtime().await;
-        let runtime = guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = runtime.client_channel.clone();
-        drop(guard);
-        let mut client = wire::client_service_client(channel);
-        let response = client
-            .delete_agent(wire::ClientDeleteAgentRequest {
-                agent: Some(wire::AgentRef {
-                    identifier: Some(wire::agent_ref::Identifier::AgentId(
-                        parent.id.as_bytes().to_vec(),
-                    )),
-                }),
-                caller_agent_id: None,
+        let observed = observed.expect("the requested agents were observed");
+        ids.iter()
+            .map(|id| {
+                observed
+                    .iter()
+                    .find(|agent| agent.id == *id)
+                    .expect("observed agent remains in captured inventory")
+                    .clone()
             })
-            .await
-            .expect("cascade delete succeeds")
-            .into_inner();
-        let removed_ids: std::collections::HashSet<_> = response
-            .removed_children
-            .into_iter()
-            .map(|agent| {
-                node::harness::agent_from_wire(agent)
-                    .expect("removed child decodes")
-                    .id
-            })
-            .collect();
-        assert_eq!(removed_ids, expected_ids);
-        assert!(response.unreachable_children.is_empty());
+            .collect()
     }
 
-    /// Exercises the model-facing stop authority: only the recorded parent
-    /// may stop a child, and stopping the child does not remove its parent.
-    pub async fn parent_alone_stops_child(&self, parent: &Agent, child: &Agent, unrelated: &Agent) {
-        let client = self.admin_client().await;
-        let child_name = child.name.clone().expect("child has a name");
-        let parent_name = parent.name.clone().expect("parent has a name");
-
-        let unrelated_error = client
-            .delete_child_agent(child_name.clone(), unrelated.id)
-            .await
-            .expect_err("an unrelated agent must not stop the child");
-        assert!(
-            unrelated_error
-                .to_string()
-                .contains("is not a child of the calling agent")
-        );
-
-        let child_error = client
-            .delete_child_agent(parent_name, child.id)
-            .await
-            .expect_err("a child must not stop its parent");
-        assert!(
-            child_error
-                .to_string()
-                .contains("is not a child of the calling agent")
-        );
-
-        client
-            .delete_child_agent(child_name, parent.id)
-            .await
-            .expect("the recorded parent stops its child");
-
-        let agents = client.list_agents().await.expect("list agents after stop");
-        assert!(agents.iter().any(|agent| agent.id == parent.id));
-        assert!(!agents.iter().any(|agent| agent.id == child.id));
-        assert!(agents.iter().any(|agent| agent.id == unrelated.id));
-    }
-
-    /// Proves automatic and explicit work status through both fleet snapshots
-    /// and live updates, then completes the child and observes the clear.
-    pub async fn working_on_lifecycle(&self, parent: &Agent) {
-        let first_line = "0123456789".repeat(9);
-        let prompt = format!("{first_line}\nmore detail that is not part of the task name");
-        let child = self
-            .spawn_echo_child_with_prompt(parent, "working-child", &prompt)
-            .await;
-        let auto = child
-            .working_on
-            .as_ref()
-            .expect("a spawned child has an automatic work status");
-        assert_eq!(auto.text, first_line.chars().take(80).collect::<String>());
-
-        let client = self.admin_client().await;
-        let mut events = self
-            .admin_client()
-            .await
-            .subscribe_agents()
-            .await
-            .expect("subscribe to fleet events");
-        loop {
-            if matches!(
-                tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
-                    .await
-                    .expect("fleet snapshot completes"),
-                Ok(node::harness::AgentEvent::SnapshotComplete { .. })
-            ) {
-                break;
-            }
-        }
-
-        client
-            .set_agent_status(node::SetAgentStatusRequest {
-                agent: child.id.into(),
-                working_on: Some("reviewing the result".to_string()),
-            })
-            .await
-            .expect("set child work status");
-        let explicit = loop {
-            let event = tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
-                .await
-                .expect("status update reaches the fleet stream")
-                .expect("fleet stream remains open");
-            if let node::harness::AgentEvent::AgentUpdated { agent } = event
-                && agent.id == child.id
-            {
-                break agent.working_on.expect("status update carries working_on");
-            }
-        };
-        assert_eq!(explicit.text, "reviewing the result");
-        assert!(explicit.updated_at >= auto.updated_at);
-
+    /// Completes a process-free echo agent through the local host boundary.
+    pub async fn complete_echo_agent(&self, agent: &Agent, result: &str) {
         let parts = self
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         agent_runtime::test_support::complete(
             parts.agent_host.as_ref(),
-            child.id,
-            "done".to_string(),
+            agent.id,
+            result.to_string(),
         )
         .await;
-
-        loop {
-            let event = tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
-                .await
-                .expect("completion clear reaches the fleet stream")
-                .expect("fleet stream remains open");
-            if let node::harness::AgentEvent::AgentUpdated { agent } = event
-                && agent.id == child.id
-            {
-                assert!(agent.working_on.is_none());
-                break;
-            }
-        }
-        let listed = client
-            .list_agents()
-            .await
-            .expect("list agents after completion");
-        assert!(
-            listed
-                .iter()
-                .find(|agent| agent.id == child.id)
-                .expect("completed child remains in the fleet")
-                .working_on
-                .is_none()
-        );
     }
 
-    /// Parks a parent and child through the production local-host suspend
-    /// seam, restarts the daemon runtime, resumes the saved sessions, and
-    /// verifies their relationship metadata through the client inventory.
-    pub async fn suspend_restart_preserves_family(&self, parent: &Agent, child: &Agent) {
+    /// Parks every local agent and commits their suspend records.
+    pub async fn suspend_agents(&self) -> u64 {
         let state_path = self.inner.data_dir.join("state.yaml");
-        let before = child
-            .working_on
-            .clone()
-            .expect("spawned child has work to preserve");
         let parts = self
             .try_parts()
             .await
@@ -714,52 +558,26 @@ impl Daemon {
             .prepare_suspend(state_path.clone())
             .await
             .expect("prepare suspend");
-        assert_eq!(suspended, 2);
         parts.agent_host.commit_suspend().await;
+        suspended
+    }
 
-        self.restart().await;
-        let resumed_parts = self
+    /// Resumes every committed suspend record after a daemon restart.
+    pub async fn resume_agents(&self) -> (u64, u64) {
+        let state_path = self.inner.data_dir.join("state.yaml");
+        let parts = self
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' did not restart", self.name()));
-        let (resumed, failed) = resumed_parts
+        parts
             .agent_host
             .resume(state_path, &host_api::OperationGate::default())
             .await
-            .expect("resume suspended agents");
-        assert_eq!((resumed, failed), (2, 0));
-        let resumed_client = self.admin_client().await;
-
-        eventually(
-            "resumed family metadata reaches the client inventory",
-            async || {
-                let Ok(listed) = resumed_client.list_agents().await else {
-                    return false;
-                };
-                let Some(resumed_parent) = listed.iter().find(|agent| agent.id == parent.id) else {
-                    return false;
-                };
-                let Some(resumed_child) = listed.iter().find(|agent| agent.id == child.id) else {
-                    return false;
-                };
-                resumed_parent.parent.is_none()
-                    && resumed_child.parent == child.parent
-                    && resumed_child.working_on.as_ref() == Some(&before)
-            },
-            self.failure_dump(),
-        )
-        .await;
+            .expect("resume suspended agents")
     }
 
-    /// A family deletion still removes its local root when a mirrored remote
-    /// child cannot be reached, and reports that child as an orphan candidate.
-    pub async fn cascade_delete_reports_unreachable(
-        &self,
-        parent: &Agent,
-        child_owner: &Daemon,
-        child: &Agent,
-    ) {
-        child_owner.stop().await;
+    /// Restores a captured agent observation without restoring its owner.
+    pub async fn restore_agent_observation(&self, agent: &Agent) {
         let parts = self
             .try_parts()
             .await
@@ -767,64 +585,19 @@ impl Daemon {
         parts
             .client
             .apply_agent_event(node::harness::AgentEvent::AgentUp {
-                agent: child.clone(),
+                agent: agent.clone(),
             })
             .await;
-
-        let guard = self.runtime().await;
-        let runtime = guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = runtime.client_channel.clone();
-        drop(guard);
-        let mut client = wire::client_service_client(channel);
-        let response = client
-            .delete_agent(wire::ClientDeleteAgentRequest {
-                agent: Some(wire::AgentRef {
-                    identifier: Some(wire::agent_ref::Identifier::AgentId(
-                        parent.id.as_bytes().to_vec(),
-                    )),
-                }),
-                caller_agent_id: None,
-            })
-            .await
-            .expect("local parent deletion succeeds despite route loss")
-            .into_inner();
-
-        assert!(response.removed_children.is_empty());
-        let unreachable = response
-            .unreachable_children
-            .into_iter()
-            .map(|agent| node::harness::agent_from_wire(agent).expect("unreachable child decodes"))
-            .collect::<Vec<_>>();
-        assert_eq!(unreachable.len(), 1);
-        assert_eq!(unreachable[0].id, child.id);
-        assert!(
-            !parts
-                .client
-                .list_agents()
-                .await
-                .iter()
-                .any(|agent| agent.id == parent.id)
-        );
     }
 
-    /// Registers a process-free Claude child, delivers a scripted Stop hook,
-    /// and observes the resulting lifecycle messages in the parent's own echo
-    /// stream. `parent_owner` may be this daemon or a paired remote daemon.
-    pub async fn claude_completion_reaches_parent(
-        &self,
-        parent_owner: &Daemon,
-        parent: &Agent,
-        last_assistant_message: &str,
-    ) {
-        assert_eq!(parent.host_id, parent_owner.host_id());
+    /// Registers a process-free Claude child with a possibly remote parent.
+    pub async fn register_scripted_claude_child(&self, parent: &Agent) -> Agent {
         let child_id = Uuid::new_v4();
         let parts = self
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let child = agent_runtime::test_support::register_scripted_claude(
+        agent_runtime::test_support::register_scripted_claude(
             parts.agent_host.as_ref(),
             CreateAgentRequest {
                 agent_id: child_id,
@@ -844,21 +617,19 @@ impl Daemon {
             },
         )
         .await
-        .unwrap_or_else(|error| panic!("register scripted Claude child: {error}"));
+        .unwrap_or_else(|error| panic!("register scripted Claude child: {error}"))
+    }
 
-        let parent_name = parent
-            .name
-            .as_deref()
-            .expect("the echo parent should have a name");
-        let client = parent_owner.admin_client().await;
-        let mut stream = client
-            .subscribe_session(node::SubscribeSessionRequest {
-                agent: parent.id.into(),
-                args: model::SessionArgs::TestEchoV1,
-            })
+    /// Delivers a scripted Claude Stop hook for a local child.
+    pub async fn deliver_scripted_claude_completion(
+        &self,
+        child: &Agent,
+        last_assistant_message: &str,
+    ) {
+        let parts = self
+            .try_parts()
             .await
-            .unwrap_or_else(|error| panic!("subscribe to echo parent '{parent_name}': {error}"));
-
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let payload = serde_json::to_vec(&serde_json::json!({
             "hook_event_name": "Stop",
             "session_id": Uuid::new_v4(),
@@ -870,270 +641,21 @@ impl Daemon {
         .expect("scripted Stop hook serializes");
         agent_runtime::test_support::deliver_scripted_hook(
             parts.agent_host.as_ref(),
-            child_id,
+            child.id,
             payload,
         )
         .await
         .unwrap_or_else(|error| panic!("deliver scripted Stop hook: {error}"));
-
-        let completed = echoed_envelope(&mut stream, parent_name, "a completed message").await;
-        assert_parent_lifecycle_envelope(
-            &completed,
-            &child,
-            model::envelope::EnvelopeKind::Completed,
-            last_assistant_message,
-        );
-
-        agent_runtime::test_support::end_scripted_session(parts.agent_host.as_ref(), child_id)
-            .await;
-        let exited = echoed_envelope(&mut stream, parent_name, "an exited message").await;
-        assert_parent_lifecycle_envelope(
-            &exited,
-            &child,
-            model::envelope::EnvelopeKind::Exited,
-            "",
-        );
     }
 
-    /// Asserts that the daemon rejects an agent-authored message when the
-    /// claimed sender is not one of its live local agents. Sender identity is
-    /// resolved before delivery, so the unavailable carrier implementation
-    /// cannot mask this authority check.
-    pub async fn refuses_unknown_message_sender(&self, recipient: &str) {
-        let guard = self.runtime().await;
-        let runtime = guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = runtime.client_channel.clone();
-        drop(guard);
-        let mut client = wire::client_service_client(channel);
-        let error = client
-            .send_message(wire::ClientSendMessageRequest {
-                to: Some(wire::AgentRef {
-                    identifier: Some(wire::agent_ref::Identifier::Name(recipient.to_string())),
-                }),
-                text: "must not be delivered".to_string(),
-                context: None,
-                from_agent_id: Some(Uuid::new_v4().as_bytes().to_vec()),
-            })
-            .await
-            .expect_err("an unknown sender must be refused");
-        assert_eq!(error.code(), tonic::Code::NotFound);
-    }
-
-    /// Sends a human-authored message through the local client service and
-    /// asserts that the recipient's own PTY output contains the authenticated
-    /// generic envelope unchanged.
-    pub async fn human_message_is_echoed(&self, recipient: &str, text: &str) {
-        let client = self.admin_client().await;
-        let mut stream = client
-            .subscribe_session(node::SubscribeSessionRequest {
-                agent: recipient.into(),
-                args: model::SessionArgs::TestEchoV1,
-            })
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' failed to subscribe to echo agent '{recipient}': {error}",
-                    self.name()
-                )
-            });
-        let envelope_id = client
-            .send_message(SendMessageRequest {
-                to: recipient.into(),
-                text: text.to_string(),
-                context: None,
-                from_agent_id: None,
-            })
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' failed to send a human message to '{recipient}': {error}",
-                    self.name()
-                )
-            });
-
-        let encoded = echoed_envelope(&mut stream, recipient, "a human message").await;
-
-        assert!(
-            encoded.starts_with("<amux "),
-            "test delivery uses the generic tag"
-        );
-        assert!(
-            encoded.contains("from=\"human\""),
-            "the echoed tag carries human provenance"
-        );
-        let parsed = model::envelope::parse(&encoded)
-            .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
-        assert_eq!(parsed.id, envelope_id);
-        assert_eq!(parsed.from, "human");
-        assert_eq!(parsed.from_id, None);
-        assert_eq!(parsed.from_kind, None);
-        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
-        assert_eq!(parsed.text, text);
-    }
-
-    /// Sends on behalf of a live agent owned by this daemon and asserts the
-    /// recipient's transcript carries only the identity the daemon resolved.
-    pub async fn agent_message_is_echoed(
-        &self,
-        recipient_owner: &Daemon,
-        sender: &Agent,
-        recipient: &Agent,
-        text: &str,
-    ) {
-        assert_eq!(sender.host_id, self.host_id());
-        assert_eq!(recipient.host_id, recipient_owner.host_id());
-
-        let assertion = format!(
-            "'{}' mirrors recipient {} from '{}'",
-            self.name(),
-            recipient.id,
-            recipient_owner.name()
-        );
-        eventually(
-            &assertion,
-            async || {
-                let Some(parts) = self.try_parts().await else {
-                    return false;
-                };
-                parts
-                    .client
-                    .list_agents()
-                    .await
-                    .iter()
-                    .any(|agent| agent.id == recipient.id)
-            },
-            self.failure_dump(),
-        )
-        .await;
-
-        let recipient_name = recipient
-            .name
-            .as_deref()
-            .expect("the echo recipient should have a name");
-        let client = recipient_owner.admin_client().await;
-        let mut stream = client
-            .subscribe_session(node::SubscribeSessionRequest {
-                agent: recipient.id.into(),
-                args: model::SessionArgs::TestEchoV1,
-            })
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' failed to subscribe to echo agent '{recipient_name}': {error}",
-                    recipient_owner.name()
-                )
-            });
-        let envelope_id = self
-            .admin_client()
-            .await
-            .send_message(SendMessageRequest {
-                to: recipient.id.into(),
-                text: text.to_string(),
-                context: None,
-                from_agent_id: Some(sender.id),
-            })
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' failed to send from agent '{}' to '{recipient_name}': {error}",
-                    self.name(),
-                    sender.name.as_deref().unwrap_or("<unnamed>")
-                )
-            });
-
-        let encoded = echoed_envelope(&mut stream, recipient_name, "an agent message").await;
-        let sender_name = sender
-            .name
-            .as_deref()
-            .expect("the echo sender should have a name");
-        assert!(
-            encoded.contains(&format!("from=\"{sender_name}/{}\"", sender.host_id)),
-            "the echoed tag carries the daemon-resolved name and host"
-        );
-        assert!(
-            encoded.contains(&format!("from-id=\"{}\"", sender.id)),
-            "the echoed tag carries the daemon-resolved agent id"
-        );
-        assert!(
-            encoded.contains(&format!("from-kind=\"{}\"", sender.kind.provider())),
-            "the echoed tag carries the daemon-resolved agent kind"
-        );
-        let parsed = model::envelope::parse(&encoded)
-            .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
-        assert_eq!(parsed.id, envelope_id);
-        assert_eq!(parsed.from, format!("{sender_name}/{}", sender.host_id));
-        assert_eq!(parsed.from_id, Some(sender.id));
-        assert_eq!(parsed.from_kind.as_deref(), Some(sender.kind.provider()));
-        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
-        assert_eq!(parsed.text, text);
-    }
-
-    /// Takes a recipient host offline after its agent was observed, then
-    /// restores that last inventory observation to reproduce a route loss
-    /// between target selection and remote dispatch. Human callers see the
-    /// failed delivery; live local agents retain fire-and-forget semantics.
-    pub async fn unreachable_recipient_message_policy(
-        &self,
-        recipient_owner: &Daemon,
-        sender: &Agent,
-        recipient: &Agent,
-    ) {
-        assert_eq!(sender.host_id, self.host_id());
-        assert_eq!(recipient.host_id, recipient_owner.host_id());
-
-        recipient_owner.stop().await;
+    /// Ends a local process-free Claude session.
+    pub async fn end_scripted_session(&self, child: &Agent) {
         let parts = self
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        parts
-            .client
-            .apply_agent_event(node::harness::AgentEvent::AgentUp {
-                agent: recipient.clone(),
-            })
+        agent_runtime::test_support::end_scripted_session(parts.agent_host.as_ref(), child.id)
             .await;
-
-        let guard = self.runtime().await;
-        let runtime = guard
-            .as_ref()
-            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let channel = runtime.client_channel.clone();
-        drop(guard);
-        let mut client = wire::client_service_client(channel);
-
-        let human_error = client
-            .send_message(wire::ClientSendMessageRequest {
-                to: Some(wire::AgentRef {
-                    identifier: Some(wire::agent_ref::Identifier::AgentId(
-                        recipient.id.as_bytes().to_vec(),
-                    )),
-                }),
-                text: "unreachable human message".to_string(),
-                context: None,
-                from_agent_id: None,
-            })
-            .await
-            .expect_err("a human sender must observe an unreachable recipient host");
-        assert_eq!(human_error.code(), tonic::Code::Unavailable);
-
-        let response = client
-            .send_message(wire::ClientSendMessageRequest {
-                to: Some(wire::AgentRef {
-                    identifier: Some(wire::agent_ref::Identifier::AgentId(
-                        recipient.id.as_bytes().to_vec(),
-                    )),
-                }),
-                text: "unreachable agent message".to_string(),
-                context: None,
-                from_agent_id: Some(sender.id.as_bytes().to_vec()),
-            })
-            .await
-            .expect("an agent sender drops an unreachable fire-and-forget message")
-            .into_inner();
-        Uuid::from_slice(&response.envelope_id)
-            .expect("the dropped response retains a valid envelope id");
     }
 
     /// Assertion: `agent_name` (eventually) appears in the inventory `other`
@@ -1413,20 +935,6 @@ async fn echoed_envelope(
     }
 }
 
-fn assert_parent_lifecycle_envelope(
-    encoded: &str,
-    child: &Agent,
-    kind: model::envelope::EnvelopeKind,
-    text: &str,
-) {
-    let parsed = model::envelope::parse(encoded)
-        .unwrap_or_else(|error| panic!("parent lifecycle envelope did not parse: {error}"));
-    assert_eq!(parsed.from_id, Some(child.id));
-    assert_eq!(parsed.from_kind.as_deref(), Some("claude"));
-    assert_eq!(parsed.kind, kind);
-    assert_eq!(parsed.text, text);
-}
-
 /// A live routed echo session opened by [`Daemon::attach`]. Input sent with
 /// [`Self::send`] is echoed straight back; [`Self::expect_output`] waits
 /// (bounded) for the echo to arrive across the tunnel.
@@ -1438,6 +946,11 @@ pub struct EchoSession {
 }
 
 impl EchoSession {
+    /// Waits for and returns the next complete authenticated message envelope.
+    pub async fn expect_envelope(&mut self, description: &str) -> String {
+        echoed_envelope(&mut self.stream, &self.agent_name, description).await
+    }
+
     /// The existing subscription must close; opening a fresh call is no proof
     /// that an already accepted stream was torn down.
     pub async fn expect_disconnect(mut self) {

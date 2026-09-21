@@ -41,18 +41,20 @@ pub mod user_state;
 pub mod harness {
     pub use crate::agents::{AgentEvent, Protocol, SendInputRequest, agent_from_wire};
     pub use crate::auth::AuthError;
-    pub use crate::auth::jwt::relay_rejects_test_token_without_tier;
+    pub use crate::auth::claims::ConnectionClaims;
+    pub use crate::auth::jwt::{JwtError, JwtValidator};
     pub use crate::config::{Config, LanConfig};
     pub use crate::connection::ConnectionManager;
     pub use crate::identity::{
         DeviceIdentity, QUIC_ALPN, device_key_path, ed25519_public_key_from_certificate,
         load_or_create_device_identity_in,
     };
+    pub use crate::link::run::{LinkAuthSession, ReauthError};
     pub use crate::routing::{
         AuthenticatedLinkUser, Capabilities, ConnectRole, Host, HostEntry, HostTrustStatus,
         HostVia, LinkCarrier, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
         LinkRole, LinkTokenAuthenticator, Route, RoutingCore, RoutingEvent, host_to_wire,
-        link_reauth_tier_probe, spawn_connector_with_establishment,
+        spawn_connector_with_establishment,
     };
     pub use crate::server::{ShutdownReason, TLS_HANDSHAKE_TIMEOUT};
     pub use crate::services::{

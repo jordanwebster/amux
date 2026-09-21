@@ -3,13 +3,15 @@
 //! the already-established link.
 
 use node::{PairingError, ProtocolError, Tier};
-use testnet::{TestNet, Via, link_tier_across_reauth, relay_refuses_token_without_tier};
+use testnet::{TestNet, Via};
+
+use crate::entitlement_support::{link_tier_across_reauth, relay_rejects_token_without_tier};
 
 /// The relay fails closed when a signed token omits the entitlement claim;
 /// accepting such a token would silently grant an undefined account tier.
 #[tokio::test]
 async fn a_token_without_a_tier_is_refused_at_the_relay() {
-    assert!(relay_refuses_token_without_tier().await);
+    assert!(relay_rejects_token_without_tier().await);
 }
 
 /// Entitlement is live link state rather than handshake-only metadata, so a

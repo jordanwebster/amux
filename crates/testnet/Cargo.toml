@@ -76,6 +76,7 @@ libc = { workspace = true }
 claude-specs = { path = "../claude-specs" }
 codex-specs = { path = "../codex-specs" }
 gethostname = { workspace = true }
+jsonwebtoken = { workspace = true }
 redaction = { workspace = true }
 
 [[test]]

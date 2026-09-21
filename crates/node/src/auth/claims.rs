@@ -3,17 +3,17 @@ use serde::Deserialize;
 
 /// Claims from a cloud routing connection token.
 #[derive(Debug, Deserialize)]
-pub(crate) struct ConnectionClaims {
+pub struct ConnectionClaims {
     /// User ID (subject).
-    pub(crate) sub: String,
+    pub sub: String,
     /// Auth client that requested the cloud connection token.
-    pub(crate) client_id: String,
+    pub client_id: String,
     /// Expected host this token is for.
-    pub(crate) host: String,
+    pub host: String,
     /// Expected port this token is for.
-    pub(crate) port: u16,
+    pub port: u16,
     /// Expiration time as seconds since Unix epoch.
-    pub(crate) exp: u64,
+    pub exp: u64,
     /// Relay entitlement carried by this token.
-    pub(crate) tier: Tier,
+    pub tier: Tier,
 }
