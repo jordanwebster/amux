@@ -1,3 +1,17 @@
+2026-09-21 — **Distinguish native pixel rounding from visual regressions.**
+Component snapshots permit one 8-bit level per channel after an exact mismatch,
+preserving failure attachments and rejecting even a single larger difference.
+The CI permission-panel failure was two red-channel values one level apart;
+no baselines were refreshed. Comparator loops use fixed-size array chunks to
+pass the pinned Clippy policy. Installation-startup timeouts now include child
+stderr, and CI retains E2E command transcripts with failure diagnostics so a
+temporary test directory cannot erase the evidence. Startup deadlines remain
+unchanged pending a reproduced cause for the Linux login timeout.
+The focused login behavior passed on macOS and Linux ARM; this does not
+establish the cause of the CI timeout. The 56 component images, explicit
+rounding-boundary tests, visible-change negative control and workspace lint
+pass without replacing a baseline.
+
 2026-09-20 — **Put native visual variations behind fast component tests.**
 The Debug component catalogue renders 28 typed states of production controls,
 asks, composer, facts and status views. Its Xcode gallery and separate hosted

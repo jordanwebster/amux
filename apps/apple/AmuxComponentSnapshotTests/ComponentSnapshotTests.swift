@@ -179,15 +179,17 @@ final class ComponentSnapshotTests: XCTestCase {
             UITraitCollection(userInterfaceStyle: appearance.interfaceStyle),
             UITraitCollection(accessibilityContrast: .normal),
         ])
+        var strategy: Snapshotting<UIViewController, UIImage> = .image(
+            drawHierarchyInKeyWindow: true,
+            precision: 1,
+            perceptualPrecision: 1,
+            size: example.canvas,
+            traits: traits
+        )
+        strategy.diffing = RoundingImageDiff.allowingChannelRounding(strategy.diffing)
         let failure = verifySnapshot(
             of: controller,
-            as: .image(
-                drawHierarchyInKeyWindow: true,
-                precision: 1,
-                perceptualPrecision: 1,
-                size: example.canvas,
-                traits: traits
-            ),
+            as: strategy,
             named: "\(example.id).\(appearance.name)",
             record: recording ? .all : .never,
             file: #filePath,

@@ -305,7 +305,7 @@ fn read_png(path: &Path) -> Result<Image, GoldenError> {
         buffer
     } else {
         let mut pixels = Vec::with_capacity((info.width * info.height * 4) as usize);
-        for chunk in buffer.chunks_exact(3) {
+        for chunk in buffer.as_chunks::<3>().0 {
             pixels.extend_from_slice(chunk);
             pixels.push(255);
         }
@@ -381,8 +381,10 @@ pub fn diff(
     let mut differences = Vec::new();
     for (index, (expected, actual)) in baseline
         .pixels
-        .chunks_exact(4)
-        .zip(taken.pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(taken.pixels.as_chunks::<4>().0)
         .enumerate()
     {
         if expected == actual {
@@ -408,7 +410,7 @@ pub fn diff(
             height: taken.height,
             pixels: taken.pixels,
         };
-        for (index, pixel) in marked.pixels.chunks_exact_mut(4).enumerate() {
+        for (index, pixel) in marked.pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x, y) = (index as u32 % taken.width, index as u32 / taken.width);
             if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
                 pixel[0] /= 4;
@@ -1060,7 +1062,7 @@ mod tests {
             let baseline = read_png(&path).expect("the committed image");
             let tolerated = room.path().join(format!("{id}.png"));
             let mut pixels = baseline.pixels.clone();
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 pixel[0] = pixel[0].saturating_add(1);
             }
             write_png(&tolerated, &Image { pixels, ..baseline }).expect("a tolerated image");

@@ -1490,6 +1490,9 @@ impl Executor {
 
         if let Some(directory) = &self.config.transcript_dir {
             std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+            if let Err(error) = &result {
+                transcript.push_str(&format!("\nError: {error}\n"));
+            }
             transcript.push_str(&format!(
                 "\nResult: {}\n",
                 if result.is_ok() { "PASS" } else { "FAIL" }

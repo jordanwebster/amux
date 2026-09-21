@@ -124,10 +124,12 @@ pub async fn spawn(config: &InstallationConfig, executable: &Path) -> Result<Fro
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        Err(anyhow!(
+        let mut message = format!(
             "installation did not start within 10s; inspect {}",
             stderr_path.display()
-        ))
+        );
+        crate::client_common::append_startup_stderr(&mut message, &stderr_path);
+        Err(anyhow!(message))
     }
     .await;
     if result.is_err() {

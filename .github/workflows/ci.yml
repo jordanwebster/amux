@@ -105,7 +105,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - name: Run end-to-end tests
+        env:
+          E2E_TRANSCRIPT_DIR: target/e2e-transcripts
         run: just e2e
+      - name: Upload end-to-end command transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-transcripts-${{ matrix.os }}
+          path: target/e2e-transcripts
+          if-no-files-found: warn
+          retention-days: 7
 
   embedded:
     name: Embedded client

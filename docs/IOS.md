@@ -298,10 +298,13 @@ report the rendering/comparison batch. Keep startup in comparisons of actual
 developer workflows.
 
 Component snapshots use Point-Free's SnapshotTesting, with pinned Xcode/iOS,
-fixed canvas, traits, locale and time zone. Their in-process images are not
-authoritative for compositor glass, system chrome, keyboards, scrolling or
+fixed canvas, traits, locale and time zone. Comparisons permit at most one
+8-bit level per channel for rasterizer rounding; even one pixel with a larger
+difference fails. Baselines are not rewritten to accommodate rounding.
+Their in-process images are not authoritative for compositor glass, system
+chrome, keyboards, scrolling or
 whole-screen layering. Those responsibilities stay with full-screen goldens
-and journeys; exact component pixels are not evidence of interaction behavior.
+and journeys; matching component pixels are not evidence of interaction behavior.
 
 ### Full-screen captures
 
