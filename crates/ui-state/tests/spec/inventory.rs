@@ -408,7 +408,7 @@ fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
             "a closed conversation is not open: {on} readonly={readonly}"
         );
         assert!(
-            matches!(released.as_slice(), [Effect::CloseStream { agent: closed }] if *closed == agent.id),
+            matches!(released.as_slice(), [Effect::CloseLegacyStream { agent: closed }] if *closed == agent.id),
             "the stream nobody asked for any more stays open: {released:?}"
         );
         assert!(model.stream(agent.id).is_none());

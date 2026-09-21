@@ -101,7 +101,7 @@ fn snapshot_epoch_separates_catchup_from_live() {
 }
 
 /// A stream pruned at the epoch barrier still has a shell task behind it:
-/// the prune emits `CloseStream` so the task is released, not orphaned to
+/// the prune emits `CloseLegacyStream` so the task is released, not orphaned to
 /// keep sending stale events across reconnects.
 #[test]
 fn epoch_prune_emits_close_stream_for_dropped_streams() {
@@ -117,7 +117,7 @@ fn epoch_prune_emits_close_stream_for_dropped_streams() {
     assert!(
         effects.iter().any(|effect| matches!(
             effect,
-            Effect::CloseStream { agent } if *agent == agent_id("first-life-a")
+            Effect::CloseLegacyStream { agent } if *agent == agent_id("first-life-a")
         )),
         "the prune must release the shell's stream task: {effects:?}"
     );

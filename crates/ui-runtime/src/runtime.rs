@@ -1782,6 +1782,11 @@ impl Runtime {
                     stream.task.abort();
                 }
             }
+            Effect::CloseLegacyStream { agent } => {
+                if let Some(task) = self.streams.remove(&agent) {
+                    task.abort();
+                }
+            }
             Effect::RequestDump { reason } => {
                 if let Err(error) = self.report(reason.clone()) {
                     tracing::warn!(?reason, %error, "failed to write requested report");
@@ -4597,6 +4602,34 @@ mod tests {
                 .maintenance_runs(),
             1,
             "idle polling must not repeat maintenance inside the hour"
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_inventory_reader_keeps_open_conversation_reader() {
+        let agent = AgentId::from_u128(597);
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions::default(),
+        );
+        runtime
+            .streams
+            .insert(agent, tokio::spawn(std::future::pending()));
+        let (paused, _paused_rx) = watch::channel(false);
+        runtime.store_streams.insert(
+            agent,
+            StoreStreamTask {
+                task: tokio::spawn(std::future::pending()),
+                paused,
+            },
+        );
+
+        runtime.run_effect(Effect::CloseLegacyStream { agent });
+
+        assert!(!runtime.streams.contains_key(&agent));
+        assert!(
+            runtime.store_streams.contains_key(&agent),
+            "inventory removal must not race away the conversation's terminal close"
         );
     }
 

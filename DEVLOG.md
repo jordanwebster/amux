@@ -1,3 +1,12 @@
+2026-09-21 — **Let terminal conversation facts outrun inventory removal.**
+Removing an agent from inventory now closes only the legacy structured reader;
+an open stored conversation keeps its independent subscription until that
+stream delivers the authoritative terminal reason and exit code. Previously a
+shared close effect aborted both readers, so inventory winning the race could
+leave an already-open conversation blank even though the host sent its exit
+status. Reducer, runtime-ownership and projection regressions cover removal
+before terminal close.
+
 2026-09-21 — **Keep an open conversation truthful through exit and reset.**
 An exited agent still leaves the global fleet, while its open session projection
 retains the terminal phase and the phone keeps the last identity local to that

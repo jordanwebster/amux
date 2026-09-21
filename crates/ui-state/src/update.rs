@@ -122,7 +122,7 @@ fn release_stream(model: &mut Model, agent_id: crate::AgentId) -> Option<Effect>
     let stream = model.streams.remove(&agent_id)?;
     refresh_attention(model, agent_id);
     (!matches!(stream.phase, StreamPhase::Closed { .. }))
-        .then_some(Effect::CloseStream { agent: agent_id })
+        .then_some(Effect::CloseLegacyStream { agent: agent_id })
 }
 
 fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> {
@@ -1112,7 +1112,7 @@ fn close_stream(model: &mut Model, id: model::AgentId) -> Vec<Effect> {
     if let Some(stream) = model.streams.remove(&id)
         && !matches!(stream.phase, StreamPhase::Closed { .. })
     {
-        return vec![Effect::CloseStream { agent: id }];
+        return vec![Effect::CloseLegacyStream { agent: id }];
     }
     Vec::new()
 }
@@ -1183,7 +1183,7 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
         if let Some(stream) = model.streams.remove(&id)
             && !matches!(stream.phase, StreamPhase::Closed { .. })
         {
-            effects.push(Effect::CloseStream { agent: id });
+            effects.push(Effect::CloseLegacyStream { agent: id });
         }
     }
     effects
@@ -1205,7 +1205,7 @@ fn forget_remembered(model: &mut Model, disproved: impl Fn(&AgentCard) -> bool) 
         if let Some(stream) = model.streams.remove(&id)
             && !matches!(stream.phase, StreamPhase::Closed { .. })
         {
-            effects.push(Effect::CloseStream { agent: id });
+            effects.push(Effect::CloseLegacyStream { agent: id });
         }
     }
     effects

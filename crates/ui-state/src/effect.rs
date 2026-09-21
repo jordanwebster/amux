@@ -61,8 +61,14 @@ pub enum Effect {
         /// still active across a transport reconnect.
         paused: bool,
     },
-    /// Close a previously opened stream.
+    /// Close both readers owned by an open conversation.
     CloseStream { agent: AgentId },
+    /// Close only the legacy structured reader.
+    ///
+    /// Inventory can remove an exited agent before the independent stored
+    /// conversation reader receives its terminal close. That reader must stay
+    /// alive long enough to retain the exit code with the open conversation.
+    CloseLegacyStream { agent: AgentId },
     /// Stop reading a chat stream while the store commit queue is over its
     /// byte budget. The subscription remains owned by the runtime.
     PauseStream(AgentId),

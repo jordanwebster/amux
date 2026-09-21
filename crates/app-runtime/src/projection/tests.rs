@@ -492,6 +492,10 @@ fn mobile_projection_retains_exit_status_for_an_open_conversation() {
     );
     update(
         &mut model,
+        Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
+    );
+    update(
+        &mut model,
         Msg::ChatStream {
             agent: AGENT,
             attempt: stream,
@@ -500,10 +504,6 @@ fn mobile_projection_retains_exit_status_for_an_open_conversation() {
                 reason: ui_state::StreamCloseReason::AgentExited { exit_code: Some(7) },
             },
         },
-    );
-    update(
-        &mut model,
-        Msg::Server(ServerMsg::AgentRemoved { id: AGENT }),
     );
 
     let events = collect(&mut subscribed(), &model);
