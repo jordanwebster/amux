@@ -2,13 +2,13 @@ version = 1
 
 [[suite]]
 name = "desktop-cli-system"
-contract = "The built CLI preserves profile isolation, MCP routing, and pairing output across real process boundaries."
+contract = "The built CLI preserves profile isolation, lifecycle, attachment, routing, and terminal behavior across real process boundaries."
 paths = ["crates/amux/tests"]
 recipe = "just test -- -p amux"
 boundary = "System composition"
 oracle = "Exact process output, exit status, persisted configuration, and service observations."
 real = ["processes", "Unix sockets", "temporary files"]
-substituted = ["cloud account", "provider"]
+substituted = ["external cloud account", "provider where scripted"]
 time = "real"
 capabilities = ["desktop", "Unix for process integration targets"]
 lane = "fast"
@@ -17,7 +17,7 @@ update = ""
 cargo = [
   { package = "amux", kind = "lib", targets = ["amux"], features = ["bundled"] },
   { package = "amux", kind = "bin", targets = ["amux"], features = ["bundled"] },
-  { package = "amux", targets = ["config_split", "mcp_route_isolation", "pairing_output"], features = ["bundled"] },
+  { package = "amux", targets = ["config_split", "mcp_route_isolation", "pairing_output", "process"], features = ["bundled"] },
 ]
 
 [[suite]]
@@ -177,6 +177,7 @@ cargo = [
   { package = "host-api", kind = "lib", targets = ["host_api"], features = [] },
   { package = "node", kind = "lib", targets = ["node"], features = [] },
   { package = "node-test-support", kind = "lib", targets = ["node_test_support"], features = [] },
+  { package = "node-test-support", kind = "bin", targets = ["account-fixture"], features = [] },
   { package = "settings", kind = "lib", targets = ["settings"], features = [] },
   { package = "wire", kind = "lib", targets = ["wire"], features = [] },
   { package = "test-agent", kind = "bin", targets = ["test-agent"], features = [] },
@@ -729,7 +730,7 @@ journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review"
 [[suite]]
 name = "terminal-journeys"
 contract = "A person completes declared terminal stories through the real TUI and production installation front door against a served topology."
-paths = ["scripts/journeys/terminal.py", "scripts/terminal-journey.py", "journeys/goldens/terminal"]
+paths = ["scripts/journeys/terminal.py", "scripts/terminal-journey.py", "journeys/manifest.json", "journeys/topologies/terminal-migration.json", "journeys/goldens/terminal"]
 recipe = "just journey terminal conversation-decision-claude-pty"
 boundary = "Journeys"
 oracle = "Door observations, exact terminal text and semantic styles, cache contents, process exits, and teardown."
@@ -741,7 +742,7 @@ lane = "journey"
 evidence = "target/journeys"
 update = "UPDATE_JOURNEY_GOLDENS=1 just journey terminal conversation-decision-claude-pty"
 journey_manifest = "journeys/manifest.json"
-journeys = ["conversation-decision-claude-pty", "leave-and-recover"]
+journeys = ["conversation-decision-claude-pty", "leave-and-recover", "reach-host", "authority-boundaries", "agent-lifecycle", "second-attach"]
 
 [[suite]]
 name = "phone-goldens"

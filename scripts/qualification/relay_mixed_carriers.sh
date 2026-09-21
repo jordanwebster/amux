@@ -1,11 +1,11 @@
 #!/bin/sh
 # Smoke the real debug relay binary with one QUIC client and one TCP fallback.
-# Usage: timeout 900 e2e-tests/relay_quic_smoke.sh SCRATCH_PARENT
+# Usage: timeout 900 scripts/qualification/relay_mixed_carriers.sh SCRATCH_PARENT
 set -eu
 
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 amux_bin=$repo_root/target/debug/amux
-fixture_bin=$repo_root/target/debug/e2e-runner
+fixture_bin=$repo_root/target/debug/account-fixture
 test_agent_bin=$repo_root/target/debug/test-agent
 scratch_parent=${1:?scratch parent is required}
 evidence_dir=$repo_root/.autopilot/evidence/relay
@@ -83,10 +83,9 @@ b_port=${remaining#* }
 
 fixture_state=$scratch/cloud-fixture
 mkdir -p "$fixture_state"
-timeout 600 "$fixture_bin" free-tier-fixture \
+timeout 600 "$fixture_bin" \
   --state-dir "$fixture_state" \
-  --relay-port "$relay_port" \
-  --amux-binary "$amux_bin" > "$scratch/identity.log" 2>&1 &
+  --relay-port "$relay_port" > "$scratch/identity.log" 2>&1 &
 fixture_pid=$!
 
 wait_file() {

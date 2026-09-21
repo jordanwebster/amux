@@ -1,11 +1,11 @@
 #!/bin/sh
 # Live inventory and fleet proof using the operator's Claude login. No prompts are sent.
-# Usage: timeout 900 e2e-tests/claude_driver_config.sh [evidence-directory]
+# Usage: timeout 900 scripts/qualification/claude_driver_configuration.sh [evidence-directory]
 set -eu
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 live_name=config
-# shellcheck source=e2e-tests/live_common.sh
-. "$repo_root/e2e-tests/live_common.sh"
+# shellcheck source=scripts/qualification/live.sh
+. "$repo_root/scripts/qualification/live.sh"
 out=${1:-$repo_root/.autopilot/evidence/live/config}
 [ ! -e "$out/transcript.txt" ] || { printf 'Use a fresh evidence directory: %s\n' "$out" >&2; exit 1; }
 live_init "$out"

@@ -3,10 +3,10 @@
 # Claude installation, but isolates Claude settings and all amux state below a
 # temporary directory.
 #
-# Usage: e2e-tests/user_hooks_live.sh [evidence-directory]
+# Usage: scripts/qualification/claude_sdk_preserves_user_hooks.sh [evidence-directory]
 set -eu
 
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 amux_bin=${AMUX_BIN:-"$repo_root/target/debug/amux"}
 evidence_arg=${1:-"$repo_root/.autopilot/evidence/live/user-hooks"}
 case "$evidence_arg" in

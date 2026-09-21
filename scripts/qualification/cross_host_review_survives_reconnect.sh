@@ -6,10 +6,10 @@
 # root; Claude's own transcript remains in its normal project history, as it
 # does for the other opt-in live harnesses.
 #
-# Usage: e2e-tests/attachments_cross_host.sh [evidence-directory]
+# Usage: scripts/qualification/cross_host_review_survives_reconnect.sh [evidence-directory]
 set -eu
 
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 amux_bin=${AMUX_BIN:-"$repo_root/target/debug/amux"}
 evidence_arg=${1:-"$repo_root/.autopilot/evidence/live/review-cross-host"}
 case "$evidence_arg" in
@@ -502,7 +502,7 @@ diff, and opened both comments again.
 
 ## Replay
 
-\`timeout 1800 e2e-tests/attachments_cross_host.sh .autopilot/evidence/live/review-cross-host\`
+\`timeout 1800 scripts/qualification/cross_host_review_survives_reconnect.sh .autopilot/evidence/live/review-cross-host\`
 
 This is an opt-in live capture: it uses the operator's logged-in Claude Code
 installation. The script isolates amux state under a private temporary root

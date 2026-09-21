@@ -151,7 +151,7 @@ shot *ARGS:
 # Run one declared journey through its real client.
 journey CLIENT NAME:
     test "{{CLIENT}}" = terminal
-    {{bounded}} 900 cargo build --locked -p amux -p testnet --bins {{desktop_features}}
+    {{bounded}} 900 cargo build --locked -p amux -p test-agent -p testnet --bins {{desktop_features}}
     {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
 
 # Generate and verify the complete TUI evidence bundle.

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import select
 import shlex
 import shutil
@@ -22,6 +23,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[2]
 AMUX = ROOT / "target/debug/amux"
 TESTNET = ROOT / "target/debug/testnet"
+TEST_AGENT = ROOT / "target/debug/test-agent"
 MANIFEST = ROOT / "journeys/manifest.json"
 OUTPUT = ROOT / "target/journeys"
 GOLDENS = ROOT / "journeys/goldens/terminal"
@@ -76,13 +78,33 @@ def _read_readiness(process: subprocess.Popen[bytes], timeout: float = 60.0) -> 
 
 
 def _stable_frame(text: str, styles: str) -> tuple[str, str]:
-    """Exclude the live turn clock without changing the captured geometry."""
+    """Exclude transient clocks and report paths without changing geometry."""
     text_rows = text.splitlines()
     style_rows = styles.splitlines()
     if len(text_rows) != len(style_rows):
         raise RuntimeError("captured frame text and semantic styles have different heights")
     marker = "─ turn · "
     for index, row in enumerate(text_rows):
+        def stable_age(match: re.Match[str]) -> str:
+            width = len(match.group("age")) + len(match.group("space"))
+            return "<age>" + " " * (width - len("<age>"))
+
+        row = re.sub(
+            r"(?P<age>\d+(?:ms|s|m|h))(?P<space> {2,})(?=(?:idle|working|–))",
+            stable_age,
+            row,
+        )
+        text_rows[index] = row
+        report_marker = "✔ wrote "
+        if report_marker in row:
+            start = row.index(report_marker)
+            end = len(row) - 1
+            replacement = "✔ report written"
+            if end - start < len(replacement):
+                raise RuntimeError(f"report row is too narrow to normalize: {row!r}")
+            text_rows[index] = (
+                row[:start] + replacement + " " * (end - start - len(replacement)) + row[end:]
+            )
         if marker not in row:
             continue
         start = row.index(marker) + len(marker)
@@ -185,6 +207,25 @@ class TerminalJourney:
         self.actions.append(f"launch {name}: {command}")
         return name
 
+    def launch_agent(self, pane: str, agent: str) -> str:
+        command = " ".join(
+            [
+                "env",
+                "TERM=xterm-256color",
+                shlex.quote(str(AMUX)),
+                "--config",
+                shlex.quote(str(self.config)),
+                "new",
+                shlex.quote(str(TEST_AGENT)),
+                "--name",
+                shlex.quote(agent),
+            ]
+        )
+        held = command + "; status=$?; echo AMUX_EXIT_$status; sleep 120"
+        self.tmux("new-session", "-d", "-x", "120", "-y", "40", "-s", pane, "sh", "-c", held)
+        self.actions.append(f"launch {pane}: {command}")
+        return pane
+
     def capture(self, pane: str) -> str:
         return self.tmux("capture-pane", "-p", "-J", "-t", pane).stdout
 
@@ -223,7 +264,9 @@ class TerminalJourney:
 
     def open_chat(self, pane: str, agent: str) -> None:
         self.wait_terms(pane, agent)
+        self.keys(pane, "Escape")
         self.keys(pane, "/")
+        self.keys(pane, "C-u")
         self.type(pane, agent)
         self.wait_terms(pane, f"> {agent}")
         self.keys(pane, "Escape")

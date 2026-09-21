@@ -227,6 +227,9 @@ pub enum Control {
         user: String,
         tier: node::Tier,
     },
+    RefreshEntitlement {
+        name: String,
+    },
     /// Eats or restores every direct UDP datagram involving a machine, which
     /// is the network a phone on a hotel connection is on.
     UdpBlocked {
@@ -371,6 +374,10 @@ pub const CONTROL_CAPABILITIES: &[ControlCapability] = &[
     ControlCapability {
         variant: "Tier",
         capability: "`TestNet::cloud_user_tier`",
+    },
+    ControlCapability {
+        variant: "RefreshEntitlement",
+        capability: "`Daemon::refresh_entitlement`",
     },
     ControlCapability {
         variant: "UdpBlocked",
@@ -1082,6 +1089,12 @@ async fn apply(
             // misspelled label would look like it worked.
             ensure!(users.contains(&user), "unknown user: {user}");
             net.cloud_user_tier(&user, tier);
+        }
+        Control::RefreshEntitlement { name } => {
+            let tier = daemon(&name)?.refresh_entitlement().await;
+            if let Reply::Ack { diagnostics, .. } = &mut reply {
+                *diagnostics = Some(serde_json::json!({ "tier": tier }));
+            }
         }
         Control::UdpBlocked {
             daemon: name,

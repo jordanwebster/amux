@@ -18,7 +18,9 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 mod latency;
+mod process_account;
 mod relay;
+pub use process_account::ProcessAccountFixture;
 pub use relay::{CloudRelay, RegisteredToken, Relay, RelayUser, TokenRegistry, UserTierRegistry};
 
 /// A caller-owned on-disk root for tests that allocate installation sockets.
@@ -36,7 +38,7 @@ pub fn short_installation_root() -> tempfile::TempDir {
 }
 
 /// Account entitlement returned by the fake identity service.
-#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
     Free,

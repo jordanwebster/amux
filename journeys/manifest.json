@@ -175,6 +175,34 @@
       "clients": ["terminal"],
       "topology": "journeys/topologies/terminal-stories.json",
       "claim": "A real terminal run creates cached fleet and chat state, a fresh client paints it while the daemon is offline with an unavailable composer, and the same chat reconciles when the daemon returns without losing or duplicating its rows."
+    },
+    {
+      "id": "reach-host",
+      "stage": 16,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-migration.json",
+      "claim": "The real terminal client reaches a second host over the declared network, opens its work, delivers one prompt, and renders the reply that host produced."
+    },
+    {
+      "id": "authority-boundaries",
+      "stage": 16,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-migration.json",
+      "claim": "A remote agent stays visible when relay entitlement is lost, the terminal refuses a write while access is unavailable, and restoring entitlement re-establishes the relay route and exposes the work again."
+    },
+    {
+      "id": "agent-lifecycle",
+      "stage": 16,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-migration.json",
+      "claim": "A real terminal agent is created and listed, its attached process is notified when the installation suspends, resume restores the same agent to the terminal fleet, and deletion removes it."
+    },
+    {
+      "id": "second-attach",
+      "stage": 16,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-migration.json",
+      "claim": "Two real terminal clients attach to one agent, both receive its replay and subsequent output, one detaches without ending the session, and the remaining resized client can leave and reopen the same conversation."
     }
   ]
 }

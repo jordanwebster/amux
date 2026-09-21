@@ -5,7 +5,7 @@
 # in can run this; it drives the production boundary (typing into the parent)
 # rather than any internal API, so what it proves is what a user would see.
 #
-# Usage: e2e-tests/a2a_acceptance.sh [result-file]
+# Usage: scripts/qualification/a2a_cross_kind_completion.sh [result-file]
 #   With a result-file, PASS/FAIL and the timestamp are written there.
 set -u
 

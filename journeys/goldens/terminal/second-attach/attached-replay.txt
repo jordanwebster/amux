@@ -1,0 +1,40 @@
+  shared-agent · claude @ remote-host                                                                       chat · idle 
+                                                                                                                        
+  ⚠ unrecognized row                                                                                                    
+    └ hook.user_prompt_submit                                                                                           
+                                                                                                                        
+▎   Show this to both terminals.                                                                                        
+                                                                                                                        
+    Both terminals received this reply.                                                                                 
+                                                                                                                        
+  ─ turn · <elapsed> ───────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+    ctx unknown                                                                                                         
+                                                                                                                        
+▎                                                                                                                       
+▎   Type a message▌                                                                                                     
+▎                                                                                                                       
+                                                                                                                        
+    enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 

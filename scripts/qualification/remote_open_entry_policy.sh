@@ -2,12 +2,12 @@
 # Two isolated identities paired over loopback LAN transport, using the
 # operator's Claude and Codex logins. Each Codex thread gets one small seed turn
 # so its own terminal has a persisted conversation to resume.
-# Usage: timeout 1500 e2e-tests/remote_open_live.sh [evidence-directory]
+# Usage: timeout 1500 scripts/qualification/remote_open_entry_policy.sh [evidence-directory]
 set -eu
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 live_name=remote-open
-# shellcheck source=e2e-tests/live_common.sh
-. "$repo_root/e2e-tests/live_common.sh"
+# shellcheck source=scripts/qualification/live.sh
+. "$repo_root/scripts/qualification/live.sh"
 live_init "${1:-$repo_root/.autopilot/evidence/live/remote-open}"
 for provider in claude codex; do
   command -v "$provider" >/dev/null 2>&1 || live_fail "$provider is required"

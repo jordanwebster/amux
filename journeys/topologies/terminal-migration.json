@@ -1,0 +1,38 @@
+{
+  "cloud_url": "https://amux.sh",
+  "users": ["personal"],
+  "daemons": [
+    {
+      "name": "terminal-host",
+      "user": "personal",
+      "installation": true,
+      "repository_roots": ["../.."]
+    },
+    {
+      "name": "remote-host",
+      "user": "personal",
+      "repository_roots": ["../.."]
+    }
+  ],
+  "paired": [["terminal-host", "remote-host", "Cloud"]],
+  "agents": [
+    {
+      "name": "reach-agent",
+      "daemon": "remote-host",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    },
+    {
+      "name": "authority-agent",
+      "daemon": "remote-host",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    },
+    {
+      "name": "shared-agent",
+      "daemon": "remote-host",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    }
+  ]
+}

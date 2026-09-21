@@ -8,12 +8,17 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 from journeys.terminal import AMUX, ROOT, TerminalJourney, story
 
 PROMPT = "Check the deployment once."
 RECOVERY_PROMPT = "Remember this recovery turn."
 RECOVERY_REPLY = "The recovery state is safely stored."
+REACH_PROMPT = "Open the remote work."
+REACH_REPLY = "The remote work is open."
+SHARED_PROMPT = "Show this to both terminals."
+SHARED_REPLY = "Both terminals received this reply."
 
 
 def prompts(rows: list[dict]) -> list[dict]:
@@ -83,6 +88,19 @@ def dump(config: Path, agent_id: str) -> str:
         timeout=30,
     )
     return result.stdout
+
+
+def run_amux(config: Path, *args: str) -> str:
+    result = subprocess.run(
+        [str(AMUX), "--config", str(config), *args],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
+    return result.stdout + result.stderr
 
 
 def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
@@ -160,6 +178,204 @@ def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
     ]
 
 
+def reach_host(journey: TerminalJourney, wrong: bool) -> list[str]:
+    pane = journey.launch("reach")
+    journey.open_chat(pane, "reach-agent")
+    journey.type(pane, REACH_PROMPT)
+    journey.keys(pane, "Enter")
+    observed = journey.wait_observation(
+        "reach-agent",
+        lambda rows: len(prompts(rows)) == 1
+        and prompts(rows)[0].get("text") == REACH_PROMPT,
+        "remote-host-received-prompt",
+    )
+    if wrong and observed:
+        raise RuntimeError("deliberately wrong reach-host expectation")
+    journey.request(
+        {
+            "AgentPlay": {
+                "agent": "reach-agent",
+                "steps": [{"Markdown": {"text": REACH_REPLY}}, "EndTurn"],
+            }
+        }
+    )
+    journey.wait_terms(pane, REACH_PROMPT, REACH_REPLY, "Type a message")
+    journey.frame(pane, "remote-work")
+    inventory = journey.request(
+        {"Inventory": {"daemon": "remote-host"}}, "remote-host-inventory"
+    )
+    if not any(item.get("name") == "reach-agent" for item in inventory["agents"]):
+        raise RuntimeError(f"remote host omitted reach-agent: {inventory!r}")
+    journey.stop_client(pane)
+    return [
+        "the real terminal opened work owned by the remote host",
+        "the remote provider observed exactly one prompt",
+        "the terminal rendered the remote reply and exited zero",
+    ]
+
+
+def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
+    pane = journey.launch("authority")
+    journey.open_chat(pane, "authority-agent")
+    before = journey.observe("authority-agent", "before-entitlement-loss")
+    journey.request(
+        {"UdpBlocked": {"daemon": "terminal-host", "blocked": True}}
+    )
+    journey.request({"UdpBlocked": {"daemon": "remote-host", "blocked": True}})
+    journey.request(
+        {"SeverDirect": {"a": "terminal-host", "b": "remote-host"}}
+    )
+    journey.request({"Tier": {"user": "personal", "tier": "free"}})
+    journey.request({"RefreshEntitlement": {"name": "terminal-host"}})
+    journey.request({"RefreshEntitlement": {"name": "remote-host"}})
+    unavailable = journey.wait(
+        pane,
+        lambda frame: "authority-agent" in frame
+        and any(
+            term in frame.lower()
+            for term in (
+                "subscription",
+                "unavailable",
+                "away",
+                "offline",
+                "send gated",
+                "session state unknown",
+            )
+        ),
+        "lost relay authority",
+        timeout=90,
+    )
+    if wrong and "deliberately absent authority state" not in unavailable:
+        raise RuntimeError("deliberately wrong authority expectation")
+    journey.frame(pane, "refused")
+    journey.type(pane, "this write must be refused")
+    journey.keys(pane, "Enter")
+    time.sleep(1.0)
+    refused = journey.observe("authority-agent", "after-refused-write")
+    if refused != before:
+        raise RuntimeError(f"authority loss delivered a refused write: {refused!r}")
+    journey.keys(pane, "C-u")
+
+    journey.request({"Tier": {"user": "personal", "tier": "pro"}})
+    journey.request({"RefreshEntitlement": {"name": "terminal-host"}})
+    journey.request({"RefreshEntitlement": {"name": "remote-host"}})
+    journey.request(
+        {"Connections": {"daemon": "terminal-host"}},
+        "connections-after-entitlement-restored",
+    )
+    journey.request(
+        {"DebugDump": {"daemon": "terminal-host", "verbose": False}},
+        "terminal-host-after-entitlement-restored",
+    )
+    journey.keys(pane, "C-a", "s")
+    journey.wait(
+        pane,
+        lambda frame: "┌ amux" in frame
+        and "authority-agent" in frame
+        and "1/3" in frame
+        and "Type a message" not in frame,
+        "fleet after authority restoration",
+        timeout=90,
+    )
+    journey.frame(pane, "restored")
+    journey.keys(pane, "q")
+    journey.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
+    return [
+        "lost entitlement kept the remote work visible but disabled its composer",
+        "the host observed no prompt from the refused write",
+        "restored entitlement re-established the relay route and exposed the remote work",
+    ]
+
+
+def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
+    owner = journey.launch_agent("lifecycle-owner", "lifecycle-agent")
+    journey.type(owner, "ready before suspend")
+    journey.keys(owner, "Enter")
+    journey.wait_terms(owner, "echo: ready before suspend")
+    pane = journey.launch("lifecycle")
+    journey.wait_terms(pane, "lifecycle-agent")
+    journey.frame(pane, "running")
+    suspended = run_amux(journey.config, "server", "suspend")
+    if "Suspended 1 agent(s)." not in suspended:
+        raise RuntimeError(f"unexpected suspend output: {suspended!r}")
+    journey.wait_terms(owner, "[server suspending]", "AMUX_EXIT_1")
+    journey.kill_client(pane)
+    resumed = run_amux(journey.config, "server", "resume")
+    if "Resumed 1 agent(s)." not in resumed:
+        raise RuntimeError(f"unexpected resume output: {resumed!r}")
+    pane = journey.launch("lifecycle-resumed")
+    journey.wait_terms(pane, "lifecycle-agent", timeout=90)
+    journey.frame(pane, "resumed")
+    removed = run_amux(journey.config, "rm", "lifecycle-agent", "--force")
+    if wrong and "deliberately not removed" not in removed:
+        raise RuntimeError("deliberately wrong lifecycle expectation")
+    journey.wait(
+        pane,
+        lambda frame: "lifecycle-agent" not in frame,
+        "agent removed from fleet",
+        timeout=90,
+    )
+    journey.frame(pane, "removed")
+    journey.keys(pane, "q")
+    journey.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
+    return [
+        "a real test-agent was created and visible in the terminal UI",
+        "installation suspend notified the attached process and resume restored it",
+        "deleting the resumed agent removed it from the terminal fleet",
+    ]
+
+
+def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
+    first = journey.launch("first")
+    second = journey.launch("second")
+    journey.open_chat(first, "shared-agent")
+    journey.open_chat(second, "shared-agent")
+    journey.type(first, SHARED_PROMPT)
+    journey.keys(first, "Enter")
+    journey.wait_observation(
+        "shared-agent",
+        lambda rows: len(prompts(rows)) == 1
+        and prompts(rows)[0].get("text") == SHARED_PROMPT,
+        "one-shared-prompt",
+    )
+    journey.request(
+        {
+            "AgentPlay": {
+                "agent": "shared-agent",
+                "steps": [{"Markdown": {"text": SHARED_REPLY}}, "EndTurn"],
+            }
+        }
+    )
+    journey.wait_terms(first, SHARED_PROMPT, SHARED_REPLY, "Type a message")
+    second_frame = journey.wait_terms(
+        second, SHARED_PROMPT, SHARED_REPLY, "Type a message"
+    )
+    if wrong and "deliberately missing replay" not in second_frame:
+        raise RuntimeError("deliberately wrong second-attach expectation")
+    journey.frame(second, "attached-replay")
+
+    journey.stop_client(first)
+    journey.tmux("resize-window", "-t", second, "-x", "96", "-y", "32")
+    journey.wait_terms(second, SHARED_REPLY)
+    journey.frame(second, "resized")
+    journey.keys(second, "C-a", "s")
+    journey.wait(
+        second,
+        lambda frame: "┌ amux" in frame and "Type a message" not in frame,
+        "fleet after detach",
+    )
+    selected = journey.wait_terms(second, "shared-agent")
+    journey.keys(second, "o" if "o chat" in selected else "Enter")
+    journey.wait_terms(second, SHARED_PROMPT, SHARED_REPLY, "Type a message")
+    journey.frame(second, "reopened")
+    journey.stop_client(second)
+    return [
+        "both real terminals received one prompt and its reply",
+        "the first terminal detached and exited without ending the session",
+        "the resized second terminal left and reopened the replayed conversation",
+    ]
+
+
 def main() -> int:
     args = sys.argv[1:]
     wrong = False
@@ -175,6 +391,14 @@ def main() -> int:
             assertions = conversation_decision(journey, wrong)
         elif declared["id"] == "leave-and-recover":
             assertions = leave_and_recover(journey, wrong)
+        elif declared["id"] == "reach-host":
+            assertions = reach_host(journey, wrong)
+        elif declared["id"] == "authority-boundaries":
+            assertions = authority_boundaries(journey, wrong)
+        elif declared["id"] == "agent-lifecycle":
+            assertions = agent_lifecycle(journey, wrong)
+        elif declared["id"] == "second-attach":
+            assertions = second_attach(journey, wrong)
         else:
             raise RuntimeError(f"terminal story has no scenario: {declared['id']}")
         journey.finish(assertions)

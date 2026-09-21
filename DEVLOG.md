@@ -1,3 +1,15 @@
+2026-09-22 — **Complete every legacy end-to-end migration replacement.**
+The migration map now records a finished disposition for all forty legacy
+workloads. CLI and operating-system behavior runs as Rust process integration
+tests against built binaries, including real terminals, daemon lifecycle,
+signals, child reaping, pipe backpressure, profile isolation, login and update.
+Four new terminal journeys cover reaching a host, authority loss and recovery,
+agent lifecycle and a second attachment through the real TUI. The free-tier
+account service is reusable test support, and the operator-only live scripts
+now live under `scripts/qualification`. All six terminal journeys pass from a
+clean state, the account fixture builds and tests, and the test catalogue and
+migration-map checks pass.
+
 2026-09-21 — **Put shared network fixtures behind a test-only boundary.**
 Identity accounts, the short installation root and the fully capable cloud
 relay now live in `node-test-support`. Node sees that crate only while its

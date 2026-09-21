@@ -1,0 +1,40 @@
+┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ /                                                                                                        4 agents    │
+│                                                                                                                      │
+│ ▎ – lifecycle-agent       test-ag… terminal-host ·di… <age> –                                                        │
+│     shared-agent          claude   remote-host ·relay <age> idle                                                     │
+│     authority-agent       claude   remote-host ·relay <age> idle                                                     │
+│     reach-agent           claude   remote-host ·relay <age> idle                                                     │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ ● connected · 2 hosts  enter raw attach  n new  r rename  d delete  q quit  ? help                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

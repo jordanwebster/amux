@@ -1,12 +1,12 @@
 #!/bin/sh
 # Opt-in live Claude conversation, asks and family capture. Uses the operator's
 # login and real inference. Run serially with the other live harnesses.
-# Usage: timeout 1500 e2e-tests/sdk_chat_live.sh [evidence-directory]
+# Usage: timeout 1500 scripts/qualification/claude_sdk_chat.sh [evidence-directory]
 set -eu
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 live_name=sdk-chat
-# shellcheck source=e2e-tests/live_common.sh
-. "$repo_root/e2e-tests/live_common.sh"
+# shellcheck source=scripts/qualification/live.sh
+. "$repo_root/scripts/qualification/live.sh"
 # Refuse stale frames from a previous attempt: a failed replay must never look
 # complete because a later step's capture survived from another run.
 out=${1:-$repo_root/.autopilot/evidence/live/sdk-chat}

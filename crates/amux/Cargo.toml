@@ -57,8 +57,14 @@ gethostname = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
+hyper-util = { workspace = true }
 node = { workspace = true }
+node-test-support = { workspace = true }
+pty-host = { workspace = true }
 testnet = { workspace = true }
 tempfile = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
 ratatui = { workspace = true }
 vt100 = "0.15"
