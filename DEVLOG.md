@@ -1,3 +1,11 @@
+2026-09-21 — **Make served controls prove their harness parity.**
+Every control variant now has one code-owned mapping to the in-process
+capability it invokes, including composed operations and host-only effects.
+The enum and both rendered documentation tables are checked against that
+mapping. Focused protocol conformance covers strict request decoding, selector
+validation, dispatch and operation errors, pipelined ordering, recovery after
+an error, and shutdown releasing both the relay and control listeners.
+
 2026-09-21 — **Give in-process and served tests one topology declaration.**
 The fluent TestNet builder now constructs the same serializable daemon and
 pairing value loaded by `testnet serve`, and both paths enter one startup

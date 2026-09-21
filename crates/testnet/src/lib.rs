@@ -48,29 +48,44 @@
 //! The same harness runs as a process: `testnet serve --topology <file>`
 //! ([`serve`]) starts a declared topology and answers control requests on
 //! loopback, which is how phone journeys and other out-of-process drivers use
-//! it. One invariant keeps the two entry points the same language: **every
-//! control verb of the door is a method on the harness with the same name.**
+//! it. One checked capability table keeps the two entry points in the same
+//! language, including the few controls that compose operations or add an
+//! effect at the process boundary.
 //!
-//! | Door verb ([`serve::Control`]) | Harness method |
+//! <!-- control-capabilities:start -->
+//! | Door verb (`serve::Control`) | Harness capability |
 //! | --- | --- |
-//! | `CloudOffline`, `CloudOnline` | [`TestNet::cloud_offline`], [`TestNet::cloud_online`] |
-//! | `SeverDirect`, `EstablishDirect` | [`TestNet::sever_direct`], [`TestNet::establish_direct`] (the door uses the `try_` form so the driver sees the error) |
-//! | `RestartDaemon` | [`TestNet::restart_daemon`] |
-//! | `StopDaemon` | [`Daemon::stop`] |
-//! | `RestartSdkDaemon` | [`TestNet::restart_daemon`] plus recreation of declared SDK agents with their original identities |
-//! | `Latency` | [`TestNet::latency`] |
-//! | `Connections` (by user) | [`TestNet::connections`] |
-//! | `Connections` (by daemon) | [`Daemon::connections`] |
-//! | `Unpair` | [`Daemon::unpair`] |
-//! | `StartPinPairing` | [`Daemon::start_pin_pairing`] |
-//! | `StartQrPairing` | [`Daemon::start_qr_pairing`] (`try_` form at the door) |
-//! | `Inventory` | [`Daemon::inventory`] |
-//! | `AgentSpawnChild` | [`Daemon::spawn_child`] |
-//! | `AgentEmit`, `AgentPlay`, `AgentRaiseAsk`, `AgentEndTurn`, `AgentExit`, `AgentObserve` | [`script::Provider::emit`], [`script::Provider::play`], [`script::Provider::raise_ask`], [`script::Provider::end_turn`], [`script::Provider::exit`], [`script::Provider::observe`] |
-//! | `AgentVerifyReplay` | `Recorded::verify_replay` on the agent's Codex recording |
-//! | `Shutdown` | [`TestNet::shutdown`] |
+//! | `CloudOffline` | `TestNet::cloud_offline` |
+//! | `CloudOnline` | `TestNet::cloud_online` |
+//! | `SeverDirect` | `TestNet::sever_direct` |
+//! | `EstablishDirect` | `TestNet::try_establish_direct` |
+//! | `RestartDaemon` | `TestNet::restart_daemon` + `Provider::close` |
+//! | `StopDaemon` | `Daemon::stop` |
+//! | `RestartSdkDaemon` | `TestNet::restart_daemon` + `Daemon::create_agent` |
+//! | `SuspendRestart` | `Daemon::suspend_restart_agents` + `Provider::close` |
+//! | `Unpair` | `Daemon::unpair` |
+//! | `StartPinPairing` | `Daemon::start_pin_pairing` |
+//! | `StartQrPairing` | `Daemon::try_start_qr_pairing` |
+//! | `Latency` | `TestNet::relay_latency` |
+//! | `Announce` | `TestNet::announce` + host mDNS publication |
+//! | `Withdraw` | `TestNet::withdraw` + host mDNS withdrawal |
+//! | `Tier` | `TestNet::cloud_user_tier` |
+//! | `UdpBlocked` | `TestNet::udp_blocked` |
+//! | `AgentEmit` | `script::Provider::emit` |
+//! | `AgentPlay` | `script::Provider::play` |
+//! | `AgentRaiseAsk` | `script::Provider::raise_ask` |
+//! | `AgentEndTurn` | `script::Provider::end_turn` |
+//! | `AgentExit` | `script::Provider::exit` |
+//! | `AgentSpawnChild` | `Daemon::spawn_child` |
+//! | `AgentVerifyReplay` | `Recorded::verify_replay` |
+//! | `AgentObserve` | `script::Provider::observe` or `Daemon::observed_sdk_inputs` |
+//! | `DebugDump` | `Daemon::debug_dump` |
+//! | `Connections` | `Daemon::connections` or `TestNet::connections` |
+//! | `Inventory` | `Daemon::inventory` |
+//! | `Shutdown` | `TestNet::shutdown` |
+//! <!-- control-capabilities:end -->
 //!
-//! Adding a verb means adding the method first; the door only names it.
+//! Adding a verb means naming its harness capability in the checked table.
 
 mod assertions;
 mod client;

@@ -159,6 +159,39 @@ is explicit and checked by a test rather than implied by matching names. A
 phone journey driving the door and a Rust spec calling the harness say the
 same sentence, and adding a verb means adding the capability first.
 
+<!-- control-capabilities:start -->
+| Door verb (`serve::Control`) | Harness capability |
+| --- | --- |
+| `CloudOffline` | `TestNet::cloud_offline` |
+| `CloudOnline` | `TestNet::cloud_online` |
+| `SeverDirect` | `TestNet::sever_direct` |
+| `EstablishDirect` | `TestNet::try_establish_direct` |
+| `RestartDaemon` | `TestNet::restart_daemon` + `Provider::close` |
+| `StopDaemon` | `Daemon::stop` |
+| `RestartSdkDaemon` | `TestNet::restart_daemon` + `Daemon::create_agent` |
+| `SuspendRestart` | `Daemon::suspend_restart_agents` + `Provider::close` |
+| `Unpair` | `Daemon::unpair` |
+| `StartPinPairing` | `Daemon::start_pin_pairing` |
+| `StartQrPairing` | `Daemon::try_start_qr_pairing` |
+| `Latency` | `TestNet::relay_latency` |
+| `Announce` | `TestNet::announce` + host mDNS publication |
+| `Withdraw` | `TestNet::withdraw` + host mDNS withdrawal |
+| `Tier` | `TestNet::cloud_user_tier` |
+| `UdpBlocked` | `TestNet::udp_blocked` |
+| `AgentEmit` | `script::Provider::emit` |
+| `AgentPlay` | `script::Provider::play` |
+| `AgentRaiseAsk` | `script::Provider::raise_ask` |
+| `AgentEndTurn` | `script::Provider::end_turn` |
+| `AgentExit` | `script::Provider::exit` |
+| `AgentSpawnChild` | `Daemon::spawn_child` |
+| `AgentVerifyReplay` | `Recorded::verify_replay` |
+| `AgentObserve` | `script::Provider::observe` or `Daemon::observed_sdk_inputs` |
+| `DebugDump` | `Daemon::debug_dump` |
+| `Connections` | `Daemon::connections` or `TestNet::connections` |
+| `Inventory` | `Daemon::inventory` |
+| `Shutdown` | `TestNet::shutdown` |
+<!-- control-capabilities:end -->
+
 | Request | Effect |
 | --- | --- |
 | `"CloudOffline"` | Stop the relay and sever its accepted sockets; wait for daemons to lose their relay links. |
@@ -166,6 +199,9 @@ same sentence, and adding a verb means adding the capability first.
 | `{"SeverDirect":{"a":"laptop","b":"desktop"}}` | Close both ends of the direct link and hold that pair's direct UDP path down; routes through the relay remain available. |
 | `{"EstablishDirect":{"a":"laptop","b":"desktop"}}` | Release the held direct path and restore its QUIC link using stored reachability. Both hosts must still trust each other. |
 | `{"RestartDaemon":{"name":"laptop"}}` | Stop and restart the daemon, preserving its identity, trust and listening address; wait for reachable peers to see it again. Provider processes end with the old runtime. |
+| `{"StopDaemon":{"name":"laptop"}}` | Stop the daemon without restarting it. |
+| `{"RestartSdkDaemon":{"name":"laptop"}}` | Restart the daemon and recreate its declared SDK agents with their original identities. The host must contain only SDK agents. |
+| `{"SuspendRestart":{"name":"laptop"}}` | Run the daemon's suspend-and-restart recovery, return its resumed and failed agent IDs in `diagnostics`, and close the old scripted providers. |
 | `{"Unpair":{"daemon":"laptop","peer":"desktop"}}` | Revoke the peer through the daemon's normal local administration API. |
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
@@ -175,13 +211,15 @@ same sentence, and adding a verb means adding the capability first.
 | `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
 | `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. Routed RPCs are not additional links. |
+| `{"Connections":{"user":"personal"}}` | Return the relay's per-host link counts for the account in `links`. Exactly one of `daemon` and `user` is required. |
 | `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
+| `{"DebugDump":{"daemon":"desktop","verbose":false}}` | Return the daemon's diagnostic snapshot. |
 | `"Shutdown"` | Stop daemons and relay, remove temporary state, acknowledge and exit. SIGTERM also cleans up. |
 
 An acknowledgement always has the same shape; unused fields are null or empty:
 
 ```json
-{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[],"found":null}}
+{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[],"diagnostics":null,"found":null}}
 ```
 
 Replay the control protocol and its independent daemon observations with
@@ -268,10 +306,12 @@ Codex recording directories resolve relative to the topology file as well.
 | Request | Effect |
 | --- | --- |
 | `{"AgentEmit":{"agent":"helper","rows":[{"type":"custom","value":1}]}}` | Append provider JSONL rows and wait for parser ingestion. |
+| `{"AgentPlay":{"agent":"helper","steps":["EndTurn"]}}` | Play one or more typed provider steps and wait for their effects. |
 | `{"AgentRaiseAsk":{"agent":"helper","ask":{"Plan":{"markdown":"Review this plan."}}}}` | Raise a semantic ask through provider rows and hooks. |
 | `{"AgentEndTurn":{"agent":"helper"}}` | Close the current scripted turn once. |
 | `{"AgentExit":{"agent":"helper","code":0}}` | End the provider session with a nonnegative exit code. |
 | `{"AgentSpawnChild":{"agent":"helper","child":"reviewer"}}` | Create a separate Claude session on the same daemon, inheriting the directory and recording the parent relationship. Its empty script is driven by controls. |
+| `{"AgentVerifyReplay":{"agent":"codex"}}` | Verify that a recorded Codex agent reproduced its expected output. |
 | `{"AgentObserve":{"agent":"helper"}}` | Return all decoded inputs accepted by the daemon and delivered to this provider, in arrival order. Controls do not count as inputs. |
 
 Observations contain `seq`, `intent`, `text`, `ask_id`, `answer` and `pins`.

@@ -5,8 +5,8 @@
 //! `testnet serve --topology <file>`, reads one readiness line from stdout and
 //! then sends control requests, one JSON value per line, to the control
 //! address. Every request is a [`Control`] verb, and every verb is a method
-//! on the harness with the same name, so an in-process spec and a phone
-//! journey say the same sentence.
+//! or an explicit composition of harness capabilities, so an in-process spec
+//! and a phone journey use the same behavior vocabulary.
 
 #[cfg(unix)]
 mod codex_recording;
@@ -160,6 +160,7 @@ pub struct AgentIdentity {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Control {
     CloudOffline,
     CloudOnline,
@@ -298,6 +299,132 @@ pub enum Control {
     },
     Shutdown,
 }
+
+/// The in-process capability reached by one served control verb.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ControlCapability {
+    pub variant: &'static str,
+    pub capability: &'static str,
+}
+
+/// Capability parity between the served door and the in-process harness.
+///
+/// This is deliberately data rather than a prose convention. Tests compare
+/// it with Serde's complete variant list and with the rendered documentation.
+pub const CONTROL_CAPABILITIES: &[ControlCapability] = &[
+    ControlCapability {
+        variant: "CloudOffline",
+        capability: "`TestNet::cloud_offline`",
+    },
+    ControlCapability {
+        variant: "CloudOnline",
+        capability: "`TestNet::cloud_online`",
+    },
+    ControlCapability {
+        variant: "SeverDirect",
+        capability: "`TestNet::sever_direct`",
+    },
+    ControlCapability {
+        variant: "EstablishDirect",
+        capability: "`TestNet::try_establish_direct`",
+    },
+    ControlCapability {
+        variant: "RestartDaemon",
+        capability: "`TestNet::restart_daemon` + `Provider::close`",
+    },
+    ControlCapability {
+        variant: "StopDaemon",
+        capability: "`Daemon::stop`",
+    },
+    ControlCapability {
+        variant: "RestartSdkDaemon",
+        capability: "`TestNet::restart_daemon` + `Daemon::create_agent`",
+    },
+    ControlCapability {
+        variant: "SuspendRestart",
+        capability: "`Daemon::suspend_restart_agents` + `Provider::close`",
+    },
+    ControlCapability {
+        variant: "Unpair",
+        capability: "`Daemon::unpair`",
+    },
+    ControlCapability {
+        variant: "StartPinPairing",
+        capability: "`Daemon::start_pin_pairing`",
+    },
+    ControlCapability {
+        variant: "StartQrPairing",
+        capability: "`Daemon::try_start_qr_pairing`",
+    },
+    ControlCapability {
+        variant: "Latency",
+        capability: "`TestNet::relay_latency`",
+    },
+    ControlCapability {
+        variant: "Announce",
+        capability: "`TestNet::announce` + host mDNS publication",
+    },
+    ControlCapability {
+        variant: "Withdraw",
+        capability: "`TestNet::withdraw` + host mDNS withdrawal",
+    },
+    ControlCapability {
+        variant: "Tier",
+        capability: "`TestNet::cloud_user_tier`",
+    },
+    ControlCapability {
+        variant: "UdpBlocked",
+        capability: "`TestNet::udp_blocked`",
+    },
+    ControlCapability {
+        variant: "AgentEmit",
+        capability: "`script::Provider::emit`",
+    },
+    ControlCapability {
+        variant: "AgentPlay",
+        capability: "`script::Provider::play`",
+    },
+    ControlCapability {
+        variant: "AgentRaiseAsk",
+        capability: "`script::Provider::raise_ask`",
+    },
+    ControlCapability {
+        variant: "AgentEndTurn",
+        capability: "`script::Provider::end_turn`",
+    },
+    ControlCapability {
+        variant: "AgentExit",
+        capability: "`script::Provider::exit`",
+    },
+    ControlCapability {
+        variant: "AgentSpawnChild",
+        capability: "`Daemon::spawn_child`",
+    },
+    ControlCapability {
+        variant: "AgentVerifyReplay",
+        capability: "`Recorded::verify_replay`",
+    },
+    ControlCapability {
+        variant: "AgentObserve",
+        capability: "`script::Provider::observe` or `Daemon::observed_sdk_inputs`",
+    },
+    ControlCapability {
+        variant: "DebugDump",
+        capability: "`Daemon::debug_dump`",
+    },
+    ControlCapability {
+        variant: "Connections",
+        capability: "`Daemon::connections` or `TestNet::connections`",
+    },
+    ControlCapability {
+        variant: "Inventory",
+        capability: "`Daemon::inventory`",
+    },
+    ControlCapability {
+        variant: "Shutdown",
+        capability: "`TestNet::shutdown`",
+    },
+];
 
 /// One agent as the machine running it describes it.
 #[derive(Debug, Serialize, Deserialize)]
@@ -1056,6 +1183,10 @@ async fn apply(
             daemon: name,
             user: label,
         } => {
+            ensure!(
+                name.is_some() ^ label.is_some(),
+                "Connections requires exactly one of daemon or user"
+            );
             let mut counted = 0usize;
             let mut per_host = Vec::new();
             if let Some(name) = name {
@@ -1303,16 +1434,28 @@ mod tests {
         }
 
         pub(super) async fn request(&mut self, control: serde_json::Value) -> serde_json::Value {
-            let mut bytes = serde_json::to_vec(&control).unwrap();
-            bytes.push(b'\n');
-            self.0.get_mut().write_all(&bytes).await.unwrap();
+            self.request_line(&serde_json::to_string(&control).unwrap())
+                .await
+        }
+
+        async fn request_line(&mut self, request: &str) -> serde_json::Value {
+            self.0
+                .get_mut()
+                .write_all(request.as_bytes())
+                .await
+                .unwrap();
+            self.0.get_mut().write_all(b"\n").await.unwrap();
+            self.read_reply().await
+        }
+
+        async fn read_reply(&mut self) -> serde_json::Value {
             let mut line = String::new();
             tokio::time::timeout(Duration::from_secs(35), self.0.read_line(&mut line))
                 .await
                 .unwrap()
                 .unwrap();
             let reply = serde_json::from_str(&line).unwrap();
-            eprintln!("control {control} => {reply}");
+            eprintln!("control reply => {reply}");
             reply
         }
 
@@ -1321,6 +1464,184 @@ mod tests {
             assert!(reply.get("Ack").is_some(), "{reply}");
             reply["Ack"].clone()
         }
+    }
+
+    thread_local! {
+        static DESERIALIZED_CONTROL_VARIANTS: std::cell::RefCell<Vec<&'static str>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    struct CollectControlVariants;
+
+    impl<'de> serde::Deserializer<'de> for CollectControlVariants {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+        where
+            V: serde::de::Visitor<'de>,
+        {
+            Err(serde::de::Error::custom("variant list collected"))
+        }
+
+        fn deserialize_enum<V>(
+            self,
+            _name: &'static str,
+            variants: &'static [&'static str],
+            _visitor: V,
+        ) -> Result<V::Value, Self::Error>
+        where
+            V: serde::de::Visitor<'de>,
+        {
+            DESERIALIZED_CONTROL_VARIANTS.with(|collected| {
+                collected.borrow_mut().extend_from_slice(variants);
+            });
+            Err(serde::de::Error::custom("variant list collected"))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
+            map struct identifier ignored_any
+        }
+    }
+
+    fn rendered_capability_table() -> String {
+        let mut rendered =
+            String::from("| Door verb (`serve::Control`) | Harness capability |\n| --- | --- |\n");
+        for entry in CONTROL_CAPABILITIES {
+            rendered.push_str(&format!("| `{}` | {} |\n", entry.variant, entry.capability));
+        }
+        rendered
+    }
+
+    fn marked_table(source: &str, line_prefix: &str) -> String {
+        let mut inside = false;
+        let mut rendered = String::new();
+        for line in source.lines() {
+            if line.contains("control-capabilities:start") {
+                inside = true;
+                continue;
+            }
+            if line.contains("control-capabilities:end") {
+                break;
+            }
+            if inside {
+                rendered.push_str(line.strip_prefix(line_prefix).unwrap_or(line));
+                rendered.push('\n');
+            }
+        }
+        assert!(inside, "control capability table markers are missing");
+        rendered
+    }
+
+    #[test]
+    fn testnet_control_capabilities_cover_the_enum_and_documentation() {
+        DESERIALIZED_CONTROL_VARIANTS.with(|collected| collected.borrow_mut().clear());
+        let _ = Control::deserialize(CollectControlVariants);
+        let variants = DESERIALIZED_CONTROL_VARIANTS.with(|collected| collected.borrow().clone());
+        let table = CONTROL_CAPABILITIES
+            .iter()
+            .map(|entry| entry.variant)
+            .collect::<Vec<_>>();
+        assert_eq!(table.len(), table.iter().collect::<HashSet<_>>().len());
+        assert_eq!(table, variants, "capability table must follow the enum");
+
+        let rendered = rendered_capability_table();
+        assert_eq!(
+            marked_table(include_str!("../lib.rs"), "//! "),
+            rendered,
+            "crate documentation must be rendered from CONTROL_CAPABILITIES"
+        );
+        assert_eq!(
+            marked_table(include_str!("../../../../docs/TESTNET.md"), ""),
+            rendered,
+            "TESTNET documentation must be rendered from CONTROL_CAPABILITIES"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn testnet_control_protocol_conforms_across_errors_ordering_and_shutdown() {
+        use serde_json::json;
+
+        let net = TestNet::builder().cloud().daemon("a").start().await;
+        let relay = net.relay_addr();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let control_address = listener.local_addr().unwrap();
+        let server = serve_net(
+            net,
+            listener,
+            [("a".to_owned(), "a".to_owned())].into(),
+            ["default".to_owned()].into(),
+            HashMap::new(),
+        );
+        let exercise = async {
+            let mut control = ControlClient::connect(control_address).await;
+
+            let malformed = control
+                .request_line(r#"{"Latency":{"millis":"soon"}}"#)
+                .await;
+            assert!(malformed.get("Error").is_some(), "{malformed}");
+            let extra = control
+                .request_line(r#"{"Latency":{"millis":0,"extra":true}}"#)
+                .await;
+            assert!(extra.get("Error").is_some(), "{extra}");
+            for invalid in [
+                json!({"Connections":{}}),
+                json!({"Connections":{"daemon":"a","user":"default"}}),
+            ] {
+                let reply = control.request(invalid).await;
+                assert_eq!(
+                    reply["Error"]["message"],
+                    "Connections requires exactly one of daemon or user"
+                );
+            }
+
+            let unknown = control
+                .request(json!({"Inventory":{"daemon":"missing"}}))
+                .await;
+            assert_eq!(unknown["Error"]["message"], "unknown daemon: missing");
+
+            control
+                .ack(json!({"StartPinPairing":{"daemon":"a","ttl_secs":30}}))
+                .await;
+            let failed_operation = control
+                .request(json!({"StartPinPairing":{"daemon":"a","ttl_secs":30}}))
+                .await;
+            assert!(
+                failed_operation.get("Error").is_some(),
+                "{failed_operation}"
+            );
+            assert!(
+                control.ack(json!({"Connections":{"daemon":"a"}})).await["connections"].is_number(),
+                "an operation error must not close the control connection"
+            );
+
+            control
+                .0
+                .get_mut()
+                .write_all(b"\"CloudOffline\"\n\"CloudOnline\"\n")
+                .await
+                .unwrap();
+            for expected in ["CloudOffline", "CloudOnline"] {
+                let reply = control.read_reply().await;
+                assert!(reply.get("Ack").is_some(), "{expected}: {reply}");
+            }
+            TcpStream::connect(relay)
+                .await
+                .expect("the second queued request runs after the first and restores the relay");
+
+            control.ack(json!("Shutdown")).await;
+        };
+        let (result, ()) = tokio::join!(server, exercise);
+        result.unwrap();
+        assert!(
+            TcpStream::connect(relay).await.is_err(),
+            "shutdown releases the relay listener"
+        );
+        assert!(
+            TcpStream::connect(control_address).await.is_err(),
+            "shutdown releases the control listener"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
