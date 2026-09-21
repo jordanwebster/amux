@@ -237,7 +237,9 @@ final class DoorHost {
             return await awaitReconciled(within: seconds)
         case .awaitOffline(let seconds):
             return await awaitOffline(within: seconds)
-        case .bridge: return .bridge(bridgeState())
+        case .bridge:
+            do { return .bridge(try bridgeState()) }
+            catch { return .error("could not observe runtime streams: \(error)") }
         case .runtimeLog(let bytes): return runtimeLog(lastBytes: bytes)
         case .conversation(let agent):
             guard let identity = AgentId(agent), let conversation = stores.conversations[identity]
@@ -936,7 +938,9 @@ final class DoorHost {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             if bridge != nil {
-                let state = bridgeState()
+                let state: BridgeState
+                do { state = try bridgeState() }
+                catch { return .error("could not observe runtime streams: \(error)") }
                 if state.connection == "connected" && state.reconciled && !state.discovered.isEmpty {
                     return .ack
                 }
@@ -946,7 +950,9 @@ final class DoorHost {
         guard bridge != nil else {
             return .error("nothing connected within \(seconds)s, and nothing was starting one")
         }
-        let state = bridgeState()
+        let state: BridgeState
+        do { state = try bridgeState() }
+        catch { return .error("could not observe runtime streams: \(error)") }
         return .error(
             "the connection did not arrive within \(seconds)s: \(state.connection), reconciled "
             + "\(state.reconciled), \(state.discovered.count) machines seen, "
@@ -985,8 +991,8 @@ final class DoorHost {
         return .runtimeLog(String(decoding: read, as: UTF8.self))
     }
 
-    private func bridgeState() -> BridgeState {
-        BridgeState(
+    private func bridgeState() throws -> BridgeState {
+        try BridgeState(
             build: Bridge.build,
             started: bridge != nil,
             connection: stores.fleet.connection.state.rawValue,
@@ -1016,13 +1022,33 @@ final class DoorHost {
     /// The agents the runtime is holding a stream for, read off its own model
     /// rather than off the screens: a screen that has been left says nothing
     /// about whether the stream behind it was released.
-    private func watching() -> [String] {
-        guard let bridge, let json = bridge.snapshot(),
-            let data = json.data(using: .utf8),
-            let model = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let attached = model["attached"] as? [String: Any]
-        else { return [] }
-        return attached.keys.sorted()
+    private func watching() throws -> [String] {
+        guard let bridge else { return [] }
+        return try Self.watching(snapshot: bridge.snapshot())
+    }
+
+    static func watching(snapshot: String?) throws -> [String] {
+        // Both store-backed and legacy conversations publish stream phases.
+        // The legacy `attached` map only records intent for the latter and
+        // cannot establish that a stream actually opened.
+        struct Snapshot: Decodable {
+            struct Stream: Decodable {
+                struct Phase: Decodable {
+                    enum Kind: String, Decodable { case opening, replaying, live, closed }
+                    let stream_phase: Kind
+                }
+                let phase: Phase
+            }
+            let streams: [String: Stream]
+        }
+        let snapshot = try JSONDecoder().decode(
+            Snapshot.self, from: Data((snapshot ?? "").utf8))
+        return snapshot.streams.compactMap { agent, stream in
+            switch stream.phase.stream_phase {
+            case .replaying, .live: agent
+            case .opening, .closed: nil
+            }
+        }.sorted()
     }
 
     /// What the runtime's link to the relay has done: every dial, and how many

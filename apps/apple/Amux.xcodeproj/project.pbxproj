@@ -49,6 +49,7 @@
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
 		A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */; };
 		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
+		A5FD8F401585569600AA7278 /* DoorStreamsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7AAFF8A7409310A3C63BA2 /* DoorStreamsTests.swift */; };
 		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
 		A9E0E48D6409673F69AB4860 /* FleetReturnTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3675E1910BD56BE9FA50B9B /* FleetReturnTests.swift */; };
 		AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBBB924EED36840518D0268 /* DoorHost.swift */; };
@@ -155,6 +156,7 @@
 		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
 		B6B0DBF15C34286BDCECEB5D /* SignedOutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedOutTests.swift; sourceTree = "<group>"; };
 		B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTests.swift; sourceTree = "<group>"; };
+		BA7AAFF8A7409310A3C63BA2 /* DoorStreamsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorStreamsTests.swift; sourceTree = "<group>"; };
 		BC486A7A07178E55789AE94C /* ReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewTests.swift; sourceTree = "<group>"; };
 		BE1CD31C989C5DC52354A7AE /* WritingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingTests.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
@@ -324,6 +326,7 @@
 			children = (
 				C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */,
 				F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */,
+				BA7AAFF8A7409310A3C63BA2 /* DoorStreamsTests.swift */,
 				D231A18709A88008938C697C /* RememberedStoreTests.swift */,
 				821F9981F05DEE81D729D42C /* ReportFreezeTests.swift */,
 				DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */,
@@ -582,6 +585,7 @@
 			files = (
 				EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */,
 				7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */,
+				A5FD8F401585569600AA7278 /* DoorStreamsTests.swift in Sources */,
 				34816637A5A803F501524A27 /* RememberedStoreTests.swift in Sources */,
 				99B82C08E29C0F2FE41DDBEC /* ReportFreezeTests.swift in Sources */,
 				25543F13A602DAF36EED1D80 /* ScenarioShellTests.swift in Sources */,

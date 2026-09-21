@@ -1,3 +1,15 @@
+2026-09-21 — **Observe the phone's opened streams in journey checks.**
+The phone's debug door now reads replaying and live streams from the runtime
+model. It previously read the legacy attachment-intent map, which stays empty
+when a conversation opens through its store, so the hosts journey reported no
+stream even though the conversation had opened. Requested and closed streams
+are excluded, and an unreadable runtime snapshot returns a diagnostic instead
+of a successful empty observation. Three focused app tests and the full hosts
+journey pass; the journey's actions, assertions and deadlines are unchanged.
+The companion lifecycle journey exposes a separate missing stream after
+foregrounding, which also failed a diagnostic wait at the existing deadline;
+that recovery failure remains unresolved.
+
 2026-09-20 — **Record the local CI baseline and its platform gap.**
 One `just --time ci` run recorded: update-flag guard 0.035s, check 10.651s,
 lint 1.734s, format check 1.844s, codegen check 1.367s, dependency policy
