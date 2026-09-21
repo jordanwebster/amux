@@ -694,7 +694,7 @@ swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests"
 [[suite]]
 name = "phone-journeys"
 contract = "A person can complete every declared phone story through the real app and production amux path against a served topology."
-paths = ["apps/apple/AmuxUITests", "journeys/manifest.json", "scripts/ios-journey.py"]
+paths = ["apps/apple/AmuxUITests", "journeys/manifest.json", "journeys/goldens/phone", "scripts/ios-journey.py"]
 recipe = "just ios journey"
 boundary = "Journeys"
 oracle = "Declared acts, independent door and host observations, screenshots, exits, and teardown evidence."
@@ -704,7 +704,7 @@ time = "real"
 capabilities = ["macOS", "Xcode 26.6", "iOS 26.5 golden simulator"]
 lane = "journey"
 evidence = "target/ios/journeys"
-update = ""
+update = "UPDATE_JOURNEY_GOLDENS=1 just ios journey -- conversation"
 swift = ["AmuxUITests"]
 journey_manifest = "journeys/manifest.json"
 journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review", "writing", "claude-sessions", "hosts-lifecycle", "hosts", "accounts", "reports", "accessibility", "production-startup", "free-tier", "signed-out", "profiles"]

@@ -486,23 +486,22 @@ class JourneyCase: XCTestCase {
             "\(complaint); \(identifier) is still on screen")
     }
 
-    /// Answers the ask on screen, and answers again if it is still waiting.
+    /// Answers an ask once unless a recovery story explicitly permits retries.
     ///
-    /// An ask reaches the phone the moment the agent raises it and the
-    /// session keeps moving underneath: an answer sent in that window is
-    /// refused by the host on purpose — it raced a session that had gone on
-    /// — and the core puts the ask back rather than leaving it looking
-    /// answered. A person presses again, and so does this. Nothing here
-    /// claims the answer arrived: what the host received is read back from
-    /// the host afterwards, so a press that went nowhere can never be
-    /// mistaken for one that did.
-    func answer(_ app: XCUIApplication, _ identifier: String, _ complaint: String) {
-        for _ in 0..<3 {
+    /// Gone is not the same as answered: while the answer travels the panel
+    /// is put away, and a refusal can bring it back. An ordinary story must
+    /// expose that refusal rather than silently pressing again. A story whose
+    /// subject is recovery may opt into two further presses at its call site.
+    func answer(
+        _ app: XCUIApplication,
+        _ identifier: String,
+        _ complaint: String,
+        retryingRefusal: Bool = false
+    ) {
+        let attempts = retryingRefusal ? 3 : 1
+        for _ in 0..<attempts {
             press(app, identifier)
             guard waitUntil(within: 15, { !self.element(app, identifier).exists }) else { continue }
-            // Gone is not the same as answered: while the answer travels the
-            // panel is put away, and a refusal brings the ask back. So the
-            // panel has to stay away before this counts as answered.
             if !waitUntil(within: 3, { self.element(app, identifier).exists }) { return }
         }
         XCTFail("\(complaint); \(identifier) is still on screen")

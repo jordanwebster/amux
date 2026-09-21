@@ -73,6 +73,80 @@ class RunningTheTestAgain(unittest.TestCase):
         self.assertEqual(said, [])
 
 
+class ComparingReachedScreens(unittest.TestCase):
+    def compare(self, *, update: bool = False, wrong: bool = False):
+        room = tempfile.TemporaryDirectory()
+        root = Path(room.name)
+        captures = {"first": root / "first.png", "second": root / "second.png"}
+        for label, path in captures.items():
+            path.write_bytes(label.encode())
+        baselines = root / "baselines"
+        golden = baselines / "conversation"
+        golden.mkdir(parents=True)
+        for label in captures:
+            (golden / f"{label}.png").write_bytes(f"old-{label}".encode())
+        journey = journeys.Journey(
+            "conversation", root / "evidence", expect_wrong=wrong)
+        environment = {"UPDATE_JOURNEY_GOLDENS": "1"} if update else {}
+        run = patch.object(
+            journeys.subprocess, "run",
+            return_value=journeys.subprocess.CompletedProcess([], 0, "same\n", ""))
+        with patch.object(journeys, "JOURNEY_GOLDENS", baselines), \
+                patch.dict(os.environ, environment, clear=True), run as called:
+            journeys.compare_reached_screens(journey, captures)
+        return room, root, captures, baselines, called
+
+    def test_each_capture_uses_the_existing_phone_comparator_and_masks(self):
+        room, root, captures, baselines, called = self.compare()
+        self.addCleanup(room.cleanup)
+        self.assertEqual(called.call_count, 2)
+        first = called.call_args_list[0].args[0]
+        self.assertEqual(first[first.index("--expected") + 1],
+                         str(baselines / "conversation/first.png"))
+        self.assertEqual(first[first.index("--actual") + 1], str(captures["first"]))
+        self.assertEqual(first[first.index("--simulator") + 1], "golden")
+        self.assertTrue((root / "evidence/goldens/first/comparison.txt").is_file())
+
+    def test_update_is_explicit_and_replaces_only_journey_baselines(self):
+        room, _root, captures, baselines, _called = self.compare(update=True)
+        self.addCleanup(room.cleanup)
+        self.assertEqual((baselines / "conversation/first.png").read_bytes(),
+                         captures["first"].read_bytes())
+        self.assertEqual((baselines / "conversation/second.png").read_bytes(),
+                         captures["second"].read_bytes())
+
+    def test_negative_check_compares_a_frame_with_the_other_baseline(self):
+        room, _root, captures, baselines, called = self.compare(wrong=True)
+        self.addCleanup(room.cleanup)
+        first = called.call_args_list[0].args[0]
+        self.assertEqual(first[first.index("--expected") + 1],
+                         str(baselines / "conversation/second.png"))
+        self.assertEqual(first[first.index("--actual") + 1], str(captures["first"]))
+
+
+class ChoosingJourneyArguments(unittest.TestCase):
+    def test_the_negative_check_is_an_explicit_option(self):
+        self.assertEqual(
+            journeys.chosen_acts(["--expect-wrong", "conversation"]),
+            (["conversation"], [], True))
+
+    def test_ordinary_arguments_do_not_expect_a_wrong_screen(self):
+        self.assertEqual(
+            journeys.chosen_acts(["hosts", "--act", "agents-started"]),
+            (["hosts"], ["agents-started"], False))
+
+    def test_the_phone_driver_ignores_terminal_only_manifest_rows(self):
+        manifest = {"journeys": [
+            {"id": "phone", "clients": ["phone"]},
+            {"id": "terminal", "clients": ["terminal"]},
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps(manifest))
+            with patch.object(journeys, "MANIFEST", path):
+                self.assertEqual(journeys.declared(), [manifest["journeys"][0]])
+
+
 class WhereARememberedFleetIsFiled(unittest.TestCase):
     """A seeded fleet has to land in the file this phone's runtime will open.
 

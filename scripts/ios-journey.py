@@ -12,6 +12,7 @@ store directly.
     python3 scripts/ios-journey.py            every declared journey
     python3 scripts/ios-journey.py home-coldstart   one of them
     python3 scripts/ios-journey.py hosts --act agents-started   one act of one
+    python3 scripts/ios-journey.py --expect-wrong conversation  negative check
 
 Each run writes what it did to target/ios/journeys/<id>/journey.txt beside the
 screens it photographed, so a failure can be read after the fact.
@@ -53,6 +54,8 @@ MANIFEST = Path("journeys/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/journeys")
+JOURNEY_GOLDENS = Path("journeys/goldens/phone")
+GOLDEN_COMPARATOR = Path("target/debug/xtask")
 SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
 # One Fleet event the bridge itself produced, kept beside the projection it
@@ -71,11 +74,12 @@ class Journey:
     """
 
     def __init__(self, name: str, directory: Path, acts: list[str] | None = None,
-                 filtered: bool = False):
+                 filtered: bool = False, expect_wrong: bool = False):
         self.name = name
         self.directory = directory
         self.acts = acts or []
         self.filtered = filtered
+        self.expect_wrong = expect_wrong
         self.lines: list[str] = []
 
     def say(self, line: str) -> None:
@@ -552,6 +556,47 @@ def states(answers: list[dict]) -> list[dict]:
 def named(state: dict, identifier: str) -> dict | None:
     return next((element for element in state["elements"]
                  if element["identifier"] == identifier), None)
+
+
+def compare_reached_screens(journey: Journey, captures: dict[str, Path]) -> None:
+    """Locks selected real journey frames with the phone golden comparator.
+
+    The standalone comparator reads the same tolerance and pinned-simulator
+    chrome masks as `just ios goldens`. Its expected/actual pair and any diff
+    stay with the journey evidence rather than the fixture-screen captures.
+    """
+    journey.expect(len(captures) >= 2, "a reached-screen story selected fewer than two frames")
+    update = os.environ.get("UPDATE_JOURNEY_GOLDENS") == "1"
+    journey.expect(not (update and journey.expect_wrong),
+                   "a deliberately wrong comparison cannot update journey goldens")
+    labels = list(captures)
+    golden_dir = JOURNEY_GOLDENS / journey.name
+    if update:
+        golden_dir.mkdir(parents=True, exist_ok=True)
+        for label, actual in captures.items():
+            shutil.copyfile(actual, golden_dir / f"{label}.png")
+
+    for index, (label, actual) in enumerate(captures.items()):
+        expected_label = labels[(index + 1) % len(labels)] \
+            if journey.expect_wrong and index == 0 else label
+        expected = golden_dir / f"{expected_label}.png"
+        evidence = journey.directory / "goldens" / label
+        compared = subprocess.run([
+            str(GOLDEN_COMPARATOR.resolve()), "golden", "diff",
+            "--expected", str(expected),
+            "--actual", str(actual),
+            "--out", str(evidence),
+            "--simulator", SIMULATOR,
+        ], text=True, capture_output=True, timeout=120)
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "comparison.txt").write_text(compared.stdout + compared.stderr)
+        journey.expect(
+            compared.returncode == 0,
+            f"reached screen {label} differs from {expected}; "
+            f"expected, actual and diff are under {evidence}")
+    action = "updated and compared" if update else "compared"
+    journey.say(f"{action} reached screens " + ", ".join(labels)
+                + " with the phone golden tolerance and system-chrome masks")
 
 
 # MARK: - The journeys
@@ -1112,6 +1157,10 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(capture.is_file() and capture.stat().st_size > 0,
                        f"{capture} was not written")
     journey.say(f"photographed {cached.name} and {confirmed.name}")
+    compare_reached_screens(journey, {
+        "cached-first-frame": cached,
+        "reconciled": confirmed,
+    })
     forget_cache(udid)
 
 
@@ -1723,6 +1772,13 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(photograph.is_file() and photograph.stat().st_size > 0,
                        f"{photograph} was not written")
     journey.say("photographed " + ", ".join(sorted(path.name for path in photographs.values())))
+    compare_reached_screens(journey, {
+        # The deliberately scrolled reading position is recorded semantically
+        # above, but its exact resting pixel varies by one row as the filmed
+        # stream settles. The recovered segment is a fixed reached state.
+        "conversation-restored": photographs["conversation-restored"],
+        "conversation-exited": photographs["conversation-exited"],
+    })
     # Said plainly, because it is the one thing this journey cannot show: an
     # agent run by a provider this build has no case for is listed, marked
     # unreadable and never offered to open. Every provider this checkout's
@@ -3979,17 +4035,18 @@ PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_wr
 
 
 def declared() -> list[dict]:
-    """Every journey the manifest declares.
+    """Every phone journey the shared manifest declares.
 
     A journey may declare `acts`: the named steps its driver takes, in order,
     which is what `--act` chooses among and what its driver's own per-act
     assertions are checked against. A journey that has not been written to be
     re-entered declares none and can only be run whole.
     """
-    return json.loads(MANIFEST.read_text())["journeys"]
+    return [plan for plan in json.loads(MANIFEST.read_text())["journeys"]
+            if "phone" in plan["clients"]]
 
 
-def chosen_acts(argv: list[str]) -> tuple[list[str], list[str]]:
+def chosen_acts(argv: list[str]) -> tuple[list[str], list[str], bool]:
     """The journeys asked for and the acts asked for, out of a plain argv.
 
     Argparse would be a heavier thing than this needs: a journey is named by
@@ -3998,9 +4055,13 @@ def chosen_acts(argv: list[str]) -> tuple[list[str], list[str]]:
     """
     wanted: list[str] = []
     acts: list[str] = []
+    expect_wrong = False
     rest = list(argv)
     while rest:
         item = rest.pop(0)
+        if item == "--expect-wrong":
+            expect_wrong = True
+            continue
         if item.startswith("--act="):
             said = item.split("=", 1)[1]
         elif item == "--act":
@@ -4013,11 +4074,11 @@ def chosen_acts(argv: list[str]) -> tuple[list[str], list[str]]:
             wanted.append(item)
             continue
         acts.extend(name for name in said.split(",") if name)
-    return wanted, acts
+    return wanted, acts, expect_wrong
 
 
 def main() -> None:
-    wanted, acts = chosen_acts(sys.argv[1:])
+    wanted, acts, expect_wrong = chosen_acts(sys.argv[1:])
     plans = declared()
     known = {plan["id"] for plan in plans}
     unknown = [name for name in wanted if name not in known]
@@ -4027,6 +4088,10 @@ def main() -> None:
     if missing:
         raise SystemExit(f"{MANIFEST} declares {', '.join(missing)}, which nobody has written")
     chosen = [plan for plan in plans if not wanted or plan["id"] in wanted]
+    if expect_wrong and len(chosen) != 1:
+        raise SystemExit("--expect-wrong is about one journey; name the journey it belongs to")
+    if expect_wrong and chosen[0]["id"] not in {"conversation", "home-coldstart"}:
+        raise SystemExit("--expect-wrong is available for conversation and home-coldstart")
     if acts and len(chosen) != 1:
         raise SystemExit("--act is about one journey; name the journey it belongs to")
     if acts:
@@ -4051,7 +4116,8 @@ def main() -> None:
         if acts:
             directory = directory / "acts" / "-".join(acts)
         driving = acts or plan.get("acts", [])
-        journey = Journey(plan["id"], directory, acts=driving, filtered=bool(acts))
+        journey = Journey(plan["id"], directory, acts=driving, filtered=bool(acts),
+                          expect_wrong=expect_wrong)
         journey.say(plan["claim"] if not acts
                     else f"one act of this journey, re-entered at {', '.join(acts)} with "
                          f"everything before it shortcut; a diagnosis and not a pass")

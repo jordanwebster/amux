@@ -1,3 +1,11 @@
+2026-09-21 — **Compare the phone screens real journeys reach.**
+The conversation and cold-start journeys now lock two semantic checkpoints
+each with the existing phone golden tolerance and system-chrome masks. Their
+baselines change only under the explicit journey update flag, every comparison
+keeps reviewable expected, actual and diff evidence, and a deliberately wrong
+pair proves the check fails. Ordinary ask answers now press once so a refused
+answer remains visible; repeated presses are an explicit recovery-story choice.
+
 2026-09-21 — **Let terminal conversation facts outrun inventory removal.**
 Removing an agent from inventory now closes only the legacy structured reader;
 an open stored conversation keeps its independent subscription until that
