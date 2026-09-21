@@ -26,10 +26,11 @@
 //!
 //! Three disciplines hold throughout:
 //!
-//! - **Eventually, never sleep.** Every observation verb polls through
-//!   [`assertions::eventually`] under one default timeout; on expiry it
-//!   panics with a dump of the declared topology, every daemon's host table,
-//!   and the failing daemon's routes. Tests contain no retry loops.
+//! - **Eventually, never sleep.** Every observation verb waits through
+//!   [`assertions::eventually`] under one default timeout, using a causal
+//!   notification where the daemon exposes one and polling as the fallback.
+//!   On expiry it panics with a dump of the declared topology, every daemon's
+//!   host table, and the failing daemon's routes. Tests contain no retry loops.
 //! - **Restart = complete teardown.** `Daemon::stop`/`restart` await the cloud
 //!   connector's cleanup, then sever direct sockets whose detached dispatcher
 //!   tasks model process-owned connections. Aborting an established connector
@@ -39,7 +40,8 @@
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
 //!
-//! Assertions poll wall-clock time. The harness has no simulated clock.
+//! Assertions and transports keep wall-clock time. Product-policy time moves
+//! only when [`TestNet::advance`] says it does.
 //!
 //! # The served door
 //!
@@ -73,6 +75,8 @@
 mod assertions;
 mod client;
 pub use client::{UserClient, connect_user};
+mod clock;
+pub use clock::DrivenClock;
 mod daemon;
 /// The fake identity service (token minting, relay assignment) that stands in
 /// for amux.sh. It lives in node so node's unit tests and this harness share
@@ -163,6 +167,7 @@ pub(crate) struct NetInner {
     pairs: Vec<(String, String, Via)>,
     pub(crate) discovery: ScriptedDiscovery,
     pub(crate) udp_proxy: UdpProxy,
+    pub(crate) clock: Arc<DrivenClock>,
     discovery_events: StdMutex<tokio::sync::broadcast::Receiver<DiscoveryEvent>>,
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
@@ -183,6 +188,12 @@ pub fn default_cloud_url() -> String {
 }
 
 impl TestNet {
+    /// Advances product-policy time without changing transport or assertion
+    /// deadlines, then wakes policy sleepers whose deadline was crossed.
+    pub fn advance(&self, duration: std::time::Duration) {
+        self.inner.clock.advance(duration);
+    }
+
     /// Loopback endpoint for clients outside the harness process.
     pub fn relay_addr(&self) -> SocketAddr {
         self.cloud().relay_addr()
@@ -978,6 +989,7 @@ impl TestNetBuilder {
             .expect("create testnet data root");
         let socket_root = crate::identity::short_installation_root();
         let discovery = ScriptedDiscovery::new();
+        let clock = Arc::new(DrivenClock::new());
         let discovery_events = discovery.browse();
         let udp_proxy = self
             .direct_idle_timeout
@@ -985,8 +997,9 @@ impl TestNetBuilder {
 
         let mut cloud = if self.cloud {
             Some(
-                CloudRelay::start_with_url(
+                CloudRelay::start_with_url_and_clock(
                     self.cloud_url.clone().unwrap_or_else(default_cloud_url),
+                    clock.clone(),
                 )
                 .await,
             )
@@ -1014,7 +1027,7 @@ impl TestNetBuilder {
                 users.insert("default".into());
             }
             let identity = Arc::new(
-                identity::IdentityServer::start(
+                identity::IdentityServer::start_with_clock(
                     users
                         .into_iter()
                         .map(|sub| identity::TestAccount {
@@ -1025,6 +1038,7 @@ impl TestNetBuilder {
                         })
                         .collect(),
                     cloud.as_ref().map(|cloud| cloud.relay_addr()),
+                    clock.clone(),
                 )
                 .await,
             );
@@ -1160,6 +1174,7 @@ impl TestNetBuilder {
                 socket_path: socket_root.path().join(format!("{}.sock", spec.name)),
                 repository_roots: spec.repository_roots.clone(),
                 artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
+                clock: clock.clone(),
                 direct_addr: prep.direct_addr,
                 proxy_id: prep.identity.host_id,
                 udp_proxy: udp_proxy.clone(),
@@ -1199,6 +1214,7 @@ impl TestNetBuilder {
                         udp_blocked_memory: spec.udp_blocked_memory,
                         relay_transport: spec.relay_transport,
                         quic_client_config: cloud.quic_client_config(),
+                        clock: clock.clone(),
                     }
                 }),
                 runtime: Mutex::new(None),
@@ -1230,6 +1246,7 @@ impl TestNetBuilder {
                     cloud.as_ref(),
                     discovery.clone(),
                     udp_proxy.clone(),
+                    clock.clone(),
                 )
                 .await;
                 daemon_inners.extend(installation.daemon_inners());
@@ -1289,6 +1306,7 @@ impl TestNetBuilder {
             pairs: self.pairs,
             discovery,
             udp_proxy,
+            clock,
             discovery_events: StdMutex::new(discovery_events),
             _data_root: data_root,
             _socket_root: socket_root,

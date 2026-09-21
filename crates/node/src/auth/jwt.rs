@@ -4,8 +4,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
+use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
 use reqwest::Client;
 use serde::Deserialize;
@@ -13,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::auth::claims::{ConnectionClaims, Tier};
+use crate::{Clock, WallClock};
 
 /// How long to cache JWKS keys before re-fetching.
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
@@ -72,16 +74,22 @@ pub(crate) struct JwtValidator {
     http_client: Client,
     keys: Arc<RwLock<HashMap<String, DecodingKey>>>,
     last_fetch: Arc<RwLock<Option<Instant>>>,
+    clock: Arc<dyn Clock>,
 }
 
 impl JwtValidator {
     /// Create a new validator for the given cloud URL
     pub(crate) fn new(cloud_url: &str) -> Self {
+        Self::new_with_clock(cloud_url, Arc::new(WallClock))
+    }
+
+    pub(crate) fn new_with_clock(cloud_url: &str, clock: Arc<dyn Clock>) -> Self {
         Self {
             jwks_url: format!("{}/.well-known/openid-configuration/jwks", cloud_url),
             http_client: Client::new(),
             keys: Arc::new(RwLock::new(HashMap::new())),
             last_fetch: Arc::new(RwLock::new(None)),
+            clock,
         }
     }
 
@@ -107,9 +115,29 @@ impl JwtValidator {
         let mut validation = Validation::new(header.alg);
         validation.set_required_spec_claims(&["exp", "aud"]);
         validation.set_audience(&["amux_token"]);
+        // jsonwebtoken consults the process wall clock internally. Validate
+        // expiration below so test issuers and this verifier can share one
+        // explicitly driven policy clock.
+        validation.validate_exp = false;
 
         let token_data = decode::<RawConnectionClaims>(token, key, &validation)?;
         let raw = token_data.claims;
+        let now = self
+            .clock
+            .system_now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if raw.exp < validation.reject_tokens_expiring_in_less_than {
+            return Err(jsonwebtoken::errors::Error::from(ErrorKind::InvalidToken).into());
+        }
+        if raw
+            .exp
+            .saturating_sub(validation.reject_tokens_expiring_in_less_than)
+            < now.saturating_sub(validation.leeway)
+        {
+            return Err(jsonwebtoken::errors::Error::from(ErrorKind::ExpiredSignature).into());
+        }
         let tier = match raw.tier.as_ref().and_then(serde_json::Value::as_str) {
             Some("free") => Tier::Free,
             Some("pro") => Tier::Pro,
@@ -216,6 +244,10 @@ pub async fn relay_rejects_test_token_without_tier() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Mutex;
+
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use serde::Serialize;
 
@@ -246,6 +278,10 @@ mod tests {
     }
 
     fn token(secret: &[u8], aud: Option<&str>, tier: Option<&str>) -> String {
+        token_with_exp(secret, aud, tier, 4_102_444_800)
+    }
+
+    fn token_with_exp(secret: &[u8], aud: Option<&str>, tier: Option<&str>, exp: u64) -> String {
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some("test-key".to_string());
         encode(
@@ -255,7 +291,7 @@ mod tests {
                 client_id: "cli",
                 host: "relay",
                 port: 9443,
-                exp: 4_102_444_800,
+                exp,
                 aud,
                 tier,
             },
@@ -309,5 +345,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(claims.tier, Tier::Free);
+    }
+
+    struct TestClock {
+        monotonic: Mutex<tokio::time::Instant>,
+        wall: Mutex<SystemTime>,
+    }
+
+    impl TestClock {
+        fn new(wall: SystemTime) -> Self {
+            Self {
+                monotonic: Mutex::new(tokio::time::Instant::now()),
+                wall: Mutex::new(wall),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            *self.monotonic.lock().unwrap() += duration;
+            *self.wall.lock().unwrap() += duration;
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> tokio::time::Instant {
+            *self.monotonic.lock().unwrap()
+        }
+
+        fn system_now(&self) -> SystemTime {
+            *self.wall.lock().unwrap()
+        }
+
+        fn sleep_until(
+            &self,
+            _deadline: tokio::time::Instant,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn expiration_uses_the_injected_policy_clock() {
+        let secret = b"secret";
+        let epoch = 1_700_000_000;
+        let clock = Arc::new(TestClock::new(
+            SystemTime::UNIX_EPOCH + Duration::from_secs(epoch),
+        ));
+        let validator = JwtValidator::new_with_clock("http://cloud.test", clock.clone());
+        validator
+            .keys
+            .write()
+            .await
+            .insert("test-key".to_string(), DecodingKey::from_secret(secret));
+        *validator.last_fetch.write().await = Some(Instant::now());
+        let token = token_with_exp(secret, Some("amux_token"), Some("pro"), epoch + 100);
+
+        assert!(validator.validate(&token, "relay", 9443).await.is_ok());
+        clock.advance(Duration::from_secs(160));
+        assert!(validator.validate(&token, "relay", 9443).await.is_ok());
+        clock.advance(Duration::from_secs(1));
+        assert!(matches!(
+            validator.validate(&token, "relay", 9443).await,
+            Err(JwtError::Jwt(error)) if matches!(error.kind(), ErrorKind::ExpiredSignature)
+        ));
     }
 }

@@ -5,6 +5,7 @@ pub mod agent_tools;
 mod agents;
 mod audit;
 mod auth;
+mod clock;
 mod config;
 mod connection;
 mod debug;
@@ -57,7 +58,7 @@ pub mod harness {
     pub use crate::services::{
         AgentServiceCtx, ClientService, CloudLinkServer, DeviceRuntimeSecurity,
         FREE_TIER_REFRESH_INTERVAL, PeerTrustCommitContext, PeerTrustUpdate, StartedUserServices,
-        commit_peer_trust, start_user_services,
+        UDP_BLOCKED_MEMORY, commit_peer_trust, start_user_services,
     };
     pub use crate::transport::{
         InProcessConnection, pairing_quic_client_config, relay_quic_client_config_with_roots,
@@ -100,6 +101,7 @@ pub use client::{
     HostEventStream, PairingCandidate, PairingError, PairingSecret, PairingStart, PeerEntry,
     PeerReachability, PeerVia, PendingPeer, SessionStream,
 };
+pub use clock::{Clock, WallClock};
 pub use config::{
     ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LanConfig, LeaderKey,
     OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,

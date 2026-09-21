@@ -5,7 +5,8 @@
 //! snapshot, and registry deltas, reauthentication, and orderly shutdown all
 //! continue on that same length-prefixed protobuf stream.
 
-use std::future;
+use std::future::{self, Future};
+use std::pin::Pin;
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, SystemTime};
 
@@ -23,7 +24,7 @@ use crate::routing::{
     host_to_wire, inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
     protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
-use crate::{HostId, audit};
+use crate::{Clock, HostId, WallClock, audit};
 
 const LINK_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
 const LINK_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -149,6 +150,7 @@ pub struct LinkConnectorAuth {
     refresher: Arc<dyn LinkConnectorTokenRefresher>,
     free_refresh_interval: Option<Duration>,
     next_refresh_at: tokio::time::Instant,
+    clock: Arc<dyn Clock>,
     on_refreshed: Option<Arc<dyn Fn(crate::Tier) + Send + Sync>>,
 }
 
@@ -166,14 +168,26 @@ impl LinkConnectorAuth {
         refresher: Arc<dyn LinkConnectorTokenRefresher>,
         free_refresh_interval: Option<Duration>,
     ) -> Self {
-        let next_refresh_at = refresh_deadline(&token, free_refresh_interval);
+        let clock: Arc<dyn Clock> = Arc::new(WallClock);
+        let next_refresh_at = refresh_deadline(&token, free_refresh_interval, clock.as_ref());
         Self {
             token,
             refresher,
             free_refresh_interval,
             next_refresh_at,
+            clock,
             on_refreshed: None,
         }
+    }
+
+    /// Rebinds product policy to the runtime's clock before the connector is
+    /// started. Recomputing the deadline prevents construction time on the
+    /// wall clock from leaking into a driven specification.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.next_refresh_at =
+            refresh_deadline(&self.token, self.free_refresh_interval, clock.as_ref());
+        self.clock = clock;
+        self
     }
 
     pub(crate) fn with_refresh_observer(
@@ -188,6 +202,14 @@ impl LinkConnectorAuth {
         self.next_refresh_at
     }
 
+    fn refresh_sleep(&self) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+        if self.token.tier == crate::Tier::Free && self.free_refresh_interval.is_some() {
+            self.clock.sleep_until(self.next_refresh_at)
+        } else {
+            Box::pin(tokio::time::sleep_until(self.next_refresh_at))
+        }
+    }
+
     async fn refresh(&mut self) -> Result<(wire::pb::Message, crate::Tier), tonic::Status> {
         let token = self.refresher.refresh_routing_token().await?;
         let message = wire::pb::Message {
@@ -197,7 +219,8 @@ impl LinkConnectorAuth {
         };
         let tier = token.tier;
         self.token = token;
-        self.next_refresh_at = refresh_deadline(&self.token, self.free_refresh_interval);
+        self.next_refresh_at =
+            refresh_deadline(&self.token, self.free_refresh_interval, self.clock.as_ref());
         if let Some(observer) = &self.on_refreshed {
             observer(tier);
         }
@@ -208,11 +231,12 @@ impl LinkConnectorAuth {
 fn refresh_deadline(
     token: &LinkConnectorToken,
     free_refresh_interval: Option<Duration>,
+    clock: &dyn Clock,
 ) -> tokio::time::Instant {
     if token.tier == crate::Tier::Free
         && let Some(interval) = free_refresh_interval
     {
-        tokio::time::Instant::now() + interval
+        clock.now() + interval
     } else {
         instant_for_system_time(token.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY)
     }
@@ -607,6 +631,9 @@ async fn run_established(
         let refresh_deadline = connector_auth
             .as_ref()
             .map(LinkConnectorAuth::refresh_deadline);
+        let refresh_sleep = connector_auth
+            .as_ref()
+            .map(LinkConnectorAuth::refresh_sleep);
         tokio::select! {
             inbound = read_message(&mut source) => {
                 let message = match inbound {
@@ -659,7 +686,7 @@ async fn run_established(
                 close_reason = wire::pb::LinkCloseReason::AuthExpired;
                 break;
             }
-            _ = maybe_sleep_until(refresh_deadline), if refresh_deadline.is_some() => {
+            _ = maybe_policy_sleep(refresh_sleep), if refresh_deadline.is_some() => {
                 let Some(auth) = connector_auth.as_mut() else { continue };
                 match auth.refresh().await {
                     Ok((message, _)) => {
@@ -1121,6 +1148,13 @@ async fn wait_for_connector_shutdown(shutdown_rx: &mut Option<watch::Receiver<bo
 async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => future::pending().await,
+    }
+}
+
+async fn maybe_policy_sleep(sleep: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>) {
+    match sleep {
+        Some(sleep) => sleep.await,
         None => future::pending().await,
     }
 }

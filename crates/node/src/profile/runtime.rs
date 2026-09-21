@@ -16,7 +16,6 @@ use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
 use crate::config::{Config, ConfigError, Keybinds, LanConfig, UiSettings};
 use crate::discovery::{Advertisement, Discovery, DiscoveryError, FoundHosts, local_pairing_addrs};
-use crate::identity;
 use crate::server::ShutdownReason;
 use crate::services::{
     CloudLink, CloudTransport, DeviceRuntimeSecurity, StartedUserServices, UDP_BLOCKED_MEMORY,
@@ -25,6 +24,7 @@ use crate::services::{
 use crate::transport::InProcessConnection;
 use crate::update::UpdateReporter;
 use crate::user_state::ServerState;
+use crate::{Clock, WallClock, identity};
 
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -148,6 +148,8 @@ pub struct ProfileRuntimeOptions {
     pub(crate) host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
 
     pub(crate) listeners: Listeners,
+    /// Product-policy time; transport and harness deadlines remain real.
+    pub clock: Arc<dyn Clock>,
     pub fixtures: RuntimeFixtures,
 }
 
@@ -195,6 +197,7 @@ impl ProfileRuntimeOptions {
             host_factory,
 
             listeners,
+            clock: Arc::new(WallClock),
             fixtures: RuntimeFixtures::default(),
         }
     }
@@ -267,6 +270,7 @@ pub struct ProfileRuntime {
     background_tasks: Vec<JoinHandle<()>>,
     cloud_link: Mutex<Option<CloudLink>>,
     udp_blocked: Arc<UdpBlockedMemory>,
+    clock: Arc<dyn Clock>,
     /// The embedder obtains relay credentials from the configured cloud through
     /// its own account API. Stopping the profile must also stop this link.
     relay_task: Mutex<Option<JoinHandle<()>>>,
@@ -518,6 +522,7 @@ async fn build(
             .fixtures
             .udp_blocked_memory
             .unwrap_or(UDP_BLOCKED_MEMORY),
+        options.clock.clone(),
     ));
 
     Ok(ProfileRuntime {
@@ -541,6 +546,7 @@ async fn build(
         background_tasks,
         cloud_link: Mutex::new(None),
         udp_blocked,
+        clock: options.clock,
         relay_task: Mutex::new(None),
         attached_relay: Mutex::new(None),
         status,
@@ -558,6 +564,20 @@ async fn build(
 impl ProfileRuntime {
     pub fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    /// Test-harness observation of the product policy that skips a known
+    /// UDP-blocked relay host. Production callers do not need this surface.
+    #[doc(hidden)]
+    pub fn remembers_udp_blocked_for_test(&self, host: &str) -> bool {
+        self.udp_blocked.holds(host)
+    }
+
+    /// Subscribes before observing so a classification transition cannot be
+    /// lost between the harness's first check and its wait.
+    #[doc(hidden)]
+    pub fn subscribe_udp_blocked_for_test(&self) -> watch::Receiver<u64> {
+        self.udp_blocked.subscribe()
     }
 
     pub fn rebind_direct_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
@@ -597,6 +617,13 @@ impl ProfileRuntime {
     #[allow(dead_code)]
     pub(crate) fn status(&self) -> watch::Receiver<Observed> {
         self.status.subscribe()
+    }
+
+    /// Test-harness subscription to connector observations. Assertions still
+    /// inspect the public carrier state; this only supplies their wakeup.
+    #[doc(hidden)]
+    pub fn subscribe_status_for_test(&self) -> watch::Receiver<crate::Observed> {
+        self.status()
     }
 
     /// Attach an embedder's relay route without changing the configured cloud.
@@ -701,7 +728,7 @@ impl ProfileRuntime {
                 CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
                     ctx,
                     *address,
-                    auth.clone(),
+                    auth.clone().with_clock(self.clock.clone()),
                     self.status.clone(),
                     self.services.quic_endpoint(),
                     crate::services::TestCloudTransport::Tcp,
@@ -715,7 +742,7 @@ impl ProfileRuntime {
                 } => CloudLink::testnet_with_auth(
                     ctx,
                     *address,
-                    auth.clone(),
+                    auth.clone().with_clock(self.clock.clone()),
                     self.status.clone(),
                     self.services.quic_endpoint(),
                     crate::services::TestCloudTransport::Quic {
@@ -733,7 +760,7 @@ impl ProfileRuntime {
                 } => CloudLink::testnet_with_auth(
                     ctx,
                     *address,
-                    auth.clone(),
+                    auth.clone().with_clock(self.clock.clone()),
                     self.status.clone(),
                     self.services.quic_endpoint(),
                     crate::services::TestCloudTransport::Auto {
@@ -776,6 +803,7 @@ impl ProfileRuntime {
                 self.udp_blocked.clone(),
                 self.test_cloud_transport,
                 self.test_cloud_refresh_interval,
+                self.clock.clone(),
             ),
         ));
         Ok(())
@@ -1114,6 +1142,7 @@ mod tests {
             host_factory: None,
 
             listeners,
+            clock: Arc::new(WallClock),
             #[cfg(test)]
             fixtures: RuntimeFixtures::default(),
         }

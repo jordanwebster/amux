@@ -22,6 +22,7 @@ use crate::config::Config;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkServer;
 use crate::user_state::ServerState;
+use crate::{Clock, WallClock};
 
 /// A caller-owned on-disk root for tests that allocate installation sockets.
 /// macOS's default TMPDIR leaves too little room for UUID socket names; tests
@@ -61,6 +62,7 @@ struct IdentityState {
     faults: Vec<Fault>,
     relay: Option<SocketAddr>,
     userinfo_gate: Option<UserinfoGate>,
+    clock: Arc<dyn Clock>,
 }
 
 struct UserinfoGate {
@@ -94,6 +96,14 @@ pub struct IdentityServer {
 
 impl IdentityServer {
     pub async fn start(accounts: Vec<TestAccount>, relay: Option<SocketAddr>) -> Self {
+        Self::start_with_clock(accounts, relay, Arc::new(WallClock)).await
+    }
+
+    pub async fn start_with_clock(
+        accounts: Vec<TestAccount>,
+        relay: Option<SocketAddr>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         assert!(
             !accounts.is_empty(),
             "identity fixture needs at least one account"
@@ -111,6 +121,7 @@ impl IdentityServer {
             faults: Vec::new(),
             relay,
             userinfo_gate: None,
+            clock,
         }));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -387,7 +398,8 @@ fn api_connect_response(
             "host": relay.ip().to_string(),
             "port": relay.port(),
             "token": relay_token(sub),
-            "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "expires_at": (chrono::DateTime::<chrono::Utc>::from(state.clock.system_now())
+                + chrono::Duration::hours(1)).to_rfc3339(),
             "tier": account.tier,
         }),
     )

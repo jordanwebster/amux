@@ -13,15 +13,15 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use futures_util::{Stream, stream};
-use node::HostId;
 use node::harness::{
     AuthenticatedLinkUser, CloudLinkServer, Config, ConnectionManager, LinkTokenAuthenticator,
     TLS_HANDSHAKE_TIMEOUT, relay_quic_client_config_with_roots, relay_quic_server_config_from_der,
 };
 use node::user_state::ServerState;
+use node::{Clock, HostId, WallClock};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -84,6 +84,7 @@ pub(crate) struct Relay {
     latency_millis: Arc<AtomicU64>,
     quic_server_config: quinn::ServerConfig,
     quic_client_config: quinn::ClientConfig,
+    clock: Arc<dyn Clock>,
 }
 
 struct RunningCloud {
@@ -128,10 +129,10 @@ impl CloudRelay {
     /// A cloud named by the default installation configuration, with a fresh
     /// loopback relay.
     pub async fn start() -> Self {
-        Self::start_with_url(super::default_cloud_url()).await
+        Self::start_with_url_and_clock(super::default_cloud_url(), Arc::new(WallClock)).await
     }
 
-    pub(crate) async fn start_with_url(url: String) -> Self {
+    pub(crate) async fn start_with_url_and_clock(url: String, clock: Arc<dyn Clock>) -> Self {
         let (listener, quic_socket) = bind_relay_sockets();
         let addr = listener
             .local_addr()
@@ -171,6 +172,7 @@ impl CloudRelay {
             latency_millis: Arc::default(),
             quic_server_config,
             quic_client_config,
+            clock,
         };
         relay.serve(listener).await;
         Self {
@@ -317,6 +319,7 @@ impl Relay {
             Arc::new(RegistryTokenAuthenticator {
                 tokens: self.tokens.clone(),
                 failures: self.failures.clone(),
+                clock: self.clock.clone(),
             }),
         );
         let connections: TrackedConnections = Arc::default();
@@ -568,6 +571,7 @@ pub(crate) fn testnet_server_state(
 struct RegistryTokenAuthenticator {
     tokens: TokenRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
+    clock: Arc<dyn Clock>,
 }
 
 #[tonic::async_trait]
@@ -589,7 +593,7 @@ impl LinkTokenAuthenticator for RegistryTokenAuthenticator {
         Ok(AuthenticatedLinkUser {
             user_id: registered.user_id,
             client_id: "test-client".to_string(),
-            expires_at: SystemTime::now() + registered.ttl,
+            expires_at: self.clock.system_now() + registered.ttl,
             tier: registered.tier,
         })
     }

@@ -26,7 +26,7 @@ use node::{AccessToken, AuthError, CredentialProvider, HostId};
 use tokio::sync::Mutex;
 
 use super::NetInner;
-use super::assertions::{DEFAULT_TIMEOUT, eventually};
+use super::assertions::{DEFAULT_TIMEOUT, eventually, eventually_on};
 use super::relay::{RegisteredToken, TokenRegistry, UserTierRegistry};
 use super::udp_proxy::UdpProxy;
 
@@ -45,6 +45,7 @@ pub(crate) struct CloudAttachment {
     pub(crate) udp_blocked_memory: Option<std::time::Duration>,
     pub(crate) relay_transport: super::RelayTransport,
     pub(crate) quic_client_config: quinn::ClientConfig,
+    pub(crate) clock: Arc<crate::DrivenClock>,
 }
 
 /// Marks a testnet daemon with a cloud attachment as account-bound. The
@@ -83,6 +84,7 @@ impl CloudAttachment {
                     .unwrap_or(node::harness::FREE_TIER_REFRESH_INTERVAL),
             ),
         )
+        .with_clock(self.clock.clone())
     }
 
     fn fixture_auth(&self) -> CloudFixtureAuth {
@@ -116,6 +118,7 @@ pub(crate) struct DaemonInner {
     pub(crate) socket_path: PathBuf,
     pub(crate) repository_roots: Vec<PathBuf>,
     pub(crate) artifact_clock: Arc<TestArtifactClock>,
+    pub(crate) clock: Arc<crate::DrivenClock>,
     /// Direct QUIC listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
     pub(crate) direct_addr: Option<SocketAddr>,
@@ -276,6 +279,7 @@ pub(crate) async fn start_daemon_runtime(
             .as_ref()
             .map(|cloud| (cloud.addr, cloud.fixture_auth())),
     };
+    options.clock = inner.clock.clone();
     let profile = runtime::start(options)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
@@ -447,9 +451,42 @@ impl Daemon {
         self.assert_relay_carrier(CarrierKind::RelayTcp).await;
     }
 
+    /// Waits for the failed UDP probe to be classified before a specification
+    /// advances the policy clock or removes the network fault.
+    pub async fn remembers_udp_blocked(&self) {
+        let mut changes = {
+            let runtime = self.runtime().await;
+            runtime
+                .as_ref()
+                .expect("profile is running")
+                .subscribe_udp_blocked_for_test()
+        };
+        eventually_on(
+            &format!("'{}' remembers the relay's failed UDP probe", self.name()),
+            async || self.udp_blocked_is_remembered().await,
+            async || changes.changed().await.is_ok(),
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    pub async fn udp_blocked_is_remembered(&self) -> bool {
+        let runtime = self.runtime().await;
+        runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.remembers_udp_blocked_for_test("testnet-relay"))
+    }
+
     async fn assert_relay_carrier(&self, expected: CarrierKind) {
         let assertion = format!("'{}' uses {expected:?} for its cloud relay", self.name());
-        eventually(
+        let mut changes = {
+            let runtime = self.runtime().await;
+            runtime
+                .as_ref()
+                .expect("profile is running")
+                .subscribe_status_for_test()
+        };
+        eventually_on(
             &assertion,
             async || {
                 let Some(parts) = self.try_parts().await else {
@@ -462,6 +499,7 @@ impl Daemon {
                     .await
                     .is_some_and(|carrier| carrier.kind() == expected)
             },
+            async || changes.changed().await.is_ok(),
             self.failure_dump(),
         )
         .await;
@@ -699,31 +737,20 @@ impl Daemon {
     }
 
     async fn expect_host_table(&self, assertion: &str, check: impl Fn(&[HostEntry]) -> bool) {
-        eventually(
+        let Some(parts) = self.try_parts().await else {
+            eventually(assertion, async || check(&[]), self.failure_dump()).await;
+            return;
+        };
+        // Subscribe with the snapshot before the first observation so a
+        // transition between checking and waiting cannot be lost.
+        let (hosts, mut changes) = parts.client.subscribe_hosts_with_snapshot().await;
+        if check(&hosts) {
+            return;
+        }
+        eventually_on(
             assertion,
-            async || {
-                // Register with the snapshot so a change between the first
-                // check and the receive cannot strand the assertion. Release
-                // the service handle before receiving so it does not keep a
-                // stopped runtime's event source alive.
-                let (hosts, mut changes) = {
-                    let Some(parts) = self.try_parts().await else {
-                        return check(&[]);
-                    };
-                    parts.client.subscribe_hosts_with_snapshot().await
-                };
-                if check(&hosts) {
-                    return true;
-                }
-                while changes.recv().await.is_some() {
-                    if check(&self.host_table().await) {
-                        return true;
-                    }
-                }
-                // A stopped runtime closes its subscription. Retry against
-                // the current runtime so assertions can span its replacement.
-                false
-            },
+            async || check(&self.host_table().await),
+            async || changes.recv().await.is_some(),
             self.failure_dump(),
         )
         .await;

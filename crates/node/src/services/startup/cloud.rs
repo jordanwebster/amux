@@ -18,7 +18,6 @@ use tracing::Instrument;
 use uuid::Uuid;
 use wire::protocol_error_from_status_details;
 
-use crate::audit;
 use crate::auth::CredentialProvider;
 use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
@@ -33,6 +32,7 @@ use crate::routing::{
 };
 use crate::transport::tls_connect_stream;
 use crate::user_state::ServerState;
+use crate::{Clock, audit};
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -46,7 +46,9 @@ pub(crate) const TCP_FALLBACK_DELAY: Duration = Duration::from_millis(300);
 
 pub struct UdpBlockedMemory {
     duration: Duration,
+    clock: Arc<dyn Clock>,
     blocked_at: Mutex<HashMap<String, tokio::time::Instant>>,
+    changed: watch::Sender<u64>,
 }
 
 pub struct CloudTransport {
@@ -54,6 +56,7 @@ pub struct CloudTransport {
     udp_blocked: Arc<UdpBlockedMemory>,
     tcp_override: Option<std::net::SocketAddr>,
     free_refresh_interval: Option<Duration>,
+    clock: Arc<dyn Clock>,
 }
 
 impl CloudTransport {
@@ -62,21 +65,26 @@ impl CloudTransport {
         udp_blocked: Arc<UdpBlockedMemory>,
         tcp_override: Option<std::net::SocketAddr>,
         free_refresh_interval: Option<Duration>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             quic_endpoint,
             udp_blocked,
             tcp_override,
             free_refresh_interval,
+            clock,
         }
     }
 }
 
 impl UdpBlockedMemory {
-    pub(crate) fn new(duration: Duration) -> Self {
+    pub(crate) fn new(duration: Duration, clock: Arc<dyn Clock>) -> Self {
+        let (changed, _) = watch::channel(0);
         Self {
             duration,
+            clock,
             blocked_at: Mutex::new(HashMap::new()),
+            changed,
         }
     }
 
@@ -85,23 +93,37 @@ impl UdpBlockedMemory {
             .blocked_at
             .lock()
             .expect("UDP-blocked memory lock poisoned");
-        let now = tokio::time::Instant::now();
+        let now = self.clock.now();
+        let previous_len = blocked_at.len();
         blocked_at.retain(|_, recorded| now.duration_since(*recorded) < self.duration);
+        if blocked_at.len() != previous_len {
+            self.changed.send_modify(|generation| *generation += 1);
+        }
         blocked_at.contains_key(host)
+    }
+
+    pub(crate) fn subscribe(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     fn record(&self, host: &str) {
         self.blocked_at
             .lock()
             .expect("UDP-blocked memory lock poisoned")
-            .insert(host.to_string(), tokio::time::Instant::now());
+            .insert(host.to_string(), self.clock.now());
+        self.changed.send_modify(|generation| *generation += 1);
     }
 
     fn clear(&self, host: &str) {
-        self.blocked_at
+        let removed = self
+            .blocked_at
             .lock()
             .expect("UDP-blocked memory lock poisoned")
-            .remove(host);
+            .remove(host)
+            .is_some();
+        if removed {
+            self.changed.send_modify(|generation| *generation += 1);
+        }
     }
 }
 
@@ -568,8 +590,9 @@ async fn dial_test_cloud_carrier(
         } => (client_config, server_name, quic_addr, false),
         TestCloudTransport::Tcp => return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp)),
     };
+    let connections_before_probe = quic_endpoint.open_connections();
     let quic = async move {
-        QuicCarrier::connect_relay_candidates_with_config(
+        let result = QuicCarrier::connect_relay_candidates_with_config(
             &quic_endpoint,
             [quic_addr],
             &server_name,
@@ -578,7 +601,20 @@ async fn dial_test_cloud_carrier(
         )
         .await
         .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+        if result.is_err() {
+            // Wait for this failed attempt to leave the endpoint, but never
+            // wait for unrelated direct QUIC connections owned by the same
+            // profile. The bound is a real transport-readiness fallback, not
+            // product-policy time.
+            let _ = tokio::time::timeout(TCP_FALLBACK_DELAY, async {
+                while quic_endpoint.open_connections() > connections_before_probe {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+        }
+        result
     };
     if automatic {
         select_cloud_carrier("testnet-relay", udp_blocked, TCP_FALLBACK_DELAY, quic, tcp).await
@@ -662,6 +698,7 @@ async fn run_cloud_connection_with_details(
                 .unwrap_or(FREE_TIER_REFRESH_INTERVAL),
         ),
     )
+    .with_clock(ctx.transport.clock.clone())
     .with_refresh_observer(move |tier| {
         refresh_status.report(Observed::Connected {
             tier,
@@ -989,13 +1026,16 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn udp_blocked_memory_expires_and_a_new_process_memory_starts_empty() {
-        let memory = UdpBlockedMemory::new(Duration::from_secs(10));
+        let memory = UdpBlockedMemory::new(Duration::from_secs(10), Arc::new(crate::WallClock));
         memory.record("relay.test");
         assert!(memory.holds("relay.test"));
 
         tokio::time::advance(Duration::from_secs(10)).await;
         assert!(!memory.holds("relay.test"));
-        assert!(!UdpBlockedMemory::new(Duration::from_secs(10)).holds("relay.test"));
+        assert!(
+            !UdpBlockedMemory::new(Duration::from_secs(10), Arc::new(crate::WallClock))
+                .holds("relay.test")
+        );
     }
 
     #[tokio::test]
@@ -1012,7 +1052,10 @@ mod tests {
             MuxRole::Connector,
             CarrierKind::RelayTcp,
         ));
-        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let memory = Arc::new(UdpBlockedMemory::new(
+            Duration::from_secs(10),
+            Arc::new(crate::WallClock),
+        ));
         let (winner, carrier) = select_cloud_carrier(
             "relay.test",
             memory.clone(),
@@ -1030,7 +1073,10 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_quic_dial_that_never_answers_loses_to_tcp_after_the_fallback_delay() {
-        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let memory = Arc::new(UdpBlockedMemory::new(
+            Duration::from_secs(10),
+            Arc::new(crate::WallClock),
+        ));
         let (tcp_io, _tcp_peer) = tokio::io::duplex(64);
         let tcp: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
             tcp_io,
@@ -1056,7 +1102,10 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_winner_is_not_remembered_until_the_complete_quic_probe_fails() {
-        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let memory = Arc::new(UdpBlockedMemory::new(
+            Duration::from_secs(10),
+            Arc::new(crate::WallClock),
+        ));
         let (probe_tx, probe_rx) = oneshot::channel();
         let quic = async move {
             probe_rx.await.unwrap();
@@ -1271,9 +1320,13 @@ mod tests {
             RuntimeStatus::new(None),
             super::CloudTransport::new(
                 quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap(),
-                Arc::new(super::UdpBlockedMemory::new(super::UDP_BLOCKED_MEMORY)),
+                Arc::new(super::UdpBlockedMemory::new(
+                    super::UDP_BLOCKED_MEMORY,
+                    Arc::new(crate::WallClock),
+                )),
                 None,
                 None,
+                Arc::new(crate::WallClock),
             ),
         );
 

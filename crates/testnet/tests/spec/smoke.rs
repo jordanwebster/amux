@@ -40,7 +40,6 @@ async fn announcing_withdrawing_and_a_tier_flip_are_observed_by_a_device() {
         .cloud_user("owner")
         .cloud_only()
         .cloud_tier(node::Tier::Free)
-        .cloud_refresh_interval(std::time::Duration::from_millis(50))
         .daemon("workstation")
         .outside_discovery("workstation")
         .start()

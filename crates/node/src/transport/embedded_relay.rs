@@ -659,7 +659,10 @@ mod tests {
     fn dialling_from() -> RelayTransport {
         RelayTransport {
             quic_endpoint: quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap(),
-            udp_blocked: Arc::new(UdpBlockedMemory::new(UDP_BLOCKED_MEMORY)),
+            udp_blocked: Arc::new(UdpBlockedMemory::new(
+                UDP_BLOCKED_MEMORY,
+                Arc::new(crate::WallClock),
+            )),
         }
     }
 

@@ -235,7 +235,8 @@ impl Server {
         let (tls_acceptor, quic_server_config) = {
             let mut state = self.state.write().await;
             state.is_cloud_server = true;
-            state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
+            let clock = state.clock.clone();
+            state.jwt_validator = Some(Arc::new(JwtValidator::new_with_clock(&cloud_url, clock)));
 
             // Cloud mode requires TLS certificates via environment variables.
             let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {

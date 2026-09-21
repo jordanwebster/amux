@@ -1037,6 +1037,7 @@ impl Inner {
                 },
 
                 listeners: self.listeners,
+                clock: Arc::new(crate::WallClock),
                 fixtures,
             };
             let config_path = paths.config_path.as_ref().unwrap();

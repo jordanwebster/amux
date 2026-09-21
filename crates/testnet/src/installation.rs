@@ -638,6 +638,7 @@ pub(super) async fn start(
     cloud: Option<&super::relay::CloudRelay>,
     discovery: ScriptedDiscovery,
     udp_proxy: UdpProxy,
+    clock: Arc<crate::DrivenClock>,
 ) -> InstallationHandle {
     let disk_root = crate::identity::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
@@ -710,6 +711,7 @@ pub(super) async fn start(
                     socket_path: paths.socket_path.clone(),
                     repository_roots: Vec::new(),
                     artifact_clock: fixture.clock.clone(),
+                    clock: clock.clone(),
                     direct_addr: fixture.direct_addr,
                     proxy_id: id.0,
                     udp_proxy: udp_proxy.clone(),
@@ -728,6 +730,7 @@ pub(super) async fn start(
                             udp_blocked_memory: None,
                             relay_transport: super::RelayTransport::Tcp,
                             quic_client_config: cloud.quic_client_config(),
+                            clock: clock.clone(),
                         }
                     }),
                     runtime: tokio::sync::Mutex::new(None),

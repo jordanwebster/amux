@@ -10,7 +10,6 @@ async fn a_device_on_a_udp_blocked_network_falls_back_to_tcp_and_retries_quic_af
         .daemon("phone")
         .cloud_only()
         .udp_blocked()
-        .udp_blocked_memory(std::time::Duration::from_secs(2))
         .daemon("host")
         .cloud_only()
         .paired("phone", "host", Via::Cloud)
@@ -21,16 +20,22 @@ async fn a_device_on_a_udp_blocked_network_falls_back_to_tcp_and_retries_quic_af
     phone.uses_tcp_relay().await;
     host.uses_quic_relay().await;
 
-    // The quick TCP win is not enough to classify the network. Leave the
-    // black-holed QUIC probe its bounded candidate budget before checking the
-    // remembered fallback.
-    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    phone.remembers_udp_blocked().await;
     net.udp_blocked(&phone, false);
+
+    let memory = node::harness::UDP_BLOCKED_MEMORY;
+    net.advance(memory - std::time::Duration::from_nanos(1));
+    assert!(phone.udp_blocked_is_remembered().await);
     phone.restart_cloud_link().await;
     phone.uses_tcp_relay().await;
 
-    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    net.advance(std::time::Duration::from_nanos(1));
+    assert!(!phone.udp_blocked_is_remembered().await);
     phone.restart_cloud_link().await;
+    phone.uses_quic_relay().await;
+
+    net.advance(std::time::Duration::from_nanos(1));
+    assert!(!phone.udp_blocked_is_remembered().await);
     phone.uses_quic_relay().await;
 }
 

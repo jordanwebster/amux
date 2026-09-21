@@ -7,6 +7,7 @@ use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
 use crate::update::UpdateReporter;
+use crate::{Clock, WallClock};
 
 pub struct ServerState {
     pub(crate) config: Config,
@@ -16,6 +17,7 @@ pub struct ServerState {
     pub is_cloud_server: bool,
     pub(crate) jwt_validator: Option<Arc<JwtValidator>>,
     pub(crate) local_agent_host: Option<Arc<dyn LocalAgentHost>>,
+    pub(crate) clock: Arc<dyn Clock>,
 }
 
 impl ServerState {
@@ -24,6 +26,22 @@ impl ServerState {
         host_id: Uuid,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
+    ) -> Self {
+        Self::new_with_clock(
+            config,
+            host_id,
+            credentials,
+            update_reporter,
+            Arc::new(WallClock),
+        )
+    }
+
+    pub(crate) fn new_with_clock(
+        config: Config,
+        host_id: Uuid,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+        update_reporter: Option<Arc<dyn UpdateReporter>>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             config,
@@ -35,6 +53,7 @@ impl ServerState {
             // Device startup injects the host after entering an async runtime;
             // cloud relays and service-level tests intentionally keep `None`.
             local_agent_host: None,
+            clock,
         }
     }
 

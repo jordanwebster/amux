@@ -24,8 +24,41 @@ where
     C: AsyncFnMut() -> bool,
     D: Future<Output = String>,
 {
-    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    eventually_with_timeout(
+        assertion,
+        DEFAULT_TIMEOUT,
+        &mut check,
+        async || std::future::pending::<bool>().await,
+        dump,
+    )
+    .await;
+}
+
+/// Waits for a causal state-change notification, retaining a short poll as a
+/// fallback for closed or replaced event sources.
+pub(crate) async fn eventually_on<C, N, D>(assertion: &str, mut check: C, notified: N, dump: D)
+where
+    C: AsyncFnMut() -> bool,
+    N: AsyncFnMut() -> bool,
+    D: Future<Output = String>,
+{
+    eventually_with_timeout(assertion, DEFAULT_TIMEOUT, &mut check, notified, dump).await;
+}
+
+async fn eventually_with_timeout<C, N, D>(
+    assertion: &str,
+    timeout: Duration,
+    mut check: C,
+    mut notified: N,
+    dump: D,
+) where
+    C: AsyncFnMut() -> bool,
+    N: AsyncFnMut() -> bool,
+    D: Future<Output = String>,
+{
+    let deadline = Instant::now() + timeout;
     let mut check_hung = false;
+    let mut notifications_open = true;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         // The deadline binds the check future itself, not just the gaps
@@ -42,7 +75,15 @@ where
         if Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if notifications_open {
+            tokio::select! {
+                open = notified() => notifications_open = open,
+                _ = tokio::time::sleep(POLL_INTERVAL.min(remaining)) => {}
+            }
+        } else {
+            tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
+        }
     }
     let hung_note = if check_hung {
         " (the final condition poll itself did not resolve)"
@@ -54,7 +95,7 @@ where
     let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
         .await
         .unwrap_or_else(|_| "<state dump timed out>".to_string());
-    panic!("spec assertion timed out after {DEFAULT_TIMEOUT:?}{hung_note}: {assertion}\n{dump}");
+    panic!("spec assertion timed out after {timeout:?}{hung_note}: {assertion}\n{dump}");
 }
 
 /// Polls `check` for `duration` and fails as soon as it returns `false`.
@@ -94,6 +135,9 @@ pub(crate) async fn consistently_for<C, D>(
 
 #[cfg(test)]
 mod tests {
+    use futures_util::FutureExt;
+    use node::Clock;
+
     use super::*;
 
     #[tokio::test(start_paused = true)]
@@ -117,5 +161,40 @@ mod tests {
         assert!(message.contains("spec assertion failed during 100ms"));
         assert!(message.contains("the state stays valid"));
         assert!(message.contains("current state"));
+    }
+
+    #[tokio::test]
+    async fn real_assertion_deadline_fires_while_policy_clock_is_stopped() {
+        let clock = crate::DrivenClock::new();
+        let stopped_at = clock.now();
+        let waiting_clock = clock.clone();
+        let assertion = std::panic::AssertUnwindSafe(async move {
+            eventually_with_timeout(
+                "a stopped policy timer does not stop the harness",
+                Duration::from_millis(25),
+                async || {
+                    waiting_clock
+                        .sleep_until(stopped_at + Duration::from_secs(1))
+                        .await;
+                    true
+                },
+                async || std::future::pending::<bool>().await,
+                async { "policy clock remained stopped".to_string() },
+            )
+            .await;
+        })
+        .catch_unwind();
+
+        let failure = tokio::time::timeout(Duration::from_millis(500), assertion)
+            .await
+            .expect("real harness deadline")
+            .expect_err("stopped policy clock must time out");
+        let message = failure
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied())
+            .expect("panic message");
+        assert!(message.contains("spec assertion timed out after 25ms"));
+        assert_eq!(clock.now(), stopped_at);
     }
 }

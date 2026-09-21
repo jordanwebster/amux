@@ -1,3 +1,18 @@
+2026-09-21 — **Drive product-policy time without slowing the specifications.**
+Node runtimes now receive an explicit policy clock while transport timers and
+harness deadlines remain on real time. TestNet advances one shared driven clock
+for the remembered UDP-blocked decision, free-tier entitlement refreshes, fake
+identity timestamps and relay verification. The relay and entitlement specs
+exercise the production one-hour and three-minute boundaries immediately
+before, at and after expiry without sleeps or shortened settings. Host-table,
+relay-carrier and UDP-classification waits consume causal notifications with
+bounded polling fallbacks, and failed QUIC probes publish their classification
+only after the fixture endpoint releases that attempt, without waiting on
+unrelated direct connections. JWT expiration also reads the injected wall clock,
+while unrelated token refresh and JWKS cache timers stay real. The complete
+434-test specification suite passes in 15.04 seconds versus task 8's 16.04
+seconds; workspace check, lint and the 54-test testnet library suite pass.
+
 2026-09-21 — **Compare the phone screens real journeys reach.**
 The conversation and cold-start journeys now lock two semantic checkpoints
 each with the existing phone golden tolerance and system-chrome masks. Their

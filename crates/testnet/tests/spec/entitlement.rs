@@ -24,19 +24,16 @@ async fn a_reauth_that_changes_the_tier_takes_effect_on_the_link() {
 /// cadence, so neither daemon nor cloud link needs a restart.
 #[tokio::test]
 async fn a_free_daemon_refreshes_and_picks_up_pro_without_a_restart() {
-    let refresh_interval = std::time::Duration::from_millis(50);
     let net = TestNet::builder()
         .cloud()
         .daemon("phone")
         .cloud_user("alice")
         .cloud_only()
         .cloud_tier(Tier::Free)
-        .cloud_refresh_interval(refresh_interval)
         .daemon("desktop")
         .cloud_user("alice")
         .cloud_only()
         .cloud_tier(Tier::Free)
-        .cloud_refresh_interval(refresh_interval)
         .paired("phone", "desktop", Via::Cloud)
         .start()
         .await;
@@ -50,6 +47,27 @@ async fn a_free_daemon_refreshes_and_picks_up_pro_without_a_restart() {
     );
     net.cloud_user_tier("alice", Tier::Pro);
     assert_eq!(phone.refresh_entitlement().await, Tier::Pro);
+    assert_eq!(
+        phone.refused_call_error(&desktop).await,
+        ProtocolError::PaymentRequired
+    );
+    assert_eq!(
+        desktop.refused_call_error(&phone).await,
+        ProtocolError::PaymentRequired
+    );
+
+    let cadence = node::harness::FREE_TIER_REFRESH_INTERVAL;
+    net.advance(cadence - std::time::Duration::from_nanos(1));
+    assert_eq!(
+        desktop.refused_call_error(&phone).await,
+        ProtocolError::PaymentRequired
+    );
+
+    net.advance(std::time::Duration::from_nanos(1));
+    phone.can_call(&desktop).await;
+    desktop.can_call(&phone).await;
+
+    net.advance(std::time::Duration::from_nanos(1));
     phone.can_call(&desktop).await;
     desktop.can_call(&phone).await;
 
