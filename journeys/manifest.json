@@ -161,6 +161,20 @@
       "clients": ["phone"],
       "topology": "journeys/topologies/profiles.json",
       "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
+    },
+    {
+      "id": "conversation-decision-claude-pty",
+      "stage": 15,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "A person sends one prompt through the real terminal client to a Claude PTY session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host independently records the prompt and decision."
+    },
+    {
+      "id": "leave-and-recover",
+      "stage": 15,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "A real terminal run creates cached fleet and chat state, a fresh client paints it while the daemon is offline with an unavailable composer, and the same chat reconciles when the daemon returns without losing or duplicating its rows."
     }
   ]
 }

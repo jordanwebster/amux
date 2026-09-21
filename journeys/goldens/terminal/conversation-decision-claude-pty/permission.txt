@@ -1,0 +1,40 @@
+  decision-agent · claude @ terminal-host                                                           default · needs you 
+                                                                                                                        
+  ⚠ unrecognized row                                                                                                    
+    └ hook.user_prompt_submit                                                                                           
+                                                                                                                        
+▎   Check the deployment once.                                                                                          
+                                                                                                                        
+  ▸ Bash deploy --check                                                                                                 
+    └ running                                                                                                           
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+    ctx unknown                                                                                                         
+                                                                                                                        
+    permission — Bash                                                                                                   
+                                                                                                                        
+      $ deploy --check                                                                                                  
+                                                                                                                        
+    › 1. Allow once                                                                                                     
+      2. Always allow access to /workspace from this project                                                            
+      3. Deny — tell the agent why (optional)                                                                           
+                                                                                                                        
+    1-3/↑↓ select · enter confirm · esc back (never answers)                                                            

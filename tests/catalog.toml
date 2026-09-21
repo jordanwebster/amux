@@ -710,6 +710,23 @@ journey_manifest = "journeys/manifest.json"
 journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review", "writing", "claude-sessions", "hosts-lifecycle", "hosts", "accounts", "reports", "accessibility", "production-startup", "free-tier", "signed-out", "profiles"]
 
 [[suite]]
+name = "terminal-journeys"
+contract = "A person completes declared terminal stories through the real TUI and production installation front door against a served topology."
+paths = ["scripts/journeys/terminal.py", "scripts/terminal-journey.py", "journeys/goldens/terminal"]
+recipe = "just journey terminal conversation-decision-claude-pty"
+boundary = "Journeys"
+oracle = "Door observations, exact terminal text and semantic styles, cache contents, process exits, and teardown."
+real = ["amux TUI", "tmux PTY", "installation front door", "SQLite store", "processes"]
+substituted = ["cloud account", "provider"]
+time = "real"
+capabilities = ["Unix", "tmux", "Python 3"]
+lane = "journey"
+evidence = "target/journeys"
+update = "UPDATE_JOURNEY_GOLDENS=1 just journey terminal conversation-decision-claude-pty"
+journey_manifest = "journeys/manifest.json"
+journeys = ["conversation-decision-claude-pty", "leave-and-recover"]
+
+[[suite]]
 name = "phone-goldens"
 contract = "Every catalogued phone fixture screen matches its reviewed image baseline in each declared appearance."
 paths = ["apps/apple/Goldens", "scripts/ios-goldens.py"]

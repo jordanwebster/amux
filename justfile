@@ -148,6 +148,12 @@ claude-sdk-live *ARGS: build
 shot *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot {{desktop_features}} -- "$@"
 
+# Run one declared journey through its real client.
+journey CLIENT NAME:
+    test "{{CLIENT}}" = terminal
+    {{bounded}} 900 cargo build --locked -p amux -p testnet --bins {{desktop_features}}
+    {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
+
 # Generate and verify the complete TUI evidence bundle.
 tui-evidence *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 scripts/tui-evidence "$@"

@@ -1,0 +1,27 @@
+{
+  "cloud_url": "https://amux.sh",
+  "users": ["personal"],
+  "daemons": [
+    {
+      "name": "terminal-host",
+      "user": "personal",
+      "installation": true,
+      "repository_roots": ["../.."]
+    }
+  ],
+  "paired": [],
+  "agents": [
+    {
+      "name": "decision-agent",
+      "daemon": "terminal-host",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    },
+    {
+      "name": "recovery-agent",
+      "daemon": "terminal-host",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    }
+  ]
+}

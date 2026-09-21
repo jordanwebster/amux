@@ -1,3 +1,15 @@
+2026-09-21 — **Drive terminal stories through the real front door.**
+Two declared terminal journeys now start a served installation, operate the
+real 120×40 TUI through tmux, assert the host's independent observations and
+leave bounded evidence behind. One story sends a prompt and answers one
+permission request; the other proves a fresh client can paint cached fleet and
+chat state while its daemon is unavailable, then reconcile without losing or
+duplicating either row. Reviewed text and semantic-theme maps come from the
+product's frozen-frame reports, with only the live turn clock normalized. A
+deliberately wrong host observation fails, client exits and testnet teardown
+are proved, the suite is catalogued on the journey lane, and Linux and macOS
+end-to-end CI install tmux and run both stories.
+
 2026-09-21 — **Observe the phone's opened streams in journey checks.**
 The phone's debug door now reads replaying and live streams from the runtime
 model. It previously read the legacy attachment-intent map, which stays empty

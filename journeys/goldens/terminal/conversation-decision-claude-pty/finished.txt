@@ -1,0 +1,40 @@
+  decision-agent · claude @ terminal-host                                                                default · idle 
+                                                                                                                        
+  ⚠ unrecognized row                                                                                                    
+    └ hook.user_prompt_submit                                                                                           
+                                                                                                                        
+▎   Check the deployment once.                                                                                          
+                                                                                                                        
+  ✔ Bash deploy --check                                                                                                 
+    └ Permission granted.                                                                                               
+                                                                                                                        
+  ─ turn · <elapsed> ───────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+    ctx unknown                                                                                                         
+                                                                                                                        
+▎                                                                                                                       
+▎   Type a message▌                                                                                                     
+▎                                                                                                                       
+                                                                                                                        
+    enter send · ctrl+j newline · C-a r review diff · ? help                                             shift+tab mode 

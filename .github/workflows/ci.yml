@@ -109,8 +109,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
+      - name: Install tmux on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: Install tmux on macOS
+        if: runner.os == 'macOS'
+        run: brew install tmux
       - name: Run end-to-end tests
         run: just e2e
+      - name: Run terminal journeys
+        run: |
+          just journey terminal conversation-decision-claude-pty
+          just journey terminal leave-and-recover
 
   embedded:
     name: Embedded client
