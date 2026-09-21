@@ -130,6 +130,24 @@ pub enum Via {
     Cloud,
 }
 
+impl From<Via> for serve::PairVia {
+    fn from(via: Via) -> Self {
+        match via {
+            Via::Direct => Self::Direct,
+            Via::Cloud => Self::Cloud,
+        }
+    }
+}
+
+impl From<serve::PairVia> for Via {
+    fn from(via: serve::PairVia) -> Self {
+        match via {
+            serve::PairVia::Direct => Self::Direct,
+            serve::PairVia::Cloud => Self::Cloud,
+        }
+    }
+}
+
 /// Carrier a fixture daemon uses for its authenticated cloud-relay link.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RelayTransport {
@@ -283,6 +301,15 @@ impl TestNet {
     /// Starts declaring a topology; finish with [`TestNetBuilder::start`].
     pub fn builder() -> TestNetBuilder {
         TestNetBuilder::default()
+    }
+
+    /// Loads the same declared network used by `testnet serve` and starts its
+    /// daemons and fixture pairings in process. Scripted agents remain a
+    /// served-door concern; an in-process spec can create the agents it needs
+    /// through the ordinary harness verbs.
+    pub async fn from_topology(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let topology = serve::Topology::load(path.as_ref())?;
+        Ok(TestNetBuilder::from_topology(&topology).start().await)
     }
 
     pub fn installation(&self, name: &str) -> InstallationHandle {
@@ -647,25 +674,154 @@ struct DaemonSpec {
     relay_transport: RelayTransport,
 }
 
+#[derive(Clone, Copy)]
+enum BuilderSelection {
+    None,
+    Installation(usize),
+    Profile { installation: usize, profile: usize },
+    Daemon(usize),
+}
+
 /// Declares a topology for [`TestNetBuilder::start`]: daemons, an optional
 /// cloud relay, and pre-seeded trust (pairing-as-fixture). Obtained from
 /// [`TestNet::builder`].
-#[derive(Default)]
 pub struct TestNetBuilder {
+    topology: serve::Topology,
     cloud: bool,
-    cloud_url: Option<String>,
+    custom_cloud_url: bool,
     identity: bool,
     installations: Vec<installation::InstallationSpec>,
-    selecting_profile: bool,
+    selection: BuilderSelection,
     daemons: Vec<DaemonSpec>,
-    pairs: Vec<(String, String, Via)>,
     stale_direct_pairs: std::collections::HashSet<(String, String)>,
     trusted: Vec<(String, String)>,
     undiscoverable: std::collections::HashSet<String>,
     direct_idle_timeout: Option<std::time::Duration>,
+    errors: Vec<String>,
+}
+
+impl Default for TestNetBuilder {
+    fn default() -> Self {
+        Self {
+            topology: serve::Topology::empty(),
+            cloud: false,
+            custom_cloud_url: false,
+            identity: false,
+            installations: Vec::new(),
+            selection: BuilderSelection::None,
+            daemons: Vec::new(),
+            stale_direct_pairs: std::collections::HashSet::new(),
+            trusted: Vec::new(),
+            undiscoverable: std::collections::HashSet::new(),
+            direct_idle_timeout: None,
+            errors: Vec::new(),
+        }
+    }
 }
 
 impl TestNetBuilder {
+    fn from_topology(topology: &serve::Topology) -> Self {
+        let mut builder = Self {
+            topology: topology.network_declaration(),
+            cloud: true,
+            custom_cloud_url: !topology.daemons.iter().any(|daemon| daemon.installation),
+            identity: true,
+            ..Self::default()
+        };
+        for daemon in &topology.daemons {
+            if daemon.installation {
+                builder.installations.push(installation::InstallationSpec {
+                    name: daemon.name.clone(),
+                    persistent: false,
+                    front_door: true,
+                    embedded: false,
+                    profiles: vec![installation::ProfileSpec {
+                        name: daemon.name.clone(),
+                        cloud_user: daemon.user.clone(),
+                        cloud_only: false,
+                        repository_roots: daemon.repository_roots.clone(),
+                    }],
+                });
+            } else {
+                builder.daemons.push(DaemonSpec {
+                    name: daemon.name.clone(),
+                    repository_roots: daemon.repository_roots.clone(),
+                    cloud_only: false,
+                    no_cloud: daemon.user.is_none(),
+                    cloud_user: daemon.user.clone(),
+                    cloud_tier: daemon
+                        .user
+                        .as_ref()
+                        .and_then(|user| topology.tiers.get(user))
+                        .copied()
+                        .unwrap_or(node::Tier::Pro),
+                    cloud_refresh_interval: None,
+                    udp_blocked_memory: None,
+                    udp_blocked: false,
+                    relay_transport: RelayTransport::Auto,
+                });
+            }
+        }
+        for (a, b, via) in &topology.paired {
+            if *via == serve::PairVia::Cloud {
+                builder.undiscoverable.insert(a.clone());
+                builder.undiscoverable.insert(b.clone());
+            }
+        }
+        builder
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        if !self.errors.is_empty() {
+            anyhow::bail!(self.errors.join("; "));
+        }
+        let mut names = std::collections::HashSet::new();
+        for daemon in &self.topology.daemons {
+            anyhow::ensure!(
+                names.insert(daemon.name.clone()),
+                "duplicate daemon '{}'",
+                daemon.name
+            );
+            if daemon.installation {
+                names.insert(format!("{0}/{0}", daemon.name));
+            }
+        }
+        for installation in &self.installations {
+            for profile in &installation.profiles {
+                names.insert(format!("{}/{}", installation.name, profile.name));
+            }
+        }
+        for (a, b, _) in &self.topology.paired {
+            anyhow::ensure!(a != b, "cannot pair '{a}' with itself");
+            anyhow::ensure!(
+                names.contains(a),
+                "paired(..) references unknown daemon '{a}'"
+            );
+            anyhow::ensure!(
+                names.contains(b),
+                "paired(..) references unknown daemon '{b}'"
+            );
+        }
+        for (a, b) in &self.trusted {
+            anyhow::ensure!(a != b, "cannot seed trust between '{a}' and itself");
+            anyhow::ensure!(
+                names.contains(a),
+                "trusted(..) references unknown daemon '{a}'"
+            );
+            anyhow::ensure!(
+                names.contains(b),
+                "trusted(..) references unknown daemon '{b}'"
+            );
+        }
+        for name in &self.undiscoverable {
+            anyhow::ensure!(
+                names.contains(name),
+                "outside_discovery(..) references unknown daemon '{name}'"
+            );
+        }
+        Ok(())
+    }
+
     pub fn installation(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         assert!(
@@ -679,16 +835,25 @@ impl TestNetBuilder {
             embedded: false,
             profiles: Vec::new(),
         });
-        self.selecting_profile = true;
+        self.selection = BuilderSelection::Installation(self.installations.len() - 1);
         self
     }
 
     pub fn profile(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
-        let installation = self
-            .installations
-            .last_mut()
-            .expect(".profile() must follow .installation()");
+        let installation_index = match self.selection {
+            BuilderSelection::Installation(index)
+            | BuilderSelection::Profile {
+                installation: index,
+                ..
+            } => index,
+            _ => {
+                self.errors
+                    .push(".profile() must follow .installation()".to_string());
+                return self;
+            }
+        };
+        let installation = &mut self.installations[installation_index];
         assert!(
             !installation
                 .profiles
@@ -702,35 +867,35 @@ impl TestNetBuilder {
             cloud_only: false,
             repository_roots: Vec::new(),
         });
-        self.selecting_profile = true;
+        self.selection = BuilderSelection::Profile {
+            installation: installation_index,
+            profile: installation.profiles.len() - 1,
+        };
         self
     }
 
     /// Serve the most recent fixture installation through its production socket.
     pub fn front_door(mut self) -> Self {
-        self.installations
-            .last_mut()
-            .expect(".front_door() must follow .installation()")
-            .front_door = true;
+        if let Some(index) = self.selected_installation_index("front_door") {
+            self.installations[index].front_door = true;
+        }
         self
     }
 
     /// Persist the installation in a short temporary root for reopen and lock tests.
     pub fn persistent(mut self) -> Self {
-        self.installations
-            .last_mut()
-            .expect(".persistent() must follow .installation()")
-            .persistent = true;
+        if let Some(index) = self.selected_installation_index("persistent") {
+            self.installations[index].persistent = true;
+        }
         self
     }
 
     /// Runs the selected installation with in-process-only host integration,
     /// matching the lifecycle policy used by the phone bridge.
     pub fn embedded(mut self) -> Self {
-        self.installations
-            .last_mut()
-            .expect(".embedded() must follow .installation()")
-            .embedded = true;
+        if let Some(index) = self.selected_installation_index("embedded") {
+            self.installations[index].embedded = true;
+        }
         self
     }
 
@@ -751,7 +916,8 @@ impl TestNetBuilder {
     /// cloud still assigns an independent loopback relay address.
     pub fn cloud_url(mut self, url: impl Into<String>) -> Self {
         self.cloud = true;
-        self.cloud_url = Some(url.into());
+        self.custom_cloud_url = true;
+        self.topology.cloud_url = url.into();
         self
     }
 
@@ -763,9 +929,9 @@ impl TestNetBuilder {
             !self.daemons.iter().any(|spec| spec.name == name),
             "duplicate daemon name '{name}'"
         );
-        self.selecting_profile = false;
+        self.selection = BuilderSelection::Daemon(self.daemons.len());
         self.daemons.push(DaemonSpec {
-            name,
+            name: name.clone(),
             repository_roots: Vec::new(),
             cloud_only: false,
             no_cloud: false,
@@ -776,21 +942,31 @@ impl TestNetBuilder {
             udp_blocked: false,
             relay_transport: RelayTransport::Auto,
         });
+        self.topology.daemons.push(serve::DaemonDecl {
+            name,
+            user: None,
+            repository_roots: Vec::new(),
+            installation: false,
+            lan: false,
+            sdk_script: None,
+        });
         self
     }
 
     /// Declares the directories searched for repositories by the most recent daemon.
     pub fn repository_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
-        if self.selecting_profile {
-            self.installations
-                .last_mut()
-                .unwrap()
-                .profiles
-                .last_mut()
-                .expect("repository_roots requires a profile")
-                .repository_roots = roots;
-        } else {
-            self.last_daemon("repository_roots").repository_roots = roots;
+        match self.selection {
+            BuilderSelection::Profile {
+                installation,
+                profile,
+            } => self.installations[installation].profiles[profile].repository_roots = roots,
+            BuilderSelection::Daemon(index) => {
+                self.daemons[index].repository_roots = roots.clone();
+                self.topology.daemons[index].repository_roots = roots;
+            }
+            _ => self
+                .errors
+                .push(".repository_roots() requires a daemon or profile".to_string()),
         }
         self
     }
@@ -798,32 +974,30 @@ impl TestNetBuilder {
     /// Marks the most recently added daemon as cloud-only: no direct
     /// transports, all traffic through the relay.
     pub fn cloud_only(mut self) -> Self {
-        if self.selecting_profile {
-            self.installations
-                .last_mut()
-                .unwrap()
-                .profiles
-                .last_mut()
-                .expect("cloud_only requires a profile")
-                .cloud_only = true;
-        } else {
-            self.last_daemon("cloud_only").cloud_only = true;
+        match self.selection {
+            BuilderSelection::Profile {
+                installation,
+                profile,
+            } => self.installations[installation].profiles[profile].cloud_only = true,
+            BuilderSelection::Daemon(index) => self.daemons[index].cloud_only = true,
+            _ => self
+                .errors
+                .push(".cloud_only() requires a daemon or profile".to_string()),
         }
         self
     }
 
     /// Opts the most recently added daemon out of the cloud relay.
     pub fn no_cloud(mut self) -> Self {
-        if self.selecting_profile {
-            self.installations
-                .last_mut()
-                .unwrap()
-                .profiles
-                .last_mut()
-                .expect("no_cloud requires a profile")
-                .cloud_user = None;
-        } else {
-            self.last_daemon("no_cloud").no_cloud = true;
+        match self.selection {
+            BuilderSelection::Profile {
+                installation,
+                profile,
+            } => self.installations[installation].profiles[profile].cloud_user = None,
+            BuilderSelection::Daemon(index) => self.daemons[index].no_cloud = true,
+            _ => self
+                .errors
+                .push(".no_cloud() requires a daemon or profile".to_string()),
         }
         self
     }
@@ -833,16 +1007,22 @@ impl TestNetBuilder {
     /// presence is per-user, so daemons of different users meet nothing of
     /// each other at the relay.
     pub fn cloud_user(mut self, user: impl Into<String>) -> Self {
-        if self.selecting_profile {
-            self.installations
-                .last_mut()
-                .unwrap()
-                .profiles
-                .last_mut()
-                .expect("cloud_user requires a profile")
-                .cloud_user = Some(user.into());
-        } else {
-            self.last_daemon("cloud_user").cloud_user = Some(user.into());
+        let user = user.into();
+        match self.selection {
+            BuilderSelection::Profile {
+                installation,
+                profile,
+            } => self.installations[installation].profiles[profile].cloud_user = Some(user),
+            BuilderSelection::Daemon(index) => {
+                self.daemons[index].cloud_user = Some(user.clone());
+                self.topology.daemons[index].user = Some(user.clone());
+                if !self.topology.users.contains(&user) {
+                    self.topology.users.push(user);
+                }
+            }
+            _ => self
+                .errors
+                .push(".cloud_user() requires a daemon or profile".to_string()),
         }
         self
     }
@@ -851,22 +1031,25 @@ impl TestNetBuilder {
     /// non-default tier receives a distinct token, so one account can
     /// exercise mixed-tier live links without changing account identity.
     pub fn cloud_tier(mut self, tier: node::Tier) -> Self {
-        assert!(
-            !self.selecting_profile,
-            "cloud_tier currently requires a standalone daemon"
-        );
-        self.last_daemon("cloud_tier").cloud_tier = tier;
+        match self.selection {
+            BuilderSelection::Daemon(index) => self.daemons[index].cloud_tier = tier,
+            _ => self
+                .errors
+                .push(".cloud_tier() requires a standalone daemon".to_string()),
+        }
         self
     }
 
     /// Overrides the free-tier refresh cadence for the selected daemon.
     pub fn cloud_refresh_interval(mut self, interval: std::time::Duration) -> Self {
-        assert!(
-            !self.selecting_profile,
-            "cloud_refresh_interval currently requires a standalone daemon"
-        );
-        self.last_daemon("cloud_refresh_interval")
-            .cloud_refresh_interval = Some(interval);
+        match self.selection {
+            BuilderSelection::Daemon(index) => {
+                self.daemons[index].cloud_refresh_interval = Some(interval);
+            }
+            _ => self
+                .errors
+                .push(".cloud_refresh_interval() requires a standalone daemon".to_string()),
+        }
         self
     }
 
@@ -882,31 +1065,36 @@ impl TestNetBuilder {
     /// Shortens how long the selected daemon remembers a UDP-blocked relay
     /// network. Intended for deterministic fallback expiry specifications.
     pub fn udp_blocked_memory(mut self, duration: std::time::Duration) -> Self {
-        assert!(
-            !self.selecting_profile,
-            "udp_blocked_memory currently requires a standalone daemon"
-        );
-        self.last_daemon("udp_blocked_memory").udp_blocked_memory = Some(duration);
+        match self.selection {
+            BuilderSelection::Daemon(index) => {
+                self.daemons[index].udp_blocked_memory = Some(duration);
+            }
+            _ => self
+                .errors
+                .push(".udp_blocked_memory() requires a standalone daemon".to_string()),
+        }
         self
     }
 
     /// Starts the selected daemon with UDP blocked by the test network.
     pub fn udp_blocked(mut self) -> Self {
-        assert!(
-            !self.selecting_profile,
-            "udp_blocked currently requires a standalone daemon"
-        );
-        self.last_daemon("udp_blocked").udp_blocked = true;
+        match self.selection {
+            BuilderSelection::Daemon(index) => self.daemons[index].udp_blocked = true,
+            _ => self
+                .errors
+                .push(".udp_blocked() requires a standalone daemon".to_string()),
+        }
         self
     }
 
     /// Uses a specific carrier for the selected daemon's cloud-relay link.
     pub fn relay_transport(mut self, transport: RelayTransport) -> Self {
-        assert!(
-            !self.selecting_profile,
-            "relay_transport currently requires a standalone daemon"
-        );
-        self.last_daemon("relay_transport").relay_transport = transport;
+        match self.selection {
+            BuilderSelection::Daemon(index) => self.daemons[index].relay_transport = transport,
+            _ => self
+                .errors
+                .push(".relay_transport() requires a standalone daemon".to_string()),
+        }
         self
     }
 
@@ -919,7 +1107,7 @@ impl TestNetBuilder {
             self.undiscoverable.insert(a.clone());
             self.undiscoverable.insert(b.clone());
         }
-        self.pairs.push((a, b, via));
+        self.topology.paired.push((a, b, via.into()));
         self
     }
 
@@ -928,7 +1116,9 @@ impl TestNetBuilder {
     pub fn paired_with_stale_direct(mut self, a: impl Into<String>, b: impl Into<String>) -> Self {
         let pair = (a.into(), b.into());
         self.stale_direct_pairs.insert(pair.clone());
-        self.pairs.push((pair.0, pair.1, Via::Direct));
+        self.topology
+            .paired
+            .push((pair.0, pair.1, serve::PairVia::Direct));
         self
     }
 
@@ -959,19 +1149,41 @@ impl TestNetBuilder {
         self
     }
 
-    fn last_daemon(&mut self, verb: &str) -> &mut DaemonSpec {
-        self.daemons
-            .last_mut()
-            .unwrap_or_else(|| panic!(".{verb}() must follow .daemon(..)"))
+    fn selected_installation_index(&mut self, verb: &str) -> Option<usize> {
+        match self.selection {
+            BuilderSelection::Installation(index)
+            | BuilderSelection::Profile {
+                installation: index,
+                ..
+            } => Some(index),
+            _ => {
+                self.errors
+                    .push(format!(".{verb}() must follow .installation(..)"));
+                None
+            }
+        }
     }
 
     /// Starts the declared topology and waits for its steady state.
-    pub async fn start(mut self) -> TestNet {
-        let (profile_pairs, daemon_pairs): (Vec<_>, Vec<_>) = self
-            .pairs
+    pub async fn start(self) -> TestNet {
+        self.validate()
+            .unwrap_or_else(|error| panic!("invalid test topology: {error}"));
+        let runtime_name = |name: &str| {
+            self.topology
+                .daemons
+                .iter()
+                .find(|daemon| daemon.name == name && daemon.installation)
+                .map_or_else(|| name.to_string(), |_| format!("{name}/{name}"))
+        };
+        let pairs = self
+            .topology
+            .paired
+            .iter()
+            .map(|(a, b, via)| (runtime_name(a), runtime_name(b), (*via).into()))
+            .collect::<Vec<_>>();
+        let (profile_pairs, daemon_pairs): (Vec<_>, Vec<_>) = pairs
             .into_iter()
             .partition(|(a, b, _)| a.contains('/') || b.contains('/'));
-        self.pairs = daemon_pairs;
         let data_root = tempfile::Builder::new()
             .prefix("amux-spec")
             .tempdir()
@@ -987,7 +1199,7 @@ impl TestNetBuilder {
         let mut cloud = if self.cloud {
             Some(
                 CloudRelay::start_with_url_and_clock(
-                    self.cloud_url.clone().unwrap_or_else(default_cloud_url),
+                    self.topology.cloud_url.clone(),
                     clock.clone(),
                 )
                 .await,
@@ -1039,7 +1251,7 @@ impl TestNetBuilder {
                 && let Some(cloud) = &mut cloud
             {
                 assert!(
-                    self.cloud_url.is_none(),
+                    !self.custom_cloud_url,
                     "installation topologies use their identity fixture URL"
                 );
                 cloud.url = identity.url();
@@ -1090,7 +1302,7 @@ impl TestNetBuilder {
             });
         }
 
-        for (a, b, via) in &self.pairs {
+        for (a, b, via) in &daemon_pairs {
             let ia = index_of(&self.daemons, a);
             let ib = index_of(&self.daemons, b);
             assert_ne!(ia, ib, "cannot pair '{a}' with itself");
@@ -1249,13 +1461,9 @@ impl TestNetBuilder {
             }
         }
 
-        let mut topology = render_topology(
-            &self.daemons,
-            &daemon_inners,
-            cloud.as_ref(),
-            &self.pairs,
-            &self.trusted,
-        );
+        let mut topology = serde_json::to_string_pretty(&self.topology)
+            .expect("test topology declaration serializes");
+        topology.push('\n');
         for installation in &installations {
             let _ = writeln!(
                 topology,
@@ -1292,7 +1500,7 @@ impl TestNetBuilder {
                     installation
                 })
                 .collect(),
-            pairs: self.pairs,
+            pairs: daemon_pairs,
             discovery,
             udp_proxy,
             clock,
@@ -1344,7 +1552,7 @@ fn index_of(specs: &[DaemonSpec], name: &str) -> usize {
     specs
         .iter()
         .position(|spec| spec.name == name)
-        .unwrap_or_else(|| panic!("paired(..) references unknown daemon '{name}'"))
+        .expect("topology validation missed a daemon reference")
 }
 
 fn trust_entry(peer: &DeviceIdentity, name: &str, reachabilities: Vec<Reachability>) -> TrustEntry {
@@ -1357,50 +1565,23 @@ fn trust_entry(peer: &DeviceIdentity, name: &str, reachabilities: Vec<Reachabili
     }
 }
 
-fn render_topology(
-    specs: &[DaemonSpec],
-    inners: &[Arc<DaemonInner>],
-    cloud: Option<&CloudRelay>,
-    pairs: &[(String, String, Via)],
-    trusted: &[(String, String)],
-) -> String {
-    let mut out = String::new();
-    if let Some(cloud) = cloud {
-        let _ = writeln!(
-            out,
-            "  cloud {} assigns relay {} (host_id {})",
-            cloud.url,
-            cloud.relay_addr(),
-            cloud.relay.host_id
-        );
+#[cfg(test)]
+mod topology_tests {
+    use super::*;
+
+    #[test]
+    fn builder_validation_rejects_a_modifier_without_an_antecedent() {
+        let builder = TestNet::builder().cloud_only();
+        let error = builder.validate().unwrap_err().to_string();
+        assert_eq!(error, ".cloud_only() requires a daemon or profile");
     }
-    for (spec, inner) in specs.iter().zip(inners) {
-        let direct = inner
-            .direct_addr
-            .map_or_else(|| "none".to_string(), |addr| addr.to_string());
-        let cloud_attachment = if spec.cloud_only {
-            "cloud-only"
-        } else if inner.cloud.is_some() {
-            "cloud-attached"
-        } else {
-            "no-cloud"
-        };
-        let cloud_user = spec
-            .cloud_user
-            .as_ref()
-            .map(|user| format!(" cloud_user='{user}'"))
-            .unwrap_or_default();
-        let _ = writeln!(
-            out,
-            "  daemon '{}' (host_id {}) quic={direct} {cloud_attachment}{cloud_user}",
-            spec.name, inner.host_id
-        );
+
+    #[test]
+    fn builder_validation_rejects_unknown_pair_references() {
+        let builder = TestNet::builder()
+            .daemon("known")
+            .paired("known", "missing", Via::Direct);
+        let error = builder.validate().unwrap_err().to_string();
+        assert_eq!(error, "paired(..) references unknown daemon 'missing'");
     }
-    for (a, b, via) in pairs {
-        let _ = writeln!(out, "  paired '{a}' <-> '{b}' via {via:?}");
-    }
-    for (a, b) in trusted {
-        let _ = writeln!(out, "  trusted '{a}' <-> '{b}' (no reachability)");
-    }
-    out
 }

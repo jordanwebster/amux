@@ -30,8 +30,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
+#[cfg(test)]
+use crate::Via;
 use crate::script::{ObservedInput, Provider, Script, ScriptAsk, Step};
-use crate::{Daemon, TestNet, Via};
+use crate::{Daemon, TestNet};
 
 #[derive(clap::Subcommand)]
 pub enum Command {
@@ -44,7 +46,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Topology {
     #[serde(default = "default_cloud_url")]
@@ -67,7 +69,7 @@ pub struct Topology {
     recordings: HashMap<String, codex_recording::Prepared>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonDecl {
     pub name: String,
@@ -92,7 +94,7 @@ pub struct DaemonDecl {
     pub sdk_script: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PairVia {
     /// Pair over a direct link. Named for the fact, not the carrier: direct
     /// pairing runs over QUIC now, and said "Tcp" only while it did not.
@@ -100,7 +102,7 @@ pub enum PairVia {
     Cloud,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDecl {
     pub name: String,
@@ -109,7 +111,7 @@ pub struct AgentDecl {
     pub provider: ScriptedProvider,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ScriptedProvider {
     Claude { script: PathBuf },
@@ -382,7 +384,37 @@ fn default_cloud_url() -> String {
 }
 
 impl Topology {
-    fn load(path: &Path) -> Result<Self> {
+    pub(crate) fn empty() -> Self {
+        Self {
+            cloud_url: default_cloud_url(),
+            users: Vec::new(),
+            tiers: HashMap::new(),
+            daemons: Vec::new(),
+            paired: Vec::new(),
+            agents: Vec::new(),
+            scripts: HashMap::new(),
+            sdk_scripts: HashMap::new(),
+            #[cfg(unix)]
+            recordings: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn network_declaration(&self) -> Self {
+        Self {
+            cloud_url: self.cloud_url.clone(),
+            users: self.users.clone(),
+            tiers: self.tiers.clone(),
+            daemons: self.daemons.clone(),
+            paired: self.paired.clone(),
+            agents: self.agents.clone(),
+            scripts: HashMap::new(),
+            sdk_scripts: HashMap::new(),
+            #[cfg(unix)]
+            recordings: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn load(path: &Path) -> Result<Self> {
         let mut topology: Self = serde_json::from_slice(
             &std::fs::read(path).with_context(|| format!("read topology {}", path.display()))?,
         )
@@ -633,51 +665,7 @@ fn publish(advertised: &mut Advertised, name: String, advertisement: Advertiseme
 }
 
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
-    let mut builder = if topology.daemons.iter().any(|daemon| daemon.installation) {
-        TestNet::builder().cloud().identity()
-    } else {
-        TestNet::builder().cloud_url(&topology.cloud_url).identity()
-    };
-    for daemon in &topology.daemons {
-        builder = if daemon.installation {
-            builder
-                .installation(&daemon.name)
-                .profile(&daemon.name)
-                .front_door()
-                .repository_roots(daemon.repository_roots.clone())
-        } else {
-            builder
-                .daemon(&daemon.name)
-                .repository_roots(daemon.repository_roots.clone())
-        };
-
-        match &daemon.user {
-            Some(user) => {
-                builder = builder.cloud_user(user);
-                // Declared before the machine starts as well as after, so its
-                // own link is admitted on the tier its account has rather than
-                // on the default and then corrected.
-                if let Some(tier) = topology.tiers.get(user) {
-                    builder = builder.cloud_tier(*tier);
-                }
-            }
-            // Nobody has signed in on this machine, so it has no account to
-            // reach the relay with: it is only ever found and reached on its
-            // own network.
-            None => builder = builder.no_cloud(),
-        }
-    }
-    for (a, b, via) in &topology.paired {
-        builder = builder.paired(
-            a,
-            b,
-            match via {
-                PairVia::Direct => Via::Direct,
-                PairVia::Cloud => Via::Cloud,
-            },
-        );
-    }
-    let net = builder.start().await;
+    let net = crate::TestNetBuilder::from_topology(topology).start().await;
     let daemon_names = topology
         .daemons
         .iter()

@@ -7,6 +7,20 @@
 use testnet::{TestNet, Via};
 
 #[tokio::test]
+async fn an_in_process_spec_can_start_a_journey_topology() {
+    let topology = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../journeys/topologies/two-hosts.json");
+    let net = TestNet::from_topology(topology)
+        .await
+        .expect("load the journey topology");
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop.sees(&desktop).await;
+    laptop.trusts(&desktop).await;
+    laptop.connects_to(&desktop).via_cloud().await;
+}
+
+#[tokio::test]
 async fn paired_daemons_see_trust_and_call_each_other() {
     let net = TestNet::builder()
         .cloud()

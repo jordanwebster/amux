@@ -1,3 +1,11 @@
+2026-09-21 — **Give in-process and served tests one topology declaration.**
+The fluent TestNet builder now constructs the same serializable daemon and
+pairing value loaded by `testnet serve`, and both paths enter one startup
+translation. Invalid references and modifiers without a selected daemon or
+profile are rejected before fixture resources are created. In-process specs
+can load journey topology files directly; a smoke specification now starts
+the shared two-host journey declaration and proves its cloud pairing.
+
 2026-09-21 — **Put scenario assertions where their behavior is specified.**
 Agent messaging, family deletion, lifecycle, work-status and suspend/resume
 specifications now show their own actions and expected outcomes instead of
