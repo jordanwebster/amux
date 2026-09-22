@@ -468,8 +468,19 @@ impl ClaudeFold {
         let mut mutations = Vec::new();
         match kind {
             RowKind::TranscriptReady => {
-                self.asks.clear();
-                self.attention = Attention::Idle;
+                // The marker says the tail has caught up with the transcript
+                // file, not that nothing is outstanding. A hook that arrived
+                // while the tail was still settling is a live ask the file
+                // cannot have resolved: what resolves one is a tool_result
+                // row, which is itself transcript and would have been read.
+                // Only a reset — a relink or memory reset that replaces the
+                // transcript — makes the asks before it stale.
+                if row.get("reset").and_then(serde_json::Value::as_bool) == Some(true) {
+                    self.asks.clear();
+                }
+                if self.asks.is_empty() {
+                    self.attention = Attention::Idle;
+                }
                 self.known_attention = true;
                 self.known_outstanding = true;
             }
@@ -2358,6 +2369,33 @@ unrecognized=0000010700000108010666757475726501057368617065000000000000000000000
             })
             .collect::<Vec<_>>();
         assert_eq!(durations, [Some(3_000), None]);
+    }
+
+    #[test]
+    fn claude_pty_transcript_ready_keeps_an_ask_the_tail_could_not_have_resolved() {
+        let ask = json!({"type":"hook.permission_request","tool_use_id":"t1",
+            "tool_name":"Bash","tool_input":{"command":"./deploy.sh"}});
+        let (fold, _) = fold_rows(&[
+            serde_json::to_vec(&ask).unwrap(),
+            serde_json::to_vec(&json!({"type":"amux.transcript_ready"})).unwrap(),
+        ]);
+        assert_eq!(fold.asks.len(), 1, "readiness is not resolution");
+        assert!(matches!(
+            fold.attention,
+            Attention::NeedsYou {
+                why: Why::Permission
+            }
+        ));
+
+        let (fold, _) = fold_rows(&[
+            serde_json::to_vec(&ask).unwrap(),
+            serde_json::to_vec(&json!({"type":"amux.transcript_ready","reset":true})).unwrap(),
+        ]);
+        assert!(
+            fold.asks.is_empty(),
+            "a replaced transcript leaves no ask behind"
+        );
+        assert!(matches!(fold.attention, Attention::Idle));
     }
 
     #[test]

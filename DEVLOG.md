@@ -1,3 +1,22 @@
+2026-09-22 — **Readiness is not resolution: keep asks across the transcript-ready marker.**
+The phone-profiles test failed twice today on hosted macOS: a permission ask
+raised by the agent never reached the phone, and the fleet said the agent was
+idle. The transcript tail emits its ready marker once the file has been quiet
+for a tenth of a second; hooks arrive on their own channel and are logged at
+once; and the fold cleared every pending ask on that marker. An ask raised
+while the tail was still settling was erased — on a fast machine ready won
+the race, on a loaded one the ask did. What resolves an ask is a tool_result
+row, which is transcript and would have been read, so the marker now clears
+asks only when it carries a reset (a relink or memory reset that replaces the
+transcript). A person whose Claude session asks for permission just as the
+daemon settles — attach, restart, relink — sees *needs you* instead of *idle*.
+
+2026-09-22 — **Build the offline suite's fixture before cutting the network.**
+The second manual dispatch of the weekly offline job ran the whole workspace
+and failed one store test for a missing separately-compiled fixture binary,
+which the ordinary test script builds first and the offline recipe did not.
+The recipe now runs the same script inside the sandbox; verified locally.
+
 2026-09-22 — **Fetch before cutting the network in the weekly offline job.**
 Dispatched by hand on macOS, the offline suite failed resolving its first
 dependency: a fresh runner has an empty crate registry and the job denied the
