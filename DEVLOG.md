@@ -1,3 +1,8 @@
+2026-09-22 — **Anchor removal evidence to a stable survivor.**
+The lifecycle journey still waits for the complete settled three-agent fleet
+after deletion, then filters its golden to one surviving agent. The `1/3`
+counter proves cardinality without assuming an order for concurrent survivors.
+
 2026-09-22 — **Keep restored-authority evidence independent of fleet order.**
 The restored-authority checkpoint filters to its subject while retaining the
 full fleet cardinality. Concurrent fixture rows may reorder without changing

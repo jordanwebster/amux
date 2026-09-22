@@ -1,9 +1,9 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ /                                                                                                        3 agents    │
+│ / shared-agent                                                                                           1/3         │
 │                                                                                                                      │
 │ ▎   shared-agent          claude   remote-host ·relay <age> idle                                                     │
-│     authority-agent       claude   remote-host ·relay <age> idle                                                     │
-│     reach-agent           claude   remote-host ·relay <age> idle                                                     │
+│                                                                                                                      │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

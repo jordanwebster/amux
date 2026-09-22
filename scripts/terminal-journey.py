@@ -361,6 +361,7 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
         "agent removed from fleet",
         timeout=90,
     )
+    journey.filter_agent(pane, "shared-agent")
     journey.frame(pane, "removed")
     journey.keys(pane, "q")
     journey.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
