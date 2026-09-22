@@ -1,0 +1,25 @@
+{
+  "cloud_url": "https://amux.sh",
+  "users": [],
+  "daemons": [
+    {
+      "name": "terminal-host",
+      "installation": true,
+      "repository_roots": ["../.."]
+    },
+    {
+      "name": "workstation",
+      "repository_roots": ["../.."],
+      "lan": true
+    }
+  ],
+  "paired": [],
+  "agents": [
+    {
+      "name": "workstation-agent",
+      "daemon": "workstation",
+      "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+    }
+  ]
+}

@@ -118,6 +118,7 @@ jobs:
         run: brew install tmux
       - name: Run terminal journeys
         run: |
+          just journey terminal find-and-pair
           just journey terminal conversation-decision-claude-pty
           just journey terminal leave-and-recover
           just journey terminal reach-host

@@ -17,6 +17,8 @@ RECOVERY_PROMPT = "Remember this recovery turn."
 RECOVERY_REPLY = "The recovery state is safely stored."
 REACH_PROMPT = "Open the remote work."
 REACH_REPLY = "The remote work is open."
+PAIRED_PROMPT = "Open the work on the machine I just trusted."
+PAIRED_REPLY = "The newly paired machine is reachable."
 SHARED_PROMPT = "Show this to both terminals."
 SHARED_REPLY = "Both terminals received this reply."
 
@@ -113,6 +115,116 @@ def run_amux(config: Path, *args: str) -> str:
         timeout=60,
     )
     return result.stdout + result.stderr
+
+
+def pair_with_pin(config: Path, target: str, pin: str) -> str:
+    result = subprocess.run(
+        [str(AMUX), "--config", str(config), "pair", target],
+        cwd=ROOT,
+        input=f"{pin}\n",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"pairing with {target} failed ({result.returncode}): {result.stdout}")
+    return result.stdout
+
+
+def peer_row(listing: str, host: str) -> str:
+    rows = [line for line in listing.splitlines() if line.split(" ", 1)[0] == host]
+    if len(rows) != 1:
+        raise RuntimeError(f"peer list has {len(rows)} rows for {host}:\n{listing}")
+    return rows[0]
+
+
+def find_and_pair(journey: TerminalJourney, wrong: bool) -> list[str]:
+    pane = journey.launch("onramp")
+    journey.wait_terms(pane, "┌ amux")
+
+    # The machine is on the network but nothing trusts it: the listing must
+    # say so, and must say what would change it, because that line is the
+    # whole of the terminal's onramp instructions.
+    found = run_amux(journey.config, "peer", "list")
+    row = peer_row(found, "workstation")
+    for term in ("found · on this network", "pair with: amux pair workstation"):
+        if term not in row:
+            raise RuntimeError(f"workstation was not offered as a candidate: {row!r}")
+    journey.observations["candidate-listing"] = found
+
+    # The overlay is the terminal's own account of what it can reach. Before
+    # pairing it knows only this machine: a found candidate reaches the
+    # listing above but not the streamed host model behind this screen.
+    journey.keys(pane, "h")
+    overlay = journey.wait_terms(pane, "hosts", "terminal-host")
+    if "workstation" in overlay:
+        raise RuntimeError(f"an unpaired machine appeared as a host: {overlay!r}")
+    journey.keys(pane, "Escape")
+    journey.wait(pane, lambda frame: "any key to close" not in frame, "fleet after the overlay")
+    journey.frame(pane, "found")
+
+    issued = journey.request(
+        {"StartPinPairing": {"daemon": "workstation", "ttl_secs": 300}},
+        "pairing-code-issued",
+    )
+    pin = issued.get("pin")
+    if not isinstance(pin, str) or len(pin) != 6:
+        raise RuntimeError(f"workstation issued no six-digit pairing code: {issued!r}")
+    paired = pair_with_pin(journey.config, "workstation", pin)
+    journey.observations["pairing-output"] = paired
+    if "Paired with workstation" not in paired or "Fingerprint: " not in paired:
+        raise RuntimeError(f"pairing did not report an identity and a peer: {paired!r}")
+
+    trusted = run_amux(journey.config, "peer", "list")
+    row = peer_row(trusted, "workstation")
+    if not row.endswith("yes") or " direct " not in row:
+        raise RuntimeError(f"workstation is not a trusted direct peer: {row!r}")
+    journey.observations["trusted-listing"] = trusted
+
+    # The same terminal, never restarted, must revise what it says about the
+    # machine: trust that only a relaunch can see is not trust the person got.
+    journey.keys(pane, "h")
+    journey.wait_terms(pane, "hosts", "workstation", "direct", timeout=90)
+    journey.keys(pane, "Escape")
+    journey.wait(pane, lambda frame: "any key to close" not in frame, "fleet after the second overlay")
+
+    journey.open_chat(pane, "workstation-agent")
+    journey.type(pane, PAIRED_PROMPT)
+    journey.keys(pane, "Enter")
+    expected = "deliberately wrong paired prompt" if wrong else PAIRED_PROMPT
+    observed = journey.wait_observation(
+        "workstation-agent",
+        lambda rows: len(prompts(rows)) == 1 and prompts(rows)[0].get("text") == expected,
+        "paired-host-received-prompt",
+        timeout=2 if wrong else 60,
+    )
+    if wrong and observed:
+        raise RuntimeError("deliberately wrong find-and-pair expectation")
+    journey.request(
+        {
+            "AgentPlay": {
+                "agent": "workstation-agent",
+                "steps": [{"Markdown": {"text": PAIRED_REPLY}}, "EndTurn"],
+            }
+        }
+    )
+    journey.wait_terms(
+        pane,
+        PAIRED_PROMPT,
+        PAIRED_REPLY,
+        "default · idle",
+        "─ turn ·",
+        "enter send",
+    )
+    journey.frame(pane, "paired")
+    journey.stop_client(pane)
+    return [
+        "the unpaired machine was listed as found, with what would pair it",
+        "six digits it issued made it a trusted direct peer with its own identity",
+        "the running terminal revised its hosts overlay without a relaunch",
+        "work on the newly paired machine opened and the machine recorded the prompt",
+    ]
 
 
 def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
@@ -442,7 +554,9 @@ def main() -> int:
     declared = story(args[0])
     journey = TerminalJourney(declared)
     try:
-        if declared["id"] == "conversation-decision-claude-pty":
+        if declared["id"] == "find-and-pair":
+            assertions = find_and_pair(journey, wrong)
+        elif declared["id"] == "conversation-decision-claude-pty":
             assertions = conversation_decision(journey, wrong)
         elif declared["id"] == "leave-and-recover":
             assertions = leave_and_recover(journey, wrong)

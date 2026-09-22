@@ -713,7 +713,7 @@ journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review"
 [[suite]]
 name = "terminal-journeys"
 contract = "A person completes declared terminal stories through the real TUI and production installation front door against a served topology."
-paths = ["scripts/journeys/terminal.py", "scripts/terminal-journey.py", "journeys/manifest.json", "journeys/topologies/terminal-migration.json", "journeys/goldens/terminal"]
+paths = ["scripts/journeys/terminal.py", "scripts/terminal-journey.py", "journeys/manifest.json", "journeys/topologies/terminal-stories.json", "journeys/topologies/terminal-migration.json", "journeys/topologies/terminal-onramp.json", "journeys/goldens/terminal"]
 recipe = "just journey terminal conversation-decision-claude-pty"
 boundary = "Journeys"
 oracle = "Door observations, exact terminal text and semantic styles, cache contents, process exits, and teardown."
@@ -725,7 +725,7 @@ lane = "journey"
 evidence = "target/journeys"
 update = "UPDATE_JOURNEY_GOLDENS=1 just journey terminal conversation-decision-claude-pty"
 journey_manifest = "journeys/manifest.json"
-journeys = ["conversation-decision-claude-pty", "leave-and-recover", "reach-host", "authority-boundaries", "agent-lifecycle", "second-attach"]
+journeys = ["find-and-pair", "conversation-decision-claude-pty", "leave-and-recover", "reach-host", "authority-boundaries", "agent-lifecycle", "second-attach"]
 
 [[suite]]
 name = "phone-goldens"

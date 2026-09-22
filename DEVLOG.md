@@ -1,3 +1,16 @@
+2026-09-22 — **Let a terminal start out trusting nothing.**
+Every terminal journey began with its hosts already paired, so nothing drove
+the terminal's own onramp: finding a machine, being told what would pair with
+it, and pairing with six digits. A new journey starts from an empty trust
+store and a machine on the network, pairs through the real CLI, and opens work
+on it — with the machine independently recording the prompt, so what the
+pairing bought is reachable work rather than a row in a table.
+
+Worth knowing: the fleet's hosts overlay does not list pairing candidates.
+Its comment says it shows them, and it can render one, but a found machine
+reaches the peer listing without reaching the streamed host model behind that
+screen. The journey pins today's behaviour and says why.
+
 2026-09-22 — **Give loose test scripts a name and something that runs them.**
 The seven operator-run qualification workloads that moved out of the retired
 end-to-end runner had no recipe, no catalogue entry and nothing invoking them.

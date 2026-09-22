@@ -163,6 +163,13 @@
       "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
     },
     {
+      "id": "find-and-pair",
+      "stage": 15,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-onramp.json",
+      "claim": "A terminal that trusts nothing and nobody is signed in on, and one machine on the same network holding work. The terminal lists that machine as found but not paired, and says in the listing itself what would pair with it; the hosts overlay shows the same machine as a candidate rather than somewhere to go. Six digits the machine issued, typed once, turn it into a trusted peer named with its host id, and the same listing and the same overlay say so without the terminal being restarted. The work on that machine then opens from this terminal and the machine independently records the prompt it was sent — so what pairing bought is not a row in a table but reachable work."
+    },
+    {
       "id": "conversation-decision-claude-pty",
       "stage": 15,
       "clients": ["terminal"],
