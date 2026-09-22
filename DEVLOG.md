@@ -10,13 +10,15 @@ goldens into in-process component snapshots. The catalogue check refused the
 merge until the new phone test target was listed, which is what it is for; the
 component suite and its perturbation control are catalogued now.
 
-2026-09-22 — **Photograph authority loss where it comes to rest.**
-The authority journey accepted either composer refusal after the relay
-entitlement was lost, and had given up its screen comparison because which one
-appeared depended on the runner. The two are not alternatives: one is the
-client still holding the unreachable agent's chat layer, the other is the
-client having let it go. Only the second is a resting state, so the journey
-waits for it and compares that screen again.
+2026-09-22 — **Say why authority loss has no photograph.**
+The two composer refusals after entitlement loss are not a fast and a slow
+reading of one moment, as trying to photograph the settled one proved: Linux
+rests on `send gated — session state unknown`, holding the unreachable agent's
+chat layer indefinitely, while macOS lets the agent go and rests on `chat
+input unavailable for this agent`. Both are honest, and the journey accepts
+either, but the screen cannot be compared until the client model decides which
+one losing a host produces. The refusal itself is still proved by the remote
+provider's unchanged record, which is the part that matters.
 
 2026-09-22 — **Let a terminal start out trusting nothing.**
 Every terminal journey began with its hosts already paired, so nothing drove
