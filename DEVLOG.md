@@ -2,7 +2,8 @@
 Golden checkpoints now wait for the exact idle chat, projected tool and turn
 outcomes, enabled composer or settled fleet cardinality they approve.
 Placeholder input, a visible agent name or an ask panel alone no longer counts
-as completion.
+as completion. Fleet goldens explicitly select their subject, and frame files
+split rows only on the LF delimiter emitted by the report writer.
 
 2026-09-22 — **Make remote terminal evidence and attachment failures legible.**
 Terminal journeys pin the ANSI color mode used by their approved semantic

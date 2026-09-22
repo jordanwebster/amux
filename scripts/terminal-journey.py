@@ -299,7 +299,7 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
         pane,
         lambda frame: "┌ amux" in frame
         and "authority-agent" in frame
-        and "1/3" in frame
+        and "3 agents" in frame
         and "Type a message" not in frame,
         "fleet after authority restoration",
         timeout=90,
@@ -326,6 +326,7 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
         "4 agents",
         "connected · 2 hosts",
     )
+    journey.select_agent(pane, "lifecycle-agent")
     journey.frame(pane, "running")
     suspended = run_amux(journey.config, "server", "suspend")
     if "Suspended 1 agent(s)." not in suspended:
@@ -343,6 +344,7 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
         "connected · 2 hosts",
         timeout=90,
     )
+    journey.select_agent(pane, "lifecycle-agent")
     journey.frame(pane, "resumed")
     removed = run_amux(journey.config, "rm", "lifecycle-agent", "--force")
     if wrong and "deliberately not removed" not in removed:
@@ -420,8 +422,7 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
         lambda frame: "┌ amux" in frame and "Type a message" not in frame,
         "fleet after detach",
     )
-    selected = journey.wait_terms(second, "shared-agent")
-    journey.keys(second, "o" if "o chat" in selected else "Enter")
+    journey.open_chat(second, "shared-agent")
     journey.wait_terms(
         second,
         SHARED_PROMPT,

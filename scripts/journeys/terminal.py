@@ -80,10 +80,16 @@ def _read_readiness(process: subprocess.Popen[bytes], timeout: float = 60.0) -> 
 
 def _stable_frame(text: str, styles: str) -> tuple[str, str]:
     """Exclude transient clocks and report paths without changing geometry."""
-    text_rows = text.splitlines()
-    style_rows = styles.splitlines()
+    # Report frames delimit terminal rows with LF. `str.splitlines()` also
+    # treats several Unicode screen-cell values as separators, which can make
+    # equal-height text and style maps appear to have different geometry.
+    text_rows = text.removesuffix("\n").split("\n")
+    style_rows = styles.removesuffix("\n").split("\n")
     if len(text_rows) != len(style_rows):
-        raise RuntimeError("captured frame text and semantic styles have different heights")
+        raise RuntimeError(
+            "captured frame text and semantic styles have different heights: "
+            f"text={len(text_rows)} styles={len(style_rows)}"
+        )
     marker = "─ turn · "
     for index, row in enumerate(text_rows):
         def stable_age(match: re.Match[str]) -> str:
@@ -267,19 +273,25 @@ class TerminalJourney:
         self.tmux("send-keys", "-t", pane, "-l", value)
         self.actions.append(f"{pane}: type {value!r}")
 
-    def open_chat(self, pane: str, agent: str) -> None:
+    def select_agent(self, pane: str, agent: str) -> str:
         self.wait_terms(pane, agent)
         self.keys(pane, "Escape")
-        self.keys(pane, "/")
-        self.keys(pane, "C-u")
-        self.type(pane, agent)
-        self.wait_terms(pane, f"> {agent}")
-        self.keys(pane, "Escape")
-        selected = self.wait(
-            pane,
-            lambda frame: agent in frame and f"> {agent}" not in frame,
-            "fleet selection",
-        )
+        self.keys(pane, "g", "g")
+        last = ""
+        for _ in range(100):
+            time.sleep(0.1)
+            last = self.capture(pane)
+            if any(
+                agent in line and "▎" in line.partition(agent)[0]
+                for line in last.splitlines()
+            ):
+                self.actions.append(f"{pane}: selected fleet agent {agent}")
+                return last
+            self.keys(pane, "j")
+        raise RuntimeError(f"could not select fleet agent {agent}; final frame:\n{last}")
+
+    def open_chat(self, pane: str, agent: str) -> None:
+        selected = self.select_agent(pane, agent)
         self.keys(pane, "o" if "o chat" in selected else "Enter")
         self.wait_terms(pane, agent, "Type a message")
 
