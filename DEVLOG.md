@@ -1,3 +1,8 @@
+2026-09-22 — **Show terminal golden differences in CI failures.**
+Terminal journey mismatches now print a unified expected-versus-actual diff,
+so platform-only rendering failures remain diagnosable after an ephemeral CI
+runner has discarded its capture directory.
+
 2026-09-22 — **Run the completed testing branch through remote CI.**
 The CI push trigger now includes the integration branch so its final Ubuntu,
 macOS, Windows and iOS results can be verified without opening a pull request.

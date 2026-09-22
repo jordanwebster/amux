@@ -7,6 +7,7 @@ terminal, door, evidence, and golden mechanics only.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import difflib
 import json
 import os
 from pathlib import Path
@@ -365,8 +366,20 @@ class TerminalJourney:
                     f"missing journey golden {path}; "
                     "review with UPDATE_JOURNEY_GOLDENS=1"
                 )
-            elif path.read_text() != actual:
-                raise RuntimeError(f"journey golden differs: {path}")
+            else:
+                approved = path.read_text()
+                if approved == actual:
+                    continue
+                diff = "\n".join(
+                    difflib.unified_diff(
+                        approved.splitlines(),
+                        actual.splitlines(),
+                        fromfile=str(path),
+                        tofile=f"actual/{path.name}",
+                        lineterm="",
+                    )
+                )
+                raise RuntimeError(f"journey golden differs: {path}\n{diff}")
 
     def stop_client(self, pane: str) -> None:
         self.keys(pane, "C-a", "s")
