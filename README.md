@@ -28,13 +28,8 @@ amux is in early development. Core multiplexing works locally. Cloud relay and m
 
 ## License
 
-The amux core is open source, dual-licensed under either [MIT](LICENSE-MIT) or
-[Apache 2.0](LICENSE-APACHE), at your option.
-
-The applications under `apps/` are source-available under the
-[Functional Source License](apps/LICENSE) (FSL-1.1-ALv2): free to read, build,
+amux is source-available under the
+[Functional Source License](LICENSE) (FSL-1.1-ALv2): free to read, build,
 modify and use for anything except competing with us, and Apache-2.0 two years
-after each version is published.
-
-[LICENSE](LICENSE) states the split; [docs/LICENSING.md](docs/LICENSING.md)
+after each version is published. [docs/LICENSING.md](docs/LICENSING.md)
 explains it.

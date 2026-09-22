@@ -1,3 +1,11 @@
+2026-09-22 — **One licence for the whole repository: FSL-1.1-ALv2.**
+The core was dual MIT or Apache-2.0 and only `apps/` was under the Functional
+Source License. Everything is now under the FSL with its two-year Apache-2.0
+conversion: the FSL text moved from `apps/LICENSE` to the root `LICENSE`, the
+MIT and Apache licence files are gone, and the README and
+`docs/LICENSING.md` describe a single licence. Commits published before this
+one keep the MIT/Apache grant they were made under; the licensing doc says so.
+
 2026-09-22 — **Readiness is not resolution: keep asks across the transcript-ready marker.**
 The phone-profiles test failed twice today on hosted macOS: a permission ask
 raised by the agent never reached the phone, and the fleet said the agent was
