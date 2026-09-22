@@ -677,23 +677,6 @@ cargo = [
 ]
 
 [[suite]]
-name = "legacy-desktop-e2e"
-contract = "Built desktop binaries complete the retained command-line scenarios through real processes and terminal sessions."
-paths = ["e2e-tests", "crates/e2e-runner"]
-recipe = "just e2e"
-boundary = "System composition"
-oracle = "Expected terminal text, command exits, captured values, and teardown directives."
-real = ["built binaries", "processes", "PTYs", "local sockets"]
-substituted = ["cloud account", "providers where scripted"]
-time = "real"
-capabilities = ["Unix"]
-lane = "system"
-evidence = ""
-update = ""
-cases = ["e2e-tests/*.test"]
-cargo = [{ package = "e2e-runner", kind = "bin", targets = ["e2e-runner"], features = [] }]
-
-[[suite]]
 name = "phone-unit-tests"
 contract = "Swift packages and the app-hosted suite preserve bridge schemas, stores, features, design tokens, shell navigation, and test fixtures."
 paths = ["apps/apple/Packages/*/Tests", "apps/apple/AmuxAppTests"]

@@ -97,8 +97,8 @@ jobs:
       - name: Build product release
         run: just release-check
 
-  e2e:
-    name: E2E (${{ matrix.os }})
+  terminal-journeys:
+    name: Terminal journeys (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -115,12 +115,14 @@ jobs:
       - name: Install tmux on macOS
         if: runner.os == 'macOS'
         run: brew install tmux
-      - name: Run end-to-end tests
-        run: just e2e
       - name: Run terminal journeys
         run: |
           just journey terminal conversation-decision-claude-pty
           just journey terminal leave-and-recover
+          just journey terminal reach-host
+          just journey terminal authority-boundaries
+          just journey terminal agent-lifecycle
+          just journey terminal second-attach
 
   embedded:
     name: Embedded client

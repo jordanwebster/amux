@@ -18,7 +18,6 @@ members = [
     "crates/codex",
     "crates/codex-specs",
     "crates/client",
-    "crates/e2e-runner",
     "crates/fold",
     "crates/host-api",
     "crates/model",

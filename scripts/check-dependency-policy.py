@@ -24,7 +24,6 @@ ALLOWED_LOCAL = {
     # Report replay reconstructs canonical store-backed windows using the
     # provider folds, while ordinary rendering still consumes ui-state.
     "tui": {"fold", "ui-runtime", "ui-state"},
-    "e2e-runner": {"wire"},
     # The app layer any rich client reuses. app-runtime never reaches node, so
     # a desktop app attached to a running daemon links it without app-embedded.
     "app-runtime": {"artifacts", "client", "model", "store", "ui-runtime", "ui-state"},
@@ -47,6 +46,7 @@ SUPPORT_ALLOWED_LOCAL = {
         "host-api",
         "model",
         "node",
+        "node-test-support",
         "pty-host",
         "replay-support",
         "store",

@@ -177,6 +177,7 @@ same sentence, and adding a verb means adding the capability first.
 | `Announce` | `TestNet::announce` + host mDNS publication |
 | `Withdraw` | `TestNet::withdraw` + host mDNS withdrawal |
 | `Tier` | `TestNet::cloud_user_tier` |
+| `RefreshEntitlement` | `Daemon::refresh_entitlement` |
 | `UdpBlocked` | `TestNet::udp_blocked` |
 | `AgentEmit` | `script::Provider::emit` |
 | `AgentPlay` | `script::Provider::play` |

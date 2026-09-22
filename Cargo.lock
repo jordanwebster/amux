@@ -1135,35 +1135,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
-name = "e2e-runner"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "glob",
- "hyper-util",
- "jsonwebtoken",
- "libc",
- "portable-pty",
- "prost",
- "prost-types",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "shell-words",
- "tempfile",
- "tokio",
- "toml 0.8.23",
- "tonic",
- "tonic-prost",
- "tower",
- "url",
- "uuid",
- "wire",
-]
-
-[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1593,12 +1564,6 @@ dependencies = [
  "color_quant",
  "weezl",
 ]
-
-[[package]]
-name = "glob"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "group"

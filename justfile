@@ -98,14 +98,6 @@ protobuf:
 codegen-check:
     {{bounded}} 600 scripts/codegen-check.sh
 
-# Build test binaries and run the end-to-end scenarios.
-e2e *ARGS: e2e-build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"
-
-# Build the binaries used by end-to-end scenarios.
-e2e-build:
-    {{bounded}} 900 cargo build --locked -p amux -p e2e-runner -p test-agent --bins {{desktop_features}}
-
 # Build the shipping binary and enforce the release dependency policy.
 release-check *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
@@ -173,17 +165,13 @@ tests-list:
 tests-check:
     {{bounded}} 120 scripts/python -B scripts/tests-catalog.py check
 
-# Validate every top-level legacy end-to-end file has a migration disposition.
-migration-check:
-    {{bounded}} 60 scripts/migration-check.sh
-
 # Refuse fixture-regeneration flags before any asserted CI check runs.
 [private]
 no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check migration-check test doctest release-check e2e embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check test doctest release-check embedded-check embedded-test mobile-check
 
 # Qualify desktop performance on an enrolled machine and include the phone
 # suite whenever Xcode is available. The phone recipe takes its own simulator

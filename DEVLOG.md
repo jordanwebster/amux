@@ -1,3 +1,11 @@
+2026-09-22 — **Retire the legacy end-to-end runner.**
+The completed migration checkpoint now permits removing the script runner,
+its scenario directory, migration checker and store-scenario driver. Workspace
+tests own CLI and operating-system behavior directly, terminal journeys own the
+shared user stories, and operator-only provider qualifications remain under
+`scripts/qualification`. CI runs the six terminal journeys on Linux and macOS
+without carrying a second end-to-end language or runner crate.
+
 2026-09-22 — **Complete every legacy end-to-end migration replacement.**
 The migration map now records a finished disposition for all forty legacy
 workloads. CLI and operating-system behavior runs as Rust process integration
