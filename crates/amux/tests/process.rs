@@ -199,8 +199,20 @@ impl Terminal {
         }
     }
 
+    /// Bounded like every read in this harness: a terminal that stops
+    /// draining its input must fail with what it had seen, not wedge the
+    /// whole suite until the recipe's own deadline fires.
     async fn write(&self, input: &[u8]) {
-        self.process.handle.write(input).await.unwrap();
+        tokio::time::timeout(PROCESS_TIMEOUT, self.process.handle.write(input))
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out writing {} bytes to the terminal; output:\n{}",
+                    input.len(),
+                    String::from_utf8_lossy(&self.seen)
+                )
+            })
+            .unwrap();
     }
 
     async fn line(&self, input: &str) {
@@ -578,7 +590,12 @@ async fn list_prints_local_agents_and_working_directories() {
     assert!(beta.exit().await.success());
 }
 
-#[tokio::test]
+/// Two processes have to make progress at once here: this terminal keeps
+/// writing while the agent echoes back, and the echo is what unblocks the
+/// write. On one worker a filled pipe can park the writer before the reader
+/// is ever polled, which is a deadlock in the harness rather than the
+/// backpressure this is about.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn terminal_pipe_backpressure_does_not_lose_input() {
     let fixture = Fixture::new(&["local"]);
     fixture.run("local", &["server", "start"]);

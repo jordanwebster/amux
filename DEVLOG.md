@@ -1,3 +1,12 @@
+2026-09-22 — **Stop a backpressure test from wedging the suite.**
+The replacement for the legacy pipe-backpressure check drove a terminal and
+its echoing agent on a single worker, where a filled input pipe can park the
+writer before the reader is ever polled — a deadlock in the harness rather
+than the backpressure under test, and one that only showed up on a loaded
+Linux runner. It gets two workers now. Writes to a test terminal are also
+bounded the way reads always were, so a terminal that stops draining fails
+with what it had seen instead of running out the recipe's deadline.
+
 2026-09-22 — **Name the lane that checks our own machinery.**
 The testing guide described four lanes while the catalogue enforced five. The
 sixth kind of suite — script contracts, source and dependency policy, the CI
