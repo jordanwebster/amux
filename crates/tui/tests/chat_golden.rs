@@ -1,4 +1,4 @@
-//! Tier-3 golden frames for the chat screen: the renderer is a pure
+//! Golden frames for the chat screen: the renderer is a pure
 //! function of (Model, ViewState, FrameContext), so every frame renders
 //! from a fixture-built Model and diffs against checked-in text — no
 //! network, no clocks, no flake. The frames follow `docs/CHAT.md`

@@ -5,8 +5,9 @@
 `mcp_substrate.jsonl` is a minimal structural projection of a no-turn capture
 made on 2026-08-24 with installed `codex-cli 0.149.0`, local Codex source commit
 `aec653daa9873bf44517a623fd033722737817a8`, and amux commit
-`c4b69f4b9d21114b559c152643cf9e72d7176af6`. The bounded source command was
-`timeout 180 python3 -B capture.py <capture-dir>`.
+`c4b69f4b9d21114b559c152643cf9e72d7176af6`. The one-off capture program is
+not retained in this repository, so this structural projection has no in-tree
+regeneration command.
 
 The source run used an isolated `CODEX_HOME`, project, and stdio MCP stub. It
 copied no credentials and started no model turn. It exercised a fresh
@@ -32,12 +33,14 @@ replacing.
 ## Structured backend scenarios
 
 Every `*.rows.jsonl` file is derived from the same-named recording under
-`crates/codex/fixtures/`. The `derived_rows` integration test opens that
+`crates/codex-specs/fixtures/runtime/`. The `derived_rows` integration test opens that
 recording with strict replay, injects its `codex::Session` through
 `CodexBackend::with_session`, drives the recorded scenario through the backend
 boundary, and compares the complete emitted JSONL bytes with the committed
-file. Set `UPDATE_DERIVED_ROWS=1` on that test to regenerate the files; there is
-no separate hand-authored structural projection.
+file. Regenerate them with `UPDATE_DERIVED_ROWS=1 just test-crate testnet --
+--test derived_rows codex_derived_rows`, then verify with the same command
+without the update flag. There is no separate hand-authored structural
+projection.
 
 The recordings were captured with codex-cli 0.150.1 and explicit model
 `gpt-5.6-luna`. Their sanitizer replaces machine paths and credentials while

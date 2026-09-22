@@ -390,16 +390,16 @@ Four tiers, in increasing cost:
    enforces its minimum supported version, allowed model, recording inventory,
    and orphan checks. The committed corpus was recorded with codex-cli 0.150.1
    and `gpt-5.6-luna` passed explicitly.
-2. **Daemon adapter derivation.** `crates/node/tests/derived_rows.rs` opens
+2. **Daemon adapter derivation.** `crates/testnet/tests/derived_rows.rs` opens
    recorded `codex::Session`s, feeds them through the real amux adapter, and
-   proves the committed `crates/amux/tests/fixtures/rows/codex/` rows reproduce
-   byte for byte from `crates/codex/fixtures/`.
+   proves the committed `crates/node/tests/fixtures/rows/codex/` rows reproduce
+   byte for byte from `crates/codex-specs/fixtures/runtime/`.
    `a2a_fixtures` separately covers the thread-scoped MCP route and carrier
    facts that belong at the daemon boundary.
 3. **`crates/ui-state/tests/spec/`.** Pure reducer folds use the derived rows;
    no clock or provider process is involved. Every registered sequence is
    swept for invariant violations after every Msg.
-4. **`crates/node/tests/codex_live.rs`.** The opt-in `codex_live` suite keeps
+4. **`crates/qualification/tests/codex_live.rs`.** The opt-in `codex_live` suite keeps
    process-level facts that transport replay cannot prove: live create and
    turn behavior, approvals with filesystem assertions, interrupt and reuse,
    suspend/resume across app-server restart, raw and structured coexistence,

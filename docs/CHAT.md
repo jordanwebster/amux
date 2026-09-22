@@ -1253,7 +1253,7 @@ sanitized recordings captured at Claude Code 2.1.251, including byte-for-byte
 intent writes, hook and transcript transports, provenance inventories, orphan
 checks, and the minimum supported version.
 
-`crates/node/tests/claude_pty_live.rs` retains only facts recording replay
+`crates/qualification/tests/claude_pty_live.rs` retains only facts recording replay
 cannot establish, plus one end-to-end semantic-chat witness. Its current
 scenarios cover semantic chat, stale-sequence refusal, two-terminal fan-out,
 external read-only hook discovery, native-socket and PTY-fallback A2A delivery,
@@ -1261,8 +1261,8 @@ agent MCP tools, and cross-kind completion. It is opt-in, always run under
 `timeout`, uses Haiku by default, and prints the observed Claude Code version
 and model first.
 
-The committed `crates/amux/tests/fixtures/rows/claude-pty/` rows are not hand
-captures. `derived_rows` replays `crates/claude/fixtures/pty/` through
+The committed `crates/node/tests/fixtures/rows/claude-pty/` rows are not hand
+captures. `derived_rows` replays `crates/claude-specs/fixtures/pty/` through
 `claude::pty::from_recording` and the real amux PTY adapter, then compares all
 18 row fixtures byte for byte. Assertions use row
 structure, ids, answer objects, and filesystem outcomes rather than assistant
@@ -1271,7 +1271,7 @@ binary, appends passing versions to recording and keymap ledgers, re-records
 only broken claims, and writes additive drift for review.
 
 The SDK corpus derives through the real daemon adapter into
-`crates/amux/tests/fixtures/rows/claude-sdk/`. Provider-fold tests cover row
+`crates/node/tests/fixtures/rows/claude-sdk/`. Provider-fold tests cover row
 semantics and continuation, while TUI goldens cover behavior that is visible
 only after rendering. The redacted live conversation in
 `crates/ui-state/tests/spec/fixtures/claude_sdk/converse.rows.jsonl` preserves

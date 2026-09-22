@@ -10,12 +10,13 @@ The complete light/dark catalogue was approved from the consolidated production
 gallery on 2026-09-12 and established as the native baseline on 2026-09-13.
 
 Run `just ios goldens` to compare every state. Run
-`just ios goldens-reference` to place the 33 reference-backed screens beside
-the preserved designs.
+`just ios goldens-reference` to place every reference-backed screen declared by
+the manifest beside the preserved designs. The manifest is the authoritative
+count for both the full catalogue and its reference-backed subset.
 
 ## Nothing is quarantined
 
-Every one of the 150 captures gates. `strip.light`, `strip.dark` and
+Every capture declared by the manifest gates. `strip.light`, `strip.dark` and
 `ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
 
 They varied for two reasons, both in the transcript rather than in the camera.

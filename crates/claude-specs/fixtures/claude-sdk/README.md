@@ -1,7 +1,7 @@
 # Claude SDK derived rows
 
 These `claude_sdk_v1` row files are derived from the corresponding
-recordings under `crates/claude/fixtures/sdk/`. The `derived_rows` integration
+recordings under `crates/claude-specs/fixtures/sdk/`. The `derived_rows` integration
 test opens each recording as a `claude::sdk::Session`, drives it through the
 real amux Claude SDK adapter, and compares the complete emitted JSONL bytes
 with the checked-in file.
@@ -12,9 +12,9 @@ Subagent rows include completion notifications after the first turn result.
 Stream events are also compared directly with the recording's inbound JSON to
 prove that every field and event survives the adapter in order.
 
-Regenerate with `UPDATE_DERIVED_ROWS=1 just test --
-claude_sdk_derived_rows`, then verify with
-`just test -- derived_rows` without the update flag.
+Regenerate with `UPDATE_DERIVED_ROWS=1 just test-crate testnet -- --test
+derived_rows claude_sdk_derived_rows`, then verify with the same command
+without the update flag.
 
 Successful prompt writes publish a `user` row before any reply, with the input
 UUID (or hex bytes for a non-UUID input) as `uuid`. The hex `input_id` links the

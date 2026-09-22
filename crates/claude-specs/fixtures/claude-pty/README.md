@@ -2,7 +2,7 @@
 
 These 18 fixtures are the daemon-visible `claude_pty_transcript_v1` rows
 derived from the canonical Claude provider recordings in
-`crates/claude/fixtures/pty/`. The derivation test strictly replays each
+`crates/claude-specs/fixtures/pty/`. The derivation test strictly replays each
 recording through `claude::pty::from_recording`, drives the provider with typed
 semantic intents, and captures the real amux Claude PTY backend log. It then
 compares that output byte for byte with the checked-in rows.
@@ -38,9 +38,14 @@ live-suite scenarios and are deliberately not synthetic row fixtures.
 Regenerate the corpus after an intentional daemon-boundary change with:
 
 ```sh
-UPDATE_DERIVED_ROWS=1 just test -- claude_pty_derived_rows
+UPDATE_DERIVED_ROWS=1 just test-crate testnet -- --test derived_rows claude_pty_derived_rows
 ```
 
-Without `UPDATE_DERIVED_ROWS`, the same test is the executable byte-for-byte
-specification. The tracked transcript semantics are documented in
-[`docs/CLAUDE_TRANSCRIPT.md`](../../../../../../docs/CLAUDE_TRANSCRIPT.md).
+Verify the regenerated corpus without the update flag:
+
+```sh
+just test-crate testnet -- --test derived_rows claude_pty_derived_rows
+```
+
+The tracked transcript semantics are documented in
+[`docs/CLAUDE_TRANSCRIPT.md`](../../../../docs/CLAUDE_TRANSCRIPT.md).

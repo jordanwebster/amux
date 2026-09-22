@@ -4,7 +4,7 @@
   "captured_at": "2026-08-23T00:38:36Z",
   "claude_version": "2.1.240 (Claude Code)",
   "model": "haiku",
-  "harness": "cargo test -p amux --test capture -- a2a_mcp_tools",
+  "harness": "just claude-pty-live -- a2a_mcp_tools",
   "graduated_at": "2026-08-23T00:38:36Z",
   "graduated_from": "synthetic fixture constrained by live MCP request log",
   "failure": null,

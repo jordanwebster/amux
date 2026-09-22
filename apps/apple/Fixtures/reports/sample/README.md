@@ -15,7 +15,7 @@ that the phone did not write.
 | `daemon.json` | The embedded phone service's own dump: its hosts, routes and sessions |
 | `replayed.json` | What the recording rebuilds: its fleet, its conversations, how old each agent's row says it is, and whether a host had confirmed them |
 
-`just ios replay ios/Fixtures/reports/sample` hands the two
+`just ios replay apps/apple/Fixtures/reports/sample` hands the two
 recordings to a debug build on the pinned simulator. The runtime folds the
 messages back into a model and projects it as the events a live connection
 would have delivered; the app builds its stores from the clock and the account
@@ -43,7 +43,7 @@ before the report was frozen, not the same moment — so a replay that read its
 clock from anywhere else draws every other pixel correctly and puts the wrong
 number on every row.
 
-`cargo run -p amux-cli -- debug report show ios/Fixtures/reports/sample` reads
+`cargo run --locked -p amux --features bundled -- debug report show apps/apple/Fixtures/reports/sample` reads
 the header the same way the daemon tooling reads a report written in a
 terminal. It says the trace came from a native view, which is why
 `amux debug report replay` records this bundle Unchecked and points at the iOS

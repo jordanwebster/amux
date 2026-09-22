@@ -4,7 +4,7 @@
   "failure": null,
   "graduated_at": "2026-08-23T00:12:15.005338+00:00",
   "graduated_from": "redacted capture run",
-  "harness": "cargo test -p amux --test capture -- a2a_socket_delivery",
+  "harness": "just claude-pty-live -- a2a_socket_delivery",
   "model": "haiku",
   "notes": {
     "assertions": {

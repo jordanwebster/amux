@@ -1,4 +1,4 @@
-//! The ui-state spec suite (tier 1).
+//! The ui-state spec suite.
 //!
 //! Reducer prose specs: ordered Msg sequences in, Model assertions out.
 //! Chapters read as documentation; the

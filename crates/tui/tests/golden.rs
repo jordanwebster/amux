@@ -1,4 +1,4 @@
-//! Tier-3 golden frames: the renderer is a pure function of
+//! Golden frames: the renderer is a pure function of
 //! (Model, ViewState, FrameContext), so render one frame from a fixture and
 //! diff against the checked-in text. The frames match the aligned mockups
 //! in the TUI V1 spec verbatim. No network, no clocks, no flake.

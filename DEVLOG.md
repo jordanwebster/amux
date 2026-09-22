@@ -1,3 +1,10 @@
+2026-09-22 — **Make testing documentation agree with its owners.**
+Fixture provenance now names the current provider-spec roots, focused derived-row
+commands and qualification harnesses. Phone report examples use the current app
+and fixture paths, golden counts defer to their manifest, and CI documentation
+names the actual iOS gate. Obsolete numbered test tiers and the retired
+worktree-specific specification command are gone.
+
 2026-09-22 — **Move environment-dependent qualification out of TestNet.**
 The new `qualification` support crate owns desktop performance measurement and
 the opt-in Claude PTY, Claude SDK and Codex live suites. TestNet now contains

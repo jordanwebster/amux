@@ -5,7 +5,7 @@
 //! top-to-bottom works as documentation; the modules below are declared in
 //! that reading order.
 //!
-//! Run with: `timeout 1200 wt run spec`
+//! Run with: `just spec`
 //!
 //! Adding a test: build a topology with `TestNet::builder()` —
 //! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Direct | Via::Cloud)`,

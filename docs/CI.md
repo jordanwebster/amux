@@ -31,7 +31,8 @@ capture suite. A runner's captures match a developer's Mac pixel for pixel
 except under the home indicator, which the comparison is told to look past
 (see [the goldens section](IOS.md#goldens-and-baseline-changes)).
 
-No capture is quarantined: all 124 gate on their pixel difference. Three of
+No capture is quarantined: the golden manifest is the authoritative capture
+count, and every capture it declares gates on its pixel difference. Three of
 them — `strip.light`, `strip.dark` and `ax-composer.dark` — were, until the
 transcript that drew them was fixed on 2026-09-14, and
 `apps/apple/Goldens/BASELINE.md` says what was wrong with it. The manifest can
@@ -74,7 +75,7 @@ runtime explicitly.
 
 ## GitHub
 
-The `iOS verification` job (`ios-verify` in `.github/workflows/ci.yml`) runs
+The `iOS gate` job (`ios-gate` in `.github/workflows/ci.yml`) runs
 on `macos-26`, selects Xcode 26.6, and checks that the iOS 26.5 simulator
 runtime and iPhone 17 Pro device type are available. It installs XcodeGen,
 `just`, the pinned stable toolchain with both ARM iOS targets and the nightly
@@ -112,7 +113,7 @@ or in an ignored results directory so it does not dirty the next check.
 `just ios ci-gate` requires a clean `nativeapp` checkout, pushes `HEAD` to
 `origin/nativeapp` without force, and waits up to 3,000 seconds for that
 commit's CI run. It fails unless the whole workflow succeeds and the `iOS
-verification` job successfully executes its `Run iOS verification` step.
+gate` job successfully executes its `Run the iOS gate` step.
 
 For a read-only check, use `just ios ci-status`, optionally adding
 `--wait 3000`. The command prints one JSON result to stdout; waiting updates
@@ -125,7 +126,7 @@ go to stderr. A successful result includes `run_id`, `url`, `head` and
 | `NoRunForHead` | No push run of ci.yml exists for that exact commit. |
 | `StillRunning` | CI has not completed within the requested wait. |
 | `Failed` | A job, the workflow or the required verification step failed or was skipped. |
-| `JobAbsent` | A completed run has no iOS verification job. |
+| `JobAbsent` | A completed run has no iOS gate job. |
 | `ToolFailure` | Git, GitHub access or the response format failed. |
 
 A newer failed run cannot be masked by an older successful run for the same
