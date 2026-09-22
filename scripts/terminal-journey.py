@@ -160,7 +160,13 @@ def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
             connection.close()
         profile_socket.unlink(missing_ok=True)
         live_socket.rename(profile_socket)
-    journey.wait_terms(pane, RECOVERY_REPLY, "Type a message", timeout=90)
+    journey.wait_terms(
+        pane,
+        RECOVERY_REPLY,
+        "chat · idle",
+        "enter send",
+        timeout=90,
+    )
     journey.frame(pane, "reconciled")
     after = dump(journey.config, agent_id)
     for value in (RECOVERY_PROMPT, RECOVERY_REPLY):

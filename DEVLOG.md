@@ -1,3 +1,8 @@
+2026-09-22 — **Wait for complete terminal recovery on every CI platform.**
+The recovery journey now captures only after the chat is idle and its composer
+can send, rather than treating placeholder input as proof of reconciliation.
+Terminal journey matrix failures no longer cancel the other operating system.
+
 2026-09-22 — **Capture settled relay-authority loss in terminal journeys.**
 The authority-boundary journey now waits for the agent's unavailable composer
 before taking its golden, instead of accepting the earlier unknown-session
