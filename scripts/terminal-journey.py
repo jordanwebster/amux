@@ -373,6 +373,17 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
 
 
 def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
+    def wait_for_replay(pane: str) -> str:
+        return journey.wait(
+            pane,
+            lambda frame: SHARED_PROMPT in frame
+            and SHARED_REPLY in frame
+            and any(header in frame for header in ("chat · idle", "default · idle"))
+            and "─ turn ·" in frame
+            and "enter send" in frame,
+            "settled shared replay",
+        )
+
     first = journey.launch("first")
     second = journey.launch("second")
     journey.open_chat(first, "shared-agent")
@@ -393,36 +404,16 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
             }
         }
     )
-    journey.wait_terms(
-        first,
-        SHARED_PROMPT,
-        SHARED_REPLY,
-        "chat · idle",
-        "─ turn ·",
-        "enter send",
-    )
-    second_frame = journey.wait_terms(
-        second,
-        SHARED_PROMPT,
-        SHARED_REPLY,
-        "chat · idle",
-        "─ turn ·",
-        "enter send",
-    )
+    wait_for_replay(first)
+    second_frame = wait_for_replay(second)
     if wrong and "deliberately missing replay" not in second_frame:
         raise RuntimeError("deliberately wrong second-attach expectation")
-    journey.frame(second, "attached-replay")
+    journey.frame(second, "attached-replay", normalize_session_idle=True)
 
     journey.stop_client(first)
     journey.tmux("resize-window", "-t", second, "-x", "96", "-y", "32")
-    journey.wait_terms(
-        second,
-        SHARED_REPLY,
-        "chat · idle",
-        "─ turn ·",
-        "enter send",
-    )
-    journey.frame(second, "resized")
+    wait_for_replay(second)
+    journey.frame(second, "resized", normalize_session_idle=True)
     journey.keys(second, "C-a", "s")
     journey.wait(
         second,
@@ -430,15 +421,8 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
         "fleet after detach",
     )
     journey.open_chat(second, "shared-agent")
-    journey.wait_terms(
-        second,
-        SHARED_PROMPT,
-        SHARED_REPLY,
-        "chat · idle",
-        "─ turn ·",
-        "enter send",
-    )
-    journey.frame(second, "reopened")
+    wait_for_replay(second)
+    journey.frame(second, "reopened", normalize_session_idle=True)
     journey.stop_client(second)
     return [
         "both real terminals received one prompt and its reply",

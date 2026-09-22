@@ -1,4 +1,4 @@
-  shared-agent · claude @ remote-host                                                                       chat · idle 
+  shared-agent · claude @ remote-host                                                                    default · idle 
                                                                                                                         
   ⚠ unrecognized row                                                                                                    
     └ hook.user_prompt_submit                                                                                           

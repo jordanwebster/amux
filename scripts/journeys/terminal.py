@@ -78,7 +78,12 @@ def _read_readiness(process: subprocess.Popen[bytes], timeout: float = 60.0) -> 
     raise RuntimeError(f"testnet readiness timed out: {seen!r}")
 
 
-def _stable_frame(text: str, styles: str) -> tuple[str, str]:
+def _stable_frame(
+    text: str,
+    styles: str,
+    *,
+    normalize_session_idle: bool = False,
+) -> tuple[str, str]:
     """Exclude transient clocks and report paths without changing geometry."""
     # Report frames delimit terminal rows with LF. `str.splitlines()` also
     # treats several Unicode screen-cell values as separators, which can make
@@ -101,6 +106,11 @@ def _stable_frame(text: str, styles: str) -> tuple[str, str]:
             stable_age,
             row,
         )
+        if normalize_session_idle and "chat · idle" in row:
+            start = row.rindex("chat · idle")
+            if start < 3 or row[start - 3 : start] != "   ":
+                raise RuntimeError(f"session header has no normalization space: {row!r}")
+            row = row[: start - 3] + "default · idle" + row[start + len("chat · idle") :]
         text_rows[index] = row
         report_marker = "✔ wrote "
         if report_marker in row:
@@ -353,7 +363,13 @@ class TerminalJourney:
             time.sleep(0.1)
         raise RuntimeError(f"timed out waiting for {description}; observed {last!r}")
 
-    def frame(self, pane: str, label: str) -> Frame:
+    def frame(
+        self,
+        pane: str,
+        label: str,
+        *,
+        normalize_session_idle: bool = False,
+    ) -> Frame:
         before = set(self.reports.iterdir()) if self.reports.exists() else set()
         self.keys(pane, "C-g")
         self.wait_terms(pane, "report this screen:", "b bug", "t tweak")
@@ -383,6 +399,7 @@ class TerminalJourney:
         text, styles = _stable_frame(
             (report / "frame.txt").read_text(),
             (report / "frame.styles").read_text(),
+            normalize_session_idle=normalize_session_idle,
         )
         self.actions.append(f"captured {label} from {report.name}")
         frame = Frame(label, text, styles)

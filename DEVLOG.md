@@ -1,3 +1,8 @@
+2026-09-22 — **Normalize optional session facts in replay goldens.**
+Second-attach checkpoints accept both valid idle headers after the complete
+replayed turn, then canonicalize their capture without changing row geometry.
+Platform timing no longer decides whether the optional mode fact is present.
+
 2026-09-22 — **Anchor removal evidence to a stable survivor.**
 The lifecycle journey still waits for the complete settled three-agent fleet
 after deletion, then filters its golden to one surviving agent. The `1/3`
