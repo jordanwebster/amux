@@ -118,7 +118,7 @@ mobile-check:
 
 # Run workspace tests with isolated user configuration and no external network.
 offline-test:
-    {{bounded}} 1200 scripts/offline-check.sh cargo test --locked --workspace --lib --tests {{desktop_features}}
+    {{bounded}} 1500 scripts/offline-check.sh scripts/workspace-test.sh --lib --tests {{desktop_features}}
 
 # Build the product with the full-debug profile.
 full-debug:
