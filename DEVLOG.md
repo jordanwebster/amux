@@ -5,6 +5,8 @@ conversion: the FSL text moved from `apps/LICENSE` to the root `LICENSE`, the
 MIT and Apache licence files are gone, and the README and
 `docs/LICENSING.md` describe a single licence. Commits published before this
 one keep the MIT/Apache grant they were made under; the licensing doc says so.
+Every crate now declares `license = "FSL-1.1-ALv2"`, inherited from the
+workspace, so cargo metadata reports it.
 
 2026-09-22 — **Readiness is not resolution: keep asks across the transcript-ready marker.**
 The phone-profiles test failed twice today on hosted macOS: a permission ask

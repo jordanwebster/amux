@@ -35,6 +35,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
+license = "FSL-1.1-ALv2"
 
 [workspace.dependencies]
 # Internal

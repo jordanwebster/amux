@@ -2,6 +2,7 @@
 name = "model"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
 description = "Transport-independent values shared across amux components"
 publish = false
 

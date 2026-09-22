@@ -2,6 +2,7 @@
 name = "app-embedded"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
 description = "Owns a provider-free embedded node installation and its relay link for a rich client"
 publish = false
 

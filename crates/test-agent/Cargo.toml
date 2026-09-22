@@ -2,6 +2,7 @@
 name = "test-agent"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Simple echo agent for E2E testing"
 publish = false
 

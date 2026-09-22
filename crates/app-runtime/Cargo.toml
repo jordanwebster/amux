@@ -2,6 +2,7 @@
 name = "app-runtime"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
 description = "Account sessions, presentation projection, fleet cache and the frame-coalesced event queue any rich amux client reuses"
 publish = false
 
