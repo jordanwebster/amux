@@ -21,6 +21,23 @@ class TestsCatalogTest(unittest.TestCase):
         self.assertIn(("node", "lib", "node"), cargo)
         self.assertIn("AmuxUITests", swift)
 
+    def test_an_unlisted_executable_workload_is_reported(self):
+        # A loose script has no manifest to go missing from, so the only thing
+        # standing between a moved workload and silence is this check.
+        stray = ROOT / "scripts" / "qualification" / "stray_workload_probe.sh"
+        stray.write_text("#!/bin/sh\nexit 0\n")
+        stray.chmod(0o755)
+        try:
+            errors, _, _ = catalog.validate(catalog.load_catalog())
+        finally:
+            stray.unlink()
+
+        self.assertIn(
+            "executable test workload scripts/qualification/stray_workload_probe.sh "
+            "is not listed",
+            errors,
+        )
+
     def test_test_crate_recipe_cannot_name_an_unlisted_target(self):
         errors = []
         catalog.validate_cargo_recipe(

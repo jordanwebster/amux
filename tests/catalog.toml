@@ -971,3 +971,115 @@ lane = "qualification"
 evidence = "target/ios/qa-live-journey"
 update = ""
 cases = ["scripts/qa-live-journey.py"]
+
+[[suite]]
+name = "a2a-cross-kind-completion"
+contract = "A real Claude parent spawns a real Codex child through the amux tools and receives the child's completion."
+paths = ["scripts/qualification/a2a_cross_kind_completion.sh"]
+recipe = "just qualify a2a_cross_kind_completion"
+boundary = "System composition"
+oracle = "The parent's own transcript, typed at the production boundary, and a written PASS or FAIL result."
+real = ["Claude CLI", "Codex CLI", "amux tools", "processes", "operator logins"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "Claude credentials", "Codex credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = "the result file named on the command line"
+update = ""
+cases = ["scripts/qualification/a2a_cross_kind_completion.sh"]
+
+[[suite]]
+name = "claude-driver-configuration-live"
+contract = "Driver defaults and overrides reach only new agents, and fleet output keeps backend vocabulary out of what a person reads."
+paths = ["scripts/qualification/claude_driver_configuration.sh", "scripts/qualification/live.sh"]
+recipe = "just qualify claude_driver_configuration"
+boundary = "Provider adapter"
+oracle = "Real inventory and fleet output captured to an evidence directory; no prompts are sent."
+real = ["Claude CLI", "tmux", "daemon processes", "operator login"]
+substituted = ["amux cloud", "inference"]
+time = "real"
+capabilities = ["Unix", "tmux", "Claude credentials"]
+lane = "qualification"
+evidence = ".autopilot/evidence/live/config"
+update = ""
+cases = ["scripts/qualification/claude_driver_configuration.sh"]
+
+[[suite]]
+name = "claude-sdk-chat-live"
+contract = "A real Claude SDK session carries streaming, interruption, permissions, edits, plans, questions, elicitation and parent-child messaging through the real terminal."
+paths = ["scripts/qualification/claude_sdk_chat.sh", "scripts/qualification/live.sh"]
+recipe = "just qualify claude_sdk_chat"
+boundary = "Provider adapter"
+oracle = "Captured terminal frames and session rows in a fresh evidence directory, which refuses frames left by an earlier attempt."
+real = ["Claude SDK", "tmux", "daemon processes", "operator login", "inference"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "tmux", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = ".autopilot/evidence/live/sdk-chat"
+update = ""
+cases = ["scripts/qualification/claude_sdk_chat.sh"]
+
+[[suite]]
+name = "claude-sdk-user-hooks-live"
+contract = "A person's own Claude Stop hook runs both under direct Claude and under the amux SDK backend."
+paths = ["scripts/qualification/claude_sdk_preserves_user_hooks.sh"]
+recipe = "just qualify claude_sdk_preserves_user_hooks"
+boundary = "Provider adapter"
+oracle = "Hook side effects recorded below an isolated settings and state root."
+real = ["Claude SDK", "user hook process", "operator login"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = ".autopilot/evidence/live/user-hooks"
+update = ""
+cases = ["scripts/qualification/claude_sdk_preserves_user_hooks.sh"]
+
+[[suite]]
+name = "cross-host-review-live"
+contract = "A review authored on one host keeps its exact diff identities, lines and comments for a second viewing host and across a host reconnect."
+paths = ["scripts/qualification/cross_host_review_survives_reconnect.sh"]
+recipe = "just qualify cross_host_review_survives_reconnect"
+boundary = "System composition"
+oracle = "Captured frames and review contents compared across both hosts before and after the reconnect."
+real = ["Claude CLI", "tmux", "two daemon installations", "repositories", "operator login"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "tmux", "Claude credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = ".autopilot/evidence/live/review-cross-host"
+update = ""
+cases = ["scripts/qualification/cross_host_review_survives_reconnect.sh"]
+
+[[suite]]
+name = "relay-mixed-carriers"
+contract = "The real relay binary carries one QUIC client and one TCP-fallback client in the same bidirectional session."
+paths = ["scripts/qualification/relay_mixed_carriers.sh"]
+recipe = "just qualify relay_mixed_carriers -- /tmp/amux-relay-scratch"
+boundary = "System composition"
+oracle = "Both clients' exchanged session output and the relay's own carrier accounting."
+real = ["relay binary", "QUIC", "TCP fallback", "daemon processes"]
+substituted = ["cloud account", "providers"]
+time = "real"
+capabilities = ["Unix", "loopback network", "a scratch parent directory named on the command line"]
+lane = "qualification"
+evidence = ".autopilot/evidence/relay"
+update = ""
+cases = ["scripts/qualification/relay_mixed_carriers.sh"]
+
+[[suite]]
+name = "remote-open-entry-policy-live"
+contract = "Real Claude and Codex agents follow remote-versus-local open policy, keep provider raw chrome, and report accurate inventory kinds and peer listings."
+paths = ["scripts/qualification/remote_open_entry_policy.sh", "scripts/qualification/live.sh"]
+recipe = "just qualify remote_open_entry_policy"
+boundary = "System composition"
+oracle = "Captured peer listings, inventories and terminal frames from both the owning and the viewing host."
+real = ["Claude CLI", "Codex CLI", "tmux", "two daemon installations", "operator logins"]
+substituted = ["amux cloud"]
+time = "real"
+capabilities = ["Unix", "tmux", "Claude credentials", "Codex credentials", "network", "may spend provider credits"]
+lane = "qualification"
+evidence = ".autopilot/evidence/live/remote-open"
+update = ""
+cases = ["scripts/qualification/remote_open_entry_policy.sh"]

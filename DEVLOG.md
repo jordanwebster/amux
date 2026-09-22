@@ -1,3 +1,12 @@
+2026-09-22 — **Give loose test scripts a name and something that runs them.**
+The seven operator-run qualification workloads that moved out of the retired
+end-to-end runner had no recipe, no catalogue entry and nothing invoking them.
+They are catalogued now and run by name through `just qualify`. The catalogue
+check grew the inventory that would have caught it: Cargo and Swift targets go
+missing from a manifest, but a loose script has no manifest to go missing from,
+so every executable file in a workload directory must now be claimed by a
+suite.
+
 2026-09-22 — **Normalize optional session facts in replay goldens.**
 Second-attach checkpoints accept both valid idle headers after the complete
 replayed turn, then canonicalize their capture without changing row geometry.

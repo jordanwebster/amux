@@ -136,6 +136,11 @@ claude-pty-live *ARGS: build
 claude-sdk-live *ARGS: build
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p qualification --test claude_sdk_live --features bundled -- "$@"
 
+# Run one operator-run qualification workload by name.
+qualify NAME *ARGS:
+    {{bounded}} 1200 cargo build --locked -p amux -p test-agent -p node-test-support --bins {{desktop_features}}
+    {{bounded}} 1800 scripts/qualification/{{NAME}}.sh {{ARGS}}
+
 # Render or inspect deterministic TUI evidence.
 shot *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot {{desktop_features}} -- "$@"
