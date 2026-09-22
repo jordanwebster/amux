@@ -228,21 +228,10 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.request({"Tier": {"user": "personal", "tier": "free"}})
     journey.request({"RefreshEntitlement": {"name": "terminal-host"}})
     journey.request({"RefreshEntitlement": {"name": "remote-host"}})
-    unavailable = journey.wait(
+    unavailable = journey.wait_terms(
         pane,
-        lambda frame: "authority-agent" in frame
-        and any(
-            term in frame.lower()
-            for term in (
-                "subscription",
-                "unavailable",
-                "away",
-                "offline",
-                "send gated",
-                "session state unknown",
-            )
-        ),
-        "lost relay authority",
+        "authority-agent",
+        "chat input unavailable for this agent",
         timeout=90,
     )
     if wrong and "deliberately absent authority state" not in unavailable:

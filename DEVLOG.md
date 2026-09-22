@@ -1,3 +1,8 @@
+2026-09-22 — **Capture settled relay-authority loss in terminal journeys.**
+The authority-boundary journey now waits for the agent's unavailable composer
+before taking its golden, instead of accepting the earlier unknown-session
+transition whose duration varies with runner scheduling.
+
 2026-09-22 — **Show terminal golden differences in CI failures.**
 Terminal journey mismatches now print a unified expected-versus-actual diff,
 so platform-only rendering failures remain diagnosable after an ephemeral CI
