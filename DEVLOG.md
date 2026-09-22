@@ -1,3 +1,15 @@
+2026-09-22 — **Make remote terminal evidence and attachment failures legible.**
+Terminal journeys pin the ANSI color mode used by their approved semantic
+style maps instead of inheriting hosted-runner `COLORTERM` differences. The
+profile-switch integration test now reports a failed attachment outcome before
+checking its opener path, preserving the cause of any future remote-only race.
+
+2026-09-22 — **Prove relay write refusal without platform-dependent copy.**
+The authority journey accepts either valid non-sendable presentation after
+relay entitlement is lost and proves refusal through the remote provider's
+unchanged observation. Its golden now covers restored reachability, not the
+runner-dependent choice between unavailable and unknown-session composer text.
+
 2026-09-22 — **Wait for complete terminal recovery on every CI platform.**
 The recovery journey now captures only after the chat is idle and its composer
 can send, rather than treating placeholder input as proof of reconciliation.

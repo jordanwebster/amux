@@ -36,5 +36,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│ ✔ report written                                                                                                     │
+│ ● connected · 2 hosts  enter chat  o raw attach  n new  r rename  d delete  q quit  ? help                           │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

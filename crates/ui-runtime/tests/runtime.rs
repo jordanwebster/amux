@@ -796,7 +796,21 @@ async fn switcher_rejects_late_results() {
         move |model| model.finished_op(work_open).is_some(),
     )
     .await;
-    let cached = opened.lock().unwrap().last().cloned().unwrap();
+    let work_outcome = &runtime
+        .model()
+        .finished_op(work_open)
+        .expect("the work account's attachment operation finished")
+        .outcome;
+    assert!(
+        matches!(work_outcome, OpOutcome::AttachmentOpened { .. }),
+        "the work account's attachment did not open: {work_outcome:?}"
+    );
+    let cached = opened
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("a successful work-account attachment open invoked its opener");
     assert!(
         cached.starts_with(root.join("work").join("cache")),
         "attachment cached outside the work account: {}",

@@ -197,6 +197,9 @@ class TerminalJourney:
             [
                 "env",
                 "TERM=xterm-256color",
+                # Terminal goldens are approved in ANSI mode. Hosted macOS
+                # exports truecolor here while Linux and local tmux do not.
+                "COLORTERM=",
                 shlex.quote(str(AMUX)),
                 "--config",
                 shlex.quote(str(self.config)),
@@ -213,6 +216,7 @@ class TerminalJourney:
             [
                 "env",
                 "TERM=xterm-256color",
+                "COLORTERM=",
                 shlex.quote(str(AMUX)),
                 "--config",
                 shlex.quote(str(self.config)),

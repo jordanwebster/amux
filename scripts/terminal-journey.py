@@ -234,15 +234,21 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.request({"Tier": {"user": "personal", "tier": "free"}})
     journey.request({"RefreshEntitlement": {"name": "terminal-host"}})
     journey.request({"RefreshEntitlement": {"name": "remote-host"}})
-    unavailable = journey.wait_terms(
+    unavailable = journey.wait(
         pane,
-        "authority-agent",
-        "chat input unavailable for this agent",
+        lambda frame: "authority-agent" in frame
+        and any(
+            reason in frame
+            for reason in (
+                "chat input unavailable for this agent",
+                "send gated — session state unknown",
+            )
+        ),
+        "relay-gated composer",
         timeout=90,
     )
     if wrong and "deliberately absent authority state" not in unavailable:
         raise RuntimeError("deliberately wrong authority expectation")
-    journey.frame(pane, "refused")
     journey.type(pane, "this write must be refused")
     journey.keys(pane, "Enter")
     time.sleep(1.0)
