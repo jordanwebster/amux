@@ -189,6 +189,9 @@ def find_and_pair(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.keys(pane, "Escape")
     journey.wait(pane, lambda frame: "any key to close" not in frame, "fleet after the second overlay")
 
+    # A newly trusted machine's work has to be dialed and listed before it can
+    # be opened, which is slower than anything else in this story.
+    journey.wait_terms(pane, "workstation-agent", timeout=90)
     journey.open_chat(pane, "workstation-agent")
     journey.type(pane, PAIRED_PROMPT)
     journey.keys(pane, "Enter")

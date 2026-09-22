@@ -1,3 +1,9 @@
+2026-09-22 — **Name the lane that checks our own machinery.**
+The testing guide described four lanes while the catalogue enforced five. The
+sixth kind of suite — script contracts, source and dependency policy, the CI
+command surface, the shipping scope audit — checks the repository rather than
+the product, and now has a name in the guide as well as in the catalogue.
+
 2026-09-22 — **Catalogue the phone's component snapshots.**
 Merging main brought the native visual variants that moved out of full-screen
 goldens into in-process component snapshots. The catalogue check refused the

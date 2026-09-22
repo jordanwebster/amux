@@ -245,6 +245,10 @@ story cannot retry invisibly; a recovery story declares its retries.
   including the small real-time transport suite.
 - **Journey lane**: both clients through the shared manifest. Desktop on
   every push; phone on the capture runner.
+- **Tool lane**: the repository's own machinery rather than the product —
+  script contracts, source and dependency policy, the CI command surface and
+  the shipping scope audit. It runs with the fast lane and needs nothing the
+  fast lane does not.
 - **Qualification lanes**: live provider compatibility and measured
   performance, explicitly provisioned on enrolled machines, scheduled or
   change-triggered. Results say `pass`, `fail`, `unavailable` or `not_run`.
