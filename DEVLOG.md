@@ -5,6 +5,7 @@ milliseconds for five probes of daemon state and, on a loaded runner, timed
 out with the same message a genuine tenant leak would produce. The window now
 says only how long the condition must hold; each check keeps the suite's
 ordinary bound, and a check that does not answer says so in its own words.
+The harness's own tests pin both wordings apart.
 
 2026-09-22 — **Bound every wait in the process suite, and say when a store deadline was hit.**
 The pipe-backpressure test held the Linux workspace suite for twelve minutes.

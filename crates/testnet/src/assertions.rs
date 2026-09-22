@@ -170,8 +170,33 @@ mod tests {
             .or_else(|| panic.downcast_ref::<&str>().copied())
             .expect("panic message");
 
-        assert!(message.contains("spec assertion failed during 100ms"));
+        assert!(message.contains("spec check did not answer within 5s"));
         assert!(message.contains("the state stays valid"));
+        assert!(message.contains("current state"));
+    }
+
+    /// A condition that stops holding is reported as that, in words that a
+    /// check which never answered cannot produce.
+    #[tokio::test(start_paused = true)]
+    async fn consistency_condition_failing_is_reported_as_the_condition() {
+        let duration = Duration::from_millis(100);
+        let assertion = tokio::spawn(consistently_for(
+            "the state stays valid",
+            duration,
+            async || false,
+            async { "current state".to_string() },
+        ));
+
+        let failure = assertion.await.expect_err("failing condition must fail");
+        let panic = failure.into_panic();
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic message");
+
+        assert!(message.contains("spec assertion failed during 100ms"));
+        assert!(!message.contains("did not answer"));
         assert!(message.contains("current state"));
     }
 
