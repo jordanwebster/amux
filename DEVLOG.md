@@ -1,3 +1,9 @@
+2026-09-22 — **Run the weekly offline suite where its sandbox exists.**
+The weekly job that runs the workspace tests with external networking denied
+was scheduled on Linux, but the only sandbox the script knows is macOS's
+`sandbox-exec`, so its first Sunday would have failed before running a test.
+It runs on macOS now, and was dispatched by hand once to prove it.
+
 2026-09-22 — **Make a terminal whose reader never finishes fail with evidence.**
 The pipe-backpressure test hung the Linux suite a second time with every
 await in it bounded, so the stall is not in an await. A tokio runtime cannot
