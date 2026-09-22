@@ -1,3 +1,7 @@
+2026-09-22 — **Run the completed testing branch through remote CI.**
+The CI push trigger now includes the integration branch so its final Ubuntu,
+macOS, Windows and iOS results can be verified without opening a pull request.
+
 2026-09-22 — **Make testing documentation agree with its owners.**
 Fixture provenance now names the current provider-spec roots, focused derived-row
 commands and qualification harnesses. Phone report examples use the current app
