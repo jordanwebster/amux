@@ -1,3 +1,8 @@
+2026-09-22 — **Keep restored-authority evidence independent of fleet order.**
+The restored-authority checkpoint filters to its subject while retaining the
+full fleet cardinality. Concurrent fixture rows may reorder without changing
+the authorization behavior the golden approves.
+
 2026-09-22 — **Isolate lifecycle terminal evidence from fleet ordering.**
 Lifecycle checkpoints filter to the agent under test, then clear the filter and
 wait for the settled full fleet before approving removal. Golden evidence no

@@ -295,11 +295,12 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
         "terminal-host-after-entitlement-restored",
     )
     journey.keys(pane, "C-a", "s")
+    journey.filter_agent(pane, "authority-agent")
     journey.wait(
         pane,
         lambda frame: "┌ amux" in frame
         and "authority-agent" in frame
-        and "3 agents" in frame
+        and "1/3" in frame
         and "Type a message" not in frame,
         "fleet after authority restoration",
         timeout=90,
