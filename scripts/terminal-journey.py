@@ -54,7 +54,12 @@ def conversation_decision(journey: TerminalJourney, wrong: bool) -> list[str]:
             }
         }
     )
-    journey.wait_terms(pane, "Allow once", "deploy --check")
+    journey.wait_terms(
+        pane,
+        "Allow once",
+        "▸ Bash deploy --check",
+        "└ running",
+    )
     journey.frame(pane, "permission")
     journey.keys(pane, "1", "Enter")
     answered = journey.wait_observation(
@@ -67,7 +72,14 @@ def conversation_decision(journey: TerminalJourney, wrong: bool) -> list[str]:
     if len([row for row in answered if row.get("intent") == "answer"]) != 1:
         raise RuntimeError(f"permission was not answered exactly once: {answered!r}")
     journey.request({"AgentEndTurn": {"agent": "decision-agent"}})
-    journey.wait_terms(pane, "Type a message")
+    journey.wait_terms(
+        pane,
+        "default · idle",
+        "✔ Bash deploy --check",
+        "Permission granted.",
+        "─ turn ·",
+        "enter send",
+    )
     journey.frame(pane, "finished")
     journey.stop_client(pane)
     return [
@@ -116,7 +128,13 @@ def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.request({"AgentPlay": {"agent": "recovery-agent", "steps": [
         {"Markdown": {"text": RECOVERY_REPLY}}, "EndTurn"
     ]}})
-    journey.wait_terms(pane, RECOVERY_REPLY, "Type a message")
+    journey.wait_terms(
+        pane,
+        RECOVERY_REPLY,
+        "default · idle",
+        "─ turn ·",
+        "enter send",
+    )
     online = journey.frame(pane, "online")
     if wrong and "a deliberately absent row" not in online.text:
         raise RuntimeError("deliberately wrong expected observation was absent")
@@ -164,6 +182,7 @@ def leave_and_recover(journey: TerminalJourney, wrong: bool) -> list[str]:
         pane,
         RECOVERY_REPLY,
         "chat · idle",
+        "─ turn ·",
         "enter send",
         timeout=90,
     )
@@ -205,7 +224,14 @@ def reach_host(journey: TerminalJourney, wrong: bool) -> list[str]:
             }
         }
     )
-    journey.wait_terms(pane, REACH_PROMPT, REACH_REPLY, "Type a message")
+    journey.wait_terms(
+        pane,
+        REACH_PROMPT,
+        REACH_REPLY,
+        "default · idle",
+        "─ turn ·",
+        "enter send",
+    )
     journey.frame(pane, "remote-work")
     inventory = journey.request(
         {"Inventory": {"daemon": "remote-host"}}, "remote-host-inventory"
@@ -294,7 +320,12 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.keys(owner, "Enter")
     journey.wait_terms(owner, "echo: ready before suspend")
     pane = journey.launch("lifecycle")
-    journey.wait_terms(pane, "lifecycle-agent")
+    journey.wait_terms(
+        pane,
+        "lifecycle-agent",
+        "4 agents",
+        "connected · 2 hosts",
+    )
     journey.frame(pane, "running")
     suspended = run_amux(journey.config, "server", "suspend")
     if "Suspended 1 agent(s)." not in suspended:
@@ -305,14 +336,20 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
     if "Resumed 1 agent(s)." not in resumed:
         raise RuntimeError(f"unexpected resume output: {resumed!r}")
     pane = journey.launch("lifecycle-resumed")
-    journey.wait_terms(pane, "lifecycle-agent", timeout=90)
+    journey.wait_terms(
+        pane,
+        "lifecycle-agent",
+        "4 agents",
+        "connected · 2 hosts",
+        timeout=90,
+    )
     journey.frame(pane, "resumed")
     removed = run_amux(journey.config, "rm", "lifecycle-agent", "--force")
     if wrong and "deliberately not removed" not in removed:
         raise RuntimeError("deliberately wrong lifecycle expectation")
     journey.wait(
         pane,
-        lambda frame: "lifecycle-agent" not in frame,
+        lambda frame: "lifecycle-agent" not in frame and "3 agents" in frame,
         "agent removed from fleet",
         timeout=90,
     )
@@ -347,9 +384,21 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
             }
         }
     )
-    journey.wait_terms(first, SHARED_PROMPT, SHARED_REPLY, "Type a message")
+    journey.wait_terms(
+        first,
+        SHARED_PROMPT,
+        SHARED_REPLY,
+        "chat · idle",
+        "─ turn ·",
+        "enter send",
+    )
     second_frame = journey.wait_terms(
-        second, SHARED_PROMPT, SHARED_REPLY, "Type a message"
+        second,
+        SHARED_PROMPT,
+        SHARED_REPLY,
+        "chat · idle",
+        "─ turn ·",
+        "enter send",
     )
     if wrong and "deliberately missing replay" not in second_frame:
         raise RuntimeError("deliberately wrong second-attach expectation")
@@ -357,7 +406,13 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
 
     journey.stop_client(first)
     journey.tmux("resize-window", "-t", second, "-x", "96", "-y", "32")
-    journey.wait_terms(second, SHARED_REPLY)
+    journey.wait_terms(
+        second,
+        SHARED_REPLY,
+        "chat · idle",
+        "─ turn ·",
+        "enter send",
+    )
     journey.frame(second, "resized")
     journey.keys(second, "C-a", "s")
     journey.wait(
@@ -367,7 +422,14 @@ def second_attach(journey: TerminalJourney, wrong: bool) -> list[str]:
     )
     selected = journey.wait_terms(second, "shared-agent")
     journey.keys(second, "o" if "o chat" in selected else "Enter")
-    journey.wait_terms(second, SHARED_PROMPT, SHARED_REPLY, "Type a message")
+    journey.wait_terms(
+        second,
+        SHARED_PROMPT,
+        SHARED_REPLY,
+        "chat · idle",
+        "─ turn ·",
+        "enter send",
+    )
     journey.frame(second, "reopened")
     journey.stop_client(second)
     return [
