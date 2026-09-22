@@ -14,6 +14,63 @@ use pty_host::{PtyProcess, PtySize, PtySpawn};
 
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Runs a CLI invocation to completion or kills it at the deadline. Every
+/// read from a test terminal here is bounded; a `Command::output()` was not,
+/// and a daemon that does not stop would hold the whole suite until the
+/// recipe's own deadline fired, with nothing captured to say why.
+trait Bounded {
+    fn bounded(&mut self) -> Output;
+}
+
+impl Bounded for Command {
+    fn bounded(&mut self) -> Output {
+        bounded_output(self)
+    }
+}
+
+fn bounded_output(command: &mut Command) -> Output {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let drain = |mut pipe: Option<_>| {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(pipe) = pipe.as_mut() {
+                let _ = std::io::Read::read_to_end(pipe, &mut buffer);
+            }
+            buffer
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+    let stderr = drain(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > PROCESS_TIMEOUT {
+            let _ = child.kill();
+            let status = child.wait().unwrap();
+            eprintln!(
+                "killed `{:?}` after {PROCESS_TIMEOUT:?} without exit",
+                command.get_args().collect::<Vec<_>>()
+            );
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr: stderr.join().unwrap(),
+    }
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     installation: InstallationConfig,
@@ -137,7 +194,7 @@ impl Fixture {
     }
 
     fn run(&self, label: &str, args: &[&str]) -> Output {
-        let output = self.command(label, args).output().unwrap();
+        let output = self.command(label, args).bounded();
         println!(
             "$ amux {}\n{}{}",
             args.join(" "),
@@ -177,7 +234,7 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         if let Some(label) = self.profiles.keys().next() {
-            let _ = self.command(label, &["server", "stop"]).output();
+            let _ = self.command(label, &["server", "stop"]).bounded();
         }
     }
 }
@@ -336,7 +393,7 @@ fn pair_direct(source: &Fixture, destination: &Fixture) {
 async fn wait_for_listing(fixture: &Fixture, expected: &str) -> String {
     tokio::time::timeout(PROCESS_TIMEOUT, async {
         loop {
-            let output = fixture.command("local", &["list"]).output().unwrap();
+            let output = fixture.command("local", &["list"]).bounded();
             let output = text(&output);
             if output.contains(expected) {
                 return output;
@@ -424,8 +481,7 @@ fn bare_help_prints_cli_and_pair_help_without_a_tty() {
         let output = Command::new(env!("CARGO_BIN_EXE_amux"))
             .args(&args)
             .env_remove("AMUX_CONFIG")
-            .output()
-            .unwrap();
+            .bounded();
         assert!(output.status.success(), "{output:?}");
         let output = text(&output);
         if args.is_empty() {
@@ -590,12 +646,7 @@ async fn list_prints_local_agents_and_working_directories() {
     assert!(beta.exit().await.success());
 }
 
-/// Two processes have to make progress at once here: this terminal keeps
-/// writing while the agent echoes back, and the echo is what unblocks the
-/// write. On one worker a filled pipe can park the writer before the reader
-/// is ever polled, which is a deadlock in the harness rather than the
-/// backpressure this is about.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn terminal_pipe_backpressure_does_not_lose_input() {
     let fixture = Fixture::new(&["local"]);
     fixture.run("local", &["server", "start"]);
@@ -686,8 +737,7 @@ fn worktree_template_starts_and_probes_daemon() {
         .arg(script)
         .arg(&root)
         .arg("example-tree")
-        .output()
-        .unwrap();
+        .bounded();
     assert!(generated.status.success(), "{generated:?}");
     let installation = InstallationConfig {
         root: root.clone(),
@@ -706,8 +756,7 @@ fn worktree_template_starts_and_probes_daemon() {
             .env("AMUX_CONFIG", &profile)
             .env("AMUX_LOG", root.join("daemon.log"))
             .env("AMUX_TEST_DISCOVERY_MODE", "disabled")
-            .output()
-            .unwrap()
+            .bounded()
     };
     struct Stop<'a>(&'a dyn Fn(&[&str]) -> Output);
     impl Drop for Stop<'_> {
@@ -902,8 +951,7 @@ async fn two_profile_logins_print_bound_accounts() {
     let start = fixture
         .command("personal", &["server", "start"])
         .env("AMUX_CLOUD_TLS_CA", ca)
-        .output()
-        .unwrap();
+        .bounded();
     assert!(start.status.success(), "{start:?}");
     fixture.run(
         "personal",
@@ -918,8 +966,7 @@ async fn two_profile_logins_print_bound_accounts() {
     let alice_login = fixture
         .command("personal", &["--profile", &personal_id, "login"])
         .env("AMUX_CLOUD_TLS_CA", ca)
-        .output()
-        .unwrap();
+        .bounded();
     assert!(alice_login.status.success(), "{alice_login:?}");
     assert!(text(&alice_login).contains("Signed in as alice@example.test"));
 
@@ -927,8 +974,7 @@ async fn two_profile_logins_print_bound_accounts() {
     let bob_login = fixture
         .command("personal", &["--profile", &work_id, "login"])
         .env("AMUX_CLOUD_TLS_CA", ca)
-        .output()
-        .unwrap();
+        .bounded();
     assert!(bob_login.status.success(), "{bob_login:?}");
     assert!(text(&bob_login).contains("Signed in as bob@example.test"));
 
@@ -937,8 +983,7 @@ async fn two_profile_logins_print_bound_accounts() {
             let output = fixture
                 .command("personal", &["profiles"])
                 .env("AMUX_CLOUD_TLS_CA", ca)
-                .output()
-                .unwrap();
+                .bounded();
             let output = text(&output);
             if output.matches("bound / connected (free, quic)").count() == 2 {
                 return output;
@@ -1003,7 +1048,7 @@ async fn update_replaces_binary_and_resumes_all_profiles() {
     personal.wait_for("echo: before personal").await;
     work.wait_for("echo: before work").await;
 
-    let update = fixture.command("personal", &["update"]).output().unwrap();
+    let update = fixture.command("personal", &["update"]).bounded();
     assert!(update.status.success(), "{update:?}");
     let update = text(&update);
     for expected in [

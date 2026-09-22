@@ -1,11 +1,18 @@
-2026-09-22 — **Stop a backpressure test from wedging the suite.**
-The replacement for the legacy pipe-backpressure check drove a terminal and
-its echoing agent on a single worker, where a filled input pipe can park the
-writer before the reader is ever polled — a deadlock in the harness rather
-than the backpressure under test, and one that only showed up on a loaded
-Linux runner. It gets two workers now. Writes to a test terminal are also
-bounded the way reads always were, so a terminal that stops draining fails
-with what it had seen instead of running out the recipe's deadline.
+2026-09-22 — **Bound every wait in the process suite, and say when a store deadline was hit.**
+The pipe-backpressure test held the Linux workspace suite for twelve minutes.
+The explanation logged earlier today — a single-worker deadlock — was wrong:
+a terminal write is a channel send that yields when full. What is true is
+that every read in that suite was bounded and no CLI invocation was, so a
+daemon that did not stop, or a writer wedged against the terminal, ran out the
+recipe's clock with nothing captured. Every command the suite runs, including
+teardown, now completes or is killed inside the same twenty seconds with its
+output kept, so the next stall is evidence rather than a mystery.
+
+The Windows failure in the small-store budget test was a different thing and
+is understood: maintenance that reaches its deadline skips the checkpoint that
+truncates the file, and the test asserted the truncated size without asserting
+maintenance had finished. It now checks the report's own deadline flag and
+gives the work the time a slow disk needs, as the sibling test already does.
 
 2026-09-22 — **Name the lane that checks our own machinery.**
 The testing guide described four lanes while the catalogue enforced five. The

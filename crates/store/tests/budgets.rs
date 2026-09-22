@@ -577,10 +577,16 @@ fn maintenance_restores_a_small_store_target_in_lru_order() {
                     store_target_bytes: target,
                     ..Budget::default()
                 },
-                Duration::from_secs(20),
+                // The size below is a finished outcome: maintenance that
+                // stops at its deadline skips the checkpoint that truncates
+                // the file, so the deadline must outlast the work on a slow
+                // disk, and reaching it is a failure in its own words rather
+                // than a wrong size.
+                Duration::from_secs(300),
             )
             .await
             .unwrap();
+        assert!(!report.deadline_reached, "maintenance ran out of time: {report:?}");
         assert!(report.entries_evicted > 1_000);
         assert!(report.vacuum_steps > 0);
         assert!(store_disk_bytes(&path) <= target.saturating_mul(9) / 10);
