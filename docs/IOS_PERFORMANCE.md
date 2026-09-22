@@ -39,7 +39,7 @@ way to claim one Mac's measurements describe another.
 
 ## Baselines and drift
 
-Baselines under `apps/apple/Perf/baselines/` are tracked in git, one file per machine.
+Baselines under `perf/baselines/phone/` are tracked in git, one file per machine.
 Record one with `just ios perf --baseline`, after checking
 that the workload and measurement are still appropriate. Re-baselining is a
 deliberate reviewed act with a reason in the commit message, never a way to
@@ -49,7 +49,7 @@ the regression. Per-run output is disposable; the comparison history is not.
 
 Budgets always apply on the pinned Mac, and so does the drift check: the median
 may grow by at most 15% for timing, hitches and CPU, or 10% for memory over the
-number recorded in `apps/apple/Perf/baselines/pinned-mac.json`. That file is the
+number recorded in `perf/baselines/phone/pinned-mac.json`. That file is the
 machine's history and an ordinary run needs it — a run that cannot find it stops
 and says so rather than quietly falling back to the budgets alone, which would
 leave a slow bleed unwatched for as long as nobody noticed the file was gone.

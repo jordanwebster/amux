@@ -7,16 +7,10 @@ publish = false
 [features]
 default = []
 bundled = ["store/bundled"]
-perf = ["dep:crossterm", "dep:portable-pty", "dep:prost", "dep:ratatui", "dep:rusqlite", "dep:tui", "tui/fixtures"]
 
 [[bin]]
 name = "testnet"
 path = "src/bin/testnet.rs"
-
-[[bin]]
-name = "perf"
-path = "src/bin/perf.rs"
-required-features = ["perf"]
 
 [dependencies]
 agent-runtime = { workspace = true }
@@ -38,13 +32,9 @@ node-test-support = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }
 model = { workspace = true }
-prost = { workspace = true, optional = true }
-portable-pty = { workspace = true, optional = true }
 pty-host = { workspace = true }
 replay-support = { path = "../replay-support" }
 reqwest = { workspace = true }
-ratatui = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true }
 rustls = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -61,14 +51,11 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
-tui = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }
-
-crossterm = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
@@ -76,24 +63,4 @@ libc = { workspace = true }
 [dev-dependencies]
 claude-specs = { path = "../claude-specs" }
 codex-specs = { path = "../codex-specs" }
-gethostname = { workspace = true }
 jsonwebtoken = { workspace = true }
-redaction = { workspace = true }
-
-[[test]]
-name = "codex_live"
-path = "tests/codex_live.rs"
-harness = false
-
-[[test]]
-name = "claude_pty_live"
-path = "tests/claude_pty_live.rs"
-harness = false
-
-[[test]]
-name = "claude_sdk_live"
-path = "tests/claude_sdk_live.rs"
-harness = false
-
-[target.'cfg(unix)'.dev-dependencies]
-nix = { workspace = true }

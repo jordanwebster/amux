@@ -7,14 +7,14 @@ on enrolled machines, never as part of an ordinary push. Deterministic work
 bounds such as retained rows and bytes, cache misses and message counts belong
 in ordinary tests; elapsed-time claims belong here.
 
-The desktop harness lives with the network harness today and the phone
-harness lives with the app. The convention to converge on is one manifest
-format for every platform (workload, metric, unit, statistic, budget, drift,
-reference environment), one baseline layout keyed by enrolled machine and one
-report format, with harness code staying with its platform. Measure user
-outcomes: store-painted startup, input to echo, streaming while typing and
-scrolling, reconnect volume and latency, attachment and review opening, bridge
-rendering, idle resources and sustained memory.
+The desktop harness lives in the qualification crate and the phone harness
+keeps its platform-specific runner with the app. The convention to converge on
+is one manifest format for every platform (workload, metric, unit, statistic,
+budget, drift, reference environment), one baseline layout keyed by enrolled
+machine and one report format, with harness code staying with its platform.
+Measure user outcomes: store-painted startup, input to echo, streaming while
+typing and scrolling, reconnect volume and latency, attachment and review
+opening, bridge rendering, idle resources and sustained memory.
 
 ## Running it
 
@@ -39,10 +39,10 @@ just perf soak
 just perf soak --baseline
 ```
 
-Desktop baselines live at `crates/testnet/perf/baselines/<hw.model>.json`, and
+Desktop baselines live at `perf/baselines/desktop/<hw.model>.json`, and
 soak baselines live separately at
-`crates/testnet/perf/baselines/<hw.model>-soak.json`. Phone baselines live at
-`apps/apple/Perf/baselines/<machine>.json`. They are valid only for the
+`perf/baselines/desktop/<hw.model>-soak.json`. Phone baselines live at
+`perf/baselines/phone/<machine>.json`. They are valid only for the
 recorded machine model, release profile and feature set. An unknown hardware
 model is refused. `--baseline` records the complete workload it accompanies
 while still enforcing every absolute budget; it never turns a miss into the

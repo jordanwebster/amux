@@ -35,7 +35,7 @@ mod codex_live {
 
 #[cfg(not(unix))]
 fn main() {
-    println!("codex_live: real-Codex scenarios are only available on Unix");
+    println!("not_run: codex_live real-Codex scenarios are only available on Unix");
 }
 
 #[cfg(unix)]
@@ -1119,7 +1119,7 @@ fn main() -> anyhow::Result<()> {
     let known = SCENARIOS.iter().map(|spec| spec.id).collect::<Vec<_>>();
     let selected = args::select(&names, &known).map_err(anyhow::Error::msg)?;
     if selected.is_empty() {
-        println!("{}", args::USAGE);
+        println!("not_run: {}", args::USAGE);
         return Ok(());
     }
     let selected = selected

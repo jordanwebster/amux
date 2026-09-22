@@ -1,3 +1,12 @@
+2026-09-22 — **Move environment-dependent qualification out of TestNet.**
+The new `qualification` support crate owns desktop performance measurement and
+the opt-in Claude PTY, Claude SDK and Codex live suites. TestNet now contains
+only reusable network-harness behavior, with no performance feature or custom
+test harness targets. Existing `just perf` and live recipe names dispatch to
+the new crate, no-scenario live runs report `not_run`, and desktop and phone
+baselines share the top-level `perf/baselines` layout while retaining their
+platform-specific harnesses and unchanged budgets.
+
 2026-09-22 — **Retire the legacy end-to-end runner.**
 The completed migration checkpoint now permits removing the script runner,
 its scenario directory, migration checker and store-scenario driver. Workspace

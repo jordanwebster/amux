@@ -240,7 +240,7 @@ cargo = [
 
 [[suite]]
 name = "testnet-harness-units"
-contract = "The test network harness preserves scripts, controls, latency proxies, performance reporting, and deterministic assertions."
+contract = "The test network harness preserves scripts, controls, latency proxies, and deterministic assertions."
 paths = ["crates/testnet/src"]
 recipe = "just test-crate testnet -- --lib --bins"
 boundary = "Many daemons"
@@ -276,7 +276,7 @@ cargo = [{ package = "testnet", targets = ["a2a_fixtures"], features = ["bundled
 [[suite]]
 name = "claude-pty-live-compatibility"
 contract = "A real Claude PTY session still initializes, converses, accepts semantic controls, and records inspectable evidence."
-paths = ["crates/testnet/tests/claude_pty_live.rs", "crates/testnet/tests/claude_pty_live"]
+paths = ["crates/qualification/tests/claude_pty_live.rs", "crates/qualification/tests/claude_pty_live"]
 recipe = "just claude-pty-live -- all"
 boundary = "Provider adapter"
 oracle = "Structural session rows, provider side effects, process exits, and captured PTY evidence."
@@ -287,13 +287,13 @@ capabilities = ["Unix", "Claude credentials", "network", "may spend provider cre
 lane = "qualification"
 evidence = "target/claude-pty-live"
 update = "Use the live suite's redaction workflow for an explicitly selected capture."
-cargo = [{ package = "testnet", targets = ["claude_pty_live"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["claude_pty_live"], features = ["bundled"] }]
 
 [[suite]]
 name = "claude-pty-live-selection"
 contract = "The Claude PTY live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
-paths = ["crates/testnet/tests/claude_pty_live_args.rs", "crates/testnet/tests/claude_pty_live/args.rs"]
-recipe = "just test-crate testnet -- --test claude_pty_live_args"
+paths = ["crates/qualification/tests/claude_pty_live_args.rs", "crates/qualification/tests/claude_pty_live/args.rs"]
+recipe = "just test-crate qualification -- --test claude_pty_live_args"
 boundary = "Provider adapter"
 oracle = "Exact selected scenario indices and typed selection errors."
 real = []
@@ -303,13 +303,13 @@ capabilities = ["Rust toolchain"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "testnet", targets = ["claude_pty_live_args"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["claude_pty_live_args"], features = ["bundled"] }]
 
 [[suite]]
 name = "claude-pty-live-redaction"
 contract = "Claude PTY captures redact bridge identities while retaining scenario identity and verifiable output."
-paths = ["crates/testnet/tests/claude_pty_live_redact.rs", "crates/testnet/tests/claude_pty_live/redact.rs"]
-recipe = "just test-crate testnet -- --test claude_pty_live_redact"
+paths = ["crates/qualification/tests/claude_pty_live_redact.rs", "crates/qualification/tests/claude_pty_live/redact.rs"]
+recipe = "just test-crate qualification -- --test claude_pty_live_redact"
 boundary = "Provider adapter"
 oracle = "Exact sanitized JSON and a scan for surviving sensitive identifiers."
 real = ["authored capture-shaped data"]
@@ -319,12 +319,12 @@ capabilities = ["Rust toolchain"]
 lane = "fast"
 evidence = ""
 update = "Set AMUX_REDACT_INPUT, AMUX_REDACT_OUTPUT, and AMUX_REDACT_SCRATCH for the ignored rewrite case."
-cargo = [{ package = "testnet", targets = ["claude_pty_live_redact"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["claude_pty_live_redact"], features = ["bundled"] }]
 
 [[suite]]
 name = "claude-sdk-live-compatibility"
 contract = "A real Claude SDK session still initializes, exchanges structured turns and controls, and shuts down cleanly."
-paths = ["crates/testnet/tests/claude_sdk_live.rs", "crates/testnet/tests/claude_sdk_live"]
+paths = ["crates/qualification/tests/claude_sdk_live.rs", "crates/qualification/tests/claude_sdk_live"]
 recipe = "just claude-sdk-live -- all"
 boundary = "Provider adapter"
 oracle = "Structural session rows, provider side effects, and captured process evidence."
@@ -335,13 +335,13 @@ capabilities = ["Unix", "Claude credentials", "network", "may spend provider cre
 lane = "qualification"
 evidence = "target/claude-sdk-live"
 update = "Capture through the named live scenario and graduate it deliberately."
-cargo = [{ package = "testnet", targets = ["claude_sdk_live"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["claude_sdk_live"], features = ["bundled"] }]
 
 [[suite]]
 name = "claude-sdk-live-selection"
 contract = "The Claude SDK live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
-paths = ["crates/testnet/tests/claude_sdk_live_args.rs", "crates/testnet/tests/claude_sdk_live/args.rs"]
-recipe = "just test-crate testnet -- --test claude_sdk_live_args"
+paths = ["crates/qualification/tests/claude_sdk_live_args.rs", "crates/qualification/tests/claude_sdk_live/args.rs"]
+recipe = "just test-crate qualification -- --test claude_sdk_live_args"
 boundary = "Provider adapter"
 oracle = "Exact selected scenario indices and typed selection errors."
 real = []
@@ -351,12 +351,12 @@ capabilities = ["Rust toolchain"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "testnet", targets = ["claude_sdk_live_args"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["claude_sdk_live_args"], features = ["bundled"] }]
 
 [[suite]]
 name = "codex-live-compatibility"
 contract = "A real Codex session still initializes, handles turns and decisions, interrupts, and resumes through app-server."
-paths = ["crates/testnet/tests/codex_live.rs", "crates/testnet/tests/codex_live"]
+paths = ["crates/qualification/tests/codex_live.rs", "crates/qualification/tests/codex_live"]
 recipe = "just codex-live -- all"
 boundary = "Provider adapter"
 oracle = "Structural app-server events, provider side effects, and captured protocol evidence."
@@ -367,13 +367,13 @@ capabilities = ["Unix", "Codex credentials", "network", "may spend provider cred
 lane = "qualification"
 evidence = "target/codex-live"
 update = "Capture through the named live scenario and graduate it deliberately."
-cargo = [{ package = "testnet", targets = ["codex_live"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["codex_live"], features = ["bundled"] }]
 
 [[suite]]
 name = "codex-live-selection"
 contract = "The Codex live-suite selector distinguishes no-op, named, all, and unknown scenario requests."
-paths = ["crates/testnet/tests/codex_live_args.rs", "crates/testnet/tests/codex_live/args.rs"]
-recipe = "just test-crate testnet -- --test codex_live_args"
+paths = ["crates/qualification/tests/codex_live_args.rs", "crates/qualification/tests/codex_live/args.rs"]
+recipe = "just test-crate qualification -- --test codex_live_args"
 boundary = "Provider adapter"
 oracle = "Exact selected scenario indices and typed selection errors."
 real = []
@@ -383,13 +383,13 @@ capabilities = ["Rust toolchain"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "testnet", targets = ["codex_live_args"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["codex_live_args"], features = ["bundled"] }]
 
 [[suite]]
 name = "codex-live-build-freshness"
 contract = "Codex live qualification refuses a missing or stale binary by reading its real dependency file."
-paths = ["crates/testnet/tests/codex_live_depfile.rs"]
-recipe = "just test-crate testnet -- --test codex_live_depfile"
+paths = ["crates/qualification/tests/codex_live_depfile.rs"]
+recipe = "just test-crate qualification -- --test codex_live_depfile"
 boundary = "System composition"
 oracle = "Dependency-file parsing and exact stale-input diagnostics."
 real = ["temporary dependency files"]
@@ -399,7 +399,7 @@ capabilities = ["Rust toolchain"]
 lane = "fast"
 evidence = ""
 update = ""
-cargo = [{ package = "testnet", targets = ["codex_live_depfile"], features = ["bundled"] }]
+cargo = [{ package = "qualification", targets = ["codex_live_depfile"], features = ["bundled"] }]
 
 [[suite]]
 name = "codex-model-effort-recording"
@@ -858,7 +858,7 @@ cases = ["scripts/ios-store-test.py"]
 [[suite]]
 name = "desktop-performance-qualification"
 contract = "Desktop user-outcome and soak workloads stay within absolute budgets and reviewed drift on enrolled hardware."
-paths = ["crates/testnet/src/perf", "crates/testnet/src/bin/perf.rs", "crates/testnet/perf/baselines"]
+paths = ["crates/qualification/src/perf", "crates/qualification/src/bin/perf.rs", "perf/baselines/desktop"]
 recipe = "just perf"
 boundary = "System composition"
 oracle = "Measured statistics against absolute budgets and machine-specific reviewed baselines."
@@ -869,13 +869,16 @@ capabilities = ["enrolled Mac14,6", "quiet machine", "release toolchain"]
 lane = "qualification"
 evidence = "target/perf"
 update = "just perf --baseline; just perf soak --baseline"
-baselines = ["crates/testnet/perf/baselines/Mac14,6.json", "crates/testnet/perf/baselines/Mac14,6-soak.json"]
-cargo = [{ package = "testnet", kind = "bin", targets = ["perf"], features = ["perf"] }]
+baselines = ["perf/baselines/desktop/Mac14,6.json", "perf/baselines/desktop/Mac14,6-soak.json"]
+cargo = [
+  { package = "qualification", kind = "lib", targets = ["qualification"], features = ["perf"] },
+  { package = "qualification", kind = "bin", targets = ["perf"], features = ["perf"] },
+]
 
 [[suite]]
 name = "phone-performance-qualification"
 contract = "Phone launch, bridge, rendering, interaction, and memory workloads stay within budgets and reviewed drift on the enrolled simulator host."
-paths = ["apps/apple/AmuxPerformanceTests", "apps/apple/Perf", "scripts/ios-perf.py"]
+paths = ["apps/apple/AmuxPerformanceTests", "perf/baselines/phone", "scripts/ios-perf.py"]
 recipe = "just ios perf"
 boundary = "Native presentation"
 oracle = "Measured XCTest signposts and resource samples against the pinned-Mac baseline and documented budgets."
@@ -887,7 +890,7 @@ lane = "qualification"
 evidence = "target/ios/perf"
 update = "just ios perf -- --baseline"
 swift = ["AmuxPerformanceTests"]
-baselines = ["apps/apple/Perf/baselines/pinned-mac.json"]
+baselines = ["perf/baselines/phone/pinned-mac.json"]
 
 [[suite]]
 name = "phone-source-policy"

@@ -30,12 +30,12 @@ ALLOWED_LOCAL = {
     "app-embedded": {"app-runtime", "client", "node"},
     "app-ffi": {"app-embedded", "app-runtime"},
 }
-TEST_SUPPORT = {"testnet", "claude-specs", "codex-specs", "test-agent", "shot"}
+TEST_SUPPORT = {"testnet", "qualification", "claude-specs", "codex-specs", "test-agent", "shot"}
 SUPPORT_ALLOWED_LOCAL = {
     # The harness drives scripted Claude and Codex sessions through the
-    # provider crates' own source seams, replays recordings, and folds the
-    # served door's report conversion through the client layer. Its optional
-    # perf feature also measures the shipping renderer at the TUI boundary.
+    # provider crates' own source seams, replays recordings, folds the served
+    # door's report conversion through the client layer, and exercises
+    # whole-daemon behavior through production boundaries.
     "testnet": {
         "agent-runtime",
         "artifacts",
@@ -50,10 +50,23 @@ SUPPORT_ALLOWED_LOCAL = {
         "pty-host",
         "replay-support",
         "store",
-        "tui",
         "ui-runtime",
         "ui-state",
         "wire",
+    },
+    # Qualification owns environment-dependent provider and performance
+    # checks while reusing the network harness rather than shipping it.
+    "qualification": {
+        "agent-runtime",
+        "client",
+        "fold",
+        "model",
+        "node",
+        "store",
+        "testnet",
+        "tui",
+        "ui-runtime",
+        "ui-state",
     },
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},

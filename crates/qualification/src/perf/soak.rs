@@ -9,13 +9,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail, ensure};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use testnet::script::{Provider, Script, ScriptAsk, Step};
+use testnet::{TestNet, connect_user};
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::store::ChatState;
 use uuid::Uuid;
 
 use super::{Baselines, Machine, Metric, MetricRun, Report, Sample, Statistic, Unit, Workload};
-use crate::script::{Provider, Script, ScriptAsk, Step};
-use crate::{TestNet, connect_user};
 
 const QUALIFICATION_DURATION: Duration = Duration::from_secs(10 * 60);
 const MIN_DIAGNOSTIC_DURATION: Duration = Duration::from_secs(4 * 60);

@@ -7,7 +7,7 @@
 | Clients | `ui-state`, `ui-runtime`, `tui` |
 | App layer | `app-runtime`, `app-embedded`, `app-ffi` |
 | Products and tools | `amux`, `shot`, `xtask` |
-| Test infrastructure | `testnet`, `replay-support`, `claude-specs`, `codex-specs`, `e2e-runner`, `test-agent` |
+| Test infrastructure | `testnet`, `qualification`, `replay-support`, `claude-specs`, `codex-specs`, `test-agent` |
 
 The values and protocol layer keeps shared meaning below effects. `model`
 owns provider-neutral values without I/O; `wire` owns protobuf schemas,
@@ -46,9 +46,10 @@ provider runtime.
 
 The scenario and executable support packages consume production APIs, never
 the reverse. `testnet` is the public harness for whole-daemon prose specs,
-cross-crate integration, embedded ownership, and live-provider entry points;
-the provider spec crates own recordings, while `e2e-runner` and `test-agent`
-drive real-process scenarios. `replay-support` is the deliberate exception: it
+cross-crate integration, and embedded ownership. `qualification` owns the
+environment-dependent live-provider and performance suites; the provider spec
+crates own recordings, while `test-agent` drives real-process scenarios.
+`replay-support` is the deliberate exception: it
 owns replay transports shared by `claude` and the spec packages, and its normal
 edge from `claude` is accepted in the shipping dependency graph. Run `just
 dependency-policy` to compare the protected edges with the declared allowlist.

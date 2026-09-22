@@ -166,7 +166,7 @@ fn main() -> Result<()> {
         .map(|index| &SCENARIOS[index])
         .collect::<Vec<_>>();
     if selected.is_empty() {
-        println!("{}", args::USAGE);
+        println!("not_run: {}", args::USAGE);
         return Ok(());
     }
 
@@ -190,7 +190,7 @@ fn validate_scenario_grammar() -> Result<()> {
 }
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-pty")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../testnet/tests/fixtures/rows/claude-pty")
 }
 
 fn semantics_markdown() -> &'static str {
@@ -3188,7 +3188,8 @@ async fn stale_seq(
         .claude(agent)
         .and_then(|layer| layer.ask_head())
         .ok_or_else(|| anyhow::anyhow!("stale failure did not resurface the ask"))?;
-    if !matches!(&resurfaced.state, AskState::SendFailed { message } if message == &error) {
+    if !matches!(&resurfaced.state, AskState::SendFailed { message } if message.as_str() == error.as_str())
+    {
         bail!(
             "resurfaced ask did not retain the failure: {:?}",
             resurfaced.state

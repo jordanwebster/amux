@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const BASELINE_SCHEMA: u32 = 1;
-const BASELINE_ROOT: &str = "crates/testnet/perf/baselines";
+const BASELINE_ROOT: &str = "perf/baselines/desktop";
 pub const DESKTOP_REFERENCE_STATE: &str = "one busy core (cluster warmer)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

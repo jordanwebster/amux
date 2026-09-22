@@ -25,7 +25,7 @@ mod claude_sdk_live {
 
 #[cfg(not(unix))]
 fn main() {
-    println!("claude_sdk_live: real-Claude scenarios are only available on Unix");
+    println!("not_run: claude_sdk_live real-Claude scenarios are only available on Unix");
 }
 
 #[cfg(unix)]
@@ -1191,7 +1191,7 @@ fn main() -> anyhow::Result<()> {
     let names: Vec<String> = std::env::args().skip(1).collect();
     let selected = args::select(&names, SCENARIOS).map_err(anyhow::Error::msg)?;
     if selected.is_empty() {
-        println!("{}", args::USAGE);
+        println!("not_run: {}", args::USAGE);
         return Ok(());
     }
     let selected = selected.into_iter().map(|index| SCENARIOS[index]).collect();

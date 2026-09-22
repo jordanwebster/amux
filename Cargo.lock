@@ -3233,6 +3233,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
+name = "qualification"
+version = "0.1.0"
+dependencies = [
+ "agent-runtime",
+ "anyhow",
+ "chrono",
+ "claude",
+ "client",
+ "crossterm 0.29.0",
+ "fold",
+ "gethostname",
+ "libc",
+ "model",
+ "nix 0.31.3",
+ "node",
+ "portable-pty",
+ "ratatui",
+ "redaction",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "store",
+ "tempfile",
+ "testnet",
+ "thiserror 2.0.20",
+ "tokio",
+ "tui",
+ "ui-runtime",
+ "ui-state",
+ "uuid",
+]
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4377,28 +4411,20 @@ dependencies = [
  "client",
  "codex",
  "codex-specs",
- "crossterm 0.29.0",
  "fold",
  "futures-util",
- "gethostname",
  "host-api",
  "hyper-util",
  "jsonwebtoken",
  "libc",
  "model",
- "nix 0.31.3",
  "node",
  "node-test-support",
- "portable-pty",
- "prost",
  "pty-host",
  "quinn",
- "ratatui",
  "rcgen",
- "redaction",
  "replay-support",
  "reqwest",
- "rusqlite",
  "rustls",
  "semver",
  "serde",
@@ -4416,7 +4442,6 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "tui",
  "ui-runtime",
  "ui-state",
  "uuid",

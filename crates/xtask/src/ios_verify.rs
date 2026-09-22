@@ -587,7 +587,7 @@ mod tests {
                 let machine = PerfMachine {
                     name: "test-machine".into(),
                     hard,
-                    baseline: "apps/apple/Perf/baselines/test-machine.json".into(),
+                    baseline: "perf/baselines/phone/test-machine.json".into(),
                     baseline_present,
                 };
                 assert_eq!(measure_perf(&machine), hard || baseline_present);

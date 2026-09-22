@@ -21,6 +21,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use store::Store;
 use tempfile::TempDir;
+use testnet::TestNet;
 use tui::{ChatView, FrameContext, Theme, ViewState, render};
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::Model;
@@ -28,7 +29,6 @@ use ui_state::store::{ChatState, WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES};
 use uuid::Uuid;
 
 use super::{Metric, MetricRun, Sample, Statistic, Unit, Workload};
-use crate::TestNet;
 
 const SEED: u64 = 0xA6_2026_0917;
 const VIEWPORT: (u16, u16) = (120, 40);
@@ -1159,7 +1159,7 @@ async fn seed_live_fleet(store: &Store, agent: &Agent) -> Result<()> {
 }
 
 async fn publish_sdk_rows(
-    daemon: &crate::Daemon,
+    daemon: &testnet::Daemon,
     agent: model::AgentId,
     first_identity: u64,
     count: usize,
@@ -1187,7 +1187,7 @@ fn sdk_live_prompt(agent: model::AgentId, identity: u64, text: usize) -> serde_j
     })
 }
 
-fn sdk_script() -> crate::sdk::Script {
+fn sdk_script() -> testnet::sdk::Script {
     serde_json::from_value(serde_json::json!({
         "initialization": {
             "commands": [],

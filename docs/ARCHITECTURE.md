@@ -57,8 +57,9 @@ Around the daemon sit its clients and consumers:
   installations through public APIs and owns reusable cross-package scenarios.
   Node's own specification suite uses a private white-box harness for real
   identities, trust stores, loopback QUIC with device mTLS and an optional
-  in-process cloud relay. `crates/e2e-runner` drives real compiled binaries end
-  to end.
+  in-process cloud relay. The `qualification` package owns environment-dependent
+  live-provider and performance checks; terminal journeys drive real compiled
+  binaries end to end.
 
 ## Accounts, configuration and local entry points
 

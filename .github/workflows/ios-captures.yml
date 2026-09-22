@@ -75,7 +75,7 @@ jobs:
           name: ios-performance
           path: |
             target/ios/perf
-            apps/apple/Perf/baselines
+            perf/baselines/phone
           if-no-files-found: warn
           retention-days: 7
       - name: Upload golden triplets, reference pairs and journeys

@@ -22,6 +22,7 @@ members = [
     "crates/host-api",
     "crates/model",
     "crates/pty-host",
+    "crates/qualification",
     "crates/redaction",
     "crates/replay-support",
     "crates/settings",

@@ -23,7 +23,7 @@ import ios_simulators
 from ios_testnet import Door, answer, free_port, runner
 
 DOCUMENT = Path("docs/IOS_PERFORMANCE.md")
-BASELINES = Path("apps/apple/Perf/baselines")
+BASELINES = Path("perf/baselines/phone")
 DERIVED_DATA = Path("target/ios/DerivedData")
 # The configuration a measured run is built in: optimised the way a shipped
 # build is, with the driving door, the fixtures and the workload generator

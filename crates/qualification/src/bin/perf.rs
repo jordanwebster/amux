@@ -2,7 +2,7 @@ use std::io::Read;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 use anyhow::{Context, Result, bail};
-use testnet::perf::{
+use qualification::perf::{
     Baselines, DESKTOP_REFERENCE_STATE, Machine, Report, run_cold_start, run_fast, run_soak,
     run_summarizer, soak_child,
 };

@@ -46,8 +46,8 @@ REQUIRED = {
     "update",
 }
 PERF_BASELINE_ROOTS = (
-    ROOT / "crates" / "testnet" / "perf" / "baselines",
-    ROOT / "apps" / "apple" / "Perf" / "baselines",
+    ROOT / "perf" / "baselines" / "desktop",
+    ROOT / "perf" / "baselines" / "phone",
 )
 
 

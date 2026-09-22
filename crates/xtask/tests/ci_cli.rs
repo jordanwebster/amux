@@ -486,7 +486,7 @@ fn ios_verify_cli_reports_missing_runner_baseline_and_fails_machine_errors() {
     for present in [false, true] {
         std::fs::write(dir.path().join("calls"), "").unwrap();
         let machine = serde_json::json!({"name":"macos-26", "hard":false,
-            "baseline":"apps/apple/Perf/baselines/macos-26.json", "baseline_present":present});
+            "baseline":"perf/baselines/phone/macos-26.json", "baseline_present":present});
         let output = ios_verify_command(dir.path())
             .env("PERF_MACHINE", machine.to_string())
             .output()
