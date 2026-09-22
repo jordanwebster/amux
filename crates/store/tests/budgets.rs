@@ -586,7 +586,10 @@ fn maintenance_restores_a_small_store_target_in_lru_order() {
             )
             .await
             .unwrap();
-        assert!(!report.deadline_reached, "maintenance ran out of time: {report:?}");
+        assert!(
+            !report.deadline_reached,
+            "maintenance ran out of time: {report:?}"
+        );
         assert!(report.entries_evicted > 1_000);
         assert!(report.vacuum_steps > 0);
         assert!(store_disk_bytes(&path) <= target.saturating_mul(9) / 10);
