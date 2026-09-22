@@ -1,3 +1,11 @@
+2026-09-22 — **Photograph authority loss where it comes to rest.**
+The authority journey accepted either composer refusal after the relay
+entitlement was lost, and had given up its screen comparison because which one
+appeared depended on the runner. The two are not alternatives: one is the
+client still holding the unreachable agent's chat layer, the other is the
+client having let it go. Only the second is a resting state, so the journey
+waits for it and compares that screen again.
+
 2026-09-22 — **Let a terminal start out trusting nothing.**
 Every terminal journey began with its hosts already paired, so nothing drove
 the terminal's own onramp: finding a machine, being told what would pair with

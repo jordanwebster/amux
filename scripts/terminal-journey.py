@@ -372,21 +372,22 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.request({"Tier": {"user": "personal", "tier": "free"}})
     journey.request({"RefreshEntitlement": {"name": "terminal-host"}})
     journey.request({"RefreshEntitlement": {"name": "remote-host"}})
+    # Losing the link is a transition: while the client still holds the
+    # agent's chat layer the composer says its session state is unknown, and
+    # once the unreachable agent has been let go it says the chat is
+    # unavailable. Only the second is a resting state, so the screen is
+    # photographed there; catching the transition is what made this frame
+    # depend on how fast the runner was.
     unavailable = journey.wait(
         pane,
         lambda frame: "authority-agent" in frame
-        and any(
-            reason in frame
-            for reason in (
-                "chat input unavailable for this agent",
-                "send gated — session state unknown",
-            )
-        ),
-        "relay-gated composer",
+        and "chat input unavailable for this agent" in frame,
+        "settled unreachable composer",
         timeout=90,
     )
     if wrong and "deliberately absent authority state" not in unavailable:
         raise RuntimeError("deliberately wrong authority expectation")
+    journey.frame(pane, "refused")
     journey.type(pane, "this write must be refused")
     journey.keys(pane, "Enter")
     time.sleep(1.0)
