@@ -316,9 +316,28 @@ impl Terminal {
     }
 
     async fn exit(&mut self) -> pty_host::ExitStatus {
-        tokio::time::timeout(PROCESS_TIMEOUT, self.process.exit.wait())
+        let status = tokio::time::timeout(PROCESS_TIMEOUT, self.process.exit.wait())
             .await
-            .expect("terminal process did not exit")
+            .expect("terminal process did not exit");
+        // The runtime cannot shut down while the PTY reader thread is blocked
+        // in read(), and that read only returns once every holder of the
+        // terminal's slave side has closed it. A test whose terminal exited
+        // but whose reader never sees end of output would otherwise hang at
+        // teardown with nothing awaiting, which is a hang without evidence.
+        tokio::time::timeout(PROCESS_TIMEOUT, async {
+            while let Some(chunk) = self.output.recv().await {
+                self.seen.extend_from_slice(&chunk);
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "terminal exited with {status:?} but its PTY never reached end of output: \
+                 something still holds the terminal's slave side; output:\n{}",
+                String::from_utf8_lossy(&self.seen)
+            )
+        });
+        status
     }
 }
 

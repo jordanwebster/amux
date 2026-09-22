@@ -1,3 +1,13 @@
+2026-09-22 — **Make a terminal whose reader never finishes fail with evidence.**
+The pipe-backpressure test hung the Linux suite a second time with every
+await in it bounded, so the stall is not in an await. A tokio runtime cannot
+drop while a blocking thread is running, and the PTY reader thread blocks in
+read() until every holder of the terminal's slave side has closed it. A test
+whose terminal exited but whose reader never saw end of output therefore
+hung at teardown with nothing awaiting, and no message. Terminal exit in the
+process suite now also waits, bounded, for the reader to finish, and names
+what it means when it does not.
+
 2026-09-22 — **Let a stability check finish once it has begun.**
 The waiter that holds a condition for a window bounded each check by the
 window's shrinking remainder, so a check begun near the end was given a few
