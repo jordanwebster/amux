@@ -290,6 +290,34 @@ class TerminalJourney:
             self.keys(pane, "j")
         raise RuntimeError(f"could not select fleet agent {agent}; final frame:\n{last}")
 
+    def filter_agent(self, pane: str, agent: str) -> str:
+        self.wait_terms(pane, agent)
+        self.keys(pane, "Escape")
+        self.keys(pane, "/")
+        self.keys(pane, "C-u")
+        self.type(pane, agent)
+        self.wait(
+            pane,
+            lambda frame: f"> {agent}" in frame
+            and any(
+                agent in line and "▎" in line.partition(agent)[0]
+                for line in frame.splitlines()
+            ),
+            f"filtered fleet agent {agent}",
+        )
+        self.keys(pane, "Escape")
+        return self.wait_terms(pane, f"/ {agent}")
+
+    def clear_filter(self, pane: str) -> str:
+        self.keys(pane, "/")
+        self.keys(pane, "C-c")
+        self.keys(pane, "Escape")
+        return self.wait(
+            pane,
+            lambda frame: " agents" in frame and "1/" not in frame,
+            "unfiltered fleet",
+        )
+
     def open_chat(self, pane: str, agent: str) -> None:
         selected = self.select_agent(pane, agent)
         self.keys(pane, "o" if "o chat" in selected else "Enter")

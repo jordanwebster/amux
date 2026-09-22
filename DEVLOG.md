@@ -1,3 +1,8 @@
+2026-09-22 — **Isolate lifecycle terminal evidence from fleet ordering.**
+Lifecycle checkpoints filter to the agent under test, then clear the filter and
+wait for the settled full fleet before approving removal. Golden evidence no
+longer depends on concurrent agents retaining one incidental row order.
+
 2026-09-22 — **Capture terminal journeys only at their asserted state.**
 Golden checkpoints now wait for the exact idle chat, projected tool and turn
 outcomes, enabled composer or settled fleet cardinality they approve.

@@ -326,7 +326,7 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
         "4 agents",
         "connected · 2 hosts",
     )
-    journey.select_agent(pane, "lifecycle-agent")
+    journey.filter_agent(pane, "lifecycle-agent")
     journey.frame(pane, "running")
     suspended = run_amux(journey.config, "server", "suspend")
     if "Suspended 1 agent(s)." not in suspended:
@@ -344,14 +344,19 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
         "connected · 2 hosts",
         timeout=90,
     )
-    journey.select_agent(pane, "lifecycle-agent")
+    journey.filter_agent(pane, "lifecycle-agent")
     journey.frame(pane, "resumed")
+    journey.clear_filter(pane)
     removed = run_amux(journey.config, "rm", "lifecycle-agent", "--force")
     if wrong and "deliberately not removed" not in removed:
         raise RuntimeError("deliberately wrong lifecycle expectation")
     journey.wait(
         pane,
-        lambda frame: "lifecycle-agent" not in frame and "3 agents" in frame,
+        lambda frame: "lifecycle-agent" not in frame
+        and "3 agents" in frame
+        and "connected · 2 hosts" in frame
+        and "enter chat" in frame
+        and "report written" not in frame,
         "agent removed from fleet",
         timeout=90,
     )

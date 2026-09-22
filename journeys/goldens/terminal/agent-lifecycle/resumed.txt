@@ -1,10 +1,10 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ /                                                                                                        4 agents    │
+│ / lifecycle-agent                                                                                        1/4         │
 │                                                                                                                      │
 │ ▎ – lifecycle-agent       test-ag… terminal-host ·di… <age> –                                                        │
-│     shared-agent          claude   remote-host ·relay <age> idle                                                     │
-│     authority-agent       claude   remote-host ·relay <age> idle                                                     │
-│     reach-agent           claude   remote-host ·relay <age> idle                                                     │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
