@@ -20,5 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
+      # The claim is that the tests need no network, not that fetching
+      # their dependencies needs none: a fresh runner has an empty registry.
+      - name: Fetch dependencies while the network is still available
+        run: cargo fetch --locked
       - name: Run without external network access
         run: just offline-test

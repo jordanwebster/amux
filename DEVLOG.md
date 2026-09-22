@@ -1,3 +1,10 @@
+2026-09-22 — **Fetch before cutting the network in the weekly offline job.**
+Dispatched by hand on macOS, the offline suite failed resolving its first
+dependency: a fresh runner has an empty crate registry and the job denied the
+network before cargo had fetched anything. The job's claim is that the tests
+run without a network, not that their dependencies download without one, so
+it fetches with the lockfile first and only then runs the sandboxed suite.
+
 2026-09-22 — **Run the weekly offline suite where its sandbox exists.**
 The weekly job that runs the workspace tests with external networking denied
 was scheduled on Linux, but the only sandbox the script knows is macOS's
