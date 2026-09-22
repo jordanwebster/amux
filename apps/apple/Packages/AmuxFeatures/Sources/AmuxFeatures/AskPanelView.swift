@@ -14,12 +14,17 @@ import SwiftUI
 /// and Codex's choices are the decisions Codex named — because a person
 /// approving something is approving those characters and not this app's
 /// summary of them.
-struct AskPanelView: View {
+public struct AskPanelView: View {
     @Environment(\.design) private var design
     let panel: AskPanel
     let answer: @MainActor (AskDecision) -> Void
 
-    var body: some View {
+    public init(panel: AskPanel, answer: @escaping @MainActor (AskDecision) -> Void) {
+        self.panel = panel
+        self.answer = answer
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 11) {
             switch panel.kind {
             case .permission(let permission):

@@ -260,11 +260,15 @@ pub(super) fn startup_exit_error(
 
 fn startup_timeout_error(log_path: &str, startup_stderr_path: &Path) -> String {
     let mut message = format!("server failed to start within 5s - check {log_path} for details");
+    append_startup_stderr(&mut message, startup_stderr_path);
+    message
+}
+
+pub(super) fn append_startup_stderr(message: &mut String, startup_stderr_path: &Path) {
     if let Some(stderr) = read_startup_stderr(startup_stderr_path) {
         message.push_str("\n\nstartup stderr:\n");
         message.push_str(&stderr);
     }
-    message
 }
 
 fn exit_status_summary(status: std::process::ExitStatus) -> String {
@@ -318,7 +322,33 @@ pub(super) fn print_update_banner(state_path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{daemon_command, format_startup_diagnostics, server_not_running_message};
+    use super::{
+        append_startup_stderr, daemon_command, format_startup_diagnostics,
+        server_not_running_message,
+    };
+
+    #[test]
+    fn startup_timeout_includes_stderr_before_temporary_files_disappear() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("amux-startup-stderr.log");
+        std::fs::write(&path, "\nfailed to open profile\n").unwrap();
+        let mut message = "installation did not start within 10s".to_string();
+        append_startup_stderr(&mut message, &path);
+        drop(directory);
+        assert_eq!(
+            message,
+            "installation did not start within 10s\n\nstartup stderr:\nfailed to open profile"
+        );
+    }
+
+    #[test]
+    fn absent_startup_stderr_preserves_timeout_message() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing.log");
+        let mut message = "installation did not start within 10s".to_string();
+        append_startup_stderr(&mut message, &path);
+        assert_eq!(message, "installation did not start within 10s");
+    }
 
     #[test]
     fn server_not_running_message_can_include_retry_command() {

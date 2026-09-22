@@ -1,3 +1,9 @@
+2026-09-22 — **Catalogue the phone's component snapshots.**
+Merging main brought the native visual variants that moved out of full-screen
+goldens into in-process component snapshots. The catalogue check refused the
+merge until the new phone test target was listed, which is what it is for; the
+component suite and its perturbation control are catalogued now.
+
 2026-09-22 — **Photograph authority loss where it comes to rest.**
 The authority journey accepted either composer refusal after the relay
 entitlement was lost, and had given up its screen comparison because which one
@@ -328,6 +334,53 @@ same state-dump path as a condition that returns false, while a window that
 has already ended does not start a synthetic zero-time poll. A paused-time
 regression test proves a never-resolving predicate fails at its deadline and
 includes the assertion and current-state dump.
+2026-09-21 — **Distinguish native pixel rounding from visual regressions.**
+Component snapshots permit one 8-bit level per channel after an exact mismatch,
+preserving failure attachments and rejecting even a single larger difference.
+The CI permission-panel failure was two red-channel values one level apart;
+no baselines were refreshed. Comparator loops use fixed-size array chunks to
+pass the pinned Clippy policy. Installation-startup timeouts now include child
+stderr, and CI retains E2E command transcripts with failure diagnostics so a
+temporary test directory cannot erase the evidence. Startup deadlines remain
+unchanged pending a reproduced cause for the Linux login timeout.
+The focused login behavior passed on macOS and Linux ARM; this does not
+establish the cause of the CI timeout. The 56 component images, explicit
+rounding-boundary tests, visible-change negative control and workspace lint
+pass without replacing a baseline.
+
+2026-09-20 — **Put native visual variations behind fast component tests.**
+The Debug component catalogue renders 28 typed states of production controls,
+asks, composer, facts and status views. Its Xcode gallery and separate hosted
+snapshot target share the same examples; the suite captures both appearances
+without starting the application's stores or runtime. Explicit markdown
+readiness avoids recording a plan before its asynchronous parser has drawn it.
+The normal command builds current sources, a deliberate warm mode reuses the
+test bundle, recording is explicit, and a negative control must detect a
+visible change. The gate now runs these snapshots on pull requests and uploads
+their comparisons and timings.
+
+Four duplicate full-screen variants now point at component examples checked
+by the snapshot suite. The routine display catalogue is 78 states instead of
+82; canonical composition, keyboard, narrow-phone, large-text and glass checks
+remain. Explicit IDs and `--all` retain the historical captures. Full-screen
+PNG comparisons skip identical normalized buffers and only construct marked
+images on failure, with unchanged pixel tolerances and chrome exclusions;
+capture and comparison timings are reported separately.
+
+Real journeys build their XCTest bundle once per command and reuse it across
+acts, retaining real input, topology isolation, fresh-phone setup and the
+runner-kill-only retry. Successful logs now retain phase durations. The
+loopback smoke uses the same optimized debug-tools bridge as the app instead
+of rebuilding an otherwise identical dev-profile library, while still staging
+and linking its own copy. The text-clear behavior test waits for native text,
+draft state and the updated element layout instead of repeatedly encoding
+screenshots. These are local test-path changes, not a claim that the complete
+CI jobs now finish in under ten minutes.
+
+2026-09-20 — **Restore capture timing experiments.**
+The capture experiment now reads its device type from the simulator role
+metadata. The role-name collection is a tuple, so indexing it by role name
+previously stopped measurements immediately after installing the app.
 
 2026-09-20 — **Let the interrupted integrity check find its deadline.**
 The phone cold-start test passes on Windows now that it counts evicted rows.

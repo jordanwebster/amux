@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import ios_bridge as bridge
 
 STAMP = bridge.OUTPUT / "rust-stamp.json"
-PROFILE = "release"
-FEATURES = (bridge.DEBUG_TOOLS_FEATURE,)
+PROFILE = bridge.DRIVING_PROFILE
+FEATURES = bridge.DRIVING_FEATURES
 
 
 def build_fingerprint() -> str:

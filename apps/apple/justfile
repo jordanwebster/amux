@@ -88,6 +88,19 @@ build: rust
 unit *ARGS: rust
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-unit.py "$@"
 
+# Build once, then render the shared SwiftUI component catalog in-process. A
+# list of component IDs selects a subset; --record is the only baseline-writing
+# path, and --skip-build checks an existing bundle without compiling edits.
+# Compare stable components with their native image baselines.
+component-snapshots *ARGS: rust
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2100 {{python}} -B scripts/ios-component-snapshots.py "$@"
+
+# Verify the selected baseline first, then draw an unmistakable strip over the
+# component and require SnapshotTesting to report an image mismatch.
+# Prove component snapshots detect a deliberate visual change.
+component-snapshots-perturb *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; just ios component-snapshots --skip-build --negative-control "$@"
+
 # Launch the debug build, open a named state through the driving door, read
 # the screen back, photograph it, and connect its shared runtime to a test
 # relay. The tools that serve that relay are an input alongside the app.
@@ -95,10 +108,9 @@ unit *ARGS: rust
 door-smoke: build tools
     scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-door-smoke.py
 
-# Capture the manifest's screens in both appearances and compare each one
-# with its baseline. No arguments means the whole manifest, which fails on any
-# screen nobody has built yet rather than skipping it.
-# Capture every catalogued screen and compare it with its baseline.
+# Capture full-screen responsibilities in both appearances. Component-covered
+# variants are omitted by default; explicit IDs or --all include them.
+# Compare full-screen states with their baselines.
 goldens *ARGS: build
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 2400 {{python}} -B scripts/ios-goldens.py "$@"
 

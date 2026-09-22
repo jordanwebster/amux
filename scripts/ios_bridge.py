@@ -29,6 +29,12 @@ DRIVING_SLICE = "ios-arm64-simulator"
 # target names, so it has to exist before any configuration can resolve.
 FRAMEWORK = "AmuxApp.xcframework"
 DEBUG_TOOLS_FEATURE = "debug-tools"
+# Every development-time simulator consumer uses this optimized bridge. A
+# Debug Swift build still carries symbols and testability of its own; giving a
+# standalone smoke a different Cargo profile only recompiles the same Rust
+# source and features without covering a different binary boundary.
+DRIVING_PROFILE = "release"
+DRIVING_FEATURES = (DEBUG_TOOLS_FEATURE,)
 
 # The served test network a simulator connects to, as `just ios tools` builds
 # it. Every recipe that starts one starts it through this.

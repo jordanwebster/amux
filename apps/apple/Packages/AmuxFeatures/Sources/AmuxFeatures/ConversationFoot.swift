@@ -101,13 +101,23 @@ public enum ConversationFootState: Equatable {
 ///
 /// It is the same plate the composer is — glass along the bottom edge — so a conversation whose layer stops taking messages does not change
 /// shape under a reader, only what is written down there.
-struct ConversationFoot: View {
+public struct ConversationFoot: View {
     @Environment(\.design) private var design
     let state: ConversationFootState
     let retry: @MainActor () -> Void
     let subscribe: @MainActor () -> Void
 
-    var body: some View {
+    public init(
+        state: ConversationFootState,
+        retry: @escaping @MainActor () -> Void,
+        subscribe: @escaping @MainActor () -> Void
+    ) {
+        self.state = state
+        self.retry = retry
+        self.subscribe = subscribe
+    }
+
+    public var body: some View {
         plate
             .padding(14)
             .frosted(
@@ -199,13 +209,19 @@ struct ConversationFoot: View {
 /// calls to action that were drawn here were cut, because restarting is
 /// starting a new agent and deleting a finished run is not something to offer
 /// somebody at the moment they are reading what it did.
-struct EndOfRun: View {
+public struct EndOfRun: View {
     @Environment(\.design) private var design
     let ended: ConversationSubject.Ended
     let age: String?
     let host: String?
 
-    var body: some View {
+    public init(ended: ConversationSubject.Ended, age: String?, host: String?) {
+        self.ended = ended
+        self.age = age
+        self.host = host
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "stop.circle")

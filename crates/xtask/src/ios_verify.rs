@@ -22,8 +22,8 @@ const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec"];
 /// These answer from code and from one simulator: what the device and
 /// simulator graphs are allowed to contain, whether the bridge and the app
 /// build, whether the packaged framework links and loads, and what the unit
-/// suites say. Nothing here compares a photograph, so nothing here depends on
-/// which machine is looking.
+/// suites say. Component images render in-process against a pinned native
+/// environment; photographs of the full simulator display run separately.
 const GATE: &[&str] = &[
     "mobile-check",
     "ios lint",
@@ -32,6 +32,7 @@ const GATE: &[&str] = &[
     "ios rust",
     "ios simulator golden",
     "ios build",
+    "ios component-snapshots",
     "ios loopback-smoke",
     "ios unit",
 ];
@@ -484,11 +485,10 @@ mod tests {
         );
     }
 
-    /// The gate is what gets to hold up a push, so what it may contain is a
-    /// rule rather than a habit: nothing that judges a photograph, because
-    /// two Macs disagree about those, and every recipe it names must exist.
+    /// The push gate includes small in-process component renders, but leaves
+    /// full-display photography and the long interaction suites off that path.
     #[test]
-    fn the_gate_builds_and_measures_nothing_it_has_to_photograph() {
+    fn the_gate_compares_components_but_not_the_simulator_display() {
         let gate = recipes(Phases::Gate, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
         for photographed in ["ios goldens", "ios journey", "ios accessibility"] {
             assert!(
@@ -497,6 +497,7 @@ mod tests {
             );
         }
         assert!(gate.contains(&"ios unit"), "the gate stopped running units");
+        assert!(gate.contains(&"ios component-snapshots"));
         for shipping in SHIPPING {
             assert!(
                 !gate.contains(shipping),

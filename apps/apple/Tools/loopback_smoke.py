@@ -95,6 +95,15 @@ def round_trip(executable: Path, device: str) -> str:
             runner.stdout.close()
 
 
+def build_bridge(output: Path) -> None:
+    """Builds and stages an independent copy of the app's driving bridge."""
+    built = bridge.cargo_build(
+        bridge.SIMULATOR_TRIPLE, profile=bridge.DRIVING_PROFILE,
+        features=bridge.DRIVING_FEATURES,
+        log=output / f"{bridge.SIMULATOR_TRIPLE}-build.jsonl")
+    bridge.stage(built, output / bridge.SIMULATOR_TRIPLE)
+
+
 def main() -> None:
     name = device_name()
     output = Path("target/ios/loopback").resolve()
@@ -104,11 +113,8 @@ def main() -> None:
     subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("test_loopback_smoke.py"))], check=True, timeout=15)
     # The same slice a development build links, staged on its own so this
     # smoke never depends on which framework the app last packaged.
-    built = bridge.cargo_build(
-        bridge.SIMULATOR_TRIPLE, profile="dev", features=(bridge.DEBUG_TOOLS_FEATURE,),
-        log=output / f"{bridge.SIMULATOR_TRIPLE}-build.jsonl")
     directory = output / bridge.SIMULATOR_TRIPLE
-    bridge.stage(built, directory)
+    build_bridge(output)
     executable = output / "app-ffi-loopback"
     compile_swift(directory, directory / "include", Path(__file__).with_name("LoopbackSmoke.swift"), executable)
     device, already_booted = simulator()

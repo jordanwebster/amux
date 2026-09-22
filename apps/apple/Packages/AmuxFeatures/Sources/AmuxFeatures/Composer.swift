@@ -14,7 +14,7 @@ import SwiftUI
 /// Return inserts a newline. Sending is the button, and only the button: a
 /// keyboard whose return key sends is a keyboard that cannot write a second
 /// paragraph, and on a phone there is no modifier to escape it with.
-struct ComposerBox: View {
+public struct ComposerBox: View {
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -28,7 +28,23 @@ struct ComposerBox: View {
     var dictation = DictationState()
     let actions: @MainActor (ConversationAction) -> Void
 
-    var body: some View {
+    public init(
+        state: ComposerState,
+        agent: String,
+        provider: ProviderFacts,
+        draft: Binding<MessageDraft>,
+        dictation: DictationState = DictationState(),
+        actions: @escaping @MainActor (ConversationAction) -> Void
+    ) {
+        self.state = state
+        self.agent = agent
+        self.provider = provider
+        _draft = draft
+        self.dictation = dictation
+        self.actions = actions
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let activity = state.line {
                 VStack(alignment: .leading, spacing: 0) {

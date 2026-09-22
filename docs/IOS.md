@@ -261,17 +261,70 @@ for the narrow test device. The command terminates this app on the selected
 simulator. Do not overlap it with other simulator checks, or run capture/image
 comparison work alongside performance measurements.
 
-## Goldens and baseline changes
+## Component snapshots and full-screen goldens
+
+Use the cheapest test that can observe the regression:
+
+- Model tests check state, decisions and projection output without rendering.
+- Component snapshots check the actual native view with a supplied state,
+  including its text, sizing and light/dark appearance. They run in one hosted
+  test process without navigating or photographing the simulator display.
+- Full-screen goldens check composition, safe areas, large text, narrow phones
+  and render-server materials in representative assembled screens.
+- Journeys check actions and wiring: real taps and typing, routing, persistence,
+  and communication with the test network. Injecting a final state is not a
+  replacement for proving the actions that produce it.
+
+The debug-only `ComponentCatalog` supplies the same named examples to Xcode's
+`Component Catalog` preview/gallery and the snapshot suite. Each example builds
+production views from typed inputs with inert action handlers. Future model
+projections can provide those inputs without changing the snapshot boundary.
+
+```sh
+just ios component-snapshots
+just ios component-snapshots composer.draft ask.approval
+just ios component-snapshots --skip-build composer.draft
+just ios component-snapshots --record composer.draft
+just ios component-snapshots-perturb controls.primary
+```
+
+The normal command builds current sources; `--skip-build` deliberately tests
+the last build and must not be used to verify a source edit. Recording is an
+explicit baseline change: inspect both appearances before accepting it, then
+run an ordinary comparison. The perturbation command first verifies the
+unchanged baseline, then adds a visible stripe and requires a pixel mismatch.
+The runner reports preparation, build and test times; the tests separately
+report the rendering/comparison batch. Keep startup in comparisons of actual
+developer workflows.
+
+Component snapshots use Point-Free's SnapshotTesting, with pinned Xcode/iOS,
+fixed canvas, traits, locale and time zone. Comparisons permit at most one
+8-bit level per channel for rasterizer rounding; even one pixel with a larger
+difference fails. Baselines are not rewritten to accommodate rounding.
+Their in-process images are not authoritative for compositor glass, system
+chrome, keyboards, scrolling or
+whole-screen layering. Those responsibilities stay with full-screen goldens
+and journeys; matching component pixels are not evidence of interaction behavior.
+
+### Full-screen captures
 
 ```sh
 just ios goldens
+just ios goldens --all
 just ios goldens dump upload-failed
 just ios goldens-reference
 just ios goldens-perturb
 ```
 
-The unfiltered manifest covers 33 reference screens and 42 additional states,
-each in light and dark. The door waits for the app's view tree, then the Mac
+The manifest preserves the reference screens and added states in light and
+dark. A state with `component_snapshots` names the native examples that now
+cover its visual variation and is omitted from the routine display suite.
+The component tests validate every such reference. `--all` runs the historical
+full catalogue; an explicit screen ID also remains available even after that
+state moves to component coverage. Only migrate a state after inspecting its
+replacement; a matching ID alone does not prove equivalent coverage.
+
+The door waits for the app's view tree, then the Mac
 captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's
 glass and the pinned system status bar. The in-app report capture instead uses
@@ -302,7 +355,9 @@ over another carries that app's name in the status bar as a way back to it.
 And Simulator.app's hardware keyboard is pinned off for both devices, so a
 field that takes focus raises the software keyboard on a Mac exactly as it does
 on a headless runner; Simulator.app reads that when it next opens the device.
-Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
+Expected, actual and difference PNGs land in `target/ios/goldens/`; `timings.json`
+separates display capture from PNG comparison for each device. Passing captures
+do not construct a difference image. The reference
 recipe pairs all 66 preserved design images in `apps/apple/Goldens/References/` with
 the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
 visual review; baseline comparisons detect regressions only after a baseline
@@ -373,6 +428,14 @@ production-startup and reports.
 The recipe starts declared topologies, runs accessibility-driven XCUITests,
 collects screenshots, recordings, test results and host observations under
 `target/ios/journeys/`, and tears its processes down.
+
+The runner builds its UI-test bundle once, then uses `test-without-building`
+for each act, including a permitted runner-crash retry. Each act still gets
+its own test-runner environment and each journey retains its declared network
+topology and fresh-phone setup. Successful logs retain build, act and journey
+durations instead of discarding all timing evidence. This removes repeated
+build planning, not the real taps, typing, waits for application state, or
+relaunches that make a journey meaningful.
 
 Protocol journeys use real relay and daemon processes from `amux::testnet`,
 with provider scripting on the host. Testnet substitutes registered bearer

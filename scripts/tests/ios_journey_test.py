@@ -1,11 +1,13 @@
 """What a journey does with a test run that never reached the app."""
 
+import contextlib
 import importlib
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +27,79 @@ KILLED = """{"testNodes": [{"name": "AmuxUITests-Runner (1269) encountered an er
 
 REFUSED = """{"testNodes": [{"name": "OnrampTests", "children": [
   {"name": "JourneyCase.swift:509: the tab bar has no Hosts tab"}]}]}"""
+
+
+class ReusingTheBuiltTestBundle(unittest.TestCase):
+    def test_the_ui_test_bundle_is_built_for_later_test_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "build.log"
+            calls = []
+
+            def run(arguments, **kwargs):
+                calls.append((arguments, kwargs))
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(journeys.subprocess, "run", run), \
+                    patch.object(journeys.time, "monotonic", side_effect=[4.0, 6.5]):
+                elapsed = journeys.build_for_testing("phone", log)
+
+            arguments, kwargs = calls[0]
+            self.assertEqual(arguments[0:2], ["xcodebuild", "build-for-testing"])
+            self.assertIn("AmuxUITests", arguments)
+            self.assertIn("id=phone", arguments)
+            self.assertEqual(kwargs["timeout"], 1800)
+            self.assertEqual(elapsed, 2.5)
+            self.assertEqual(log.read_text(), "AmuxUITests: built for testing in 2.5s\n")
+
+    def test_each_selected_test_runs_without_building_and_keeps_its_environment(self):
+        launched = []
+
+        class Process:
+            def __init__(self, arguments, **kwargs):
+                launched.append((arguments, kwargs))
+
+            def wait(self, timeout):
+                self.timeout = timeout
+                return 0
+
+            def poll(self):
+                return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {"TEST_RUNNER_AMUX_ACTS": "sign-in,subscribe"}
+            with patch.object(journeys.subprocess, "Popen", Process):
+                returned, details = journeys.run_once(
+                    "phone", "AmuxUITests/AccountTests", root / "test.log",
+                    root / "test.xcresult", environment, None)
+
+        arguments, kwargs = launched[0]
+        self.assertEqual(arguments[0:2], ["xcodebuild", "test-without-building"])
+        self.assertIn("AmuxUITests/AccountTests", arguments)
+        self.assertEqual(kwargs["env"], environment)
+        self.assertEqual((returned, details), (0, ""))
+
+
+class JourneyCompletionOutput(unittest.TestCase):
+    def test_timing_does_not_change_the_exact_pass_line_the_verifier_reads(self):
+        plan = {"id": "short", "claim": "one short journey", "topology": "topology"}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(sys, "argv", ["ios-journey.py", "short"]), \
+                patch.object(journeys, "OUTPUT", Path(directory)), \
+                patch.object(journeys, "declared", lambda: [plan]), \
+                patch.object(journeys.ios_simulators, "ready", lambda _: "phone"), \
+                patch.object(journeys, "build_for_testing", lambda *_: 1.0), \
+                patch.object(journeys, "runner", lambda _: contextlib.nullcontext({
+                    "cloud_url": "https://cloud.test", "relay": "relay",
+                })), \
+                patch.dict(journeys.JOURNEYS,
+                           {"short": lambda *_: None}, clear=True), \
+                patch("builtins.print") as printed:
+            journeys.main()
+
+        lines = [call.args[0] for call in printed.call_args_list]
+        self.assertTrue(any(line.startswith("short: journey took ") for line in lines))
+        self.assertIn("short: passed", lines)
 
 
 class RunningTheTestAgain(unittest.TestCase):
@@ -70,7 +145,8 @@ class RunningTheTestAgain(unittest.TestCase):
     def test_a_passing_run_is_not_repeated(self):
         spent, said = self.perform([(0, "")])
         self.assertEqual(spent, 1)
-        self.assertEqual(said, [])
+        self.assertEqual(len(said), 1)
+        self.assertIn("AmuxUITests/OnrampTests passed in", said[0])
 
 
 class ComparingReachedScreens(unittest.TestCase):

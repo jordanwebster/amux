@@ -842,6 +842,7 @@ struct Prose: View {
     let markdown: String
     let open: Bool
     @State private var document: MarkdownDocument?
+    @State private var documentSource: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DocumentMetrics.blockGap) {
@@ -856,13 +857,22 @@ struct Prose: View {
         .tint(design.accent.color)
         .task(id: markdown) {
             let source = markdown
-            document = await Task.detached(priority: .userInitiated) {
+            let parsed = await Task.detached(priority: .userInitiated) {
                 MarkdownDocument.parse(source)
             }.value
+            guard !Task.isCancelled else { return }
+            document = parsed
+            documentSource = source
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(markdown)
         .identified("transcript.prose", value: open ? "open" : "final")
+        // Rendering readiness is an in-process fact, not an accessibility
+        // identity. Debug captures can wait for parsed markdown without
+        // guessing how long the detached parser will take.
+        .reported(
+            "transcript.prose.render",
+            value: document != nil && documentSource == markdown ? "rendered" : "pending")
     }
 }
 

@@ -7,16 +7,19 @@ updates and deliberate perturbation runs remain explicit commands. `just
 --list ios` shows every phone recipe with its purpose; each carries its own
 wall-clock bound, so a firing bound is a hang to diagnose.
 
-The goldens run over the states the app can open (`just ios goldens
---built`): every one of them is captured in both appearances and must still
-draw what it was locked as, and a state nobody has built yet is reported and
-counted rather than failed. Built is a property of a state, not of a screen:
-one screen draws several of them — the conversation, the conversation whose
-host was lost, the same conversation at an accessibility type size — and each
-is written, captured and locked on its own, so the first one landing does not
-make the rest openable. A bare `just ios goldens` asks the whole catalogue and
-fails naming every state still owed. A state that opens and has no baseline
-fails either way; that is what catches one built and never locked. The
+The gate runs native component snapshots after building the app, so visual
+changes to those components are checked on pull requests rather than waiting
+for the nightly display suite. The examples are also available in Xcode's
+component gallery. These in-process pictures check native layout and styling;
+they do not replace full-screen compositor or real-input journey coverage.
+
+`just ios goldens` captures the routine full-screen suite in both appearances.
+States whose variations have moved to native component snapshots name those
+examples in the manifest and are excluded from this default selection. Use
+`--all` to run the historical full catalogue, or name a state explicitly.
+`--built` reports unopened states instead of failing on them; missing baselines
+still fail. See [native visual testing](IOS.md#component-snapshots-and-full-screen-goldens)
+for coverage responsibilities and deliberate baseline updates. The
 measured run happens only where a number from it would mean something: on a
 machine whose budgets are written down in `docs/IOS_PERFORMANCE.md`, or on one
 judged against its own recorded run once that baseline file exists. Otherwise
@@ -25,14 +28,15 @@ the baseline enrols it with no further edit. `AMUX_PERF_MACHINE` names the
 row deliberately; the GitHub runner sets it because no hardware row identifies
 it.
 
-The nightly `iOS captures` workflow compares the golden catalogue on a GitHub
-runner with both pinned devices booted; dispatching it by hand runs every
-capture suite. A runner's captures match a developer's Mac pixel for pixel
-except under the home indicator, which the comparison is told to look past
-(see [the goldens section](IOS.md#goldens-and-baseline-changes)).
+The nightly `iOS captures` workflow compares components and the routine
+full-screen suite on a GitHub runner with both pinned devices booted;
+dispatching it by hand also runs the journeys, accessibility and performance
+suites. Component comparison artifacts and timings are uploaded alongside the
+full-screen evidence. Exact pixels still require the pinned native environment;
+the display comparisons exclude the declared system-chrome rectangles.
 
 No capture is quarantined: the golden manifest is the authoritative capture
-count, and every capture it declares gates on its pixel difference. Three of
+count, and every capture it selects gates on its pixel difference. Three of
 them — `strip.light`, `strip.dark` and `ax-composer.dark` — were, until the
 transcript that drew them was fixed on 2026-09-14, and
 `apps/apple/Goldens/BASELINE.md` says what was wrong with it. The manifest can
@@ -44,7 +48,7 @@ made in the open and nothing carries the mark today.
 ## The bridge
 
 `just ios rust` builds the one bridge slice a development build links: the
-simulator architecture, with the driving tools, under the ordinary `dev`
+simulator architecture, with the driving tools, under the ordinary `release`
 profile, into a Cargo target directory owned by that triple under
 `target/ios/rust-cargo`. It packages `target/ios/AmuxAppDebugTools.xcframework`
 only when the static library or its generated C header changed, and it runs

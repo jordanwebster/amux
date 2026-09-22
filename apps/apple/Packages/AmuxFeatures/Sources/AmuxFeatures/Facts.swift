@@ -21,7 +21,7 @@ import SwiftUI
 /// Opened, the strip grows in place. The summary line stays exactly where it
 /// was and the list appears above it, so what was tapped does not move out
 /// from under the thumb.
-struct FactsStrip: View {
+public struct FactsStrip: View {
     @Environment(\.design) private var design
     let facts: ConversationFacts
     /// The same roster whose count is in `facts`, retained in full for the
@@ -39,7 +39,23 @@ struct FactsStrip: View {
     let unqueue: @MainActor () -> Void
     @State private var explaining: String?
 
-    var body: some View {
+    public init(
+        facts: ConversationFacts,
+        children: [ChildRow],
+        open: Bool,
+        grow: @escaping @MainActor () -> Void,
+        openChild: @escaping @MainActor (ChildRow) -> Void,
+        unqueue: @escaping @MainActor () -> Void
+    ) {
+        self.facts = facts
+        self.children = children
+        self.open = open
+        self.grow = grow
+        self.openChild = openChild
+        self.unqueue = unqueue
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if open {
                 if let tasks = facts.tasks, !tasks.items.isEmpty {

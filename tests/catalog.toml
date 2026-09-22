@@ -1083,3 +1083,35 @@ lane = "qualification"
 evidence = ".autopilot/evidence/live/remote-open"
 update = ""
 cases = ["scripts/qualification/remote_open_entry_policy.sh"]
+
+[[suite]]
+name = "phone-component-snapshots"
+contract = "Every catalogued phone component renders to its reviewed image in each declared appearance and size."
+paths = ["apps/apple/AmuxComponentSnapshotTests", "apps/apple/Amux/Debug/ComponentCatalog.swift", "scripts/ios-component-snapshots.py"]
+recipe = "just ios component-snapshots"
+boundary = "Native presentation"
+oracle = "Image comparison against the reviewed snapshot for each component, appearance and size."
+real = ["native rendering", "pinned iOS simulator"]
+substituted = ["daemon", "network", "providers", "full-screen chrome"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "pinned iOS simulator"]
+lane = "fast"
+evidence = "target/ios/component-snapshots"
+update = "just ios component-snapshots --record <component>, then review every image diff."
+swift = ["AmuxComponentSnapshotTests"]
+
+[[suite]]
+name = "phone-component-snapshot-sensitivity"
+contract = "The component snapshot comparator rejects a deliberate one-token visual perturbation."
+paths = ["scripts/ios-component-snapshots.py"]
+recipe = "just ios component-snapshots-perturb"
+boundary = "Native presentation"
+oracle = "An intentional pixel change must produce a failing comparison."
+real = ["native rendering", "pinned iOS simulator", "snapshot comparator"]
+substituted = ["daemon", "network", "providers"]
+time = "real"
+capabilities = ["macOS", "Xcode 26.6", "pinned iOS simulator"]
+lane = "fast"
+evidence = "target/ios/component-snapshots"
+update = ""
+cases = ["scripts/ios-component-snapshots.py"]
