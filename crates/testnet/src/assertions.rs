@@ -116,15 +116,27 @@ pub(crate) async fn consistently_for<C, D>(
         if Instant::now() >= deadline {
             return;
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match tokio::time::timeout(remaining, check()).await {
-            Ok(true) => {}
-            Ok(false) | Err(_) => {
-                let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
-                    .await
-                    .unwrap_or_else(|_| "<state dump timed out>".to_string());
-                panic!("spec assertion failed during {duration:?}: {assertion}\n{dump}");
-            }
+        // `duration` says how long the condition must hold; it is not a
+        // budget for the check itself. A check begun inside the window gets
+        // the suite's ordinary bound, because one bounded by the shrinking
+        // remainder would be given a few milliseconds near the end and its
+        // probes of daemon state would "time out" on a loaded machine with a
+        // message identical to the condition genuinely failing.
+        let failure = match tokio::time::timeout(DEFAULT_TIMEOUT, check()).await {
+            Ok(true) => None,
+            Ok(false) => Some(format!(
+                "spec assertion failed during {duration:?}: {assertion}"
+            )),
+            Err(_) => Some(format!(
+                "spec check did not answer within {DEFAULT_TIMEOUT:?} while holding \
+                 {assertion} for {duration:?}"
+            )),
+        };
+        if let Some(failure) = failure {
+            let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
+                .await
+                .unwrap_or_else(|_| "<state dump timed out>".to_string());
+            panic!("{failure}\n{dump}");
         }
         if Instant::now() >= deadline {
             return;

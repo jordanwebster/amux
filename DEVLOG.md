@@ -1,3 +1,11 @@
+2026-09-22 — **Let a stability check finish once it has begun.**
+The waiter that holds a condition for a window bounded each check by the
+window's shrinking remainder, so a check begun near the end was given a few
+milliseconds for five probes of daemon state and, on a loaded runner, timed
+out with the same message a genuine tenant leak would produce. The window now
+says only how long the condition must hold; each check keeps the suite's
+ordinary bound, and a check that does not answer says so in its own words.
+
 2026-09-22 — **Bound every wait in the process suite, and say when a store deadline was hit.**
 The pipe-backpressure test held the Linux workspace suite for twelve minutes.
 The explanation logged earlier today — a single-worker deadlock — was wrong:
