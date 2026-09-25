@@ -1,3 +1,14 @@
+2026-09-26 — **The protos can only grow: `just proto-check`.**
+Journals, stored bodies and the peer link are all read by binaries of other
+versions, so a shipped protobuf field may never be removed, renumbered,
+retyped or made required. `just proto-check` compiles the wire's protos with
+the vendored protoc and compares them with the committed descriptor baseline
+at `crates/wire/proto/baseline.binpb`: anything the baseline has that the
+current schema lost or changed (fields, enum values, messages, RPCs and their
+signatures) fails with its full name, and additions pass. A deliberate break
+is recorded with `just proto-check --update` and a committed baseline. The
+check is in `just ci`.
+
 2026-09-26 — **The wire in its final shape; the workspace shrinks to what builds on it.**
 The protobuf schema is rewritten to the journal architecture rather than
 bridged. `records.proto` holds what an agent's interpreter writes and every

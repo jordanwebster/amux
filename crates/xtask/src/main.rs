@@ -10,6 +10,9 @@ mod simulator;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("codegen") => codegen(),
+        Some("proto-check") => {
+            xtask::proto_check::main(&std::env::args().skip(2).collect::<Vec<_>>())
+        }
         Some("ci-status") => ci::main(),
         Some("ci-observe") => ci::observe_main(),
         Some("door") => door::main(),
@@ -18,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("ios-verify") => ios_verify::run(),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }
@@ -57,13 +60,10 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
         .file_descriptor_set_path(out_dir.join("amux.v1.bin"))
         .out_dir(&out_dir)
         .compile_protos(
-            &[
-                proto_dir.join("amux/v1/amux.proto"),
-                proto_dir.join("amux/v1/agent.proto"),
-                proto_dir.join("amux/v1/claude.proto"),
-                proto_dir.join("amux/v1/codex.proto"),
-                proto_dir.join("amux/v1/records.proto"),
-            ],
+            &xtask::proto_check::PROTO_FILES
+                .iter()
+                .map(|file| proto_dir.join(file))
+                .collect::<Vec<_>>(),
             &[proto_dir],
         )?;
     Ok(())

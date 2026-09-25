@@ -2249,6 +2249,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "png",
+ "prost",
+ "prost-types",
  "protoc-bin-vendored",
  "serde",
  "serde_json",

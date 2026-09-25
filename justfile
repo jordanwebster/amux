@@ -94,6 +94,11 @@ fmt-check:
 protobuf:
     {{bounded}} 600 cargo run --locked -p xtask -- codegen
 
+# Fail when the protos remove, renumber, retype or require anything the
+# committed baseline has; `just proto-check --update` records a deliberate break.
+proto-check *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked -q -p xtask -- proto-check "$@"
+
 # Check that committed protobuf bindings match their sources.
 codegen-check:
     {{bounded}} 600 scripts/codegen-check.sh
@@ -176,7 +181,7 @@ no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check dependency-policy tests-check test doctest release-check embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy tests-check test doctest release-check embedded-check embedded-test mobile-check
 
 # Qualify desktop performance on an enrolled machine and include the phone
 # suite whenever Xcode is available. The phone recipe takes its own simulator
