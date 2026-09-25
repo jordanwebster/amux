@@ -1,3 +1,17 @@
+2026-09-26 — **The attachments crate: one element syntax, seen only by the model.**
+Inputs and items carry attachments one way: text with a U+FFFC placeholder
+per attachment and the ordered typed list. `crates/attachments` validates that
+shape (one placeholder per attachment, every blob named by a SHA-256 digest)
+before anything reaches an agent, formats each placeholder as the
+`<amux-attachment>` element the model reads — image, file, pasted text, or a
+review whose comments are framed by byte counts so no comment text can pass
+for the next heading — with the blob's path in the agent's directory, and
+parses elements back out of whatever the provider reflects or the model
+writes. Blobs are named by `hash`, not the old artifact id; the path is
+informational and ignored on parse. A candidate that does not parse stays in
+the text as written and is reported, and a stray U+FFFC in text is replaced
+and reported, so parsing always yields a well-shaped value.
+
 2026-09-26 — **The journal crate: steps on disk between an agent and its daemon.**
 `crates/journal` is the queue an agent process appends its interpreter steps
 to and its daemon reads from, with no acks and neither side needing the other

@@ -7,6 +7,7 @@ resolver = "2"
 # tui, ui-runtime.
 members = [
     "crates/artifacts",
+    "crates/attachments",
     "crates/claude",
     "crates/claude-specs",
     "crates/codex",
@@ -63,6 +64,7 @@ store = { path = "crates/store" }
 wire = { path = "crates/wire" }
 settings = { path = "crates/settings" }
 artifacts = { path = "crates/artifacts" }
+attachments = { path = "crates/attachments" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
 tui = { path = "crates/tui" }
