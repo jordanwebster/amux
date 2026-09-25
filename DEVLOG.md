@@ -1,3 +1,17 @@
+2026-09-26 — **The journal crate: steps on disk between an agent and its daemon.**
+`crates/journal` is the queue an agent process appends its interpreter steps
+to and its daemon reads from, with no acks and neither side needing the other
+alive. A journal is a directory of segment files named by the global offset
+of their first byte; the writer closes a segment before creating the next,
+so a segment is final exactly when a later one exists, and a reader's whole
+state is one offset. Frames are a varint length and a protobuf Step, never
+split across segments, written with plain writes and no fsync. A reader
+returns only whole frames: bytes at the end of the newest segment that are
+not yet a frame are reported as torn and picked up once the writer finishes
+them; a restarted writer cuts a dead writer's torn tail off before
+appending. A synthetic writer (feature `synthetic`) leaves frames
+half-written or cuts the journal at any byte for the daemon's tests.
+
 2026-09-26 — **The protos can only grow: `just proto-check`.**
 Journals, stored bodies and the peer link are all read by binaries of other
 versions, so a shipped protobuf field may never be removed, renumbered,

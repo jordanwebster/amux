@@ -13,6 +13,7 @@ members = [
     "crates/codex-specs",
     "crates/fold",
     "crates/host-api",
+    "crates/journal",
     "crates/model",
     "crates/pty-host",
     "crates/redaction",
@@ -55,6 +56,7 @@ node-test-support = { path = "crates/node-test-support" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 host-api = { path = "crates/host-api" }
+journal = { path = "crates/journal" }
 fold = { path = "crates/fold" }
 model = { path = "crates/model" }
 store = { path = "crates/store" }
