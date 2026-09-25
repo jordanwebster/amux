@@ -59,9 +59,10 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(
             &[
                 proto_dir.join("amux/v1/amux.proto"),
+                proto_dir.join("amux/v1/agent.proto"),
                 proto_dir.join("amux/v1/claude.proto"),
                 proto_dir.join("amux/v1/codex.proto"),
-                proto_dir.join("amux/v1/test_agent.proto"),
+                proto_dir.join("amux/v1/records.proto"),
             ],
             &[proto_dir],
         )?;

@@ -1,32 +1,15 @@
-//! Committed protobuf messages and codecs for amux protocol boundaries.
+//! Committed protobuf messages for every amux protocol boundary: the session
+//! records the journal frames and the store keeps, the agent process's spec
+//! and control frames, and the client, peer, pairing, profile and
+//! installation services.
 
-mod domain;
-mod error;
-mod provider;
-
-/// Protocol version for the native-stream link handshake.
-pub const PROTOCOL_VERSION: u32 = 3;
-
-pub use domain::{
-    agent_from_wire, agent_parent_from_wire, agent_to_wire, artifact_kind_from_wire,
-    artifact_kind_to_wire, artifact_ref_from_wire, artifact_ref_to_wire, capabilities_from_wire,
-    diff_base_from_wire, diff_base_to_wire, diff_response_from_wire, diff_response_to_wire,
-    progress_from_wire, progress_to_wire, summary_from_wire, summary_to_wire,
-};
-pub use error::{
-    DecodeError, EncodeError, decode_protocol_error, encode_protocol_error,
-    protocol_error_from_status_details, protocol_status, protocol_version_mismatch_error,
-};
-pub use provider::{
-    replay_facts_from_wire, replay_facts_to_wire, session_args_from_client_wire,
-    session_args_from_wire, session_args_to_client_wire, session_args_to_wire,
-    session_input_from_client_wire, session_input_from_wire, session_input_to_client_wire,
-    session_input_to_wire, session_output_from_wire, session_output_to_wire,
-};
+/// Protocol version for the native-stream link handshake. Bumped only for a
+/// deliberate semantic break; the only-add rule keeps it otherwise unused.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 pub mod amux {
     pub mod v1 {
-        #![allow(dead_code, clippy::enum_variant_names)]
+        #![allow(dead_code, clippy::enum_variant_names, clippy::large_enum_variant)]
         include!("generated/amux.v1.rs");
     }
 }
@@ -39,30 +22,13 @@ pub mod pb {
 
 /// Bound for link-control messages and application-stream prefaces.
 pub const MESSAGE_SIZE_LIMIT: usize = 16 * 1024 * 1024;
-/// RPC payloads include artifacts plus protobuf framing overhead.
+/// RPC payloads include blobs plus protobuf framing overhead.
 const CHANNEL_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
-
-pub fn agent_service_client(
-    channel: tonic::transport::Channel,
-) -> agent_service_client::AgentServiceClient<tonic::transport::Channel> {
-    agent_service_client::AgentServiceClient::new(channel)
-        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
-}
 
 pub fn client_service_client(
     channel: tonic::transport::Channel,
 ) -> client_service_client::ClientServiceClient<tonic::transport::Channel> {
     client_service_client::ClientServiceClient::new(channel)
-        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
-        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
-}
-
-pub fn agent_service_server<T>(service: T) -> agent_service_server::AgentServiceServer<T>
-where
-    T: agent_service_server::AgentService,
-{
-    agent_service_server::AgentServiceServer::new(service)
         .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
         .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
@@ -76,44 +42,40 @@ where
         .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
-pub fn agent_kind_to_wire(kind: model::AgentKind) -> AgentKind {
-    let kind = match kind {
-        model::AgentKind::Claude { driver } => agent_kind::Kind::Claude(ClaudeKind {
-            driver: claude_driver_to_wire(driver) as i32,
-        }),
-        model::AgentKind::Codex => agent_kind::Kind::Codex(CodexKind {}),
-        model::AgentKind::TestAgent => agent_kind::Kind::TestAgent(TestAgentKind {}),
-    };
-    AgentKind { kind: Some(kind) }
+pub fn peer_service_client(
+    channel: tonic::transport::Channel,
+) -> peer_service_client::PeerServiceClient<tonic::transport::Channel> {
+    peer_service_client::PeerServiceClient::new(channel)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
-pub fn agent_kind_from_wire(kind: AgentKind) -> Result<model::AgentKind, DecodeError> {
-    let kind = kind
-        .kind
-        .ok_or_else(|| DecodeError::Invalid("AgentKind missing kind".into()))?;
-    Ok(match kind {
-        agent_kind::Kind::Claude(claude) => model::AgentKind::Claude {
-            driver: claude_driver_from_wire(claude.driver)?,
-        },
-        agent_kind::Kind::Codex(_) => model::AgentKind::Codex,
-        agent_kind::Kind::TestAgent(_) => model::AgentKind::TestAgent,
-    })
+pub fn peer_service_server<T>(service: T) -> peer_service_server::PeerServiceServer<T>
+where
+    T: peer_service_server::PeerService,
+{
+    peer_service_server::PeerServiceServer::new(service)
+        .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
 }
 
-pub const fn claude_driver_to_wire(driver: model::ClaudeDriver) -> ClaudeDriver {
-    match driver {
-        model::ClaudeDriver::Pty => ClaudeDriver::Pty,
-        model::ClaudeDriver::Sdk => ClaudeDriver::Sdk,
+/// The kind tag an item or snapshot envelope carries for each interpreter.
+pub const fn kind_tag(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Unspecified => "",
+        Kind::ClaudePty => "claude_pty",
+        Kind::ClaudeSdk => "claude_sdk",
+        Kind::Codex => "codex",
     }
 }
 
-pub fn claude_driver_from_wire(driver: i32) -> Result<model::ClaudeDriver, DecodeError> {
-    match ClaudeDriver::try_from(driver) {
-        Ok(ClaudeDriver::Pty) => Ok(model::ClaudeDriver::Pty),
-        Ok(ClaudeDriver::Sdk) => Ok(model::ClaudeDriver::Sdk),
-        Ok(ClaudeDriver::Unspecified) | Err(_) => Err(DecodeError::Invalid(
-            "ClaudeDriver must be specified".into(),
-        )),
+/// The interpreter an envelope's kind tag names, if any.
+pub fn kind_from_tag(tag: &str) -> Option<Kind> {
+    match tag {
+        "claude_pty" => Some(Kind::ClaudePty),
+        "claude_sdk" => Some(Kind::ClaudeSdk),
+        "codex" => Some(Kind::Codex),
+        _ => None,
     }
 }
 
@@ -121,249 +83,257 @@ pub const DESCRIPTOR_SET: &[u8] = include_bytes!("generated/amux.v1.bin");
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use prost::Message as _;
+    use prost_types::{DescriptorProto, FileDescriptorSet};
 
-    use super::DESCRIPTOR_SET;
+    use super::*;
 
-    #[test]
-    fn descriptor_set_contains_core_protocol_messages_and_services() {
-        let descriptor = prost_types::FileDescriptorSet::decode(DESCRIPTOR_SET)
-            .expect("descriptor set should decode");
-        let message_names = descriptor
-            .file
+    fn descriptor() -> FileDescriptorSet {
+        FileDescriptorSet::decode(DESCRIPTOR_SET).expect("descriptor set should decode")
+    }
+
+    fn messages(set: &FileDescriptorSet) -> BTreeMap<String, DescriptorProto> {
+        set.file
             .iter()
             .filter(|file| file.package.as_deref() == Some("amux.v1"))
             .flat_map(|file| file.message_type.iter())
-            .filter_map(|message| message.name.as_deref())
-            .collect::<std::collections::BTreeSet<_>>();
-        let service_names = descriptor
-            .file
+            .map(|message| (message.name().to_owned(), message.clone()))
+            .collect()
+    }
+
+    fn fields(message: &DescriptorProto) -> BTreeMap<&str, i32> {
+        message
+            .field
             .iter()
-            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .map(|field| (field.name(), field.number()))
+            .collect()
+    }
+
+    fn methods(set: &FileDescriptorSet, service: &str) -> BTreeSet<String> {
+        set.file
+            .iter()
             .flat_map(|file| file.service.iter())
-            .filter_map(|service| service.name.as_deref())
-            .collect::<std::collections::BTreeSet<_>>();
-
-        for message_name in [
-            "Message",
-            "Hello",
-            "HelloAck",
-            "NeighborUp",
-            "NeighborDown",
-            "StreamPreface",
-            "BeginPairRequest",
-            "PendingPairResponse",
-            "TrustSshPeerRequest",
-            "PairMessage",
-            "PairingComplete",
-            "PairingError",
-            "PairingIdentity",
-            "AgentUpdated",
-            "AgentKind",
-            "ProtocolNotExposed",
-            "ArtifactRef",
-            "DiffBase",
-            "BaseIdentity",
-            "DiffFile",
-            "AttachmentMissing",
-            "AttachmentTooLarge",
-            "ArtifactCorrupt",
-            "DiffUnavailable",
-            "ClaudeKind",
-            "CodexKind",
-            "TestAgentKind",
-            "TerminalV1Args",
-            "TerminalV1Input",
-            "TerminalV1Output",
-            "ClaudeSdkV1Args",
-            "ClaudeSdkV1Input",
-            "CodexCreateConfig",
-            "CodexSdkV1Args",
-            "CodexSdkV1Input",
-            "TestEchoV1Args",
-            "TestEchoV1Input",
-            "TestEchoV1Output",
-            "StructuredRow",
-            "SessionClosed",
-            "Reauth",
-            "LinkClose",
-        ] {
-            assert!(
-                message_names.contains(message_name),
-                "{message_name} should be in the descriptor"
-            );
-        }
-
-        let expected_services = std::collections::BTreeSet::from([
-            "AgentService",
-            "ClientService",
-            "PairingService",
-            "ProfileService",
-            "InstallationService",
-        ]);
-        assert_eq!(service_names, expected_services);
-
-        let service_methods = descriptor
-            .file
-            .iter()
-            .filter(|file| file.package.as_deref() == Some("amux.v1"))
-            .flat_map(|file| file.service.iter())
-            .map(|service| {
-                (
-                    service.name.as_deref().unwrap_or_default(),
-                    service
-                        .method
-                        .iter()
-                        .filter_map(|method| method.name.as_deref())
-                        .collect::<std::collections::BTreeSet<_>>(),
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(
-            service_methods.get("PairingService").cloned(),
-            Some(std::collections::BTreeSet::from(["Pair"]))
-        );
-        assert_eq!(
-            service_methods.get("AgentService").cloned(),
-            Some(std::collections::BTreeSet::from([
-                "CreateAgent",
-                "DeleteAgent",
-                "Diff",
-                "GetArtifact",
-                "ListRepositories",
-                "PutArtifact",
-                "RenameAgent",
-                "SendInput",
-                "SendMessage",
-                "SetAgentStatus",
-                "SubscribeAgentEvents",
-                "SubscribeSession",
-            ]))
-        );
-        assert_eq!(
-            service_methods.get("ClientService").cloned(),
-            Some(std::collections::BTreeSet::from([
-                "CreateAgent",
-                "Debug",
-                "DeleteAgent",
-                "Diff",
-                "GetArtifact",
-                "HandleHook",
-                "ListAgents",
-                "ListHosts",
-                "ListRepositories",
-                "PutArtifact",
-                "RenameAgent",
-                "SendInput",
-                "SendMessage",
-                "SetAgentStatus",
-                "SubscribeAgents",
-                "SubscribeHosts",
-                "SubscribeSession",
-            ]))
-        );
-
-        let message_fields = descriptor
-            .file
-            .iter()
-            .filter(|file| file.package.as_deref() == Some("amux.v1"))
-            .flat_map(|file| file.message_type.iter())
-            .map(|message| {
-                (
-                    message.name.as_deref().unwrap_or_default(),
-                    message
-                        .field
-                        .iter()
-                        .map(|field| {
-                            (
-                                field.name.as_deref().unwrap_or_default(),
-                                field.number.unwrap_or_default(),
-                            )
-                        })
-                        .collect::<std::collections::BTreeMap<_, _>>(),
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(
-            message_fields.get("Message").cloned(),
-            Some(std::collections::BTreeMap::from([
-                ("hello", 1),
-                ("hello_ack", 2),
-                ("neighbor_up", 3),
-                ("neighbor_down", 4),
-                ("reauth", 8),
-                ("link_close", 9),
-            ]))
-        );
-        assert_eq!(
-            message_fields.get("Hello").cloned(),
-            Some(std::collections::BTreeMap::from([
-                ("supported_protocol_versions", 1),
-                ("host", 2),
-                ("neighbors", 3),
-                ("auth_token", 4),
-                ("incarnation", 5),
-            ]))
-        );
-        assert_eq!(
-            message_fields.get("StreamPreface").cloned(),
-            Some(std::collections::BTreeMap::from([("dst", 1)]))
-        );
-
-        let enum_values = descriptor
-            .file
-            .iter()
-            .filter(|file| file.package.as_deref() == Some("amux.v1"))
-            .flat_map(|file| file.enum_type.iter())
-            .map(|enumeration| {
-                (
-                    enumeration.name.as_deref().unwrap_or_default(),
-                    enumeration
-                        .value
-                        .iter()
-                        .filter_map(|value| value.name.as_deref())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(
-            enum_values.get("StreamRefusal").cloned(),
-            Some(vec![
-                "STREAM_REFUSAL_UNSPECIFIED",
-                "NO_ROUTE",
-                "PAYMENT_REQUIRED",
-                "RATE_LIMITED",
-                "NOT_ADJACENT",
-                "SHUTTING_DOWN",
-            ])
-        );
-
-        let pairing_methods = descriptor
-            .file
-            .iter()
-            .filter(|file| file.package.as_deref() == Some("amux.v1"))
-            .flat_map(|file| file.service.iter())
-            .find(|service| service.name.as_deref() == Some("PairingService"))
-            .expect("PairingService should exist");
-        let pair = pairing_methods
-            .method
-            .iter()
-            .find(|method| method.name.as_deref() == Some("Pair"))
-            .expect("Pair should exist");
-        assert_eq!(pair.input_type.as_deref(), Some(".amux.v1.PairMessage"));
-        assert_eq!(pair.output_type.as_deref(), Some(".amux.v1.PairMessage"));
-        assert_eq!(pair.client_streaming, Some(true));
-        assert_eq!(pair.server_streaming, Some(true));
+            .filter(|candidate| candidate.name() == service)
+            .flat_map(|candidate| candidate.method.iter())
+            .map(|method| method.name().to_owned())
+            .collect()
     }
 
     #[test]
-    fn generated_service_clients_are_available() {
-        let clients = [
-            std::any::type_name::<super::agent_service_client::AgentServiceClient<()>>(),
-            std::any::type_name::<super::client_service_client::ClientServiceClient<()>>(),
-            std::any::type_name::<super::pairing_service_client::PairingServiceClient<()>>(),
-        ];
+    fn services_are_the_client_peer_pairing_profile_and_installation_surfaces() {
+        let set = descriptor();
+        let services = set
+            .file
+            .iter()
+            .flat_map(|file| file.service.iter())
+            .map(|service| service.name().to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            services,
+            BTreeSet::from(
+                [
+                    "ClientService",
+                    "InstallationService",
+                    "PairingService",
+                    "PeerService",
+                    "ProfileService"
+                ]
+                .map(str::to_owned)
+            )
+        );
 
-        assert!(clients.iter().all(|client| client.contains("Client")));
+        let client = methods(&set, "ClientService");
+        assert_eq!(
+            client,
+            BTreeSet::from(
+                [
+                    "SubscribeInventory",
+                    "ResolveAgent",
+                    "Subscribe",
+                    "Fetch",
+                    "Get",
+                    "SendInput",
+                    "CreateAgent",
+                    "RenameAgent",
+                    "StopAgent",
+                    "ResumeAgent",
+                    "DeleteAgent",
+                    "SendMessage",
+                    "PutBlob",
+                    "GetBlob",
+                    "Diff",
+                    "ListRepositories",
+                    "Dump",
+                ]
+                .map(str::to_owned)
+            )
+        );
+
+        // The peer surface is the client surface minus name resolution and
+        // dumps, over the same request and response messages.
+        let mut peer_expected = client.clone();
+        peer_expected.remove("ResolveAgent");
+        peer_expected.remove("Dump");
+        assert_eq!(methods(&set, "PeerService"), peer_expected);
+
+        let installation = methods(&set, "InstallationService");
+        assert_eq!(
+            installation,
+            BTreeSet::from(["GetInfo", "Shutdown"].map(str::to_owned))
+        );
+    }
+
+    #[test]
+    fn envelope_numbers_match_the_record_schema() {
+        let set = descriptor();
+        let messages = messages(&set);
+        let expect = |name: &str, pairs: &[(&str, i32)]| {
+            assert_eq!(
+                fields(&messages[name]),
+                pairs.iter().copied().collect::<BTreeMap<_, _>>(),
+                "{name}"
+            );
+        };
+        expect(
+            "Step",
+            &[
+                ("items", 1),
+                ("appends", 2),
+                ("snapshot", 3),
+                ("turn_end", 5),
+            ],
+        );
+        expect(
+            "Item",
+            &[
+                ("agent", 1),
+                ("key", 2),
+                ("order", 3),
+                ("revision", 4),
+                ("producer_version", 5),
+                ("input_id", 6),
+                ("text", 7),
+                ("attachments", 8),
+                ("kind", 9),
+                ("body", 10),
+                ("at_ms", 11),
+            ],
+        );
+        expect(
+            "Append",
+            &[
+                ("agent", 1),
+                ("key", 2),
+                ("base_revision", 3),
+                ("revision", 4),
+                ("text", 5),
+            ],
+        );
+        expect(
+            "Snapshot",
+            &[
+                ("agent", 1),
+                ("revision", 2),
+                ("queue", 3),
+                ("kind", 4),
+                ("body", 5),
+                ("phase", 6),
+                ("working_on", 7),
+                ("at_ms", 8),
+            ],
+        );
+        expect(
+            "CtlFrame",
+            &[
+                ("hello", 1),
+                ("nudge", 2),
+                ("input", 3),
+                ("stop", 4),
+                ("dump", 5),
+                ("reply", 6),
+            ],
+        );
+        expect(
+            "SessionEvent",
+            &[
+                ("snapshot", 1),
+                ("item", 2),
+                ("append", 3),
+                ("caught_up", 5),
+                ("lagged", 6),
+                ("reset", 7),
+                ("detached", 8),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_spec_names_its_parent_by_host_and_id() {
+        let set = descriptor();
+        let messages = messages(&set);
+        let parent = messages["AgentSpec"]
+            .field
+            .iter()
+            .find(|field| field.name() == "parent")
+            .expect("AgentSpec.parent");
+        assert_eq!(parent.number(), 6);
+        assert_eq!(parent.type_name(), ".amux.v1.AgentParent");
+        assert_eq!(
+            fields(&messages["AgentParent"]),
+            BTreeMap::from([("host_id", 1), ("agent_id", 2)])
+        );
+    }
+
+    #[test]
+    fn every_snapshot_body_carries_the_four_strip_facts() {
+        let set = descriptor();
+        let messages = messages(&set);
+        for snapshot in ["ClaudePtySnapshot", "ClaudeSdkSnapshot", "CodexSnapshot"] {
+            let types = messages[snapshot]
+                .field
+                .iter()
+                .map(|field| field.type_name())
+                .collect::<BTreeSet<_>>();
+            for fact in [
+                ".amux.v1.UsageLimits",
+                ".amux.v1.ToolServerHealth",
+                ".amux.v1.SignIn",
+                ".amux.v1.BackgroundProcesses",
+            ] {
+                assert!(types.contains(fact), "{snapshot} lacks {fact}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_step_round_trips_with_an_opaque_body() {
+        let body = ClaudeSdkItem {
+            kind: Some(claude_sdk_item::Kind::Message(Text { complete: true })),
+        }
+        .encode_to_vec();
+        let step = Step {
+            items: vec![Item {
+                key: "msg:1".into(),
+                text: "hello".into(),
+                kind: kind_tag(Kind::ClaudeSdk).into(),
+                body: body.clone(),
+                at_ms: 7,
+                ..Default::default()
+            }],
+            turn_end: Some(TurnEnd {
+                turn_id: 1,
+                last_message_key: "msg:1".into(),
+            }),
+            ..Default::default()
+        };
+        let decoded = Step::decode(step.encode_to_vec().as_slice()).expect("decode");
+        assert_eq!(decoded, step);
+        assert_eq!(kind_from_tag(&decoded.items[0].kind), Some(Kind::ClaudeSdk));
+        assert_eq!(
+            ClaudeSdkItem::decode(decoded.items[0].body.as_slice()).expect("body"),
+            ClaudeSdkItem::decode(body.as_slice()).expect("body")
+        );
     }
 }

@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package amux.v1;
+
+import "amux/v1/claude.proto";
+import "amux/v1/codex.proto";
+import "amux/v1/records.proto";
+
+// The agent process's contract with its daemon: the input vocabulary, the
+// immutable spec file each incarnation starts from, and the frames on the
+// agent directory's ctl.sock. The journal between them frames Step
+// (records.proto).
+
+// A client-generated input id and one arm. The reply is the interpreter's
+// verdict, never a handover receipt. An arm this agent version cannot
+// interpret is rejected as unsupported.
+message Input {
+  bytes input_id = 1;
+  oneof of {
+    // Kind-neutral: an agent message with its daemon-set envelope; the
+    // recipient's interpreter picks the carrier.
+    Envelope agent_message = 2;
+    // Kind-neutral: asks the agent process for its part of a dump bundle,
+    // answered with CtlFrame.dump.
+    DumpInput dump = 3;
+    ClaudePtyInput claude_pty = 10;
+    ClaudeSdkInput claude_sdk = 11;
+    CodexInput codex = 12;
+  }
+}
+
+message DumpInput {
+  bytes dump_id = 1;
+}
+
+// One immutable file per incarnation, spec.<n> in the agent directory. The
+// daemon writes it before each spawn and never rewrites it; a resume writes
+// the next one from current config.
+message AgentSpec {
+  // The directory name; ours, never the provider's.
+  bytes agent_id = 1;
+  bytes profile_id = 2;
+  // claude_pty | claude_sdk | codex
+  string kind = 3;
+  // The project directory the provider child is launched in, frozen at
+  // spawn.
+  string cwd = 4;
+  // At spawn; later renames live on the agents row only.
+  string name = 5;
+  // The inventory row's parent, host and id, so a child resumed from its
+  // spec on one host still addresses a parent on another.
+  optional AgentParent parent = 6;
+  // Exactly what the daemon resolved: model, permission mode, sandbox.
+  repeated string provider_args = 7;
+  map<string, string> provider_env = 8;
+  // As configured, re-resolved on every spawn and resume.
+  string provider_command = 9;
+  // Exactly what the agent process reads at start and nothing the daemon
+  // consumes.
+  EffectiveConfig config = 10;
+  // Which binary wrote this.
+  string daemon_version = 11;
+  int64 created_at_ms = 12;
+  // The n in spec.<n>.
+  uint32 incarnation = 13;
+  // The path that ran for this incarnation: a record, not an instruction.
+  string provider_binary = 14;
+  // What that binary reported, for the same reason.
+  string provider_version = 15;
+  // The spawn's prompt, or a parent's message on a parent-driven resume,
+  // with its input id; the child seeds its queue from it.
+  optional Input initial_prompt = 16;
+}
+
+message EffectiveConfig {
+  // Hook policy: which provider hooks the agent process installs.
+  repeated string hooks = 1;
+  // How long a graceful stop waits for the provider before aborting.
+  uint32 grace_ms = 2;
+  // How long the agent keeps writing its journal with no daemon.
+  uint32 drain_ms = 3;
+  uint64 facts_ring_bytes = 4;
+  uint64 journal_segment_bytes = 5;
+  optional string model = 6;
+  optional string permission_mode = 7;
+  // Environment additions for the provider child.
+  map<string, string> env = 8;
+  // The canonical install path the hook binary and tool server run from.
+  string install_path = 9;
+}
+
+// ctl.sock frames, length-prefixed, no version integer, only-add forever.
+// EOF in either direction means the peer is gone.
+message CtlFrame {
+  oneof of {
+    // Agent to daemon, first frame.
+    AgentHello hello = 1;
+    // Agent to daemon: the journal grew.
+    Nudge nudge = 2;
+    // Daemon to agent.
+    Input input = 3;
+    // Daemon to agent.
+    Stop stop = 4;
+    // Agent to daemon, answering a dump input.
+    DumpPart dump = 5;
+    // Agent to daemon; the daemon relays it as the SendInput reply.
+    InputReply reply = 6;
+  }
+}
+
+message AgentHello {
+  bytes agent_id = 1;
+  string agent_version = 2;
+  uint64 journal_offset = 3;
+}
+
+message Nudge {}
+
+message Stop {
+  StopMode mode = 1;
+}
+
+// Named apart from the Interrupt input so the two are never confused.
+enum StopMode {
+  GRACEFUL = 0;
+  ABORT = 1;
+  KILL = 2;
+}
+
+// The agent process's part of a dump: its facts ring and checkpoint,
+// already redacted.
+message DumpPart {
+  bytes dump_id = 1;
+  repeated DumpFile files = 2;
+}
+
+message DumpFile {
+  string name = 1;
+  bytes contents = 2;
+}
+
+message InputReply {
+  bytes input_id = 1;
+  SendInputResponse verdict = 2;
+}

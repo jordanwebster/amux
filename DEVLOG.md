@@ -1,3 +1,30 @@
+2026-09-26 — **The wire in its final shape; the workspace shrinks to what builds on it.**
+The protobuf schema is rewritten to the journal architecture rather than
+bridged. `records.proto` holds what an agent's interpreter writes and every
+stream carries: Step, Item, Append and Snapshot envelopes whose per-kind
+bodies are opaque bytes to the daemon and store, the shared item and ask
+bodies, and the four session-strip facts (usage limits, tool-server health,
+sign-in, running background processes) as fields on every kind's snapshot.
+`agent.proto` holds the Input vocabulary, the immutable per-incarnation
+AgentSpec (its parent is a host and an id, so a child resumed on one host
+still addresses a parent on another) and the ctl.sock frames. `claude.proto`
+and `codex.proto` hold the per-kind items, snapshots, inputs and answers.
+`amux.proto` keeps pairing, profiles, installation and link control, and
+replaces the agent and client services with one ClientService (inventory
+stream, ResolveAgent, Subscribe/Fetch/Get, SendInput with the interpreter's
+verdict, registry calls with Stop and Resume, blobs, Diff, Dump) and a
+PeerService over the same messages. Gone: AgentRef and the duplicate request
+set, SubscribeSession and its replay facts, terminal bytes over the network,
+summary and progress events, the unary list calls, AgentKind and the test
+agent kind, artifacts and pins, the suspend RPCs, Debug, HandleHook,
+SetAgentStatus, and the sequence-number and update-required errors (a relay
+refusing a too-old build now says version mismatch). The protocol version
+goes to 4. The wire crate is only generated types now; its hand conversions
+to the old model went with the messages they converted. Crates built on the
+old wire are out of the workspace members list, named in `Cargo.toml`, until
+each is rebuilt or deleted; the workspace test script no longer builds the
+old store's cross-process fixture.
+
 2026-09-26 — **CI runs on the rearchitect branch.**
 The rearchitecture (journals, one store per profile, one chat model on both
 clients) is about to be built by an unattended flight on `rearchitect`. Its

@@ -1,164 +1,29 @@
-// amux protocol vNext.
+// amux protocol.
 //
-// This file is the canonical protobuf source. Generated Rust types are
-// committed under crates/amux/src/protocol/generated/ — regenerate with
-// `just protobuf` after editing any proto here (CI fails on
-// stale output) — and must be wrapped in domain types before being used by
-// application code.
+// This directory is the canonical protobuf source. Generated Rust is
+// committed under crates/wire/src/generated/; regenerate with
+// `just protobuf` after editing any proto here (CI fails on stale output).
 //
 // The amux runtime uses gRPC services for application calls. Host-to-host
 // links exchange length-prefixed Message values on their control stream and
 // carry application channels on separate native streams.
+//
+// Compatibility: never renumber, never reuse a number, never make a field
+// required. PROTOCOL_VERSION (Hello.supported_protocol_versions) is bumped
+// only for a deliberate semantic break.
 
 syntax = "proto3";
 
 package amux.v1;
 
+import "amux/v1/agent.proto";
 import "amux/v1/claude.proto";
 import "amux/v1/codex.proto";
-import "amux/v1/test_agent.proto";
+import "amux/v1/records.proto";
 
 // ---------------------------------------------------------------------------
-// Common
+// Errors
 // ---------------------------------------------------------------------------
-
-message Empty {}
-
-// In-band marker that a local subscription's snapshot has been flushed
-// (agent/host inventory subscriptions). The link layer has no snapshot
-// phase: the neighbor snapshot is a field of Hello/HelloAccepted.
-message SnapshotComplete {
-  bytes host_id = 1;
-  uint64 through_revision = 2;
-}
-
-// Exclusive cursor or bounded tail selection for a sequenced session.
-message ReplayQuery {
-  oneof query {
-    uint64 after = 1;
-    uint64 tail_count = 2;
-  }
-  optional uint64 tail_bound = 3;
-}
-
-message ReplayComplete {}
-
-// Agent-independent raw terminal byte-plane payloads.
-message TerminalV1Args {
-  optional TerminalSize terminal_size = 1;
-  optional TerminalV1ReplayQuery replay_query = 2;
-}
-
-message TerminalV1ReplayQuery {
-  oneof query {
-    uint64 tail_bytes = 1;
-  }
-}
-
-message TerminalV1Input {
-  bytes payload = 1;
-}
-
-message TerminalV1Output {
-  bytes payload = 1;
-}
-
-message ClaudePtyTranscriptV1Args {
-  optional TerminalSize terminal_size = 1;
-  optional ReplayQuery replay_query = 2;
-}
-
-message ClaudeSdkV1Args {
-  optional ReplayQuery replay_query = 1;
-}
-
-message CodexSdkV1Args {
-  optional ReplayQuery replay_query = 1;
-}
-
-message StructuredRow {
-  uint64 seq = 1;
-  int64 published_at_unix_ms = 2;
-  optional int64 activity_at_unix_ms = 3;
-  bool historical = 4;
-  bytes payload = 5;
-}
-
-message AgentKind {
-  oneof kind {
-    ClaudeKind claude = 1;
-    CodexKind codex = 2;
-    TestAgentKind test_agent = 3;
-  }
-}
-
-message ClaudeKind {
-  ClaudeDriver driver = 1;
-}
-
-message CodexKind {}
-message TestAgentKind {}
-
-enum AgentProtocol {
-  AGENT_PROTOCOL_UNSPECIFIED = 0;
-  AGENT_PROTOCOL_TERMINAL_V1 = 1;
-  AGENT_PROTOCOL_CLAUDE_PTY_TRANSCRIPT_V1 = 2;
-  AGENT_PROTOCOL_CLAUDE_SDK_V1 = 3;
-  AGENT_PROTOCOL_CODEX_SDK_V1 = 4;
-  AGENT_PROTOCOL_TEST_ECHO_V1 = 5;
-}
-
-message ProtocolNotExposed {
-  AgentKind kind = 1;
-  AgentProtocol protocol = 2;
-}
-
-message AgentRef {
-  oneof identifier {
-    bytes agent_id = 1;
-    string name = 2;
-  }
-}
-
-enum ArtifactKind {
-  ARTIFACT_KIND_UNSPECIFIED = 0;
-  ARTIFACT_KIND_IMAGE = 1;
-  ARTIFACT_KIND_FILE = 2;
-  ARTIFACT_KIND_DIFF = 3;
-}
-
-message ArtifactRef {
-  string id = 1;
-  ArtifactKind kind = 2;
-  string name = 3;
-  string mime = 4;
-  uint64 size = 5;
-}
-
-message DiffBase {
-  oneof base {
-    Empty working_tree = 1;
-    string branch = 2;
-  }
-}
-
-message BaseIdentity {
-  DiffBase base = 1;
-  string head = 2;
-  optional string merge_base = 3;
-  repeated PathBlob blobs = 4;
-}
-
-message PathBlob {
-  string path = 1;
-  string blob = 2;
-}
-
-message DiffFile {
-  string path = 1;
-  uint32 added = 2;
-  uint32 removed = 3;
-}
 
 message Error {
   ErrorCode code = 1;
@@ -167,48 +32,35 @@ message Error {
 }
 
 message ErrorDetail {
-  // Fully-qualified message name, e.g. "amux.v1.UpdateRequired".
+  // Fully-qualified message name, e.g. "amux.v1.ProtocolVersionMismatch".
   string type = 1;
   // Proto-encoded detail message of the named type.
   bytes value = 2;
 }
 
-message UpdateRequired {
-  string minimum_version = 1;
-  string current_version = 2;
-  optional string update_url = 3;
-}
-
+// The one break-glass error: the peers share no protocol version.
 message ProtocolVersionMismatch {
   repeated uint32 supported_protocol_versions = 1;
   repeated uint32 peer_supported_protocol_versions = 2;
 }
 
-message SequenceNumberMismatch {
-  uint64 expected = 1;
-  uint64 actual = 2;
+message BlobMissing {
+  bytes hash = 1;
 }
 
-message AttachmentMissing {
-  string id = 1;
-}
-
-message AttachmentTooLarge {
+message BlobTooLarge {
   uint64 size = 1;
   uint64 max = 2;
-}
-
-message ArtifactCorrupt {
-  string id = 1;
 }
 
 message DiffUnavailable {
   string message = 1;
 }
 
+// ResolveAgent found more than one agent by that name.
 message AmbiguousAgentName {
   string name = 1;
-  repeated bytes agent_ids = 2;
+  repeated Agent candidates = 2;
 }
 
 enum ErrorCode {
@@ -317,11 +169,8 @@ message Reauth {
 
 message Capabilities {
   repeated string features = 1;
-  repeated SupportedAgentType supported_agents = 2;
-}
-
-message SupportedAgentType {
-  AgentKind kind = 1;
+  // The agent kinds this host can run.
+  repeated Kind kinds = 2;
 }
 
 // "The link is closed now, here's why." No grace period: a receiver treats
@@ -335,11 +184,12 @@ enum LinkCloseReason {
   LINK_CLOSE_REASON_UNSPECIFIED = 0;
   LINK_CLOSE_REASON_USER_SHUTDOWN = 1;
   LINK_CLOSE_REASON_UPDATING = 2;
-  LINK_CLOSE_REASON_SUSPENDING = 3;
+  reserved 3;
   LINK_CLOSE_REASON_RESTARTING = 4;
   LINK_CLOSE_REASON_AUTH_EXPIRED = 5;
   LINK_CLOSE_REASON_PROTOCOL_ERROR = 6;
-  LINK_CLOSE_REASON_UPDATE_REQUIRED = 7;
+  // The peers share no protocol version; the older one needs updating.
+  LINK_CLOSE_REASON_VERSION_MISMATCH = 7;
   LINK_CLOSE_REASON_USER_REVOKED = 8;
 }
 
@@ -354,6 +204,7 @@ message Host {
   optional string platform = 5;
   optional bool signed_in = 6;
 }
+
 
 // ---------------------------------------------------------------------------
 // Pairing service
@@ -400,36 +251,60 @@ message PairingIdentity {
   int64 expires_at_unix_ms = 4;
 }
 
-message ListHostsRequest {}
-message ListHostsResponse {
-  repeated HostEntry hosts = 1;
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+// Hosts and agent rows: the current set, CaughtUp, then deltas. A listing is
+// this stream read to CaughtUp.
+message InventoryEvent {
+  oneof of {
+    HostEntry host = 1;
+    HostRemoved host_removed = 2;
+    Agent agent = 3;
+    AgentRemoved agent_removed = 4;
+    CaughtUp caught_up = 100;
+  }
 }
 
-enum HostTrustStatus {
-  HOST_TRUST_STATUS_UNSPECIFIED = 0;
-  TRUSTED = 1;
-  UNTRUSTED_BUT_ONLINE = 2;
-}
-
+// One host set: every trusted host is in every snapshot whatever its
+// presence; candidates come and go with discovery. HostRemoved only on
+// untrust, or when a candidate disappears.
 message HostEntry {
+  reserved 3, 6;
   bytes host_id = 1;
   string name = 2;
-  // Presence, derived from routing: adjacent, or claimed adjacent by a
-  // neighbor.
-  bool online = 3;
   optional string version = 4;
   optional Capabilities capabilities = 5;
-  HostTrustStatus trust_status = 6;
   // The outcome of the daemon's last failed dial attempt at this host,
-  // cleared when a route comes up. Nothing probes, so this is all the
-  // daemon honestly knows; "never tried / no news" is
-  // `!online && last_dial_error` unset, derived client-side if needed.
+  // cleared when a route comes up.
   optional string last_dial_error = 7;
   HostVia via = 8;
   optional bool signed_in = 9;
   // The machine's kind, as it announced itself in the handshake. Unset for a
-  // host that has never been adjacent, because nothing else knows it.
+  // host that has never been adjacent.
   optional string platform = 10;
+  // Bumped only after an unclean reboot of that host.
+  uint64 generation = 11;
+  Trust trust = 12;
+  Presence presence = 13;
+  // Where discovery found a candidate; what pairing dials.
+  repeated string addrs = 14;
+}
+
+enum Trust {
+  TRUST_UNSPECIFIED = 0;
+  TRUSTED = 1;
+  // Found by discovery, never paired.
+  CANDIDATE = 2;
+}
+
+enum Presence {
+  PRESENCE_UNSPECIFIED = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  AWAY = 3;
 }
 
 enum HostVia {
@@ -437,241 +312,214 @@ enum HostVia {
   HOST_VIA_DIRECT = 1;
   HOST_VIA_RELAY = 2;
   HOST_VIA_SSH = 3;
-  HOST_VIA_OFFLINE = 4;
+  reserved 4;
 }
 
+message HostRemoved {
+  bytes host_id = 1;
+}
+
+// The inventory row: lifecycle from the daemon, phase and working_on copied
+// from the snapshot envelope, never a snapshot.
 message Agent {
   bytes agent_id = 1;
   bytes host_id = 2;
-  optional string name = 3;
-  string command = 4;
-  string working_dir = 5;
-  AgentKind kind = 6;
-  reserved 7;
-  bool readonly = 8;
-  repeated string args = 9;
-  int64 created_at_unix_ms = 10;
-  optional AgentParent parent = 11;
-  optional WorkingOn working_on = 12;
-  // When the host last saw the agent do anything: a transcript row, an ask,
-  // a tool call. Dated by the host where it happened, so every client orders
-  // and ages agents by the same fact whether or not it reads their streams.
-  int64 last_activity_unix_ms = 16;
-  optional AgentSummary summary = 13;
-  optional Progress progress = 14;
-  uint64 inventory_revision = 15;
+  Kind kind = 3;
+  optional string name = 4;
+  string cwd = 5;
+  optional AgentParent parent = 6;
+  int64 created_at_ms = 7;
+  Lifecycle lifecycle = 8;
+  optional string exit_cause = 9;
+  Phase phase = 10;
+  optional WorkingOn working_on = 11;
+  // The snapshot envelope's at_ms: when the agent last did anything, on the
+  // clock of the host where it happened.
+  int64 last_activity_ms = 12;
+  reserved 13;
+  string producer_version = 14;
+  uint32 incarnation = 15;
 }
 
-enum SummaryAttention {
-  SUMMARY_ATTENTION_UNSPECIFIED = 0;
-  SUMMARY_ATTENTION_UNKNOWN = 1;
-  SUMMARY_ATTENTION_IDLE = 2;
-  SUMMARY_ATTENTION_WORKING = 3;
-  SUMMARY_ATTENTION_NEEDS_YOU = 4;
+// The kind is the interpreter.
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  CLAUDE_PTY = 1;
+  CLAUDE_SDK = 2;
+  CODEX = 3;
 }
 
-enum SummaryWhy {
-  SUMMARY_WHY_UNSPECIFIED = 0;
-  SUMMARY_WHY_PERMISSION = 1;
-  SUMMARY_WHY_QUESTION = 2;
-  SUMMARY_WHY_FINISHED = 3;
-}
-
-enum SummaryPhase {
-  SUMMARY_PHASE_UNSPECIFIED = 0;
-  SUMMARY_PHASE_RUNNING = 1;
-  SUMMARY_PHASE_EXITED = 2;
-}
-
-enum SummaryField {
-  SUMMARY_FIELD_UNSPECIFIED = 0;
-  SUMMARY_FIELD_ATTENTION = 1;
-  SUMMARY_FIELD_PHASE = 2;
-  SUMMARY_FIELD_LAST_ACTIVITY = 3;
-  SUMMARY_FIELD_TODO = 4;
-  SUMMARY_FIELD_CONTEXT = 5;
-  SUMMARY_FIELD_MODEL = 6;
-  SUMMARY_FIELD_OUTSTANDING = 7;
-}
-
-enum ContextMeterSource {
-  CONTEXT_METER_SOURCE_UNSPECIFIED = 0;
-  CONTEXT_METER_SOURCE_ASSISTANT_USAGE = 1;
-  CONTEXT_METER_SOURCE_RESULT_USAGE = 2;
-  CONTEXT_METER_SOURCE_ASSISTANT_CONTEXT_USAGE = 3;
-  CONTEXT_METER_SOURCE_COMPACT_BOUNDARY = 4;
-}
-
-message SummaryTodoProgress {
-  uint64 done = 1;
-  uint64 total = 2;
-  optional string current = 3;
-}
-
-message SummaryContextMeter {
-  uint64 used_tokens = 1;
-  optional uint64 window_tokens = 2;
-  ContextMeterSource source = 3;
-}
-
-message AgentSummary {
-  uint64 through = 1;
-  uint32 producer_version = 2;
-  int64 observed_at_unix_ms = 3;
-  bool stale = 4;
-  uint64 revision = 5;
-  SummaryAttention attention = 6;
-  optional SummaryWhy why = 7;
-  SummaryPhase phase = 8;
-  optional int32 exit_code = 9;
-  optional int64 last_activity_unix_ms = 10;
-  optional SummaryTodoProgress todo = 11;
-  optional SummaryContextMeter context = 12;
-  optional string model = 13;
-  repeated SummaryField unknown = 14;
-}
-
-message Progress {
-  uint64 through = 1;
-  int64 at_unix_ms = 2;
-  uint64 revision = 3;
-}
-
-message AgentSummaryEvent {
-  bytes host_id = 1;
-  bytes agent_id = 2;
-  AgentSummary envelope = 3;
-}
-
-message AgentProgressEvent {
-  bytes host_id = 1;
-  bytes agent_id = 2;
-  Progress progress = 3;
-}
-
-message AgentParent {
-  bytes agent_id = 1;
-  bytes host_id = 2;
+enum Lifecycle {
+  LIFECYCLE_UNSPECIFIED = 0;
+  LIVE = 1;
+  EXITED = 2;
 }
 
 message WorkingOn {
   string text = 1;
-  int64 updated_at_unix_ms = 2;
+  int64 updated_at_ms = 2;
 }
 
-message Envelope {
-  bytes id = 1;
-  optional bytes context = 2;
-  Sender from = 3;
-  AgentParent to = 4;
-  EnvelopeKind kind = 5;
-  string text = 6;
-}
-
-message Sender {
-  oneof value {
-    AgentSender agent = 1;
-    Human human = 2;
-  }
-}
-
-message AgentSender {
-  bytes agent_id = 1;
-  bytes host_id = 2;
-  string name = 3;
-  string kind = 4;
-}
-
-message Human {}
-
-enum EnvelopeKind {
-  ENVELOPE_KIND_UNSPECIFIED = 0;
-  ENVELOPE_KIND_MESSAGE = 1;
-  ENVELOPE_KIND_COMPLETED = 2;
-  ENVELOPE_KIND_EXITED = 3;
-}
-
-message AgentUp {
-  Agent agent = 1;
-}
-message AgentUpdated {
-  Agent agent = 1;
-}
-message AgentDown {
+message AgentRemoved {
   bytes host_id = 1;
   bytes agent_id = 2;
   optional string reason = 3;
-  uint64 inventory_revision = 4;
 }
 
 // ---------------------------------------------------------------------------
-// Agent service
+// Client and peer services
 // ---------------------------------------------------------------------------
 
-service AgentService {
-  // Subscribe to this host's agent inventory: snapshot (one AgentUp per
-  // currently-known agent) then SnapshotComplete then deltas.
-  // Hosts with no supported agents MUST reject with FAILED_PRECONDITION.
-  rpc SubscribeAgentEvents(SubscribeAgentEventsRequest) returns (stream SubscribeAgentEventsResponse);
+// The whole client-facing surface.
+service ClientService {
+  rpc SubscribeInventory(Empty) returns (stream InventoryEvent);
+  // Fleet-wide name to row: NOT_FOUND, or AmbiguousAgentName with the
+  // candidates. Every other call takes an agent id.
+  rpc ResolveAgent(ResolveAgentRequest) returns (Agent);
+  rpc Subscribe(SubscribeRequest) returns (stream SessionEvent);
+  rpc Fetch(FetchRequest) returns (FetchResponse);
+  rpc Get(GetRequest) returns (Item);
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc RenameAgent(RenameAgentRequest) returns (Agent);
+  // A registry operation for the CLI, never a chat control.
+  rpc StopAgent(StopAgentRequest) returns (Empty);
+  // Spawn the directory again.
+  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
+  // Cascades to children.
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  // Also called by the tool server with the agent's identity.
+  rpc SendMessage(Envelope) returns (SendMessageResponse);
+  // The only put: written into that agent's directory.
+  rpc PutBlob(PutBlobRequest) returns (BlobRef);
+  rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
+  // Puts the patch blob on the host and returns the Diff value.
+  rpc Diff(DiffRequest) returns (amux.v1.Diff);
+  rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
+  // The one bundle format.
+  rpc Dump(DumpRequest) returns (DumpResponse);
+}
 
-  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
-  rpc RenameAgent(RenameAgentRequest) returns (RenameAgentResponse);
+// Daemon to daemon, over the link's application streams. Replication is a
+// daemon being a client of its peer; every request and response is the one
+// ClientService uses.
+service PeerService {
+  rpc SubscribeInventory(Empty) returns (stream InventoryEvent);
+  rpc Subscribe(SubscribeRequest) returns (stream SessionEvent);
+  rpc Fetch(FetchRequest) returns (FetchResponse);
+  rpc Get(GetRequest) returns (Item);
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc RenameAgent(RenameAgentRequest) returns (Agent);
+  rpc StopAgent(StopAgentRequest) returns (Empty);
+  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
   rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
   rpc SendMessage(Envelope) returns (SendMessageResponse);
-  rpc SetAgentStatus(SetAgentStatusRequest) returns (SetAgentStatusResponse);
-
-  // Subscribe to an agent's session output. The selected oneof arm names the
-  // protocol and carries its typed arguments.
-  rpc SubscribeSession(SubscribeSessionRequest) returns (stream SubscribeSessionResponse);
-
-  // Send input/control to an agent independently of subscriptions.
-  rpc SendInput(SendInputRequest) returns (SendInputResponse);
-
-  rpc PutArtifact(PutArtifactRequest) returns (PutArtifactResponse);
-  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
-  rpc Diff(DiffRequest) returns (DiffResponse);
+  rpc PutBlob(PutBlobRequest) returns (BlobRef);
+  rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
+  rpc Diff(DiffRequest) returns (amux.v1.Diff);
   rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
 }
 
-message SubscribeAgentEventsRequest {}
+message ResolveAgentRequest {
+  string name = 1;
+}
 
-message SubscribeAgentEventsResponse {
-  oneof event {
-    HostInventory host_inventory = 9;
-    AgentUp agent_up = 10;
-    AgentDown agent_down = 11;
-    AgentUpdated agent_updated = 12;
-    AgentSummaryEvent summary = 13;
-    AgentProgressEvent progress = 14;
-
-    SnapshotComplete snapshot_complete = 100;
+// Clients send tail; a peer source sends after toward its origin.
+message SubscribeRequest {
+  bytes agent_id = 1;
+  oneof from {
+    uint32 tail = 2;
+    After after = 3;
   }
+}
+
+// The delta if it is at most cap rows, else Reset and a tail of cap.
+message After {
+  uint64 revision = 1;
+  uint32 cap = 2;
+}
+
+message SessionEvent {
+  oneof of {
+    Snapshot snapshot = 1;
+    Item item = 2;
+    Append append = 3;
+    CaughtUp caught_up = 5;
+    Lagged lagged = 6;
+    Reset reset = 7;
+    Detached detached = 8;
+  }
+}
+
+// "You hold what the origin holds as of now", on every stream. On a session
+// stream, the origin's revision replay is complete through: a source stores
+// it as its cursor and clients ignore it.
+message CaughtUp {
+  uint64 revision = 1;
+}
+
+// The stream closes after this; the client re-tails.
+message Lagged {}
+
+// Forget the transcript; a fresh tail follows, then CaughtUp.
+message Reset {}
+
+// The origin is not being followed; rows may be stale.
+message Detached {}
+
+message FetchRequest {
+  bytes agent_id = 1;
+  optional uint64 before_order = 2;
+  uint32 limit = 3;
+}
+
+// By order, newest first; exhausted means no older history exists.
+message FetchResponse {
+  repeated Item items = 1;
+  bool exhausted = 2;
+}
+
+message GetRequest {
+  bytes agent_id = 1;
+  string key = 2;
+}
+
+message SendInputRequest {
+  bytes agent_id = 1;
+  Input input = 2;
 }
 
 message CreateAgentRequest {
   bytes agent_id = 1;
-  optional string name = 2;
-  optional AgentParent parent = 3;
-  optional string initial_prompt = 4;
-
-  oneof agent {
+  optional bytes host_id = 2;
+  optional string name = 3;
+  optional AgentParent parent = 4;
+  // The same Input as SendInput, so a first prompt carries attachments.
+  optional Input initial_prompt = 5;
+  string cwd = 6;
+  // Which interpreter: the config arm names only the provider.
+  Kind kind = 7;
+  oneof config {
     ClaudeCreateConfig claude = 10;
     CodexCreateConfig codex = 11;
-    // Dev/test only. Production servers MUST reject this with UNIMPLEMENTED.
-    TestAgentCreateConfig test_agent = 100;
   }
-}
-
-message CreateAgentResponse {
-  Agent agent = 1;
 }
 
 message RenameAgentRequest {
   bytes agent_id = 1;
   string name = 2;
 }
-message RenameAgentResponse {
-  Agent agent = 1;
+
+message StopAgentRequest {
+  bytes agent_id = 1;
+  StopMode mode = 2;
+}
+
+// The composer of an exited chat sends its draft through initial_prompt.
+message ResumeAgentRequest {
+  bytes agent_id = 1;
+  optional Input initial_prompt = 2;
 }
 
 message DeleteAgentRequest {
@@ -687,73 +535,20 @@ message SendMessageResponse {
   bytes envelope_id = 1;
 }
 
-message SetAgentStatusRequest {
+message PutBlobRequest {
   bytes agent_id = 1;
-  optional string working_on = 2;
+  string name = 2;
+  string mime = 3;
+  bytes bytes = 4;
 }
 
-message SetAgentStatusResponse {}
-
-// ---------------------------------------------------------------------------
-// Sessions
-// ---------------------------------------------------------------------------
-
-message SubscribeSessionRequest {
+message GetBlobRequest {
   bytes agent_id = 1;
-  oneof protocol {
-    TerminalV1Args terminal_v1 = 10;
-    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
-    ClaudeSdkV1Args claude_sdk_v1 = 12;
-    CodexSdkV1Args codex_sdk_v1 = 13;
-    TestEchoV1Args test_echo_v1 = 100;
-  }
+  bytes hash = 2;
 }
 
-message SubscribeSessionResponse {
-  oneof event {
-    SessionOpened opened = 1;
-    SessionOutput output = 2;
-    ReplayComplete replay_complete = 3;
-    SessionClosed closed = 4;
-  }
-}
-
-message SendInputRequest {
-  bytes agent_id = 1;
-  // Client-generated id for correlating protocol-defined input results.
-  bytes input_id = 2;
-  repeated string pin = 3;
-  oneof event {
-    TerminalV1Input terminal_v1 = 10;
-    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
-    ClaudeSdkV1Input claude_sdk_v1 = 12;
-    CodexSdkV1Input codex_sdk_v1 = 13;
-    SessionControl control = 20;
-    TestEchoV1Input test_echo_v1 = 100;
-  }
-}
-
-message SendInputResponse {}
-
-message PutArtifactRequest {
-  bytes agent_id = 1;
-  ArtifactKind kind = 2;
-  string name = 3;
-  string mime = 4;
-  bytes bytes = 5;
-}
-
-message PutArtifactResponse {
-  ArtifactRef artifact = 1;
-}
-
-message GetArtifactRequest {
-  bytes agent_id = 1;
-  string id = 2;
-}
-
-message GetArtifactResponse {
-  ArtifactRef artifact = 1;
+message GetBlobResponse {
+  BlobRef blob = 1;
   bytes bytes = 2;
 }
 
@@ -762,74 +557,40 @@ message DiffRequest {
   DiffBase base = 2;
 }
 
-message DiffResponse {
-  ArtifactRef artifact = 1;
-  string patch = 2;
-  BaseIdentity identity = 3;
-  repeated DiffFile files = 4;
+// Host-owned discovery; the client chooses a host, never a search root.
+message ListRepositoriesRequest {
+  optional string query = 1;
+  uint32 limit = 2;
+  // Absent means the answering host.
+  optional bytes host_id = 3;
 }
 
-// Side-channel control event. It is a directive about the session itself,
-// rather than data flowing through one provider protocol.
-message SessionControl {
-  oneof control {
-    TerminalSize resize = 1;
-  }
+message ListRepositoriesResponse {
+  repeated ProjectEntry recent = 1;
+  repeated ProjectEntry repositories = 2;
+  repeated string roots = 3;
+}
+message ProjectEntry {
+  string path = 1;
+  string name = 2;
+  optional int64 last_used_unix_ms = 3;
 }
 
-message ReplayFacts {
-  uint64 retained_from = 1;
-  uint64 through = 2;
-  uint64 selected_from = 3;
-  uint64 reset_at = 4;
-  oneof outcome {
-    Continuous continuous = 5;
-    Truncated truncated = 6;
-    Reset reset = 7;
-  }
+// Assembles the host-side parts of a dump bundle into the reports
+// directory: the agents' journal tails, store slices and agent parts, all
+// redacted.
+message DumpRequest {
+  // Empty means every agent of the profile.
+  repeated bytes agent_ids = 1;
+  string reason = 2;
+  // Produced on an invariant violation or panic rather than on request.
+  bool automatic = 3;
 }
 
-message Continuous {}
-message Truncated { uint64 missing_after = 1; }
-message Reset { string reason = 1; }
-
-message SessionOpened {
-  // Unset for byte-oriented terminal sessions.
-  optional ReplayFacts replay = 1;
+message DumpResponse {
+  string report_path = 1;
+  bytes bundle = 2;
 }
-
-message SessionOutput {
-  oneof output {
-    TerminalV1Output terminal_v1 = 10;
-    StructuredRow claude_pty_transcript_v1 = 11;
-    StructuredRow claude_sdk_v1 = 12;
-    StructuredRow codex_sdk_v1 = 13;
-    TestEchoV1Output test_echo_v1 = 100;
-  }
-}
-
-message SessionClosed {
-  oneof reason {
-    AgentDeleted agent_deleted = 1;
-    AgentExited agent_exited = 2;
-    HostUnreachable host_unreachable = 3;
-    InternalError internal_error = 4;
-    Reset reset = 5;
-  }
-}
-
-message AgentDeleted {}
-message AgentExited {
-  optional int32 exit_code = 1;
-}
-message HostUnreachable {}
-message InternalError {
-  string detail = 1;
-}
-
-// ---------------------------------------------------------------------------
-// Client service
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Installation front door (local Unix socket and in-process only)
@@ -837,7 +598,7 @@ message InternalError {
 
 service ProfileService {
   rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
-  // Snapshot, SnapshotComplete, then ordered events; ABORTED requires a fresh watch.
+  // Snapshot, CaughtUp, then ordered events; ABORTED requires a fresh watch.
   rpc WatchProfiles(WatchProfilesRequest) returns (stream WatchProfilesResponse);
   rpc CreateProfile(CreateProfileRequest) returns (ProfileInfo);
   rpc BindProfile(BindProfileRequest) returns (ProfileInfo);
@@ -857,16 +618,11 @@ service ProfileService {
   rpc ListPeers(ProfileRequest) returns (ListPeersResponse);
   rpc GetPeer(ProfileGetPeerRequest) returns (GetPeerResponse);
   rpc Unpair(ProfileUnpairRequest) returns (UnpairResponse);
-  rpc ListPairingCandidates(ProfileRequest) returns (ListPairingCandidatesResponse);
-  rpc DebugProfile(ProfileDebugRequest) returns (DebugResponse);
 }
 
 service InstallationService {
   rpc GetInfo(GetInfoRequest) returns (InstallationInfo);
-  rpc SuspendAll(SuspendAllRequest) returns (SuspendAllResponse);
-  rpc ResumeAll(ResumeAllRequest) returns (ResumeAllResponse);
   rpc Shutdown(InstallationShutdownRequest) returns (ShutdownResponse);
-  rpc DebugInstallation(DebugRequest) returns (DebugResponse);
 }
 
 enum Intent {
@@ -884,7 +640,8 @@ enum Observed {
   OBSERVED_RETRYING = 4;
   OBSERVED_AUTHENTICATION_REQUIRED = 5;
   reserved 6;
-  OBSERVED_UPDATE_REQUIRED = 7;
+  // The cloud refused this build as too old for its protocol.
+  OBSERVED_VERSION_MISMATCH = 7;
   OBSERVED_STARTUP_FAILED = 8;
 }
 enum Tier {
@@ -921,7 +678,7 @@ message WatchProfilesResponse {
   oneof event {
     ProfileInfo upserted = 2;
     string removed_id = 3;
-    SnapshotComplete snapshot_complete = 4;
+    CaughtUp caught_up = 4;
   }
 }
 message CreateProfileRequest { string operation_id = 1; optional string label = 2; }
@@ -980,199 +737,13 @@ enum PeerVia {
   PEER_VIA_RELAY = 2;
   PEER_VIA_SSH = 3;
 }
-message PairingCandidate {
-  HostEntry host = 1;
-  PeerVia via = 2;
-  repeated string addrs = 3;
-}
-message ListPairingCandidatesResponse { repeated PairingCandidate candidates = 1; }
-message ProfileDebugRequest { string profile_id = 1; DebugRequest debug = 2; }
 message GetInfoRequest {}
 message InstallationInfo {
   string version = 1;
   string root = 2;
   string front_door_path = 3;
 }
-message SuspendAllRequest { string operation_id = 1; SuspendReason reason = 2; }
-message ProfileSuspendResult { string profile_id = 1; uint64 suspended_count = 2; repeated string agent_ids = 3; }
-message SuspendAllResponse { repeated ProfileSuspendResult profiles = 1; }
-message ResumeAllRequest { string operation_id = 1; }
-enum AgentResumeStatus {
-  AGENT_RESUME_STATUS_UNSPECIFIED = 0;
-  AGENT_RESUME_STATUS_RESUMED = 1;
-  AGENT_RESUME_STATUS_ALREADY_RUNNING = 2;
-  AGENT_RESUME_STATUS_FAILED = 3;
-}
-message AgentResumeResult { string agent_id = 1; AgentResumeStatus status = 2; }
-message ProfileResumeResult {
-  string profile_id = 1;
-  uint64 resumed_count = 2;
-  uint64 failed_count = 3;
-  repeated AgentResumeResult agents = 4;
-  optional string error = 5;
-}
-message ResumeAllResponse { repeated ProfileResumeResult profiles = 1; }
 message InstallationShutdownRequest { string operation_id = 1; }
-
-// New architecture client-facing service.
-service ClientService {
-  rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
-  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
-  rpc SubscribeHosts(SubscribeHostsRequest) returns (stream SubscribeHostsResponse);
-  rpc SubscribeAgents(SubscribeAgentsRequest) returns (stream SubscribeAgentsResponse);
-
-  rpc CreateAgent(ClientCreateAgentRequest) returns (CreateAgentResponse);
-  rpc RenameAgent(ClientRenameAgentRequest) returns (RenameAgentResponse);
-  rpc DeleteAgent(ClientDeleteAgentRequest) returns (DeleteAgentResponse);
-  rpc SendMessage(ClientSendMessageRequest) returns (SendMessageResponse);
-  rpc SetAgentStatus(ClientSetAgentStatusRequest) returns (SetAgentStatusResponse);
-
-  rpc SubscribeSession(ClientSubscribeSessionRequest) returns (stream SubscribeSessionResponse);
-  rpc SendInput(ClientSendInputRequest) returns (SendInputResponse);
-  rpc PutArtifact(ClientPutArtifactRequest) returns (PutArtifactResponse);
-  rpc GetArtifact(ClientGetArtifactRequest) returns (GetArtifactResponse);
-  rpc Diff(ClientDiffRequest) returns (DiffResponse);
-  rpc ListRepositories(ClientListRepositoriesRequest) returns (ListRepositoriesResponse);
-
-  rpc Debug(DebugRequest) returns (DebugResponse);
-
-  rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
-}
-
-message ListAgentsRequest {}
-message ListAgentsResponse {
-  repeated Agent agents = 1;
-}
-
-message SubscribeHostsRequest {}
-message SubscribeHostsResponse {
-  oneof event {
-    HostUpdated host_updated = 1;
-    HostRemoved host_removed = 2;
-    SnapshotComplete snapshot_complete = 100;
-  }
-}
-
-message HostUpdated {
-  HostEntry host = 1;
-}
-
-message HostRemoved {
-  bytes host_id = 1;
-}
-
-// Last complete inventory observed from one remote host. Subsequent snapshots
-// and confirmed deletions replace this membership; reachability loss does not.
-message HostInventory {
-  bytes host_id = 1;
-  repeated Agent agents = 2;
-  uint64 through_revision = 3;
-}
-
-message SubscribeAgentsRequest {}
-message SubscribeAgentsResponse {
-  oneof event {
-    HostInventory host_inventory = 4;
-    AgentUp agent_up = 1;
-    AgentDown agent_down = 2;
-    AgentUpdated agent_updated = 3;
-    SnapshotComplete snapshot_complete = 100;
-    AgentSummaryEvent summary = 13;
-    AgentProgressEvent progress = 14;
-  }
-}
-
-message ClientCreateAgentRequest {
-  bytes agent_id = 1;
-  optional string name = 2;
-  optional bytes host_id = 3;
-  optional AgentParent parent = 4;
-  optional string initial_prompt = 5;
-
-  oneof agent {
-    ClaudeCreateConfig claude = 10;
-    CodexCreateConfig codex = 11;
-    TestAgentCreateConfig test_agent = 100;
-  }
-}
-
-message ClientRenameAgentRequest {
-  AgentRef agent = 1;
-  string name = 2;
-}
-
-message ClientDeleteAgentRequest {
-  AgentRef agent = 1;
-  optional bytes caller_agent_id = 2;
-}
-
-message ClientSendMessageRequest {
-  AgentRef to = 1;
-  string text = 2;
-  optional bytes context = 3;
-  optional bytes from_agent_id = 4;
-}
-
-message ClientSetAgentStatusRequest {
-  AgentRef agent = 1;
-  optional string working_on = 2;
-}
-
-message ClientSubscribeSessionRequest {
-  AgentRef agent = 1;
-  oneof protocol {
-    TerminalV1Args terminal_v1 = 10;
-    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
-    ClaudeSdkV1Args claude_sdk_v1 = 12;
-    CodexSdkV1Args codex_sdk_v1 = 13;
-    TestEchoV1Args test_echo_v1 = 100;
-  }
-}
-
-message ClientSendInputRequest {
-  AgentRef agent = 1;
-  bytes input_id = 2;
-  repeated string pin = 3;
-  oneof event {
-    TerminalV1Input terminal_v1 = 10;
-    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
-    ClaudeSdkV1Input claude_sdk_v1 = 12;
-    CodexSdkV1Input codex_sdk_v1 = 13;
-    SessionControl control = 20;
-    TestEchoV1Input test_echo_v1 = 100;
-  }
-}
-
-message ClientPutArtifactRequest {
-  AgentRef agent = 1;
-  ArtifactKind kind = 2;
-  string name = 3;
-  string mime = 4;
-  bytes bytes = 5;
-  // Agent-originated puts are pinned and announced on the agent's output
-  // stream before this call returns. The client service accepts this only
-  // for an agent hosted by the local daemon.
-  bool agent_attach = 6;
-}
-
-message ClientGetArtifactRequest {
-  AgentRef agent = 1;
-  string id = 2;
-}
-
-message ClientDiffRequest {
-  AgentRef agent = 1;
-  DiffBase base = 2;
-}
-
-message HandleHookRequest {
-  bytes agent_id = 1;
-  bytes payload = 2;
-  bool external = 3;
-  map<string, string> env = 4;
-}
-
-message HandleHookResponse {}
 
 // SSH bootstrap includes the local selector needed for subsequent stdio relays.
 message SshPairingIdentity {
@@ -1265,28 +836,7 @@ message UnpairResponse {
   PeerEntry removed_peer = 1;
 }
 
-message DebugRequest {
-  bool verbose = 1;
-  DebugFormat format = 2;
-}
-
-enum DebugFormat {
-  DEBUG_FORMAT_UNSPECIFIED = 0;
-  DEBUG_FORMAT_YAML = 1;
-  DEBUG_FORMAT_JSON = 2;
-}
-
-message DebugResponse {
-  string dump = 1;
-}
-
 message ShutdownResponse {}
-
-enum SuspendReason {
-  SUSPEND_REASON_UNSPECIFIED = 0;
-  SUSPEND_REASON_USER = 1;
-  SUSPEND_REASON_UPDATE = 2;
-}
 
 message StartPairingRequest {
   enum Mode {
@@ -1329,22 +879,3 @@ message CancelPairingRequest {}
 message CancelPairingResponse {}
 
 // Host-owned discovery; the client chooses a host, never a search root.
-message ListRepositoriesRequest {
-  optional string query = 1;
-  uint32 limit = 2;
-}
-message ClientListRepositoriesRequest {
-  bytes host_id = 1;
-  optional string query = 2;
-  uint32 limit = 3;
-}
-message ListRepositoriesResponse {
-  repeated ProjectEntry recent = 1;
-  repeated ProjectEntry repositories = 2;
-  repeated string roots = 3;
-}
-message ProjectEntry {
-  string path = 1;
-  string name = 2;
-  optional int64 last_used_unix_ms = 3;
-}

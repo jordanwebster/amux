@@ -31,7 +31,7 @@ test *ARGS:
 
 # Run tests for one named workspace crate.
 test-crate CRATE *ARGS:
-    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; if [ "$crate" = store ]; then {{bounded}} 1200 cargo build --locked -p store --bin store-family-v2-fixture --features bundled,family-definition-v2-fixture; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
+    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
 # Exercise the shared merge algebra and provider folds.
 test-fold *ARGS:

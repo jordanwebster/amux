@@ -2,160 +2,225 @@ syntax = "proto3";
 
 package amux.v1;
 
-// Claude-specific creation config and structured protocol payloads.
+import "amux/v1/records.proto";
 
-message TerminalSize {
-  uint32 rows = 1;
-  uint32 cols = 2;
-}
-
-enum ClaudeDriver {
-  CLAUDE_DRIVER_UNSPECIFIED = 0;
-  CLAUDE_DRIVER_PTY = 1;
-  CLAUDE_DRIVER_SDK = 2;
-}
+// Claude's per-kind bodies: the item and snapshot messages encoded into
+// Item.body and Snapshot.body for kinds claude_pty and claude_sdk, the
+// inputs each accepts, and the answer body AnswerInput carries for them.
 
 message ClaudeCreateConfig {
-  string working_dir = 1;
-  repeated string args = 2;
-  optional TerminalSize initial_terminal_size = 10;
-  ClaudeDriver driver = 11;
+  // Extra provider arguments exactly as the person gave them.
+  repeated string args = 1;
+  optional string model = 2;
+  optional string permission_mode = 3;
+  optional string effort = 4;
 }
 
-message ClaudePtyTranscriptV1Input {
-  uint64 expected_seq = 1;
-  oneof intent {
-    ClaudePrompt prompt = 10;
-    ClaudeInterrupt interrupt = 11;
-    ClaudeCyclePermissionMode cycle_permission_mode = 12;
-    ClaudeAnswer answer = 13;
+// ---------------------------------------------------------------------------
+// Claude in a terminal
+// ---------------------------------------------------------------------------
+
+message ClaudePtyItem {
+  oneof kind {
+    Prompt prompt = 1;
+    Text message = 2;
+    Thinking thinking = 3;
+    ToolCall tool = 4;
+    Turn turn = 5;
+    Compaction compaction = 6;
+    CompactSummary compact_summary = 7;
+    TaskNotification task = 8;
+    Interruption interruption = 9;
+    AgentMessage agent_message = 10;
+    ApiError api_error = 11;
+    Boundary boundary = 12;
+    SlashOutput slash = 13;
+    Unrecognized unrecognized = 14;
   }
 }
 
-message ClaudePrompt {
-  string text = 1;
+// The summary a compaction wrote into the transcript; the summary is the
+// envelope text.
+message CompactSummary {}
+
+// A background task's completion notice injected into the conversation.
+message TaskNotification {
+  string task_id = 1;
+  string status = 2;
+  string summary = 3;
 }
 
-message ClaudeInterrupt {}
+// "You stopped it."
+message Interruption {}
 
-message ClaudeCyclePermissionMode {}
+// Phase lives in the Snapshot envelope, once.
+message ClaudePtySnapshot {
+  reserved 1;
+  repeated Ask asks = 2;
+  TaskList tasks = 3;
+  ContextMeter context = 4;
+  optional string model = 5;
+  optional string permission_mode = 6;
+  string provider_session = 7;
+  UsageLimits usage = 8;
+  ToolServerHealth servers = 9;
+  SignIn sign_in = 10;
+  BackgroundProcesses background_processes = 11;
+}
 
-message ClaudeAnswer {
-  string ask_id = 1;
-  oneof answer {
-    ClaudePermissionAnswer permission = 10;
-    ClaudePlanAnswer plan = 11;
-    ClaudeQuestionResponse question = 12;
+message ClaudePtyInput {
+  oneof of {
+    PromptInput prompt = 1;
+    AnswerInput answer = 2;
+    Key key = 3;
+    Clear clear = 4;
+    Interrupt interrupt = 5;
+    WithdrawQueued withdraw = 6;
   }
 }
 
-message ClaudePermissionAnswer {
-  oneof decision {
-    ClaudePermissionAllowOnce allow_once = 10;
-    ClaudePermissionAllowScoped allow_scoped = 11;
-    ClaudePermissionDeny deny = 12;
+// The semantic keymap vocabulary. The agent process maps a key to PTY bytes
+// with the keymap resolved for the observed Claude version; raw bytes never
+// cross the wire.
+message Key {
+  KeyName key = 1;
+}
+
+enum KeyName {
+  KEY_NAME_UNSPECIFIED = 0;
+  KEY_NAME_ESCAPE = 1;
+  KEY_NAME_ACCEPT = 2;
+  KEY_NAME_CYCLE_PERMISSION_MODE = 3;
+  KEY_NAME_TOGGLE_THINKING = 4;
+  KEY_NAME_UP = 5;
+  KEY_NAME_DOWN = 6;
+  KEY_NAME_TAB = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Claude through the SDK
+// ---------------------------------------------------------------------------
+
+message ClaudeSdkItem {
+  oneof kind {
+    Prompt prompt = 1;
+    Text message = 2;
+    Thinking thinking = 3;
+    ToolCall tool = 4;
+    Task task = 5;
+    Turn turn = 6;
+    Status status = 7;
+    Boundary boundary = 8;
+    AgentMessage agent_message = 9;
+    ApiError api_error = 10;
+    SlashOutput slash = 11;
+    Unrecognized unrecognized = 12;
+    ModelSwitch model_switch = 13;
+    Compaction compaction = 14;
   }
 }
 
-message ClaudePermissionAllowOnce {}
-
-message ClaudePermissionAllowScoped {
-  uint64 suggestion = 1;
+// A subagent or background task the SDK reports with its own progress.
+message Task {
+  string task_id = 1;
+  string description = 2;
+  TaskState state = 3;
+  uint32 tool_count = 4;
+  string last_tool = 5;
+  // The key of the tool call that started it.
+  string tool_key = 6;
+  uint64 tokens = 7;
 }
 
-message ClaudePermissionDeny {
-  optional string feedback = 1;
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_RUNNING = 1;
+  TASK_STATE_COMPLETED = 2;
+  TASK_STATE_FAILED = 3;
+  TASK_STATE_STOPPED = 4;
 }
 
-message ClaudePlanAnswer {
-  oneof decision {
-    ClaudePlanApproveAuto approve_auto = 10;
-    ClaudePlanApproveManual approve_manual = 11;
-    ClaudePlanRequestChanges request_changes = 12;
+// A status the SDK reports as an event worth a row; the text is the envelope
+// text.
+message Status {
+  string status = 1;
+}
+
+message ClaudeSdkSnapshot {
+  reserved 1;
+  repeated Ask asks = 2;
+  TaskList tasks = 3;
+  ContextMeter context = 4;
+  optional string model = 5;
+  optional string effort = 6;
+  optional string permission_mode = 7;
+  repeated Task active_tasks = 8;
+  UsageLimits usage = 9;
+  ToolServerHealth servers = 10;
+  SignIn sign_in = 11;
+  BackgroundProcesses background_processes = 12;
+  string provider_session = 13;
+}
+
+message ClaudeSdkInput {
+  oneof of {
+    PromptInput prompt = 1;
+    AnswerInput answer = 2;
+    Interrupt interrupt = 3;
+    SetPermissionMode mode = 4;
+    SetModel model = 5;
+    Clear clear = 6;
+    WithdrawQueued withdraw = 7;
+    SetEffort effort = 8;
   }
 }
 
-message ClaudePlanApproveAuto {}
-
-message ClaudePlanApproveManual {}
-
-message ClaudePlanRequestChanges {
-  string feedback = 1;
-}
-
-message ClaudeQuestionResponse {
-  repeated ClaudeQuestionAnswer answers = 1;
-}
-
-message ClaudeQuestionAnswer {
-  repeated uint64 selected = 1;
-  optional string other = 2;
-}
-
-message ClaudeSdkV1Input {
-  oneof input {
-    ClaudeSdkPrompt prompt = 10;
-    ClaudeSdkInterrupt interrupt = 11;
-    ClaudeSdkPermissionDecision permission_decision = 12;
-    ClaudeSdkElicitationDecision elicitation_decision = 13;
-    ClaudeSdkDialogDecision dialog_decision = 14;
-    ClaudeSdkSetPermissionMode set_permission_mode = 15;
-    ClaudeSdkSetModel set_model = 16;
-    ClaudeSdkRequestContextBreakdown request_context_breakdown = 17;
-    ClaudeSdkSetEffort set_effort = 18;
-  }
-}
-
-message ClaudeSdkPrompt {
-  string text = 1;
-}
-
-message ClaudeSdkInterrupt {}
-
-message ClaudeSdkElicitationDecision {
-  string request_id = 1;
-  // Provider ElicitationResult JSON, including optional extension fields.
-  bytes result_json = 2;
-}
-
-message ClaudeSdkDialogDecision {
-  string request_id = 1;
-  // Provider UserDialogResult JSON; the completed result payload is opaque.
-  bytes result_json = 2;
-}
-
-message ClaudeSdkPermissionDecision {
-  string request_id = 1;
-  oneof decision {
-    ClaudeSdkPermissionAllow allow = 10;
-    ClaudeSdkPermissionDeny deny = 11;
-  }
-}
-
-message ClaudeSdkPermissionAllow {
-  optional bytes updated_input_json = 1;
-  repeated bytes updated_permissions_json = 2;
-  optional string tool_use_id = 3;
-}
-
-message ClaudeSdkPermissionDeny {
-  string message = 1;
-  optional bool interrupt = 2;
-  optional string tool_use_id = 3;
-}
-
-message ClaudeSdkSetPermissionMode {
+message SetPermissionMode {
   string mode = 1;
 }
 
-message ClaudeSdkSetModel {
-  // Absent restores the launch model.
-  optional string model = 1;
+// ---------------------------------------------------------------------------
+// Answers (AnswerInput.body for both Claude kinds)
+// ---------------------------------------------------------------------------
+
+message ClaudeAnswer {
+  oneof of {
+    PermissionAnswer permission = 1;
+    QuestionAnswer question = 2;
+    PlanAnswer plan = 3;
+    FormAnswer form = 4;
+    LinkAnswer link = 5;
+  }
 }
 
-message ClaudeSdkRequestContextBreakdown {}
+message PermissionAnswer {
+  oneof of {
+    PermissionAllow allow = 1;
+    PermissionDeny deny = 2;
+  }
+}
 
-message ClaudeSdkSetEffort {
-  // Absent clears the session effort override.
-  optional string effort = 1;
+message PermissionAllow {
+  // A ScopeChoice.index from the ask; absent allows once.
+  optional uint32 scope = 1;
+}
+
+message PermissionDeny {
+  string note = 1;
+  bool stop = 2;
+}
+
+message PlanAnswer {
+  oneof of {
+    PlanApprove approve = 1;
+    PlanSendBack send_back = 2;
+  }
+}
+
+message PlanApprove {
+  bool auto_accept_edits = 1;
+}
+
+message PlanSendBack {
+  string note = 1;
 }
