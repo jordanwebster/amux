@@ -1,3 +1,11 @@
+2026-09-26 — **CI runs on the rearchitect branch.**
+The rearchitecture (journals, one store per profile, one chat model on both
+clients) is about to be built by an unattended flight on `rearchitect`. Its
+CI will take a few rounds to get green, and waiting for a merge to `main` to
+learn that is too slow a loop, so the push trigger now includes the branch:
+each milestone can be pushed and its full matrix read back from GitHub while
+the work is still fresh. Nothing else in the workflow changes.
+
 2026-09-22 — **One licence for the whole repository: FSL-1.1-ALv2.**
 The core was dual MIT or Apache-2.0 and only `apps/` was under the Functional
 Source License. Everything is now under the FSL with its two-year Apache-2.0
