@@ -752,6 +752,7 @@ async fn follow(runtime: Weak<ProfileRuntime>, host: HostId) {
             return;
         };
         let reachable = edge.via(host).await != HostVia::Offline;
+        let route = edge.route(host).await;
         drop(edge);
         if !reachable {
             backoff = None;
@@ -771,33 +772,33 @@ async fn follow(runtime: Weak<ProfileRuntime>, host: HostId) {
         let clock = me.clock().clone();
         let until = clock.now_ms() + backoff.next();
         drop(me);
-        wait_while_reachable(&runtime, host, clock.sleep_until(until)).await;
+        wait_while_reachable(&runtime, host, route, clock.sleep_until(until)).await;
     }
 }
 
-/// Waits out `wait`, unless the host's route changes first: a host that
-/// goes away, or goes and comes back on a new link between two looks, is
-/// followed as soon as it is seen. Only a host that stays on the route it
-/// had is waited on for the whole backoff.
+/// Waits out `wait`, unless the host's route is no longer `followed`, the
+/// one the lost stream was opened on: a host that goes away, or goes and
+/// comes back on a new link, is followed as soon as that is seen. The
+/// comparison is with the route before the stream, not the route once it
+/// has ended, because a link restored quickly is already up by the time
+/// the stream's end is noticed. Only a host that stays on the route it had
+/// is waited on for the whole backoff.
 async fn wait_while_reachable(
     runtime: &Weak<ProfileRuntime>,
     host: HostId,
+    followed: Option<crate::routing::Route>,
     wait: agent_dir::Sleep,
 ) {
-    let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
-        return;
-    };
-    let route = edge.route(host).await;
-    drop(edge);
     let moved = async {
         loop {
-            tokio::time::sleep(ROUTE_POLL).await;
             let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
                 return;
             };
-            if route.is_none() || edge.route(host).await != route {
+            if followed.is_none() || edge.route(host).await != followed {
                 return;
             }
+            drop(edge);
+            tokio::time::sleep(ROUTE_POLL).await;
         }
     };
     tokio::select! {

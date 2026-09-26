@@ -21,7 +21,9 @@ use provider_fakes::script::Step;
 use store::{AgentKey, CommitClock, Marker, PageEnd, Store as _};
 use testnet::observe::{self, Mark, holds_for, marks};
 use testnet::{AgentDecl, JournalCut, Net, NetOptions, PATIENCE, Topology};
-use wire::{FetchRequest, Item, SessionEvent, StopMode, session_event};
+use wire::{
+    FetchRequest, InventoryEvent, Item, SessionEvent, StopMode, inventory_event, session_event,
+};
 
 fn text(text: &str) -> Step {
     Step::Text {
@@ -594,9 +596,10 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
 }
 
 /// A host that goes away and comes back between two of the follower's
-/// looks at its route is followed again at once: the backoff runs on the
-/// policy clock, which nothing here advances, so a follower that missed the
-/// gap would wait on it forever.
+/// looks at its route is followed again at once, and so is one whose new
+/// link is up before the follower notices that its stream on the old one
+/// ended: the backoff runs on the policy clock, which nothing here
+/// advances, so a follower that missed either would wait on it forever.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_link_back_before_the_follower_looks_is_followed_without_its_backoff() {
     let topology = desk_and_laptop().agent(
@@ -614,6 +617,34 @@ async fn a_link_back_before_the_follower_looks_is_followed_without_its_backoff()
         restore(&mut net).await;
         wait_current(&net, "laptop", "worker").await;
     }
+
+    // The follower is busy with a change to the worker while the link is
+    // cut and a new one comes up, and reads its stream's end only after.
+    let (release, released) = tokio::sync::watch::channel(false);
+    let (heard, mut hearing) = tokio::sync::mpsc::unbounded_channel();
+    let held = Arc::new(AtomicBool::new(false));
+    net.runtime("laptop")
+        .unwrap()
+        .set_inventory_hook(Some(Arc::new(move |_, event: &InventoryEvent| {
+            let about_an_agent = matches!(&event.of, Some(inventory_event::Of::Agent(_)));
+            if !about_an_agent || held.swap(true, Ordering::SeqCst) {
+                return SourceVerdict::Keep;
+            }
+            let _ = heard.send(());
+            let mut released = released.clone();
+            SourceVerdict::Hold(Box::pin(async move {
+                let _ = released.wait_for(|released| *released).await;
+            }))
+        })));
+    net.send("worker", "two").await.unwrap();
+    hearing
+        .recv()
+        .await
+        .expect("the follower hears the worker change");
+    sever(&mut net).await;
+    restore(&mut net).await;
+    release.send(true).unwrap();
+    wait_current(&net, "laptop", "worker").await;
     net.shutdown().await.unwrap();
 }
 

@@ -1,3 +1,15 @@
+2026-09-27 — **A host's follower picks up a quickly restored link at once.**
+When a host's inventory stream ends, its follower waits a backoff on the
+policy clock unless the host's route changes first. It read the route to
+compare against only after the stream had ended, so when a new link was
+already up by then (a short outage, a busy follower), it watched the new
+link for a change that never came and waited the whole backoff; in the
+testnet, whose policy clock nothing advances, the replica stayed Detached
+for good (about 1 run in 30 of the replication spec under load). The
+follower now compares against the route it read before opening the
+stream. The replication spec holds the follower on an inventory event
+across a sever and a restore, which failed every run before the change.
+
 2026-09-27 — **One abandoned QUIC dial no longer locks a network out of QUIC.**
 The relay and the LAN listener answer a first Initial with a Retry and
 allow each source address ten per minute. A client connection closed
