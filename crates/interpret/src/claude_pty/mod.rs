@@ -32,10 +32,14 @@ use serde_json::Value;
 use wire::{
     AgentSpec, Ask, Attachment, BackgroundProcesses, Boundary, BoundaryKind, ClaudeAnswer,
     ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, Step,
-    TaskList, TaskListEntry, ToolCall, ToolDecision, ToolState, claude_answer, claude_pty_input,
-    claude_pty_item, input, permission_answer, plan_answer,
+    ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item, input,
+    permission_answer, plan_answer,
 };
 
+use crate::claude_common::{
+    Task, describe_asks, describe_tasks, describe_tool, or_dash, same_json, split_tool_name,
+    task_list,
+};
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
     RedactTarget, Shared, SnapshotView, Stepped, agent_message_body, agent_message_key,
@@ -271,14 +275,6 @@ enum AskShape {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Task {
-    id: String,
-    subject: String,
-    status: i32,
-    active_form: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct PendingMessage {
     #[serde(with = "serde_pb::bytes")]
     id: Vec<u8>,
@@ -351,21 +347,7 @@ impl State {
     }
 
     fn body(&self) -> Vec<u8> {
-        let tasks = match &self.tasks {
-            None => unknown::task_list(),
-            Some(tasks) => TaskList {
-                known: true,
-                entries: tasks
-                    .iter()
-                    .map(|task| TaskListEntry {
-                        id: task.id.clone(),
-                        subject: task.subject.clone(),
-                        status: task.status,
-                        active_form: task.active_form.clone(),
-                    })
-                    .collect(),
-            },
-        };
+        let tasks = task_list(&self.tasks);
         let context = match self.context_tokens {
             None => unknown::context_meter(),
             Some(used_tokens) => ContextMeter {
@@ -700,20 +682,6 @@ impl Tool {
     }
 }
 
-/// `mcp__server__tool` as (server, tool); a built-in tool has no server.
-pub(crate) fn split_tool_name(name: &str) -> (String, String) {
-    if let Some(rest) = name.strip_prefix("mcp__")
-        && let Some((server, tool)) = rest.split_once("__")
-    {
-        return (server.to_owned(), tool.to_owned());
-    }
-    (String::new(), name.to_owned())
-}
-
-fn same_json(stored: &str, value: &Value) -> bool {
-    serde_json::from_str::<Value>(stored).is_ok_and(|stored| stored == *value)
-}
-
 /// The keystrokes an answer stands for and the decision it records, or
 /// None when the answer does not fit the ask.
 fn terminal_answer(
@@ -967,127 +935,8 @@ fn describe_item(body: &[u8]) -> ItemView {
     }
 }
 
-fn or_dash(text: &str) -> &str {
-    if text.is_empty() { "-" } else { text }
-}
-
-fn describe_tool(tool: &ToolCall) -> String {
-    let mut text = format!(
-        "{}{} {}",
-        if tool.server.is_empty() {
-            String::new()
-        } else {
-            format!("{}·", tool.server)
-        },
-        tool.name,
-        ToolState::try_from(tool.state).map_or("?", |state| state.as_str_name())
-    );
-    if tool.class == wire::ToolClass::Exploration as i32 {
-        text.push_str(" exploration");
-    }
-    if tool.background {
-        text.push_str(" background");
-    }
-    if let Some(decision) = &tool.decision {
-        text.push_str(&format!(
-            " decision={}{}{}{}",
-            DecisionOutcome::try_from(decision.outcome)
-                .map_or("?", |outcome| outcome.as_str_name()),
-            if decision.scope.is_empty() {
-                String::new()
-            } else {
-                format!(" scope={}", decision.scope)
-            },
-            if decision.note.is_empty() {
-                String::new()
-            } else {
-                format!(" note={}", Value::String(decision.note.clone()))
-            },
-            if decision.elsewhere { " elsewhere" } else { "" }
-        ));
-    }
-    if let Some(ended) = tool.ended_at_ms {
-        text.push_str(&format!(" ended={ended}"));
-    }
-    let input = String::from_utf8_lossy(&tool.input_json);
-    text.push_str(&format!(" input={}", clip(&input, 60)));
-    if !tool.outcome_text.is_empty() {
-        text.push_str(&format!(" out={}", clip(&tool.outcome_text, 60)));
-    }
-    text
-}
-
-fn clip(text: &str, chars: usize) -> String {
-    let clipped = match text.char_indices().nth(chars) {
-        Some((at, _)) => format!("{}…", &text[..at]),
-        None => text.to_owned(),
-    };
-    Value::String(clipped).to_string()
-}
-
 fn describe_snapshot(body: &[u8]) -> SnapshotView {
     let snapshot = ClaudePtySnapshot::decode(body).unwrap_or_default();
-    let asks = snapshot
-        .asks
-        .iter()
-        .map(|ask| {
-            let body = match &ask.body {
-                Some(wire::ask::Body::Permission(permission)) => format!(
-                    "permission:{}{}{}",
-                    permission.tool_name,
-                    if permission.server.is_empty() {
-                        String::new()
-                    } else {
-                        format!("@{}", permission.server)
-                    },
-                    permission
-                        .scopes
-                        .iter()
-                        .map(|scope| format!(
-                            "/{}{}",
-                            scope.destination,
-                            scope
-                                .rules
-                                .iter()
-                                .chain(&scope.directories)
-                                .map(|rule| format!(" {rule}"))
-                                .collect::<String>()
-                        ))
-                        .collect::<String>()
-                ),
-                Some(wire::ask::Body::Question(question)) => format!(
-                    "question:{}",
-                    question
-                        .questions
-                        .iter()
-                        .map(|question| format!(
-                            "{}{}{}",
-                            question.options.len(),
-                            if question.multi_select { "m" } else { "" },
-                            if question.allow_other { "+other" } else { "" }
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                ),
-                Some(wire::ask::Body::Plan(plan)) => {
-                    format!("plan:{}chars", plan.plan.chars().count())
-                }
-                Some(other) => format!("{other:?}"),
-                None => "none".into(),
-            };
-            format!(
-                "{}->{} {}",
-                ask.key,
-                if ask.item_key.is_empty() {
-                    "-"
-                } else {
-                    &ask.item_key
-                },
-                body
-            )
-        })
-        .collect::<Vec<_>>();
-    let tasks = snapshot.tasks.unwrap_or_default();
     let context = snapshot.context.unwrap_or_default();
     let background = snapshot.background_processes.unwrap_or_default();
     SnapshotView {
@@ -1098,7 +947,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .collect(),
         text: format!(
             "asks=[{}] session={} model={} mode={} context={} tasks={} background={}",
-            asks.join("; "),
+            describe_asks(&snapshot.asks),
             snapshot.provider_session.as_deref().unwrap_or("?"),
             snapshot.model.as_deref().unwrap_or("?"),
             snapshot.permission_mode.as_deref().unwrap_or("?"),
@@ -1107,25 +956,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             } else {
                 "?".into()
             },
-            if tasks.known {
-                format!(
-                    "[{}]",
-                    tasks
-                        .entries
-                        .iter()
-                        .map(|entry| format!(
-                            "{}:{}:{}",
-                            entry.id,
-                            wire::TaskListStatus::try_from(entry.status)
-                                .map_or("?", |status| status.as_str_name()),
-                            Value::String(entry.subject.clone())
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
-            } else {
-                "?".into()
-            },
+            describe_tasks(&snapshot.tasks.unwrap_or_default()),
             if background.known {
                 background.running.to_string()
             } else {

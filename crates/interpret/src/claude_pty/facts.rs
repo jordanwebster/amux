@@ -4,81 +4,20 @@
 use serde_json::Value;
 use wire::claude_pty_item::Kind;
 use wire::{
-    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, Question, QuestionAsk,
-    QuestionOption, ScopeChoice, TaskListStatus, ToolClass, ToolState, Turn, TurnOutcome,
+    Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ToolState, Turn, TurnOutcome,
 };
 
-use super::{
-    AskMeta, AskShape, Decision, PendingMessage, QuestionShape, Slash, State, Task, Tool,
-    item_body, split_tool_name,
+use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Tool, item_body};
+use crate::claude_common::{
+    PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
+    question_ask, scope_choices, split_tool_name, text, timestamp_ms, tool_class,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
-
-/// Built-in tools that only look: views fold runs of them together.
-const EXPLORATION: &[&str] = &[
-    "Read",
-    "Grep",
-    "Glob",
-    "LS",
-    "WebFetch",
-    "WebSearch",
-    "ToolSearch",
-    "NotebookRead",
-    "ListMcpResourcesTool",
-    "ReadMcpResourceTool",
-];
-
-/// Tools whose calls are drawn as the task list, never as rows.
-const TASK_TOOLS: &[&str] = &[
-    "TaskCreate",
-    "TaskUpdate",
-    "TaskGet",
-    "TaskList",
-    "TodoWrite",
-];
-
-const QUESTION_TOOL: &str = "AskUserQuestion";
-const PLAN_TOOL: &str = "ExitPlanMode";
 
 /// How terminal Claude words a call the person refused, on the tool result.
 const REJECTED: &str = "The user doesn't want to proceed with this tool use.";
 const REJECTED_NOTE: &str = "the user said:\n";
 const INTERRUPTED: &str = "[Request interrupted by user";
-
-fn text<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
-fn timestamp_ms(row: &Value) -> Option<i64> {
-    let stamp = row.get("timestamp")?.as_str()?;
-    chrono::DateTime::parse_from_rfc3339(stamp)
-        .ok()
-        .map(|at| at.timestamp_millis())
-}
-
-fn compact_json(value: &Value) -> String {
-    if value.is_null() {
-        String::new()
-    } else {
-        value.to_string()
-    }
-}
-
-/// A content value as text: a string, or its text blocks joined.
-fn content_text(content: &Value) -> String {
-    match content {
-        Value::String(text) => text.clone(),
-        Value::Array(blocks) => blocks
-            .iter()
-            .filter_map(|block| match block.get("type").and_then(Value::as_str) {
-                Some("text") => block.get("text").and_then(Value::as_str),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
-}
 
 /// The text between `<tag>` and `</tag>`, trimmed.
 fn between<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
@@ -89,11 +28,14 @@ fn between<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     Some(text[start..end].trim())
 }
 
-/// The bodies of every `<cross-session-message …>` element: what Claude
-/// shows the model for a message that arrived on its messaging socket.
-fn cross_session_bodies(text: &str) -> Vec<String> {
+/// The messages from another session a user row shows the model: the body
+/// of each `<cross-session-message …>` element (Claude 2.1.240), or the
+/// text between the peer preamble and its trust note (2.1.282).
+fn peer_message_bodies(text: &str) -> Vec<String> {
     const OPEN: &str = "<cross-session-message";
     const CLOSE: &str = "</cross-session-message>";
+    const PREAMBLE: &str = "Another Claude session sent a message:\n";
+    const TRUST_NOTE: &str = "\n\nThis came from another Claude session";
     let mut bodies = Vec::new();
     let mut rest = text;
     while let Some(at) = rest.find(OPEN) {
@@ -108,16 +50,13 @@ fn cross_session_bodies(text: &str) -> Vec<String> {
         bodies.push(inner[..close].trim().to_owned());
         rest = &inner[close + CLOSE.len()..];
     }
+    if bodies.is_empty()
+        && let Some(message) = text.trim_start().strip_prefix(PREAMBLE)
+    {
+        let end = message.find(TRUST_NOTE).unwrap_or(message.len());
+        bodies.push(message[..end].trim().to_owned());
+    }
     bodies
-}
-
-fn task_status(status: &str) -> Option<i32> {
-    Some(match status {
-        "pending" => TaskListStatus::Pending as i32,
-        "in_progress" => TaskListStatus::InProgress as i32,
-        "completed" => TaskListStatus::Completed as i32,
-        _ => return None,
-    })
 }
 
 impl State {
@@ -228,7 +167,13 @@ impl State {
         let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
         let (server, tool) = split_tool_name(name);
         let (body, shape) = match tool.as_str() {
-            QUESTION_TOOL if server.is_empty() => question_ask(&input),
+            QUESTION_TOOL if server.is_empty() => {
+                let (question, questions) = question_ask(&input);
+                (
+                    wire::ask::Body::Question(question),
+                    AskShape::Question { questions },
+                )
+            }
             PLAN_TOOL if server.is_empty() => (
                 wire::ask::Body::Plan(PlanAsk {
                     plan: text(&input, "plan").to_owned(),
@@ -298,7 +243,7 @@ impl State {
                 });
             }
         }
-        self.apply_task_tool(&id, &response);
+        self.task_tool(&id, &response);
         self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
         self.emit_tool(emit, &id);
     }
@@ -330,11 +275,7 @@ impl State {
                 self.shared.set_working_on(working_on);
             }
             let seq = self.next_seq();
-            let class = if server.is_empty() && EXPLORATION.contains(&tool_name.as_str()) {
-                ToolClass::Exploration
-            } else {
-                ToolClass::Consequential
-            };
+            let class = tool_class(&server, &tool_name);
             self.tools.insert(
                 id.to_owned(),
                 Tool {
@@ -421,80 +362,20 @@ impl State {
                 self.close(emit, &key, decision);
             }
         }
-        self.apply_task_tool(&id, &result);
+        self.task_tool(&id, &result);
         self.emit_tool(emit, &id);
     }
 
-    /// Task tools keep the task list. Upserts by task id, so the hook and
-    /// the row reporting the same result change nothing twice.
-    fn apply_task_tool(&mut self, id: &str, result: &Value) {
+    fn task_tool(&mut self, id: &str, result: &Value) {
         let Some(tool) = self.tools.get(id) else {
             return;
         };
-        if !tool.server.is_empty() || !TASK_TOOLS.contains(&tool.name.as_str()) {
+        if !tool.server.is_empty() {
             return;
         }
         let input = serde_json::from_str::<Value>(&tool.input).unwrap_or(Value::Null);
-        let tasks = self.tasks.get_or_insert_with(Vec::new);
-        match tool.name.as_str() {
-            "TaskCreate" => {
-                let Some(task_id) = result
-                    .pointer("/task/id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                else {
-                    return;
-                };
-                if tasks.iter().any(|task| task.id == task_id) {
-                    return;
-                }
-                tasks.push(Task {
-                    id: task_id,
-                    subject: text(&input, "subject").to_owned(),
-                    status: TaskListStatus::Pending as i32,
-                    active_form: text(&input, "activeForm").to_owned(),
-                });
-            }
-            "TaskUpdate" => {
-                if result.get("success").and_then(Value::as_bool) == Some(false) {
-                    return;
-                }
-                let task_id = text(&input, "taskId");
-                if text(&input, "status") == "deleted" {
-                    tasks.retain(|task| task.id != task_id);
-                    return;
-                }
-                let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
-                    return;
-                };
-                if let Some(status) = task_status(text(&input, "status")) {
-                    task.status = status;
-                }
-                if let Some(subject) = input.get("subject").and_then(Value::as_str) {
-                    task.subject = subject.to_owned();
-                }
-                if let Some(active) = input.get("activeForm").and_then(Value::as_str) {
-                    task.active_form = active.to_owned();
-                }
-            }
-            "TodoWrite" => {
-                let Some(todos) = input.get("todos").and_then(Value::as_array) else {
-                    return;
-                };
-                *tasks = todos
-                    .iter()
-                    .enumerate()
-                    .map(|(index, todo)| Task {
-                        id: (index + 1).to_string(),
-                        subject: text(todo, "content").to_owned(),
-                        status: task_status(text(todo, "status"))
-                            .unwrap_or(TaskListStatus::Unspecified as i32),
-                        active_form: text(todo, "activeForm").to_owned(),
-                    })
-                    .collect();
-            }
-            _ => {}
-        }
+        let name = tool.name.clone();
+        apply_task_tool(&mut self.tasks, &name, &input, result);
     }
 
     // --- rows ------------------------------------------------------------
@@ -540,7 +421,7 @@ impl State {
         let uuid = text(row, "uuid").to_owned();
         let content = row.pointer("/message/content").unwrap_or(&Value::Null);
         let whole = content_text(content);
-        if !cross_session_bodies(&whole).is_empty() {
+        if !peer_message_bodies(&whole).is_empty() {
             return self.reflected_messages(&whole);
         }
         if row.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
@@ -683,7 +564,7 @@ impl State {
     fn reflected_messages(&mut self, text: &str) {
         // Claude answers a message from its socket in a turn of its own.
         self.shared.turn_started();
-        for body in cross_session_bodies(text) {
+        for body in peer_message_bodies(text) {
             if let Some(at) = self
                 .messages
                 .iter()
@@ -962,60 +843,6 @@ impl State {
     }
 }
 
-fn question_ask(input: &Value) -> (wire::ask::Body, AskShape) {
-    let questions = input
-        .get("questions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let shapes = questions
-        .iter()
-        .map(|question| QuestionShape {
-            options: question
-                .get("options")
-                .and_then(Value::as_array)
-                .map_or(0, |options| options.len() as u32),
-            multi_select: question
-                .get("multiSelect")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        })
-        .collect();
-    let questions = questions
-        .iter()
-        .map(|question| Question {
-            header: text(question, "header").to_owned(),
-            question: text(question, "question").to_owned(),
-            multi_select: question
-                .get("multiSelect")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            options: question
-                .get("options")
-                .and_then(Value::as_array)
-                .map(|options| {
-                    options
-                        .iter()
-                        .map(|option| QuestionOption {
-                            label: text(option, "label").to_owned(),
-                            description: text(option, "description").to_owned(),
-                            preview: text(option, "preview").to_owned(),
-                            recommended: false,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            // Terminal Claude's form always offers a typed answer.
-            allow_other: true,
-            secret: false,
-        })
-        .collect();
-    (
-        wire::ask::Body::Question(QuestionAsk { questions }),
-        AskShape::Question { questions: shapes },
-    )
-}
-
 fn permission_ask(
     server: &str,
     tool: &str,
@@ -1027,45 +854,7 @@ fn permission_ask(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let strings = |value: &Value, key: &str| -> Vec<String> {
-        value
-            .get(key)
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let scopes = suggestions
-        .iter()
-        .enumerate()
-        .map(|(index, suggestion)| ScopeChoice {
-            index: index as u32,
-            destination: text(suggestion, "destination").to_owned(),
-            rules: suggestion
-                .get("rules")
-                .and_then(Value::as_array)
-                .map(|rules| {
-                    rules
-                        .iter()
-                        .map(
-                            |rule| match rule.get("ruleContent").and_then(Value::as_str) {
-                                Some(content) => format!("{}({content})", text(rule, "toolName")),
-                                None => text(rule, "toolName").to_owned(),
-                            },
-                        )
-                        .collect()
-                })
-                .unwrap_or_default(),
-            directories: strings(suggestion, "directories"),
-            mode: text(suggestion, "mode").to_owned(),
-            label: String::new(),
-        })
-        .collect::<Vec<_>>();
+    let scopes = scope_choices(&suggestions);
     let shape = AskShape::Permission {
         scopes: scopes
             .iter()
@@ -1085,4 +874,26 @@ fn permission_ask(
         }),
         shape,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_message_bodies;
+
+    #[test]
+    fn peer_messages_are_read_in_both_wordings() {
+        assert_eq!(
+            peer_message_bodies(
+                "Another Claude session sent a message:\n<cross-session-message from=\"amux\">\nhi\n</cross-session-message>\n\nThis came from another Claude session."
+            ),
+            ["hi"]
+        );
+        assert_eq!(
+            peer_message_bodies(
+                "Another Claude session sent a message:\nReply BRAVO.\n\nThis came from another Claude session — not typed by your user."
+            ),
+            ["Reply BRAVO."]
+        );
+        assert!(peer_message_bodies("an ordinary prompt").is_empty());
+    }
 }

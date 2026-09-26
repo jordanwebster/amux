@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+mod claude_common;
 pub mod claude_pty;
 mod golden;
 mod serde_pb;

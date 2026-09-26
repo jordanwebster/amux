@@ -56,7 +56,12 @@ item agent-message:6531 agent_message final input=e1 at=1800000000000 text="plea
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 ## 19 fact {"channel":"transcript","json":{"message":{"content":[{"text":"Looking.","type":"text"}],"id":"m5","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.060Z","type":"assistant","uuid":"a5"}}
 item a5 message final at=1800000000060 text="Looking."
-## 20 fact {"channel":"transcript","json":{"durationMs":20,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.070Z","type":"system","uuid":"d5"}}
+## 20 input {"agent_message":{"envelope":"e2","from":"reviewer","text":"and the tests"},"id":"m2"}
+effect inject e2 via MessagingSocket
+effect reply m2 queued
+item agent-message:6532 agent_message final input=e2 at=1800000000000 text="and the tests" envelope=6532
+## 21 fact {"channel":"transcript","json":{"isMeta":true,"message":{"content":"Another Claude session sent a message:\nand the tests\n\nThis came from another Claude session — not typed by your user.","role":"user"},"origin":{"kind":"peer"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.061Z","type":"user","uuid":"u6"}}
+## 22 fact {"channel":"transcript","json":{"durationMs":20,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.070Z","type":"system","uuid":"d5"}}
 item turn:3 turn final at=1800000000070 text="" #3 TURN_OUTCOME_COMPLETED started=1800000000050
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 turn_end 3 last=a5

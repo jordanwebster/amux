@@ -28,9 +28,9 @@ snapshot WORKING queue=[] working_on=- at=1788074794478 asks=[] session=f6fef710
 ## 49 recorded 47: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_012mL17q3UZCtEJ343VAWHka
 item toolu_012mL17q3UZCtEJ343VAWHka tool final at=1788074796223 text="" ExitPlanMode TOOL_STATE_RUNNING input="{\"plan\":\"# Context\\n\\nThe user asked to change README.md's o…"
 ## 51 recorded 49: fact Hook hook_event_name=PermissionRequest
-snapshot NEEDS_YOU queue=[] working_on=- at=1788074796252 asks=[ask:1->toolu_012mL17q3UZCtEJ343VAWHka plan:330chars] session=f6fef710-9678-4718-b315-d6dde1ac6d23 model=claude-sonnet-5 mode=plan context=50392 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1788074796252 asks=[ask:1->toolu_012mL17q3UZCtEJ343VAWHka plan:330chars auto-accept] session=f6fef710-9678-4718-b315-d6dde1ac6d23 model=claude-sonnet-5 mode=plan context=50392 tasks=? background=?
 ## 53 recorded 51: fact Transcript type=assistant uuid=bd52d0ae-efe1-451a-8f6d-64ff488a0802
-snapshot NEEDS_YOU queue=[] working_on=- at=1788074797569 asks=[ask:1->toolu_012mL17q3UZCtEJ343VAWHka plan:330chars] session=f6fef710-9678-4718-b315-d6dde1ac6d23 model=claude-sonnet-5 mode=plan context=51419 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1788074797569 asks=[ask:1->toolu_012mL17q3UZCtEJ343VAWHka plan:330chars auto-accept] session=f6fef710-9678-4718-b315-d6dde1ac6d23 model=claude-sonnet-5 mode=plan context=51419 tasks=? background=?
 ## 54 recorded 52: fact Transcript type=user uuid=8c2b6404-2e89-4148-a63b-7a535ea2e414
 item toolu_012mL17q3UZCtEJ343VAWHka tool final at=1788074796223 text="" ExitPlanMode TOOL_STATE_DENIED decision=DECISION_OUTCOME_DENIED note="Also explain why the change is needed" elsewhere ended=1788074797632 input="{\"plan\":\"# Context\\n\\nThe user asked to change README.md's o…" out="The user doesn't want to proceed with this tool use. The too…"
 snapshot WORKING queue=[] working_on=- at=1788074797569 asks=[] session=f6fef710-9678-4718-b315-d6dde1ac6d23 model=claude-sonnet-5 mode=plan context=51419 tasks=? background=?

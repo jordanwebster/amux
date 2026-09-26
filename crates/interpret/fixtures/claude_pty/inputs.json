@@ -338,6 +338,42 @@
       }
     },
     {
+      "input": {
+        "id": "m2",
+        "agent_message": {
+          "envelope": "e2",
+          "from": "reviewer",
+          "text": "and the tests"
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u6",
+          "timestamp": "2027-01-15T08:00:00.061Z",
+          "sessionId": "s1",
+          "isMeta": true,
+          "origin": {
+            "kind": "peer"
+          },
+          "message": {
+            "role": "user",
+            "content": "Another Claude session sent a message:\nand the tests\n\nThis came from another Claude session \u2014 not typed by your user."
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      },
+      "note": "the same, as Claude 2.1.282 words it"
+    },
+    {
       "fact": {
         "channel": "transcript",
         "json": {
