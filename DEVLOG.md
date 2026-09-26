@@ -1,3 +1,12 @@
+2026-09-26 — **A person's images reach headless Claude as native image blocks.**
+When a prompt or steer carries image attachments, the stream-JSON user
+message's content is a block array: the text with each attachment's
+element at its placeholder, and after each image's element a base64 image
+block with the blob's bytes and media type, the shape Claude records for
+an image prompt. Text-only inputs are unchanged. The stdio fakes can log
+every line their host writes (`AMUX_FAKE_INPUT_LOG`), which the agent
+tests read back as `Agent::provider_input`.
+
 2026-09-26 — **amux's tool server never makes a send, spawn or stop twice.**
 Only dialling tools.sock is retried over the update window for those
 calls. Once one has gone out, a dropped connection or an unavailable answer

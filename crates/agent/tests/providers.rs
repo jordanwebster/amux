@@ -54,6 +54,71 @@ async fn a_codex_agent_handshakes_runs_a_turn_and_resumes_its_thread() {
 /// (here small enough to have rotated, so from a checkpoint in the middle)
 /// and starts by re-emitting every open item in full on its own key; the
 /// keys it mints afterwards carry on from the last incarnation's.
+/// A person's image reaches headless Claude as a native image block with
+/// the blob's bytes, right after the attachment's element in the text.
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_claude_gets_a_persons_image_as_an_image_block() {
+    use sha2::Digest as _;
+
+    let agent = Agent::start(Setup {
+        steps: vec![
+            Step::Text {
+                chunks: vec!["a red square".into()],
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let bytes = b"\x89PNG\r\n\x1a\n a tiny square".to_vec();
+    let hash = sha2::Sha256::digest(&bytes).to_vec();
+    // The daemon stores a person's blobs in the agent's directory by hash.
+    let blob = agent.dir.join(agent::BLOBS).join(interpret::to_hex(&hash));
+    std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+    std::fs::write(&blob, &bytes).unwrap();
+    let image = wire::Attachment {
+        of: Some(wire::attachment::Of::Image(wire::BlobRef {
+            hash: hash.clone(),
+            name: "square.png".into(),
+            mime: "image/png".into(),
+            size: bytes.len() as u64,
+        })),
+    };
+    let input = wire::Input {
+        input_id: b"p1".to_vec(),
+        of: Some(wire::input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Prompt(wire::PromptInput {
+                text: format!("What colour is {} here?", attachments::PLACEHOLDER),
+                attachments: vec![image.clone()],
+            })),
+        })),
+    };
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.input(input).await, Verdict::Accepted);
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    let sent = agent
+        .provider_input()
+        .into_iter()
+        .find(|line| line["type"] == "user")
+        .expect("the prompt reached Claude");
+    let element = attachments::element(&image, Some(&blob));
+    assert_eq!(
+        sent["message"]["content"],
+        serde_json::json!([
+            { "type": "text", "text": format!("What colour is {element}") },
+            { "type": "image", "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgogYSB0aW55IHNxdWFyZQ==",
+            } },
+            { "type": "text", "text": " here?" },
+        ])
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_from_the_checkpoint_re_emits_open_items_and_carries_keys_on() {
     let agent = Agent::start(Setup {

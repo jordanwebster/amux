@@ -23,6 +23,26 @@ use serde_json::Value;
 pub const SCRIPT_ENV: &str = "AMUX_FAKE_SCRIPT";
 /// The environment variable naming a recording a fake plays back verbatim.
 pub const PLAYBACK_ENV: &str = "AMUX_FAKE_PLAYBACK";
+/// The environment variable naming a file a stdio fake appends every line
+/// its host writes to, so a test can see exactly what the provider got.
+pub const INPUT_LOG_ENV: &str = "AMUX_FAKE_INPUT_LOG";
+
+/// Append one host line to the input log, when the environment names one.
+pub fn log_input(line: &str) {
+    use std::io::Write as _;
+
+    let Some(path) = std::env::var_os(INPUT_LOG_ENV) else {
+        return;
+    };
+    let appended = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| writeln!(file, "{line}"));
+    if let Err(error) = appended {
+        eprintln!("input log {}: {error}", Path::new(&path).display());
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

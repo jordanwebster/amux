@@ -31,7 +31,8 @@ pub mod shape;
 
 pub use conformance::{Drift, conformance};
 pub use script::{
-    Ask, Outcome, PLAYBACK_ENV, SCRIPT_ENV, Script, ScriptError, Step, Tool, ToolClass,
+    Ask, INPUT_LOG_ENV, Outcome, PLAYBACK_ENV, SCRIPT_ENV, Script, ScriptError, Step, Tool,
+    ToolClass,
 };
 
 /// Which provider a fake stands in for.

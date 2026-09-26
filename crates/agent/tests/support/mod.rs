@@ -140,7 +140,20 @@ pub struct Agent {
     reader: Mutex<(journal::Reader, Log)>,
 }
 
+/// Where the stdio fakes log every line the agent wrote them, under the
+/// test's root.
+const INPUT_LOG: &str = "provider-input.jsonl";
+
 impl Agent {
+    /// Every line the agent has written to its stdio provider so far.
+    pub fn provider_input(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self._root.path().join(INPUT_LOG))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
     pub async fn start(setup: Setup) -> Self {
         let root = tempfile::tempdir().expect("a temp dir");
         let dir = root.path().join("agents").join("a1");
@@ -186,6 +199,10 @@ impl Agent {
             (
                 "AMUX_TEST_HOLD".to_owned(),
                 hold.to_str().unwrap().to_owned(),
+            ),
+            (
+                provider_fakes::INPUT_LOG_ENV.to_owned(),
+                root.path().join(INPUT_LOG).to_str().unwrap().to_owned(),
             ),
             // Claude's own directory, where terminal Claude's transcripts go.
             (

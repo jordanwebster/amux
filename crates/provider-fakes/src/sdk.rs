@@ -131,6 +131,7 @@ impl Engine {
         tokio::spawn(async move {
             let mut lines = BufReader::new(tokio::io::stdin()).lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                crate::script::log_input(&line);
                 match serde_json::from_str::<Value>(&line) {
                     Ok(value) => {
                         if tx.send(value).is_err() {

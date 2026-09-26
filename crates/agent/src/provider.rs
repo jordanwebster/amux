@@ -515,6 +515,62 @@ impl Provider {
         )
     }
 
+    /// A headless user message's content: the text with its elements, or,
+    /// when a person attached images, content blocks with each image's bytes
+    /// as a native image block right after its element.
+    fn content(&self, text: &str, attachments: &[Attachment]) -> serde_json::Value {
+        use attachments::Piece;
+        use wire::attachment::Of;
+
+        let images = attachments
+            .iter()
+            .any(|attachment| matches!(attachment.of, Some(Of::Image(_))));
+        if !images {
+            return self.with_attachments(text, attachments).into();
+        }
+        let positioned = attachments::Positioned {
+            text: text.to_owned(),
+            attachments: attachments.to_vec(),
+        };
+        let mut blocks = Vec::new();
+        let mut prose = String::new();
+        for piece in attachments::pieces(&positioned, &self.dir.join(dir::BLOBS)) {
+            match piece {
+                Piece::Text(text) => prose.push_str(text),
+                Piece::Element {
+                    element,
+                    attachment,
+                    path,
+                } => {
+                    prose.push_str(&element);
+                    let Some(Of::Image(blob)) = &attachment.of else {
+                        continue;
+                    };
+                    // The element names the file, so a model can still
+                    // read an image whose bytes cannot be inlined.
+                    let Some(bytes) = path.and_then(|path| std::fs::read(path).ok()) else {
+                        continue;
+                    };
+                    blocks.push(
+                        serde_json::json!({ "type": "text", "text": std::mem::take(&mut prose) }),
+                    );
+                    blocks.push(serde_json::json!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": blob.mime,
+                            "data": base64(&bytes),
+                        },
+                    }));
+                }
+            }
+        }
+        if !prose.is_empty() {
+            blocks.push(serde_json::json!({ "type": "text", "text": prose }));
+        }
+        blocks.into()
+    }
+
     fn type_keys(&self, steps: Vec<claude::pty::keymap::KeyStep>) -> io::Result<()> {
         match &self.input {
             Input::Terminal(keys) => keys.send(steps).map_err(|_| closed()),
@@ -563,7 +619,7 @@ impl Provider {
         text: &str,
         attachments: &[Attachment],
     ) -> io::Result<()> {
-        let content = self.with_attachments(text, attachments);
+        let content = self.content(text, attachments);
         let line = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -1016,4 +1072,35 @@ fn environment(command: &mut tokio::process::Command, spec: &AgentSpec) {
         command.envs(&config.env);
     }
     command.envs(&spec.provider_env);
+}
+
+/// Standard base64 with padding, as Claude's image blocks carry bytes.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let word = chunk.iter().enumerate().fold(0u32, |word, (index, byte)| {
+            word | u32::from(*byte) << (16 - 8 * index)
+        });
+        for index in 0..4 {
+            if index <= chunk.len() {
+                encoded.push(ALPHABET[(word >> (18 - 6 * index) & 63) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn base64_pads_as_the_standard_does() {
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"f"), "Zg==");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert_eq!(super::base64(b"foo"), "Zm9v");
+        assert_eq!(super::base64(b"foob"), "Zm9vYg==");
+    }
 }
