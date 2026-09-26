@@ -1,0 +1,31 @@
+## 0 initial
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.251"}}
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+effect follow "<MACHINE_PATH>"
+item boundary:1 boundary final at=1788069686591 text="" BOUNDARY_KIND_STARTED session=174c4dae-4040-48b5-aca3-08280a5b0baa version=2.1.251 keymap=claude-2.1
+snapshot IDLE queue=[] working_on=- at=1788069686591 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
+## 6 recorded 4: fact Transcript type=permission-mode
+snapshot IDLE queue=[] working_on=- at=1788069686676 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+## 11 recorded 9: fact Transcript type=user uuid=65bef10f-bd03-4c5a-8ea3-2f5e93da1f13
+item 65bef10f-bd03-4c5a-8ea3-2f5e93da1f13 prompt final at=1788069686779 text="Use the Bash tool to run exactly: printf denied > denied.txt. Then stop."
+snapshot WORKING queue=[] working_on=- at=1788069686779 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+## 22 recorded 20: fact Hook hook_event_name=PermissionRequest
+snapshot NEEDS_YOU queue=[] working_on=- at=1788069689366 asks=[ask:1->- permission:Bash/session <MACHINE_PATH>] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+## 24 recorded 22: fact Transcript type=assistant uuid=ffc66187-d325-4c74-929b-ff8fb64f2cde
+item ffc66187-d325-4c74-929b-ff8fb64f2cde thinking final at=1788069689477 text=""
+snapshot NEEDS_YOU queue=[] working_on=- at=1788069691272 asks=[ask:1->- permission:Bash/session <MACHINE_PATH>] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=34307 tasks=? background=?
+## 26 recorded 24: fact Transcript type=assistant uuid=4567561b-19e8-4df0-bc0b-c92d0c6f3acf
+item toolu_01Nmez8vqBvMqHuNtBxUKfnn tool final at=1788069689494 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"printf denied > denied.txt\",\"description\":\"Write…"
+snapshot NEEDS_YOU queue=[] working_on=- at=1788069691273 asks=[ask:1->toolu_01Nmez8vqBvMqHuNtBxUKfnn permission:Bash/session <MACHINE_PATH>] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=34307 tasks=? background=?
+## 27 recorded 25: fact Transcript type=user uuid=52629c26-ee79-4807-a7ac-d1717ca78732
+item toolu_01Nmez8vqBvMqHuNtBxUKfnn tool final at=1788069689494 text="" Bash TOOL_STATE_DENIED decision=DECISION_OUTCOME_DENIED elsewhere ended=1788069689528 input="{\"command\":\"printf denied > denied.txt\",\"description\":\"Write…" out="The user doesn't want to proceed with this tool use. The too…"
+snapshot WORKING queue=[] working_on=- at=1788069691273 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=34307 tasks=? background=?
+## 29 recorded 27: fact Transcript type=user uuid=d5ce3a1b-dc30-493f-bd74-c375b32aec9a
+item d5ce3a1b-dc30-493f-bd74-c375b32aec9a interruption final at=1788069689528 text=""
+item turn:1 turn final at=1788069689528 text="" #1 TURN_OUTCOME_INTERRUPTED started=1788069686779
+snapshot IDLE queue=[] working_on=- at=1788069691274 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=34307 tasks=? background=?
+turn_end 1 last=-
+## 33 recorded 31: fact Transcript type=user uuid=e18b6955-193a-4774-8758-8ea10980fbdd
+item e18b6955-193a-4774-8758-8ea10980fbdd prompt final at=1788069691440 text="Use a read-only command instead"
+snapshot WORKING queue=[] working_on=- at=1788069691316 asks=[] session=174c4dae-4040-48b5-aca3-08280a5b0baa model=claude-haiku-4-5-20251001 mode=default context=34307 tasks=? background=?

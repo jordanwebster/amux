@@ -1,0 +1,31 @@
+## 0 initial
+snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] session=? model=? mode=? context=? tasks=? background=?
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.282"}}
+## 2 fact {"channel":"hook","json":{"hook_event_name":"SessionStart","model":"claude-opus-5-5","session_id":"s1","source":"startup","transcript_path":"/t/s1.jsonl"}}
+effect follow "/t/s1.jsonl"
+item boundary:1 boundary final at=1800000000000 text="" BOUNDARY_KIND_STARTED session=s1 version=2.1.282 keymap=claude-2.1
+snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
+## 3 tick 1800000000010
+## 4 fact {"channel":"transcript","json":{"message":{"content":"run the tests","role":"user"},"origin":{"kind":"human"},"promptSource":"typed","sessionId":"s1","timestamp":"2027-01-15T08:00:00.010Z","type":"user","uuid":"u1"}}
+item u1 prompt final at=1800000000010 text="run the tests"
+snapshot WORKING queue=[] working_on=- at=1800000000010 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
+## 5 tick 1800000001000
+## 6 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"command":"cargo test"},"tool_name":"Bash","tool_use_id":"t1"}}
+item t1 tool final at=1800000001000 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"cargo test\"}"
+## 7 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t1","input":{"command":"cargo test"},"name":"Bash","type":"tool_use"}],"id":"m1","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:00.900Z","type":"assistant","uuid":"a1"}}
+## 8 tick 1800000003000
+## 9 fact {"channel":"hook","json":{"duration_ms":2000,"hook_event_name":"PostToolUse","tool_input":{"command":"cargo test"},"tool_name":"Bash","tool_response":{"stderr":"","stdout":"ok"},"tool_use_id":"t1"}}
+item t1 tool final at=1800000001000 text="" Bash TOOL_STATE_SUCCEEDED ended=1800000003000 input="{\"command\":\"cargo test\"}"
+## 10 fact {"channel":"transcript","json":{"message":{"content":[{"content":"ok","is_error":false,"tool_use_id":"t1","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:03.001Z","toolUseResult":{"interrupted":false,"stderr":"","stdout":"ok"},"type":"user","uuid":"r1"}}
+item t1 tool final at=1800000001000 text="" Bash TOOL_STATE_SUCCEEDED ended=1800000003000 input="{\"command\":\"cargo test\"}" out="ok"
+## 11 tick 1800000004000
+## 12 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t2","input":{"file_path":"src/lib.rs"},"name":"Read","type":"tool_use"}],"id":"m2","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:03.900Z","type":"assistant","uuid":"a2"}}
+item t2 tool final at=1800000003900 text="" Read TOOL_STATE_RUNNING exploration input="{\"file_path\":\"src/lib.rs\"}"
+## 13 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"file_path":"src/lib.rs"},"tool_name":"Read","tool_use_id":"t2"}}
+## 14 fact {"channel":"transcript","json":{"message":{"content":[{"content":"1\tfn main() {}","is_error":false,"tool_use_id":"t2","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":"2027-01-15T08:00:04.010Z","toolUseResult":{"type":"text"},"type":"user","uuid":"r2"}}
+item t2 tool final at=1800000003900 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1800000004010 input="{\"file_path\":\"src/lib.rs\"}" out="1\tfn main() {}"
+## 15 fact {"channel":"hook","json":{"duration_ms":3,"hook_event_name":"PostToolUse","tool_input":{"file_path":"src/lib.rs"},"tool_name":"Read","tool_response":{"type":"text"},"tool_use_id":"t2"}}
+## 16 fact {"channel":"transcript","json":{"durationMs":4090,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:04.100Z","type":"system","uuid":"d1"}}
+item turn:1 turn final at=1800000004100 text="" #1 TURN_OUTCOME_COMPLETED started=1800000000010
+snapshot IDLE queue=[] working_on=- at=1800000004000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
+turn_end 1 last=-

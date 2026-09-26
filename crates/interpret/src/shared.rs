@@ -635,6 +635,14 @@ impl<A: OpenAsk> Shared<A> {
         Some(turn)
     }
 
+    /// What began as a turn was a local command (terminal Claude's
+    /// /compact runs no model turn): nothing runs any more, and no TurnEnd
+    /// is written because no turn happened.
+    pub fn turn_abandoned(&mut self) {
+        self.busy = false;
+        self.turn.end();
+    }
+
     /// The provider is gone: no turn runs and nothing is submitted. A turn
     /// cut short has no TurnEnd; the daemon reports the incarnation failed.
     pub fn provider_exited(&mut self) -> Option<OpenTurn> {

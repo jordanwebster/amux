@@ -1,0 +1,189 @@
+{
+  "about": "Every session change is a boundary carrying the provider session and version and the keymap the agent resolved: startup, resume, compact, clear, the provider exiting, and a relaunch after it, which is a restart whatever the session start says.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.282",
+          "keymap": "claude-2.1"
+        }
+      },
+      "expect": {
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "items": [
+          "boundary:1"
+        ],
+        "phase": "IDLE"
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "resume",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "items": [
+          "boundary:2"
+        ],
+        "effects": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "compact",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "items": [
+          "boundary:3"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "clear",
+          "session_id": "s2",
+          "transcript_path": "/t/s2.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "items": [
+          "boundary:4"
+        ],
+        "effects": [
+          "follow \"/t/s2.jsonl\""
+        ]
+      }
+    },
+    {
+      "provider_exit": {
+        "code": 1
+      },
+      "expect": {
+        "items": [
+          "boundary:5"
+        ],
+        "phase": "STARTING"
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "after the restart"
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      },
+      "expect": {
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "resume",
+          "session_id": "s2",
+          "transcript_path": "/t/s2.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "items": [
+          "boundary:6"
+        ],
+        "effects": [
+          "terminal prompt \"after the restart\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "after the restart"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "uuid": "d1",
+          "timestamp": "2027-01-15T08:00:00.020Z",
+          "sessionId": "s1",
+          "subtype": "turn_duration",
+          "durationMs": 10
+        }
+      }
+    },
+    {
+      "provider_exit": {},
+      "expect": {
+        "items": [
+          "boundary:7"
+        ]
+      }
+    }
+  ]
+}

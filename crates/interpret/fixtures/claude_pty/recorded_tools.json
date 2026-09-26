@@ -1,0 +1,22 @@
+{
+  "about": "Read, Edit and Bash: each call is one item under its tool-use id, emitted from the PreToolUse hook and revised when PostToolUse and the rows land.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "prelude": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.251",
+          "keymap": "claude-2.1"
+        }
+      }
+    }
+  ],
+  "recording": {
+    "path": "../../../claude-specs/fixtures/pty/tools/io.jsonl",
+    "format": "claude_pty_io"
+  }
+}

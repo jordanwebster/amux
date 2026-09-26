@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod claude_pty;
 mod golden;
 mod serde_pb;
 mod shared;
@@ -118,6 +119,10 @@ pub enum Channel {
     Rpc,
     /// A call on the agent's own tool server (tools.sock).
     Tools,
+    /// What the agent process itself observed about the provider it
+    /// launched: for Claude in a terminal, the version it found and the
+    /// keymap it resolved for that version.
+    Agent,
 }
 
 /// A step's output.
@@ -145,6 +150,12 @@ pub enum Effect {
     KickTurn,
     /// The agent process should exit with this cause.
     Exit { cause: String },
+    /// Claude in a terminal: a semantic input the agent process types into
+    /// the PTY through the keymap it resolved for the running Claude.
+    Terminal(claude_pty::TerminalInput),
+    /// Claude in a terminal: a session started on this transcript file;
+    /// the agent process tails it from now on.
+    FollowTranscript { path: String },
 }
 
 /// The provider's own injection channel for agent messages.

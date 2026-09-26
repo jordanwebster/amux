@@ -1,0 +1,614 @@
+{
+  "about": "Answers sent through amux are typed into the terminal's menus as semantic inputs, close their ask with the outcome they carry, and put the decision on the call's row; an answer that does not fit the ask is refused and leaves it open.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.282",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "test it"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "reply p1 accepted",
+          "terminal prompt \"test it\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "test it"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "u1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cargo test"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cargo test"
+          },
+          "permission_suggestions": [
+            {
+              "type": "addRules",
+              "destination": "localSettings",
+              "behavior": "allow",
+              "rules": [
+                {
+                  "toolName": "Bash",
+                  "ruleContent": "cargo test:*"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "allow": {
+              "scope": 0
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "items": [
+          "t1"
+        ],
+        "effects": [
+          "terminal permission of 1 AllowScoped { suggestion: 0 }",
+          "reply a1 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PostToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cargo test"
+          },
+          "tool_response": {
+            "stdout": "ok"
+          },
+          "duration_ms": 900
+        }
+      },
+      "expect": {
+        "items": [
+          "t1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t2",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rm -rf build"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rm -rf build"
+          },
+          "permission_suggestions": []
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "ask:2",
+          "answer": {
+            "allow": {
+              "scope": 3
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "ask:2"
+        ],
+        "silent": true
+      },
+      "note": "no such scope choice"
+    },
+    {
+      "input": {
+        "id": "a3",
+        "answer": {
+          "ask": "ask:2",
+          "answer": {
+            "form": {
+              "action": "accept"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "ask:2"
+        ],
+        "silent": true
+      },
+      "note": "a form answer to a permission ask"
+    },
+    {
+      "input": {
+        "id": "a4",
+        "answer": {
+          "ask": "ask:2",
+          "answer": {
+            "deny": {
+              "note": "use cargo clean",
+              "stop": false
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "effects": [
+          "terminal permission of 0 Deny { note: \"use cargo clean\" }",
+          "reply a4 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r2",
+          "timestamp": "2027-01-15T08:00:00.020Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t2",
+                "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+                "is_error": true
+              }
+            ]
+          },
+          "toolUseResult": "User rejected tool use"
+        }
+      },
+      "expect": {
+        "items": [
+          "t2"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t3",
+          "tool_name": "ExitPlanMode",
+          "tool_input": {
+            "plan": "# Plan\n\n- Edit README.md"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "ExitPlanMode",
+          "tool_input": {
+            "plan": "# Plan\n\n- Edit README.md"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:3"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a5",
+        "answer": {
+          "ask": "ask:3",
+          "answer": {
+            "approve_plan": {
+              "auto_accept_edits": true
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "terminal plan ApproveAutoAcceptEdits",
+          "reply a5 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t4",
+          "tool_name": "ExitPlanMode",
+          "tool_input": {
+            "plan": "# Plan\n\n- Edit README.md"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "ExitPlanMode",
+          "tool_input": {
+            "plan": "# Plan\n\n- Edit README.md"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "a6",
+        "answer": {
+          "ask": "ask:4",
+          "answer": {
+            "send_back": {
+              "note": "explain why"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "terminal plan SendBack { note: \"explain why\" }",
+          "reply a6 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t5",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool",
+                    "preview": "#00f"
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  },
+                  {
+                    "label": "Drill",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool",
+                    "preview": "#00f"
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  },
+                  {
+                    "label": "Drill",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:5"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a7",
+        "answer": {
+          "ask": "ask:5",
+          "answer": {
+            "selected": [
+              [
+                0,
+                1
+              ]
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
+      },
+      "note": "one answer for two questions, and two picks on a single-select"
+    },
+    {
+      "input": {
+        "id": "a8",
+        "answer": {
+          "ask": "ask:5",
+          "answer": {
+            "selected": [
+              2,
+              [
+                0
+              ]
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
+      }
+    },
+    {
+      "input": {
+        "id": "a9",
+        "answer": {
+          "ask": "ask:5",
+          "answer": {
+            "selected": [
+              "Green",
+              [
+                0,
+                2
+              ]
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "effects": [
+          "terminal question [ of 2 other=\"Green\"] [0,2 of 3 multi]",
+          "reply a9 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PostToolUse",
+          "tool_use_id": "t5",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "header": "Color",
+                "question": "Pick a color",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "label": "Red",
+                    "description": "warm"
+                  },
+                  {
+                    "label": "Blue",
+                    "description": "cool",
+                    "preview": "#00f"
+                  }
+                ]
+              },
+              {
+                "header": "Tools",
+                "question": "Pick tools",
+                "multiSelect": true,
+                "options": [
+                  {
+                    "label": "Hammer",
+                    "description": ""
+                  },
+                  {
+                    "label": "Saw",
+                    "description": ""
+                  },
+                  {
+                    "label": "Drill",
+                    "description": ""
+                  }
+                ]
+              }
+            ]
+          },
+          "tool_response": {
+            "answers": {
+              "Pick a color": "Green",
+              "Pick tools": "Hammer, Drill"
+            }
+          },
+          "duration_ms": 5
+        }
+      },
+      "expect": {
+        "items": [
+          "t5"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "uuid": "d1",
+          "timestamp": "2027-01-15T08:00:00.060Z",
+          "sessionId": "s1",
+          "subtype": "turn_duration",
+          "durationMs": 50
+        }
+      },
+      "expect": {
+        "turn_end": {
+          "turn_id": 1,
+          "last_message_key": ""
+        }
+      }
+    }
+  ]
+}

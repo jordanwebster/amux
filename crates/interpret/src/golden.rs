@@ -19,9 +19,14 @@
 //! }
 //! ```
 //!
-//! Recording events, when present, run before the authored ones. The golden
-//! is the rendered emission beside the fixture, `<name>.golden`; it is only
-//! written when `INTERPRET_UPDATE_GOLDENS=1`, never by an ordinary run.
+//! Recording events, when present, run before the authored ones; authored
+//! events that must come first (what the agent process knew before the
+//! provider wrote anything, inputs already accepted) go in `"prelude"`, the
+//! same shape as `"events"`. The golden is the rendered emission beside the
+//! fixture, `<name>.golden`; it is only written when
+//! `INTERPRET_UPDATE_GOLDENS=1`, never by an ordinary run. A recorded event
+//! that emitted nothing is left out of the golden; its frame number shows
+//! the gap.
 //!
 //! Besides the golden and the expectations, every run checks the invariants
 //! ([`check_invariants`]) and the checkpoint property: resuming from a
@@ -47,6 +52,9 @@ use crate::serde_pb::{from_hex, to_hex};
 use crate::{
     Channel, Checkpoint, Effect, Event, Fact, Interpreter, decode_checkpoint, encode_checkpoint,
 };
+
+/// The label prefix of an event read from a recording.
+const RECORDED: &str = "recorded ";
 
 /// Set to 1 to write goldens instead of comparing against them.
 pub const UPDATE_GOLDENS_ENV: &str = "INTERPRET_UPDATE_GOLDENS";
@@ -80,7 +88,10 @@ pub enum FixtureInput {
     Clear {},
     /// `answer` is the kind's answer in JSON: for Claude `{"allow": {}}`,
     /// `{"allow": {"scope": 1}}`, `{"deny": {"note": "…", "stop": true}}`,
-    /// `{"approve_plan": {}}`, `{"send_back": {"note": "…"}}`; for Codex
+    /// `{"approve_plan": {}}`, `{"send_back": {"note": "…"}}`,
+    /// `{"selected": [0, [1, 2], "typed"], "note": "…"}` (one entry per
+    /// question: an index, indices, or a typed answer),
+    /// `{"form": {"action": "accept", "content": {…}}}`; for Codex
     /// `{"decision": "approve"}` answers an approval and anything else is a
     /// CodexAnswer.
     Answer {
@@ -112,6 +123,8 @@ struct Fixture {
     #[serde(default)]
     spec: FixtureSpec,
     recording: Option<Recording>,
+    #[serde(default)]
+    prelude: Vec<Value>,
     #[serde(default)]
     events: Vec<Value>,
     #[serde(default)]
@@ -354,6 +367,9 @@ fn spec<I: Interpreter>(spec: &FixtureSpec) -> AgentSpec {
 
 fn script<I: Interpreter>(fixture: &Path, parsed: &Fixture) -> Result<Vec<Scripted>, String> {
     let mut script = Vec::new();
+    for (index, value) in parsed.prelude.iter().enumerate() {
+        script.push(scripted::<I>(value).map_err(|error| format!("prelude {index}: {error}"))?);
+    }
     if let Some(recording) = &parsed.recording {
         let path = fixture
             .parent()
@@ -366,7 +382,7 @@ fn script<I: Interpreter>(fixture: &Path, parsed: &Fixture) -> Result<Vec<Script
             .enumerate()
         {
             script.push(Scripted {
-                label: format!("recorded {index}: {}", event_label(&event)),
+                label: format!("{RECORDED}{index}: {}", event_label(&event)),
                 action: Action::Event(event),
                 expect: None,
             });
@@ -528,6 +544,19 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
                     .unwrap_or(false),
             })),
         })
+    } else if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
+        claude_answer::Of::Question(question_answer(selected, text(answer, "note")))
+    } else if let Some(form) = answer.get("form") {
+        claude_answer::Of::Form(wire::FormAnswer {
+            action: wire::FormAction::from_str_name(&format!(
+                "FORM_ACTION_{}",
+                text(form, "action").to_uppercase()
+            ))? as i32,
+            content_json: form
+                .get("content")
+                .map(|content| content.to_string().into_bytes())
+                .unwrap_or_default(),
+        })
     } else {
         let send_back = answer.get("send_back")?;
         claude_answer::Of::Plan(wire::PlanAnswer {
@@ -620,22 +649,35 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
     })
 }
 
-fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
-    use wire::codex_answer::Of;
-    let of = if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
-        Of::Question(wire::QuestionAnswer {
-            answers: selected
-                .iter()
-                .map(|choice| wire::QuestionResponse {
-                    selected: choice
+/// One answer per question: an option index, a list of indices for a
+/// multi-select, or a string for a typed answer.
+fn question_answer(selected: &[Value], note: String) -> wire::QuestionAnswer {
+    wire::QuestionAnswer {
+        answers: selected
+            .iter()
+            .map(|choice| wire::QuestionResponse {
+                selected: match choice {
+                    Value::Array(indices) => indices
+                        .iter()
+                        .filter_map(Value::as_u64)
+                        .map(|index| index as u32)
+                        .collect(),
+                    other => other
                         .as_u64()
                         .map(|index| vec![index as u32])
                         .unwrap_or_default(),
-                    other: choice.as_str().map(str::to_owned),
-                })
-                .collect(),
-            note: String::new(),
-        })
+                },
+                other: choice.as_str().map(str::to_owned),
+            })
+            .collect(),
+        note,
+    }
+}
+
+fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
+    use wire::codex_answer::Of;
+    let of = if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
+        Of::Question(question_answer(selected, String::new()))
     } else {
         let grant = answer.get("grant")?;
         let paths = |key: &str| {
@@ -1049,6 +1091,15 @@ fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> 
 fn render<I: Interpreter>(frames: &[Frame]) -> String {
     let mut out = String::new();
     for (index, frame) in frames.iter().enumerate() {
+        let step = &frame.step;
+        let silent = frame.effects.is_empty()
+            && step.items.is_empty()
+            && step.appends.is_empty()
+            && step.snapshot.is_none()
+            && step.turn_end.is_none();
+        if silent && frame.label.starts_with(RECORDED) {
+            continue;
+        }
         let _ = writeln!(out, "## {index} {}", frame.label);
         for effect in &frame.effects {
             let _ = writeln!(out, "effect {}", render_effect(effect));
@@ -1135,6 +1186,8 @@ fn render_effect(effect: &Effect) -> String {
         }
         Effect::KickTurn => "kick_turn".to_owned(),
         Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
+        Effect::Terminal(input) => format!("terminal {input}"),
+        Effect::FollowTranscript { path } => format!("follow {}", Value::String(path.clone())),
     }
 }
 
@@ -1155,12 +1208,42 @@ fn phase_name(phase: i32) -> &'static str {
 
 fn event_label(event: &Event) -> String {
     match event {
-        Event::Fact(fact) => format!("fact {:?} {}", fact.channel, display_bytes(&fact.payload)),
+        Event::Fact(fact) => format!("fact {:?} {}", fact.channel, summary(&fact.payload)),
         Event::Input(input) => format!("input {}", display_id(&input.input_id)),
         Event::Tick { at_ms } => format!("tick {at_ms}"),
         Event::ProviderExit { code } => format!("provider_exit {code:?}"),
         Event::DaemonLost => "daemon_lost".into(),
         Event::StopRequested(mode) => format!("stop {}", mode.as_str_name()),
+    }
+}
+
+/// A recorded fact in a golden: the fields that say what it is, since
+/// recorded payloads are long.
+fn summary(payload: &[u8]) -> String {
+    const NAMING: [&str; 6] = [
+        "hook_event_name",
+        "type",
+        "subtype",
+        "uuid",
+        "tool_use_id",
+        "method",
+    ];
+    if let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(payload) {
+        let named = NAMING
+            .iter()
+            .filter_map(|field| match object.get(*field) {
+                Some(Value::String(text)) => Some(format!("{field}={text}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !named.is_empty() {
+            return named.join(" ");
+        }
+    }
+    let text = display_bytes(payload);
+    match text.char_indices().nth(80) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text,
     }
 }
 

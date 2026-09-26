@@ -1,3 +1,47 @@
+2026-09-26 — **The Claude terminal interpreter.**
+`interpret::claude_pty` reads Claude-in-a-terminal's facts: transcript
+rows, hook payloads from the hooks socket, a launch fact the agent process
+sends with the Claude version and the keymap it resolved, and the PTY's
+exit. Rows arrive whole, so nothing streams. A tool call is one item under
+its tool-use id, emitted from whichever of its PreToolUse hook or its row
+arrives first and revised in place by the other and by PostToolUse and the
+tool result. An ask opens on the PermissionRequest hook, which carries no
+tool-use id: it points at the running call a PreToolUse announced with the
+same tool and input, or at the call whose row lands later. It closes on an
+answer sent through amux, on its call's PostToolUse or tool result
+(answered in the terminal: allowed, or denied with the note Claude quotes
+back), or on a later fact that proves the call is over without saying how
+(a new prompt, an interruption, the turn's end, a session change, the
+provider exiting, a row from a later assistant message), which records the
+outcome as unknown. Ticks never close an ask. Answers through amux are
+checked against the ask's shape and become semantic terminal inputs
+(`Effect::Terminal`) that the agent process types with its keymap; the
+decision lands on the call's row. Prompts, keys, interrupt and clear become
+the same kind of effect.
+
+Session starts, resumes, compactions, clears, provider exits and relaunches
+are boundary items carrying the provider session, the Claude version and
+the keymap; a new transcript path is `Effect::FollowTranscript`. Turns end
+on Claude's `turn_duration` row (its duration is the turn's), or on an
+interruption; a prompt that turns out to be a local command such as
+/compact ends without a turn. Thinking rows keep their text (empty in every
+current recording) and their timestamp, so "thought for" is the gap to the
+previous item. Also kept: compaction counts and the summary text, slash
+command output on the command's row, API errors with retry progress,
+unknown content blocks as Unrecognized rows, the task list from the task
+tools and the old todo tool (no rows for those), working_on from the status
+tool (no row), the context meter from assistant usage, and the background
+shell count from the Stop hook. Agent messages go out on the messaging
+socket and leave the pending set when Claude shows them to the model.
+
+Goldens cover all 18 claude-specs terminal recordings, a task-tools
+transcript and a two-message socket delivery (both copied into
+claude-specs), and authored fixtures for hook order, the ask rules,
+answers, inputs, boundaries and rows no recording has. The harness gained
+a prelude of authored events that run before a recording, short labels for
+recorded facts, and leaves recorded events that emitted nothing out of the
+golden.
+
 2026-09-26 — **The interpret crate: the kind-neutral core and its golden harness.**
 `crates/interpret` holds what every interpreter shares. `Interpreter` is a
 pure step: a provider fact, an input or a tick in, a journal `Step` and the

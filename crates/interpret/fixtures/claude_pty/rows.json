@@ -1,0 +1,349 @@
+{
+  "about": "Rows no recording shows: thinking with its text kept, a message with several blocks, API errors with retries and without, an unknown content block made visible, the status tool setting working_on without a row, the old todo tool setting the task list, background shells counted from the Stop hook, and a subagent's own rows left to its call.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.282",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.000Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1",
+          "timestamp": "2027-01-15T08:00:08.000Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "The parser is the slow part.",
+                "signature": "sig"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "a1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a2",
+          "timestamp": "2027-01-15T08:00:08.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "Starting."
+              },
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "mcp__amux__status",
+                "input": {
+                  "working_on": "Rewriting the parser"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "a2"
+        ],
+        "working_on": "Rewriting the parser"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a3",
+          "timestamp": "2027-01-15T08:00:08.200Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "TodoWrite",
+                "input": {
+                  "todos": [
+                    {
+                      "content": "Write the parser",
+                      "status": "completed",
+                      "activeForm": "Writing the parser"
+                    },
+                    {
+                      "content": "Test it",
+                      "status": "in_progress",
+                      "activeForm": "Testing it"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r2",
+          "timestamp": "2027-01-15T08:00:08.300Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t2",
+                "content": "Todos have been modified successfully",
+                "is_error": false
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "uuid": "e1",
+          "timestamp": "2027-01-15T08:00:09.000Z",
+          "sessionId": "s1",
+          "subtype": "api_error",
+          "level": "error",
+          "retryInMs": 4000.0,
+          "retryAttempt": 1,
+          "maxRetries": 10,
+          "error": {
+            "status": 529,
+            "error": {
+              "type": "overloaded_error",
+              "message": "Overloaded"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "e2",
+          "timestamp": "2027-01-15T08:00:15.000Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m2",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "API Error: 400 prompt is too long"
+              }
+            ]
+          },
+          "isApiErrorMessage": true,
+          "error": "invalid_request"
+        }
+      },
+      "expect": {
+        "items": [
+          "e2"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a4",
+          "timestamp": "2027-01-15T08:00:16.000Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m3",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "server_tool_use",
+                "id": "s1",
+                "name": "web_search"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "a4"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "sc",
+          "timestamp": "2027-01-15T08:00:16.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m4",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "subagent step"
+              }
+            ]
+          },
+          "isSidechain": true
+        }
+      },
+      "expect": {
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t3",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "npm run dev",
+            "run_in_background": true
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "t3"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "Stop",
+          "background_tasks": [
+            {
+              "id": "b1"
+            },
+            {
+              "id": "b2"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "silent": false
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "uuid": "d1",
+          "timestamp": "2027-01-15T08:00:17.000Z",
+          "sessionId": "s1",
+          "subtype": "turn_duration",
+          "durationMs": 17000
+        }
+      },
+      "expect": {
+        "turn_end": {
+          "turn_id": 1,
+          "last_message_key": "a2"
+        }
+      }
+    }
+  ],
+  "end": {
+    "streams_may_remain": false
+  }
+}

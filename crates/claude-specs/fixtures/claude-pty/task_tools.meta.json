@@ -1,0 +1,5 @@
+{
+  "recorded_version": "2.1.273",
+  "source": "Claude Code SDK transcript captured 2026-09-16; six unmodified rows with TaskCreate, TaskUpdate, an auto-denied Write and their tool results",
+  "copied_from": "crates/fold/fixtures/claude-task-tools-2.1.273.jsonl"
+}

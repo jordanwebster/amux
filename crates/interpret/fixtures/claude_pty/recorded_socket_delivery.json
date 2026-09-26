@@ -1,0 +1,48 @@
+{
+  "about": "Two agent messages accepted before the provider wrote anything, delivered on the messaging socket, and consumed when Claude shows each to the model; the pending set empties.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "prelude": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.240",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "m-idle",
+        "agent_message": {
+          "envelope": "env-idle",
+          "from": "probe",
+          "text": "A2A_SOCKET_IDLE_21240"
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    },
+    {
+      "input": {
+        "id": "m-busy",
+        "agent_message": {
+          "envelope": "env-busy",
+          "from": "probe",
+          "text": "A2A_SOCKET_BUSY_21240"
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    }
+  ],
+  "recording": {
+    "path": "../../../claude-specs/fixtures/claude-pty/socket_delivery.rows.jsonl",
+    "format": "transcript_rows"
+  }
+}

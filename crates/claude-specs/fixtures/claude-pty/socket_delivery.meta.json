@@ -1,0 +1,5 @@
+{
+  "recorded_version": "2.1.240",
+  "source": "live terminal capture 2026-08-23 (a2a_socket_delivery): two messages delivered on Claude's messaging socket, one while idle and one while busy; hook payloads inline",
+  "copied_from": "crates/testnet/fixtures/a2a/socket_delivery.jsonl"
+}
