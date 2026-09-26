@@ -1,3 +1,9 @@
+2026-09-26 — **provider-fakes' tests compile for Windows again.**
+The terminal fake's messaging-socket test dials a Unix-domain socket, which
+Claude (and so the fake) only serves on Unix; it is gated to Unix with the
+gap stated beside it. The agent, provider-fakes and amux crates cross-check
+clean for x86_64-pc-windows-msvc with all targets.
+
 2026-09-26 — **The agent-message tests check the provider took the message before a one-shot child exits.**
 They read the agent's facts ring: headless Claude's reflection of the
 message and terminal Claude's user row for it must come before the exit

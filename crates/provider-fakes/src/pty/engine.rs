@@ -63,7 +63,8 @@ enum Key {
 
 enum In {
     Key(Key),
-    /// A message from the messaging socket.
+    /// A message from the messaging socket, which only Unix serves.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Peer(String),
     Closed,
 }

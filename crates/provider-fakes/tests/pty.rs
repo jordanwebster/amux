@@ -23,7 +23,9 @@ struct Terminal {
     _dir: tempfile::TempDir,
     transcript: PathBuf,
     hooks: PathBuf,
+    #[cfg_attr(not(unix), allow(dead_code))]
     socket: PathBuf,
+    #[cfg_attr(not(unix), allow(dead_code))]
     token: PathBuf,
 }
 
@@ -427,6 +429,9 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
     assert_eq!(terminal.exit_code().await, 0);
 }
 
+// Windows gap: Claude's messaging socket is a Unix-domain socket, and the
+// fake, like Claude, serves none off Unix.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() {
     use tokio::io::AsyncWriteExt;

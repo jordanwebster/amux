@@ -259,6 +259,7 @@ impl Agent {
         }
         if let Some(session) = setup.session {
             let private = dir.join(agent::PRIVATE);
+            #[cfg_attr(not(unix), allow(unused_mut))]
             let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
