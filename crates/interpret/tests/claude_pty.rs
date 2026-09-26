@@ -66,6 +66,7 @@ goldens! {
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
     boundaries_carry_the_provider_session_and_version => "boundaries",
     rows_no_recording_shows => "rows",
+    recorded_steer_send_now => "recorded_steer_send_now",
 }
 
 #[test]

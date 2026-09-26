@@ -4,7 +4,12 @@
 //! Stdout lines are facts. What the recording's host wrote to stdin becomes
 //! the inputs that would make this interpreter write the same thing: user
 //! messages are prompts, answers to permission and elicitation requests are
-//! answers, and model, mode and interrupt requests are those inputs. The
+//! answers, and model, mode and interrupt requests are those inputs. A user
+//! message that carries a uuid gets the input id that makes the interpreter
+//! write that same uuid, so Claude's replay of it correlates. One written
+//! while a turn runs, at default priority, is Claude folding it into that
+//! turn, which this interpreter writes only for a prompt sent now: it becomes
+//! the prompt followed by sending it now. The
 //! host's own handshake and introspection requests are left out; their
 //! responses stay in as facts. Time is microseconds since the recording
 //! began, placed on the wall clock the first timestamped line uses.
@@ -14,8 +19,8 @@ use serde_json::Value;
 use wire::{
     AnswerInput, ClaudeAnswer, ClaudeSdkInput, FormAction, FormAnswer, Input, Interrupt,
     PermissionAllow, PermissionAnswer, PermissionDeny, PlanAnswer, PlanApprove, PlanSendBack,
-    PromptInput, QuestionAnswer, QuestionResponse, SetModel, SetPermissionMode, claude_answer,
-    claude_sdk_input, input, permission_answer, plan_answer,
+    PromptInput, QuestionAnswer, QuestionResponse, SendQueuedNow, SetModel, SetPermissionMode,
+    claude_answer, claude_sdk_input, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{PLAN_TOOL, QUESTION_TOOL, text, timestamp_ms};
@@ -49,6 +54,7 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
     let mut now = None;
     let mut requests = std::collections::BTreeMap::<String, Value>::new();
     let mut inputs = 0;
+    let mut turn_running = false;
     for line in &lines {
         let Some(message) = parsed(line) else {
             continue;
@@ -63,6 +69,9 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
         };
         let dir = line.get("dir").and_then(Value::as_str).unwrap_or_default();
         if dir == "stdout" {
+            if text(&message, "type") == "result" {
+                turn_running = false;
+            }
             if text(&message, "type") == "control_request" {
                 requests.insert(
                     text(&message, "request_id").to_owned(),
@@ -76,7 +85,24 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
             continue;
         }
         inputs += 1;
-        let id = format!("stdin-{inputs}").into_bytes();
+        let mut id = format!("stdin-{inputs}").into_bytes();
+        let mut send_now = None;
+        if text(&message, "type") == "user" {
+            if let Some(uuid) = message.get("uuid").and_then(Value::as_str) {
+                id = crate::serde_pb::from_hex(&uuid.replace('-', ""))?;
+            }
+            if turn_running && message.get("priority").is_none() {
+                send_now = Some(Input {
+                    input_id: format!("stdin-{inputs}-now").into_bytes(),
+                    of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
+                        of: Some(claude_sdk_input::Of::SendNow(SendQueuedNow {
+                            queued_input_id: id.clone(),
+                        })),
+                    })),
+                });
+            }
+            turn_running = true;
+        }
         let arm = match text(&message, "type") {
             "user" => Some(claude_sdk_input::Of::Prompt(PromptInput {
                 text: crate::claude_common::content_text(
@@ -123,6 +149,9 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                 input_id: id,
                 of: Some(input::Of::ClaudeSdk(ClaudeSdkInput { of: Some(arm) })),
             }));
+        }
+        if let Some(send_now) = send_now {
+            push(Event::Input(send_now));
         }
     }
     Ok(events)

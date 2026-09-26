@@ -73,6 +73,9 @@ goldens! {
     recorded_side_channel => "recorded_side_channel",
     recorded_sign_in_problem => "recorded_sign_in_problem",
     recorded_task_list => "recorded_task_list",
+    recorded_elicitation_cancelled => "recorded_elicitation_cancelled",
+    recorded_steer_folded => "recorded_steer_folded",
+    recorded_steer_preempted => "recorded_steer_preempted",
 }
 
 #[test]

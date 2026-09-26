@@ -1,0 +1,10 @@
+{
+  "about": "A tool server asks for a form and the person cancels it without choosing; the server hears cancel, not decline.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/elicitation_cancelled/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}
