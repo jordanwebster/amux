@@ -61,7 +61,8 @@ message ClaudePtySnapshot {
   ContextMeter context = 4;
   optional string model = 5;
   optional string permission_mode = 6;
-  string provider_session = 7;
+  // Absent until SessionStart or the first system event names it.
+  optional string provider_session = 7;
   UsageLimits usage = 8;
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
@@ -159,7 +160,8 @@ message ClaudeSdkSnapshot {
   ToolServerHealth servers = 10;
   SignIn sign_in = 11;
   BackgroundProcesses background_processes = 12;
-  string provider_session = 13;
+  // Absent until the init event names it.
+  optional string provider_session = 13;
 }
 
 message ClaudeSdkInput {

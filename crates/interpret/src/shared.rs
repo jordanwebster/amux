@@ -1,0 +1,891 @@
+//! The kind-neutral state every interpreter composes: the person's queue, the
+//! ask list, the set of accepted but unconsumed agent messages, working_on,
+//! the turn counter, and the items still open for streaming. It also owns
+//! step assembly, so phase derivation and "a change forces a snapshot" are
+//! written once.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+use wire::{
+    AgentMessage, AgentSpec, Append, Attachment, Envelope, Input, Item, Phase, PromptInput,
+    QueuedInput, Sender, Snapshot, Step, TurnEnd, input, sender,
+};
+
+use crate::{Effect, Stepped, reply, serde_pb};
+
+/// Why an input was refused. The strings are the wire's reason vocabulary.
+pub mod reason {
+    pub const CLOSED_ASK: &str = "closed_ask";
+    pub const NOT_QUEUED: &str = "not_queued";
+    pub const UNSUPPORTED: &str = "unsupported";
+    pub const DRAINING: &str = "draining";
+    pub const EXITING: &str = "exiting";
+    pub const EXITED: &str = "exited";
+}
+
+/// The tool server name amux's own tools are registered under, and the tool
+/// whose call sets working_on.
+pub const AMUX_TOOL_SERVER: &str = "amux";
+pub const STATUS_TOOL: &str = "status";
+
+/// An open ask as the shared list needs to see it. Implemented by the
+/// per-kind ask messages.
+pub trait OpenAsk: prost::Message + Default + Clone + PartialEq {
+    fn key(&self) -> &str;
+    fn item_key(&self) -> &str;
+}
+
+impl OpenAsk for wire::Ask {
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn item_key(&self) -> &str {
+        &self.item_key
+    }
+}
+
+impl OpenAsk for wire::CodexAsk {
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn item_key(&self) -> &str {
+        &self.item_key
+    }
+}
+
+/// The person's queue: prompts waiting for the provider to go idle, in
+/// arrival order, whichever client sent them. Nothing is edited in place;
+/// an edit is a withdraw and a new prompt.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Queue {
+    #[serde(with = "serde_pb::msgs")]
+    entries: Vec<QueuedInput>,
+}
+
+impl Queue {
+    pub fn push(&mut self, entry: QueuedInput) {
+        self.entries.push(entry);
+    }
+
+    /// Removes the entry with this input id; false when it is not queued.
+    pub fn withdraw(&mut self, input_id: &[u8]) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.input_id != input_id);
+        self.entries.len() != before
+    }
+
+    pub fn pop(&mut self) -> Option<QueuedInput> {
+        (!self.entries.is_empty()).then(|| self.entries.remove(0))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn contains(&self, input_id: &[u8]) -> bool {
+        self.entries.iter().any(|entry| entry.input_id == input_id)
+    }
+
+    pub fn entries(&self) -> &[QueuedInput] {
+        &self.entries
+    }
+}
+
+/// The open asks, in the order they opened. Opened and closed only by
+/// provider facts, or by an answer this interpreter sent: never by a timer,
+/// a quiet period, or anything downstream.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
+pub struct Asks<A: OpenAsk> {
+    #[serde(with = "serde_pb::msgs")]
+    open: Vec<A>,
+}
+
+impl<A: OpenAsk> Default for Asks<A> {
+    fn default() -> Self {
+        Self { open: Vec::new() }
+    }
+}
+
+impl<A: OpenAsk> Asks<A> {
+    /// Opens an ask, or replaces the open one with the same key.
+    pub fn open(&mut self, ask: A) {
+        match self.open.iter_mut().find(|open| open.key() == ask.key()) {
+            Some(open) => *open = ask,
+            None => self.open.push(ask),
+        }
+    }
+
+    pub fn close(&mut self, key: &str) -> Option<A> {
+        let at = self.open.iter().position(|open| open.key() == key)?;
+        Some(self.open.remove(at))
+    }
+
+    /// Closes every ask whose item is `item_key`: a tool result or a later
+    /// message closes the asks that pointed at the call.
+    pub fn close_for_item(&mut self, item_key: &str) -> Vec<A> {
+        let (closed, open) = std::mem::take(&mut self.open)
+            .into_iter()
+            .partition(|ask| !item_key.is_empty() && ask.item_key() == item_key);
+        self.open = open;
+        closed
+    }
+
+    pub fn close_all(&mut self) -> Vec<A> {
+        std::mem::take(&mut self.open)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&A> {
+        self.open.iter().find(|open| open.key() == key)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.open.is_empty()
+    }
+
+    pub fn open_asks(&self) -> &[A] {
+        &self.open
+    }
+}
+
+/// The per-agent turn counter. A turn begins when a prompt is submitted or
+/// the provider reports one starting, and ends on the provider's turn-end
+/// fact; an ask is mid-turn.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TurnCounter {
+    last_id: u64,
+    current: Option<OpenTurn>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpenTurn {
+    pub id: u64,
+    pub started_at_ms: i64,
+    /// The turn's newest complete assistant text item.
+    pub last_message_key: String,
+}
+
+impl TurnCounter {
+    /// The running turn's id, starting one if none is running.
+    pub fn begin(&mut self, now_ms: i64) -> u64 {
+        if let Some(turn) = &self.current {
+            return turn.id;
+        }
+        self.last_id += 1;
+        self.current = Some(OpenTurn {
+            id: self.last_id,
+            started_at_ms: now_ms,
+            last_message_key: String::new(),
+        });
+        self.last_id
+    }
+
+    pub fn current(&self) -> Option<&OpenTurn> {
+        self.current.as_ref()
+    }
+
+    pub fn note_message(&mut self, key: &str) {
+        if let Some(turn) = &mut self.current {
+            turn.last_message_key = key.to_owned();
+        }
+    }
+
+    pub fn end(&mut self) -> Option<OpenTurn> {
+        self.current.take()
+    }
+}
+
+/// An item as an interpreter builds it; the envelope's agent, kind and
+/// producer version are filled in by [`Shared::item`].
+#[derive(Clone, Debug, Default)]
+pub struct ItemDraft {
+    pub key: String,
+    pub text: String,
+    pub attachments: Vec<Attachment>,
+    pub input_id: Vec<u8>,
+    /// The per-kind item message, encoded.
+    pub body: Vec<u8>,
+    /// The provider's own timestamp. When absent: the time an open item
+    /// was first emitted, so a stream keeps the moment it started, else the
+    /// interpreter's clock. A kind re-emitting a completed item (a tool
+    /// call's result) passes the time it started.
+    pub at_ms: Option<i64>,
+    /// No append will follow. Anything not complete stays open, and a
+    /// resume re-emits it in full.
+    pub complete: bool,
+}
+
+/// One step's output as it is assembled.
+#[derive(Debug, Default)]
+pub struct Emit {
+    step: Step,
+    effects: Vec<Effect>,
+}
+
+impl Emit {
+    pub fn effect(&mut self, effect: Effect) {
+        self.effects.push(effect);
+    }
+
+    pub fn effects(&self) -> &[Effect] {
+        &self.effects
+    }
+
+    pub fn items(&self) -> &[Item] {
+        &self.step.items
+    }
+}
+
+/// Everything kind-neutral an interpreter holds. Every field is checkpointed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
+pub struct Shared<A: OpenAsk> {
+    #[serde(with = "serde_pb::bytes")]
+    agent: Vec<u8>,
+    kind: String,
+    producer_version: String,
+    now_ms: i64,
+    /// The provider accepts input.
+    started: bool,
+    /// A turn is running: submitted, or reported by the provider.
+    busy: bool,
+    queue: Queue,
+    asks: Asks<A>,
+    /// Agent messages the provider accepted and has not yet consumed, by
+    /// envelope id. A one-shot agent does not exit while this is non-empty.
+    #[serde(with = "serde_pb::bytes_set")]
+    pending_messages: BTreeSet<Vec<u8>>,
+    working_on: Option<String>,
+    turn: TurnCounter,
+    /// Prompts handed to the provider and not yet reflected, oldest first:
+    /// the reflection FIFO.
+    #[serde(with = "serde_pb::bytes_vec")]
+    submitted: Vec<Vec<u8>>,
+    /// Items emitted and not complete, at their full current state.
+    #[serde(with = "serde_pb::msg_map")]
+    open_items: BTreeMap<String, Item>,
+    /// The last snapshot emitted, so a step emits one only when it changed.
+    #[serde(with = "serde_pb::opt_msg")]
+    last_snapshot: Option<Snapshot>,
+}
+
+impl<A: OpenAsk> Shared<A> {
+    /// The state an agent starts from: its queue seeded from the spawn's
+    /// prompt, working_on from that prompt's first line, the clock at the
+    /// spec's creation time.
+    pub fn new(spec: &AgentSpec, kind: &str, producer_version: &str) -> Self {
+        let mut shared = Self {
+            agent: spec.agent_id.clone(),
+            kind: kind.to_owned(),
+            producer_version: producer_version.to_owned(),
+            now_ms: spec.created_at_ms,
+            started: false,
+            busy: false,
+            queue: Queue::default(),
+            asks: Asks::default(),
+            pending_messages: BTreeSet::new(),
+            working_on: None,
+            turn: TurnCounter::default(),
+            submitted: Vec::new(),
+            open_items: BTreeMap::new(),
+            last_snapshot: None,
+        };
+        if let Some(initial) = &spec.initial_prompt
+            && let Some(entry) = queued_from_input(initial)
+        {
+            shared.working_on = first_line(&entry.text);
+            shared.queue.push(entry);
+        }
+        shared
+    }
+
+    /// The first journal frame: a Snapshot, phase starting, the body at the
+    /// kind's explicit unknowns.
+    pub fn initial_step(&mut self, unknown_body: Vec<u8>) -> Step {
+        let mut emit = Emit::default();
+        self.snapshot_into(&mut emit, unknown_body, true);
+        emit.step
+    }
+
+    /// Finishes a step: appends a Snapshot if anything a client draws from
+    /// it changed.
+    pub fn finish(&mut self, mut emit: Emit, body: Vec<u8>) -> Stepped {
+        self.snapshot_into(&mut emit, body, false);
+        Stepped {
+            step: emit.step,
+            effects: emit.effects,
+        }
+    }
+
+    /// The step a resume starts with: every open item in full on its known
+    /// key, and the snapshot. At-least-once; downstream dedupes by key.
+    pub fn resume_step(&mut self, body: Vec<u8>) -> Step {
+        let mut emit = Emit::default();
+        emit.step.items = self.open_items.values().cloned().collect();
+        self.snapshot_into(&mut emit, body, true);
+        emit.step
+    }
+
+    fn snapshot_into(&mut self, emit: &mut Emit, body: Vec<u8>, force: bool) {
+        let snapshot = Snapshot {
+            agent: self.agent.clone(),
+            revision: 0,
+            queue: self.queue.entries.clone(),
+            kind: self.kind.clone(),
+            body,
+            phase: self.phase() as i32,
+            working_on: self.working_on.clone(),
+            at_ms: self.now_ms,
+        };
+        let changed = self.last_snapshot.as_ref().is_none_or(|last| {
+            Snapshot {
+                at_ms: snapshot.at_ms,
+                ..last.clone()
+            } != snapshot
+        });
+        if force || changed {
+            self.last_snapshot = Some(snapshot.clone());
+            emit.step.snapshot = Some(snapshot);
+        }
+    }
+
+    /// Needs-you whenever an ask is open; starting until the provider
+    /// accepts input; working while a turn runs; idle otherwise.
+    pub fn phase(&self) -> Phase {
+        if !self.asks.is_empty() {
+            Phase::NeedsYou
+        } else if !self.started {
+            Phase::Starting
+        } else if self.busy {
+            Phase::Working
+        } else {
+            Phase::Idle
+        }
+    }
+
+    // --- clock -----------------------------------------------------------
+
+    /// The interpreter's clock: the newest tick. It never runs backwards,
+    /// so durations between two items are never negative.
+    pub fn tick(&mut self, at_ms: i64) {
+        self.now_ms = self.now_ms.max(at_ms);
+    }
+
+    pub fn now_ms(&self) -> i64 {
+        self.now_ms
+    }
+
+    // --- items -----------------------------------------------------------
+
+    /// Emits an item at its full current state.
+    pub fn item(&mut self, emit: &mut Emit, draft: ItemDraft) {
+        let at_ms = draft.at_ms.unwrap_or_else(|| {
+            self.open_items
+                .get(&draft.key)
+                .map_or(self.now_ms, |open| open.at_ms)
+        });
+        let item = Item {
+            agent: self.agent.clone(),
+            key: draft.key,
+            order: 0,
+            revision: 0,
+            producer_version: self.producer_version.clone(),
+            input_id: draft.input_id,
+            text: draft.text,
+            attachments: draft.attachments,
+            kind: self.kind.clone(),
+            body: draft.body,
+            at_ms,
+        };
+        if draft.complete {
+            self.open_items.remove(&item.key);
+        } else {
+            self.open_items.insert(item.key.clone(), item.clone());
+        }
+        // A step's items commit before its appends, and a key appears once
+        // per step: this full state supersedes anything the step already
+        // holds for the key.
+        emit.step.appends.retain(|append| append.key != item.key);
+        match emit.step.items.iter_mut().find(|held| held.key == item.key) {
+            Some(held) => *held = item,
+            None => emit.step.items.push(item),
+        }
+    }
+
+    /// Extends the text of an open item. False, and nothing emitted, when
+    /// the key is not open: the caller emits a full item instead.
+    pub fn append(&mut self, emit: &mut Emit, key: &str, text: &str) -> bool {
+        let Some(item) = self.open_items.get_mut(key) else {
+            return false;
+        };
+        item.text.push_str(text);
+        if let Some(held) = emit.step.items.iter_mut().find(|held| held.key == key) {
+            held.text.push_str(text);
+            return true;
+        }
+        emit.step.appends.push(Append {
+            agent: self.agent.clone(),
+            key: key.to_owned(),
+            base_revision: 0,
+            revision: 0,
+            text: text.to_owned(),
+        });
+        true
+    }
+
+    pub fn open_item(&self, key: &str) -> Option<&Item> {
+        self.open_items.get(key)
+    }
+
+    // --- inputs ----------------------------------------------------------
+
+    pub fn accept(&mut self, emit: &mut Emit, input_id: &[u8], queued: bool) {
+        emit.effect(Effect::Reply {
+            input_id: input_id.to_vec(),
+            verdict: reply::accepted(queued),
+        });
+    }
+
+    /// A refusal is a reply and nothing else: no item, no snapshot change.
+    pub fn reject(&mut self, emit: &mut Emit, input_id: &[u8], reason: &str) {
+        emit.effect(Effect::Reply {
+            input_id: input_id.to_vec(),
+            verdict: reply::rejected(reason),
+        });
+    }
+
+    fn ready(&self) -> bool {
+        self.started && !self.busy && self.asks.is_empty()
+    }
+
+    /// A person's prompt from any client. Submitted now when the provider
+    /// is idle and nothing is queued ahead of it (returned, so the kind
+    /// writes it to the provider), else queued; replies either way.
+    pub fn admit_prompt(
+        &mut self,
+        emit: &mut Emit,
+        input_id: &[u8],
+        prompt: PromptInput,
+        sender: Sender,
+    ) -> Option<QueuedInput> {
+        let entry = QueuedInput {
+            input_id: input_id.to_vec(),
+            text: prompt.text,
+            attachments: prompt.attachments,
+            steer: prompt.steer,
+            sender: Some(sender),
+        };
+        if self.ready() && self.queue.is_empty() {
+            self.mark_submitted(&entry.input_id);
+            self.accept(emit, input_id, false);
+            Some(entry)
+        } else {
+            self.queue.push(entry);
+            self.accept(emit, input_id, true);
+            None
+        }
+    }
+
+    /// The head of the queue, when the provider is idle: the kind writes it
+    /// to the provider. Call whenever the provider may have become idle.
+    pub fn next_queued(&mut self) -> Option<QueuedInput> {
+        if !self.ready() {
+            return None;
+        }
+        let entry = self.queue.pop()?;
+        self.mark_submitted(&entry.input_id);
+        Some(entry)
+    }
+
+    fn mark_submitted(&mut self, input_id: &[u8]) {
+        self.submitted.push(input_id.to_vec());
+        self.busy = true;
+        self.turn.begin(self.now_ms);
+    }
+
+    /// The input id of the oldest submitted prompt the provider has not yet
+    /// reflected; the reflection's item carries it.
+    pub fn reflect_prompt(&mut self) -> Option<Vec<u8>> {
+        (!self.submitted.is_empty()).then(|| self.submitted.remove(0))
+    }
+
+    pub fn awaiting_reflection(&self) -> &[Vec<u8>] {
+        &self.submitted
+    }
+
+    /// Withdraws a queued prompt; rejected{not_queued} if it already left
+    /// the queue.
+    pub fn withdraw(&mut self, emit: &mut Emit, input_id: &[u8], target: &[u8]) {
+        if self.queue.withdraw(target) {
+            self.accept(emit, input_id, false);
+        } else {
+            self.reject(emit, input_id, reason::NOT_QUEUED);
+        }
+    }
+
+    /// Queues an agent message on a provider with no injection channel, as
+    /// an ordinary entry labelled with its sender.
+    pub fn queue_agent_message(&mut self, emit: &mut Emit, input_id: &[u8], envelope: &Envelope) {
+        let entry = QueuedInput {
+            input_id: envelope.id.clone(),
+            text: envelope.text.clone(),
+            attachments: Vec::new(),
+            steer: false,
+            sender: envelope.from.clone(),
+        };
+        self.queue.push(entry);
+        self.accept(emit, input_id, true);
+    }
+
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    // --- asks ------------------------------------------------------------
+
+    pub fn open_ask(&mut self, ask: A) {
+        self.asks.open(ask);
+    }
+
+    pub fn close_ask(&mut self, key: &str) -> Option<A> {
+        self.asks.close(key)
+    }
+
+    pub fn close_asks_for_item(&mut self, item_key: &str) -> Vec<A> {
+        self.asks.close_for_item(item_key)
+    }
+
+    pub fn close_all_asks(&mut self) -> Vec<A> {
+        self.asks.close_all()
+    }
+
+    pub fn asks(&self) -> &Asks<A> {
+        &self.asks
+    }
+
+    /// The stale-answer rule. An answer to an open ask closes it and hands
+    /// it back, so the kind writes the answer and accepts. An answer to an
+    /// ask that is not open is rejected{closed_ask} and writes nothing.
+    pub fn answer(&mut self, emit: &mut Emit, input_id: &[u8], ask_key: &str) -> Option<A> {
+        let ask = self.asks.close(ask_key);
+        if ask.is_none() {
+            self.reject(emit, input_id, reason::CLOSED_ASK);
+        }
+        ask
+    }
+
+    // --- agent messages --------------------------------------------------
+
+    /// The provider accepted an injected agent message: it waits in the
+    /// pending set until the carrier's consumption point.
+    pub fn message_accepted(&mut self, envelope_id: &[u8]) {
+        self.pending_messages.insert(envelope_id.to_vec());
+    }
+
+    /// The carrier consumed the message. False if it was not pending.
+    pub fn message_consumed(&mut self, envelope_id: &[u8]) -> bool {
+        self.pending_messages.remove(envelope_id)
+    }
+
+    pub fn pending_messages(&self) -> &BTreeSet<Vec<u8>> {
+        &self.pending_messages
+    }
+
+    // --- provider and turn state ----------------------------------------
+
+    /// The provider accepts input.
+    pub fn provider_started(&mut self) {
+        self.started = true;
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.started
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy
+    }
+
+    /// The provider reports a turn running; idempotent with a submission.
+    pub fn turn_started(&mut self) -> u64 {
+        self.busy = true;
+        self.turn.begin(self.now_ms)
+    }
+
+    /// A complete assistant text item: the turn's newest message so far.
+    pub fn note_message(&mut self, key: &str) {
+        self.turn.note_message(key);
+    }
+
+    pub fn turn(&self) -> Option<&OpenTurn> {
+        self.turn.current()
+    }
+
+    /// The provider reports the turn over: the step carries TurnEnd, and
+    /// the ended turn is returned for the kind's Turn item. None when no
+    /// turn was running.
+    pub fn turn_ended(&mut self, emit: &mut Emit) -> Option<OpenTurn> {
+        self.busy = false;
+        let turn = self.turn.end()?;
+        emit.step.turn_end = Some(TurnEnd {
+            turn_id: turn.id,
+            last_message_key: turn.last_message_key.clone(),
+        });
+        Some(turn)
+    }
+
+    /// The provider is gone: no turn runs and nothing is submitted. A turn
+    /// cut short has no TurnEnd; the daemon reports the incarnation failed.
+    pub fn provider_exited(&mut self) -> Option<OpenTurn> {
+        self.started = false;
+        self.busy = false;
+        self.submitted.clear();
+        self.turn.end()
+    }
+
+    /// A one-shot agent may exit: no turn running, nothing queued, no
+    /// accepted agent message waiting to be consumed.
+    pub fn quiescent(&self) -> bool {
+        !self.busy && self.queue.is_empty() && self.pending_messages.is_empty()
+    }
+
+    // --- working_on ------------------------------------------------------
+
+    /// Set from the status tool call; never cleared automatically.
+    pub fn set_working_on(&mut self, working_on: Option<String>) {
+        self.working_on = working_on.filter(|text| !text.trim().is_empty());
+    }
+
+    pub fn working_on(&self) -> Option<&str> {
+        self.working_on.as_deref()
+    }
+}
+
+/// The working_on a status tool call declares: `{"working_on": string |
+/// null}`. None when the arguments are not a status call's.
+pub fn status_working_on(arguments_json: &[u8]) -> Option<Option<String>> {
+    let value: serde_json::Value = serde_json::from_slice(arguments_json).ok()?;
+    match value.get("working_on")? {
+        serde_json::Value::Null => Some(None),
+        serde_json::Value::String(text) => Some(Some(text.clone())),
+        _ => None,
+    }
+}
+
+/// Whether a tool-server call is amux's status tool.
+pub fn is_status_tool(server: &str, tool: &str) -> bool {
+    server == AMUX_TOOL_SERVER && tool == STATUS_TOOL
+}
+
+/// The kind-neutral key for an agent message's item.
+pub fn agent_message_key(envelope_id: &[u8]) -> String {
+    format!("agent-message:{}", serde_pb::to_hex(envelope_id))
+}
+
+/// The body every kind's agent-message item carries.
+pub fn agent_message_body(envelope: &Envelope) -> AgentMessage {
+    AgentMessage {
+        envelope_id: envelope.id.clone(),
+        kind: envelope.kind,
+        from: envelope.from.clone(),
+        context: envelope.context.clone().unwrap_or_default(),
+    }
+}
+
+/// A prompt or agent message as a queue entry: the spawn's first input.
+fn queued_from_input(input: &Input) -> Option<QueuedInput> {
+    let prompt = match input.of.as_ref()? {
+        input::Of::AgentMessage(envelope) => {
+            return Some(QueuedInput {
+                input_id: envelope.id.clone(),
+                text: envelope.text.clone(),
+                attachments: Vec::new(),
+                steer: false,
+                sender: envelope.from.clone(),
+            });
+        }
+        input::Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::Prompt(prompt)),
+        })
+        | input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Prompt(prompt)),
+        })
+        | input::Of::Codex(wire::CodexInput {
+            of: Some(wire::codex_input::Of::Prompt(prompt)),
+        }) => prompt,
+        _ => return None,
+    };
+    Some(QueuedInput {
+        input_id: input.input_id.clone(),
+        text: prompt.text.clone(),
+        attachments: prompt.attachments.clone(),
+        steer: false,
+        sender: Some(human()),
+    })
+}
+
+/// The first line with visible text, placeholders removed.
+fn first_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(|line| line.replace('\u{FFFC}', "").trim().to_owned())
+        .find(|line| !line.is_empty())
+}
+
+/// The sender of a person's input.
+pub fn human() -> Sender {
+    Sender {
+        value: Some(sender::Value::Human(wire::Human {})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wire::{Ask, EnvelopeKind};
+
+    use super::*;
+
+    fn shared() -> Shared<Ask> {
+        let spec = AgentSpec {
+            agent_id: b"a".to_vec(),
+            created_at_ms: 10,
+            ..Default::default()
+        };
+        Shared::new(&spec, "test", "v")
+    }
+
+    fn envelope(id: &[u8]) -> Envelope {
+        Envelope {
+            id: id.to_vec(),
+            kind: EnvelopeKind::Message as i32,
+            text: "hi".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_one_shot_agent_is_quiet_only_with_nothing_queued_running_or_pending() {
+        let mut shared = shared();
+        shared.provider_started();
+        assert!(shared.quiescent());
+
+        shared.message_accepted(b"e1");
+        assert!(!shared.quiescent(), "an accepted message is still pending");
+        assert!(!shared.message_consumed(b"other"));
+        assert!(shared.message_consumed(b"e1"));
+        assert!(shared.quiescent());
+
+        let mut emit = Emit::default();
+        let prompt = PromptInput {
+            text: "go".into(),
+            ..Default::default()
+        };
+        assert!(
+            shared
+                .admit_prompt(&mut emit, b"p1", prompt.clone(), human())
+                .is_some()
+        );
+        assert!(!shared.quiescent(), "a turn is running");
+        assert!(
+            shared
+                .admit_prompt(&mut emit, b"p2", prompt, human())
+                .is_none()
+        );
+        assert_eq!(shared.turn_ended(&mut emit).map(|turn| turn.id), Some(1));
+        assert!(!shared.quiescent(), "p2 is queued");
+        assert_eq!(
+            shared.next_queued().map(|entry| entry.input_id),
+            Some(b"p2".to_vec())
+        );
+        shared.turn_ended(&mut emit);
+        assert!(shared.quiescent());
+    }
+
+    #[test]
+    fn an_agent_message_without_a_carrier_queues_labelled_with_its_sender() {
+        let mut shared = shared();
+        let mut emit = Emit::default();
+        let mut message = envelope(b"e1");
+        message.from = Some(Sender {
+            value: Some(sender::Value::Agent(wire::AgentSender {
+                name: "reviewer".into(),
+                ..Default::default()
+            })),
+        });
+        shared.queue_agent_message(&mut emit, b"in", &message);
+        let entry = &shared.queue().entries()[0];
+        assert_eq!(entry.input_id, b"e1");
+        assert_eq!(entry.sender, message.from);
+        assert_eq!(emit.effects().len(), 1);
+    }
+
+    #[test]
+    fn a_provider_exit_mid_turn_has_no_turn_end() {
+        let mut shared = shared();
+        shared.provider_started();
+        shared.turn_started();
+        let mut emit = Emit::default();
+        assert_eq!(shared.provider_exited().map(|turn| turn.id), Some(1));
+        assert!(shared.turn_ended(&mut emit).is_none());
+        assert!(emit.step.turn_end.is_none());
+        assert_eq!(shared.phase(), Phase::Starting);
+    }
+
+    #[test]
+    fn an_open_ask_outranks_every_other_phase() {
+        let mut shared = shared();
+        shared.open_ask(Ask {
+            key: "k".into(),
+            ..Default::default()
+        });
+        assert_eq!(shared.phase(), Phase::NeedsYou, "even while starting");
+        shared.provider_started();
+        shared.turn_started();
+        assert_eq!(shared.phase(), Phase::NeedsYou);
+        shared.close_ask("k");
+        assert_eq!(shared.phase(), Phase::Working);
+    }
+
+    #[test]
+    fn working_on_is_set_and_cleared_only_by_the_status_call() {
+        assert_eq!(
+            status_working_on(br#"{"working_on": "x"}"#),
+            Some(Some("x".into()))
+        );
+        assert_eq!(status_working_on(br#"{"working_on": null}"#), Some(None));
+        assert_eq!(status_working_on(br#"{"other": 1}"#), None);
+        assert!(is_status_tool("amux", "status"));
+        assert!(!is_status_tool("other", "status"));
+        let mut shared = shared();
+        shared.set_working_on(Some("  ".into()));
+        assert_eq!(shared.working_on(), None);
+    }
+
+    #[test]
+    fn a_checkpoint_round_trips_every_field() {
+        let mut shared = shared();
+        let mut emit = Emit::default();
+        shared.provider_started();
+        shared.admit_prompt(&mut emit, b"p1", PromptInput::default(), human());
+        shared.admit_prompt(&mut emit, b"p2", PromptInput::default(), human());
+        shared.open_ask(Ask {
+            key: "k".into(),
+            item_key: "t".into(),
+            ..Default::default()
+        });
+        shared.message_accepted(&[0, 255]);
+        shared.set_working_on(Some("w".into()));
+        shared.item(
+            &mut emit,
+            ItemDraft {
+                key: "m".into(),
+                text: "open".into(),
+                ..Default::default()
+            },
+        );
+        shared.finish(emit, Vec::new());
+        let json = serde_json::to_string(&shared).unwrap();
+        let back: Shared<Ask> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, shared);
+    }
+}

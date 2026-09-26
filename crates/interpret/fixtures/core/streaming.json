@@ -1,0 +1,22 @@
+{
+  "about": "A streamed message grows by appends to the newest item and ends with a full item; a resume mid-stream re-emits the open item in full on its known key.",
+  "spec": { "created_at_ms": 1000 },
+  "events": [
+    { "fact": { "channel": "stream", "json": { "type": "ready" } } },
+    { "fact": { "channel": "stream", "json": { "type": "model", "model": "opus" } } },
+    { "input": { "id": "p1", "prompt": { "text": "say hello" } } },
+    { "tick": 1200 },
+    { "fact": { "channel": "stream", "json": { "type": "user", "id": "u1", "text": "say hello" } } },
+    { "tick": 1300 },
+    { "fact": { "channel": "stream", "json": { "type": "text", "id": "m1", "delta": "Hel" } },
+      "expect": { "items": ["m1"] } },
+    { "fact": { "channel": "stream", "json": { "type": "text", "id": "m1", "delta": "lo w" } } },
+    { "checkpoint": {} },
+    { "fact": { "channel": "stream", "json": { "type": "text", "id": "m1", "delta": "orld" } } },
+    { "tick": 1500 },
+    { "fact": { "channel": "stream", "json": { "type": "text_done", "id": "m1" } },
+      "expect": { "items": ["m1"] } },
+    { "fact": { "channel": "stream", "json": { "type": "turn_end" } },
+      "expect": { "turn_end": { "turn_id": 1, "last_message_key": "m1" } } }
+  ]
+}

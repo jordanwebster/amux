@@ -1,0 +1,1197 @@
+//! The golden harness: recorded or authored facts in, an emission golden,
+//! explicit outcomes and the interpreter invariants out.
+//!
+//! A fixture is a JSON file:
+//!
+//! ```json
+//! {
+//!   "about": "what this fixture shows",
+//!   "spec": { "agent_id": "a1", "created_at_ms": 1000, "initial_prompt": "fix it" },
+//!   "recording": { "path": "corpus.jsonl", "format": "transcript" },
+//!   "events": [
+//!     { "tick": 1500 },
+//!     { "fact": { "channel": "stream", "json": { "type": "ready" } } },
+//!     { "input": { "id": "p1", "prompt": { "text": "hello" } },
+//!       "expect": { "reply": "accepted", "phase": "WORKING" } },
+//!     { "checkpoint": {} }
+//!   ],
+//!   "end": { "queue_may_remain": false }
+//! }
+//! ```
+//!
+//! Recording events, when present, run before the authored ones. The golden
+//! is the rendered emission beside the fixture, `<name>.golden`; it is only
+//! written when `INTERPRET_UPDATE_GOLDENS=1`, never by an ordinary run.
+//!
+//! Besides the golden and the expectations, every run checks the invariants
+//! ([`check_invariants`]) and the checkpoint property: resuming from a
+//! checkpoint taken after any prefix of the events and running the rest
+//! yields the same items and final snapshot as the uninterrupted run, and a
+//! resume re-emits only known keys at their current content.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+use prost::Message as _;
+use serde::Deserialize;
+use serde_json::Value;
+use wire::{
+    AgentSpec, AnswerInput, ClaudeAnswer, CodexAnswer, Envelope, EnvelopeKind, Input, Item, Key,
+    KeyName, Phase, PromptInput, SendInputResponse, Sender, Snapshot, Step, StopMode,
+    WithdrawQueued, claude_answer, claude_pty_input, claude_sdk_input, codex_input, input,
+    send_input_response, sender,
+};
+
+use crate::serde_pb::{from_hex, to_hex};
+use crate::{
+    Channel, Checkpoint, Effect, Event, Fact, Interpreter, decode_checkpoint, encode_checkpoint,
+};
+
+/// Set to 1 to write goldens instead of comparing against them.
+pub const UPDATE_GOLDENS_ENV: &str = "INTERPRET_UPDATE_GOLDENS";
+
+/// What a fixture allows to be left over when its events run out.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndRules {
+    /// The fixture ends with prompts still queued on purpose.
+    #[serde(default)]
+    pub queue_may_remain: bool,
+    /// The fixture ends mid-stream on purpose (a recording cut short).
+    #[serde(default)]
+    pub streams_may_remain: bool,
+}
+
+/// An authored input, in the vocabulary fixtures write. Each kind maps it
+/// to its own input arm in [`Interpreter::fixture_input`].
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum FixtureInput {
+    Prompt {
+        text: String,
+        #[serde(default)]
+        steer: bool,
+    },
+    Withdraw {
+        target: String,
+    },
+    Interrupt {},
+    Clear {},
+    /// `answer` is the kind's answer in JSON: for Claude `{"allow": {}}`,
+    /// `{"allow": {"scope": 1}}`, `{"deny": {"note": "…", "stop": true}}`,
+    /// `{"approve_plan": {}}`, `{"send_back": {"note": "…"}}`; for Codex
+    /// `{"decision": "approve"}` answers an approval and anything else is a
+    /// CodexAnswer.
+    Answer {
+        ask: String,
+        #[serde(default)]
+        answer: Value,
+    },
+    AgentMessage {
+        envelope: String,
+        #[serde(default)]
+        from: String,
+        text: String,
+    },
+    Key {
+        name: String,
+    },
+    /// An encoded Input, hex, for arms the vocabulary above does not name.
+    Raw {
+        hex: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Fixture {
+    #[serde(default)]
+    #[allow(dead_code)]
+    about: String,
+    #[serde(default)]
+    spec: FixtureSpec,
+    recording: Option<Recording>,
+    #[serde(default)]
+    events: Vec<Value>,
+    #[serde(default)]
+    end: EndRules,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureSpec {
+    agent_id: Option<String>,
+    #[serde(default)]
+    created_at_ms: i64,
+    #[serde(default)]
+    parent: bool,
+    initial_prompt: Option<String>,
+    producer_version: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recording {
+    path: String,
+    format: String,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Expect {
+    /// Phase in the newest snapshot after this event.
+    phase: Option<String>,
+    /// accepted | queued | rejected:<reason>, for this event's input.
+    reply: Option<String>,
+    /// Input ids queued in the newest snapshot, in order.
+    queue: Option<Vec<String>>,
+    /// Open ask keys in the newest snapshot, in order.
+    asks: Option<Vec<String>>,
+    /// working_on in the newest snapshot; null for none.
+    #[serde(default, deserialize_with = "present")]
+    working_on: Option<Value>,
+    /// false, or {"turn_id": n, "last_message_key": "k"}.
+    turn_end: Option<Value>,
+    /// Item keys this event emitted, in order.
+    items: Option<Vec<String>>,
+    /// Effect lines this event produced, rendered as in the golden.
+    effects: Option<Vec<String>>,
+    /// This event emitted nothing to the journal.
+    silent: Option<bool>,
+}
+
+/// Keeps an explicit JSON null distinct from an absent key.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
+
+#[allow(clippy::large_enum_variant)]
+enum Action {
+    Event(Event),
+    Checkpoint,
+}
+
+struct Scripted {
+    label: String,
+    action: Action,
+    expect: Option<Expect>,
+}
+
+struct Frame {
+    label: String,
+    step: Step,
+    effects: Vec<Effect>,
+}
+
+/// What [`run_golden`] found.
+#[derive(Debug)]
+pub struct GoldenReport {
+    pub fixture: PathBuf,
+    /// The emission as rendered now.
+    pub rendered: String,
+    /// The committed golden, if any.
+    pub golden: Option<String>,
+    /// The golden was rewritten because updates were requested.
+    pub updated: bool,
+    /// Broken invariants and checkpoint-property failures.
+    pub violations: Vec<String>,
+    /// Unmet expectations, fixture errors and golden mismatches.
+    pub failures: Vec<String>,
+}
+
+impl GoldenReport {
+    pub fn is_ok(&self) -> bool {
+        self.violations.is_empty() && self.failures.is_empty()
+    }
+
+    /// Panics with everything wrong, for use in tests.
+    #[track_caller]
+    pub fn assert_ok(&self) {
+        if self.is_ok() {
+            return;
+        }
+        let mut message = format!("{} failed\n", self.fixture.display());
+        for violation in &self.violations {
+            let _ = writeln!(message, "  invariant: {violation}");
+        }
+        for failure in &self.failures {
+            let _ = writeln!(message, "  {failure}");
+        }
+        panic!("{message}");
+    }
+
+    fn fail(fixture: &Path, failure: String) -> Self {
+        Self {
+            fixture: fixture.to_owned(),
+            rendered: String::new(),
+            golden: None,
+            updated: false,
+            violations: Vec::new(),
+            failures: vec![failure],
+        }
+    }
+}
+
+/// Runs one fixture through interpreter `I` and checks its golden, its
+/// expectations, the invariants and the checkpoint property.
+pub fn run_golden<I: Interpreter>(fixture: &Path) -> GoldenReport {
+    let text = match std::fs::read_to_string(fixture) {
+        Ok(text) => text,
+        Err(error) => return GoldenReport::fail(fixture, format!("read fixture: {error}")),
+    };
+    let parsed: Fixture = match serde_json::from_str(&text) {
+        Ok(parsed) => parsed,
+        Err(error) => return GoldenReport::fail(fixture, format!("parse fixture: {error}")),
+    };
+    let script = match script::<I>(fixture, &parsed) {
+        Ok(script) => script,
+        Err(error) => return GoldenReport::fail(fixture, error),
+    };
+    let spec = spec::<I>(&parsed.spec);
+    let producer = parsed.spec.producer_version.as_deref().unwrap_or("test");
+
+    let mut report = GoldenReport {
+        fixture: fixture.to_owned(),
+        rendered: String::new(),
+        golden: None,
+        updated: false,
+        violations: Vec::new(),
+        failures: Vec::new(),
+    };
+
+    let frames = match execute::<I>(&spec, producer, &script, None) {
+        Ok(frames) => frames,
+        Err(error) => return GoldenReport::fail(fixture, error),
+    };
+    report.rendered = render::<I>(&frames);
+
+    let steps = frames
+        .iter()
+        .map(|frame| frame.step.clone())
+        .collect::<Vec<_>>();
+    report.violations = check_invariants::<I>(&steps, &parsed.end);
+    report.violations.extend(check_resumes(&frames));
+    report.failures = check_expectations::<I>(&frames, &script);
+
+    // The checkpoint property, at every prefix.
+    let whole = merge(&frames);
+    for at in 0..=script.len() {
+        match execute::<I>(&spec, producer, &script, Some(at)) {
+            Ok(resumed) => {
+                if let Some(problem) = check_resumes(&resumed).into_iter().next() {
+                    report
+                        .violations
+                        .push(format!("checkpoint after event {at}: {problem}"));
+                }
+                if let Some(difference) = whole.difference(&merge(&resumed)) {
+                    report.violations.push(format!(
+                        "resuming from a checkpoint after event {at} diverges: {difference}"
+                    ));
+                }
+            }
+            Err(error) => report
+                .violations
+                .push(format!("checkpoint after event {at}: {error}")),
+        }
+    }
+
+    let golden_path = fixture.with_extension("golden");
+    if std::env::var(UPDATE_GOLDENS_ENV).is_ok_and(|value| value == "1") {
+        match std::fs::write(&golden_path, &report.rendered) {
+            Ok(()) => report.updated = true,
+            Err(error) => report.failures.push(format!("write golden: {error}")),
+        }
+        report.golden = Some(report.rendered.clone());
+    } else {
+        match std::fs::read_to_string(&golden_path) {
+            Ok(golden) => {
+                if golden != report.rendered {
+                    report.failures.push(format!(
+                        "emission differs from {}:\n{}",
+                        golden_path.display(),
+                        first_difference(&golden, &report.rendered)
+                    ));
+                }
+                report.golden = Some(golden);
+            }
+            Err(_) => report.failures.push(format!(
+                "no golden at {}; review the emission and write it with {UPDATE_GOLDENS_ENV}=1",
+                golden_path.display()
+            )),
+        }
+    }
+    report
+}
+
+fn spec<I: Interpreter>(spec: &FixtureSpec) -> AgentSpec {
+    AgentSpec {
+        agent_id: spec
+            .agent_id
+            .as_deref()
+            .unwrap_or("agent")
+            .as_bytes()
+            .to_vec(),
+        kind: I::KIND.to_owned(),
+        created_at_ms: spec.created_at_ms,
+        incarnation: 1,
+        parent: spec.parent.then(|| wire::AgentParent {
+            host_id: b"parent-host".to_vec(),
+            agent_id: b"parent".to_vec(),
+        }),
+        initial_prompt: spec.initial_prompt.as_ref().and_then(|text| {
+            I::fixture_input(
+                b"initial".to_vec(),
+                &FixtureInput::Prompt {
+                    text: text.clone(),
+                    steer: false,
+                },
+            )
+        }),
+        ..Default::default()
+    }
+}
+
+fn script<I: Interpreter>(fixture: &Path, parsed: &Fixture) -> Result<Vec<Scripted>, String> {
+    let mut script = Vec::new();
+    if let Some(recording) = &parsed.recording {
+        let path = fixture
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(&recording.path);
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("read recording {}: {error}", path.display()))?;
+        for (index, event) in I::recording(&recording.format, &bytes)?
+            .into_iter()
+            .enumerate()
+        {
+            script.push(Scripted {
+                label: format!("recorded {index}: {}", event_label(&event)),
+                action: Action::Event(event),
+                expect: None,
+            });
+        }
+    }
+    for (index, value) in parsed.events.iter().enumerate() {
+        script.push(scripted::<I>(value).map_err(|error| format!("event {index}: {error}"))?);
+    }
+    Ok(script)
+}
+
+fn scripted<I: Interpreter>(value: &Value) -> Result<Scripted, String> {
+    let Value::Object(object) = value else {
+        return Err("an event is an object".into());
+    };
+    let mut action_keys = object
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "expect" | "note"));
+    let (Some(key), None) = (action_keys.next(), action_keys.next()) else {
+        return Err(format!("an event has exactly one action: {value}"));
+    };
+    let body = &object[key];
+    let expect = object
+        .get("expect")
+        .map(|expect| serde_json::from_value::<Expect>(expect.clone()))
+        .transpose()
+        .map_err(|error| format!("expect: {error}"))?;
+    let label = format!("{key} {body}");
+    let action = match key.as_str() {
+        "tick" => Action::Event(Event::Tick {
+            at_ms: body.as_i64().ok_or("tick takes milliseconds")?,
+        }),
+        "fact" => Action::Event(Event::Fact(fact(body)?)),
+        "input" => Action::Event(Event::Input(input_of::<I>(body)?)),
+        "provider_exit" => Action::Event(Event::ProviderExit {
+            code: body
+                .get("code")
+                .and_then(Value::as_i64)
+                .map(|code| code as i32),
+        }),
+        "daemon_lost" => Action::Event(Event::DaemonLost),
+        "stop" => Action::Event(Event::StopRequested(
+            match body.as_str().ok_or("stop takes a mode")? {
+                "graceful" => StopMode::Graceful,
+                "abort" => StopMode::Abort,
+                "kill" => StopMode::Kill,
+                other => return Err(format!("unknown stop mode {other:?}")),
+            },
+        )),
+        "checkpoint" => Action::Checkpoint,
+        other => return Err(format!("unknown action {other:?}")),
+    };
+    Ok(Scripted {
+        label,
+        action,
+        expect,
+    })
+}
+
+fn fact(body: &Value) -> Result<Fact, String> {
+    let channel =
+        serde_json::from_value::<Channel>(body.get("channel").cloned().unwrap_or_default())
+            .map_err(|error| format!("fact channel: {error}"))?;
+    let payload = match (body.get("json"), body.get("text")) {
+        (Some(json), None) => serde_json::to_vec(json).expect("json serializes"),
+        (None, Some(Value::String(text))) => text.clone().into_bytes(),
+        _ => return Err("a fact has either json or text".into()),
+    };
+    Ok(Fact { channel, payload })
+}
+
+fn input_of<I: Interpreter>(body: &Value) -> Result<Input, String> {
+    let mut object = body.as_object().cloned().ok_or("an input is an object")?;
+    let id = object
+        .remove("id")
+        .and_then(|id| id.as_str().map(str::to_owned))
+        .ok_or("an input has a string id")?;
+    let input: FixtureInput =
+        serde_json::from_value(Value::Object(object)).map_err(|error| format!("input: {error}"))?;
+    let input_id = id.into_bytes();
+    match &input {
+        FixtureInput::AgentMessage {
+            envelope,
+            from,
+            text,
+        } => Ok(Input {
+            input_id,
+            of: Some(input::Of::AgentMessage(Envelope {
+                id: envelope.clone().into_bytes(),
+                context: None,
+                from: Some(Sender {
+                    value: Some(sender::Value::Agent(wire::AgentSender {
+                        agent_id: from.clone().into_bytes(),
+                        host_id: b"host".to_vec(),
+                        name: from.clone(),
+                        kind: String::new(),
+                    })),
+                }),
+                to: None,
+                kind: EnvelopeKind::Message as i32,
+                text: text.clone(),
+            })),
+        }),
+        FixtureInput::Raw { hex } => {
+            let bytes = from_hex(hex)?;
+            let mut decoded = Input::decode(bytes.as_slice()).map_err(|error| error.to_string())?;
+            decoded.input_id = input_id;
+            Ok(decoded)
+        }
+        other => I::fixture_input(input_id, other)
+            .ok_or_else(|| format!("{} has no input for {other:?}", I::KIND)),
+    }
+}
+
+fn prompt(text: &str, steer: bool) -> PromptInput {
+    PromptInput {
+        text: text.to_owned(),
+        attachments: Vec::new(),
+        steer,
+    }
+}
+
+fn withdraw(target: &str) -> WithdrawQueued {
+    WithdrawQueued {
+        queued_input_id: target.as_bytes().to_vec(),
+    }
+}
+
+fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
+    let text = |value: &Value, key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let of = if let Some(allow) = answer.get("allow") {
+        claude_answer::Of::Permission(wire::PermissionAnswer {
+            of: Some(wire::permission_answer::Of::Allow(wire::PermissionAllow {
+                scope: allow
+                    .get("scope")
+                    .and_then(Value::as_u64)
+                    .map(|scope| scope as u32),
+            })),
+        })
+    } else if let Some(deny) = answer.get("deny") {
+        claude_answer::Of::Permission(wire::PermissionAnswer {
+            of: Some(wire::permission_answer::Of::Deny(wire::PermissionDeny {
+                note: text(deny, "note"),
+                stop: deny.get("stop").and_then(Value::as_bool).unwrap_or(false),
+            })),
+        })
+    } else if let Some(approve) = answer.get("approve_plan") {
+        claude_answer::Of::Plan(wire::PlanAnswer {
+            of: Some(wire::plan_answer::Of::Approve(wire::PlanApprove {
+                auto_accept_edits: approve
+                    .get("auto_accept_edits")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })),
+        })
+    } else {
+        let send_back = answer.get("send_back")?;
+        claude_answer::Of::Plan(wire::PlanAnswer {
+            of: Some(wire::plan_answer::Of::SendBack(wire::PlanSendBack {
+                note: text(send_back, "note"),
+            })),
+        })
+    };
+    Some(AnswerInput {
+        ask_key: ask.to_owned(),
+        kind: kind.to_owned(),
+        body: ClaudeAnswer { of: Some(of) }.encode_to_vec(),
+    })
+}
+
+/// The shared fixture vocabulary as a Claude PTY input.
+pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
+    use claude_pty_input::Of;
+    let of = match input {
+        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
+        FixtureInput::Clear {} => Of::Clear(wire::Clear {}),
+        FixtureInput::Answer { ask, answer } => {
+            Of::Answer(claude_answer("claude_pty", ask, answer)?)
+        }
+        FixtureInput::Key { name } => Of::Key(Key {
+            key: KeyName::from_str_name(&format!("KEY_NAME_{}", name.to_uppercase()))? as i32,
+        }),
+        FixtureInput::AgentMessage { .. } | FixtureInput::Raw { .. } => return None,
+    };
+    Some(Input {
+        input_id,
+        of: Some(input::Of::ClaudePty(wire::ClaudePtyInput { of: Some(of) })),
+    })
+}
+
+/// The shared fixture vocabulary as a Claude SDK input.
+pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
+    use claude_sdk_input::Of;
+    let of = match input {
+        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
+        FixtureInput::Clear {} => Of::Clear(wire::Clear {}),
+        FixtureInput::Answer { ask, answer } => {
+            Of::Answer(claude_answer("claude_sdk", ask, answer)?)
+        }
+        FixtureInput::Key { .. } | FixtureInput::AgentMessage { .. } | FixtureInput::Raw { .. } => {
+            return None;
+        }
+    };
+    Some(Input {
+        input_id,
+        of: Some(input::Of::ClaudeSdk(wire::ClaudeSdkInput { of: Some(of) })),
+    })
+}
+
+/// The shared fixture vocabulary as a Codex input.
+pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
+    use codex_input::Of;
+    let of = match input {
+        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
+        FixtureInput::Answer { ask, answer } => {
+            match answer.get("decision").and_then(Value::as_str) {
+                Some(decision) => Of::Approve(wire::Approve {
+                    request_id: ask.clone(),
+                    decision: wire::Decision::from_str_name(&format!(
+                        "DECISION_{}",
+                        decision.to_uppercase()
+                    ))? as i32,
+                }),
+                None => Of::Answer(AnswerInput {
+                    ask_key: ask.clone(),
+                    kind: "codex".into(),
+                    body: codex_answer(answer)?.encode_to_vec(),
+                }),
+            }
+        }
+        FixtureInput::Clear {}
+        | FixtureInput::Key { .. }
+        | FixtureInput::AgentMessage { .. }
+        | FixtureInput::Raw { .. } => return None,
+    };
+    Some(Input {
+        input_id,
+        of: Some(input::Of::Codex(wire::CodexInput { of: Some(of) })),
+    })
+}
+
+fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
+    use wire::codex_answer::Of;
+    let of = if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
+        Of::Question(wire::QuestionAnswer {
+            answers: selected
+                .iter()
+                .map(|choice| wire::QuestionResponse {
+                    selected: choice
+                        .as_u64()
+                        .map(|index| vec![index as u32])
+                        .unwrap_or_default(),
+                    other: choice.as_str().map(str::to_owned),
+                })
+                .collect(),
+            note: String::new(),
+        })
+    } else {
+        let grant = answer.get("grant")?;
+        let paths = |key: &str| {
+            grant
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .filter_map(|path| path.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Of::Grant(wire::GrantAnswer {
+            read: paths("read"),
+            write: paths("write"),
+            network: grant
+                .get("network")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            for_session: grant
+                .get("for_session")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    };
+    Some(CodexAnswer { of: Some(of) })
+}
+
+/// Runs the script. With `checkpoint_at`, the state is written, read back
+/// and resumed before event `checkpoint_at`, as a restart would.
+fn execute<I: Interpreter>(
+    spec: &AgentSpec,
+    producer: &str,
+    script: &[Scripted],
+    checkpoint_at: Option<usize>,
+) -> Result<Vec<Frame>, String> {
+    let (mut state, first) = I::initial(spec, producer);
+    let mut frames = vec![Frame {
+        label: "initial".into(),
+        step: first,
+        effects: Vec::new(),
+    }];
+    let round_trip = |state: &I::State| -> Result<(I::State, Step), String> {
+        let bytes = encode_checkpoint(state);
+        let decoded: I::State = decode_checkpoint(&bytes)
+            .map_err(|error| format!("checkpoint does not decode: {error}"))?;
+        Ok(decoded.resume())
+    };
+    for (index, scripted) in script.iter().enumerate() {
+        if checkpoint_at == Some(index) {
+            let (resumed, step) = round_trip(&state)?;
+            state = resumed;
+            frames.push(Frame {
+                label: "resume".into(),
+                step,
+                effects: Vec::new(),
+            });
+        }
+        match &scripted.action {
+            Action::Event(event) => {
+                let stepped = I::step(&mut state, event.clone());
+                frames.push(Frame {
+                    label: scripted.label.clone(),
+                    step: stepped.step,
+                    effects: stepped.effects,
+                });
+            }
+            Action::Checkpoint => {
+                let (resumed, step) = round_trip(&state)?;
+                state = resumed;
+                frames.push(Frame {
+                    label: "resume".into(),
+                    step,
+                    effects: Vec::new(),
+                });
+            }
+        }
+    }
+    if checkpoint_at == Some(script.len()) {
+        let (_, step) = round_trip(&state)?;
+        frames.push(Frame {
+            label: "resume".into(),
+            step,
+            effects: Vec::new(),
+        });
+    }
+    Ok(frames)
+}
+
+/// The invariants every interpreter's journal obeys, over the steps of one
+/// run in order, the first being the initial frame.
+pub fn check_invariants<I: Interpreter>(steps: &[Step], end: &EndRules) -> Vec<String> {
+    let mut violations = Vec::new();
+    match steps.first() {
+        None => violations.push("no initial frame".to_owned()),
+        Some(first) => {
+            match &first.snapshot {
+                None => violations.push("the first frame is not a Snapshot".to_owned()),
+                Some(snapshot) => {
+                    if snapshot.phase != Phase::Starting as i32 {
+                        violations.push(format!(
+                            "the first Snapshot's phase is {}, not STARTING",
+                            phase_name(snapshot.phase)
+                        ));
+                    }
+                    if snapshot.body != I::unknown_snapshot() {
+                        violations.push(
+                            "the first Snapshot's body is not every field at its unknown"
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+            if !first.items.is_empty() || !first.appends.is_empty() {
+                violations.push("the first frame carries items".to_owned());
+            }
+        }
+    }
+
+    let mut arms = BTreeMap::<String, String>::new();
+    let mut created = Vec::<String>::new();
+    let mut open = BTreeSet::<String>::new();
+    let mut last_snapshot: Option<&Snapshot> = None;
+    for (index, step) in steps.iter().enumerate() {
+        let mut in_step = BTreeSet::new();
+        for item in &step.items {
+            if !in_step.insert(item.key.as_str()) {
+                violations.push(format!("frame {index}: key {} twice in one step", item.key));
+            }
+            let view = I::describe_item(&item.body);
+            match arms.get(&item.key) {
+                Some(arm) if *arm != view.arm => violations.push(format!(
+                    "frame {index}: key {} changed from {arm} to {}",
+                    item.key, view.arm
+                )),
+                Some(_) => {
+                    if !view.complete && !open.contains(&item.key) {
+                        violations.push(format!(
+                            "frame {index}: key {} reopened after its final item",
+                            item.key
+                        ));
+                    }
+                }
+                None => {
+                    arms.insert(item.key.clone(), view.arm.clone());
+                    created.push(item.key.clone());
+                }
+            }
+            if view.complete {
+                open.remove(&item.key);
+            } else {
+                open.insert(item.key.clone());
+            }
+        }
+        for append in &step.appends {
+            if !arms.contains_key(&append.key) {
+                violations.push(format!(
+                    "frame {index}: append to unknown key {}",
+                    append.key
+                ));
+            } else if !open.contains(&append.key) {
+                violations.push(format!(
+                    "frame {index}: append to {} after its final item",
+                    append.key
+                ));
+            } else if created.last() != Some(&append.key) {
+                violations.push(format!(
+                    "frame {index}: append to {}, which is not the newest item",
+                    append.key
+                ));
+            }
+        }
+        if let Some(snapshot) = &step.snapshot {
+            for (ask, item_key) in I::describe_snapshot(&snapshot.body).asks {
+                if !item_key.is_empty() && !arms.contains_key(&item_key) {
+                    violations.push(format!(
+                        "frame {index}: open ask {ask} points at {item_key}, which has no item"
+                    ));
+                }
+            }
+            last_snapshot = Some(snapshot);
+        }
+    }
+
+    if let Some(snapshot) = last_snapshot
+        && !end.queue_may_remain
+        && !snapshot.queue.is_empty()
+    {
+        violations.push(format!(
+            "the queue did not drain: {}",
+            snapshot
+                .queue
+                .iter()
+                .map(|entry| display_id(&entry.input_id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !end.streams_may_remain && !open.is_empty() {
+        violations.push(format!(
+            "streams never ended with a final item: {}",
+            open.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    violations
+}
+
+/// A resume re-emits only keys readers already have, at the content they
+/// already hold.
+fn check_resumes(frames: &[Frame]) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut view = View::default();
+    for frame in frames {
+        if frame.label == "resume" {
+            for item in &frame.step.items {
+                match view.items.get(&item.key) {
+                    None => problems.push(format!("resume emitted unknown key {}", item.key)),
+                    Some(held) if held != item => problems.push(format!(
+                        "resume re-emitted {} with different content",
+                        item.key
+                    )),
+                    Some(_) => {}
+                }
+            }
+            if !frame.step.appends.is_empty() {
+                problems.push("resume emitted appends".to_owned());
+            }
+            if frame.step.snapshot.is_none() {
+                problems.push("resume emitted no snapshot".to_owned());
+            }
+        }
+        view.apply(&frame.step);
+    }
+    problems
+}
+
+/// What a reader holding every committed record would have: items merged
+/// by key with appends applied, and the newest snapshot.
+#[derive(Default)]
+struct View {
+    items: BTreeMap<String, Item>,
+    snapshot: Option<Snapshot>,
+}
+
+impl View {
+    fn apply(&mut self, step: &Step) {
+        for item in &step.items {
+            self.items.insert(item.key.clone(), item.clone());
+        }
+        for append in &step.appends {
+            if let Some(item) = self.items.get_mut(&append.key) {
+                item.text.push_str(&append.text);
+            }
+        }
+        if let Some(snapshot) = &step.snapshot {
+            self.snapshot = Some(Snapshot {
+                at_ms: 0,
+                ..snapshot.clone()
+            });
+        }
+    }
+
+    fn difference(&self, other: &View) -> Option<String> {
+        let keys = self
+            .items
+            .keys()
+            .chain(other.items.keys())
+            .collect::<BTreeSet<_>>();
+        for key in keys {
+            match (self.items.get(key), other.items.get(key)) {
+                (Some(a), Some(b)) if a == b => {}
+                (Some(_), Some(_)) => return Some(format!("item {key} differs")),
+                (Some(_), None) => return Some(format!("item {key} missing")),
+                (None, _) => return Some(format!("extra item {key}")),
+            }
+        }
+        (self.snapshot != other.snapshot).then(|| "the final snapshot differs".to_owned())
+    }
+}
+
+fn merge(frames: &[Frame]) -> View {
+    let mut view = View::default();
+    for frame in frames {
+        view.apply(&frame.step);
+    }
+    view
+}
+
+fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut snapshot: Option<Snapshot> = frames[0].step.snapshot.clone();
+    // frames[0] is the initial frame; frames[n + 1] answers script[n].
+    for (index, (scripted, frame)) in script.iter().zip(&frames[1..]).enumerate() {
+        if let Some(latest) = &frame.step.snapshot {
+            snapshot = Some(latest.clone());
+        }
+        let Some(expect) = &scripted.expect else {
+            continue;
+        };
+        let mut fail = |what: &str, expected: String, got: String| {
+            if expected != got {
+                failures.push(format!(
+                    "event {index} ({}): {what} expected {expected}, got {got}",
+                    scripted.label
+                ));
+            }
+        };
+        let current = snapshot.clone().unwrap_or_default();
+        if let Some(phase) = &expect.phase {
+            fail("phase", phase.clone(), phase_name(current.phase).to_owned());
+        }
+        if let Some(reply) = &expect.reply {
+            let replies = frame
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::Reply { verdict, .. } => Some(verdict_name(verdict)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            fail(
+                "reply",
+                format!("[{reply}]"),
+                format!("[{}]", replies.join(", ")),
+            );
+        }
+        if let Some(queue) = &expect.queue {
+            fail(
+                "queue",
+                format!("{queue:?}"),
+                format!(
+                    "{:?}",
+                    current
+                        .queue
+                        .iter()
+                        .map(|entry| display_id(&entry.input_id))
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
+        if let Some(asks) = &expect.asks {
+            fail(
+                "asks",
+                format!("{asks:?}"),
+                format!(
+                    "{:?}",
+                    I::describe_snapshot(&current.body)
+                        .asks
+                        .into_iter()
+                        .map(|(key, _)| key)
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
+        if let Some(working_on) = &expect.working_on {
+            fail(
+                "working_on",
+                working_on.to_string(),
+                current
+                    .working_on
+                    .as_ref()
+                    .map_or(Value::Null, |text| Value::String(text.clone()))
+                    .to_string(),
+            );
+        }
+        if let Some(turn_end) = &expect.turn_end {
+            let got = frame.step.turn_end.as_ref().map_or(Value::Bool(false), |end| {
+                serde_json::json!({ "turn_id": end.turn_id, "last_message_key": end.last_message_key })
+            });
+            fail("turn_end", turn_end.to_string(), got.to_string());
+        }
+        if let Some(items) = &expect.items {
+            fail(
+                "items",
+                format!("{items:?}"),
+                format!(
+                    "{:?}",
+                    frame
+                        .step
+                        .items
+                        .iter()
+                        .map(|item| &item.key)
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
+        if let Some(effects) = &expect.effects {
+            fail(
+                "effects",
+                format!("{effects:?}"),
+                format!(
+                    "{:?}",
+                    frame.effects.iter().map(render_effect).collect::<Vec<_>>()
+                ),
+            );
+        }
+        if let Some(silent) = expect.silent {
+            let step = &frame.step;
+            let is_silent = step.items.is_empty()
+                && step.appends.is_empty()
+                && step.snapshot.is_none()
+                && step.turn_end.is_none();
+            fail("silent", silent.to_string(), is_silent.to_string());
+        }
+    }
+    failures
+}
+
+fn render<I: Interpreter>(frames: &[Frame]) -> String {
+    let mut out = String::new();
+    for (index, frame) in frames.iter().enumerate() {
+        let _ = writeln!(out, "## {index} {}", frame.label);
+        for effect in &frame.effects {
+            let _ = writeln!(out, "effect {}", render_effect(effect));
+        }
+        for item in &frame.step.items {
+            let view = I::describe_item(&item.body);
+            let _ = writeln!(
+                out,
+                "item {} {} {}{} at={} text={}{}{}",
+                item.key,
+                view.arm,
+                if view.complete { "final" } else { "open" },
+                if item.input_id.is_empty() {
+                    String::new()
+                } else {
+                    format!(" input={}", display_id(&item.input_id))
+                },
+                item.at_ms,
+                Value::String(item.text.clone()),
+                if item.attachments.is_empty() {
+                    String::new()
+                } else {
+                    format!(" attachments={}", item.attachments.len())
+                },
+                if view.text.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", view.text)
+                }
+            );
+        }
+        for append in &frame.step.appends {
+            let _ = writeln!(
+                out,
+                "append {} {}",
+                append.key,
+                Value::String(append.text.clone())
+            );
+        }
+        if let Some(snapshot) = &frame.step.snapshot {
+            let _ = writeln!(
+                out,
+                "snapshot {} queue=[{}] working_on={} at={} {}",
+                phase_name(snapshot.phase),
+                snapshot
+                    .queue
+                    .iter()
+                    .map(|entry| display_id(&entry.input_id))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                snapshot
+                    .working_on
+                    .as_ref()
+                    .map_or("-".to_owned(), |text| Value::String(text.clone())
+                        .to_string()),
+                snapshot.at_ms,
+                I::describe_snapshot(&snapshot.body).text
+            );
+        }
+        if let Some(end) = &frame.step.turn_end {
+            let _ = writeln!(
+                out,
+                "turn_end {} last={}",
+                end.turn_id,
+                if end.last_message_key.is_empty() {
+                    "-"
+                } else {
+                    &end.last_message_key
+                }
+            );
+        }
+    }
+    out
+}
+
+fn render_effect(effect: &Effect) -> String {
+    match effect {
+        Effect::ProviderWrite(bytes) => format!("write {}", display_bytes(bytes)),
+        Effect::Reply { input_id, verdict } => {
+            format!("reply {} {}", display_id(input_id), verdict_name(verdict))
+        }
+        Effect::Inject { envelope, via } => {
+            format!("inject {} via {via:?}", display_id(&envelope.id))
+        }
+        Effect::KickTurn => "kick_turn".to_owned(),
+        Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
+    }
+}
+
+fn verdict_name(verdict: &SendInputResponse) -> String {
+    match &verdict.of {
+        Some(send_input_response::Of::Accepted(accepted)) if accepted.queued => "queued".into(),
+        Some(send_input_response::Of::Accepted(_)) => "accepted".into(),
+        Some(send_input_response::Of::Rejected(rejected)) => {
+            format!("rejected:{}", rejected.reason)
+        }
+        None => "empty".into(),
+    }
+}
+
+fn phase_name(phase: i32) -> &'static str {
+    Phase::try_from(phase).map_or("INVALID", |phase| phase.as_str_name())
+}
+
+fn event_label(event: &Event) -> String {
+    match event {
+        Event::Fact(fact) => format!("fact {:?} {}", fact.channel, display_bytes(&fact.payload)),
+        Event::Input(input) => format!("input {}", display_id(&input.input_id)),
+        Event::Tick { at_ms } => format!("tick {at_ms}"),
+        Event::ProviderExit { code } => format!("provider_exit {code:?}"),
+        Event::DaemonLost => "daemon_lost".into(),
+        Event::StopRequested(mode) => format!("stop {}", mode.as_str_name()),
+    }
+}
+
+/// An id as fixtures write it: text when printable, else hex.
+fn display_id(bytes: &[u8]) -> String {
+    if !bytes.is_empty() && bytes.iter().all(|byte| (0x21..0x7f).contains(byte)) {
+        String::from_utf8_lossy(bytes).into_owned()
+    } else {
+        format!("0x{}", to_hex(bytes))
+    }
+}
+
+fn display_bytes(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Value::String(text.to_owned()).to_string(),
+        Err(_) => format!("0x{}", to_hex(bytes)),
+    }
+}
+
+fn first_difference(golden: &str, rendered: &str) -> String {
+    let golden_lines = golden.lines().collect::<Vec<_>>();
+    let rendered_lines = rendered.lines().collect::<Vec<_>>();
+    let at = golden_lines
+        .iter()
+        .zip(&rendered_lines)
+        .position(|(a, b)| a != b)
+        .unwrap_or(golden_lines.len().min(rendered_lines.len()));
+    format!(
+        "  line {}\n  golden:   {}\n  rendered: {}",
+        at + 1,
+        golden_lines.get(at).unwrap_or(&"<end>"),
+        rendered_lines.get(at).unwrap_or(&"<end>")
+    )
+}

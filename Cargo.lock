@@ -803,6 +803,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "interpret"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "wire",
+]
+
+[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

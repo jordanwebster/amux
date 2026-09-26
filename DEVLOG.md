@@ -1,3 +1,40 @@
+2026-09-26 — **The interpret crate: the kind-neutral core and its golden harness.**
+`crates/interpret` holds what every interpreter shares. `Interpreter` is a
+pure step: a provider fact, an input or a tick in, a journal `Step` and the
+effects the agent process performs (provider writes, input replies, message
+injection, an empty-turn kick, exit) out, with no clock, ids or I/O. `Shared`
+carries the person's queue (a prompt is submitted when the provider is idle
+and nothing is ahead of it, else queued, whichever client sent it, and
+withdrawable until submitted), the ask list with the stale-answer rule (an
+answer to an ask that is not open is rejected and writes nothing), the set
+of accepted agent messages the provider has not consumed, working_on from
+the status tool call, the turn counter with `TurnEnd`, and the items still
+open for streaming. Phase is derived once: needs-you whenever an ask is
+open, starting until the provider accepts input, then working or idle; a
+snapshot is emitted only when something a client draws from it changed. A
+checkpoint is the whole state as JSON, and resuming re-emits every open item
+in full on its known key. A provider exiting mid-turn ends the turn without
+a `TurnEnd`, so a parent hears "failed" from the daemon rather than
+"finished".
+
+Snapshot totality is enforced twice: each kind's unknown snapshot is an
+exhaustive struct literal, so a new field does not compile until its
+unknown is chosen, and a schema test requires every snapshot scalar to be
+`optional` and every message present. That test made three plain strings
+optional (`provider_session` on both Claude snapshots, `active_turn` and
+`thread_id` on Codex), since an empty string would read as known.
+
+`run_golden` replays authored or recorded fixtures, compares the rendered
+emission with a reviewed `.golden` (rewritten only with
+`INTERPRET_UPDATE_GOLDENS=1`), checks per-event expectations, the
+invariants (first frame a starting Snapshot at its unknowns, keys unique
+per step and never changing arm, appends only to the newest open item and
+never after its final, every open ask's item emitted, the queue drained,
+every stream ended full) and the checkpoint property: resuming after any
+prefix of the events reaches the same items and final snapshot. Five core
+fixtures drive a small test interpreter through the queue, asks, agent
+messages, streaming and a spawn prompt.
+
 2026-09-26 — **Replica eviction keeps the agent's registry row.**
 When the replica sweep evicts an agent nobody is following, it now drops the
 agent's rows and empties its block but keeps its agents row, which goes only

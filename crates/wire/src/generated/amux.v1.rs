@@ -1297,8 +1297,9 @@ pub struct ClaudePtySnapshot {
     pub model: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub permission_mode: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "7")]
-    pub provider_session: ::prost::alloc::string::String,
+    /// Absent until SessionStart or the first system event names it.
+    #[prost(string, optional, tag = "7")]
+    pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "8")]
     pub usage: ::core::option::Option<UsageLimits>,
     #[prost(message, optional, tag = "9")]
@@ -1431,8 +1432,9 @@ pub struct ClaudeSdkSnapshot {
     pub sign_in: ::core::option::Option<SignIn>,
     #[prost(message, optional, tag = "12")]
     pub background_processes: ::core::option::Option<BackgroundProcesses>,
-    #[prost(string, tag = "13")]
-    pub provider_session: ::prost::alloc::string::String,
+    /// Absent until the init event names it.
+    #[prost(string, optional, tag = "13")]
+    pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeSdkInput {
@@ -1829,8 +1831,9 @@ pub struct CodexSnapshot {
     pub approval_policy: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub sandbox: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "7")]
-    pub active_turn: ::prost::alloc::string::String,
+    /// Absent while no turn is known to be running.
+    #[prost(string, optional, tag = "7")]
+    pub active_turn: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "8")]
     pub servers: ::core::option::Option<ToolServerHealth>,
     #[prost(message, optional, tag = "9")]
@@ -1844,8 +1847,9 @@ pub struct CodexSnapshot {
     pub plan: ::core::option::Option<TaskList>,
     #[prost(string, optional, tag = "13")]
     pub effort: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "14")]
-    pub thread_id: ::prost::alloc::string::String,
+    /// Absent until the thread start response names it.
+    #[prost(string, optional, tag = "14")]
+    pub thread_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexAsk {

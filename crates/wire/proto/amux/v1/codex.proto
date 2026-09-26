@@ -144,7 +144,8 @@ message CodexSnapshot {
   optional string model = 4;
   optional string approval_policy = 5;
   optional string sandbox = 6;
-  string active_turn = 7;
+  // Absent while no turn is known to be running.
+  optional string active_turn = 7;
   ToolServerHealth servers = 8;
   UsageLimits usage = 9;
   SignIn sign_in = 10;
@@ -152,7 +153,8 @@ message CodexSnapshot {
   // Plan steps with status.
   TaskList plan = 12;
   optional string effort = 13;
-  string thread_id = 14;
+  // Absent until the thread start response names it.
+  optional string thread_id = 14;
 }
 
 message CodexAsk {

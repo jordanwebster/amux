@@ -1,0 +1,27 @@
+{
+  "about": "An agent message is accepted through the provider's injection channel, yields its item at acceptance, and stays pending until the provider's record reflects it; the status tool sets working_on, which nothing clears automatically.",
+  "spec": { "created_at_ms": 1000, "parent": true },
+  "events": [
+    { "fact": { "channel": "stream", "json": { "type": "ready" } } },
+    { "input": { "id": "p1", "prompt": { "text": "go" } } },
+    { "fact": { "channel": "stream", "json": { "type": "user", "id": "u1", "text": "go" } } },
+    { "fact": { "channel": "stream", "json": { "type": "tool", "id": "s1", "name": "status", "server": "amux", "input": { "working_on": "auditing the queue" } } },
+      "expect": { "working_on": "auditing the queue" } },
+    { "input": { "id": "d1", "agent_message": { "envelope": "env-1", "from": "reviewer", "text": "also check withdraws" } },
+      "expect": { "reply": "queued", "items": ["agent-message:656e762d31"], "effects": ["inject env-1 via Stdin", "reply d1 queued"] } },
+    { "fact": { "channel": "stream", "json": { "type": "text", "id": "m1", "delta": "Done." } } },
+    { "fact": { "channel": "stream", "json": { "type": "text_done", "id": "m1" } } },
+    { "fact": { "channel": "stream", "json": { "type": "turn_end" } },
+      "expect": { "turn_end": { "turn_id": 1, "last_message_key": "m1" }, "working_on": "auditing the queue", "phase": "IDLE" } },
+    { "checkpoint": {}, "note": "the pending message survives a restart" },
+    { "fact": { "channel": "stream", "json": { "type": "turn_start" } }, "expect": { "phase": "WORKING" } },
+    { "fact": { "channel": "stream", "json": { "type": "user", "envelope": "env-1" } },
+      "note": "the reflection is the consumption point; the item already exists",
+      "expect": { "items": [] } },
+    { "fact": { "channel": "stream", "json": { "type": "tool", "id": "s2", "name": "status", "server": "amux", "input": { "working_on": null } } },
+      "note": "only an explicit null clears it",
+      "expect": { "working_on": null } },
+    { "fact": { "channel": "stream", "json": { "type": "turn_end" } },
+      "expect": { "turn_end": { "turn_id": 2, "last_message_key": "" } } }
+  ]
+}
