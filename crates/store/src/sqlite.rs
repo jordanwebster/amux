@@ -71,6 +71,28 @@ impl Sqlite {
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
+
+    /// Moves every committed transaction from the WAL into the database
+    /// file and flushes it to the drive itself (fullfsync, which macOS
+    /// needs for a flush to pass the drive's cache). Commits are otherwise
+    /// not synced, so this is what a clean shutdown promises before it
+    /// marks the installation clean.
+    pub fn flush_to_drive(&self) -> Result<(), rusqlite::Error> {
+        self.conn.pragma_update(None, "fullfsync", true)?;
+        let checkpoint = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                row.get::<_, i64>(0)
+            });
+        let restored = self.conn.pragma_update(None, "fullfsync", false);
+        match checkpoint? {
+            0 => restored,
+            _ => Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                Some("a reader held the WAL through the checkpoint".into()),
+            )),
+        }
+    }
 }
 
 fn migrate(conn: &mut Connection, name: &str) -> Result<(), OpenError> {

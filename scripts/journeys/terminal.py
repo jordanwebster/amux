@@ -24,7 +24,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[2]
 AMUX = ROOT / "target/debug/amux"
 TESTNET = ROOT / "target/debug/testnet"
-TEST_AGENT = ROOT / "target/debug/test-agent"
+FAKE_PROVIDER = ROOT / "target/debug/fake-claude-pty"
 MANIFEST = ROOT / "journeys/manifest.json"
 OUTPUT = ROOT / "target/journeys"
 GOLDENS = ROOT / "journeys/goldens/terminal"
@@ -237,7 +237,7 @@ class TerminalJourney:
                 "--config",
                 shlex.quote(str(self.config)),
                 "new",
-                shlex.quote(str(TEST_AGENT)),
+                shlex.quote(str(FAKE_PROVIDER)),
                 "--name",
                 shlex.quote(agent),
             ]

@@ -62,18 +62,6 @@ doctest:
 spec *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; scripts/spec-test.sh "$@"
 
-# Exercise the structured daemon replay, ring and semantic-reset contract.
-test-daemon-protocol *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; filter=daemon_protocol; if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then filter="daemon_protocol_$1"; shift; fi; if [ "$#" -gt 0 ]; then {{bounded}} 1200 cargo test --locked -p agent-runtime "$filter" -- "$@"; else {{bounded}} 1200 cargo test --locked -p agent-runtime "$filter"; fi
-
-# Exercise daemon-owned structured-agent summaries, progress and health recovery.
-test-daemon-summarizer *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_summarizer "$@" && {{bounded}} 1200 cargo test --locked -p node daemon_summarizer "$@"
-
-# Exercise Claude SDK transcript-tail resume publication and fold semantics.
-test-daemon-sdk *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p claude history "$@" && {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_sdk "$@" && {{bounded}} 1200 cargo test --locked -p fold claude_sdk "$@"
-
 # Exercise TUI behavior.
 test-tui *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p tui --features fixtures "$@"
@@ -143,7 +131,7 @@ claude-sdk-live *ARGS: build
 
 # Run one operator-run qualification workload by name.
 qualify NAME *ARGS:
-    {{bounded}} 1200 cargo build --locked -p amux -p test-agent -p node-test-support --bins {{desktop_features}}
+    {{bounded}} 1200 cargo build --locked -p amux -p provider-fakes -p node-test-support --bins {{desktop_features}}
     {{bounded}} 1800 scripts/qualification/{{NAME}}.sh {{ARGS}}
 
 # Render or inspect deterministic TUI evidence.
@@ -153,7 +141,7 @@ shot *ARGS:
 # Run one declared journey through its real client.
 journey CLIENT NAME:
     test "{{CLIENT}}" = terminal
-    {{bounded}} 900 cargo build --locked -p amux -p test-agent -p testnet --bins {{desktop_features}}
+    {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet --bins {{desktop_features}}
     {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
 
 # Generate and verify the complete TUI evidence bundle.

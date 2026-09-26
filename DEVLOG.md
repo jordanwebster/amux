@@ -1,3 +1,28 @@
+2026-09-26 — **The daemon is rebuilt around agent processes: registry, generation file, one startup path.**
+`crates/node` is back in the workspace, rewritten from scratch. A profile
+runtime spawns each agent as `amux agent <dir>` after writing its
+immutable `spec.<n>`, listens on the agent's `tools.sock`, dials its
+`ctl.sock` for the Hello, ingests its journal on every Nudge, and records
+the exit when the directory's lock is released. Resume writes the next
+spec from current configuration (waiting for a dying process's lock),
+stop sends graceful, abort or kill and kills the process group past the
+stop deadline, delete aborts first and cascades to this host's children,
+rename touches only the row. Startup takes the installation lock, rewrites
+`<data_dir>/generation` durably (the counter bumps only when the boot id
+changed and the last run did not shut down cleanly), migrates each store,
+looks at every agent directory without writing, answers the supervisor's
+activation pipe (or goes at once without one), and only then sweeps: live
+agents are adopted, the rest are marked exited with their journal
+remainder ingested and their CaughtUp flag set. Clean shutdown flushes each
+store to the drive with fullfsync before setting the clean flag. The
+agent-directory contract both sides share (names, lock, local sockets,
+control framing, clock) moved into `crates/agent-dir`, so the daemon never
+depends on the agent process crate and its providers. The in-daemon
+hosting (`agent-runtime`), its `host-api` seam, the `test-agent` binary,
+the suspend machinery and the update markers are deleted; recipes and
+scripts that built `test-agent` build the fake providers instead, and the
+`claude.driver` setting is retired because every creation names its kind.
+
 2026-09-26 — **provider-fakes' tests compile for Windows again.**
 The terminal fake's messaging-socket test dials a Unix-domain socket, which
 Claude (and so the fake) only serves on Unix; it is gated to Unix with the

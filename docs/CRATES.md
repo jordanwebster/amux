@@ -3,11 +3,11 @@
 | Layer | Crates |
 | --- | --- |
 | Values and protocol | `model`, `wire`, `settings`, `artifacts`, `redaction`, `client` |
-| Daemon | `host-api`, `node`, `agent-runtime`, `claude`, `codex`, `pty-host` |
+| Daemon | `node`, `agent`, `journal`, `store`, `interpret`, `claude`, `codex`, `pty-host` |
 | Clients | `ui-state`, `ui-runtime`, `tui` |
 | App layer | `app-runtime`, `app-embedded`, `app-ffi` |
 | Products and tools | `amux`, `shot`, `xtask` |
-| Test infrastructure | `testnet`, `qualification`, `replay-support`, `claude-specs`, `codex-specs`, `test-agent` |
+| Test infrastructure | `testnet`, `qualification`, `replay-support`, `claude-specs`, `codex-specs`, `provider-fakes` |
 
 The values and protocol layer keeps shared meaning below effects. `model`
 owns provider-neutral values without I/O; `wire` owns protobuf schemas,
@@ -16,13 +16,14 @@ configuration, `artifacts` owns content-addressed storage, `redaction` owns
 sanitization, and `client` provides typed RPC clients over supplied channels
 or endpoints.
 
-The daemon layer separates network and installation ownership from provider
-processes. `host-api` is the asynchronous boundary: `node` owns identity,
-trust, routing, admission, services and installation lifecycle, while
-`agent-runtime` owns provider sessions, persistence, attachments, diffs and
-artifact retention. The provider and PTY crates implement those sessions.
-`node` has no private `src/testnet` harness; whole-daemon behavior belongs to
-`testnet`.
+The daemon layer runs every agent as its own process. `agent` is that
+process (`amux agent <dir>`): it hosts one provider child through the
+`claude` or `codex` transport, runs the kind's `interpret` step and appends
+each step to its `journal`. `node` is the daemon: the installation lock, the
+generation file, one profile runtime per profile with its agent registry and
+startup sweep, and ingest of each agent's journal into that profile's
+`store`. `node` has no private `src/testnet` harness; whole-daemon behavior
+belongs to `testnet`.
 
 The client layer separates pure state from effects and presentation.
 `ui-state` is the reducer, `ui-runtime` owns per-view connections,
@@ -48,7 +49,8 @@ The scenario and executable support packages consume production APIs, never
 the reverse. `testnet` is the public harness for whole-daemon prose specs,
 cross-crate integration, and embedded ownership. `qualification` owns the
 environment-dependent live-provider and performance suites; the provider spec
-crates own recordings, while `test-agent` drives real-process scenarios.
+crates own recordings, while `provider-fakes` stands in for each provider in
+real-process scenarios.
 `replay-support` is the deliberate exception: it
 owns replay transports shared by `claude` and the spec packages, and its normal
 edge from `claude` is accepted in the shipping dependency graph. Run `just

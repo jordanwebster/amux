@@ -6,7 +6,7 @@ set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 amux_bin=$repo_root/target/debug/amux
 fixture_bin=$repo_root/target/debug/account-fixture
-test_agent_bin=$repo_root/target/debug/test-agent
+fake_provider_bin=$repo_root/target/debug/fake-claude-pty
 scratch_parent=${1:?scratch parent is required}
 evidence_dir=$repo_root/.autopilot/evidence/relay
 evidence=$evidence_dir/local-smoke.txt
@@ -19,7 +19,7 @@ for dependency in timeout tmux python3; do
 done
 [ -x "$amux_bin" ] || { printf 'missing %s; run wt build\n' "$amux_bin" >&2; exit 1; }
 [ -x "$fixture_bin" ] || { printf 'missing %s; run wt build\n' "$fixture_bin" >&2; exit 1; }
-[ -x "$test_agent_bin" ] || { printf 'missing %s; run wt build\n' "$test_agent_bin" >&2; exit 1; }
+[ -x "$fake_provider_bin" ] || { printf 'missing %s; run wt build\n' "$fake_provider_bin" >&2; exit 1; }
 [ -d "$scratch_parent" ] || { printf 'scratch parent is not a directory: %s\n' "$scratch_parent" >&2; exit 1; }
 
 # Keep Unix-domain socket paths below the platform's SUN_LEN limit even when
@@ -222,7 +222,7 @@ start_agent() {
   config=$2
   project=$3
   timeout 10 tmux -S "$scratch/tmux.sock" new-session -d -s "$name" -x 120 -y 40 \
-    -c "$project" "timeout 300 '$amux_bin' --config '$config' new '$test_agent_bin' --name '$name'"
+    -c "$project" "timeout 300 '$amux_bin' --config '$config' new '$fake_provider_bin' --name '$name'"
 }
 
 wait_pane() {

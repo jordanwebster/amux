@@ -1,0 +1,18 @@
+[package]
+name = "agent-dir"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The agent directory: the contract between an agent process and its daemon"
+publish = false
+
+[dependencies]
+prost = { workspace = true }
+tokio = { workspace = true }
+wire = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

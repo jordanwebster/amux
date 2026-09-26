@@ -439,9 +439,9 @@ def authority_boundaries(journey: TerminalJourney, wrong: bool) -> list[str]:
 
 def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
     owner = journey.launch_agent("lifecycle-owner", "lifecycle-agent")
-    journey.type(owner, "ready before suspend")
+    journey.type(owner, "ready before stop")
     journey.keys(owner, "Enter")
-    journey.wait_terms(owner, "echo: ready before suspend")
+    journey.wait_terms(owner, "echo: ready before stop")
     pane = journey.launch("lifecycle")
     journey.wait_terms(
         pane,
@@ -451,14 +451,10 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
     )
     journey.filter_agent(pane, "lifecycle-agent")
     journey.frame(pane, "running")
-    suspended = run_amux(journey.config, "server", "suspend")
-    if "Suspended 1 agent(s)." not in suspended:
-        raise RuntimeError(f"unexpected suspend output: {suspended!r}")
-    journey.wait_terms(owner, "[server suspending]", "AMUX_EXIT_1")
+    run_amux(journey.config, "stop", "lifecycle-agent")
+    journey.wait_terms(owner, "AMUX_EXIT_")
     journey.kill_client(pane)
-    resumed = run_amux(journey.config, "server", "resume")
-    if "Resumed 1 agent(s)." not in resumed:
-        raise RuntimeError(f"unexpected resume output: {resumed!r}")
+    run_amux(journey.config, "resume", "lifecycle-agent")
     pane = journey.launch("lifecycle-resumed")
     journey.wait_terms(
         pane,
@@ -488,8 +484,8 @@ def agent_lifecycle(journey: TerminalJourney, wrong: bool) -> list[str]:
     journey.keys(pane, "q")
     journey.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
     return [
-        "a real test-agent was created and visible in the terminal UI",
-        "installation suspend notified the attached process and resume restored it",
+        "a real agent was created on the fake provider and visible in the terminal UI",
+        "stopping the agent ended its process and resume started it again",
         "deleting the resumed agent removed it from the terminal fleet",
     ]
 

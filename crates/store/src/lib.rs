@@ -355,6 +355,8 @@ pub trait Backend {
 pub trait Store {
     fn own_host(&self) -> &[u8];
     fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError>;
+    /// Every agents row, own and replica.
+    fn agents(&self) -> Result<Vec<AgentRow>, StoreError>;
     /// Items by order, newest first, from the block only.
     fn page(
         &self,
@@ -440,6 +442,10 @@ impl<B: Backend> Store for B {
 
     fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError> {
         self.read(|tables| tables.agent(agent))
+    }
+
+    fn agents(&self) -> Result<Vec<AgentRow>, StoreError> {
+        self.read(|tables| tables.agents())
     }
 
     fn page(

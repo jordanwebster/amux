@@ -140,8 +140,8 @@ cargo = [
 [[suite]]
 name = "daemon-library-units"
 contract = "Daemon-side libraries preserve their local parsing, state, routing, lifecycle, persistence, and wire invariants."
-paths = ["crates/agent-runtime/src", "crates/artifacts/src", "crates/client/src", "crates/host-api/src", "crates/node/src", "crates/node-test-support/src", "crates/settings/src", "crates/wire/src", "crates/test-agent/src"]
-recipe = "just test -- -p agent-runtime -p artifacts -p client -p host-api -p node -p node-test-support -p settings -p wire -p test-agent"
+paths = ["crates/artifacts/src", "crates/client/src", "crates/node/src", "crates/node-test-support/src", "crates/settings/src", "crates/wire/src"]
+recipe = "just test -- -p artifacts -p client -p node -p node-test-support -p settings -p wire"
 boundary = "Single daemon"
 oracle = "Value assertions, explicit state transitions, wire round trips, and owned-resource observations."
 real = ["temporary files and local sockets in integration-shaped unit cases"]
@@ -152,16 +152,13 @@ lane = "fast"
 evidence = ""
 update = ""
 cargo = [
-  { package = "agent-runtime", kind = "lib", targets = ["agent_runtime"], features = [] },
   { package = "artifacts", kind = "lib", targets = ["artifacts"], features = [] },
   { package = "client", kind = "lib", targets = ["client"], features = [] },
-  { package = "host-api", kind = "lib", targets = ["host_api"], features = [] },
   { package = "node", kind = "lib", targets = ["node"], features = [] },
   { package = "node-test-support", kind = "lib", targets = ["node_test_support"], features = [] },
   { package = "node-test-support", kind = "bin", targets = ["account-fixture"], features = [] },
   { package = "settings", kind = "lib", targets = ["settings"], features = [] },
   { package = "wire", kind = "lib", targets = ["wire"], features = [] },
-  { package = "test-agent", kind = "bin", targets = ["test-agent"], features = [] },
 ]
 
 [[suite]]

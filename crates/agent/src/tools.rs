@@ -17,6 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub use agent_dir::TOOLS_SOCK;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tonic::transport::{Channel, Endpoint};
@@ -30,9 +31,6 @@ use wire::{
 };
 
 use crate::dir;
-
-/// The socket the daemon listens on for this agent's tool server.
-pub const TOOLS_SOCK: &str = "tools.sock";
 
 /// What a fleet call answers when no daemon is listening.
 pub const NOT_RUNNING: &str = "amux daemon isn't running";

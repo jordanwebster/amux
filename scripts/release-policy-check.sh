@@ -48,23 +48,11 @@ case "$help" in
         ;;
 esac
 
-new_help=$("$binary" new --help)
-case "$new_help" in
-    *test-agent*)
-        echo "release-policy-check: release help exposes the test agent" >&2
-        exit 1
-        ;;
-esac
-
 if "$binary" debug --help >/dev/null 2>&1; then
     echo "release-policy-check: release binary accepts the debug command" >&2
-    exit 1
-fi
-if "$binary" new test-agent >/dev/null 2>&1; then
-    echo "release-policy-check: release binary accepts the test agent" >&2
     exit 1
 fi
 
 scripts/python -B scripts/sqlite_linkage.py "$binary"
 
-echo "release policy excludes diagnostics and development agents"
+echo "release policy excludes diagnostics"

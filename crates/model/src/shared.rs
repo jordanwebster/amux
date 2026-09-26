@@ -23,7 +23,6 @@ pub enum ShutdownReason {
     ProtocolError,
     UserRequested,
     Updating,
-    Suspending,
     Restarting,
     AuthExpired,
 }
@@ -35,7 +34,6 @@ impl ShutdownReason {
             Self::ProtocolError => "protocol_error",
             Self::UserRequested => "user_requested",
             Self::Updating => "updating",
-            Self::Suspending => "suspending",
             Self::Restarting => "restarting",
             Self::AuthExpired => "auth_expired",
         }
@@ -47,7 +45,6 @@ impl ShutdownReason {
             "protocol_error" => Some(Self::ProtocolError),
             "user_requested" => Some(Self::UserRequested),
             "updating" => Some(Self::Updating),
-            "suspending" => Some(Self::Suspending),
             "restarting" => Some(Self::Restarting),
             "auth_expired" => Some(Self::AuthExpired),
             _ => None,
@@ -62,7 +59,6 @@ impl std::fmt::Display for ShutdownReason {
             Self::ProtocolError => "protocol error",
             Self::UserRequested => "server shutting down",
             Self::Updating => "server updating",
-            Self::Suspending => "server suspending",
             Self::Restarting => "server restarting",
             Self::AuthExpired => "authentication expired",
         })

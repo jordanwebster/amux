@@ -15,9 +15,11 @@ ALLOWED_LOCAL = {
     "settings": {"model"},
     "artifacts": {"model"},
     "client": {"model", "wire"},
-    "host-api": {"model"},
-    "node": {"client", "host-api", "model", "settings", "wire"},
-    "agent-runtime": {"artifacts", "claude", "codex", "fold", "host-api", "model", "pty-host"},
+    "agent-dir": {"wire"},
+    # The daemon reaches agent processes only through the directory contract,
+    # never the agent crate, so the phone can host a runtime without a
+    # provider in its graph.
+    "node": {"agent-dir", "journal", "settings", "store", "wire"},
     "redaction": set(),
     "ui-state": {"wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
@@ -37,7 +39,6 @@ TEST_SUPPORT = {
     "claude-specs",
     "codex-specs",
     "provider-fakes",
-    "test-agent",
     "shot",
 }
 SUPPORT_ALLOWED_LOCAL = {
@@ -46,13 +47,11 @@ SUPPORT_ALLOWED_LOCAL = {
     # door's report conversion through the client layer, and exercises
     # whole-daemon behavior through production boundaries.
     "testnet": {
-        "agent-runtime",
         "artifacts",
         "claude",
         "client",
         "codex",
         "fold",
-        "host-api",
         "model",
         "node",
         "node-test-support",
@@ -66,7 +65,6 @@ SUPPORT_ALLOWED_LOCAL = {
     # Qualification owns environment-dependent provider and performance
     # checks while reusing the network harness rather than shipping it.
     "qualification": {
-        "agent-runtime",
         "client",
         "fold",
         "model",

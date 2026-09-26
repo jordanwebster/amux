@@ -299,23 +299,6 @@ pub struct Keybinds {
     pub leader: LeaderKey,
 }
 
-/// Defaults for newly created Claude agents.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ClaudeSettings {
-    /// How a new Claude agent runs when a creation surface does not say.
-    pub driver: ClaudeInterface,
-}
-
-/// Claude in a terminal, or headless through its SDK.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ClaudeInterface {
-    #[default]
-    Pty,
-    Sdk,
-}
-
 /// A setting that is on or off, spelled `on` or `off`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -496,7 +479,6 @@ pub struct UiSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct InstallationConfig {
     pub repository_roots: Vec<PathBuf>,
-    pub claude: ClaudeSettings,
     pub root: PathBuf,
     pub front_door_socket: PathBuf,
     pub host_name: String,
@@ -528,7 +510,6 @@ impl Default for InstallationConfig {
     fn default() -> Self {
         Self {
             repository_roots: Vec::new(),
-            claude: ClaudeSettings::default(),
             root: default_data_dir(),
             front_door_socket: default_socket_path(),
             host_name: default_host_name(),
@@ -673,6 +654,10 @@ const RETIRED_KEYS: &[(&[&str], &str)] = &[
         &["prevent_idle_sleep"],
         "replaced by keep_awake (on | off), which the supervisor holds for its lifetime",
     ),
+    (
+        &["claude", "driver"],
+        "every new agent names its kind: claude_pty (Claude in a terminal) or claude_sdk (headless Claude)",
+    ),
 ];
 
 /// Parses YAML into a config type after rejecting retired keys by name.
@@ -780,10 +765,6 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiSettings,
 
-    /// Defaults for newly created Claude agents.
-    #[serde(default)]
-    pub claude: ClaudeSettings,
-
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -804,21 +785,9 @@ impl Default for Config {
             repository_roots: Vec::new(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
-            claude: ClaudeSettings::default(),
             path: None,
         }
     }
-}
-
-/// Resolve the driver for a newly created Claude agent.
-///
-/// A creation-time override wins over the configured default. With neither,
-/// the shipped default remains the PTY driver.
-pub fn resolve_claude_driver(
-    explicit: Option<ClaudeInterface>,
-    config: &Config,
-) -> ClaudeInterface {
-    explicit.unwrap_or(config.claude.driver)
 }
 
 impl Config {
@@ -887,30 +856,6 @@ impl Config {
 mod tests {
     use super::*;
 
-    #[test]
-    fn claude_driver_config_defaults_to_pty_and_accepts_sdk() {
-        let absent: Config = serde_yaml::from_str("host_name: test\n").unwrap();
-        assert_eq!(resolve_claude_driver(None, &absent), ClaudeInterface::Pty);
-
-        let sdk: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
-        assert_eq!(resolve_claude_driver(None, &sdk), ClaudeInterface::Sdk);
-        assert_eq!(
-            resolve_claude_driver(Some(ClaudeInterface::Pty), &sdk),
-            ClaudeInterface::Pty
-        );
-    }
-
-    #[test]
-    fn claude_driver_config_rejects_unknown_keys_and_values() {
-        assert!(
-            serde_yaml::from_str::<Config>("claude:\n  backend: sdk\n")
-                .unwrap_err()
-                .to_string()
-                .contains("unknown field")
-        );
-        assert!(serde_yaml::from_str::<Config>("claude:\n  driver: other\n").is_err());
-    }
-
     /// Verify serde_yaml round-trips Windows-style backslash paths correctly.
     /// serde_yaml serializes paths unquoted, which YAML parses literally.
     /// (Double-quoted YAML strings would break because `\p`, `\U` etc. are
@@ -970,13 +915,6 @@ mod tests {
         let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(parsed.reports_dir, Some(PathBuf::from("/srv/amux-reports")));
         assert_eq!(parsed.reports_dir(), PathBuf::from("/srv/amux-reports"));
-    }
-
-    #[test]
-    fn retired_claude_plugin_config_is_rejected() {
-        let error =
-            serde_yaml::from_str::<Config>("claude:\n  manage_plugin: false\n").unwrap_err();
-        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
@@ -1362,6 +1300,7 @@ mod tests {
                 "prevent_idle_sleep",
                 "keep_awake",
             ),
+            ("claude:\n  driver: sdk\n", "claude.driver", "claude_sdk"),
         ] {
             for error in [
                 installation(yaml).unwrap_err().to_string(),

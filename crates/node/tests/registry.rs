@@ -1,0 +1,664 @@
+//! The daemon's agent registry, generation file and startup path, against
+//! real `amux agent` processes on the scripted fake providers.
+
+mod support;
+
+use std::time::Duration;
+
+use node::{
+    ActivationError, ActivationPipe, CAUSE_ABORTED, CAUSE_EXITED_AWAY, CAUSE_KILLED,
+    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, Generation, LockError, RegistryError, StartError,
+};
+use prost::Message as _;
+use store::{AgentKey, AgentRow, Marker, Store as _};
+use support::*;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use wire::{AgentSpec, Lifecycle, Phase, StopMode};
+
+fn spec(dir: &std::path::Path, n: u32) -> AgentSpec {
+    let bytes = std::fs::read(dir.join(format!("spec.{n}"))).expect("the spec exists");
+    AgentSpec::decode(bytes.as_slice()).unwrap()
+}
+
+fn key(runtime: &node::ProfileRuntime, id: uuid::Uuid) -> AgentKey {
+    AgentKey::new(runtime.host().as_bytes().to_vec(), id.as_bytes().to_vec())
+}
+
+/// Where the agent's journal ends: the offset past its last whole frame.
+fn journal_end(dir: &std::path::Path) -> u64 {
+    let mut reader = journal::Reader::new(dir.join(agent_dir::JOURNAL), 0);
+    reader.read_to_end().unwrap();
+    reader.cursor()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_installation_lock_admits_one_daemon() {
+    let install = Install::new();
+    let first = install
+        .start("boot-1", install.launch("idle", vec![]))
+        .await;
+    let second = node::start(
+        install.options("boot-1", install.launch("idle", vec![])),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(second, Err(StartError::Lock(LockError::Busy(_)))),
+        "a second daemon on the same data directory is refused"
+    );
+    first.shutdown().await.unwrap();
+    let third = install
+        .start("boot-1", install.launch("idle", vec![]))
+        .await;
+    third.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_generation_bumps_only_after_an_unclean_reboot() {
+    let install = Install::new();
+    let launch = || install.launch("idle", vec![]);
+    let on_disk = || Generation::read(&install.data_dir).unwrap().unwrap();
+
+    let daemon = install.start("boot-1", launch()).await;
+    assert_eq!(
+        daemon.generation().counter,
+        1,
+        "the first start is generation 1"
+    );
+    assert!(
+        !on_disk().clean,
+        "the flag is cleared before anything is served"
+    );
+    daemon.shutdown().await.unwrap();
+    assert!(on_disk().clean, "a clean shutdown sets the flag last");
+
+    // A clean reboot: new boot id, flag set. Nothing was lost.
+    let daemon = install.start("boot-2", launch()).await;
+    assert_eq!(
+        daemon.generation().counter,
+        1,
+        "a clean reboot keeps the generation"
+    );
+    drop(daemon);
+
+    // A daemon crash: same boot id, flag clear. The page cache survived.
+    let daemon = install.start("boot-2", launch()).await;
+    assert_eq!(
+        daemon.generation().counter,
+        1,
+        "a daemon crash keeps the generation"
+    );
+    drop(daemon);
+
+    // Power loss: the machine came back with a new boot id and the last
+    // run never shut down cleanly.
+    let daemon = install.start("boot-3", launch()).await;
+    assert_eq!(
+        daemon.generation().counter,
+        2,
+        "an unclean reboot bumps the generation"
+    );
+    assert_eq!(on_disk().boot_id, "boot-3");
+    daemon.shutdown().await.unwrap();
+
+    let leftovers: Vec<_> = std::fs::read_dir(&install.data_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "no temporary file is left: {leftovers:?}"
+    );
+    println!(
+        "generation file after an unclean reboot and a clean shutdown: {}",
+        std::fs::read_to_string(install.data_dir.join(node::GENERATION)).unwrap()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_prepares_after_looking_and_writes_only_after_go() {
+    let install = Install::new();
+    let host = node::host_id(&install.profile_dir()).unwrap();
+    let store_path = install.profile_dir().join(node::STORE);
+
+    // An agent that ran while no daemon was up: a live row, a directory with
+    // a journal nobody ingested, and no process holding its lock.
+    let away = uuid::Uuid::new_v4();
+    // A row whose directory is gone, and a directory no row lists.
+    let missing = uuid::Uuid::new_v4();
+    let orphan = uuid::Uuid::new_v4();
+    {
+        let mut store = store::Sqlite::open(&store_path, host.as_bytes().to_vec()).unwrap();
+        for id in [away, missing] {
+            let key = AgentKey::new(host.as_bytes().to_vec(), id.as_bytes().to_vec());
+            store
+                .put_agent(&AgentRow::new(key, "claude_sdk", "/tmp"))
+                .unwrap();
+        }
+    }
+    let away_dir = install.agent_dir(away);
+    let mut writer = journal::Writer::open(away_dir.join(agent_dir::JOURNAL), 1 << 20).unwrap();
+    writer
+        .append(&wire::Step {
+            snapshot: Some(wire::Snapshot {
+                phase: Phase::Idle as i32,
+                at_ms: 1_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+    let written = writer.offset();
+    std::fs::create_dir_all(install.agent_dir(orphan)).unwrap();
+
+    // A supervisor that answers go only when the test says so.
+    let (daemon_end, supervisor_end) = tokio::io::duplex(64);
+    let (daemon_read, daemon_write) = tokio::io::split(daemon_end);
+    let (supervisor_read, mut supervisor_write) = tokio::io::split(supervisor_end);
+    let pipe = ActivationPipe::new(daemon_read, daemon_write);
+    let options = install.options("boot-1", install.launch("idle", vec![]));
+    let starting = tokio::spawn(node::start(options, Some(pipe)));
+
+    let mut lines = BufReader::new(supervisor_read).lines();
+    let prepared = tokio::time::timeout(PATIENCE, lines.next_line())
+        .await
+        .expect("the daemon prepares")
+        .unwrap();
+    assert_eq!(prepared.as_deref(), Some(node::PREPARED));
+
+    // Prepared: the store is migrated and nothing else is written yet.
+    {
+        let look = store::Sqlite::open(&store_path, host.as_bytes().to_vec()).unwrap();
+        let row = look
+            .agent(&AgentKey::new(
+                host.as_bytes().to_vec(),
+                away.as_bytes().to_vec(),
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.lifecycle,
+            Lifecycle::Live as i32,
+            "not marked exited before go"
+        );
+        assert_eq!(row.ingest_cursor, 0, "nothing ingested before go");
+        let stamp: u32 = look
+            .connection()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(stamp, store::SCHEMA_STAMP, "migrated before prepared");
+    }
+    assert!(
+        install.agent_dir(orphan).exists(),
+        "nothing removed before go"
+    );
+    assert!(!starting.is_finished(), "the daemon waits for go");
+
+    supervisor_write.write_all(b"go\n").await.unwrap();
+    let daemon = tokio::time::timeout(PATIENCE, starting)
+        .await
+        .expect("the daemon starts after go")
+        .unwrap()
+        .expect("the start succeeds");
+    let runtime = runtime(&daemon, &install);
+    let report = daemon.sweep(install.profile).unwrap().clone();
+    println!("sweep after go: {report:#?}");
+
+    let mut exited = vec![away, missing];
+    exited.sort();
+    assert_eq!(report.exited, exited);
+    assert_eq!(report.removed, vec![orphan]);
+    assert!(report.live.is_empty() && report.unanswered.is_empty());
+    assert!(!install.agent_dir(orphan).exists());
+
+    let store = runtime.store().await;
+    let row = store.agent(&key(&runtime, away)).unwrap().unwrap();
+    assert_eq!(row.lifecycle, Lifecycle::Exited as i32);
+    assert_eq!(row.exit_cause.as_deref(), Some(CAUSE_EXITED_AWAY));
+    assert_eq!(row.ingest_cursor, written, "the remainder is ingested");
+    assert_eq!(row.phase, Phase::Idle as i32);
+    assert_eq!(
+        store.cut(&key(&runtime, away), 10).unwrap().marker,
+        Some(Marker::CaughtUp),
+        "an agent the sweep finds exited is caught up"
+    );
+    let row = store.agent(&key(&runtime, missing)).unwrap().unwrap();
+    assert_eq!(row.exit_cause.as_deref(), Some(CAUSE_NO_DIRECTORY));
+    drop(store);
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+
+    // A supervisor that goes away before go: the daemon does not start.
+    let (daemon_end, supervisor_end) = tokio::io::duplex(64);
+    let (daemon_read, daemon_write) = tokio::io::split(daemon_end);
+    let pipe = ActivationPipe::new(daemon_read, daemon_write);
+    let options = install.options("boot-1", install.launch("idle", vec![]));
+    let starting = tokio::spawn(node::start(options, Some(pipe)));
+    let (supervisor_read, supervisor_write) = tokio::io::split(supervisor_end);
+    let mut lines = BufReader::new(supervisor_read).lines();
+    assert_eq!(
+        lines.next_line().await.unwrap().as_deref(),
+        Some(node::PREPARED)
+    );
+    drop(supervisor_write);
+    drop(lines);
+    let result = tokio::time::timeout(PATIENCE, starting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(StartError::Activation(ActivationError::SupervisorGone))
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spawn_writes_spec_one_and_starts_the_agent_process() {
+    let install = Install::new();
+    let launch = install.launch("reply", vec![text("hello"), wire_turn_end()]);
+    let daemon = install.start("boot-1", launch.clone()).await;
+    let runtime = runtime(&daemon, &install);
+
+    let agent = runtime
+        .spawn(create(&install.work, "first", Some("say hello")), None)
+        .await
+        .expect("the agent spawns");
+    let id = id_of(&agent);
+    let dir = install.agent_dir(id);
+    assert_eq!(agent.lifecycle, Lifecycle::Live as i32);
+    assert_eq!(agent.incarnation, 1);
+    assert_eq!(agent.name.as_deref(), Some("first"));
+    assert!(
+        node::locked(&dir),
+        "the agent process holds its directory's lock"
+    );
+    assert!(runtime.hello(id).is_some(), "the agent said Hello");
+    assert!(
+        dir.join(agent_dir::TOOLS_SOCK).exists(),
+        "the daemon listens on the agent's tools socket"
+    );
+
+    let spec = spec(&dir, 1);
+    assert_eq!(spec.agent_id, id.as_bytes().to_vec());
+    assert_eq!(spec.profile_id, install.profile.as_bytes().to_vec());
+    assert_eq!(spec.kind, "claude_sdk");
+    assert_eq!(spec.cwd, install.work.to_string_lossy());
+    assert_eq!(spec.name, "first");
+    assert_eq!(spec.incarnation, 1);
+    assert_eq!(spec.provider_command, launch.claude_command);
+    assert_eq!(spec.daemon_version, node::VERSION);
+    assert!(
+        spec.initial_prompt.is_some(),
+        "spec.1 carries the first prompt"
+    );
+    let config = spec.config.as_ref().unwrap();
+    assert_eq!(config.install_path, launch.install_path.to_string_lossy());
+    assert_eq!(config.grace_ms, 20_000);
+    println!("spec.1 of a spawned agent: {spec:#?}");
+
+    // The journal is ingested as the agent writes it: the prompt runs to
+    // the end of its turn and the row follows the snapshot to idle.
+    until("the reply to be committed", async || {
+        let store = runtime.store().await;
+        let row = store.agent(&key(&runtime, id)).unwrap().unwrap();
+        row.phase == Phase::Idle as i32
+            && store
+                .last_n(&key(&runtime, id), 50)
+                .unwrap()
+                .iter()
+                .any(|item| item.text.contains("hello"))
+    })
+    .await;
+
+    let again = runtime
+        .spawn(
+            wire::CreateAgentRequest {
+                agent_id: id.as_bytes().to_vec(),
+                ..create(&install.work, "again", None)
+            },
+            None,
+        )
+        .await;
+    assert!(matches!(again, Err(RegistryError::AlreadyExists(_))));
+    let nowhere = runtime
+        .spawn(create(&install.path("missing"), "nowhere", None), None)
+        .await;
+    assert!(matches!(nowhere, Err(RegistryError::BadCwd(_))));
+
+    kill_all(&runtime).await;
+    assert!(
+        !dir.join(agent_dir::TOOLS_SOCK).exists(),
+        "the tools socket goes when the agent exits"
+    );
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_modes_end_the_process_and_record_why() {
+    let install = Install::new();
+    let never = install.path("never");
+    let daemon = install
+        .start("boot-1", install.launch("held", vec![wait_for(&never)]))
+        .await;
+    let runtime = runtime(&daemon, &install);
+
+    for (mode, cause, prompt) in [
+        (StopMode::Graceful, CAUSE_STOPPED, None),
+        (StopMode::Abort, CAUSE_ABORTED, Some("work until stopped")),
+        (StopMode::Kill, CAUSE_KILLED, Some("work until killed")),
+    ] {
+        let agent = runtime
+            .spawn(create(&install.work, cause, prompt), None)
+            .await
+            .unwrap();
+        let id = id_of(&agent);
+        let dir = install.agent_dir(id);
+        if prompt.is_some() {
+            until("the turn to start", async || {
+                runtime.agent(id).await.unwrap().phase == Phase::Working as i32
+            })
+            .await;
+        }
+        let stopped = runtime.stop(id, mode).await.expect("the stop completes");
+        assert_eq!(stopped.lifecycle, Lifecycle::Exited as i32, "{mode:?}");
+        assert_eq!(stopped.exit_cause.as_deref(), Some(cause), "{mode:?}");
+        assert!(!node::locked(&dir), "{mode:?}: the lock is released");
+        assert!(!dir.join(agent_dir::TOOLS_SOCK).exists(), "{mode:?}");
+        assert!(!runtime.live().contains(&id), "{mode:?}");
+        assert_eq!(
+            runtime
+                .store()
+                .await
+                .cut(&key(&runtime, id), 1)
+                .unwrap()
+                .marker,
+            Some(Marker::CaughtUp),
+            "{mode:?}: an exited agent's journal is read to its end"
+        );
+        // Stopping an exited agent leaves it as it is.
+        let again = runtime.stop(id, StopMode::Kill).await.unwrap();
+        assert_eq!(again.exit_cause.as_deref(), Some(cause));
+    }
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resume_writes_the_next_spec_and_waits_for_a_dying_process() {
+    let install = Install::new();
+    let gate = install.path("gate");
+    let daemon = install
+        .start(
+            "boot-1",
+            install.launch("gated-exit", vec![wait_for(&gate), exit(0)]),
+        )
+        .await;
+    let runtime = runtime(&daemon, &install);
+    let agent = runtime
+        .spawn(
+            create(&install.work, "resumable", Some("wait at the gate")),
+            None,
+        )
+        .await
+        .unwrap();
+    let id = id_of(&agent);
+    let dir = install.agent_dir(id);
+
+    let live = runtime.resume(id, None).await;
+    assert!(
+        matches!(live, Err(RegistryError::Live(_))),
+        "a live agent is not resumed"
+    );
+
+    // The agent has said it is leaving (it answered an input "exiting"),
+    // but its process still holds the directory: the resume waits.
+    runtime.mark_exiting(id);
+    let resuming = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .resume(id, Some(sdk_prompt(b"p1", "carry on")))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!resuming.is_finished(), "the resume waits for the lock");
+    assert!(
+        !dir.join("spec.2").exists(),
+        "no spec is written under a live lock"
+    );
+
+    std::fs::write(&gate, "").unwrap();
+    let resumed = tokio::time::timeout(PATIENCE, resuming)
+        .await
+        .expect("the resume completes once the old process is gone")
+        .unwrap()
+        .expect("the resume succeeds");
+    assert_eq!(resumed.incarnation, 2);
+    let spec2 = spec(&dir, 2);
+    assert_eq!(spec2.incarnation, 2);
+    assert_eq!(spec2.agent_id, id.as_bytes().to_vec());
+    assert_eq!(spec2.name, "resumable", "a spec keeps the spawn's name");
+    assert_eq!(
+        spec2
+            .initial_prompt
+            .as_ref()
+            .map(|input| input.input_id.clone()),
+        Some(b"p1".to_vec()),
+        "the resume's prompt seeds the new incarnation"
+    );
+    assert_eq!(spec(&dir, 1).incarnation, 1, "spec.1 is never rewritten");
+
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_aborts_first_and_cascades_to_children() {
+    let install = Install::new();
+    let never = install.path("never");
+    let daemon = install
+        .start("boot-1", install.launch("held", vec![wait_for(&never)]))
+        .await;
+    let runtime = runtime(&daemon, &install);
+
+    let parent = id_of(
+        &runtime
+            .spawn(create(&install.work, "parent", Some("hold")), None)
+            .await
+            .unwrap(),
+    );
+    let child = runtime
+        .spawn(create(&install.work, "child", Some("hold")), Some(parent))
+        .await
+        .unwrap();
+    assert_eq!(
+        parent_of(&child).map(|p| p.agent_id),
+        Some(parent.as_bytes().to_vec()),
+        "the caller is the parent"
+    );
+    let child = id_of(&child);
+    let bystander = id_of(
+        &runtime
+            .spawn(create(&install.work, "bystander", None), None)
+            .await
+            .unwrap(),
+    );
+    // A child on another host: listed, but out of this daemon's reach.
+    let remote = AgentKey::new(vec![7; 16], uuid::Uuid::new_v4().as_bytes().to_vec());
+    {
+        let mut row = AgentRow::new(remote.clone(), "codex", "/");
+        row.parent = Some(key(&runtime, parent));
+        runtime.store().await.put_agent(&row).unwrap();
+    }
+    for id in [parent, child] {
+        until("the turn to start", async || {
+            runtime.agent(id).await.unwrap().phase == Phase::Working as i32
+        })
+        .await;
+    }
+
+    let response = runtime.delete(parent).await.expect("the delete completes");
+    println!("delete response: {response:#?}");
+    assert_eq!(
+        response
+            .removed_children
+            .iter()
+            .map(|agent| agent.agent_id.clone())
+            .collect::<Vec<_>>(),
+        vec![child.as_bytes().to_vec()]
+    );
+    assert_eq!(
+        response
+            .unreachable_children
+            .iter()
+            .map(|agent| agent.agent_id.clone())
+            .collect::<Vec<_>>(),
+        vec![remote.agent.clone()]
+    );
+    for id in [parent, child] {
+        assert!(!install.agent_dir(id).exists(), "the directory is removed");
+        assert!(matches!(
+            runtime.agent(id).await,
+            Err(RegistryError::NotFound(_))
+        ));
+        assert!(!runtime.live().contains(&id));
+    }
+    assert!(runtime.store().await.agent(&remote).unwrap().is_some());
+    assert_eq!(
+        runtime.agent(bystander).await.unwrap().lifecycle,
+        Lifecycle::Live as i32
+    );
+    assert!(matches!(
+        runtime.delete(parent).await,
+        Err(RegistryError::NotFound(_))
+    ));
+
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rename_changes_the_row_and_never_the_spec() {
+    let install = Install::new();
+    let daemon = install
+        .start("boot-1", install.launch("idle", vec![]))
+        .await;
+    let runtime = runtime(&daemon, &install);
+    let id = id_of(
+        &runtime
+            .spawn(create(&install.work, "before", None), None)
+            .await
+            .unwrap(),
+    );
+    let renamed = runtime.rename(id, "after").await.unwrap();
+    assert_eq!(renamed.name.as_deref(), Some("after"));
+    assert_eq!(
+        runtime.agent(id).await.unwrap().name.as_deref(),
+        Some("after")
+    );
+    assert_eq!(spec(&install.agent_dir(id), 1).name, "before");
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restarted_daemon_adopts_live_agents_and_sweeps_exited_ones() {
+    let install = Install::new();
+    let gate = install.path("gate");
+    let launch = install.launch(
+        "finish-while-away",
+        // The provider plays steps only within a turn, so the exit is part
+        // of the turn the gate holds open.
+        vec![wait_for(&gate), text("done while away"), exit(0)],
+    );
+    let daemon = install.start("boot-1", launch.clone()).await;
+    let runtime = runtime(&daemon, &install);
+    let stays = id_of(
+        &runtime
+            .spawn(create(&install.work, "stays", None), None)
+            .await
+            .unwrap(),
+    );
+    let leaves = id_of(
+        &runtime
+            .spawn(create(&install.work, "leaves", Some("finish later")), None)
+            .await
+            .unwrap(),
+    );
+    until("the turn to start", async || {
+        runtime.agent(leaves).await.unwrap().phase == Phase::Working as i32
+    })
+    .await;
+
+    // The daemon dies without shutting down; one agent finishes its turn
+    // and exits while it is away, the other keeps running.
+    drop(runtime);
+    drop(daemon);
+    std::fs::write(&gate, "").unwrap();
+    let leaves_dir = install.agent_dir(leaves);
+    until("the agent to exit while the daemon is away", async || {
+        !node::locked(&leaves_dir)
+    })
+    .await;
+    assert!(node::locked(&install.agent_dir(stays)));
+
+    let daemon = install.start("boot-1", launch).await;
+    assert_eq!(
+        daemon.generation().counter,
+        1,
+        "a daemon crash keeps the generation"
+    );
+    let runtime = support::runtime(&daemon, &install);
+    let report = daemon.sweep(install.profile).unwrap().clone();
+    println!("sweep after a daemon crash: {report:#?}");
+    assert_eq!(
+        report.live,
+        vec![stays],
+        "the live agent answered with a Hello"
+    );
+    assert_eq!(report.exited, vec![leaves]);
+    assert!(runtime.hello(stays).is_some());
+    assert!(runtime.live().contains(&stays));
+
+    let store = runtime.store().await;
+    let row = store.agent(&key(&runtime, leaves)).unwrap().unwrap();
+    assert_eq!(row.lifecycle, Lifecycle::Exited as i32);
+    assert_eq!(row.exit_cause.as_deref(), Some(CAUSE_EXITED_AWAY));
+    assert_eq!(
+        row.ingest_cursor,
+        journal_end(&leaves_dir),
+        "the journal written while the daemon was away is ingested"
+    );
+    assert!(
+        store
+            .last_n(&key(&runtime, leaves), 50)
+            .unwrap()
+            .iter()
+            .any(|item| item.text.contains("done while away"))
+    );
+    assert_eq!(
+        store.cut(&key(&runtime, leaves), 1).unwrap().marker,
+        Some(Marker::CaughtUp)
+    );
+    drop(store);
+
+    // The adopted agent is the registry's like any other: it stops.
+    let stopped = runtime.stop(stays, StopMode::Graceful).await.unwrap();
+    assert_eq!(stopped.exit_cause.as_deref(), Some(CAUSE_STOPPED));
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+fn wire_turn_end() -> provider_fakes::script::Step {
+    provider_fakes::script::Step::TurnEnd
+}
+
+fn exit(code: i32) -> provider_fakes::script::Step {
+    provider_fakes::script::Step::Exit { code }
+}

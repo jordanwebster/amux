@@ -5,19 +5,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+pub use agent_dir::{BLOBS, CTL_SOCK, JOURNAL, LOCK, PRIVATE, PTY, PTY_SOCK, lock};
 use prost::Message as _;
 use wire::AgentSpec;
-
-pub const LOCK: &str = "lock";
-pub const CTL_SOCK: &str = "ctl.sock";
-pub const PTY_SOCK: &str = "pty.sock";
-pub const JOURNAL: &str = "journal";
-pub const PTY: &str = "pty";
-pub const PRIVATE: &str = "private";
 pub const HOOKS_SOCK: &str = "hooks.sock";
 /// Terminal Claude's messaging socket, under private/, which Claude binds.
 pub const MESSAGING_SOCK: &str = "messaging.sock";
-pub const BLOBS: &str = "blobs";
 /// How far the agent has read Claude's transcript, and which one.
 pub const TRANSCRIPT_CURSOR: &str = "transcript-cursor";
 /// The facts ring and its checkpoints, under private/.
@@ -26,25 +19,6 @@ pub const FACTS: &str = "facts";
 pub const PROVIDER_SESSION: &str = "provider-session";
 /// What the provider wrote to stderr.
 pub const PROVIDER_LOG: &str = "provider.log";
-
-/// The directory's exclusive lock, held for the process's lifetime; the
-/// kernel releases it when the process dies.
-#[derive(Debug)]
-pub struct Lock(#[allow(dead_code)] File);
-
-/// Takes `<dir>/lock` or reports that a live agent holds it.
-pub fn lock(dir: &Path) -> io::Result<Option<Lock>> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join(LOCK))?;
-    match file.try_lock() {
-        Ok(()) => Ok(Some(Lock(file))),
-        Err(fs::TryLockError::WouldBlock) => Ok(None),
-        Err(fs::TryLockError::Error(error)) => Err(error),
-    }
-}
 
 /// The newest `spec.<n>` and its number.
 pub fn newest_spec(dir: &Path) -> io::Result<Option<(u32, AgentSpec)>> {
