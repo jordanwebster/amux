@@ -1,3 +1,20 @@
+2026-09-26 — **Both clients get one view library: ui-view.**
+The new ui-view crate turns a session into content values: chat rows (one
+per item, the row id the item key, runs of exploration calls as an
+attribute with the newest member as the summary), the ask card (head ask
+and count, the subject verbatim, the body variant, and choices stated as
+outcomes with the answer each sends), the session strip, the composer's
+mode and tokens, queued prompts with Withdraw and Send now, this client's
+unconfirmed inputs, the fleet list and card, the family header and the
+review document. Its goldens are derived from every interpreter fixture of
+all three kinds: the emission is committed the way the daemon commits it,
+reduced into a session and rendered after every frame; authored goldens
+cover what no fixture reaches (not confirmed, Resume, steering, an
+unanswerable ask, every strip fact). The interpreter harness gained a
+`replay` helper for this. A headless Claude task item now redraws the Agent
+call it names: ui-state records which item refers to which, so the changed
+keys of an update include the call's row.
+
 2026-09-26 — **One session model for both clients: ui-state is rebuilt on the journal records.**
 The old reducer, its effects, the per-kind folds, the client store and its
 commit protocol are gone from ui-state. A chat is now a `SessionState`: the

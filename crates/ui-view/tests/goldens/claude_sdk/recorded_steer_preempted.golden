@@ -1,0 +1,66 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 8 recorded 7: input 0x22222222222242228222222222222201
+  composer Send activity=None queue=[QueuedRow { input_id: [34, 34, 34, 34, 34, 34, 66, 34, 130, 34, 34, 34, 34, 34, 34, 1], text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], from_agent: None, mine: true, steer…
+## 14 recorded 13: fact Stream type=system subtype=init uuid=9666e2b2-05ed-4c4e-8f5c-dd3d49778b79
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 22 recorded 21: fact Stream type=assistant uuid=963fb830-55bd-4c65-b112-1f7a0c852eb4
+  row    3 msg_011CfRNe1t23dJ2KG6srDKvt:0 Thinking { text: "", open: false, duration_ms: Some(2663) }
+## 24 recorded 23: fact Stream type=assistant uuid=647a623f-306d-4e97-867b-c50154ff4f3f
+  row    4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "toolu_01V8KNRp5VHwLZsBWWh8nwpU" }) queue=[] outbox=[]
+## 28 recorded 27: fact Stream type=system subtype=task_started uuid=83739026-24af-4f6f-bdcf-e0c39747067e tool_use_id=toolu_01V8KNRp5VHwLZsBWWh8nwpU
+  row    4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    5 task:bq1m36189 Hidden collapsed
+  composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
+## 30 recorded 29: input 0x22222222222242228222222222222204
+  composer Send activity=Some(Subagents { count: 1 }) queue=[QueuedRow { input_id: [34, 34, 34, 34, 34, 34, 66, 34, 130, 34, 34, 34, 34, 34, 34, 4], text: [Text("Also append the word NUTMEG.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 34 recorded 33: fact Stream type=system subtype=task_notification uuid=0ca56b6a-939c-4a6e-b5a7-88012c3f18cb tool_use_id=toolu_01V8KNRp5VHwLZsBWWh8nwpU
+  row    4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row    5 task:bq1m36189 Hidden collapsed
+  composer Send activity=Some(Working) queue=[QueuedRow { input_id: [34, 34, 34, 34, 34, 34, 66, 34, 130, 34, 34, 34, 34, 34, 34, 4], text: [Text("Also append the word NUTMEG.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 36 recorded 35: fact Stream type=user uuid=bb20ceb3-ece3-4f4c-b45b-5c43f9e2ad93
+  row    4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15162) }
+## 38 recorded 37: fact Stream type=result subtype=success uuid=c4786fca-f2bb-4574-9bd4-defb5f8f08a9
+  row    6 turn:1 Stopped
+  row    7 22222222-2222-4222-8222-222222222204 Prompt { text: [Text("Also append the word NUTMEG.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 49 recorded 48: fact Stream type=assistant uuid=255cf081-a5fb-48d8-9fef-34c6bc315114
+  row    8 msg_011CfRNfNgSgdLrQHfx1jsF7:0 Thinking { text: "", open: false, duration_ms: Some(1597) }
+## 51 recorded 50: fact Stream type=assistant uuid=69912cb0-b673-424e-b5eb-fdb5664f026b
+  row    9 toolu_0185XCcbbCw5erC6Fi3B99Ro Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "toolu_0185XCcbbCw5erC6Fi3B99Ro" }) queue=[] outbox=[]
+## 53 recorded 52: fact Stream type=system subtype=task_started uuid=995f237d-300b-4932-b034-ae4bc31264cf tool_use_id=toolu_0185XCcbbCw5erC6Fi3B99Ro
+  row    9 toolu_0185XCcbbCw5erC6Fi3B99Ro Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row   10 task:bnbh0rcqu Hidden collapsed
+  composer Send activity=Some(Subagents { count: 1 }) queue=[] outbox=[]
+## 55 recorded 54: fact Stream type=system subtype=task_notification uuid=18cde99b-9a71-4e27-a689-fda5e77adc19 tool_use_id=toolu_0185XCcbbCw5erC6Fi3B99Ro
+  row    9 toolu_0185XCcbbCw5erC6Fi3B99Ro Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  row   10 task:bnbh0rcqu Hidden collapsed
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 57 recorded 56: fact Stream type=user uuid=0cf80e6e-13d3-4f17-8d55-65dc4f6f91a2
+  row    9 toolu_0185XCcbbCw5erC6Fi3B99Ro Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5074) }
+## 63 recorded 62: fact Stream type=assistant uuid=5f81c81b-a1e0-4dc7-bdb8-dd79835eff42
+  row   11 msg_011CfRNfuLgcUn8jjMUCR381:0 Thinking { text: "", open: false, duration_ms: Some(3408) }
+## 65 recorded 64: fact Stream type=assistant uuid=ce99ec94-c0a5-4929-bc29-8a85d4bb8107
+  row   12 msg_011CfRNfuLgcUn8jjMUCR381:1 Prose { text: [Text("DONE-N NUTMEG")], streaming: false, working_note: false }
+## 67 recorded 66: fact Stream type=result subtype=success uuid=8da37b7c-dc29-4ef0-8c4e-d067b013000b
+  row   13 turn:2 TurnEnd { duration_ms: Some(8630), cost_usd: Some(0.032968800000000006), failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
+     3 msg_011CfRNe1t23dJ2KG6srDKvt:0 Thinking { text: "", open: false, duration_ms: Some(2663) }
+     4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15162) }
+     5 task:bq1m36189 Hidden collapsed
+     6 turn:1 Stopped
+     7 22222222-2222-4222-8222-222222222204 Prompt { text: [Text("Also append the word NUTMEG.")], steered: false }
+     8 msg_011CfRNfNgSgdLrQHfx1jsF7:0 Thinking { text: "", open: false, duration_ms: Some(1597) }
+     9 toolu_0185XCcbbCw5erC6Fi3B99Ro Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5074) }
+    10 task:bnbh0rcqu Hidden collapsed
+    11 msg_011CfRNfuLgcUn8jjMUCR381:0 Thinking { text: "", open: false, duration_ms: Some(3408) }
+    12 msg_011CfRNfuLgcUn8jjMUCR381:1 Prose { text: [Text("DONE-N NUTMEG")], streaming: false, working_note: false }
+    13 turn:2 TurnEnd { duration_ms: Some(8630), cost_usd: Some(0.032968800000000006), failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 26478, window_tokens: Some(200000), percent: Some(13), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "plugin:stripe:stripe", error: "", needs_auth: true }, ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

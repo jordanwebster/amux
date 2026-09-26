@@ -272,6 +272,63 @@ impl GoldenReport {
     }
 }
 
+/// One fixture event as the interpreter answered it: the input it carried,
+/// if any, the step it emitted and the verdicts it replied.
+#[derive(Clone, Debug)]
+pub struct Replayed {
+    pub label: String,
+    pub input: Option<Input>,
+    pub step: Step,
+    pub replies: Vec<(Vec<u8>, SendInputResponse)>,
+}
+
+/// Runs one fixture through interpreter `I` and returns its emission, frame
+/// by frame, the initial frame first: what the view goldens replay through
+/// the session model.
+pub fn replay<I: Interpreter>(fixture: &Path) -> Result<Vec<Replayed>, String> {
+    let text =
+        std::fs::read_to_string(fixture).map_err(|error| format!("read fixture: {error}"))?;
+    let parsed: Fixture =
+        serde_json::from_str(&text).map_err(|error| format!("parse fixture: {error}"))?;
+    let script = script::<I>(fixture, &parsed)?;
+    let spec = spec::<I>(&parsed.spec);
+    let producer = parsed.spec.producer_version.as_deref().unwrap_or("test");
+    let frames = execute::<I>(&spec, producer, &script, None)?;
+    let mut inputs = script.iter().filter_map(|scripted| match &scripted.action {
+        Action::Event(Event::Input(input)) => Some((scripted.label.as_str(), input.clone())),
+        _ => None,
+    });
+    let mut next_input = inputs.next();
+    Ok(frames
+        .into_iter()
+        .map(|frame| {
+            let input = match &next_input {
+                Some((label, _)) if *label == frame.label => next_input
+                    .take()
+                    .map(|(_, input)| input)
+                    .inspect(|_| next_input = inputs.next()),
+                _ => None,
+            };
+            let replies = frame
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::Reply { input_id, verdict } => {
+                        Some((input_id.clone(), verdict.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            Replayed {
+                label: frame.label,
+                input,
+                step: frame.step,
+                replies,
+            }
+        })
+        .collect())
+}
+
 /// Runs one fixture through interpreter `I` and checks its golden, its
 /// expectations, the invariants and the checkpoint property.
 pub fn run_golden<I: Interpreter>(fixture: &Path) -> GoldenReport {

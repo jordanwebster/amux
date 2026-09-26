@@ -1,0 +1,79 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 13 recorded 11: fact Transcript type=user uuid=d29ee71d-c85f-4683-b701-24355b98540c
+  row    2 d29ee71d-c85f-4683-b701-24355b98540c Prompt { text: [Text("Do these in order, one tool call each. 1: use Write to overwrite README.md with the single line REPLACED. 2: use Bash to run exactly: mv config.txt moved.txt. 3: use Bash to run exactly: rm moved.txt. 4: use Bash to run exactly: ls missing-file.txt. The last one fails; that is expected. Then stop.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 41 recorded 39: fact Transcript type=assistant uuid=8c15fca5-6590-41d2-95b9-bf9579d66f9a
+  row    3 8c15fca5-6590-41d2-95b9-bf9579d66f9a Thinking { text: "", open: false, duration_ms: Some(2087) }
+## 42 recorded 40: fact Transcript type=assistant uuid=2e1dffa1-1904-4686-894b-f0db8b0d0e4b
+  row    4 toolu_013jHbVUB15dSPqzs7eZGPEQ FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running }
+  composer Send activity=Some(Running { key: "toolu_013jHbVUB15dSPqzs7eZGPEQ" }) queue=[] outbox=[]
+## 44 recorded 42: fact Transcript type=user uuid=cd2f4280-d2ab-4df8-9dd1-d69e1e2652e9
+  row    4 toolu_013jHbVUB15dSPqzs7eZGPEQ FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Failed } attention
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 55 recorded 53: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01FJjmDBCY6HDDDbVQ3CHCss
+  row    5 toolu_01FJjmDBCY6HDDDbVQ3CHCss Explore { verb: Read, subject: "<MACHINE_PATH>", state: Running }
+  composer Send activity=Some(Running { key: "toolu_01FJjmDBCY6HDDDbVQ3CHCss" }) queue=[] outbox=[]
+## 57 recorded 55: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01FJjmDBCY6HDDDbVQ3CHCss
+  row    5 toolu_01FJjmDBCY6HDDDbVQ3CHCss Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 59 recorded 57: fact Transcript type=assistant uuid=b0b4f4f4-706e-43ad-b644-230ec57ba06b
+  row    6 b0b4f4f4-706e-43ad-b644-230ec57ba06b Thinking { text: "", open: false, duration_ms: Some(165) }
+## 61 recorded 59: fact Transcript type=user uuid=042a6a79-cbbe-4c50-aa97-7eb7ad9c6fc7
+  row    5 toolu_01FJjmDBCY6HDDDbVQ3CHCss Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }
+## 65 recorded 63: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu
+  row    7 toolu_012R6FqWBi8NJXv2M4XPgTYu FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Running }
+  composer Send activity=Some(Running { key: "toolu_012R6FqWBi8NJXv2M4XPgTYu" }) queue=[] outbox=[]
+## 67 recorded 65: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu
+  row    7 toolu_012R6FqWBi8NJXv2M4XPgTYu FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 69 recorded 67: fact Transcript type=assistant uuid=a166af93-b071-4ec3-a472-13dcd72d496b
+  row    8 a166af93-b071-4ec3-a472-13dcd72d496b Thinking { text: "", open: false, duration_ms: Some(59) }
+## 72 recorded 70: fact Transcript type=user uuid=3bc34769-2eae-4647-bd07-6c71d2b31680
+  row    7 toolu_012R6FqWBi8NJXv2M4XPgTYu FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
+## 76 recorded 74: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01NgKbJgjWP2HSRNH9ffGnoB
+  row    9 toolu_01NgKbJgjWP2HSRNH9ffGnoB Command { command: "mv config.txt moved.txt", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "toolu_01NgKbJgjWP2HSRNH9ffGnoB" }) queue=[] outbox=[]
+## 78 recorded 76: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01NgKbJgjWP2HSRNH9ffGnoB
+  row    9 toolu_01NgKbJgjWP2HSRNH9ffGnoB Command { command: "mv config.txt moved.txt", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(121) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 80 recorded 78: fact Transcript type=assistant uuid=e27a2974-aaec-4834-bf51-0d2a63b93473
+  row   10 e27a2974-aaec-4834-bf51-0d2a63b93473 Thinking { text: "", open: false, duration_ms: Some(61) }
+## 83 recorded 81: fact Transcript type=user uuid=0e326cfe-40c9-4063-9046-fe001a2d3558
+  row    9 toolu_01NgKbJgjWP2HSRNH9ffGnoB Command { command: "mv config.txt moved.txt", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(121) }
+## 87 recorded 85: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01S6s6y1T4QecL8TWjDQdvTE
+  row   11 toolu_01S6s6y1T4QecL8TWjDQdvTE Command { command: "rm moved.txt", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "toolu_01S6s6y1T4QecL8TWjDQdvTE" }) queue=[] outbox=[]
+## 89 recorded 87: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01S6s6y1T4QecL8TWjDQdvTE
+  row   11 toolu_01S6s6y1T4QecL8TWjDQdvTE Command { command: "rm moved.txt", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(19) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 91 recorded 89: fact Transcript type=assistant uuid=c1e947b7-f0fd-4b43-a6ee-6571cccbd507
+  row   12 c1e947b7-f0fd-4b43-a6ee-6571cccbd507 Thinking { text: "", open: false, duration_ms: Some(165) }
+## 93 recorded 91: fact Transcript type=user uuid=69248f41-5a0e-4c89-8ed0-1bd8969736d3
+  row   11 toolu_01S6s6y1T4QecL8TWjDQdvTE Command { command: "rm moved.txt", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(19) }
+## 97 recorded 95: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_018cH8azshatUkXvdDF85BWn
+  row   13 toolu_018cH8azshatUkXvdDF85BWn Command { command: "ls missing-file.txt", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "toolu_018cH8azshatUkXvdDF85BWn" }) queue=[] outbox=[]
+## 99 recorded 97: fact Transcript type=assistant uuid=9cbe6bef-ed22-4696-ac84-014103c40973
+  row   14 9cbe6bef-ed22-4696-ac84-014103c40973 Thinking { text: "", open: false, duration_ms: Some(71) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 101 recorded 99: fact Transcript type=user uuid=8d868614-b24b-4754-80d7-5914fa8867ba
+  row   13 toolu_018cH8azshatUkXvdDF85BWn Command { command: "ls missing-file.txt", state: Failed, exit_code: None, output_head: ["Exit code 1", "ls: missing-file.txt: No such file or directory"], more_lines: 0, duration_ms: Some(578) } attention
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 d29ee71d-c85f-4683-b701-24355b98540c Prompt { text: [Text("Do these in order, one tool call each. 1: use Write to overwrite README.md with the single line REPLACED. 2: use Bash to run exactly: mv config.txt moved.txt. 3: use Bash to run exactly: rm moved.txt. 4: use Bash to run exactly: ls missing-file.txt. The last one fails; that is expected. Then stop.")], steered: false }
+     3 8c15fca5-6590-41d2-95b9-bf9579d66f9a Thinking { text: "", open: false, duration_ms: Some(2087) }
+     4 toolu_013jHbVUB15dSPqzs7eZGPEQ FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Failed } attention
+     5 toolu_01FJjmDBCY6HDDDbVQ3CHCss Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }
+     6 b0b4f4f4-706e-43ad-b644-230ec57ba06b Thinking { text: "", open: false, duration_ms: Some(165) }
+     7 toolu_012R6FqWBi8NJXv2M4XPgTYu FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Edited, added: 1, removed: 1 }], state: Succeeded }
+     8 a166af93-b071-4ec3-a472-13dcd72d496b Thinking { text: "", open: false, duration_ms: Some(59) }
+     9 toolu_01NgKbJgjWP2HSRNH9ffGnoB Command { command: "mv config.txt moved.txt", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(121) }
+    10 e27a2974-aaec-4834-bf51-0d2a63b93473 Thinking { text: "", open: false, duration_ms: Some(61) }
+    11 toolu_01S6s6y1T4QecL8TWjDQdvTE Command { command: "rm moved.txt", state: Succeeded, exit_code: None, output_head: ["(Bash completed with no output)"], more_lines: 0, duration_ms: Some(19) }
+    12 c1e947b7-f0fd-4b43-a6ee-6571cccbd507 Thinking { text: "", open: false, duration_ms: Some(165) }
+    13 toolu_018cH8azshatUkXvdDF85BWn Command { command: "ls missing-file.txt", state: Failed, exit_code: None, output_head: ["Exit code 1", "ls: missing-file.txt: No such file or directory"], more_lines: 0, duration_ms: Some(578) } attention
+    14 9cbe6bef-ed22-4696-ac84-014103c40973 Thinking { text: "", open: false, duration_ms: Some(71) }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 37271, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

@@ -24,6 +24,7 @@ members = [
     "crates/store",
     "crates/test-agent",
     "crates/ui-state",
+    "crates/ui-view",
     "crates/wire",
     "crates/xtask",
 ]
@@ -69,6 +70,7 @@ artifacts = { path = "crates/artifacts" }
 attachments = { path = "crates/attachments" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
+ui-view = { path = "crates/ui-view" }
 tui = { path = "crates/tui" }
 pty-host = { path = "crates/pty-host" }
 claude = { path = "crates/claude" }

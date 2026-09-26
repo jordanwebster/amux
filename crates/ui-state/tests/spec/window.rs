@@ -226,3 +226,37 @@ fn an_attachment_is_a_placeholder_until_its_bytes_arrive() {
         );
     }
 }
+
+#[test]
+fn a_task_item_redraws_the_call_it_names() {
+    use prost::Message;
+    let kind = Kind::ClaudeSdk;
+    let task = |order: u64, revision: u64, state: wire::TaskState| {
+        let mut item = text(kind, order, revision, "");
+        item.body = wire::ClaudeSdkItem {
+            kind: Some(wire::claude_sdk_item::Kind::Task(wire::Task {
+                task_id: "t".into(),
+                description: "Count".into(),
+                state: state as i32,
+                tool_key: "k2".into(),
+                ..wire::Task::default()
+            })),
+        }
+        .encode_to_vec();
+        item
+    };
+    let mut state = open_with(kind, 1..=1);
+    apply_checked(
+        &mut state,
+        ev_item(command(kind, 2, 11, wire::ToolState::Running)),
+    );
+    let outcome = apply_checked(&mut state, ev_item(task(3, 12, wire::TaskState::Running)));
+    assert_eq!(outcome.changed, vec!["k3", "k2"]);
+    let outcome = apply_checked(&mut state, ev_item(task(3, 13, wire::TaskState::Completed)));
+    assert_eq!(
+        outcome.changed,
+        vec!["k3", "k2"],
+        "progress on the task redraws the call's row"
+    );
+    assert_eq!(state.transcript().referrer("k2").unwrap().item.key, "k3");
+}

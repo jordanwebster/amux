@@ -1,0 +1,38 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 8 recorded 7: fact Rpc "{\"id\":2,\"result\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"nev…
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 11 recorded 10: input stdin-4
+  row    2 prompt:737464696e2d34 Prompt { text: [Text("Use your web search tool to look up the capital city of Australia, then reply with the city name only.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 25 recorded 24: fact Rpc method=item/started
+  row    3 rs_07b442cd94dce1af016ab72ebab0a087d2af0fc0f2bb07812a Thinking { text: "", open: true, duration_ms: None }
+  composer Send activity=Some(Thinking) queue=[] outbox=[]
+## 27 recorded 26: fact Rpc method=item/completed
+  row    3 rs_07b442cd94dce1af016ab72ebab0a087d2af0fc0f2bb07812a Thinking { text: "", open: false, duration_ms: Some(7553) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 29 recorded 28: fact Rpc method=item/started
+  row    4 exec-3c575a4d-c180-4758-8b39-f2031d36f615 Explore { verb: WebSearch, subject: "", state: Running }
+  composer Send activity=Some(Running { key: "exec-3c575a4d-c180-4758-8b39-f2031d36f615" }) queue=[] outbox=[]
+## 31 recorded 30: fact Rpc method=item/completed
+  row    4 exec-3c575a4d-c180-4758-8b39-f2031d36f615 Explore { verb: WebSearch, subject: "capital city of Australia", state: Succeeded }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 36 recorded 35: fact Rpc method=item/started
+  row    5 msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 Prose { text: [], streaming: true, working_note: false }
+## 37 recorded 36: fact Rpc method=item/agentMessage/delta
+  row    5 msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 Prose { text: [Text("Can")], streaming: true, working_note: false }
+## 39 recorded 38: fact Rpc method=item/agentMessage/delta
+  row    5 msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 Prose { text: [Text("Canberra")], streaming: true, working_note: false }
+## 41 recorded 40: fact Rpc method=item/completed
+  row    5 msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 Prose { text: [Text("Canberra")], streaming: false, working_note: false }
+## 47 recorded 46: fact Rpc method=turn/completed
+  row    6 turn:1 TurnEnd { duration_ms: Some(12885), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 prompt:737464696e2d34 Prompt { text: [Text("Use your web search tool to look up the capital city of Australia, then reply with the city name only.")], steered: false }
+     3 rs_07b442cd94dce1af016ab72ebab0a087d2af0fc0f2bb07812a Thinking { text: "", open: false, duration_ms: Some(7553) }
+     4 exec-3c575a4d-c180-4758-8b39-f2031d36f615 Explore { verb: WebSearch, subject: "capital city of Australia", state: Succeeded }
+     5 msg_07b442cd94dce1af016ab72ec00f3487d29c6b7163e5df4754 Prose { text: [Text("Canberra")], streaming: false, working_note: false }
+     6 turn:1 TurnEnd { duration_ms: Some(12885), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 16447, window_tokens: Some(258400), percent: Some(6), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("never"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

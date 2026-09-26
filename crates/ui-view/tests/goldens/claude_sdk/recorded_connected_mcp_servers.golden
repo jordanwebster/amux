@@ -1,0 +1,19 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 4 recorded 3: input stdin-3
+  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 51], text: [Text("Reply with exactly SERVERS_OK and nothing else.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 16 recorded 15: fact Stream type=system subtype=init uuid=39c554a5-4ffb-4c02-be83-2989d9bca114
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4300-8000-000000000000 Prompt { text: [Text("Reply with exactly SERVERS_OK and nothing else.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 20 recorded 19: fact Stream type=assistant uuid=14008531-0570-4733-b63e-10b8e11bdd59
+  row    3 msg_011CeXDshsT1UAM4tM6qxDbC:0 Prose { text: [Text("SERVERS_OK")], streaming: false, working_note: false }
+## 22 recorded 21: fact Stream type=result subtype=success uuid=28e0576c-f147-4de0-8ea0-77ed5ac564f0
+  row    4 turn:1 TurnEnd { duration_ms: Some(1655), cost_usd: Some(0.0634934), failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4300-8000-000000000000 Prompt { text: [Text("Reply with exactly SERVERS_OK and nothing else.")], steered: false }
+     3 msg_011CeXDshsT1UAM4tM6qxDbC:0 Prose { text: [Text("SERVERS_OK")], streaming: false, working_note: false }
+     4 turn:1 TurnEnd { duration_ms: Some(1655), cost_usd: Some(0.0634934), failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 38819, window_tokens: Some(1000000), percent: Some(3), in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

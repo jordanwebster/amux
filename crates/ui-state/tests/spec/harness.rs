@@ -475,15 +475,19 @@ pub fn rejected(reason: &str) -> InputOutcome {
     })
 }
 
-/// Every held row's projection: what a view reads for it.
+/// Every held row's projection: what a view reads for it, including the
+/// item drawn on its row.
 pub fn projection(transcript: &Transcript) -> Vec<(String, String)> {
     transcript
         .iter()
         .map(|held| {
-            (
-                held.item.key.clone(),
-                format!("{:?}|{:?}", held, transcript.run_at(held.item.order)),
-            )
+            let row = format!(
+                "{:?}|{:?}|{:?}",
+                held,
+                transcript.run_at(held.item.order),
+                transcript.referrer(&held.item.key)
+            );
+            (held.item.key.clone(), row)
         })
         .collect()
 }

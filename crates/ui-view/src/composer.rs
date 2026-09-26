@@ -1,0 +1,279 @@
+//! Around the composer: the session strip, the composer's mode and tokens,
+//! the queued prompts and this client's unconfirmed inputs.
+
+use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Waiting};
+use wire::{Attachment, SignInState, TaskListStatus, UsageState};
+
+use crate::segments::{Segment, segments};
+
+/// Context use shows in the strip only from here; below it lives in
+/// settings.
+pub const CONTEXT_STRIP_PERCENT: u64 = 80;
+
+/// The facts strip: each field is None when there is nothing to show.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Strip {
+    pub tasks: Option<TasksView>,
+    pub context: Option<ContextView>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+    /// Only near or at a limit.
+    pub usage: Option<UsageView>,
+    /// Only tool servers that failed.
+    pub failed_servers: Vec<ServerView>,
+    /// Only a problem; it replaces the composer with a foot card.
+    pub sign_in: Option<SignInView>,
+    /// Running background processes, when known and any.
+    pub background: Option<u32>,
+    pub working_on: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TasksView {
+    pub done: u32,
+    pub total: u32,
+    /// The task in progress, in its active form.
+    pub current: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextView {
+    pub used_tokens: u64,
+    pub window_tokens: Option<u64>,
+    pub percent: Option<u64>,
+    /// High enough to show in the strip rather than only in settings.
+    pub in_strip: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UsageView {
+    pub blocked: bool,
+    pub windows: Vec<(String, f64, Option<i64>)>,
+    pub credits: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerView {
+    pub name: String,
+    pub error: String,
+    pub needs_auth: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignInView {
+    pub state: SignInState,
+    pub account: String,
+    pub message: String,
+}
+
+pub fn session_strip(state: &SessionState) -> Strip {
+    let agent = state.agent_state();
+    let tasks = agent.tasks.known.then(|| {
+        let total = agent.tasks.entries.len() as u32;
+        let done = agent
+            .tasks
+            .entries
+            .iter()
+            .filter(|task| task.status() == TaskListStatus::Completed)
+            .count() as u32;
+        let current = agent
+            .tasks
+            .entries
+            .iter()
+            .find(|task| task.status() == TaskListStatus::InProgress)
+            .map(|task| {
+                if task.active_form.is_empty() {
+                    task.subject.clone()
+                } else {
+                    task.active_form.clone()
+                }
+            })
+            .unwrap_or_default();
+        TasksView {
+            done,
+            total,
+            current,
+        }
+    });
+    let tasks = tasks.filter(|tasks| tasks.total > 0);
+    let context = agent.context.known.then(|| {
+        let percent = agent
+            .context
+            .window_tokens
+            .filter(|window| *window > 0)
+            .map(|window| agent.context.used_tokens * 100 / window);
+        ContextView {
+            used_tokens: agent.context.used_tokens,
+            window_tokens: agent.context.window_tokens,
+            percent,
+            in_strip: percent.is_some_and(|percent| percent >= CONTEXT_STRIP_PERCENT),
+        }
+    });
+    let usage = match agent.usage.state() {
+        UsageState::NearLimit | UsageState::Blocked => Some(UsageView {
+            blocked: agent.usage.state() == UsageState::Blocked,
+            windows: agent
+                .usage
+                .windows
+                .iter()
+                .map(|window| {
+                    (
+                        window.name.clone(),
+                        window.used_percent,
+                        window.resets_at_ms,
+                    )
+                })
+                .collect(),
+            credits: agent.usage.credits.clone(),
+        }),
+        UsageState::Unknown | UsageState::Ok => None,
+    };
+    let failed_servers = agent
+        .servers
+        .servers
+        .iter()
+        .filter(|server| {
+            matches!(
+                server.status(),
+                wire::ToolServerStatus::Failed | wire::ToolServerStatus::NeedsAuth
+            )
+        })
+        .map(|server| ServerView {
+            name: server.name.clone(),
+            error: server.error.clone(),
+            needs_auth: server.status() == wire::ToolServerStatus::NeedsAuth,
+        })
+        .collect();
+    let sign_in = match agent.sign_in.state() {
+        SignInState::SignedOut | SignInState::Expired | SignInState::Failed => Some(SignInView {
+            state: agent.sign_in.state(),
+            account: agent.sign_in.account.clone(),
+            message: agent.sign_in.message.clone(),
+        }),
+        SignInState::Unknown | SignInState::SignedIn => None,
+    };
+    Strip {
+        tasks,
+        context,
+        model: agent.model.clone(),
+        effort: agent.effort.clone(),
+        mode: agent.mode.clone(),
+        usage,
+        failed_servers,
+        sign_in,
+        background: (agent.background.known && agent.background.running > 0)
+            .then_some(agent.background.running),
+        working_on: agent.working_on.clone(),
+    }
+}
+
+/// The composer as the chat draws it: Send, Resume for an exited agent,
+/// or waiting while drafting continues; with the activity line inside it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerView {
+    pub mode: Composer,
+    pub activity: Option<Activity>,
+}
+
+pub fn composer(state: &SessionState, now_ms: i64) -> ComposerView {
+    ComposerView {
+        mode: state.composer(),
+        activity: state.activity(now_ms),
+    }
+}
+
+/// The waiting reason, for a client that words the disabled composer.
+pub fn waiting(state: &SessionState) -> Option<Waiting> {
+    match state.composer() {
+        Composer::Disabled(why) => Some(why),
+        Composer::Send | Composer::Resume => None,
+    }
+}
+
+/// The draft as tokens: text runs and attachment chips at their places.
+pub fn composer_tokens(draft: &str, attachments: &[Attachment]) -> Vec<Segment> {
+    segments(draft, attachments)
+}
+
+/// A queued prompt under the composer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueuedRow {
+    pub input_id: Vec<u8>,
+    pub text: Vec<Segment>,
+    /// Who queued it: None for a person, the agent's name for an agent.
+    pub from_agent: Option<String>,
+    pub mine: bool,
+    /// Reads "steered" until its reflection lands.
+    pub steered: bool,
+    pub can_withdraw: bool,
+    /// Send now steers it into the running turn.
+    pub can_send_now: bool,
+}
+
+pub fn queue_rows(state: &SessionState) -> Vec<QueuedRow> {
+    let live = state.can_send();
+    state
+        .queue()
+        .into_iter()
+        .map(|row| {
+            let from_agent = match row
+                .entry
+                .sender
+                .as_ref()
+                .and_then(|sender| sender.value.as_ref())
+            {
+                Some(wire::sender::Value::Agent(agent)) => Some(agent.name.clone()),
+                _ => None,
+            };
+            QueuedRow {
+                input_id: row.entry.input_id.clone(),
+                text: segments(&row.entry.text, &row.entry.attachments),
+                from_agent,
+                mine: row.mine,
+                steered: row.steered,
+                can_withdraw: live && !row.steered,
+                can_send_now: live && !row.steered,
+            }
+        })
+        .collect()
+}
+
+/// This client's prompts not yet in the transcript or the queue: sending,
+/// not confirmed (resend or discard), or rejected with the reason.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutboxRow {
+    pub input_id: Vec<u8>,
+    pub text: Vec<Segment>,
+    pub state: OutboxState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboxState {
+    Sending,
+    NotConfirmed,
+    Rejected(String),
+}
+
+pub fn outbox_rows(state: &SessionState) -> Vec<OutboxRow> {
+    state
+        .inputs()
+        .iter()
+        .filter_map(|sent| {
+            let InputWhat::Prompt { text, attachments } = &sent.what else {
+                return None;
+            };
+            let state = match &sent.state {
+                InputState::Sent => OutboxState::Sending,
+                InputState::Uncertain => OutboxState::NotConfirmed,
+                InputState::Rejected(reason) => OutboxState::Rejected(reason.clone()),
+                InputState::Queued | InputState::Settled => return None,
+            };
+            Some(OutboxRow {
+                input_id: sent.id.clone(),
+                text: segments(text, attachments),
+                state,
+            })
+        })
+        .collect()
+}

@@ -1,0 +1,15 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 5 recorded 4: fact Rpc "{\"id\":2,\"result\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"on-…
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 8 recorded 7: input stdin-4
+  row    2 prompt:737464696e2d34 Prompt { text: [Text("Count slowly from one to one hundred, one number per line.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 23 recorded 22: fact Rpc method=turn/completed
+  row    3 turn:1 Stopped
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 prompt:737464696e2d34 Prompt { text: [Text("Count slowly from one to one hundred, one number per line.")], steered: false }
+     3 turn:1 Stopped
+== strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

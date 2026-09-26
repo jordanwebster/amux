@@ -1,0 +1,34 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 1 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 2 input {"id":"p1","prompt":{"text":"Count to three."}}
+  row    2 prompt:7031 Prompt { text: [Text("Count to three.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 5 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"msg-1","phase":"final_answer","text":"","type":"agentMessage"},"startedAtMs":null,"threadId":"t1","turnId":"turn-1"}}}
+  row    3 msg-1 Prose { text: [], streaming: true, working_note: false }
+## 6 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"id":"msg-1","phase":"final_answer","text":"1 2 3","type":"agentMessage"},"threadId":"t1","turnId":"turn-1"}}}
+  row    3 msg-1 Prose { text: [Text("1 2 3")], streaming: false, working_note: false }
+## 8 input {"agent_message":{"envelope":"e1","from":"reviewer","text":"Also say DONE."},"id":"m1"}
+  row    4 agent-message:6531 AgentMessage { from: "reviewer", kind: Message, text: "Also say DONE." }
+## 9 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-1","status":"completed"}}}}
+  row    5 turn:1 TurnEnd { duration_ms: Some(1000), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+## 10 fact {"channel":"rpc","json":{"id":"amux-2","result":{}}}
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 13 fact {"channel":"rpc","json":{"method":"item/started","params":{"item":{"id":"msg-2","phase":"final_answer","text":"","type":"agentMessage"},"startedAtMs":null,"threadId":"t1","turnId":"turn-2"}}}
+  row    6 msg-2 Prose { text: [], streaming: true, working_note: false }
+## 14 fact {"channel":"rpc","json":{"method":"item/completed","params":{"item":{"id":"msg-2","phase":"final_answer","text":"DONE","type":"agentMessage"},"threadId":"t1","turnId":"turn-2"}}}
+  row    6 msg-2 Prose { text: [Text("DONE")], streaming: false, working_note: false }
+## 16 fact {"channel":"rpc","json":{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-2","status":"completed"}}}}
+  row    7 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 prompt:7031 Prompt { text: [Text("Count to three.")], steered: false }
+     3 msg-1 Prose { text: [Text("1 2 3")], streaming: false, working_note: false }
+     4 agent-message:6531 AgentMessage { from: "reviewer", kind: Message, text: "Also say DONE." }
+     5 turn:1 TurnEnd { duration_ms: Some(1000), cost_usd: None, failed: false }
+     6 msg-2 Prose { text: [Text("DONE")], streaming: false, working_note: false }
+     7 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

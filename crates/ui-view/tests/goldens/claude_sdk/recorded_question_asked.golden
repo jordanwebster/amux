@@ -1,0 +1,41 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 4 recorded 3: input stdin-2
+  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
+## 8 recorded 7: fact Stream type=system subtype=init uuid=550206b8-cbd8-4eef-8f55-fe03225e188e
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 14 recorded 13: fact Stream type=assistant uuid=0e3eb49b-860c-42ae-b8bb-1a56a9aef150
+  row    3 msg_011CeixitM32yJAB6skNTfWY:0 Thinking { text: "", open: false, duration_ms: Some(1705) }
+## 16 recorded 15: fact Stream type=assistant uuid=83b1ae0e-15bb-4e56-9013-81bfa73cedba
+  row    4 toolu_016Kp5kTBqHGAvp93kUYGWd5 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: ""…
+  composer Send activity=Some(Running { key: "toolu_016Kp5kTBqHGAvp93kUYGWd5" }) queue=[] outbox=[]
+## 18 recorded 17: fact Stream type=control_request
+  ask 4d184198-967f-47aa-9569-af7d377ef2da -> "toolu_016Kp5kTBqHGAvp93kUYGWd5" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
+  composer Send activity=None queue=[] outbox=[]
+## 20 recorded 19: input stdin-3
+  row    4 toolu_016Kp5kTBqHGAvp93kUYGWd5 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: ""…
+  ask none
+  composer Send activity=Some(Running { key: "toolu_016Kp5kTBqHGAvp93kUYGWd5" }) queue=[] outbox=[]
+## 22 recorded 21: fact Stream type=user uuid=790b0b7b-e5e6-43e1-a47c-0140c268fd90
+  row    4 toolu_016Kp5kTBqHGAvp93kUYGWd5 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: "Y…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 24 recorded 23: fact Stream type=assistant uuid=815fc883-2947-40a0-a964-b9d47b8dad5d
+  row    5 msg_011Ceixj5ieT1t1iXEK8kpWJ:0 Thinking { text: "", open: false, duration_ms: Some(1015) }
+## 26 recorded 25: fact Stream type=assistant uuid=2027fd93-c2ae-422d-9a26-ea5c12e99308
+  row    6 msg_011Ceixj5ieT1t1iXEK8kpWJ:1 Prose { text: [Text("You selected **Blue**.")], streaming: false, working_note: false }
+## 28 recorded 27: fact Stream type=result subtype=success uuid=29ec0d2d-ba3e-463f-a3ca-310b52c869f3
+  row    7 turn:1 TurnEnd { duration_ms: Some(3684), cost_usd: Some(0.028109400000000003), failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.")], steered: false }
+     3 msg_011CeixitM32yJAB6skNTfWY:0 Thinking { text: "", open: false, duration_ms: Some(1705) }
+     4 toolu_016Kp5kTBqHGAvp93kUYGWd5 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: "Y…
+     5 msg_011Ceixj5ieT1t1iXEK8kpWJ:0 Thinking { text: "", open: false, duration_ms: Some(1015) }
+     6 msg_011Ceixj5ieT1t1iXEK8kpWJ:1 Prose { text: [Text("You selected **Blue**.")], streaming: false, working_note: false }
+     7 turn:1 TurnEnd { duration_ms: Some(3684), cost_usd: Some(0.028109400000000003), failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 25522, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

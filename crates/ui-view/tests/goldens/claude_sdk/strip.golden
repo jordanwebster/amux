@@ -1,0 +1,7 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 1 fact {"channel":"stream","json":{"claude_code_version":"2.1.282","mcp_servers":[{"name":"github","status":"connected"},{"name":"db","status":"failed"}],"model":"claude-opus-5-5","permissionMode":"default","session_id":"s1","subtype":"init","type":"system","uuid":"init-s1"}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 41000, window_tokens: Some(200000), percent: Some(20), in_strip: false }), model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: true, windows: [("five_hour", 100.0, Some(1800003600000))], credits: None }), failed_servers: [], sign_in: Some(SignInView { state: Failed, account: "", message: "OAuth token expired" }), background: Some(3), working_on: None }

@@ -1,0 +1,29 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 12 recorded 10: fact Transcript type=user uuid=ce7a6266-7bea-4408-ad3f-ac533756f87c
+  row    2 ce7a6266-7bea-4408-ad3f-ac533756f87c Prompt { text: [Text("Use AskUserQuestion to ask one single-select question with header Color and options Red and Blue. Then repeat my answer.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 23 recorded 21: fact Hook hook_event_name=PermissionRequest
+  ask ask:1 -> "" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
+  composer Send activity=None queue=[] outbox=[]
+## 25 recorded 23: fact Transcript type=assistant uuid=486a19a1-2675-48f6-bba6-b527c9f6eb84
+  row    3 486a19a1-2675-48f6-bba6-b527c9f6eb84 Thinking { text: "", open: false, duration_ms: Some(2343) }
+## 26 recorded 24: fact Transcript type=assistant uuid=bff01b93-e468-4d88-ac43-0b5babcd9ef8
+  row    4 toolu_01YahM7Aqdk6Cqy9UqyXgeZ9 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: ""…
+  ask ask:1 -> "toolu_01YahM7Aqdk6Cqy9UqyXgeZ9" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
+## 28 recorded 26: fact Transcript type=user uuid=bde420af-f761-4c4f-8b6f-6d0869aa95d1
+  row    4 toolu_01YahM7Aqdk6Cqy9UqyXgeZ9 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: "Y…
+  ask none
+  composer Send activity=Some(Working) queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 ce7a6266-7bea-4408-ad3f-ac533756f87c Prompt { text: [Text("Use AskUserQuestion to ask one single-select question with header Color and options Red and Blue. Then repeat my answer.")], steered: false }
+     3 486a19a1-2675-48f6-bba6-b527c9f6eb84 Thinking { text: "", open: false, duration_ms: Some(2343) }
+     4 toolu_01YahM7Aqdk6Cqy9UqyXgeZ9 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], answer: "Y…
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34316, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

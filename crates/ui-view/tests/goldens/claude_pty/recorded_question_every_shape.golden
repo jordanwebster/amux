@@ -1,0 +1,26 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 13 recorded 11: fact Transcript type=user uuid=cad3c8cb-b87d-4af2-9d23-749281561b8b
+  row    2 cad3c8cb-b87d-4af2-9d23-749281561b8b Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 37 recorded 35: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01WRvFGnY13VXqpiQcd1Vt5o
+  row    3 toolu_01WRvFGnY13VXqpiQcd1Vt5o Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools",…
+  composer Send activity=Some(Running { key: "toolu_01WRvFGnY13VXqpiQcd1Vt5o" }) queue=[] outbox=[]
+## 39 recorded 37: fact Hook hook_event_name=PermissionRequest
+  ask ask:1 -> "toolu_01WRvFGnY13VXqpiQcd1Vt5o" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Which tools do you need?", multi_select: …
+  composer Send activity=None queue=[] outbox=[]
+## 45 recorded 43: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01WRvFGnY13VXqpiQcd1Vt5o
+  row    3 toolu_01WRvFGnY13VXqpiQcd1Vt5o Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools",…
+  ask none
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 47 recorded 45: fact Transcript type=user uuid=1b79c141-0e41-48ec-8dd6-292fd3ec35cb
+  row    3 toolu_01WRvFGnY13VXqpiQcd1Vt5o Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools",…
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 cad3c8cb-b87d-4af2-9d23-749281561b8b Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+     3 toolu_01WRvFGnY13VXqpiQcd1Vt5o Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools",…
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 41374, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("auto"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

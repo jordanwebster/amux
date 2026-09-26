@@ -1,0 +1,33 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 10 recorded 8: fact Transcript type=user uuid=104f3301-c165-4ce0-bf5e-7c98043943cc
+  row    2 104f3301-c165-4ce0-bf5e-7c98043943cc Prompt { text: [Text("Use one AskUserQuestion call containing two questions: first a single-select Color question with Red and Blue; second a multi-select Tools question with Hammer, Saw, and Drill. Then repeat both answers.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 21 recorded 19: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01RvcE5CZ5FufiVEqtUdnTxL
+  row    3 toolu_01RvcE5CZ5FufiVEqtUdnTxL Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color:", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "P…
+  composer Send activity=Some(Running { key: "toolu_01RvcE5CZ5FufiVEqtUdnTxL" }) queue=[] outbox=[]
+## 23 recorded 21: fact Hook hook_event_name=PermissionRequest
+  ask ask:1 -> "toolu_01RvcE5CZ5FufiVEqtUdnTxL" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Pick a color:", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools:", multi_select: true, options: [OptionView…
+  composer Send activity=None queue=[] outbox=[]
+## 25 recorded 23: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01RvcE5CZ5FufiVEqtUdnTxL
+  row    3 toolu_01RvcE5CZ5FufiVEqtUdnTxL Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color:", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "P…
+  ask none
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 27 recorded 25: fact Transcript type=user uuid=87d78350-2c3b-460d-84e1-48fa6e7dbe6d
+  row    3 toolu_01RvcE5CZ5FufiVEqtUdnTxL Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color:", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "P…
+## 38 recorded 36: fact Transcript type=assistant uuid=33f3e8ff-c6ef-4b5b-bd00-6c890e2d723d
+  row    4 33f3e8ff-c6ef-4b5b-bd00-6c890e2d723d Prose { text: [Text("Color: Blue. Tools: Hammer, Drill.")], streaming: false, working_note: false }
+## 40 recorded 38: fact Transcript type=system subtype=turn_duration uuid=bcb07b02-89d0-4fae-8952-2edad8fa4e2d
+  row    5 turn:1 TurnEnd { duration_ms: Some(3344), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 104f3301-c165-4ce0-bf5e-7c98043943cc Prompt { text: [Text("Use one AskUserQuestion call containing two questions: first a single-select Color question with Red and Blue; second a multi-select Tools question with Hammer, Saw, and Drill. Then repeat both answers.")], steered: false }
+     3 toolu_01RvcE5CZ5FufiVEqtUdnTxL Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color:", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "P…
+     4 33f3e8ff-c6ef-4b5b-bd00-6c890e2d723d Prose { text: [Text("Color: Blue. Tools: Hammer, Drill.")], streaming: false, working_note: false }
+     5 turn:1 TurnEnd { duration_ms: Some(3344), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 48643, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("auto"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

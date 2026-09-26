@@ -1,0 +1,41 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 8 recorded 7: input stdin-2
+  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header …
+## 10 recorded 9: fact Stream type=system subtype=init uuid=30b4696e-d9fb-478e-8355-5173815b14d2
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 22 recorded 21: fact Stream type=assistant uuid=835e274c-b37e-43d4-b888-5eec44a90f83
+  row    3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5485) }
+## 24 recorded 23: fact Stream type=assistant uuid=d6a1daa7-e25e-4261-aeef-5262c31c92e5
+  row    4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_other: tru…
+  composer Send activity=Some(Running { key: "toolu_01PpKZzwKZ9tHyeeGtQv6zb2" }) queue=[] outbox=[]
+## 26 recorded 25: fact Stream type=control_request
+  ask 44a8cbe0-4bc5-4ac5-a02b-d4f83a734d93 -> "toolu_01PpKZzwKZ9tHyeeGtQv6zb2" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", q…
+  composer Send activity=None queue=[] outbox=[]
+## 28 recorded 27: input stdin-3
+  row    4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_other: tru…
+  ask none
+  composer Send activity=Some(Running { key: "toolu_01PpKZzwKZ9tHyeeGtQv6zb2" }) queue=[] outbox=[]
+## 30 recorded 29: fact Stream type=user uuid=229c725f-f3e1-4e29-94f5-3c5da8dfa4f0
+  row    4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_other: tru…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 38 recorded 37: fact Stream type=assistant uuid=f26e0e3a-0140-4912-ae53-8c716738f276
+  row    5 msg_011CfRE3gGBaXJ87UoW9ehMx:0 Thinking { text: "", open: false, duration_ms: Some(1968) }
+## 40 recorded 39: fact Stream type=assistant uuid=06bef8dd-5c1f-456f-a26c-8aaa3b929935
+  row    6 msg_011CfRE3gGBaXJ87UoW9ehMx:1 Prose { text: [Text("Your answers:\n\n1. **Color:** Blue\n2. **Tools:** Hammer, Drill\n3. **Layout:** Grid\n4. **Snack:** Dried mango")], streaming: false, working_note: false }
+## 42 recorded 41: fact Stream type=result subtype=success uuid=83a6fb24-bc66-4fdc-b2c4-49c668e531ee
+  row    7 turn:1 TurnEnd { duration_ms: Some(13701), cost_usd: Some(0.067362), failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+     3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5485) }
+     4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_other: tru…
+     5 msg_011CfRE3gGBaXJ87UoW9ehMx:0 Thinking { text: "", open: false, duration_ms: Some(1968) }
+     6 msg_011CfRE3gGBaXJ87UoW9ehMx:1 Prose { text: [Text("Your answers:\n\n1. **Color:** Blue\n2. **Tools:** Hammer, Drill\n3. **Layout:** Grid\n4. **Snack:** Dried mango")], streaming: false, working_note: false }
+     7 turn:1 TurnEnd { duration_ms: Some(13701), cost_usd: Some(0.067362), failed: false }
+== strip Strip { tasks: None, context: Some(ContextView { used_tokens: 28664, window_tokens: Some(200000), percent: Some(14), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "plugin:stripe:stripe", error: "", needs_auth: true }, ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

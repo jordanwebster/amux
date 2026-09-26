@@ -1,0 +1,99 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 2 fact {"channel":"hook","json":{"hook_event_name":"SessionStart","model":"claude-opus-5-5","session_id":"s1","source":"startup","transcript_path":"/t/s1.jsonl"}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 3 input {"id":"p1","prompt":{"text":"test it"}}
+  composer Send activity=Some(Working) queue=[] outbox=[OutboxRow { input_id: [112, 49], text: [Text("test it")], state: Sending }]
+## 4 fact {"channel":"transcript","json":{"message":{"content":"test it","role":"user"},"origin":{"kind":"human"},"promptSource":"typed","sessionId":"s1","timestamp":"2027-01-15T08:00:00.010Z","type":"user","uuid":"u1"}}
+  row    2 u1 Prompt { text: [Text("test it")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 5 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"command":"cargo test"},"tool_name":"Bash","tool_use_id":"t1"}}
+  row    3 t1 Command { command: "cargo test", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "t1" }) queue=[] outbox=[]
+## 6 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","permission_suggestions":[{"behavior":"allow","destination":"localSettings","rules":[{"ruleContent":"cargo test:*","toolName":"Bash"}],"type":"addRules"}],"tool_input":{"command":"cargo test"},"tool_name":"Bash"}}
+  ask ask:1 -> "t1" 1/1 Open
+    choices AllowOnce*, AllowAlways { subjects: ["cargo test"], directories: [], mode: "", scope: Project, label: "" }, Deny { stops: true }+note
+    body Command { command: "cargo test", cwd: "", reason: "", description: "" }
+  composer Send activity=None queue=[] outbox=[]
+## 7 input {"answer":{"answer":{"allow":{"scope":0}},"ask":"ask:1"},"id":"a1"}
+  row    3 t1 Command { command: "cargo test", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None } decision=Decision { outcome: Allowed, scope: Some("localSettings"), note: None, elsewhere: false }
+  ask none
+  composer Send activity=Some(Running { key: "t1" }) queue=[] outbox=[]
+## 8 fact {"channel":"hook","json":{"duration_ms":900,"hook_event_name":"PostToolUse","tool_input":{"command":"cargo test"},"tool_name":"Bash","tool_response":{"stdout":"ok"},"tool_use_id":"t1"}}
+  row    3 t1 Command { command: "cargo test", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(900) } decision=Decision { outcome: Allowed, scope: Some("localSettings"), note: None, elsewhere: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 9 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"command":"rm -rf build"},"tool_name":"Bash","tool_use_id":"t2"}}
+  row    4 t2 Command { command: "rm -rf build", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+  composer Send activity=Some(Running { key: "t2" }) queue=[] outbox=[]
+## 10 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","permission_suggestions":[],"tool_input":{"command":"rm -rf build"},"tool_name":"Bash"}}
+  ask ask:2 -> "t2" 1/1 Open
+    choices AllowOnce*, Deny { stops: true }+note
+    body Command { command: "rm -rf build", cwd: "", reason: "", description: "" }
+  composer Send activity=None queue=[] outbox=[]
+## 11 input {"answer":{"answer":{"allow":{"scope":3}},"ask":"ask:2"},"id":"a2"}
+  ask ask:2 -> "t2" 1/1 Rejected("unsupported")
+    choices AllowOnce*, Deny { stops: true }+note
+    body Command { command: "rm -rf build", cwd: "", reason: "", description: "" }
+## 13 input {"answer":{"answer":{"deny":{"note":"use cargo clean","stop":false}},"ask":"ask:2"},"id":"a4"}
+  row    4 t2 Command { command: "rm -rf build", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None } decision=Decision { outcome: Denied, scope: None, note: Some("use cargo clean"), elsewhere: false }
+  ask none
+  composer Send activity=Some(Running { key: "t2" }) queue=[] outbox=[]
+## 14 fact {"channel":"transcript","json":{"message":{"content":[{"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.","is_error":true,"tool_use_id":"t2","type":"tool_result"}],"role":"user"},"sessionId":"s1","timestamp":…
+  row    4 t2 Command { command: "rm -rf build", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, duration_ms: Some(20) } decision=Decision { outcome: Denied, scope…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 15 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode","tool_use_id":"t3"}}
+  row    5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Open })
+  composer Send activity=Some(Running { key: "t3" }) queue=[] outbox=[]
+## 16 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode"}}
+  ask ask:3 -> "t3" 1/1 Open
+    choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
+    body Plan { plan: "# Plan\n\n- Edit README.md" }
+  composer Send activity=None queue=[] outbox=[]
+## 17 input {"answer":{"answer":{"approve_plan":{"auto_accept_edits":true}},"ask":"ask:3"},"id":"a5"}
+  row    5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Approved })
+  ask none
+  composer Send activity=Some(Running { key: "t3" }) queue=[] outbox=[]
+## 18 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode","tool_use_id":"t4"}}
+  row    6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Open })
+  composer Send activity=Some(Running { key: "t4" }) queue=[] outbox=[]
+## 19 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"plan":"# Plan\n\n- Edit README.md"},"tool_name":"ExitPlanMode"}}
+  ask ask:4 -> "t4" 1/1 Open
+    choices ApprovePlan { auto_accept_edits: false }*, ApprovePlan { auto_accept_edits: true }, SendBack+note
+    body Plan { plan: "# Plan\n\n- Edit README.md" }
+  composer Send activity=None queue=[] outbox=[]
+## 20 input {"answer":{"answer":{"send_back":{"note":"explain why"}},"ask":"ask:4"},"id":"a6"}
+  row    6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: SentBack })
+  ask none
+  composer Send activity=Some(Running { key: "t4" }) queue=[] outbox=[]
+## 21 fact {"channel":"hook","json":{"hook_event_name":"PreToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"","label"…
+  row    7 t5 Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select…
+  composer Send activity=Some(Running { key: "t5" }) queue=[] outbox=[]
+## 22 fact {"channel":"hook","json":{"hook_event_name":"PermissionRequest","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"",…
+  ask ask:5 -> "t5" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: true, options: [OptionV…
+  composer Send activity=None queue=[] outbox=[]
+## 23 input {"answer":{"answer":{"selected":[[0,1]]},"ask":"ask:5"},"id":"a7"}
+  ask ask:5 -> "t5" 1/1 Rejected("unsupported")
+    choices 
+    body Question([QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select: true, options: [OptionV…
+## 25 input {"answer":{"answer":{"selected":["Green",[0,2]]},"ask":"ask:5"},"id":"a9"}
+  row    7 t5 Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select…
+  ask none
+  composer Send activity=Some(Running { key: "t5" }) queue=[] outbox=[]
+## 26 fact {"channel":"hook","json":{"duration_ms":5,"hook_event_name":"PostToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"descri…
+  row    7 t5 Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select…
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 27 fact {"channel":"transcript","json":{"durationMs":50,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.060Z","type":"system","uuid":"d1"}}
+  row    8 turn:1 TurnEnd { duration_ms: Some(50), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 u1 Prompt { text: [Text("test it")], steered: false }
+     3 t1 Command { command: "cargo test", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(900) } decision=Decision { outcome: Allowed, scope: Some("localSettings"), note: None, elsewhere: false }
+     4 t2 Command { command: "rm -rf build", state: Denied, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."], more_lines: 0, duration_ms: Some(20) } decision=Decision { outcome: Denied, scope…
+     5 t3 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: Approved })
+     6 t4 Ask(Plan { plan: "# Plan\n\n- Edit README.md", verdict: SentBack })
+     7 t5 Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { header: "Tools", question: "Pick tools", multi_select…
+     8 turn:1 TurnEnd { duration_ms: Some(50), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

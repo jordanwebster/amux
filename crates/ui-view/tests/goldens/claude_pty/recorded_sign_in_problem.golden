@@ -1,0 +1,18 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+## 13 recorded 11: fact Transcript type=user uuid=2b2977b9-0b94-4cbc-a523-20d7346ac06e
+  row    2 2b2977b9-0b94-4cbc-a523-20d7346ac06e Prompt { text: [Text("Reply exactly PTY_SPEC_SIGN_IN and nothing else.")], steered: false }
+  composer Send activity=Some(Working) queue=[] outbox=[]
+## 35 recorded 33: fact Transcript type=assistant uuid=be31fc58-a53e-4488-98ae-a0384fa2dbec
+  row    3 be31fc58-a53e-4488-98ae-a0384fa2dbec Error { error_kind: "authentication_failed", message: "Please run /login · API Error: 401 API key is invalid.", attempts: 0, gave_up: true } attention
+## 36 recorded 34: fact Transcript type=system subtype=turn_duration uuid=db2f6def-b34b-42d1-80a6-98380d005626
+  row    4 turn:1 TurnEnd { duration_ms: Some(2510), cost_usd: None, failed: false }
+  composer Send activity=None queue=[] outbox=[]
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 2b2977b9-0b94-4cbc-a523-20d7346ac06e Prompt { text: [Text("Reply exactly PTY_SPEC_SIGN_IN and nothing else.")], steered: false }
+     3 be31fc58-a53e-4488-98ae-a0384fa2dbec Error { error_kind: "authentication_failed", message: "Please run /login · API Error: 401 API key is invalid.", attempts: 0, gave_up: true } attention
+     4 turn:1 TurnEnd { duration_ms: Some(2510), cost_usd: None, failed: false }
+== strip Strip { tasks: None, context: None, model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
