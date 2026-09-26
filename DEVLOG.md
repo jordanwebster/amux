@@ -1,3 +1,17 @@
+2026-09-26 — **An agent that stops reading its control socket no longer stalls deliveries or a stop.**
+Every write on an agent's control connection (an input, a stop, a dump
+request) now waits at most a bounded time for the connection and the write
+together; past it the input counts as lost and the daemon closes its side,
+which an agent that does read sees as the daemon going away, and the watcher
+dials it again. A stop therefore always reaches its deadline and the kill
+after it. The deliveries drain gives up on a parent for the rest of a pass
+after its first lost or unreachable delivery, so one wedged parent costs one
+wait per pass rather than one per waiting row. The write bound and the wait
+for an input's verdict are launch settings. A test wedges a synthetic agent
+with three waiting deliveries and sees another parent's delivery arrive
+after one wait, and a kill return within its deadlines while an oversized
+input is stuck on the socket.
+
 2026-09-26 — **A child's delivery waiting behind its parent's lane is dropped when the parent resumes meanwhile.**
 The deliveries drain checked the parent's incarnation before taking the
 parent's lane, so a message that held the lane and resumed the parent let a

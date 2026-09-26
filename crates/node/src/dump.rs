@@ -260,10 +260,11 @@ impl ProfileRuntime {
                 })),
             })),
         };
-        let sent = match handle.ctl.lock().await.as_mut() {
-            Some(ctl) => agent_dir::write_frame(ctl, &frame).await.is_ok(),
-            None => false,
-        };
+        let patience = crate::runtime::ms(self.launch().ctl_write_ms);
+        let sent = matches!(
+            handle.write_ctl(&frame, patience).await,
+            crate::runtime::Sent::Written
+        );
         let part = if sent {
             tokio::time::timeout(PART_PATIENCE, rx).await.ok()?.ok()
         } else {

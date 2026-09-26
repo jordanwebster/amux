@@ -22,7 +22,7 @@ use wire::{
     sender,
 };
 
-use crate::runtime::{AgentId, ProfileRuntime, RegistryError};
+use crate::runtime::{AgentId, ProfileRuntime, RegistryError, Sent, ms};
 
 /// The agent has exited; the composer offers Resume.
 pub const EXITED: &str = "exited";
@@ -31,9 +31,6 @@ pub const EXITING: &str = "exiting";
 
 /// How long an input waits for the agent to be connected.
 const CONNECT_PATIENCE: Duration = Duration::from_secs(5);
-/// How long an input waits for the interpreter's verdict, which it gives at
-/// once; past this the connection is taken to be lost.
-const REPLY_PATIENCE: Duration = Duration::from_secs(30);
 /// How long an accepted message waits for its acceptance item to commit.
 const ACCEPT_PATIENCE: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(20);
@@ -165,14 +162,16 @@ impl ProfileRuntime {
         let frame = wire::CtlFrame {
             of: Some(wire::ctl_frame::Of::Input(input)),
         };
+        let launch = self.launch();
         let connect_by = tokio::time::Instant::now() + CONNECT_PATIENCE;
         loop {
-            if let Some(ctl) = handle.ctl.lock().await.as_mut() {
-                if agent_dir::write_frame(ctl, &frame).await.is_err() {
+            match handle.write_ctl(&frame, ms(launch.ctl_write_ms)).await {
+                Sent::Written => break,
+                Sent::Failed => {
                     handle.forget_reply(&input_id);
                     return Err(RelayError::Lost);
                 }
-                break;
+                Sent::NoConnection => {}
             }
             if *handle.exited.borrow() {
                 handle.forget_reply(&input_id);
@@ -184,7 +183,7 @@ impl ProfileRuntime {
             }
             tokio::time::sleep(POLL).await;
         }
-        match tokio::time::timeout(REPLY_PATIENCE, rx).await {
+        match tokio::time::timeout(ms(launch.reply_patience_ms), rx).await {
             Ok(Ok(verdict)) => Ok(verdict),
             // The connection ended before the answer: the watcher dropped
             // every waiting reply.

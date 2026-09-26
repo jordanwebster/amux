@@ -100,6 +100,13 @@ pub struct Launch {
     pub start_deadline_ms: i64,
     /// How long a stop may take before the daemon kills the process group.
     pub stop_deadline_ms: i64,
+    /// How long one write on an agent's control connection may take,
+    /// waiting for the connection included. Past it the agent is taken to
+    /// have stopped reading, and the connection is closed.
+    pub ctl_write_ms: i64,
+    /// How long an input waits for the interpreter's verdict, which it
+    /// gives at once; past this the answer is taken to be lost.
+    pub reply_patience_ms: i64,
     /// How long a notification waits before it is sent, so an answer from
     /// another client cancels it.
     pub notify_delay_ms: i64,
@@ -134,6 +141,8 @@ impl Default for Launch {
             journal_segment_bytes: 0,
             start_deadline_ms: 20_000,
             stop_deadline_ms: 30_000,
+            ctl_write_ms: 5_000,
+            reply_patience_ms: 30_000,
             notify_delay_ms: 30_000,
             fanout_capacity: 512,
             inventory_capacity: 1024,
@@ -336,6 +345,46 @@ impl AgentHandle {
     pub(crate) fn forget_dump(&self, dump_id: &[u8]) {
         self.dumps.lock().unwrap().remove(dump_id);
     }
+
+    /// Writes one frame on the control connection, waiting for the
+    /// connection and the write together at most `patience`, so an agent
+    /// that stopped reading never holds a caller. A write that overruns may
+    /// have sent part of its frame and the agent is not reading anyway: the
+    /// write half is shut down, which an agent that does read sees as the
+    /// daemon going away, and the watcher dials it again.
+    pub(crate) async fn write_ctl(&self, frame: &CtlFrame, patience: Duration) -> Sent {
+        let written = tokio::time::timeout(patience, async {
+            match self.ctl.lock().await.as_mut() {
+                None => Sent::NoConnection,
+                Some(ctl) => match agent_dir::write_frame(ctl, frame).await {
+                    Ok(()) => Sent::Written,
+                    Err(_) => Sent::Failed,
+                },
+            }
+        })
+        .await;
+        match written {
+            Ok(sent) => sent,
+            Err(_) => {
+                // Held by another writer that overran too: it closes it.
+                if let Ok(mut ctl) = self.ctl.try_lock()
+                    && let Some(mut writer) = ctl.take()
+                {
+                    let _ = writer.shutdown().await;
+                }
+                Sent::Failed
+            }
+        }
+    }
+}
+
+/// What a write on an agent's control connection came to.
+pub(crate) enum Sent {
+    Written,
+    /// No connection is open now.
+    NoConnection,
+    /// The write failed or overran; the frame may or may not have arrived.
+    Failed,
 }
 
 impl Drop for ProfileRuntime {
@@ -734,12 +783,11 @@ impl ProfileRuntime {
         let frame = CtlFrame {
             of: Some(ctl_frame::Of::Stop(Stop { mode: mode as i32 })),
         };
-        if let Some(ctl) = handle.ctl.lock().await.as_mut() {
-            // A failed write means the connection is already going; the
-            // deadline below still applies.
-            let _ = agent_dir::write_frame(ctl, &frame).await;
-        }
-        let deadline = self.launch().stop_deadline_ms;
+        let launch = self.launch();
+        // A failed write means the connection is already going; the
+        // deadline below still applies.
+        let _ = handle.write_ctl(&frame, ms(launch.ctl_write_ms)).await;
+        let deadline = launch.stop_deadline_ms;
         if self.wait_exit(&handle, deadline).await.is_err() {
             *handle.stopping.lock().unwrap() = Some(StopMode::Kill);
             if !self.kill(&handle) {
@@ -1584,4 +1632,8 @@ pub fn to_wire(row: &AgentRow) -> Agent {
         producer_version: row.producer_version.clone(),
         incarnation: row.incarnation,
     }
+}
+
+pub(crate) fn ms(ms: i64) -> Duration {
+    Duration::from_millis(ms.max(0) as u64)
 }

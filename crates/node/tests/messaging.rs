@@ -12,7 +12,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use node::{ClientApi, Daemon, ProfileRuntime, RelayError};
+use node::{ClientApi, Daemon, Launch, ProfileRuntime, RegistryError, RelayError};
 use store::{AgentKey, Store as _};
 use support::synthetic::*;
 use support::*;
@@ -21,7 +21,7 @@ use wire::client_service_server::ClientService as _;
 use wire::{
     AgentParent, ClaudeSdkInput, DeleteAgentRequest, Envelope, EnvelopeKind, Input, Lifecycle,
     PromptInput, RenameAgentRequest, SendInputRequest, SendInputResponse, StopAgentRequest,
-    claude_sdk_input, input, send_input_response, sender,
+    StopMode, claude_sdk_input, input, send_input_response, sender,
 };
 
 const SEGMENTS: u64 = 1 << 20;
@@ -729,6 +729,90 @@ async fn a_child_gone_without_a_turn_end_tells_its_parent_it_failed() {
         ],
         "one thing per event: finished once, failed only for the child that never finished"
     );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_stops_reading_holds_up_neither_other_parents_nor_a_kill() {
+    const WRITE_MS: i64 = 300;
+    const REPLY_MS: i64 = 1_500;
+    const STOP_MS: i64 = 1_000;
+    let install = Install::new();
+    let mut wedged = SyntheticAgent::new(&install, "wedged", SEGMENTS);
+    wedged.register_offline(&install);
+    wedged.go_live();
+    wedged.stop_reading();
+    let mut other = SyntheticAgent::new(&install, "other", SEGMENTS);
+    other.register_offline(&install);
+    other.go_live();
+    // Four children that finished while no daemon ran. The outbox is read
+    // in child id order: the wedged parent's three rows come first.
+    let mut children: Vec<_> = (0..4)
+        .map(|_| SyntheticAgent::new(&install, "child", SEGMENTS))
+        .collect();
+    children.sort_by_key(|child| child.id);
+    for (n, child) in children.iter_mut().enumerate() {
+        let parent = if n < 3 { &wedged } else { &other };
+        child.parent = Some(parent.key(&install));
+        child.register_offline(&install);
+        child.append(&snapshot(wire::Phase::Working, &[], 2_000));
+        child.append(&item("last", "the tests pass"));
+        child.append(&turn_end(1, "last"));
+    }
+    let launch = Launch {
+        ctl_write_ms: WRITE_MS,
+        reply_patience_ms: REPLY_MS,
+        stop_deadline_ms: STOP_MS,
+        ..quiet_launch()
+    };
+    let started = tokio::time::Instant::now();
+    let daemon = install.start("boot-1", launch).await;
+    let runtime = runtime(&daemon, &install);
+
+    until("the other parent's delivery", async || {
+        !messages(&other).is_empty()
+    })
+    .await;
+    let waited = started.elapsed();
+    assert!(
+        waited < Duration::from_millis(2 * REPLY_MS as u64),
+        "the wedged parent cost one lost answer, not one per row: {waited:?}"
+    );
+    assert_eq!(
+        messages(&other),
+        vec![(EnvelopeKind::Finished, "the tests pass".to_owned())]
+    );
+    // The other parent's row goes once its item commits; the wedged
+    // parent's rows wait.
+    until("only the wedged parent's rows", async || {
+        deliveries(&runtime).await == 3
+    })
+    .await;
+
+    // An input too large for the socket's buffer blocks its write, and a
+    // kill arrives while it is stuck.
+    let stuck = tokio::spawn({
+        let runtime = runtime.clone();
+        let request = SendInputRequest {
+            agent_id: wedged.id.as_bytes().to_vec(),
+            input: Some(prompt(b"big", &"x".repeat(8 << 20))),
+        };
+        async move { runtime.send_input(&request).await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let bound = Duration::from_millis((2 * WRITE_MS + STOP_MS) as u64 + 2_000);
+    let stopped = tokio::time::timeout(bound, runtime.stop(wedged.id, StopMode::Kill))
+        .await
+        .expect("the kill returns within its deadlines");
+    assert!(
+        matches!(stopped, Err(RegistryError::StopTimeout(_))),
+        "this daemon did not start the process, so it has nothing to kill: {stopped:?}"
+    );
+    let stuck = tokio::time::timeout(bound, stuck)
+        .await
+        .expect("the stuck write gave up")
+        .unwrap();
+    assert!(matches!(stuck, Err(RelayError::Lost)), "{stuck:?}");
     crash(daemon, runtime).await;
 }
 

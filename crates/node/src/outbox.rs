@@ -16,6 +16,7 @@
 //! the phase leaves needs_you first, at the agent's exit or with the agent.
 //! The drain sends each once it is due and deletes it.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -145,13 +146,24 @@ impl ProfileRuntime {
                 return report;
             }
         };
+        // A parent that lost one delivery or could not be reached is not
+        // tried again this pass: each try could wait out a full patience.
+        let mut unreachable = HashSet::new();
         for row in rows {
+            if unreachable.contains(&row.parent) {
+                report.kept += 1;
+                continue;
+            }
+            let parent = row.parent.clone();
             match self.deliver_row(row).await {
                 Ok(Outcome::Delivered) => report.delivered += 1,
                 Ok(Outcome::Stale) => report.stale += 1,
                 Ok(Outcome::Kept) => report.kept += 1,
                 Err(error) => {
                     tracing::warn!(%error, "a delivery failed; it stays in the outbox");
+                    if matches!(error, RelayError::Lost | RelayError::Unavailable) {
+                        unreachable.insert(parent);
+                    }
                     report.kept += 1;
                 }
             }

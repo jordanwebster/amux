@@ -57,6 +57,8 @@ pub struct SyntheticAgent {
     segment_bytes: u64,
     answer: Arc<Mutex<Answer>>,
     inputs: Arc<Mutex<Vec<Input>>>,
+    /// Set when the agent stops reading its control connection.
+    wedged: Arc<tokio::sync::watch::Sender<bool>>,
     cwd: PathBuf,
     live: Option<Live>,
 }
@@ -85,6 +87,7 @@ impl SyntheticAgent {
             segment_bytes,
             answer: Arc::new(Mutex::new(Answer::Accept)),
             inputs: Arc::default(),
+            wedged: Arc::new(tokio::sync::watch::Sender::new(false)),
             cwd: install.work.clone(),
             live: None,
         }
@@ -104,6 +107,13 @@ impl SyntheticAgent {
 
     pub fn answer_with(&self, answer: Answer) {
         *self.answer.lock().unwrap() = answer;
+    }
+
+    /// The agent stops reading its control connection and keeps it open,
+    /// as a process wedged in a blocking call would: what the daemon writes
+    /// fills the socket's buffer and then blocks.
+    pub fn stop_reading(&self) {
+        self.wedged.send_replace(true);
     }
 
     /// Every input the daemon relayed to this agent.
@@ -185,6 +195,7 @@ impl SyntheticAgent {
         let journal = self.journal.clone();
         let answer = self.answer.clone();
         let inputs = self.inputs.clone();
+        let wedged = self.wedged.clone();
         let accept = tokio::spawn({
             let conn = conn.clone();
             let hellos = hellos.clone();
@@ -209,8 +220,21 @@ impl SyntheticAgent {
                         answer.clone(),
                         inputs.clone(),
                     );
+                    let mut wedged = wedged.subscribe();
                     tokio::spawn(async move {
-                        while let Ok(Some(frame)) = agent_dir::read_frame(&mut reader).await {
+                        loop {
+                            let frame = tokio::select! {
+                                biased;
+                                () = async {
+                                    let _ = wedged.wait_for(|wedged| *wedged).await;
+                                } => {
+                                    // Holds the connection open, unread.
+                                    std::future::pending::<()>().await;
+                                    return;
+                                }
+                                frame = agent_dir::read_frame(&mut reader) => frame,
+                            };
+                            let Ok(Some(frame)) = frame else { break };
                             let Some(ctl_frame::Of::Input(input)) = frame.of else {
                                 continue;
                             };
