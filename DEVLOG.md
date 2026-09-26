@@ -1,3 +1,20 @@
+2026-09-27 — **A relay link whose credential lapsed comes back on a fresh one.**
+The relay spec's hosts sometimes never reached each other again after the
+phone's last reconnect (about 1 run in 5-10). The case advances the policy
+clock an hour to expire the phone's memory of blocked UDP, well past the
+relay's ten-minute credential, so the desk's refresh and the relay's
+expiry come due at once. When the expiry won, the relay closed the desk's
+link as Unauthenticated, and the desk read any refusal as "sign in again"
+and stopped dialling for good: the relay was left holding only the phone.
+A refusal after the link came up means the credential lapsed first (a
+refresh that lost the race, a host asleep past the expiry), so the desk
+now dials again and fetches fresh credentials, and credentials that are
+really gone fail at that fetch and ask for a sign-in. Reverting only that
+change fails the case within five runs, with the desk's relay link
+registered once and never again; with it, the desk's link comes back
+every run and the case passed 45 runs in a row. The spec also has a case
+for a relay whose clock runs ahead of the host's.
+
 2026-09-27 — **A host's follower picks up a quickly restored link at once.**
 When a host's inventory stream ends, its follower waits a backoff on the
 policy clock unless the host's route changes first. It read the route to
