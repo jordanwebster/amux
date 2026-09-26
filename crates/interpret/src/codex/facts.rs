@@ -344,10 +344,11 @@ impl State {
         self.shared.provider_started();
         let kind = if opt_text(thread, "forkedFromId").is_some() {
             wire::BoundaryKind::Forked
-        } else if thread
-            .get("turns")
-            .and_then(Value::as_array)
-            .is_some_and(|turns| !turns.is_empty())
+        } else if self.incarnation > 1
+            || thread
+                .get("turns")
+                .and_then(Value::as_array)
+                .is_some_and(|turns| !turns.is_empty())
         {
             wire::BoundaryKind::Resumed
         } else {

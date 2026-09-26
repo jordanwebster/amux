@@ -164,6 +164,9 @@ struct Overrides {
 pub struct State {
     shared: Shared<CodexAsk>,
     consumption: InjectConsumption,
+    /// The spec's incarnation: a later one's first thread is a resume.
+    #[serde(default)]
+    incarnation: u32,
     thread_id: Option<String>,
     version: Option<String>,
     model: Option<String>,
@@ -238,6 +241,7 @@ impl State {
         Self {
             shared: Shared::new(spec, KIND, producer_version),
             consumption,
+            incarnation: spec.incarnation,
             thread_id: None,
             version: (!spec.provider_version.is_empty()).then(|| spec.provider_version.clone()),
             model: None,

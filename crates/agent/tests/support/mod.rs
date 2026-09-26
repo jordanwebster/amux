@@ -15,9 +15,10 @@ use provider_fakes::{SCRIPT_ENV, Script, Step};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::task::JoinHandle;
 use wire::{
-    AgentHello, AgentParent, AgentSpec, ClaudePtyItem, ClaudeSdkInput, ClaudeSdkItem,
-    ClaudeSdkSnapshot, CtlFrame, EffectiveConfig, Input, Phase, PromptInput, Stop, StopMode,
-    claude_pty_item, claude_sdk_input, claude_sdk_item, ctl_frame, input, send_input_response,
+    AgentHello, AgentParent, AgentSpec, ClaudePtyInput, ClaudePtyItem, ClaudeSdkInput,
+    ClaudeSdkItem, ClaudeSdkSnapshot, CodexInput, CodexItem, CtlFrame, EffectiveConfig, Input,
+    Phase, PromptInput, Stop, StopMode, claude_pty_input, claude_pty_item, claude_sdk_input,
+    claude_sdk_item, codex_input, codex_item, ctl_frame, input, send_input_response,
 };
 
 /// When every agent in these tests starts.
@@ -89,6 +90,7 @@ impl Setup {
 }
 
 pub struct Agent {
+    kind: &'static str,
     _root: tempfile::TempDir,
     pub dir: PathBuf,
     pub clock: ManualClock,
@@ -167,7 +169,9 @@ impl Agent {
             daemon_version: "test".into(),
             created_at_ms: T0,
             incarnation: 1,
-            initial_prompt: setup.initial_prompt.map(|text| prompt(b"p0", text)),
+            initial_prompt: setup
+                .initial_prompt
+                .map(|text| prompt(setup.kind, b"p0", text)),
             ..Default::default()
         };
         std::fs::write(dir.join("spec.1"), spec.encode_to_vec()).unwrap();
@@ -176,6 +180,7 @@ impl Agent {
         let task = tokio::spawn(agent::run(dir.clone(), clock.clone()));
         let reader = journal::Reader::new(dir.join(agent::JOURNAL), 0);
         Self {
+            kind: setup.kind,
             _root: root,
             dir,
             clock,
@@ -184,6 +189,32 @@ impl Agent {
             task: Mutex::new(Some(task)),
             reader: Mutex::new((reader, Log::default())),
         }
+    }
+
+    /// Starts the next incarnation from the newest spec with its number
+    /// bumped, after this one has exited.
+    pub fn resume(&self) {
+        let (n, mut spec) = (1..)
+            .map_while(|n| {
+                std::fs::read(self.dir.join(format!("spec.{n}")))
+                    .ok()
+                    .map(|bytes| (n, AgentSpec::decode(bytes.as_slice()).unwrap()))
+            })
+            .last()
+            .expect("a spec");
+        spec.incarnation = n + 1;
+        spec.initial_prompt = None;
+        std::fs::write(
+            self.dir.join(format!("spec.{}", n + 1)),
+            spec.encode_to_vec(),
+        )
+        .unwrap();
+        let task = tokio::spawn(agent::run(self.dir.clone(), self.clock.clone()));
+        *self.task.lock().unwrap() = Some(task);
+    }
+
+    pub fn provider_session(&self) -> String {
+        std::fs::read_to_string(self.dir.join(agent::PRIVATE).join("provider-session")).unwrap()
     }
 
     /// Dials ctl.sock as the daemon does and reads the Hello.
@@ -205,6 +236,7 @@ impl Agent {
             other => panic!("the first frame is a Hello, not {other:?}"),
         };
         Daemon {
+            kind: self.kind,
             reader,
             writer,
             hello,
@@ -341,15 +373,24 @@ pub fn running(marker: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn prompt(id: &[u8], text: &str) -> Input {
+pub fn prompt(kind: &str, id: &[u8], text: &str) -> Input {
+    let prompt = PromptInput {
+        text: text.to_owned(),
+        ..Default::default()
+    };
     Input {
         input_id: id.to_vec(),
-        of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
-            of: Some(claude_sdk_input::Of::Prompt(PromptInput {
-                text: text.to_owned(),
-                ..Default::default()
-            })),
-        })),
+        of: Some(match kind {
+            "codex" => input::Of::Codex(CodexInput {
+                of: Some(codex_input::Of::Prompt(prompt)),
+            }),
+            "claude_pty" => input::Of::ClaudePty(ClaudePtyInput {
+                of: Some(claude_pty_input::Of::Prompt(prompt)),
+            }),
+            _ => input::Of::ClaudeSdk(ClaudeSdkInput {
+                of: Some(claude_sdk_input::Of::Prompt(prompt)),
+            }),
+        }),
     }
 }
 
@@ -370,6 +411,7 @@ pub enum Verdict {
 
 /// A stand-in daemon on ctl.sock.
 pub struct Daemon {
+    kind: &'static str,
     reader: ReadHalf<LocalStream>,
     writer: WriteHalf<LocalStream>,
     pub hello: AgentHello,
@@ -386,7 +428,8 @@ impl Daemon {
 
     /// Sends a prompt and returns the agent's verdict on it.
     pub async fn prompt(&mut self, id: &[u8], text: &str) -> Verdict {
-        self.send(ctl_frame::Of::Input(prompt(id, text))).await;
+        self.send(ctl_frame::Of::Input(prompt(self.kind, id, text)))
+            .await;
         loop {
             let frame = next_frame(&mut self.reader).await.of;
             if let Some(ctl_frame::Of::Nudge(_)) = frame {
@@ -491,6 +534,10 @@ fn boundary(item: &wire::Item) -> Option<String> {
         },
         "claude_pty" => match ClaudePtyItem::decode(item.body.as_slice()).ok()?.kind? {
             claude_pty_item::Kind::Boundary(boundary) => boundary,
+            _ => return None,
+        },
+        "codex" => match CodexItem::decode(item.body.as_slice()).ok()?.kind? {
+            codex_item::Kind::Boundary(boundary) => boundary,
             _ => return None,
         },
         _ => return None,

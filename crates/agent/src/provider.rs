@@ -15,6 +15,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use interpret::{Channel, Effect, Fact};
@@ -27,6 +28,10 @@ use crate::dir;
 
 /// How long output still in flight is collected after the child exits.
 const TRAILING_OUTPUT: Duration = Duration::from_millis(300);
+/// The request ids of the agent's own Codex handshake; the interpreter's
+/// requests are numbered amux-N.
+const CODEX_INITIALIZE: &str = "agent-initialize";
+const CODEX_THREAD: &str = "agent-thread";
 /// How often a followed transcript is read for new rows.
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(25);
 
@@ -50,8 +55,11 @@ pub enum ProviderError {
     Io(#[from] io::Error),
 }
 
+/// A plain child's stdin, shared with the handshake that writes first.
+type Stdin = Arc<tokio::sync::Mutex<Option<ChildStdin>>>;
+
 enum Input {
-    Stdin(ChildStdin),
+    Stdin(Stdin),
     Terminal(pty_host::PtyHandle),
     Closed,
 }
@@ -81,6 +89,7 @@ impl Provider {
         match spec.kind.as_str() {
             "claude_sdk" => Self::spawn_sdk(spec, dir, events).await,
             "claude_pty" => Self::spawn_terminal(spec, dir, events),
+            "codex" => Self::spawn_codex(spec, dir, events),
             other => Err(ProviderError::Unhosted(other.to_owned())),
         }
     }
@@ -154,7 +163,7 @@ impl Provider {
         });
 
         let mut provider = Self {
-            input: Input::Stdin(stdin),
+            input: Input::Stdin(Arc::new(tokio::sync::Mutex::new(Some(stdin)))),
             pid,
             kill: Some(kill),
             terminal: None,
@@ -169,6 +178,135 @@ impl Provider {
             .write_line(br#"{"type":"control_request","request_id":"agent-initialize","request":{"subtype":"initialize"}}"#)
             .await?;
         Ok(provider)
+    }
+
+    /// Codex: one app server per agent over stdio. The agent does the
+    /// handshake (initialize, initialized, then thread/start or, for a later
+    /// incarnation, thread/resume); every line the server writes is a fact,
+    /// and the interpreter writes everything after the handshake.
+    fn spawn_codex(
+        spec: &AgentSpec,
+        dir: &Path,
+        events: mpsc::Sender<ProviderEvent>,
+    ) -> Result<Self, ProviderError> {
+        let session_path = dir.join(dir::PRIVATE).join(dir::PROVIDER_SESSION);
+        let thread = std::fs::read_to_string(&session_path)
+            .ok()
+            .map(|thread| thread.trim().to_owned())
+            .filter(|thread| !thread.is_empty() && spec.incarnation > 1);
+        let mut command = tokio::process::Command::new(&spec.provider_command);
+        command
+            .args(&spec.provider_args)
+            .args(["app-server", "--listen", "stdio://"])
+            .current_dir(&spec.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(provider_log(dir)?)
+            .kill_on_drop(false);
+        environment(&mut command, spec);
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command.spawn().map_err(|source| ProviderError::Spawn {
+            command: spec.provider_command.clone(),
+            source,
+        })?;
+        let pid = child.id();
+        let stdin: Stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take()));
+        let stdout = child.stdout.take().expect("stdout is piped");
+
+        let (initialized, on_initialized) = oneshot::channel();
+        let lines = events.clone();
+        let reader = tokio::spawn(async move {
+            let mut initialized = Some(initialized);
+            let mut stdout = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = stdout.next_line().await {
+                if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) {
+                    match message["id"].as_str() {
+                        Some(CODEX_INITIALIZE) => {
+                            if let Some(initialized) = initialized.take() {
+                                let _ = initialized.send(());
+                            }
+                        }
+                        // The thread the server made or resumed is the
+                        // session the next incarnation resumes.
+                        Some(CODEX_THREAD) => {
+                            if let Some(thread) = message["result"]["thread"]["id"].as_str() {
+                                let _ = std::fs::write(&session_path, thread);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let fact = Fact {
+                    channel: Channel::Rpc,
+                    payload: line.into_bytes(),
+                };
+                if lines.send(ProviderEvent::Fact(fact)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let (kill, killed) = oneshot::channel();
+        let exited = events.clone();
+        tokio::spawn(async move {
+            let status = tokio::select! {
+                status = child.wait() => status,
+                _ = killed => {
+                    let _ = child.start_kill();
+                    child.wait().await
+                }
+            };
+            let _ = tokio::time::timeout(TRAILING_OUTPUT, reader).await;
+            let code = status.ok().and_then(|status| status.code());
+            let _ = exited.send(ProviderEvent::Exited(code)).await;
+        });
+
+        let handshake = stdin.clone();
+        let cwd = spec.cwd.clone();
+        let model = spec.config.as_ref().and_then(|config| config.model.clone());
+        tokio::spawn(async move {
+            let initialize = serde_json::json!({
+                "id": CODEX_INITIALIZE,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": { "name": "amux", "title": null, "version": crate::VERSION },
+                    "capabilities": { "experimentalApi": true },
+                },
+            });
+            if write_line(&handshake, initialize.to_string().as_bytes())
+                .await
+                .is_err()
+                || on_initialized.await.is_err()
+            {
+                return;
+            }
+            let mut params = serde_json::json!({ "cwd": cwd });
+            if let Some(model) = model {
+                params["model"] = serde_json::json!(model);
+            }
+            let method = match thread {
+                Some(thread) => {
+                    params["threadId"] = serde_json::json!(thread);
+                    "thread/resume"
+                }
+                None => "thread/start",
+            };
+            let start =
+                serde_json::json!({ "id": CODEX_THREAD, "method": method, "params": params });
+            let _ = write_line(&handshake, br#"{"method":"initialized"}"#).await;
+            let _ = write_line(&handshake, start.to_string().as_bytes()).await;
+        });
+
+        Ok(Self {
+            input: Input::Stdin(stdin),
+            pid,
+            kill: Some(kill),
+            terminal: None,
+            session: String::new(),
+            dir: dir.to_owned(),
+            events,
+            followers: Vec::new(),
+        })
     }
 
     /// Claude in a terminal. Its hooks report to private/hooks.sock.
@@ -265,6 +403,13 @@ impl Provider {
                 let uuid = interpret::claude_sdk::client_uuid(&envelope.id);
                 self.user_message(&uuid, &envelope.text, &[]).await
             }
+            Effect::CodexTurnInput {
+                request,
+                attachments,
+            } => {
+                let request = codex_turn_input(&request, &attachments, &self.dir.join(dir::BLOBS))?;
+                self.write_line(&request).await
+            }
             Effect::FollowTranscript { path } => {
                 self.follow(PathBuf::from(path));
                 Ok(())
@@ -305,11 +450,7 @@ impl Provider {
 
     async fn write_line(&mut self, bytes: &[u8]) -> io::Result<()> {
         match &mut self.input {
-            Input::Stdin(stdin) => {
-                stdin.write_all(bytes).await?;
-                stdin.write_all(b"\n").await?;
-                stdin.flush().await
-            }
+            Input::Stdin(stdin) => write_line(stdin, bytes).await,
             Input::Terminal(terminal) => terminal.write(bytes).await.map_err(io::Error::other),
             Input::Closed => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -354,7 +495,9 @@ impl Provider {
     /// terminate signal for a terminal one.
     pub fn close(&mut self) {
         match std::mem::replace(&mut self.input, Input::Closed) {
-            Input::Stdin(stdin) => drop(stdin),
+            Input::Stdin(stdin) => {
+                tokio::spawn(async move { stdin.lock().await.take() });
+            }
             Input::Terminal(terminal) => {
                 let _ = terminal.signal_process_group(pty_host::ProcessGroupSignal::Terminate);
             }
@@ -396,6 +539,51 @@ impl Drop for Provider {
             follower.abort();
         }
     }
+}
+
+/// A Codex turn request with its attachments appended to `params.input`:
+/// an image as a local image by its blob's path, anything else as the
+/// element text the model reads.
+fn codex_turn_input(
+    request: &[u8],
+    attachments: &[Attachment],
+    blobs: &Path,
+) -> io::Result<Vec<u8>> {
+    let mut request: serde_json::Value = serde_json::from_slice(request)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let Some(input) = request["params"]["input"].as_array_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a Codex turn request without params.input",
+        ));
+    };
+    for attachment in attachments {
+        input.push(match &attachment.of {
+            Some(wire::attachment::Of::Image(blob)) => serde_json::json!({
+                "type": "localImage",
+                "path": blobs.join(interpret::to_hex(&blob.hash)),
+            }),
+            _ => serde_json::json!({
+                "type": "text",
+                "text": attachments::element(attachment, None),
+                "text_elements": [],
+            }),
+        });
+    }
+    serde_json::to_vec(&request).map_err(io::Error::other)
+}
+
+async fn write_line(stdin: &Stdin, bytes: &[u8]) -> io::Result<()> {
+    let mut stdin = stdin.lock().await;
+    let Some(stdin) = stdin.as_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "the provider's input is closed",
+        ));
+    };
+    stdin.write_all(bytes).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await
 }
 
 /// The provider's own session id for this agent, and whether this
