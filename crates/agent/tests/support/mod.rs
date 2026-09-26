@@ -267,7 +267,7 @@ impl Agent {
             spec.encode_to_vec(),
         )
         .unwrap();
-        let task = tokio::spawn(agent::run(self.dir.clone(), self.clock.clone()));
+        let task = tokio::spawn(run_when_unlocked(self.dir.clone(), self.clock.clone()));
         *self.task.lock().unwrap() = Some(task);
     }
 
@@ -432,6 +432,22 @@ impl Agent {
             bytes.extend(std::fs::read(journal::segment_path(&pty, start)).unwrap());
         }
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// Runs the next incarnation once the last one's lock is free, as the
+/// daemon waits for a dying process's lock. Every agent in a test shares
+/// this process's descriptors, so a sibling test forking a provider can
+/// hold a copy of the lock for the moment before its child execs.
+async fn run_when_unlocked(dir: PathBuf, clock: ManualClock) -> Result<ExitCause, AgentError> {
+    let started = std::time::Instant::now();
+    loop {
+        match agent::run(dir.clone(), clock.clone()).await {
+            Err(AgentError::Locked(_)) if started.elapsed() < PATIENCE => {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            outcome => return outcome,
+        }
     }
 }
 
