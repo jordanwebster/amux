@@ -187,3 +187,60 @@ fn sent(turn: &super::Turn) -> u64 {
             + usage.cache_read_input_tokens.unwrap_or_default()
     })
 }
+
+pub(super) static SIGN_IN_PROBLEM: SpecDef = SpecDef {
+    name: "session/sign_in_problem",
+    fixture: "sign_in_problem",
+    setup: sign_in_problem_setup,
+    run: |session| Box::pin(sign_in_problem(session)),
+};
+
+fn sign_in_problem_setup() -> SessionSetup {
+    let mut setup = SessionSetup::new(HAIKU, "Reply with exactly PONG and nothing else.");
+    setup.options.permission_mode = Some(PermissionMode::Default);
+    // A key the API rejects takes precedence over the owner's own sign-in;
+    // two retries keep the recording short.
+    setup.extra_env = vec![
+        ("ANTHROPIC_API_KEY", "sk-ant-api03-amux-spec-invalid"),
+        ("CLAUDE_CODE_MAX_RETRIES", "2"),
+    ];
+    setup
+}
+
+/// A rejected credential shows as API errors that Claude retries with a
+/// growing delay, each naming the status and `authentication_failed`, and
+/// then a synthetic assistant message in place of an answer.
+async fn sign_in_problem(session: &mut SpecSession) {
+    let turn = session.turn().await;
+    let frames = turn
+        .messages()
+        .iter()
+        .map(|message| serde_json::to_value(message).expect("a parsed frame serialises"))
+        .collect::<Vec<_>>();
+    let retries = frames
+        .iter()
+        .filter(|frame| frame["type"] == "system" && frame["subtype"] == "api_retry")
+        .map(|frame| {
+            (
+                frame["attempt"].as_u64().unwrap_or_default(),
+                frame["error_status"].as_u64().unwrap_or_default(),
+                frame["error"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    expect!(
+        retries
+            == [
+                (1, 401, "authentication_failed".to_owned()),
+                (2, 401, "authentication_failed".to_owned()),
+            ],
+        "each retry names its attempt, the status and the error: {retries:?}"
+    );
+    let synthetic = frames
+        .iter()
+        .find(|frame| frame["type"] == "assistant" && frame["message"]["model"] == "<synthetic>");
+    expect!(
+        synthetic.is_some_and(|frame| frame["error"] == "authentication_failed"),
+        "the answer is a synthetic message carrying the sign-in error: {synthetic:?}"
+    );
+}

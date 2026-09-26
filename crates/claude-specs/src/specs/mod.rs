@@ -88,6 +88,8 @@ pub struct SessionSetup {
     prompt_uuid: Option<String>,
     /// A PNG attached to the opening prompt, ahead of its text.
     prompt_image: Option<&'static [u8]>,
+    /// Variables added to a live session's inherited environment.
+    extra_env: Vec<(&'static str, &'static str)>,
 }
 
 /// How the specification answers AskUserQuestion.
@@ -122,6 +124,7 @@ impl SessionSetup {
             defer_prompt: false,
             prompt_uuid: None,
             prompt_image: None,
+            extra_env: Vec::new(),
         }
     }
 
@@ -234,6 +237,20 @@ impl Sessions {
         let session = match &mut *self.source.lock().await {
             Source::Live(environment) => {
                 environment(&mut setup.options);
+                if !setup.extra_env.is_empty() {
+                    let mut env = setup
+                        .options
+                        .env
+                        .take()
+                        .unwrap_or_else(|| std::env::vars().collect());
+                    env.extend(
+                        setup
+                            .extra_env
+                            .iter()
+                            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
+                    );
+                    setup.options.env = Some(env);
+                }
                 crate::driver::sdk::spawn(setup.options).await?
             }
             Source::Recorded(transports) => {
@@ -1008,6 +1025,7 @@ static DEFINITIONS: &[&SpecDef] = &[
     &session::TEXT_TURN,
     &session::STREAMED_TURN,
     &session::MULTI_TURN,
+    &session::SIGN_IN_PROBLEM,
     &commands::COMPACTED,
     &commands::CLEARED,
     &control::PERMISSION_MODE_AND_MODEL,
@@ -1056,6 +1074,7 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("session/text_turn", "text_turn"),
     entry("session/streamed_turn", "streamed_turn"),
     entry("session/multi_turn", "multi_turn"),
+    entry("session/sign_in_problem", "sign_in_problem"),
     entry("commands/compacted", "compacted"),
     entry("commands/cleared", "cleared"),
     entry("control/permission_mode_and_model", "controls"),

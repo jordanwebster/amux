@@ -1,3 +1,12 @@
+2026-09-26 — **A recorded sign-in problem for headless Claude.**
+`session/sign_in_problem` runs Claude Code 2.1.283 with a key the API
+rejects, which takes precedence over the owner's sign-in. Claude retries
+with a growing delay, each `api_retry` frame naming the attempt, status 401
+and `authentication_failed`, then answers with a synthetic assistant message
+carrying the same error; retries are capped at two to keep the recording
+short. The spec harness can now add environment variables to a live
+session.
+
 2026-09-26 — **Codex and Claude recordings for the rows that had none.**
 Nine Codex specifications, captured against codex-cli 0.157.0, cover
 reasoning summaries, commands Codex classifies as reads, listings and

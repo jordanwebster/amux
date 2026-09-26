@@ -30,6 +30,7 @@ mod sdk_replays {
         session_text_turn => "session/text_turn",
         session_streamed_turn => "session/streamed_turn",
         session_multi_turn => "session/multi_turn",
+        session_sign_in_problem => "session/sign_in_problem",
         commands_compacted => "commands/compacted",
         commands_cleared => "commands/cleared",
         control_permission_mode_and_model => "control/permission_mode_and_model",
