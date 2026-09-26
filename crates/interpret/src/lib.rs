@@ -56,6 +56,18 @@ pub trait Interpreter {
     /// One event in; the step to journal and the effects to perform out.
     fn step(state: &mut Self::State, event: Event) -> Stepped;
 
+    /// Continues a checkpointed state in the agent's next incarnation under
+    /// `spec`: the spec's prompt joins the queue, what belonged to the
+    /// previous provider process starts over, and every counter behind an
+    /// item key carries on, so the new incarnation never reuses a key. The
+    /// step it starts with re-emits every open item in full on its existing
+    /// key, and the snapshot.
+    fn reincarnate(
+        state: Self::State,
+        spec: &AgentSpec,
+        producer_version: &str,
+    ) -> (Self::State, Step);
+
     /// Removes secrets from a body, a facts-ring entry or a checkpoint while
     /// keeping its structure; the daemon calls it (through [`redact()`]) on a
     /// store slice at dump time and the agent process on its own dump part.

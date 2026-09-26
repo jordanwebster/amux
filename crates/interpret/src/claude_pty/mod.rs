@@ -852,6 +852,15 @@ impl Interpreter for ClaudePty {
         (state, step)
     }
 
+    fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
+        state.shared.reincarnate(spec, producer_version);
+        // The launch fact of the new process is its first, not a relaunch:
+        // the session it resumes is a resume, not a restart.
+        state.provider.launches = 0;
+        state.provider.relaunched = false;
+        state.resume()
+    }
+
     fn step(state: &mut State, event: Event) -> Stepped {
         let mut emit = Emit::default();
         match event {

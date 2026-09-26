@@ -73,6 +73,8 @@ pub struct Setup {
     /// Keep the provider's process alive after the fake exits, until
     /// [`Agent::unhold`].
     pub hold: bool,
+    /// The facts ring's size; the agent's default when zero.
+    pub ring_bytes: u64,
 }
 
 impl Setup {
@@ -85,6 +87,7 @@ impl Setup {
             initial_prompt: None,
             parent: false,
             hold: false,
+            ring_bytes: 0,
         }
     }
 }
@@ -164,6 +167,7 @@ impl Agent {
             config: Some(EffectiveConfig {
                 grace_ms: GRACE as u32,
                 drain_ms: DRAIN as u32,
+                facts_ring_bytes: setup.ring_bytes,
                 ..Default::default()
             }),
             daemon_version: "test".into(),
@@ -494,6 +498,35 @@ impl Log {
             }
         }
         sequence
+    }
+
+    /// Every item emission, in journal order, with the index of the step
+    /// that carried it.
+    pub fn items(&self) -> Vec<(usize, wire::Item)> {
+        self.steps
+            .iter()
+            .enumerate()
+            .flat_map(|(index, step)| step.items.iter().map(move |item| (index, item.clone())))
+            .collect()
+    }
+
+    /// Each key's item as it stands: its newest emission with every later
+    /// append applied.
+    pub fn full_items(&self) -> std::collections::BTreeMap<String, wire::Item> {
+        let mut items = std::collections::BTreeMap::new();
+        for step in &self.steps {
+            for item in &step.items {
+                items.insert(item.key.clone(), item.clone());
+            }
+            for append in &step.appends {
+                if let Some(item) = items.get_mut(&append.key) {
+                    let item: &mut wire::Item = item;
+                    item.text.push_str(&append.text);
+                    item.revision = append.revision;
+                }
+            }
+        }
+        items
     }
 
     pub fn has_text(&self, text: &str) -> bool {

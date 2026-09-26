@@ -764,6 +764,19 @@ impl Interpreter for ClaudeSdk {
         (state, step)
     }
 
+    fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
+        state.shared.reincarnate(spec, producer_version);
+        // A new process: its first init is the incarnation's boundary.
+        state.incarnation = spec.incarnation;
+        state.inits = 0;
+        state.exited = false;
+        if !spec.provider_version.is_empty() {
+            state.version = Some(spec.provider_version.clone());
+        }
+        state.effort = launch_arg(&spec.provider_args, "--effort");
+        state.resume()
+    }
+
     fn step(state: &mut State, event: Event) -> Stepped {
         let mut emit = Emit::default();
         match event {

@@ -1,0 +1,295 @@
+//! The facts ring: every event the interpreter was fed, in order, in
+//! private/facts/, so the interpreter's state can be rebuilt and a dump can
+//! show what the provider actually said.
+//!
+//! The ring is segments named by the global offset of their first byte, as
+//! the journal is. Each segment starts with a checkpoint beside it,
+//! `<offset>.checkpoint`: the interpreter's whole state before the
+//! segment's first entry. A segment rotates once it reaches its size; the
+//! newest two are kept, so a dump is the last two segments plus the
+//! checkpoint at each one's start. The state at any moment is the newest
+//! checkpoint with its segment's entries fed through the interpreter again.
+//!
+//! An entry is one JSON line. Provider payloads are text when they are
+//! UTF-8, which every provider's are, and hex otherwise; inputs are their
+//! encoded protobuf in hex.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
+
+use interpret::{Channel, Event, Fact};
+use prost::Message as _;
+use serde::{Deserialize, Serialize};
+use wire::StopMode;
+
+/// Segments kept.
+const KEEP: usize = 2;
+const CHECKPOINT: &str = "checkpoint";
+
+/// One event as the ring records it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Entry {
+    Fact {
+        channel: Channel,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hex: Option<String>,
+    },
+    Input {
+        hex: String,
+    },
+    Tick {
+        at_ms: i64,
+    },
+    ProviderExit {
+        code: Option<i32>,
+    },
+    DaemonLost,
+    Stop {
+        mode: i32,
+    },
+    Exiting {
+        cause: String,
+    },
+}
+
+impl Entry {
+    pub fn of(event: &Event) -> Self {
+        match event {
+            Event::Fact(fact) => match std::str::from_utf8(&fact.payload) {
+                Ok(text) => Entry::Fact {
+                    channel: fact.channel,
+                    text: Some(text.to_owned()),
+                    hex: None,
+                },
+                Err(_) => Entry::Fact {
+                    channel: fact.channel,
+                    text: None,
+                    hex: Some(interpret::to_hex(&fact.payload)),
+                },
+            },
+            Event::Input(input) => Entry::Input {
+                hex: interpret::to_hex(&input.encode_to_vec()),
+            },
+            Event::Tick { at_ms } => Entry::Tick { at_ms: *at_ms },
+            Event::ProviderExit { code } => Entry::ProviderExit { code: *code },
+            Event::DaemonLost => Entry::DaemonLost,
+            Event::StopRequested(mode) => Entry::Stop { mode: *mode as i32 },
+            Event::Exiting { cause } => Entry::Exiting {
+                cause: cause.clone(),
+            },
+        }
+    }
+
+    /// The event again; None for an entry this build cannot read.
+    pub fn event(self) -> Option<Event> {
+        Some(match self {
+            Entry::Fact { channel, text, hex } => Event::Fact(Fact {
+                channel,
+                payload: match (text, hex) {
+                    (Some(text), _) => text.into_bytes(),
+                    (None, Some(hex)) => interpret::from_hex(&hex).ok()?,
+                    (None, None) => Vec::new(),
+                },
+            }),
+            Entry::Input { hex } => {
+                Event::Input(wire::Input::decode(interpret::from_hex(&hex).ok()?.as_slice()).ok()?)
+            }
+            Entry::Tick { at_ms } => Event::Tick { at_ms },
+            Entry::ProviderExit { code } => Event::ProviderExit { code },
+            Entry::DaemonLost => Event::DaemonLost,
+            Entry::Stop { mode } => Event::StopRequested(StopMode::try_from(mode).ok()?),
+            Entry::Exiting { cause } => Event::Exiting { cause },
+        })
+    }
+}
+
+/// The writer of one agent's ring.
+pub struct Ring {
+    dir: PathBuf,
+    segment_bytes: u64,
+    /// The global offset of the next byte.
+    offset: u64,
+    /// The open segment's start and file.
+    segment: (u64, File),
+}
+
+/// What a ring holds for resuming: the newest checkpoint and the entries
+/// written after it.
+pub struct Saved {
+    pub checkpoint: Vec<u8>,
+    pub entries: Vec<Entry>,
+}
+
+impl Ring {
+    /// Opens the ring in `dir`, starting a new segment whose checkpoint is
+    /// `checkpoint`: every incarnation starts its own segment from the state
+    /// it resumed.
+    pub fn open(dir: PathBuf, ring_bytes: u64, checkpoint: &[u8]) -> io::Result<Self> {
+        fs::create_dir_all(&dir)?;
+        let offset = match journal::segments(&dir)?.last() {
+            Some(&start) => start + fs::metadata(journal::segment_path(&dir, start))?.len(),
+            None => 0,
+        };
+        let segment = start_segment(&dir, offset, checkpoint)?;
+        let ring = Self {
+            dir,
+            segment_bytes: (ring_bytes / KEEP as u64).max(1),
+            offset,
+            segment: (offset, segment),
+        };
+        ring.prune()?;
+        Ok(ring)
+    }
+
+    /// Whether the open segment is full, so the next entry starts a new one
+    /// after [`Ring::rotate`].
+    pub fn full(&self) -> bool {
+        self.offset - self.segment.0 >= self.segment_bytes
+    }
+
+    /// Starts a new segment from `checkpoint`, the state now.
+    pub fn rotate(&mut self, checkpoint: &[u8]) -> io::Result<()> {
+        let file = start_segment(&self.dir, self.offset, checkpoint)?;
+        self.segment = (self.offset, file);
+        self.prune()
+    }
+
+    pub fn append(&mut self, entry: &Entry) -> io::Result<()> {
+        let mut line = serde_json::to_vec(entry).map_err(io::Error::other)?;
+        line.push(b'\n');
+        self.segment.1.write_all(&line)?;
+        self.offset += line.len() as u64;
+        Ok(())
+    }
+
+    fn prune(&self) -> io::Result<()> {
+        let starts = journal::segments(&self.dir)?;
+        let excess = starts.len().saturating_sub(KEEP);
+        for start in &starts[..excess] {
+            fs::remove_file(journal::segment_path(&self.dir, *start))?;
+            match fs::remove_file(checkpoint_path(&self.dir, *start)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The newest checkpoint in `dir` and the entries after it; None when the
+/// ring holds none. A torn last line, from a process that died mid-write, is
+/// left out.
+pub fn saved(dir: &Path) -> io::Result<Option<Saved>> {
+    for start in journal::segments(dir)?.into_iter().rev() {
+        let checkpoint = match fs::read(checkpoint_path(dir, start)) {
+            Ok(checkpoint) => checkpoint,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let bytes = fs::read(journal::segment_path(dir, start))?;
+        let entries = bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map_while(|line| serde_json::from_slice(line).ok())
+            .collect();
+        return Ok(Some(Saved {
+            checkpoint,
+            entries,
+        }));
+    }
+    Ok(None)
+}
+
+pub fn checkpoint_path(dir: &Path, start: u64) -> PathBuf {
+    dir.join(format!("{}.{CHECKPOINT}", journal::segment_name(start)))
+}
+
+/// Writes the checkpoint by temp-and-rename, then creates the segment: a
+/// segment never exists without the state it starts from.
+fn start_segment(dir: &Path, start: u64, checkpoint: &[u8]) -> io::Result<File> {
+    let path = checkpoint_path(dir, start);
+    let temp = path.with_extension("tmp");
+    fs::write(&temp, checkpoint)?;
+    fs::rename(&temp, &path)?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(journal::segment_path(dir, start))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tick(at_ms: i64) -> Entry {
+        Entry::Tick { at_ms }
+    }
+
+    #[test]
+    fn the_ring_rotates_by_size_keeps_two_segments_and_resumes_from_the_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        let facts = dir.path().join("facts");
+        let mut ring = Ring::open(facts.clone(), 60, b"state 0").unwrap();
+        for at in 0..10 {
+            if ring.full() {
+                ring.rotate(format!("state {at}").as_bytes()).unwrap();
+            }
+            ring.append(&tick(at)).unwrap();
+        }
+        let segments = journal::segments(&facts).unwrap();
+        assert_eq!(segments.len(), 2);
+        for start in &segments {
+            assert!(checkpoint_path(&facts, *start).exists());
+        }
+        let saved = super::saved(&facts).unwrap().unwrap();
+        let first = match saved.entries.first() {
+            Some(Entry::Tick { at_ms }) => *at_ms,
+            other => panic!("a tick, not {other:?}"),
+        };
+        assert_eq!(saved.checkpoint, format!("state {first}").into_bytes());
+        assert_eq!(saved.entries.last(), Some(&tick(9)));
+
+        // A new incarnation starts its own segment after the last.
+        drop(ring);
+        let ring = Ring::open(facts.clone(), 60, b"resumed").unwrap();
+        assert!(!ring.full());
+        let saved = super::saved(&facts).unwrap().unwrap();
+        assert_eq!(saved.checkpoint, b"resumed");
+        assert!(saved.entries.is_empty());
+    }
+
+    #[test]
+    fn entries_round_trip_every_event() {
+        let events = [
+            Event::Fact(Fact {
+                channel: Channel::Hook,
+                payload: br#"{"a":1}"#.to_vec(),
+            }),
+            Event::Fact(Fact {
+                channel: Channel::Stream,
+                payload: vec![0xff, 0x00],
+            }),
+            Event::Input(wire::Input {
+                input_id: b"i1".to_vec(),
+                ..Default::default()
+            }),
+            Event::Tick { at_ms: 5 },
+            Event::ProviderExit { code: Some(3) },
+            Event::DaemonLost,
+            Event::StopRequested(StopMode::Abort),
+            Event::Exiting {
+                cause: "stopped".into(),
+            },
+        ];
+        for event in events {
+            let line = serde_json::to_vec(&Entry::of(&event)).unwrap();
+            let entry: Entry = serde_json::from_slice(&line).unwrap();
+            assert_eq!(entry.event(), Some(event));
+        }
+    }
+}

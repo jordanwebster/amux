@@ -16,6 +16,8 @@ pub const PTY: &str = "pty";
 pub const PRIVATE: &str = "private";
 pub const HOOKS_SOCK: &str = "hooks.sock";
 pub const BLOBS: &str = "blobs";
+/// The facts ring and its checkpoints, under private/.
+pub const FACTS: &str = "facts";
 /// The provider's own session id, kept so a resume continues it.
 pub const PROVIDER_SESSION: &str = "provider-session";
 /// What the provider wrote to stderr.

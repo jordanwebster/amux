@@ -20,6 +20,7 @@ mod dir;
 mod host;
 pub mod local_socket;
 mod provider;
+mod ring;
 
 use std::fmt;
 use std::path::PathBuf;

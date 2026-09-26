@@ -12,6 +12,7 @@ claude = { workspace = true }
 interpret = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
+serde = { workspace = true }
 pty-host = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

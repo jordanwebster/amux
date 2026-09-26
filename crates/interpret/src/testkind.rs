@@ -296,6 +296,15 @@ impl<const FORGET: bool> Interpreter for TestKind<FORGET> {
         (state, step)
     }
 
+    fn reincarnate(
+        mut state: Self::State,
+        spec: &AgentSpec,
+        producer_version: &str,
+    ) -> (Self::State, Step) {
+        state.shared.reincarnate(spec, producer_version);
+        state.resume()
+    }
+
     fn step(state: &mut Self::State, event: Event) -> Stepped {
         let mut emit = Emit::default();
         match event {

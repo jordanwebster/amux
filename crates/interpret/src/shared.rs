@@ -349,6 +349,21 @@ impl<A: OpenAsk> Shared<A> {
         shared
     }
 
+    /// Carries this state into the agent's next incarnation under `spec`:
+    /// the producer and clock move on, and a prompt the spec brings (a
+    /// resume with a prompt, or a parent's message) joins the queue.
+    pub fn reincarnate(&mut self, spec: &AgentSpec, producer_version: &str) {
+        self.producer_version = producer_version.to_owned();
+        self.now_ms = self.now_ms.max(spec.created_at_ms);
+        if let Some(initial) = &spec.initial_prompt
+            && let Some(entry) = queued_from_input(initial)
+            && !self.queue.contains(&entry.input_id)
+        {
+            self.working_on = first_line(&entry.text);
+            self.queue.push(entry);
+        }
+    }
+
     /// The first journal frame: a Snapshot, phase starting, the body at the
     /// kind's explicit unknowns.
     pub fn initial_step(&mut self, unknown_body: Vec<u8>) -> Step {

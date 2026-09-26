@@ -31,6 +31,7 @@ use crate::clock::Clock;
 use crate::dir::{self, PtyLog};
 use crate::local_socket::{LocalListener, LocalStream};
 use crate::provider::{Provider, ProviderEvent};
+use crate::ring::{self, Entry, Ring};
 use crate::{AgentError, ExitCause, VERSION, ctl};
 
 /// Grace after the daemon leaves, when the spec leaves it unset.
@@ -41,9 +42,14 @@ const DEFAULT_DRAIN_MS: i64 = 10 * 60 * 1000;
 const PROVIDER_STOP_MS: i64 = 10 * 1000;
 /// Journal segment size, when the spec leaves it unset.
 const DEFAULT_SEGMENT_BYTES: u64 = 1024 * 1024;
+/// The facts ring's size across its two segments, when the spec leaves it
+/// unset.
+const DEFAULT_RING_BYTES: u64 = 4 * 1024 * 1024;
 /// Terminal log segments: enough to rebuild a screen.
 const PTY_SEGMENT_BYTES: u64 = 256 * 1024;
 const PTY_SEGMENTS_KEPT: usize = 4;
+/// The final boundary's cause for an incarnation that never wrote one.
+const UNENDED: &str = "ended unexpectedly";
 
 enum Mode {
     Running,
@@ -89,6 +95,7 @@ pub(crate) struct Host<I: Interpreter> {
     clock: Arc<dyn Clock>,
     state: I::State,
     journal: journal::Writer,
+    ring: Ring,
     pty_log: Option<PtyLog>,
     provider: Option<Provider>,
     daemon: Option<Daemon>,
@@ -164,7 +171,17 @@ pub(crate) async fn run<I: Interpreter>(
     } else {
         None
     };
-    let (state, first) = I::initial(&spec, VERSION);
+    let facts = dir.join(dir::PRIVATE).join(dir::FACTS);
+    let (state, first) = start::<I>(&facts, &spec);
+    let ring = Ring::open(
+        facts,
+        match config.facts_ring_bytes {
+            0 => DEFAULT_RING_BYTES,
+            bytes => bytes,
+        },
+        &interpret::encode_checkpoint(&state),
+    )
+    .map_err(AgentError::Journal)?;
     let now = clock.now_ms();
     let mut host = Host::<I> {
         dir,
@@ -173,6 +190,7 @@ pub(crate) async fn run<I: Interpreter>(
         clock,
         state,
         journal,
+        ring,
         pty_log,
         provider: None,
         daemon: None,
@@ -185,11 +203,13 @@ pub(crate) async fn run<I: Interpreter>(
         last_tick: i64::MIN,
         done: None,
     };
-    host.apply(Stepped {
-        step: first,
-        effects: Vec::new(),
-    })
-    .await?;
+    for step in first {
+        host.apply(Stepped {
+            step,
+            effects: Vec::new(),
+        })
+        .await?;
+    }
 
     let mut channels = Channels {
         provider: provider_rx,
@@ -489,11 +509,25 @@ impl<I: Interpreter> Host<I> {
         let now = self.clock.now_ms();
         if now > self.last_tick {
             self.last_tick = now;
-            let stepped = I::step(&mut self.state, Event::Tick { at_ms: now });
+            let stepped = self.step(Event::Tick { at_ms: now })?;
             self.apply(stepped).await?;
         }
-        let stepped = I::step(&mut self.state, event);
+        let stepped = self.step(event)?;
         self.apply(stepped).await
+    }
+
+    /// Records the event in the facts ring, then steps the interpreter. A
+    /// full segment rotates first, checkpointing the state the event meets.
+    fn step(&mut self, event: Event) -> Result<Stepped, AgentError> {
+        if self.ring.full() {
+            self.ring
+                .rotate(&interpret::encode_checkpoint(&self.state))
+                .map_err(AgentError::Journal)?;
+        }
+        self.ring
+            .append(&Entry::of(&event))
+            .map_err(AgentError::Journal)?;
+        Ok(I::step(&mut self.state, event))
     }
 
     /// Blobs first, then the journal, then the effects: a reply is sent and
@@ -573,6 +607,55 @@ impl<I: Interpreter> Host<I> {
             DEFAULT_DRAIN_MS,
         )
     }
+}
+
+/// The interpreter's state for this incarnation and the steps it starts
+/// with. A first incarnation starts from nothing. A later one continues the
+/// state the last one ended in, rebuilt from the ring's newest checkpoint
+/// and the events after it, so its item keys carry on from there. An
+/// incarnation that ended without its final boundary (killed, or crashed)
+/// gets it now, then the resume step re-emits whatever is still open in
+/// full. A ring that cannot be read starts over.
+fn start<I: Interpreter>(facts: &std::path::Path, spec: &AgentSpec) -> (I::State, Vec<wire::Step>) {
+    let fresh = || {
+        let (state, step) = I::initial(spec, VERSION);
+        (state, vec![step])
+    };
+    let saved = match ring::saved(facts) {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return fresh(),
+        Err(error) => {
+            eprintln!("amux agent: reading the facts ring: {error}");
+            return fresh();
+        }
+    };
+    let mut state = match interpret::decode_checkpoint::<I::State>(&saved.checkpoint) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("amux agent: reading the checkpoint: {error}");
+            return fresh();
+        }
+    };
+    let ended = saved
+        .entries
+        .last()
+        .is_none_or(|entry| matches!(entry, Entry::ProviderExit { .. } | Entry::Exiting { .. }));
+    for event in saved.entries.into_iter().filter_map(Entry::event) {
+        let _ = I::step(&mut state, event);
+    }
+    let mut steps = Vec::new();
+    if !ended {
+        let stepped = I::step(
+            &mut state,
+            Event::Exiting {
+                cause: UNENDED.to_owned(),
+            },
+        );
+        steps.push(stepped.step);
+    }
+    let (state, resume) = I::reincarnate(state, spec, VERSION);
+    steps.push(resume);
+    (state, steps)
 }
 
 fn ms(configured: u32, default: i64) -> i64 {

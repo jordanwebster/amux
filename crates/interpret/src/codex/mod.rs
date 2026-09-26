@@ -937,6 +937,15 @@ impl<A: Arm> Interpreter for CodexWith<A> {
         (state, step)
     }
 
+    fn reincarnate(mut state: State, spec: &AgentSpec, producer_version: &str) -> (State, Step) {
+        state.shared.reincarnate(spec, producer_version);
+        state.incarnation = spec.incarnation;
+        if !spec.provider_version.is_empty() {
+            state.version = Some(spec.provider_version.clone());
+        }
+        state.resume()
+    }
+
     fn step(state: &mut State, event: Event) -> Stepped {
         let mut emit = Emit::default();
         match event {
