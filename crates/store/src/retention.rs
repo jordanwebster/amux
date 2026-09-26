@@ -304,6 +304,36 @@ pub(crate) fn sweep_replicas(
             .filter(|row| sourced.contains(&row.agent))
             .map(|row| row.agent.clone())
             .collect::<Vec<_>>();
+        // Rows a Reset left below the block are served by Get but are not
+        // history anyone pages through, so they go first, and whole. What
+        // the rounds then trim is the block alone, and its boundary can
+        // only move up to a row inside it: counting a stale row as the
+        // block's oldest would leave the boundary claiming contiguity over
+        // the hole between it and the block.
+        for agent in &candidates {
+            if pool <= budget {
+                break;
+            }
+            let row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+            let floor = match row.complete_from_order {
+                Some(floor) => floor,
+                // No block yet: nothing held is part of one.
+                None => tables.max_order(agent)?.map_or(0, |order| order + 1),
+            };
+            let (before_bytes, before_rows) = tables.agent_bytes(agent)?;
+            tables.remove_items_below(agent, floor)?;
+            let (after_bytes, after_rows) = tables.agent_bytes(agent)?;
+            if before_rows > after_rows {
+                let bytes = before_bytes - after_bytes;
+                pool = pool.saturating_sub(bytes);
+                sweep.steps.push(SweepStep::Trimmed {
+                    agent: agent.clone(),
+                    rows: before_rows - after_rows,
+                    bytes,
+                    from_order: floor,
+                });
+            }
+        }
         pool = trim_rounds(
             tables,
             &candidates,

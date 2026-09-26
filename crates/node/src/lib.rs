@@ -38,6 +38,7 @@ mod routing;
 mod runtime;
 mod serve;
 mod services;
+mod sources;
 mod spec;
 mod transport;
 mod trust;
@@ -69,6 +70,7 @@ pub use runtime::{
     ProfileRuntime, RegistryError, SweepReport, TAIL_ROWS, locked, to_wire,
 };
 pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
+pub use sources::{NO_LONGER_LISTED, SourceHook, SourcePolicy, SourceVerdict};
 
 /// Internals the testnet harness assembles topologies from. Hidden and
 /// unstable: reachable only for test infrastructure, never for products.

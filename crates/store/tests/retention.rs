@@ -142,7 +142,79 @@ both!(
     retention_never_trims_below_the_protected_rows,
     retention_of_replicas_evicts_unfollowed_agents_by_last_use_then_trims_to_k,
     retention_of_a_replica_keeps_its_agents_row_for_the_children_here,
+    retention_of_a_replica_drops_rows_a_reset_left_below_the_block_before_trimming_it,
 );
+
+/// A Reset leaves the old block's rows below the new one: stored for Get,
+/// not history. Trimming takes them first and whole, then trims the block
+/// itself, and the boundary only ever lands on a row inside the block, so
+/// paging down from the top never skips an order.
+fn retention_of_a_replica_drops_rows_a_reset_left_below_the_block_before_trimming_it<S: Store>(
+    mut store: S,
+) {
+    let followed = peer("followed");
+    // Orders 1..=4, then a Reset whose tail is orders 9..=14: 5..=8 are
+    // missing, and 1..=4 are stale rows below the new block.
+    replica(&mut store, &followed, 4, 100);
+    let tail = (9..=14)
+        .map(|order| Item {
+            key: format!("{order:02}"),
+            order,
+            revision: 20 + order,
+            text: "x".repeat(TEXT),
+            kind: "codex".into(),
+            ..Default::default()
+        })
+        .collect();
+    store
+        .absorb(
+            &followed,
+            Absorb::Reset {
+                tail,
+                snapshot: Snapshot {
+                    revision: 40,
+                    at_ms: 200,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(store.pool_bytes(false).unwrap(), 10 * ROW);
+    let sourced = HashSet::from([followed.clone()]);
+
+    let sweep = store
+        .sweep_replicas(8 * ROW, 3, &sourced, &HashMap::new())
+        .unwrap();
+    assert_eq!(
+        describe(&sweep),
+        [format!(
+            "trimmed followed by 4 rows ({} bytes); history now starts at order 9",
+            4 * ROW
+        )],
+        "the stale rows go first and whole, and that is enough"
+    );
+    assert!(store.get(&followed, "01").unwrap().is_none());
+
+    let sweep = store
+        .sweep_replicas(0, 3, &sourced, &HashMap::new())
+        .unwrap();
+    assert_eq!(
+        describe(&sweep),
+        [
+            format!(
+                "trimmed followed by 3 rows ({} bytes); history now starts at order 12",
+                3 * ROW
+            ),
+            "every live agent is at its protected rows; stopping".to_owned(),
+        ]
+    );
+    let row = store.agent(&followed).unwrap().unwrap();
+    assert_eq!((row.complete_from_order, row.exhausted), (Some(12), false));
+    let page = store.page(&followed, None, 10).unwrap();
+    let orders: Vec<u64> = page.items.iter().map(|item| item.order).collect();
+    assert_eq!(orders, [14, 13, 12], "paging down yields no gap");
+    assert_eq!(page.end, PageEnd::Boundary);
+}
 
 /// The accepted scenario: a profile over its budget with a live parent,
 /// its finished children and old exited agents. The old exited agents go

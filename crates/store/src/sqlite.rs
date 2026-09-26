@@ -443,6 +443,30 @@ impl Tables for SqlTables<'_> {
         rows.into_iter().map(finish_item).collect()
     }
 
+    fn items_after(
+        &self,
+        agent: &AgentKey,
+        revision: u64,
+        limit: u32,
+    ) -> Result<Vec<Item>, StoreError> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {ITEM_COLUMNS} FROM items WHERE origin_host = ?1 AND agent_id = ?2 \
+             AND revision > ?3 ORDER BY revision LIMIT ?4"
+        ))?;
+        let rows = statement
+            .query_map(
+                params![
+                    agent.host,
+                    agent.agent,
+                    revision.min(i64::MAX as u64) as i64,
+                    limit
+                ],
+                |row| item_row(row, agent),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(finish_item).collect()
+    }
+
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO deliveries (child_id, incarnation, turn_id, parent_host, \

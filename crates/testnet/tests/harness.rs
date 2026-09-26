@@ -417,9 +417,12 @@ async fn a_rewound_host_loses_what_the_drive_never_got_under_a_new_generation() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_hole() {
+    // The attic is linked to nothing, so no source writes its replica and
+    // the hole written there by hand stays.
     let topology = Topology::new()
         .host("desk")
         .host("laptop")
+        .host("attic")
         .link("desk", "laptop")
         .agent(
             AgentDecl::new("worker", "desk")
@@ -433,11 +436,21 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
         .await
         .unwrap();
     net.assert_block_invariant("desk", "worker").await.unwrap();
+    net.assert_block_invariant("attic", "worker").await.unwrap();
+    // The laptop follows the desk: once settled, its block is the desk's.
+    let mut replica = net.observe("laptop", "worker", 50).await.unwrap();
+    replica
+        .observe_until(
+            |events| says(events, "three") && observe::caught_up(events),
+            PATIENCE,
+        )
+        .await
+        .unwrap();
     net.assert_block_invariant("laptop", "worker")
         .await
         .unwrap();
 
-    // A replica on the laptop that skipped a row: the check names the hole.
+    // A replica in the attic that skipped a row: the check names the hole.
     let worker = net.agent("worker").unwrap().clone();
     let key = worker.key();
     let (origin, snapshot) = {
@@ -450,7 +463,7 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
     let mut holed = origin.clone();
     holed.remove(1);
     {
-        let runtime = net.runtime("laptop").unwrap();
+        let runtime = net.runtime("attic").unwrap();
         let mut store = runtime.store().await;
         store
             .put_agent(&AgentRow::new(key.clone(), "claude_sdk", "/"))
@@ -466,7 +479,7 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
             .unwrap();
     }
     let broken = net
-        .assert_block_invariant("laptop", "worker")
+        .assert_block_invariant("attic", "worker")
         .await
         .expect_err("a hole breaks the block");
     let NetError::Block(violation) = &broken else {
@@ -606,14 +619,28 @@ async fn the_door_serves_a_topology_to_a_real_client_once_it_publishes_readiness
     tokio::task::spawn_blocking(move || {
         let mut door = Door::connect(control);
         // Dispatch and results.
-        let inventory = door.ok(json!({"Inventory": {"host": "laptop"}}));
-        let names: Vec<&str> = inventory["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|agent| agent["name"].as_str())
-            .collect();
-        assert_eq!(names, ["reviewer"]);
+        // The laptop's fleet is its own agent and, once its inventory of
+        // the desk has caught up, the desk's.
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let inventory = door.ok(json!({"Inventory": {"host": "laptop"}}));
+            let mut names: Vec<&str> = inventory["agents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|agent| agent["name"].as_str())
+                .collect();
+            names.sort_unstable();
+            assert!(names.contains(&"reviewer"), "{names:?}");
+            if names == ["reviewer", "writer"] {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the desk's agent never listed: {names:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
         assert_eq!(
             door.ok(json!({"Link": {"a": "desk", "b": "laptop"}}))["up"],
             true

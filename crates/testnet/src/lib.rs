@@ -60,7 +60,8 @@ pub use binaries::Binaries;
 pub use clock::DrivenClock;
 pub use invariant::BlockViolation;
 pub use net::{
-    Ack, AgentRef, ClockMode, EdgeHook, HostInfo, JournalCut, Net, NetError, NetOptions, prompt,
+    Ack, AgentRef, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetError,
+    NetOptions, prompt,
 };
 pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 pub use topology::{AgentDecl, FakeKind, HostDecl, LinkDecl, Topology, TopologyError};

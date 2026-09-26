@@ -301,6 +301,13 @@ pub trait Tables {
         min_order: u64,
         limit: u32,
     ) -> Result<Vec<Item>, StoreError>;
+    /// Items whose revision is above `revision`, oldest revision first.
+    fn items_after(
+        &self,
+        agent: &AgentKey,
+        revision: u64,
+        limit: u32,
+    ) -> Result<Vec<Item>, StoreError>;
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
     fn deliveries(&self) -> Result<Vec<Delivery>, StoreError>;
     fn remove_delivery(
@@ -382,6 +389,15 @@ pub trait Store {
     fn cursor(&self, agent: &AgentKey) -> Result<u64, StoreError>;
     /// The snapshot, the newest `n` rows and the marker, read together.
     fn cut(&self, agent: &AgentKey, n: u32) -> Result<Cut, StoreError>;
+    /// What a peer that holds everything through `revision` is missing:
+    /// every row revised since, in revision order, when there are at most
+    /// `cap` of them; None when there are more, and a tail is the answer.
+    fn after(
+        &self,
+        agent: &AgentKey,
+        revision: u64,
+        cap: u32,
+    ) -> Result<Option<Vec<Item>>, StoreError>;
     fn set_marker(&mut self, agent: &AgentKey, marker: Option<Marker>);
 
     /// Creates a row or updates its registry fields: kind, name, cwd,
@@ -539,6 +555,18 @@ impl<B: Backend> Store for B {
                 held: last_n(tables, agent, own, n)?,
                 marker,
             })
+        })
+    }
+
+    fn after(
+        &self,
+        agent: &AgentKey,
+        revision: u64,
+        cap: u32,
+    ) -> Result<Option<Vec<Item>>, StoreError> {
+        self.read(|tables| {
+            let items = tables.items_after(agent, revision, cap.saturating_add(1))?;
+            Ok((items.len() <= cap as usize).then_some(items))
         })
     }
 

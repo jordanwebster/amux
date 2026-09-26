@@ -107,7 +107,56 @@ conformance!(
     absorb_refuses_own_rows,
     item_by_input_finds_the_item_an_input_produced,
     remove_notification_removes_only_that_one,
+    after_answers_every_row_revised_since_up_to_the_cap,
 );
+
+/// What an origin answers a peer that holds everything through a revision:
+/// the rows revised since, in revision order, each once in its latest
+/// state, while they fit the cap; past it, nothing, and the peer is sent a
+/// tail instead.
+fn after_answers_every_row_revised_since_up_to_the_cap<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    store
+        .commit(
+            &agent,
+            &[
+                (10, items_step(&[item("m1", "one"), item("m2", "two")])),
+                (20, items_step(&[item("m3", "three")])),
+                (30, items_step(&[item("m1", "one, revised")])),
+            ],
+            CLOCK,
+        )
+        .unwrap();
+    // Revisions: m1 1, m2 2, m3 3, then m1 again at 4.
+    let since = |store: &S, revision, cap| {
+        store.after(&agent, revision, cap).unwrap().map(|items| {
+            items
+                .iter()
+                .map(|item| (item.key.clone(), item.revision))
+                .collect::<Vec<_>>()
+        })
+    };
+    let owned = |pairs: &[(&str, u64)]| {
+        Some(
+            pairs
+                .iter()
+                .map(|(key, revision)| ((*key).to_owned(), *revision))
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        since(&store, 1, 10),
+        owned(&[("m2", 2), ("m3", 3), ("m1", 4)])
+    );
+    assert_eq!(since(&store, 2, 2), owned(&[("m3", 3), ("m1", 4)]));
+    assert_eq!(
+        since(&store, 1, 2),
+        None,
+        "three rows do not fit a cap of two"
+    );
+    assert_eq!(since(&store, 4, 0), owned(&[]));
+}
 
 fn rewind_cursor_moves_only_the_cursor_and_only_back<S: Store>(store: S) {
     let agent = own("a");

@@ -1,3 +1,28 @@
+2026-09-26 — **Daemons replicate each other's agents: peer sources keep one contiguous block per replica.**
+Each profile follows every trusted host's inventory while the host has a
+route. At the inventory's CaughtUp it compares the host's generation with
+the one the store recorded, drops every replica of the host on a change,
+writes the rows the host lists and drops the ones it no longer lists; only
+then does the host count as reachable and its agents get sources. A source
+is one Subscribe to the origin: a tail of K with no block, otherwise what
+came after its cursor capped at K, which the origin answers as a delta when
+it fits and as Reset and a fresh tail when it does not. A catch-up is held
+until the origin's CaughtUp and absorbed in one go, so a stream that dies
+midway, even right after its Snapshot, leaves the block as it was and the
+cursor where it was; after that the cursor moves per live record. Records
+are absorbed before they are broadcast; a lost stream is Detached to local
+chats and retried after the cursor on a doubling backoff of the policy
+clock while the host stays reachable; a source for an exited agent closes
+once its catch-up lands. The source policy is Listed (every listed agent)
+or OnDemand (only what a client subscribes to), read by one sweep after
+every inventory catch-up and change. Fetch serves the block locally and
+asks the origin below it, extending the block where the page joins it, and
+is an error when the origin is away; a client's tail is clamped to K. The
+replica retention sweep runs on the retention interval, and now takes the
+rows a Reset left below the block before trimming the block itself, so its
+boundary never claims contiguity over a hole. `crates/testnet/tests/
+spec_replication.rs` holds these against real daemons and agents.
+
 2026-09-26 — **The testnet is rebuilt on the new daemon: topologies, faults, observations and the served door.**
 `crates/testnet` was written against the old runtime and is replaced whole.
 A `Topology` (Rust builder or JSON) declares hosts, the in-process links

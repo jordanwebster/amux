@@ -41,6 +41,10 @@ use crate::topology::{AgentDecl, FakeKind, HostDecl, Topology, TopologyError, li
 /// such as pointing its cloud link at a stand-in relay.
 pub type EdgeHook = Arc<dyn Fn(&str, &mut EdgeOptions) + Send + Sync>;
 
+/// Lets a caller change a host's parameters, such as the tail size K or a
+/// retention budget, on everything the host starts with.
+pub type LaunchHook = Arc<dyn Fn(&str, &mut Launch) + Send + Sync>;
+
 /// Which clock the daemons' policy timers run on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClockMode {
@@ -58,6 +62,7 @@ pub struct NetOptions {
     /// stand-in relay, must share it; a fresh one otherwise.
     pub driven: Option<DrivenClock>,
     pub edge: Option<EdgeHook>,
+    pub launch: Option<LaunchHook>,
 }
 
 /// A verb's acknowledgement: what was installed, at what policy time.
@@ -186,6 +191,7 @@ pub struct Net {
     binaries: Binaries,
     bus: ScriptedDiscovery,
     edge_hook: Option<EdgeHook>,
+    launch_hook: Option<LaunchHook>,
     hosts: BTreeMap<String, Host>,
     links: BTreeMap<(String, String), Link>,
     agents: BTreeMap<String, AgentRef>,
@@ -222,6 +228,7 @@ impl Net {
             binaries: Binaries::built().clone(),
             bus: ScriptedDiscovery::new(),
             edge_hook: options.edge,
+            launch_hook: options.launch,
             hosts: BTreeMap::new(),
             links: BTreeMap::new(),
             agents: BTreeMap::new(),
@@ -532,6 +539,9 @@ impl Net {
         launch.agent.grace_secs = 20;
         launch.agent.drain_secs = 5;
         launch.stop_deadline_ms = 15_000;
+        if let Some(hook) = &self.launch_hook {
+            hook(&host.name, &mut launch);
+        }
         launch
     }
 

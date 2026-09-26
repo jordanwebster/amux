@@ -161,6 +161,25 @@ impl Tables for Data {
             .collect())
     }
 
+    fn items_after(
+        &self,
+        agent: &AgentKey,
+        revision: u64,
+        limit: u32,
+    ) -> Result<Vec<Item>, StoreError> {
+        let Some(items) = self.items.get(agent) else {
+            return Ok(Vec::new());
+        };
+        let mut after: Vec<Item> = items
+            .values()
+            .filter(|item| item.revision > revision)
+            .cloned()
+            .collect();
+        after.sort_by_key(|item| item.revision);
+        after.truncate(limit as usize);
+        Ok(after)
+    }
+
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError> {
         self.deliveries.insert(
             (

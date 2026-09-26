@@ -128,6 +128,14 @@ pub struct Launch {
     pub tail_rows: u32,
     /// How often the retention sweep runs.
     pub retention_interval_ms: i64,
+    /// The bytes rows replicated from other hosts may hold.
+    pub replica_budget_bytes: u64,
+    /// The bytes replica blob files may hold.
+    pub replica_blob_budget_bytes: u64,
+    /// A source's first wait before reconnecting to a reachable origin;
+    /// it doubles on each failure up to the ceiling.
+    pub source_backoff_ms: i64,
+    pub source_backoff_max_ms: i64,
 }
 
 impl Default for Launch {
@@ -153,6 +161,11 @@ impl Default for Launch {
             retention_chunk_bytes: 4 << 20,
             tail_rows: TAIL_ROWS,
             retention_interval_ms: 10 * 60_000,
+            replica_budget_bytes: settings::RetentionSettings::default().replica_rows_mib << 20,
+            replica_blob_budget_bytes: settings::RetentionSettings::default().replica_blobs_mib
+                << 20,
+            source_backoff_ms: 1_000,
+            source_backoff_max_ms: 30_000,
         }
     }
 }
@@ -274,6 +287,10 @@ pub struct ProfileRuntime {
     pub(crate) me: Weak<ProfileRuntime>,
     /// The network edge, once the profile is in service.
     edge: std::sync::OnceLock<Arc<crate::edge::Edge>>,
+    /// Followers of trusted hosts and the sources of replica agents.
+    pub(crate) sources: Mutex<crate::sources::Sources>,
+    /// Replica blob files by last read, indexed at the first sweep.
+    pub(crate) replica_blobs: Mutex<Option<store::BlobLru>>,
 }
 
 pub(crate) struct AgentHandle {
@@ -397,6 +414,7 @@ impl Drop for ProfileRuntime {
         for task in self.background.get_mut().unwrap().drain(..) {
             task.abort();
         }
+        self.sources.get_mut().unwrap().abort_all();
     }
 }
 
@@ -458,6 +476,8 @@ impl ProfileRuntime {
             daemon_log,
             me: me.clone(),
             edge: std::sync::OnceLock::new(),
+            sources: Mutex::new(crate::sources::Sources::default()),
+            replica_blobs: Mutex::new(None),
         })
     }
 
@@ -473,7 +493,9 @@ impl ProfileRuntime {
         let edge =
             crate::edge::Edge::start(&self.dir, options, self.clock.clone(), Arc::downgrade(self))
                 .await?;
-        Ok(self.edge.get_or_init(|| edge).clone())
+        let edge = self.edge.get_or_init(|| edge).clone();
+        self.start_replication();
+        Ok(edge)
     }
 
     /// The profile's network edge, once started.
@@ -483,6 +505,7 @@ impl ProfileRuntime {
 
     /// Closes the edge's links with `reason` and stops serving the network.
     pub async fn stop_edge(&self, reason: wire::LinkCloseReason) {
+        self.sources.lock().unwrap().abort_all();
         if let Some(edge) = self.edge.get() {
             edge.stop(reason).await;
         }
@@ -1452,7 +1475,7 @@ impl ProfileRuntime {
     }
 
     /// Tells inventory subscribers what the row now says.
-    fn publish_row(&self, store: &Sqlite, key: &AgentKey) -> Result<(), StoreError> {
+    pub(crate) fn publish_row(&self, store: &Sqlite, key: &AgentKey) -> Result<(), StoreError> {
         if let Some(row) = store.agent(key)? {
             self.fanout
                 .publish_inventory(inventory(inventory_event::Of::Agent(to_wire(&row))));

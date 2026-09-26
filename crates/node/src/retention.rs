@@ -8,13 +8,16 @@
 //! directories, which takes their blobs with them. The sweep runs when the
 //! background work starts and then on its interval, on the runtime's clock.
 
+use std::collections::HashSet;
 use std::io;
+use std::path::PathBuf;
 
-use store::{Store as _, Sweep};
+use store::{BlobLru, Store as _, Sweep};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{AgentRemoved, inventory_event};
 
+use crate::install::REPLICAS;
 use crate::runtime::{ProfileRuntime, RegistryError};
 use crate::serve::inventory;
 
@@ -28,6 +31,10 @@ pub struct Retention {
     pub runs: u64,
     /// What the last one did.
     pub last: Option<Sweep>,
+    /// What the last one did to replica rows.
+    pub replicas: Option<Sweep>,
+    /// The replica blob files the last one deleted.
+    pub replica_blobs: Vec<std::path::PathBuf>,
 }
 
 impl ProfileRuntime {
@@ -80,6 +87,33 @@ impl ProfileRuntime {
         Ok(sweep)
     }
 
+    /// Runs one replica retention sweep: rows to their budget, evicting
+    /// agents with no source least recently used first and trimming the
+    /// rest to K with their block kept whole, then replica blob files to
+    /// theirs, least recently read first.
+    pub async fn sweep_replica_retention(&self) -> Result<(Sweep, Vec<PathBuf>), RegistryError> {
+        let launch = self.launch();
+        let (sourced, last_used): (HashSet<_>, _) = self.sources_in_use();
+        let sweep = self.store.lock().await.sweep_replicas(
+            launch.replica_budget_bytes,
+            launch.tail_rows,
+            &sourced,
+            &last_used,
+        )?;
+        let root = self.dir().join(REPLICAS);
+        let now = self.clock_now();
+        let mut blobs = self.replica_blobs.lock().unwrap();
+        if blobs.is_none() {
+            *blobs = Some(BlobLru::scan(&root, now)?);
+        }
+        let removed = blobs
+            .as_mut()
+            .expect("scanned above")
+            .sweep(launch.replica_blob_budget_bytes)?;
+        drop(blobs);
+        Ok((sweep, removed))
+    }
+
     /// The sweeps run so far, and each one as it finishes.
     pub fn retention(&self) -> tokio::sync::watch::Receiver<Retention> {
         self.retention.subscribe()
@@ -92,6 +126,13 @@ impl ProfileRuntime {
                 let Some(me) = runtime.upgrade() else { return };
                 if let Err(error) = me.sweep_retention().await {
                     tracing::warn!(%error, "the retention sweep failed");
+                }
+                match me.sweep_replica_retention().await {
+                    Ok((sweep, blobs)) => me.retention.send_modify(|retention| {
+                        retention.replicas = Some(sweep);
+                        retention.replica_blobs = blobs;
+                    }),
+                    Err(error) => tracing::warn!(%error, "the replica retention sweep failed"),
                 }
                 let clock = me.clock().clone();
                 let next = clock.now_ms() + me.launch().retention_interval_ms;

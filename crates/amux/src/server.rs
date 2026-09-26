@@ -59,6 +59,8 @@ fn launch(config: &InstallationConfig) -> Result<Launch> {
         install_path,
         agent: config.agent,
         own_budget_bytes: config.retention.own_budget_mib << 20,
+        replica_budget_bytes: config.retention.replica_rows_mib << 20,
+        replica_blob_budget_bytes: config.retention.replica_blobs_mib << 20,
         ..Launch::default()
     })
 }

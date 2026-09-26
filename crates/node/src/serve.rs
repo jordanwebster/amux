@@ -20,6 +20,16 @@ use crate::runtime::{ProfileRuntime, to_wire};
 
 /// The most items one Fetch returns, whatever the limit asked for.
 pub const MAX_PAGE: u32 = 500;
+/// The most rows a peer's catch-up may ask for.
+const MAX_CAP: u32 = 10_000;
+
+/// Where a Subscribe starts.
+enum Opening {
+    /// A client's: the newest rows.
+    Tail(u32),
+    /// A peer source's: what came after the revision it holds.
+    After { revision: u64, cap: u32 },
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -147,9 +157,32 @@ fn row_by_id(store: &Sqlite, own_host: &[u8], agent_id: &[u8]) -> Result<AgentRo
 
 impl ProfileRuntime {
     /// Opens a Subscribe stream on an agent: its Snapshot, the newest
-    /// `tail` rows of its block, its marker if one is set, then every event
-    /// its source broadcasts.
+    /// `tail` rows of its block (at most K), its marker if one is set, then
+    /// every event its source broadcasts.
     pub async fn subscribe(&self, agent_id: &[u8], tail: u32) -> Result<Subscription, ServeError> {
+        self.open_subscription(agent_id, Opening::Tail(tail)).await
+    }
+
+    /// Opens a Subscribe stream for a peer that holds everything through
+    /// `revision`: the rows revised since, in revision order, when there
+    /// are at most `cap`; otherwise Reset and the newest `cap` rows. Either
+    /// way the Snapshot leads and the marker follows, then every event.
+    pub async fn subscribe_after(
+        &self,
+        agent_id: &[u8],
+        revision: u64,
+        cap: u32,
+    ) -> Result<Subscription, ServeError> {
+        self.open_subscription(agent_id, Opening::After { revision, cap })
+            .await
+    }
+
+    async fn open_subscription(
+        &self,
+        agent_id: &[u8],
+        from: Opening,
+    ) -> Result<Subscription, ServeError> {
+        let k = self.launch().tail_rows;
         // The store stays locked from the join through the whole opening.
         // Commits and marker changes need the store exclusively and publish
         // while they hold it, so with the lock held nothing commits between
@@ -162,13 +195,37 @@ impl ProfileRuntime {
         // held; do not release it between the marker read and the row read.
         let store = self.store.lock().await;
         let row = row_by_id(&store, store.own_host(), agent_id)?;
+        let own = row.agent.host == store.own_host();
+        if !own {
+            self.used(&row.agent);
+            self.ensure_source(&row.agent);
+        }
         let live = self.fanout.join(&row.agent);
         let hook = self.join_hook.lock().unwrap().clone();
         if let Some(hook) = hook {
             hook().await;
         }
-        let cut = store.cut(&row.agent, tail)?;
-        let mut opening = VecDeque::with_capacity(cut.held.len() + 2);
+        let (reset, rows, cut) = match from {
+            // A client's tail never exceeds what a replica keeps.
+            Opening::Tail(tail) => {
+                let mut cut = store.cut(&row.agent, tail.min(k))?;
+                (false, std::mem::take(&mut cut.held), cut)
+            }
+            Opening::After { revision, cap } => {
+                let cap = cap.min(MAX_CAP);
+                match store.after(&row.agent, revision, cap)? {
+                    Some(delta) => (false, delta, store.cut(&row.agent, 0)?),
+                    None => {
+                        let mut cut = store.cut(&row.agent, cap)?;
+                        (true, std::mem::take(&mut cut.held), cut)
+                    }
+                }
+            }
+        };
+        let mut opening = VecDeque::with_capacity(rows.len() + 3);
+        if reset {
+            opening.push_back(Arc::new(event(session_event::Of::Reset(wire::Reset {}))));
+        }
         let snapshot = cut.snapshot.unwrap_or_else(|| Snapshot {
             // Nothing emitted yet: the kind tag and an empty body.
             agent: row.agent.agent.clone(),
@@ -176,12 +233,18 @@ impl ProfileRuntime {
             ..Snapshot::default()
         });
         opening.push_back(Arc::new(event(session_event::Of::Snapshot(snapshot))));
-        for item in cut.held {
+        for item in rows {
             opening.push_back(Arc::new(event(session_event::Of::Item(item))));
         }
-        match cut.marker {
+        let marker = match cut.marker {
+            // A replica nobody follows is served as it stands, stale and
+            // honestly: its host is away, or no source has reached it yet.
+            None if !own && !self.source_open(&row.agent) => Some(Marker::Detached),
+            marker => marker,
+        };
+        match marker {
             Some(Marker::CaughtUp) => {
-                let revision = if row.agent.host == store.own_host() {
+                let revision = if own {
                     row.next_revision.saturating_sub(1)
                 } else {
                     row.source_cursor
@@ -206,21 +269,47 @@ impl ProfileRuntime {
     }
 
     /// A page of older items by order, newest first. Held rows answer it;
-    /// below a replica's block the history is at the origin, and an origin
-    /// that cannot be asked is an error, never an empty page.
+    /// below a replica's block the history is at the origin, which is asked
+    /// and whose answer extends the block where it joins it. An origin that
+    /// cannot be asked is an error, never an empty page.
     pub async fn fetch(&self, request: &FetchRequest) -> Result<FetchResponse, ServeError> {
-        let store = self.store.lock().await;
-        let row = row_by_id(&store, store.own_host(), &request.agent_id)?;
-        let page = store.page(
-            &row.agent,
-            request.before_order,
-            request.limit.min(MAX_PAGE),
-        )?;
-        match page.end {
-            PageEnd::Boundary if page.items.is_empty() => Err(ServeError::OriginUnreachable),
-            end => Ok(FetchResponse {
+        let limit = request.limit.min(MAX_PAGE);
+        let (row, page) = {
+            let store = self.store.lock().await;
+            let row = row_by_id(&store, store.own_host(), &request.agent_id)?;
+            let page = store.page(&row.agent, request.before_order, limit)?;
+            (row, page)
+        };
+        let own = row.agent.host == self.host().as_bytes().as_slice();
+        if own || page.end != PageEnd::Boundary || page.items.len() >= limit as usize {
+            return Ok(FetchResponse {
+                exhausted: page.end == PageEnd::Exhausted,
                 items: page.items,
-                exhausted: end == PageEnd::Exhausted,
+            });
+        }
+        self.used(&row.agent);
+        // Below the block: the origin's page starts where the held rows
+        // stop, or where the request asked if that is lower still.
+        let before = match (row.complete_from_order, request.before_order) {
+            (Some(floor), Some(before)) => Some(floor.min(before)),
+            (Some(floor), None) => Some(floor),
+            (None, before) => before,
+        };
+        let wanted = limit - page.items.len() as u32;
+        match self.fetch_from_origin(&row.agent, before, wanted).await {
+            Ok(older) => {
+                let mut items = page.items;
+                items.extend(older.items);
+                Ok(FetchResponse {
+                    items,
+                    exhausted: older.exhausted,
+                })
+            }
+            Err(()) if page.items.is_empty() => Err(ServeError::OriginUnreachable),
+            // What is held is served; the next page down asks again.
+            Err(()) => Ok(FetchResponse {
+                items: page.items,
+                exhausted: false,
             }),
         }
     }

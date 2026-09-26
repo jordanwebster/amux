@@ -624,6 +624,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
                     credentials: None,
                 };
             })),
+            ..NetOptions::default()
         },
     )
     .await

@@ -110,6 +110,11 @@ impl ProfileRuntime {
         }
         let row = self.blob_owner(&request.agent_id).await?;
         let path = self.blob_path(&row, &request.hash);
+        if row.agent.host != self.host().as_bytes()
+            && let Some(blobs) = self.replica_blobs.lock().unwrap().as_mut()
+        {
+            blobs.touch(&path, self.clock_now());
+        }
         let bytes = match tokio::fs::read(&path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {

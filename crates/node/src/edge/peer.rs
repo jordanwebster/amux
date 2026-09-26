@@ -14,8 +14,8 @@ use wire::{
     Agent, BlobRef, CreateAgentRequest, DeleteAgentRequest, DeleteAgentResponse, DiffRequest,
     Empty, Envelope, FetchRequest, FetchResponse, GetBlobRequest, GetBlobResponse, GetRequest,
     Item, ListRepositoriesRequest, ListRepositoriesResponse, PutBlobRequest, RenameAgentRequest,
-    ResumeAgentRequest, SendInputRequest, SendInputResponse, SendMessageResponse, StopAgentRequest,
-    SubscribeRequest,
+    ResumeAgentRequest, SendInputRequest, SendInputResponse, SendMessageResponse, SessionEvent,
+    StopAgentRequest, SubscribeRequest, subscribe_request,
 };
 
 use crate::HostId;
@@ -82,12 +82,36 @@ impl PeerService for PeerApi {
         self.client.subscribe_inventory(request).await
     }
 
+    /// A peer asks for a tail, like a client, or for what came after the
+    /// revision its replica holds, capped.
     async fn subscribe(
         &self,
         request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         caller(&request)?;
-        self.client.subscribe(request).await
+        let request = request.into_inner();
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| Status::unavailable("the profile is no longer running"))?;
+        let subscription = match request.from {
+            Some(subscribe_request::From::After(after)) => {
+                runtime
+                    .subscribe_after(&request.agent_id, after.revision, after.cap)
+                    .await
+            }
+            Some(subscribe_request::From::Tail(tail)) => {
+                runtime.subscribe(&request.agent_id, tail).await
+            }
+            None => runtime.subscribe(&request.agent_id, 0).await,
+        }
+        .map_err(|error| status(error.to_wire()))?;
+        drop(runtime);
+        let stream = futures_util::stream::unfold(subscription, |mut subscription| async move {
+            let event = subscription.next().await?;
+            Some((Ok(SessionEvent::clone(&event)), subscription))
+        });
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn fetch(
