@@ -400,6 +400,11 @@ pub trait Store {
         frames: &[(u64, Step)],
         clock: CommitClock,
     ) -> Result<Committed, StoreError>;
+    /// Moves an own row's ingest cursor back to where its journal now
+    /// ends, after a power cut took the journal's tail but not the store's
+    /// commit of it. Everything committed stays, and so does the next
+    /// revision: what the agent writes again is new to every reader.
+    fn rewind_cursor(&mut self, agent: &AgentKey, cursor: u64) -> Result<(), StoreError>;
     fn absorb(&mut self, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError>;
     /// Drops every replica of `host` and records its new generation in one
     /// transaction. Returns how many agents were dropped.
@@ -593,6 +598,17 @@ impl<B: Backend> Store for B {
             return Err(StoreError::NotOwn);
         }
         self.write(|tables| commit(tables, agent, frames, clock))
+    }
+
+    fn rewind_cursor(&mut self, agent: &AgentKey, cursor: u64) -> Result<(), StoreError> {
+        if !is_own(self, agent) {
+            return Err(StoreError::NotOwn);
+        }
+        self.write(|tables| {
+            let mut row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+            row.ingest_cursor = row.ingest_cursor.min(cursor);
+            tables.put_agent(&row)
+        })
     }
 
     fn absorb(&mut self, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError> {

@@ -96,6 +96,7 @@ conformance!(
     commit_refuses_replica_rows_and_unknown_agents,
     delete_removes_an_agent_whole,
     put_agent_keeps_committed_state,
+    rewind_cursor_moves_only_the_cursor_and_only_back,
     a_reset_replaces_the_block_and_keeps_older_rows_for_get,
     a_delta_joins_above_and_only_live_records_move_the_cursor,
     older_revisions_never_overwrite_newer,
@@ -107,6 +108,35 @@ conformance!(
     item_by_input_finds_the_item_an_input_produced,
     remove_notification_removes_only_that_one,
 );
+
+fn rewind_cursor_moves_only_the_cursor_and_only_back<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    store
+        .commit(
+            &agent,
+            &[
+                (10, items_step(&[item("m1", "one")])),
+                (20, items_step(&[item("m2", "two")])),
+            ],
+            CLOCK,
+        )
+        .unwrap();
+    store.rewind_cursor(&agent, 10).unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!((row.ingest_cursor, row.next_revision), (10, 3));
+    assert_eq!(store.page(&agent, None, 10).unwrap().items.len(), 2);
+    store.rewind_cursor(&agent, 30).unwrap();
+    assert_eq!(
+        store.cursor(&agent).unwrap(),
+        10,
+        "a rewind never moves forward"
+    );
+    assert!(matches!(
+        store.rewind_cursor(&peer("r"), 0),
+        Err(StoreError::NotOwn)
+    ));
+}
 
 fn commit_assigns_revisions_per_record_and_orders_once_per_key<S: Store>(store: S) {
     let agent = own("a");

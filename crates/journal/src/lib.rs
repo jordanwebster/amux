@@ -85,6 +85,22 @@ pub fn reclaimable(dir: &Path, durable_cursor: u64, keep: usize) -> io::Result<V
     Ok(below[..reclaim].to_vec())
 }
 
+/// The global offset just past the journal's last whole frame: where a
+/// writer opening the journal now would append. Zero for an empty journal.
+/// A consumer whose cursor lies beyond it lost the journal's tail to a
+/// power cut after storing that cursor.
+pub fn end(dir: &Path) -> io::Result<u64> {
+    let Some(&start) = segments(dir)?.last() else {
+        return Ok(0);
+    };
+    match fs::read(segment_path(dir, start)) {
+        Ok(bytes) => Ok(start + whole_prefix(&bytes) as u64),
+        // Reclaimed or cut between listing and reading: look again.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => end(dir),
+        Err(error) => Err(error),
+    }
+}
+
 /// Encodes one frame: varint length, then the step.
 pub fn encode_frame(step: &Step) -> Vec<u8> {
     step.encode_length_delimited_to_vec()

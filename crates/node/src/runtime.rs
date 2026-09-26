@@ -1061,9 +1061,25 @@ impl ProfileRuntime {
         // a subscribe waiting on the lock reads a cut either wholly before
         // this batch or wholly after it.
         let mut store = self.store.lock().await;
-        let cursor = store.cursor(&key)?;
+        let mut cursor = store.cursor(&key)?;
         let mut reader = journal::Reader::new(&journal_dir, cursor);
-        let batch = reader.read_to_end()?;
+        let mut batch = reader.read_to_end()?;
+        if batch.frames.is_empty() {
+            // Nothing past the cursor may mean the cursor is past the
+            // journal: the store reached the drive after committing frames
+            // the unsynced journal then lost to a power cut. The agent
+            // re-derives from the last whole frame, so that is where the
+            // cursor goes; revisions keep counting up, so what it writes
+            // again is new to every subscriber.
+            let end = journal::end(&journal_dir)?;
+            if end < cursor {
+                tracing::warn!(agent = %id, cursor, end, "the journal ends below the cursor; rewinding");
+                store.rewind_cursor(&key, end)?;
+                cursor = end;
+                reader.seek(end);
+                batch = reader.read_to_end()?;
+            }
+        }
         // A torn frame in the newest segment is a write still under way:
         // the journal has not ended yet, and its Nudge will come.
         let at_end = !matches!(batch.torn, Some(journal::Torn { skipped: false, .. }));

@@ -1,3 +1,17 @@
+2026-09-26 — **Ingest rewinds its cursor when a power cut leaves the journal shorter than the store.**
+The store can reach the drive after committing frames that the agent's
+journal, which is never synced, then loses to a power cut. The daemon read
+from its stored cursor, past the journal's new end, so what the agent
+re-derived from its last whole frame was never read, or was read from the
+middle of a frame. When a read finds nothing past the cursor, ingest now
+compares the cursor with the journal's last whole frame and, if the journal
+ends below it, commits the cursor back to that frame and keeps the next
+revision, so the re-derived steps commit and broadcast under fresh
+revisions. New tests cover that case, a multi-frame batch whose later frame
+fails to commit (none of it commits or is broadcast), and the startup sweep
+over a child that finished its turn while no daemon ran (one finished
+delivery, no failed one, and CaughtUp at the last committed revision).
+
 2026-09-26 — **An agent's tools socket makes only the calls its tools need.**
 The client service on an agent's tools socket now refuses, as permission
 denied, an input to any agent that is not the caller's own direct child

@@ -969,6 +969,194 @@ async fn power_loss_bumps_the_generation_and_re_ingests_from_the_durable_cursor(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_journal_cut_below_a_durable_cursor_rewinds_it_and_re_derived_steps_commit_anew() {
+    let install = Install::new();
+    let mut agent = SyntheticAgent::new(&install, "rewind", BIG_SEGMENTS);
+    agent.register_offline(&install);
+    let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
+    let offsets = write_and_ingest(&runtime, &mut agent, &steps()).await;
+    // The store reaches the drive after the last step; the journal, never
+    // synced, keeps only what the cut leaves of it.
+    runtime.store().await.flush_to_drive().unwrap();
+    let before = held(&runtime, &agent, &install).await;
+    assert_eq!(before.cursor, offsets[7]);
+    let checkpointed = checkpointed_store(&runtime, &install).await;
+    crash(daemon, runtime);
+    lose_power(&install, &checkpointed);
+    journal::synthetic::cut(&agent.dir.join(agent_dir::JOURNAL), offsets[5] + 3).unwrap();
+
+    let (daemon, runtime) = start(&install, "boot-2", quiet_launch()).await;
+    assert_eq!(daemon.generation().counter, 2);
+    let after = held(&runtime, &agent, &install).await;
+    assert_eq!(
+        after.cursor, offsets[5],
+        "the cursor rewound to the journal's last whole frame"
+    );
+    assert_eq!(after.items, before.items, "nothing committed is lost");
+    assert_eq!(after.snapshot, before.snapshot);
+    assert_eq!(
+        after.next_revision, before.next_revision,
+        "revisions keep counting up from where they were"
+    );
+
+    let mut subscription = runtime.subscribe(agent.id.as_bytes(), 10).await.unwrap();
+    let mut opening = Vec::new();
+    read_until(&mut subscription, &mut opening, "the opening", |seen| {
+        caught_ups(seen) == 1
+    })
+    .await;
+    // The agent re-derives what the journal lost.
+    agent.reopen_journal();
+    write_and_ingest(
+        &runtime,
+        &mut agent,
+        &[snapshot(Phase::Idle, &[], 3_000), item("d", "four, again")],
+    )
+    .await;
+    let revision = before.next_revision;
+    let mut live = Vec::new();
+    read_until(
+        &mut subscription,
+        &mut live,
+        "the re-derived steps",
+        |seen| seen.len() == 2,
+    )
+    .await;
+    assert_eq!(
+        log(&live),
+        vec![
+            format!("snapshot r{revision} Idle queue=[]"),
+            format!("item d o4 r{} \"four, again\"", revision + 1),
+        ],
+        "the re-derived steps are broadcast under fresh revisions"
+    );
+    let rederived = held(&runtime, &agent, &install).await;
+    assert_eq!(
+        rederived.items["d"],
+        (4, revision + 1, "four, again".to_owned())
+    );
+    assert_eq!(rederived.snapshot, Some((revision, Vec::new())));
+    crash(daemon, runtime);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_batch_that_fails_on_a_later_frame_commits_and_broadcasts_none_of_it() {
+    let install = Install::new();
+    let mut agent = SyntheticAgent::new(&install, "batch", BIG_SEGMENTS);
+    agent.register_offline(&install);
+    let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
+    let steps = steps();
+    write_and_ingest(&runtime, &mut agent, &steps[..1]).await;
+    let mut subscription = runtime.subscribe(agent.id.as_bytes(), 0).await.unwrap();
+    let mut opening = Vec::new();
+    drain(&mut subscription, &mut opening, Duration::from_millis(20)).await;
+    let before = held(&runtime, &agent, &install).await;
+
+    // Four frames read in one batch; the fourth's item write fails.
+    for step in &steps[1..5] {
+        agent.append(step);
+    }
+    runtime
+        .store()
+        .await
+        .connection()
+        .execute_batch(
+            "CREATE TEMP TRIGGER cut BEFORE INSERT ON items WHEN NEW.key = 'c' \
+             BEGIN SELECT RAISE(ABORT, 'cut'); END;",
+        )
+        .unwrap();
+    assert!(runtime.ingest(agent.id).await.is_err());
+    assert_eq!(
+        held(&runtime, &agent, &install).await,
+        before,
+        "none of the batch's earlier frames committed"
+    );
+    let mut live = Vec::new();
+    drain(&mut subscription, &mut live, Duration::from_millis(50)).await;
+    assert!(
+        live.is_empty(),
+        "nothing of a failed batch is broadcast: {:?}",
+        log(&live)
+    );
+
+    runtime
+        .store()
+        .await
+        .connection()
+        .execute_batch("DROP TRIGGER temp.cut;")
+        .unwrap();
+    runtime.ingest(agent.id).await.unwrap();
+    read_until(&mut subscription, &mut live, "the batch", |seen| {
+        seen.len() == 4
+    })
+    .await;
+    assert_eq!(
+        log(&live),
+        vec![
+            "item b o2 r2 \"tw\"",
+            "append b r3 base r2 \"o\"",
+            "snapshot r4 Working queue=[\"q1\"]",
+            "item c o3 r5 \"three\"",
+        ],
+        "the retried batch commits whole"
+    );
+    crash(daemon, runtime);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sweep_ingests_a_finished_childs_journal_before_marking_it_exited() {
+    let install = Install::new();
+    let parent = SyntheticAgent::new(&install, "parent", BIG_SEGMENTS);
+    parent.register_offline(&install);
+    let mut child = SyntheticAgent::new(&install, "child", BIG_SEGMENTS);
+    child.parent = Some(parent.key(&install));
+    child.register_offline(&install);
+    // The child finished its turn and exited while no daemon ran.
+    child.append(&snapshot(Phase::Working, &[], 2_000));
+    child.append(&item("last", "the tests pass"));
+    child.append(&turn_end(1, "last"));
+
+    let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
+    assert!(
+        daemon
+            .sweep(install.profile)
+            .unwrap()
+            .exited
+            .contains(&child.id)
+    );
+    // The parent has exited too, so the outbox keeps what the sweep wrote.
+    let deliveries: Vec<_> = runtime
+        .store()
+        .await
+        .deliveries()
+        .unwrap()
+        .into_iter()
+        .map(|row| (wire::EnvelopeKind::try_from(row.kind).unwrap(), row.body))
+        .collect();
+    assert_eq!(
+        deliveries,
+        vec![(wire::EnvelopeKind::Finished, "the tests pass".to_owned())],
+        "one finished delivery and no failed one"
+    );
+    let mut subscription = runtime.subscribe(child.id.as_bytes(), 10).await.unwrap();
+    let mut opening = Vec::new();
+    read_until(&mut subscription, &mut opening, "the opening", |seen| {
+        caught_ups(seen) == 1
+    })
+    .await;
+    assert_eq!(
+        log(&opening),
+        vec![
+            "snapshot r3 Idle queue=[]",
+            "item last o1 r2 \"the tests pass\"",
+            "caught_up r3",
+        ],
+        "CaughtUp carries the last committed revision"
+    );
+    crash(daemon, runtime);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_crash_under_the_same_boot_id_bumps_nothing() {
     let install = Install::new();
     let mut agent = SyntheticAgent::new(&install, "crash", BIG_SEGMENTS);
