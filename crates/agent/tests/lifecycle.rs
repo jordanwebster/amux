@@ -72,6 +72,7 @@ async fn an_orphan_finishes_its_turn_before_it_exits() {
     let mut daemon = agent.dial().await;
     agent.ready().await;
     assert_eq!(daemon.prompt(b"p1", "start").await, Verdict::Accepted);
+    assert!(daemon.nudges > 0, "the journal grew before the verdict");
     agent
         .wait("the turn is under way", |log| log.has_text("working"))
         .await;
@@ -107,11 +108,15 @@ async fn an_orphan_finishes_its_turn_before_it_exits() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_dialling_back_in_cancels_the_grace() {
     let agent = Agent::start(Setup::sdk()).await;
+    // Nothing is journaled once the provider is ready, so the Hello's
+    // offset below is the journal's end.
+    agent.ready().await;
     let daemon = agent.dial().await;
     drop(daemon);
     agent.clock.armed(T0 + GRACE).await;
 
     let mut daemon = agent.dial().await;
+    assert_eq!(daemon.hello.journal_offset, agent.journal_end());
     agent
         .until("the grace is no longer armed", || {
             agent.clock.sleeping().is_empty()

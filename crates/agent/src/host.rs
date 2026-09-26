@@ -199,8 +199,12 @@ pub(crate) async fn run<I: Interpreter>(
         frames_tx,
     };
     let result = host.run(&mut channels).await;
+    // The listeners live in these tasks; waiting for each to be dropped
+    // removes the sockets before the lock is released, so a next
+    // incarnation never has its socket removed by this one.
     for task in tasks {
         task.abort();
+        let _ = task.await;
     }
     result
 }

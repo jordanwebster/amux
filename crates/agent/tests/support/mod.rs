@@ -208,6 +208,7 @@ impl Agent {
             reader,
             writer,
             hello,
+            nudges: 0,
         }
     }
 
@@ -246,6 +247,14 @@ impl Agent {
         })
         .await;
         assert!(waited.is_ok(), "timed out waiting until {what}");
+    }
+
+    /// The journal's length: where a daemon's reader would stand once it
+    /// had read everything.
+    pub fn journal_end(&self) -> u64 {
+        let mut reader = journal::Reader::new(self.dir.join(agent::JOURNAL), 0);
+        reader.read_to_end().unwrap();
+        reader.cursor()
     }
 
     /// Everything journaled so far.
@@ -294,7 +303,18 @@ impl Agent {
             .write(true)
             .open(self.dir.join(agent::LOCK))
             .unwrap();
-        assert!(lock.try_lock().is_ok(), "the agent released its lock");
+        // Other tests in this process spawn children at the same time, and
+        // a child being spawned can hold a copy of every descriptor until it
+        // execs; a lock the agent closed has been seen held for about a
+        // millisecond that way. Allow a moment, never a hang.
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while lock.try_lock().is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the agent released its lock"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert!(
             !self.dir.join(agent::CTL_SOCK).exists(),
             "the agent removed ctl.sock"
@@ -353,6 +373,8 @@ pub struct Daemon {
     reader: ReadHalf<LocalStream>,
     writer: WriteHalf<LocalStream>,
     pub hello: AgentHello,
+    /// Nudges read so far.
+    pub nudges: usize,
 }
 
 impl Daemon {
@@ -366,7 +388,11 @@ impl Daemon {
     pub async fn prompt(&mut self, id: &[u8], text: &str) -> Verdict {
         self.send(ctl_frame::Of::Input(prompt(id, text))).await;
         loop {
-            if let Some(ctl_frame::Of::Reply(reply)) = next_frame(&mut self.reader).await.of
+            let frame = next_frame(&mut self.reader).await.of;
+            if let Some(ctl_frame::Of::Nudge(_)) = frame {
+                self.nudges += 1;
+            }
+            if let Some(ctl_frame::Of::Reply(reply)) = frame
                 && reply.input_id == id
             {
                 return match reply.verdict.and_then(|verdict| verdict.of) {
