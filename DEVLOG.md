@@ -1,3 +1,17 @@
+2026-09-26 — **fake-claude-sdk plays authored scripts the way headless Claude runs a session.**
+A script is the model's side of a session — streamed text, thinking, tool
+calls by class with their outcome, asks, pauses on a file, turn ends, an
+exit code — and the fake supplies the provider's side as Claude 2.1.283
+does it: the stdin `uuid` echoed on the reflection and on
+`command_lifecycle` frames, a default-priority message written mid-turn
+folded into the running turn at its next tool result, `later` waiting for
+its own turn, `now` and `interrupt` cutting the turn short,
+`cancel_async_message` withdrawing a message still queued, and permission,
+question, plan and form asks as control requests that block until
+answered. Every frame it composes is checked against the recorded corpus
+by shape: each field must appear on some recorded frame of the same kind,
+and every field the newest recordings always send must be there.
+
 2026-09-26 — **provider-fakes: fake Claude and Codex binaries that replay the recorded corpora.**
 A new crate ships fake-claude-pty, fake-claude-sdk and fake-codex. Pointed
 at a claude-specs or codex-specs recording, each becomes that provider

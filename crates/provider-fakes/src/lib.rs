@@ -16,6 +16,7 @@
 //! has a shape some recorded frame of the same kind has ([`shape`]), so a
 //! fake that invents or drops fields drifts from its corpus and fails.
 
+pub mod claude;
 pub mod codex;
 pub mod conformance;
 pub mod lines;

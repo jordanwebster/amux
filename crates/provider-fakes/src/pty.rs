@@ -6,10 +6,11 @@
 //! all three and draws only plain text on the terminal.
 
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::Value;
 
+use crate::claude::Args;
 use crate::playback::{self, Channel, Process};
 use crate::{DRIFT_EXIT, Mode};
 
@@ -35,72 +36,6 @@ pub fn main() -> i32 {
             }
         },
         Mode::Script(script) => runtime.block_on(engine::run(script, Args::parse(&args))),
-    }
-}
-
-/// The launch arguments the fake honours; everything else is accepted and
-/// ignored, as a provider ignores flags a host passes for other versions.
-#[derive(Clone, Debug, Default)]
-pub struct Args {
-    pub settings: Vec<Value>,
-    pub session_id: Option<String>,
-    pub resume: Option<String>,
-    pub model: Option<String>,
-    pub messaging_socket: Option<PathBuf>,
-    pub permission_mode: Option<String>,
-}
-
-impl Args {
-    pub fn parse(args: &[String]) -> Self {
-        let mut parsed = Args::default();
-        let mut index = 0;
-        while index < args.len() {
-            let (flag, inline) = match args[index].split_once('=') {
-                Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_owned())),
-                _ => (args[index].as_str(), None),
-            };
-            let mut value = || {
-                inline.clone().or_else(|| {
-                    index += 1;
-                    args.get(index).cloned()
-                })
-            };
-            match flag {
-                "--settings" => {
-                    if let Some(source) = value() {
-                        let settings = serde_json::from_str(&source).or_else(|_| {
-                            std::fs::read(&source)
-                                .ok()
-                                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                                .ok_or(())
-                        });
-                        if let Ok(settings) = settings {
-                            parsed.settings.push(settings);
-                        }
-                    }
-                }
-                "--session-id" => parsed.session_id = value(),
-                "--resume" | "-r" => parsed.resume = value(),
-                "--model" => parsed.model = value(),
-                "--messaging-socket-path" => parsed.messaging_socket = value().map(PathBuf::from),
-                "--permission-mode" => parsed.permission_mode = value(),
-                _ => {}
-            }
-            index += 1;
-        }
-        parsed
-    }
-
-    /// Every hook command registered for `event`, in settings order.
-    pub fn hook_commands(&self, event: &str) -> Vec<String> {
-        self.settings
-            .iter()
-            .filter_map(|settings| settings.get("hooks")?.get(event)?.as_array())
-            .flatten()
-            .filter_map(|matcher| matcher.get("hooks")?.as_array())
-            .flatten()
-            .filter_map(|hook| hook.get("command")?.as_str().map(str::to_owned))
-            .collect()
     }
 }
 

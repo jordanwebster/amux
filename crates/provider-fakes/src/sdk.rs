@@ -1,8 +1,30 @@
-//! `fake-claude-sdk`.
+//! `fake-claude-sdk`: headless Claude (`claude -p`) speaking stream-JSON.
+//!
+//! Modelled on what Claude Code 2.1.282 and 2.1.283 do on the wire: a user
+//! message's `uuid` is echoed on its `isReplay` reflection (with
+//! `--replay-user-messages`) and names its `command_lifecycle` frames
+//! (queued, started, completed or cancelled); a message written while a turn
+//! runs is queued, and at default priority folded into that turn at its next
+//! tool result, so one `result` closes the turn for all of them; `later`
+//! waits for its own turn; `now` cuts the running turn short and runs next.
+//! `cancel_async_message` withdraws a message still queued. Asks are control
+//! requests (`can_use_tool` for permissions, questions and plans,
+//! `elicitation` for a tool server's form) that block the turn until the
+//! host's control response.
 
-use tokio::io::BufReader;
+use std::collections::{BTreeMap, VecDeque};
 
+use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, BufReader, Stdout};
+use tokio::sync::mpsc;
+
+use crate::claude::{Args, Ids, timestamp, uuid};
+use crate::lines::Out;
+use crate::script::{Ask, Question, Script, Step, Tool};
 use crate::{DRIFT_EXIT, Mode};
+
+/// The asks headless Claude can raise.
+pub const RAISES: &[&str] = &["permission", "question", "plan", "form"];
 
 pub fn main() -> i32 {
     let mode = match crate::mode_from_env() {
@@ -12,6 +34,7 @@ pub fn main() -> i32 {
             return DRIFT_EXIT;
         }
     };
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -33,7 +56,965 @@ pub fn main() -> i32 {
                     }
                 }
             }
-            Mode::Script(_script) => 0,
+            Mode::Script(script) => {
+                if let Err(error) = script.check("headless Claude", RAISES) {
+                    eprintln!("fake-claude-sdk: {error}");
+                    return DRIFT_EXIT;
+                }
+                Engine::new(script, Args::parse(&args)).run().await
+            }
         }
     })
+}
+
+/// A user message Claude has taken but not yet run.
+#[derive(Clone, Debug)]
+struct Queued {
+    /// The host's uuid, when it sent one; lifecycle frames need it.
+    uuid: Option<String>,
+    message: Value,
+}
+
+enum Priority {
+    Now,
+    Next,
+    Later,
+}
+
+/// Why a turn stopped before its steps did.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    Interrupted,
+    Preempted,
+}
+
+struct Engine {
+    out: Out<Stdout>,
+    input: mpsc::UnboundedReceiver<Value>,
+    eof: bool,
+    steps: VecDeque<Step>,
+    args: Args,
+    session: String,
+    model: String,
+    mode: String,
+    cwd: String,
+    ids: Ids,
+    /// Messages that start turns of their own, in order.
+    queue: VecDeque<Queued>,
+    /// Default-priority messages written mid-turn, folded at the next tool
+    /// result.
+    folding: Vec<Queued>,
+    /// Whether a turn is running.
+    busy: bool,
+    /// Command uuids the running turn completes when it ends.
+    running: Vec<String>,
+    cut: Option<Cut>,
+    answers: BTreeMap<String, Value>,
+    turns: u32,
+    last_text: String,
+}
+
+impl Engine {
+    fn new(script: Script, args: Args) -> Self {
+        let (tx, input) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(tokio::io::stdin()).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                match serde_json::from_str::<Value>(&line) {
+                    Ok(value) => {
+                        if tx.send(value).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => eprintln!("fake-claude-sdk: unreadable input {line}: {error}"),
+                }
+            }
+        });
+        let session = args
+            .resume
+            .clone()
+            .or_else(|| args.session_id.clone())
+            .unwrap_or_else(uuid);
+        let model = args
+            .model
+            .clone()
+            .or_else(|| script.model.clone())
+            .unwrap_or_else(|| "claude-fake-1".into());
+        let mode = args
+            .permission_mode
+            .clone()
+            .unwrap_or_else(|| "default".into());
+        let cwd = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        Self {
+            out: Out::new(tokio::io::stdout()),
+            input,
+            eof: false,
+            steps: script.steps.into(),
+            args,
+            session,
+            model,
+            mode,
+            cwd,
+            ids: Ids::default(),
+            queue: VecDeque::new(),
+            folding: Vec::new(),
+            busy: false,
+            running: Vec::new(),
+            cut: None,
+            answers: BTreeMap::new(),
+            turns: 0,
+            last_text: String::new(),
+        }
+    }
+
+    async fn run(mut self) -> i32 {
+        loop {
+            if let Some(next) = self.queue.pop_front() {
+                if let Some(code) = self.turn(next).await {
+                    return code;
+                }
+                continue;
+            }
+            if self.eof {
+                return 0;
+            }
+            match self.input.recv().await {
+                Some(frame) => self.handle(frame).await,
+                None => self.eof = true,
+            }
+        }
+    }
+
+    async fn send(&mut self, frame: Value) {
+        if self.out.send(&frame).await.is_err() {
+            // The host is gone; so is the reason to run.
+            std::process::exit(0);
+        }
+    }
+
+    /// Take whatever the host has written, without waiting.
+    async fn drain(&mut self) {
+        loop {
+            match self.input.try_recv() {
+                Ok(frame) => self.handle(frame).await,
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.eof = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Wait for the next host frame, or for a moment to pass.
+    async fn pump(&mut self) {
+        if self.eof {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            return;
+        }
+        tokio::select! {
+            frame = self.input.recv() => match frame {
+                Some(frame) => self.handle(frame).await,
+                None => self.eof = true,
+            },
+            () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+        }
+    }
+
+    async fn handle(&mut self, frame: Value) {
+        match frame["type"].as_str() {
+            Some("control_request") => self.control(frame).await,
+            Some("control_response") => {
+                let response = &frame["response"];
+                if let Some(id) = response["request_id"].as_str() {
+                    self.answers.insert(id.to_owned(), response.clone());
+                }
+            }
+            Some("user") => self.user(frame).await,
+            other => eprintln!("fake-claude-sdk: ignoring input of type {other:?}"),
+        }
+    }
+
+    async fn control(&mut self, frame: Value) {
+        let id = frame["request_id"].clone();
+        let request = &frame["request"];
+        let body = match request["subtype"].as_str().unwrap_or_default() {
+            "initialize" => {
+                let response = self.initialize();
+                self.send(json!({
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": id,
+                        "response": response,
+                        "pending_permission_requests": [],
+                        "pending_user_dialog_requests": [],
+                    },
+                }))
+                .await;
+                return;
+            }
+            "set_model" => {
+                if let Some(model) = request["model"].as_str() {
+                    self.model = model.to_owned();
+                }
+                None
+            }
+            "set_permission_mode" => {
+                if let Some(mode) = request["mode"].as_str() {
+                    self.mode = mode.to_owned();
+                }
+                Some(json!({ "mode": self.mode }))
+            }
+            "interrupt" => {
+                if self.busy {
+                    self.cut = Some(Cut::Interrupted);
+                }
+                Some(json!({ "still_queued": self.still_queued() }))
+            }
+            "cancel_async_message" => {
+                let target = request["message_uuid"].as_str().unwrap_or_default();
+                let cancelled = self.withdraw(target);
+                if cancelled {
+                    self.lifecycle(target, "cancelled").await;
+                }
+                Some(json!({ "cancelled": cancelled }))
+            }
+            other => {
+                let error = format!("Unsupported control request: {other}");
+                self.send(json!({
+                    "type": "control_response",
+                    "response": { "subtype": "error", "request_id": id, "error": error },
+                }))
+                .await;
+                return;
+            }
+        };
+        let mut response = json!({ "subtype": "success", "request_id": id });
+        if let Some(body) = body {
+            response["response"] = body;
+        }
+        self.send(json!({ "type": "control_response", "response": response }))
+            .await;
+    }
+
+    fn still_queued(&self) -> Vec<String> {
+        self.queue
+            .iter()
+            .chain(&self.folding)
+            .filter_map(|queued| queued.uuid.clone())
+            .collect()
+    }
+
+    fn withdraw(&mut self, target: &str) -> bool {
+        let before = self.queue.len() + self.folding.len();
+        self.queue
+            .retain(|queued| queued.uuid.as_deref() != Some(target));
+        self.folding
+            .retain(|queued| queued.uuid.as_deref() != Some(target));
+        before != self.queue.len() + self.folding.len()
+    }
+
+    async fn user(&mut self, frame: Value) {
+        let queued = Queued {
+            uuid: frame["uuid"].as_str().map(str::to_owned),
+            message: frame["message"].clone(),
+        };
+        let priority = match frame["priority"].as_str() {
+            Some("now") => Priority::Now,
+            Some("later") => Priority::Later,
+            _ => Priority::Next,
+        };
+        if let Some(uuid) = queued.uuid.clone() {
+            self.lifecycle(&uuid, "queued").await;
+        }
+        if !self.busy {
+            self.queue.push_back(queued);
+            return;
+        }
+        match priority {
+            Priority::Later => self.queue.push_back(queued),
+            Priority::Next => self.folding.push(queued),
+            Priority::Now => {
+                self.cut = Some(Cut::Preempted);
+                self.queue.push_front(queued);
+            }
+        }
+    }
+
+    async fn lifecycle(&mut self, command: &str, state: &str) {
+        let frame = json!({
+            "type": "command_lifecycle",
+            "command_uuid": command,
+            "state": state,
+            "session_id": self.session,
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+
+    fn initialize(&self) -> Value {
+        json!({
+            "commands": [],
+            "agents": [],
+            "account": {},
+            "models": [{
+                "value": self.model,
+                "displayName": self.model,
+                "description": "The scripted model",
+                "supportedEffortLevels": ["low", "medium", "high"],
+            }],
+            "output_style": "default",
+            "available_output_styles": ["default"],
+            "current_permission_mode": self.mode,
+            "fast_mode_state": "off",
+        })
+    }
+
+    fn init_frame(&self) -> Value {
+        let mut frame = json!({
+            "type": "system",
+            "subtype": "init",
+            "agents": [],
+            "analytics_disabled": false,
+            "apiKeySource": "none",
+            "capabilities": ["interrupt_receipt_v1", "msg_lifecycle_v1"],
+            "claude_code_version": crate::claude::VERSION,
+            "cwd": self.cwd,
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "fast_mode_state": "off",
+            "mcp_servers": [],
+            "memory_paths": { "auto": format!("{}/memory", self.cwd) },
+            "per_turn_effort_active": false,
+            "product_feedback_disabled": false,
+            "terminal_slash_commands": [],
+            "view_mode": "default",
+            "model": self.model,
+            "output_style": "default",
+            "permissionMode": self.mode,
+            "plugins": [],
+            "session_id": self.session,
+            "skills": [],
+            "slash_commands": [],
+            "tools": ["Bash", "Read", "Edit", "Write", "AskUserQuestion", "ExitPlanMode"],
+            "uuid": uuid(),
+        });
+        if let Some(socket) = &self.args.messaging_socket {
+            frame["messaging_socket_path"] = json!(socket.display().to_string());
+        }
+        frame
+    }
+
+    /// Run one turn from its first message. `Some(code)` ends the process.
+    async fn turn(&mut self, first: Queued) -> Option<i32> {
+        self.busy = true;
+        self.turns += 1;
+        self.cut = None;
+        self.running.clear();
+        self.last_text.clear();
+        let request = self.ids.next("req_fake");
+        let message = self.ids.next("msg_fake");
+        if let Some(uuid) = first.uuid.clone() {
+            self.lifecycle(&uuid, "started").await;
+            self.running.push(uuid);
+        }
+        let init = self.init_frame();
+        self.send(init).await;
+        self.replay(&first).await;
+        let mut calls = 0;
+        let exit = loop {
+            self.drain().await;
+            if self.cut.is_some() {
+                break None;
+            }
+            let Some(step) = self.steps.pop_front() else {
+                break None;
+            };
+            match step {
+                Step::Text { chunks } => self.text(&request, &message, &chunks).await,
+                Step::Thinking { text } => {
+                    let block = json!({ "type": "thinking", "thinking": text, "signature": "" });
+                    let frame = self.assistant(&request, &message, block);
+                    self.send(frame).await;
+                }
+                Step::Tool(tool) => {
+                    calls += 1;
+                    let (id, input) = self.tool_use(&request, &message, &tool).await;
+                    let output = tool.outcome.output.clone();
+                    self.tool_result(&id, &tool, &input, Ok(output)).await;
+                    self.fold().await;
+                }
+                Step::Ask(ask) => {
+                    calls += 1;
+                    self.ask(&request, &message, ask).await;
+                    if self.cut.is_none() {
+                        self.fold().await;
+                    }
+                }
+                Step::WaitFor { path } => {
+                    while !path.exists() && self.cut.is_none() {
+                        self.pump().await;
+                    }
+                }
+                Step::TurnEnd => break None,
+                Step::Exit { code } => break Some(code),
+            }
+        };
+        if let Some(code) = exit {
+            return Some(code);
+        }
+        match self.cut {
+            None => self.succeed(calls).await,
+            Some(cut) => self.abort(cut, calls).await,
+        }
+        let running = std::mem::take(&mut self.running);
+        for command in running {
+            self.lifecycle(&command, "completed").await;
+        }
+        // Messages waiting to fold when the turn ended run as the next turn.
+        let folding = std::mem::take(&mut self.folding);
+        for (index, queued) in folding.into_iter().enumerate() {
+            self.queue.insert(index, queued);
+        }
+        self.busy = false;
+        None
+    }
+
+    async fn replay(&mut self, queued: &Queued) {
+        if !self.args.replay_user_messages {
+            return;
+        }
+        let frame = json!({
+            "type": "user",
+            "message": queued.message,
+            "parent_tool_use_id": null,
+            "session_id": self.session,
+            "timestamp": timestamp(),
+            "uuid": queued.uuid.clone().unwrap_or_else(uuid),
+            "isReplay": true,
+        });
+        self.send(frame).await;
+    }
+
+    /// Fold every default-priority message written since the last boundary
+    /// into the running turn: their reflections, then their starts.
+    async fn fold(&mut self) {
+        self.drain().await;
+        let folding = std::mem::take(&mut self.folding);
+        for queued in &folding {
+            self.replay(queued).await;
+        }
+        for queued in folding {
+            if let Some(uuid) = queued.uuid {
+                self.lifecycle(&uuid, "started").await;
+                self.running.push(uuid);
+            }
+        }
+    }
+
+    fn assistant(&mut self, request: &str, message: &str, block: Value) -> Value {
+        json!({
+            "type": "assistant",
+            "message": {
+                "container": null,
+                "content": [block],
+                "context_management": null,
+                "diagnostics": null,
+                "id": message,
+                "input_transformations": [],
+                "model": self.model,
+                "role": "assistant",
+                "stop_details": null,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "type": "message",
+                "usage": usage(),
+            },
+            "parent_tool_use_id": null,
+            "request_id": request,
+            "session_id": self.session,
+            "timestamp": timestamp(),
+            "uuid": uuid(),
+        })
+    }
+
+    async fn text(&mut self, request: &str, message: &str, chunks: &[String]) {
+        let text: String = chunks.concat();
+        if self.args.include_partial_messages {
+            self.stream(json!({
+                "type": "message_start",
+                "message": {
+                    "content": [],
+                    "diagnostics": null,
+                    "id": message,
+                    "model": self.model,
+                    "role": "assistant",
+                    "stop_details": null,
+                    "stop_reason": null,
+                    "stop_sequence": null,
+                    "type": "message",
+                    "usage": usage(),
+                },
+            }))
+            .await;
+            self.stream(json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": { "type": "text", "text": "" },
+            }))
+            .await;
+            for chunk in chunks {
+                self.stream(json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": { "type": "text_delta", "text": chunk },
+                }))
+                .await;
+            }
+        }
+        let frame = self.assistant(request, message, json!({ "type": "text", "text": text }));
+        self.send(frame).await;
+        if self.args.include_partial_messages {
+            self.stream(json!({ "type": "content_block_stop", "index": 0 }))
+                .await;
+        }
+        self.last_text = text;
+    }
+
+    async fn stream(&mut self, event: Value) {
+        let mut frame = json!({
+            "type": "stream_event",
+            "event": event,
+            "parent_tool_use_id": null,
+            "session_id": self.session,
+            "uuid": uuid(),
+        });
+        if frame["event"]["type"] == "message_start" {
+            frame["ttft_ms"] = json!(1);
+        }
+        self.send(frame).await;
+    }
+
+    async fn tool_use(&mut self, request: &str, message: &str, tool: &Tool) -> (String, Value) {
+        let (name, input) = claude_tool(tool, &self.cwd);
+        let id = self.ids.next("toolu_fake");
+        let block = json!({
+            "type": "tool_use",
+            "id": id,
+            "name": name,
+            "input": input,
+            "caller": { "type": "direct" },
+        });
+        let mut frame = self.assistant(request, message, block);
+        frame["wire_tool_inputs"] = json!({ id.clone(): input.clone() });
+        self.send(frame).await;
+        (id, input)
+    }
+
+    /// The tool's result row: its output, or the refusal or failure text.
+    async fn tool_result(
+        &mut self,
+        id: &str,
+        tool: &Tool,
+        input: &Value,
+        outcome: Result<String, String>,
+    ) {
+        let (name, _) = claude_tool(tool, &self.cwd);
+        let (content, is_error, sidecar) = match outcome {
+            Ok(output) if tool.outcome.error => {
+                (output.clone(), true, json!(format!("Error: {output}")))
+            }
+            Ok(output) => {
+                let sidecar = sidecar(&name, input, &output);
+                (output, false, sidecar)
+            }
+            Err(refusal) => (refusal.clone(), true, json!(format!("Error: {refusal}"))),
+        };
+        self.user_result(id, json!(content), is_error, sidecar)
+            .await;
+    }
+
+    async fn user_result(&mut self, id: &str, content: Value, is_error: bool, sidecar: Value) {
+        let mut block = json!({ "type": "tool_result", "tool_use_id": id, "content": content });
+        if is_error {
+            block["is_error"] = json!(true);
+        }
+        let frame = json!({
+            "type": "user",
+            "message": { "role": "user", "content": [block] },
+            "parent_tool_use_id": null,
+            "session_id": self.session,
+            "timestamp": timestamp(),
+            "tool_use_result": sidecar,
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+
+    /// Send a control request and wait for its response, or for the turn to
+    /// be cut short.
+    async fn request(&mut self, body: Value) -> Option<Value> {
+        let id = uuid();
+        self.send(json!({ "type": "control_request", "request_id": id, "request": body }))
+            .await;
+        loop {
+            if let Some(answer) = self.answers.remove(&id) {
+                return Some(answer);
+            }
+            if self.cut.is_some() {
+                return None;
+            }
+            if self.eof {
+                return None;
+            }
+            self.pump().await;
+        }
+    }
+
+    async fn ask(&mut self, request: &str, message: &str, ask: Ask) {
+        match ask {
+            Ask::Permission(tool) => {
+                let (id, input) = self.tool_use(request, message, &tool).await;
+                let (name, _) = claude_tool(&tool, &self.cwd);
+                let answer = self
+                    .request(json!({
+                        "subtype": "can_use_tool",
+                        "tool_name": name,
+                        "display_name": name,
+                        "input": input,
+                        "tool_use_id": id,
+                        "permission_suggestions": [{
+                            "type": "addRules",
+                            "behavior": "allow",
+                            "destination": "localSettings",
+                            "rules": [{ "toolName": name }],
+                        }],
+                    }))
+                    .await;
+                let Some(answer) = answer else { return };
+                let outcome = match allowed(&answer) {
+                    Ok(()) => Ok(tool.outcome.output.clone()),
+                    Err(refusal) => Err(refusal),
+                };
+                self.tool_result(&id, &tool, &input, outcome).await;
+            }
+            Ask::Question { questions } => {
+                let input =
+                    json!({ "questions": questions.iter().map(question).collect::<Vec<_>>() });
+                let id = self
+                    .named_tool_use(request, message, "AskUserQuestion", &input)
+                    .await;
+                let answer = self
+                    .request(json!({
+                        "subtype": "can_use_tool",
+                        "tool_name": "AskUserQuestion",
+                        "display_name": "AskUserQuestion",
+                        "input": input,
+                        "tool_use_id": id,
+                        "requires_user_interaction": true,
+                    }))
+                    .await;
+                let Some(answer) = answer else { return };
+                match allowed(&answer) {
+                    Ok(()) => {
+                        let updated = &answer["response"]["updatedInput"];
+                        let answers = updated["answers"].clone();
+                        let said = answers
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .map(|(question, answer)| {
+                                format!(
+                                    "\"{question}\"=\"{}\"",
+                                    answer.as_str().unwrap_or_default()
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let content = format!(
+                            "Your questions have been answered: {said}. You can now continue with the user's answers in mind."
+                        );
+                        let sidecar =
+                            json!({ "questions": input["questions"], "answers": answers });
+                        self.user_result(&id, json!(content), false, sidecar).await;
+                    }
+                    Err(refusal) => {
+                        self.user_result(
+                            &id,
+                            json!(refusal),
+                            true,
+                            json!(format!("Error: {refusal}")),
+                        )
+                        .await;
+                    }
+                }
+            }
+            Ask::Plan { markdown } => {
+                let input = json!({ "plan": markdown });
+                let id = self
+                    .named_tool_use(request, message, "ExitPlanMode", &input)
+                    .await;
+                let answer = self
+                    .request(json!({
+                        "subtype": "can_use_tool",
+                        "tool_name": "ExitPlanMode",
+                        "display_name": "ExitPlanMode",
+                        "input": input,
+                        "tool_use_id": id,
+                        "requires_user_interaction": true,
+                    }))
+                    .await;
+                let Some(answer) = answer else { return };
+                match allowed(&answer) {
+                    Ok(()) => {
+                        let content = format!(
+                            "User has approved your plan. You can now start coding.\n\n## Approved Plan:\n{markdown}"
+                        );
+                        let sidecar = json!({ "plan": markdown, "isAgent": false });
+                        self.user_result(&id, json!(content), false, sidecar).await;
+                    }
+                    Err(refusal) => {
+                        self.user_result(
+                            &id,
+                            json!(refusal),
+                            true,
+                            json!(format!("Error: {refusal}")),
+                        )
+                        .await;
+                    }
+                }
+            }
+            Ask::Form {
+                server,
+                message: prompt,
+                schema,
+            } => {
+                let name = format!("mcp__{server}__ask");
+                let id = self
+                    .named_tool_use(request, message, &name, &json!({}))
+                    .await;
+                let answer = self
+                    .request(json!({
+                        "subtype": "elicitation",
+                        "mcp_server_name": server,
+                        "message": prompt,
+                        "mode": "form",
+                        "requested_schema": schema,
+                    }))
+                    .await;
+                let Some(answer) = answer else { return };
+                let action = answer["response"]["action"]
+                    .as_str()
+                    .unwrap_or("cancel")
+                    .to_owned();
+                let mut said = format!("elicitation {action}");
+                if let Some(content) = answer["response"].get("content") {
+                    said.push(' ');
+                    said.push_str(&content.to_string());
+                }
+                let blocks = json!([{ "type": "text", "text": said }]);
+                self.user_result(&id, blocks.clone(), false, blocks).await;
+            }
+            Ask::Link { .. } | Ask::Grant { .. } => {
+                unreachable!("refused when the script loaded")
+            }
+        }
+    }
+
+    async fn named_tool_use(
+        &mut self,
+        request: &str,
+        message: &str,
+        name: &str,
+        input: &Value,
+    ) -> String {
+        let tool = Tool {
+            name: Some(name.to_owned()),
+            class: crate::ToolClass::Consequential,
+            input: Some(input.clone()),
+            outcome: Default::default(),
+        };
+        self.tool_use(request, message, &tool).await.0
+    }
+
+    async fn succeed(&mut self, calls: u32) {
+        let frame = json!({
+            "type": "result",
+            "subtype": "success",
+            "api_error_status": null,
+            "duration_api_ms": 1,
+            "duration_ms": 1,
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "fast_mode_state": "off",
+            "is_error": false,
+            "modelUsage": {},
+            "result_index": 0,
+            "subagent_stats": subagent_stats(),
+            "num_turns": calls + 1,
+            "permission_denials": [],
+            "queued_turn_count": self.queue.len(),
+            "result": self.last_text,
+            "session_id": self.session,
+            "stop_reason": "end_turn",
+            "terminal_reason": "completed",
+            "total_cost_usd": 0.0,
+            "usage": turn_usage(),
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+
+    /// Cut the turn short the way Claude does: the interruption marker, then
+    /// an error result. The rest of this turn's steps are dropped.
+    async fn abort(&mut self, cut: Cut, calls: u32) {
+        while let Some(step) = self.steps.pop_front() {
+            if step == Step::TurnEnd {
+                break;
+            }
+        }
+        let marker = match cut {
+            Cut::Interrupted => "[Request interrupted by user]",
+            Cut::Preempted => "[Request interrupted by user for tool use]",
+        };
+        let frame = json!({
+            "type": "user",
+            "message": { "role": "user", "content": [{ "type": "text", "text": marker }] },
+            "parent_tool_use_id": null,
+            "session_id": self.session,
+            "timestamp": timestamp(),
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+        let frame = json!({
+            "type": "result",
+            "subtype": "error_during_execution",
+            "duration_api_ms": 1,
+            "duration_ms": 1,
+            "errors": [],
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "fast_mode_state": "off",
+            "is_error": true,
+            "modelUsage": {},
+            "result_index": 0,
+            "subagent_stats": subagent_stats(),
+            "num_turns": calls + 1,
+            "permission_denials": [],
+            "queued_turn_count": self.queue.len(),
+            "session_id": self.session,
+            "stop_reason": null,
+            "terminal_reason": if calls > 0 { "aborted_tools" } else { "aborted_streaming" },
+            "total_cost_usd": 0.0,
+            "usage": turn_usage(),
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+}
+
+/// A message's token tally.
+fn usage() -> Value {
+    json!({
+        "cache_creation": { "ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0 },
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "inference_geo": "not_available",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "service_tier": "standard",
+    })
+}
+
+/// A turn's token tally, as its result carries it.
+fn turn_usage() -> Value {
+    let mut usage = usage();
+    usage["iterations"] = json!([]);
+    usage["output_tokens_details"] = json!({ "thinking_tokens": 0 });
+    usage["server_tool_use"] = json!({ "web_fetch_requests": 0, "web_search_requests": 0 });
+    usage["speed"] = json!("standard");
+    usage
+}
+
+fn subagent_stats() -> Value {
+    json!({
+        "by_type": {},
+        "completed": 0,
+        "failed": 0,
+        "killed": { "parent": 0, "system": 0, "user": 0 },
+        "max_depth": 0,
+        "refused": { "budget": 0, "concurrency_limit": 0, "depth_limit": 0 },
+        "requested": { "background": 0, "foreground": 0, "unset": 0 },
+        "spawned": 0,
+        "spawned_by_subagents": 0,
+        "started_in_background": 0,
+    })
+}
+
+/// The allow or the refusal text of a `can_use_tool` answer.
+fn allowed(answer: &Value) -> Result<(), String> {
+    let response = &answer["response"];
+    if answer["subtype"] == "success" && response["behavior"] == "allow" {
+        return Ok(());
+    }
+    Err(response["message"]
+        .as_str()
+        .filter(|message| !message.is_empty())
+        .unwrap_or("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.")
+        .to_owned())
+}
+
+fn question(question: &Question) -> Value {
+    json!({
+        "question": question.question,
+        "header": question.header,
+        "multiSelect": question.multi_select,
+        "options": question.options.iter().map(|label| json!({
+            "label": label,
+            "description": label,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The Claude tool a scripted call names, with its input.
+pub fn claude_tool(tool: &Tool, cwd: &str) -> (String, Value) {
+    let name = tool.name.clone().unwrap_or_else(|| {
+        if tool.is_exploration() {
+            "Read".into()
+        } else {
+            "Bash".into()
+        }
+    });
+    let input = tool.input.clone().unwrap_or_else(|| match name.as_str() {
+        "Read" => json!({ "file_path": format!("{cwd}/README.md") }),
+        "Bash" => json!({ "command": "true", "description": "Run a command" }),
+        "Grep" => json!({ "pattern": "TODO" }),
+        "Glob" => json!({ "pattern": "**/*" }),
+        _ => json!({}),
+    });
+    (name, input)
+}
+
+/// The `tool_use_result` Claude writes beside a successful call's result.
+pub fn sidecar(name: &str, input: &Value, output: &str) -> Value {
+    match name {
+        "Bash" => json!({
+            "stdout": output,
+            "stderr": "",
+            "interrupted": false,
+            "isImage": false,
+            "noOutputExpected": false,
+        }),
+        "Read" => json!({
+            "type": "text",
+            "file": {
+                "filePath": input["file_path"],
+                "content": output,
+                "numLines": output.lines().count(),
+                "startLine": 1,
+                "totalLines": output.lines().count(),
+            },
+        }),
+        _ => json!(output),
+    }
 }
