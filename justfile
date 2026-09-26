@@ -159,6 +159,13 @@ no-update-flags:
 # Run the same task sequence exercised across continuous-integration jobs.
 ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy tests-check test doctest release-check embedded-check embedded-test mobile-check
 
+# Run the live provider compatibility lane for one kind (claude_pty,
+# claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,
+# resume, or all), under the operator's existing login. With no arguments
+# it reports not_run for every kind and starts nothing.
+live *ARGS:
+    set -e; if [ "${1-}" = -- ]; then shift; fi; if [ $# -eq 0 ]; then for kind in claude_pty claude_sdk codex; do echo "live $kind: not_run (no scenario selected)"; done; exit 0; fi; kind=$1; shift; case "$kind" in claude_pty|claude_sdk|codex) ;; *) echo "live: unknown kind $kind; known: claude_pty, claude_sdk, codex" >&2; exit 2 ;; esac; {{bounded}} 3600 cargo test --locked -p qualification --features bundled,live --test "${kind}_live" -- "$@"
+
 # Qualify desktop performance on an enrolled machine and include the phone
 # suite whenever Xcode is available. The phone recipe takes its own simulator
 # lease and prepares the pinned device. Pass --baseline to record the current

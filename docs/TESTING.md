@@ -260,6 +260,33 @@ record`, `codex-probe record`) and the fakes are held to those recordings.
 Measured performance is `just perf`; `just perf -- --only flood` runs the
 flood workload alone.
 
+Live compatibility judges the provider installed now against those
+recordings. `just live -- <kind> <scenario|all>` runs one entry point —
+`claude_pty`, `claude_sdk` or `codex` — as a real daemon from the built amux
+binary hosting the real provider under the operator's existing login, with
+amux state, sockets and projects in a temporary directory, Claude on haiku
+with its auto-update disabled, and Codex in a scratch home holding only the
+login. The scenarios are `initialize` (the agent takes input, signed in,
+knowing at least what the recording knew by then), `respond` (one prompt,
+one completed turn with an answer), `decide` (the provider asks before
+running a command; allowing it once runs it and the file exists),
+`interrupt` (a running turn ends interrupted and the agent takes input
+again) and `resume` (stopped and resumed, the agent continues the same
+provider session and its new turn has a response's shape). The CLI verbs
+create, prompt, stop and resume; answers, interrupts and Codex's asking
+approval policy go through the client service, as the apps send them. Each
+scenario judges what the daemon committed, as a subscribed client reads it:
+the item classes, asks, decisions, phase changes and turn ends must have the
+shape the interpreter gives the matching recording when its fixture in
+`crates/interpret/fixtures` is replayed. Generated prose is never compared.
+The report names the provider version, the corpus version (the newest
+version the matched recordings were recorded or verified against) and the
+model, then one result per scenario: `pass`, `fail`, `unavailable` (no
+binary, no login, or a provider older than the corpus) or `not_run`. `just
+live` with no arguments prints `not_run` for every kind and starts nothing.
+The lane is the `live` feature of the qualification crate; `just test`,
+`just ci` and chunk checks never select it.
+
 Production sign-in, StoreKit purchase and a real-cloud phone conversation
 are the by-hand QA recipes in the phone justfile. Scripted journeys prove the
 app handles the boundary; live runs prove the boundary still interoperates.

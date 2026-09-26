@@ -1,3 +1,30 @@
+2026-09-26 — **Live provider compatibility, and terminal Claude's messaging socket.**
+The qualification crate has a `live` feature again, with one target per
+provider entry point (`claude_pty_live`, `claude_sdk_live`, `codex_live`).
+Each starts a real daemon from the built amux binary in a temporary
+installation, hosting the real provider under the operator's own login
+(Claude on haiku with auto-update off; Codex in a scratch home holding only
+its login), drives it with the CLI verbs, and judges what a client
+subscribed to the profile reads: the item classes, asks, decisions, phase
+changes and turn ends must have the shape the interpreter gives the
+matching probe recording, replayed from its fixture. Prose is never
+compared. Five scenarios per kind: `initialize`, `respond`, `decide`,
+`interrupt`, `resume`; each reports `pass`, `fail`, `unavailable` or
+`not_run`, with the provider, corpus and model versions. `just live --
+<kind> <scenario|all>` runs one; `just live` alone prints `not_run` and
+starts nothing. Nothing else selects the feature.
+
+Headless Claude 2.1.283 and Codex 0.157.0 pass all five. Terminal Claude
+2.1.283 found two defects. It refuses a `--messaging-socket-path` whose
+directory is a symbolic link, which is how the agent shortened socket paths
+too long for `sockaddr_un` (every real data directory), so every terminal
+agent exited at launch; a socket another program binds now gets a real
+private directory in the runtime directory instead
+(`local_socket::unix_private_address`). And it turns bracketed paste on as
+its first output, before it can take input, so the agent's readiness
+signal fires early and the first prompt is lost; that repair is filed
+separately.
+
 2026-09-26 — **A host back between two looks is followed at once.**
 The replication case whose stream dies after its Snapshot failed about
 four runs in ten, with or without the worktree's `AMUX_CONFIG` exported.

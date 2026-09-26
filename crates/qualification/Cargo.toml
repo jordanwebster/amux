@@ -11,6 +11,9 @@ bundled = ["store/bundled"]
 # The release perf binary. The workloads themselves build without it, so
 # their smoke runs in the ordinary test lane.
 perf = []
+# The live provider compatibility lane: real providers under the operator's
+# login, run only on request through `just live`.
+live = []
 
 [lib]
 
@@ -36,4 +39,30 @@ wire = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+agent-dir = { workspace = true }
+hyper-util = { workspace = true }
+interpret = { workspace = true }
+prost = { workspace = true }
 tempfile = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+ui-state = { workspace = true }
+uuid = { workspace = true }
+
+[[test]]
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
+harness = false
+required-features = ["live"]
+
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+harness = false
+required-features = ["live"]
+
+[[test]]
+name = "codex_live"
+path = "tests/codex_live.rs"
+harness = false
+required-features = ["live"]

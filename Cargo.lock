@@ -2292,10 +2292,14 @@ dependencies = [
 name = "qualification"
 version = "0.1.0"
 dependencies = [
+ "agent-dir",
  "anyhow",
  "chrono",
+ "hyper-util",
+ "interpret",
  "libc",
  "node",
+ "prost",
  "provider-fakes",
  "serde",
  "serde_json",
@@ -2304,6 +2308,10 @@ dependencies = [
  "testnet",
  "thiserror 2.0.20",
  "tokio",
+ "tonic",
+ "tower",
+ "ui-state",
+ "uuid",
  "wire",
 ]
 

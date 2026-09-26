@@ -366,7 +366,7 @@ impl Provider {
             "--settings".to_owned(),
             settings,
             "--messaging-socket-path".to_owned(),
-            socket_address(&private.join(dir::MESSAGING_SOCK))?
+            messaging_address(&private.join(dir::MESSAGING_SOCK))?
                 .display()
                 .to_string(),
         ]);
@@ -1014,6 +1014,21 @@ fn socket_address(path: &Path) -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
         crate::local_socket::unix_address(path)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(path.to_owned())
+    }
+}
+
+/// Where terminal Claude binds its messaging socket. Claude binds it itself
+/// and refuses a directory reached through a symbolic link, so a path too
+/// long for a socket moves to a real private directory rather than behind
+/// the link the agent's own sockets use.
+fn messaging_address(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        crate::local_socket::unix_private_address(path)
     }
     #[cfg(not(unix))]
     {

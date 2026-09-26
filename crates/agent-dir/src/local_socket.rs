@@ -64,6 +64,16 @@ pub fn unix_address(path: &Path) -> io::Result<PathBuf> {
     imp::address(&std::path::absolute(path)?)
 }
 
+/// The path to hand a program that binds the socket itself and insists its
+/// directory be a real, private one (terminal Claude's messaging socket):
+/// the path itself when it fits, else the same name in a real directory,
+/// only this user's, in the per-user runtime directory. Nothing but the
+/// program's own announcement of it leads there, so it needs no link.
+#[cfg(unix)]
+pub fn unix_private_address(path: &Path) -> io::Result<PathBuf> {
+    imp::private_address(&std::path::absolute(path)?)
+}
+
 /// FNV-1a: stable across processes and versions, which is all a derived
 /// address needs.
 fn fnv(bytes: &[u8]) -> u64 {
@@ -151,17 +161,55 @@ mod imp {
         Ok(address)
     }
 
+    pub fn private_address(path: &Path) -> io::Result<PathBuf> {
+        if path.as_os_str().as_bytes().len() < limit() {
+            return Ok(path.to_owned());
+        }
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} names no socket", path.display()),
+            ));
+        };
+        let short = runtime_dir()?.join(format!("{:016x}.d", fnv(dir.as_os_str().as_bytes())));
+        private_dir(&short)?;
+        let address = short.join(name);
+        if address.as_os_str().as_bytes().len() >= limit() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("no short address fits {}", path.display()),
+            ));
+        }
+        Ok(address)
+    }
+
+    fn limit() -> usize {
+        // SAFETY: sockaddr_un is plain old data; zeroed is a valid value.
+        unsafe { std::mem::zeroed::<libc::sockaddr_un>() }
+            .sun_path
+            .len()
+    }
+
     /// A directory only this user can write, for the short links.
     fn runtime_dir() -> io::Result<PathBuf> {
         // SAFETY: getuid cannot fail.
         let uid = unsafe { libc::getuid() };
         let dir = std::env::temp_dir().join(format!("amux-{uid}"));
-        match fs::DirBuilder::new().mode(0o700).create(&dir) {
+        private_dir(&dir)?;
+        Ok(dir)
+    }
+
+    /// Makes `dir` if it is missing, and refuses it unless it is a real
+    /// directory this user owns that no one else can use.
+    fn private_dir(dir: &Path) -> io::Result<()> {
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        match fs::DirBuilder::new().mode(0o700).create(dir) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
-        let metadata = fs::symlink_metadata(&dir)?;
+        let metadata = fs::symlink_metadata(dir)?;
         if !metadata.is_dir() || metadata.uid() != uid || metadata.permissions().mode() & 0o077 != 0
         {
             return Err(io::Error::new(
@@ -169,7 +217,7 @@ mod imp {
                 format!("{} is not a private directory", dir.display()),
             ));
         }
-        Ok(dir)
+        Ok(())
     }
 }
 
@@ -262,5 +310,28 @@ mod tests {
         assert_eq!(&got, b"hello");
         drop(server.await.unwrap());
         assert!(!path.exists(), "dropping the listener removes the socket");
+    }
+
+    /// Terminal Claude binds its messaging socket itself and refuses a
+    /// directory reached through a symbolic link.
+    #[test]
+    fn a_socket_another_program_binds_gets_a_real_private_directory() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let deep = root.path().join("d".repeat(60)).join("e".repeat(60));
+        std::fs::create_dir_all(&deep).unwrap();
+        let path = deep.join("messaging.sock");
+        let address = unix_private_address(&path).unwrap();
+        assert_ne!(address, path, "the path is too long to bind");
+        assert_eq!(address.file_name(), path.file_name());
+        let dir = std::fs::symlink_metadata(address.parent().unwrap()).unwrap();
+        assert!(dir.is_dir(), "a real directory, not a link");
+        assert_eq!(dir.permissions().mode() & 0o777, 0o700);
+        assert_eq!(unix_private_address(&path).unwrap(), address, "stable");
+        std::os::unix::net::UnixListener::bind(&address).unwrap();
+        std::fs::remove_file(&address).unwrap();
+
+        let short = root.path().join("m.sock");
+        assert_eq!(unix_private_address(&short).unwrap(), short);
     }
 }
