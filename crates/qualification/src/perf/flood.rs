@@ -49,13 +49,16 @@ pub struct FloodOptions {
     pub pace_ms: Option<u64>,
     /// The replica tail and catch-up cap every host runs with.
     pub k: u32,
-    /// How long the agents run before the viewer connects, so every
-    /// agent's history is well past K.
-    pub warm_up: Duration,
+    /// The revisions every agent's history reaches before the viewer
+    /// connects: well past K.
+    pub history: u64,
     /// How long ingest lag and memory are sampled.
     pub sampling: Duration,
     /// How long the daemon stays dead while its journals grow.
     pub outage: Duration,
+    /// The journal bytes the capacity phase has the agents write ahead of
+    /// ingest before it drains them.
+    pub backlog: u64,
 }
 
 impl FloodOptions {
@@ -66,9 +69,12 @@ impl FloodOptions {
             messages: 10_000_000,
             pace_ms: Some(PACE_MS),
             k: K,
-            warm_up: Duration::from_secs(6),
+            // About six seconds of flood at full rate.
+            history: 300,
             sampling: Duration::from_secs(3),
             outage: Duration::from_secs(2),
+            // About 115 000 frames, several seconds of draining.
+            backlog: 16 << 20,
         }
     }
 
@@ -81,16 +87,15 @@ impl FloodOptions {
             // A small K keeps the distance past it a couple of seconds of
             // flood.
             k: 20,
-            warm_up: Duration::from_secs(1),
+            history: 40,
             sampling: Duration::from_millis(500),
             outage: Duration::from_millis(500),
+            // About 36 000 frames: enough for every window to span eight
+            // ingest batches.
+            backlog: 5 << 20,
         }
     }
 }
-
-/// How long an agent may go without a new revision before the flood is
-/// taken to have ended under the workload.
-const STALL: Duration = Duration::from_secs(2);
 
 /// The pause between one agent's messages in the measured flood: full
 /// rate, the fastest a real provider streams.
@@ -157,7 +162,7 @@ const WORKLOAD: Workload = Workload {
     description: "flood: agents streaming at full rate, a message every 20 ms (at or above the fastest recorded provider, 47 frames in one second), on one host, a second runtime with no block opening the fleet and one chat",
     seed: 0,
     identity_growth: "one agent per flood slot, fixed",
-    warm_up: "agents run before the viewer connects, so each history is past K",
+    warm_up: "agents run before the viewer connects until each history is past K",
 };
 
 /// The metrics, their budgets and the basis for each budget in the
@@ -198,10 +203,10 @@ mod budgets {
 }
 
 const CAPACITY_WORKLOAD: Workload = Workload {
-    description: "flood capacity: agents write unthrottled on one host, far faster than any provider, then pause while ingest drains their backlog alone; cost is wall time over frames committed in each window",
+    description: "flood capacity: agents write unthrottled on one host, far faster than any provider, while ingest is held until their journals hold a fixed backlog, then pause while ingest drains it alone; cost is wall time over frames committed in each seventh of the drain",
     seed: 0,
     identity_growth: "one agent per flood slot, fixed",
-    warm_up: "agents write unthrottled until each journal holds a backlog",
+    warm_up: "agents write unthrottled, ingest held, until the journals hold the backlog",
 };
 
 /// A metric held to its budget alone. The flood's timings are one
@@ -305,16 +310,22 @@ async fn start(k: u32) -> Result<Net> {
     .context("start the flood's hosts")
 }
 
-/// The windows the capacity phase prices ingest over.
+/// The windows the capacity phase prices ingest over: equal shares of
+/// the frames it drains.
 const CAPACITY_WINDOWS: usize = 7;
+/// The fewest frames one window holds: several ingest batches, so the
+/// batch a window's edge cuts through is a small part of its time.
+const WINDOW_FRAMES: u64 = 8 * node::INGEST_BATCH as u64;
 
-/// Ingest's cost per committed frame: the agents write unthrottled until
-/// every journal holds a backlog far past what ingest can keep up with,
-/// then stop writing, and each window's wall time is divided by the
-/// frames the origin committed in it. Pausing the writers leaves ingest
-/// the machine to itself, so the figure is ingest's own cost rather than
-/// how twenty busy writers share the cores with it, and it stays steady
-/// enough between runs to track drift.
+/// Ingest's cost per committed frame. The agents write unthrottled while
+/// the phase holds the origin's store, so ingest commits nothing, until
+/// their journals hold `backlog` bytes past the origin's cursors; then
+/// the writers stop, the store is let go, and ingest drains the backlog
+/// alone. The drain is cut into equal shares of the frames it committed,
+/// and each share's wall time over its frames is one sample. Pausing the
+/// writers leaves ingest the machine to itself, so the figure is ingest's
+/// own cost rather than how busy writers share the cores with it, and
+/// how much there is to drain does not depend on how fast they ran.
 async fn capacity(net: &mut Net, options: &FloodOptions) -> Result<MetricRun> {
     let mut run = Recording::start(Metric {
         workload: CAPACITY_WORKLOAD,
@@ -333,7 +344,6 @@ async fn capacity(net: &mut Net, options: &FloodOptions) -> Result<MetricRun> {
         net.spawn(agent).await?;
     }
     let names: Vec<String> = (0..options.agents).map(agent_name).collect();
-    tokio::time::sleep(options.warm_up).await;
     let pids = agent_pids(net, &names)?;
     ensure!(
         pids.len() == names.len(),
@@ -341,29 +351,105 @@ async fn capacity(net: &mut Net, options: &FloodOptions) -> Result<MetricRun> {
         pids.len(),
         names.len()
     );
-    signal(&pids, "-STOP")?;
     let runtime = net.runtime(ORIGIN)?;
-    let window = options.sampling / CAPACITY_WINDOWS as u32;
-    for _ in 0..CAPACITY_WINDOWS {
-        let (frames, started) = (runtime.ingested_frames(), Instant::now());
-        tokio::time::sleep(window).await;
-        let (committed, elapsed) = (runtime.ingested_frames() - frames, started.elapsed());
-        ensure!(committed > 0, "ingest committed nothing in {elapsed:?}");
-        run.add(elapsed.as_secs_f64() * 1e6 / committed as f64);
+    let store = runtime.store().await;
+    let keys = names
+        .iter()
+        .map(|name| Ok(net.agent(name)?.key()))
+        .collect::<Result<Vec<_>>>()?;
+    let deadline = Instant::now() + PATIENCE;
+    let ends = loop {
+        let ends = journals(net, &names)?;
+        let mut behind = 0;
+        for (key, end) in keys.iter().zip(&ends) {
+            behind += end.saturating_sub(store.cursor(key)?);
+        }
+        if behind >= options.backlog {
+            break ends;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the agents wrote {behind} of {} bytes ahead of ingest",
+            options.backlog
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    signal(&pids, "-STOP")?;
+    // What the writers had written by the time they stopped.
+    let ends = journals(net, &names)?
+        .into_iter()
+        .zip(ends)
+        .map(|(now, then)| now.max(then))
+        .collect::<Vec<_>>();
+
+    // Every change in the committed count, until the cursors reach the
+    // ends; the check takes the store, so it runs far less often.
+    let mut drain = vec![(Instant::now(), runtime.ingested_frames())];
+    drop(store);
+    let mut checked = Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let frames = runtime.ingested_frames();
+        if frames != drain.last().expect("the start").1 {
+            drain.push((Instant::now(), frames));
+        }
+        if checked.elapsed() < Duration::from_millis(50) {
+            continue;
+        }
+        checked = Instant::now();
+        let store = runtime.store().await;
+        let mut drained = true;
+        for (key, end) in keys.iter().zip(&ends) {
+            drained &= store.cursor(key)? >= *end;
+        }
+        if drained {
+            break;
+        }
+        ensure!(
+            drain.last().expect("the start").0.elapsed() < PATIENCE,
+            "ingest stopped draining the backlog"
+        );
     }
     drop(runtime);
-    // A window in which ingest ran out of backlog timed idleness too.
-    let backlog = backlog(net, &names).await?;
-    ensure!(
-        backlog > 0,
-        "ingest drained the whole backlog within the windows; lengthen the warm-up"
-    );
-    // A stop ingests its agent's journal to the end, and these backlogs
-    // take far longer to drain than the phase took to write them: crash
-    // the origin instead, and the shutdown kills its agents unread.
+    for sample in drain_costs(&drain)? {
+        run.add(sample);
+    }
+    // A stop ingests its agent's journal to the end, and these agents
+    // write far faster than ingest drains: crash the origin instead, and
+    // the shutdown kills its agents unread.
     signal(&pids, "-CONT")?;
     net.kill_daemon(ORIGIN).await?;
     Ok(run.finish())
+}
+
+/// Cuts a drain, the committed count at each moment it changed, into
+/// [`CAPACITY_WINDOWS`] equal shares of its frames, and prices each in
+/// microseconds a frame. The drain ends at its last commit, so no share
+/// times ingest waiting for work.
+fn drain_costs(drain: &[(Instant, u64)]) -> Result<Vec<f64>> {
+    let (started, first) = drain[0];
+    let last = drain.last().expect("the start").1;
+    let frames = last - first;
+    ensure!(
+        frames >= WINDOW_FRAMES * CAPACITY_WINDOWS as u64,
+        "the backlog drained in {frames} frames, too few to price; raise it"
+    );
+    let mut costs = Vec::new();
+    let mut from = (started, first);
+    for window in 1..=CAPACITY_WINDOWS as u64 {
+        let edge = first + frames * window / CAPACITY_WINDOWS as u64;
+        let to = *drain
+            .iter()
+            .find(|(_, committed)| *committed >= edge)
+            .expect("the last commit reaches every edge");
+        // One look can see commits past two edges when the looking
+        // thread was held off the cores; those shares are one window.
+        if to.1 > from.1 {
+            costs.push((to.0 - from.0).as_secs_f64() * 1e6 / (to.1 - from.1) as f64);
+            from = to;
+        }
+    }
+    Ok(costs)
 }
 
 fn signal(pids: &[u32], signal: &str) -> Result<()> {
@@ -376,19 +462,6 @@ fn signal(pids: &[u32], signal: &str) -> Result<()> {
     Ok(())
 }
 
-/// The bytes written to the named agents' journals that the origin has not
-/// committed yet.
-async fn backlog(net: &Net, names: &[String]) -> Result<u64> {
-    let mut behind = 0;
-    for name in names {
-        let end = net.journal_end(name)?;
-        let key = net.agent(name)?.key();
-        let cursor = net.runtime(ORIGIN)?.store().await.cursor(&key)?;
-        behind += end.saturating_sub(cursor);
-    }
-    Ok(behind)
-}
-
 async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>> {
     // The viewer holds nothing: cut it off before any agent exists.
     net.sever_link(ORIGIN, VIEWER)?;
@@ -398,13 +471,9 @@ async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>
     }
     let names: Vec<String> = (0..options.agents).map(agent_name).collect();
     let chat = names[0].clone();
-    tokio::time::sleep(options.warm_up).await;
-    let rate = rows_per_second(net, &chat, Duration::from_millis(300)).await?;
-    ensure!(rate > 0.0, "{chat} is not emitting");
-    ensure!(
-        origin_newest(net, &chat).await? > u64::from(options.k),
-        "{chat}'s history is not past K after the warm-up; lengthen it"
-    );
+    for name in &names {
+        wait_newest(net, name, options.history).await?;
+    }
 
     // Fleet and chat on a runtime with no block.
     let mut fleet_run = Recording::start(metric(
@@ -481,7 +550,6 @@ async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>
         net,
         &mut observer,
         &chat,
-        rate,
         u64::from(options.k) / 2,
         "flood catch-up under K",
     )
@@ -490,7 +558,6 @@ async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>
         net,
         &mut observer,
         &chat,
-        rate,
         u64::from(options.k) * 5,
         "flood catch-up over K",
     )
@@ -563,13 +630,23 @@ async fn origin_newest(net: &Net, agent: &str) -> Result<u64> {
     Ok(row.next_revision - 1)
 }
 
-/// How many revisions a second `agent` commits at the origin.
-async fn rows_per_second(net: &Net, agent: &str, over: Duration) -> Result<f64> {
-    let first = origin_newest(net, agent).await?;
-    let started = Instant::now();
-    tokio::time::sleep(over).await;
-    let last = origin_newest(net, agent).await?;
-    Ok((last - first) as f64 / started.elapsed().as_secs_f64())
+/// Waits until the origin has committed `agent`'s revision `revision`.
+/// The agent's turn outlasts any flood, so only a stalled agent or ingest
+/// runs out the harness's patience between two revisions.
+async fn wait_newest(net: &Net, agent: &str, revision: u64) -> Result<()> {
+    let mut last = (origin_newest(net, agent).await?, Instant::now());
+    while last.0 < revision {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let newest = origin_newest(net, agent).await?;
+        if newest > last.0 {
+            last = (newest, Instant::now());
+        }
+        ensure!(
+            last.1.elapsed() < PATIENCE,
+            "{agent} stopped at revision {newest}, short of {revision}"
+        );
+    }
+    Ok(())
 }
 
 /// The time from a journal's end now to the origin's cursor passing it.
@@ -608,7 +685,6 @@ async fn catch_up(
     net: &mut Net,
     observer: &mut testnet::Observer,
     agent: &str,
-    rate: f64,
     distance: u64,
     name: &'static str,
 ) -> Result<MetricRun> {
@@ -622,22 +698,7 @@ async fn catch_up(
     net.sever_link(ORIGIN, VIEWER)?;
     net.wait_link(ORIGIN, VIEWER, false).await?;
     let from = origin_newest(net, agent).await?;
-    let step = Duration::from_secs_f64(distance as f64 / rate).min(Duration::from_millis(20));
-    let mut last = (from, Instant::now());
-    loop {
-        tokio::time::sleep(step).await;
-        let newest = origin_newest(net, agent).await?;
-        if newest >= from + distance {
-            break;
-        }
-        if newest > last.0 {
-            last = (newest, Instant::now());
-        }
-        ensure!(
-            last.1.elapsed() < STALL,
-            "{agent} stopped at {newest} short of a distance of {distance} from {from}: its turn is too short for the flood"
-        );
-    }
+    wait_newest(net, agent, from + distance).await?;
     let restored = Instant::now();
     net.restore_link(ORIGIN, VIEWER)?;
     observer

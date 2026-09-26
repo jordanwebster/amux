@@ -1,3 +1,19 @@
+2026-09-26 — **The flood smoke no longer races the clock.**
+Under load the smoke failed most runs: its capacity phase let the agents
+write for a fixed second, then priced ingest over seven fixed 71 ms
+windows, and failed whenever a window committed nothing or the backlog ran
+out before the last one, which is just what a loaded machine does. Now the
+phase holds the origin's store while the unthrottled agents write, so
+ingest commits nothing until the journals hold a fixed number of bytes
+past the cursors (5 MiB in the smoke, 16 MiB in the release run), then
+stops the writers, lets ingest drain alone, and cuts the drain at its
+last commit into seven equal shares of the frames committed. The metric
+is still the median wall time per frame draining a backlog with the
+writers paused. The flood phase's fixed warm-up became a wait for each
+agent's history to reach a revision past K, the rate it measured over
+300 ms is gone, and the catch-up waits end on the revision reached, with
+the harness's patience as the only deadline.
+
 2026-09-26 — **An exited replica settles from its own stream.**
 A replica closed the source of an agent its origin listed exited as soon
 as its marker read CaughtUp. During live following it always does, so the
