@@ -1,10 +1,11 @@
-use std::io;
+use std::io::{self, BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
 use codex_specs::specs::{
-    CAPTURE_MODEL, SpecSource, execute, fixtures_root, live_io_path, registry,
+    CAPTURE_MODEL, SPEC_TOOL, SPEC_TOOL_SERVER, SpecSource, execute, fixtures_root, live_io_path,
+    registry,
 };
 use redaction::Redaction;
 use replay_support::{
@@ -16,6 +17,10 @@ use uuid::Uuid;
 
 #[tokio::main]
 pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var_os(TOOL_SERVER_ENV).is_some() {
+        run_spec_tool_server();
+        return Ok(());
+    }
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args.as_slice() {
         [command] if command == "list" => list(),
@@ -131,7 +136,7 @@ async fn run_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 async fn live_attempt(
     entry: SpecEntry,
 ) -> Result<codex_specs::specs::RunReport, Box<dyn std::error::Error>> {
-    let scratch = isolated_home(!codex_specs::specs::SIGNED_OUT.contains(&entry.name))?;
+    let scratch = isolated_home(entry.name)?;
     execute(
         &entry,
         SpecSource::Live {
@@ -144,7 +149,7 @@ async fn live_attempt(
 }
 
 async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let scratch = isolated_home(!codex_specs::specs::SIGNED_OUT.contains(&entry.name))?;
+    let scratch = isolated_home(entry.name)?;
     let codex_home = scratch.path().join("codex-home");
     let report = execute(
         &entry,
@@ -213,8 +218,10 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
 
 /// A scratch Codex home and project. The project holds the files the
 /// specifications name; the home carries the owner's credentials unless the
-/// specification is about being signed out.
-fn isolated_home(signed_in: bool) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+/// specification is about being signed out, and registers the spec tool
+/// server when the specification calls it.
+fn isolated_home(spec: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let signed_in = !codex_specs::specs::SIGNED_OUT.contains(&spec);
     let scratch = tempfile::Builder::new().prefix("codex-spec-").tempdir()?;
     let codex_home = scratch.path().join("codex-home");
     let project = scratch.path().join("project");
@@ -242,10 +249,15 @@ fn isolated_home(signed_in: bool) -> Result<tempfile::TempDir, Box<dyn std::erro
         format!("{}\n", Uuid::new_v4()),
     )?;
     let project_key = serde_json::to_string(&project.to_string_lossy())?;
-    std::fs::write(
-        codex_home.join("config.toml"),
-        format!("[projects.{project_key}]\ntrust_level = \"trusted\"\n"),
-    )?;
+    let mut config = format!("[projects.{project_key}]\ntrust_level = \"trusted\"\n");
+    if codex_specs::specs::WITH_TOOL_SERVER.contains(&spec) {
+        let command = serde_json::to_string(&std::env::current_exe()?.to_string_lossy())?;
+        config.push_str(&format!(
+            "\n[mcp_servers.{SPEC_TOOL_SERVER}]\ncommand = {command}\n\
+             env = {{ {TOOL_SERVER_ENV} = \"1\" }}\n"
+        ));
+    }
+    std::fs::write(codex_home.join("config.toml"), config)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -339,4 +351,127 @@ fn default_probe_dir() -> PathBuf {
     Path::new("target")
         .join("codex-probe")
         .join(Uuid::new_v4().to_string())
+}
+
+/// Set in the environment of the probe when Codex starts it as the spec tool
+/// server.
+const TOOL_SERVER_ENV: &str = "CODEX_SPEC_TOOL_SERVER";
+
+/// A stdio MCP server with one tool. Calling it with a word asks the person,
+/// through an elicitation, to confirm that word as a form; the word LINK asks
+/// with the link form instead, sending the person to a page.
+fn run_spec_tool_server() {
+    const PROTOCOL_VERSION: &str = "2025-11-25";
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+    let mut stdout = std::io::stdout();
+    let mut outgoing_id = 1000i64;
+    while let Some(Ok(line)) = lines.next() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        let method = message.get("method").and_then(serde_json::Value::as_str);
+        let id = message.get("id").cloned();
+        let result = match (method, &id) {
+            (Some(_), None) => continue,
+            (Some("initialize"), Some(_)) => serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": SPEC_TOOL_SERVER, "version": "1.0.0"},
+            }),
+            (Some("tools/list"), Some(_)) => serde_json::json!({
+                "tools": [{
+                    "name": SPEC_TOOL,
+                    "description": "Ask the operator to confirm a word, then return it.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"word": {"type": "string"}},
+                        "required": ["word"],
+                    },
+                }],
+            }),
+            (Some("tools/call"), Some(_)) => {
+                let word = message
+                    .pointer("/params/arguments/word")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("nothing")
+                    .to_owned();
+                outgoing_id += 1;
+                let answer = elicit(&mut stdout, &mut lines, outgoing_id, &word);
+                serde_json::json!({"content": [{"type": "text", "text": answer}]})
+            }
+            _ => {
+                send(
+                    &mut stdout,
+                    serde_json::json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": {"code": -32601, "message": "method not found"},
+                    }),
+                );
+                continue;
+            }
+        };
+        send(
+            &mut stdout,
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        );
+    }
+}
+
+fn elicit(
+    stdout: &mut std::io::Stdout,
+    lines: &mut std::io::Lines<std::io::StdinLock<'_>>,
+    id: i64,
+    word: &str,
+) -> String {
+    let params = if word == "LINK" {
+        serde_json::json!({
+            "mode": "url",
+            "message": "Open the page to confirm.",
+            "url": "https://example.com/confirm",
+            "elicitationId": "spec-link",
+        })
+    } else {
+        serde_json::json!({
+            "mode": "form",
+            "message": format!("Confirm the word {word}."),
+            "requestedSchema": {
+                "type": "object",
+                "properties": {"confirmed": {"type": "string"}},
+                "required": ["confirmed"],
+            },
+        })
+    };
+    send(
+        stdout,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "elicitation/create", "params": params,
+        }),
+    );
+    while let Some(Ok(line)) = lines.next() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if message.get("id").and_then(serde_json::Value::as_i64) != Some(id) {
+            continue;
+        }
+        return match message
+            .pointer("/result/action")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("accept") => message
+                .pointer("/result/content/confirmed")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(word)
+                .to_owned(),
+            Some(other) => format!("elicitation {other}"),
+            None => format!("elicitation failed: {}", message["error"]),
+        };
+    }
+    "elicitation abandoned".to_owned()
+}
+
+fn send(stdout: &mut std::io::Stdout, message: serde_json::Value) {
+    let _ = writeln!(stdout, "{message}");
+    let _ = stdout.flush();
 }

@@ -16,12 +16,19 @@ const ALLOWED_MODELS: &[&str] = &[CAPTURE_MODEL];
 const EVENT_TIMEOUT: Duration = Duration::from_secs(300);
 const LIVE_IO_FILE: &str = "spec.io.jsonl";
 
+#[path = "decisions.rs"]
+mod decisions;
 #[path = "rows.rs"]
 mod rows;
+
+pub use decisions::{SPEC_TOOL, SPEC_TOOL_SERVER};
 
 /// Specifications that run with no signed-in account; capture gives them a
 /// Codex home without credentials.
 pub const SIGNED_OUT: &[&str] = &["signed_out"];
+
+/// Specifications whose Codex home registers the spec tool server.
+pub const WITH_TOOL_SERVER: &[&str] = &["tool_server_form"];
 
 const REGISTRY: &[SpecEntry] = &[
     entry("initialize_and_start"),
@@ -44,6 +51,14 @@ const REGISTRY: &[SpecEntry] = &[
     entry("plan_mode"),
     entry("turn_error"),
     entry("signed_out"),
+    entry("web_search"),
+    entry("file_moved"),
+    entry("subagent"),
+    entry("background_terminal"),
+    entry("tool_server_form"),
+    entry("access_grant"),
+    entry("automatic_review"),
+    entry("approval_scopes"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -257,6 +272,14 @@ async fn run_scenario(
         "plan_mode" => rows::plan_mode(codex, model, project).await,
         "turn_error" => rows::turn_error(codex, model, project).await,
         "signed_out" => rows::signed_out(codex, model, project).await,
+        "web_search" => rows::web_search(codex, model, project).await,
+        "file_moved" => rows::file_moved(codex, model, project).await,
+        "subagent" => rows::subagent(codex, model, project).await,
+        "background_terminal" => rows::background_terminal(codex, model, project).await,
+        "tool_server_form" => decisions::tool_server_form(codex, model, project).await,
+        "access_grant" => decisions::access_grant(codex, model, project).await,
+        "automatic_review" => decisions::automatic_review(codex, model, project).await,
+        "approval_scopes" => decisions::approval_scopes(codex, model, project).await,
         other => Err(format!("unknown registered specification {other}")),
     }
 }
@@ -731,7 +754,7 @@ mod tests {
 
     #[test]
     fn registry_names_the_provider_side_of_the_c_suite() {
-        assert_eq!(registry().len(), 20);
+        assert_eq!(registry().len(), 28);
         assert_eq!(registry()[0].name, "initialize_and_start");
         assert_eq!(registry()[9].name, "two_assistant_messages");
         assert!(

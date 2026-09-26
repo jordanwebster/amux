@@ -1,7 +1,8 @@
 //! Specifications for the chat rows a Codex turn produces beyond a plain
 //! answer: reasoning summaries, exploring commands, a failing command, file
 //! changes, images, compaction, plan mode with its question,
-//! a turn that errors, and a signed-out account.
+//! a turn that errors, a signed-out account, web search, a moved file, a
+//! subagent and a background terminal session.
 //!
 //! Live capture seeds the project with `config.txt` (`VALUE=1`), `old.txt`
 //! and `square.png`, a 32×32 red PNG. Prompts name files relative to the
@@ -15,6 +16,7 @@ use codex::{
     ThreadItem, TurnConfig, TurnEvent, TurnInput, TurnStatus,
 };
 
+use super::decisions::drive_turn;
 use super::{ScenarioReport, next_event, report, stringify, thread_config};
 
 /// The seed image, attached to a prompt as a data URL.
@@ -410,6 +412,151 @@ pub(super) async fn signed_out(
         return Err(format!(
             "the signed-out turn ended {:?}",
             final_status(&seen)
+        ));
+    }
+    Ok(report(&thread))
+}
+
+/// With live web search on, a search runs as its own web-search item.
+pub(super) async fn web_search(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let mut config = thread_config(model, project);
+    config.approval_policy = Some(ApprovalPolicy::Never);
+    config.config = Some(
+        [("web_search".to_owned(), serde_json::json!("live"))]
+            .into_iter()
+            .collect(),
+    );
+    let thread = codex.start_thread(config).await.map_err(stringify)?;
+    let mut events = thread.events().await.map_err(stringify)?;
+    thread
+        .start_turn(
+            "Use your web search tool to look up the capital city of Australia, then reply with \
+             the city name only.",
+        )
+        .await
+        .map_err(stringify)?;
+    let seen = collect_turn(&mut events).await?;
+    if !completed_items(&seen)
+        .into_iter()
+        .any(|item| matches!(item, ThreadItem::WebSearch { .. }))
+    {
+        return Err("no web-search item completed".to_string());
+    }
+    Ok(report(&thread))
+}
+
+/// A patch that renames a file arrives as a file change whose kind carries
+/// the path it moved to.
+pub(super) async fn file_moved(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let (thread, mut events) = full_auto(codex, model, project).await?;
+    thread
+        .start_turn(
+            "Use apply_patch to rename old.txt to moved.txt, with a patch that has a Move to \
+             line. Do not use shell commands. Then reply DONE.",
+        )
+        .await
+        .map_err(stringify)?;
+    let seen = drive_turn(&thread, &mut events, &mut |_| None).await?;
+    let moved = seen.iter().any(|event| {
+        event.method == "item/completed"
+            && event.params["item"]["type"] == "fileChange"
+            && event.params["item"]["changes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|change| change["kind"]["move_path"].is_string())
+    });
+    if !moved {
+        return Err(format!(
+            "no file change carried a move: {:?}",
+            items_of(&seen, &["fileChange", "commandExecution"])
+        ));
+    }
+    Ok(report(&thread))
+}
+
+/// Codex's multi-agent tools start a child thread and wait for it; each call
+/// is a collab-agent tool-call item on the parent thread.
+pub(super) async fn subagent(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let (thread, mut events) = full_auto(codex, model, project).await?;
+    thread
+        .start_turn(
+            "Call your spawn_agent tool directly, without reading any file or using any skill, to \
+             start exactly one agent whose task is: reply with exactly CODEX_SPEC_CHILD. Then \
+             wait for it to finish and reply with what it answered.",
+        )
+        .await
+        .map_err(stringify)?;
+    let seen = drive_turn(&thread, &mut events, &mut |_| None).await?;
+    let tools = seen
+        .iter()
+        .filter(|event| {
+            event.method == "item/completed"
+                && event.params["item"]["type"] == "collabAgentToolCall"
+        })
+        .map(|event| event.params["item"]["tool"].to_string())
+        .collect::<Vec<_>>();
+    if tools.is_empty() {
+        return Err("no collab-agent tool call completed".to_string());
+    }
+    // The owner's own skills are visible to the capture; reading one would
+    // put its text into the recording.
+    if seen.iter().any(|event| {
+        event.method == "item/started" && event.params["item"]["type"] == "commandExecution"
+    }) {
+        return Err("the turn ran a command instead of only spawning".to_string());
+    }
+    Ok(report(&thread))
+}
+
+/// The completed items of the given types, as JSON, for a failure message.
+pub(super) fn items_of(seen: &[codex::ThreadEvent], types: &[&str]) -> Vec<String> {
+    seen.iter()
+        .filter(|event| event.method == "item/completed")
+        .map(|event| &event.params["item"])
+        .filter(|item| types.iter().any(|kind| item["type"] == *kind))
+        .map(|item| item.to_string())
+        .collect()
+}
+
+/// A long-running command started without waiting keeps running as a
+/// terminal session; each later read of it arrives as a terminal interaction
+/// on the command's item.
+pub(super) async fn background_terminal(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let (thread, mut events) = full_auto(codex, model, project).await?;
+    thread
+        .start_turn(
+            "Start the shell command `read LINE; echo CODEX_SPEC_GOT $LINE` with a yield time \
+             of 1000 ms, so the call returns while it waits for input. Then write the text \
+             hello followed by a newline to that same running session, read its output, and \
+             reply DONE.",
+        )
+        .await
+        .map_err(stringify)?;
+    let seen = drive_turn(&thread, &mut events, &mut |_| None).await?;
+    let backgrounded = seen
+        .iter()
+        .any(|event| event.method == "item/commandExecution/terminalInteraction");
+    if !backgrounded {
+        return Err(format!(
+            "no command ran as a terminal session: {:?}",
+            seen.iter().map(|event| &event.method).collect::<Vec<_>>()
         ));
     }
     Ok(report(&thread))

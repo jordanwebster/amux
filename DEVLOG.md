@@ -1,3 +1,19 @@
+2026-09-26 — **Codex recordings for decisions and background work.**
+Eight more Codex specifications, captured against codex-cli 0.157.0. Work
+rows: a live web search as its own item, a file renamed through apply_patch
+(the change kind carries `move_path`), a subagent started and waited on
+through the multi-agent tools, and input written to a command still running
+as a terminal session (`terminalInteraction`). Decisions: a tool-server call
+that first asks whether the tool may run, then a form accepted with its field
+filled and a link cancelled, all as `mcpServer/elicitation/request`; an
+access grant for network access through the request-permissions tool; the
+automatic reviewer approving a command with its risk level and rationale;
+and approvals that outlive one request (a command approved with the rule
+Codex proposes, a file change approved for the session). The Codex probe
+serves the spec tool server itself when Codex starts it. Network rules stay
+authored: with the network proxy on, a domain off the allowlist is blocked
+outright and no approval proposes a rule.
+
 2026-09-26 — **A recorded sign-in problem for headless Claude.**
 `session/sign_in_problem` runs Claude Code 2.1.283 with a key the API
 rejects, which takes precedence over the owner's sign-in. Claude retries
