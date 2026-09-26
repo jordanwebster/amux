@@ -39,14 +39,20 @@ pub mod control;
 pub mod history;
 pub mod probe;
 pub mod pty;
+pub mod questions;
 pub mod results;
 pub mod session;
 pub mod tools;
+pub mod work;
 
 /// Specifications reach for Haiku first: shorter turns make smaller, more
 /// stable recordings, and nothing below needs a larger model to be true.
 pub(crate) const HAIKU: &str = "claude-haiku-4-5-20251001";
 pub const MINIMUM_SUPPORTED: &str = "2.1.247";
+
+/// A 32×32 solid red PNG that image scenarios hand to the provider, and that
+/// live capture writes into the working directory as `square.png`.
+pub const SQUARE_PNG: &[u8] = include_bytes!("../../assets/square.png");
 pub const ALLOWED_MODELS: &[&str] = &[HAIKU, "claude-sonnet-5"];
 
 /// How long a draining session must stay silent before it counts as finished.
@@ -71,7 +77,7 @@ pub struct SessionSetup {
     pub prompt: String,
     pub options: QueryOptions,
     answer_permission: bool,
-    question_answer: Option<String>,
+    questions: Option<QuestionReply>,
     plan_reviews: VecDeque<PlanReview>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     elicitation_content: Option<serde_json::Value>,
@@ -80,6 +86,18 @@ pub struct SessionSetup {
     /// The id the opening prompt carries on stdin, when a specification is
     /// about that id.
     prompt_uuid: Option<String>,
+    /// A PNG attached to the opening prompt, ahead of its text.
+    prompt_image: Option<&'static [u8]>,
+}
+
+/// How the specification answers AskUserQuestion.
+#[derive(Clone)]
+pub(crate) enum QuestionReply {
+    /// Answer every question with the text this returns for it: an option's
+    /// label, several labels joined by ", ", or free text.
+    Answer(Arc<dyn Fn(&serde_json::Value) -> String + Send + Sync>),
+    /// Dismiss the form and stop the turn, as a person pressing Escape does.
+    Dismiss(String),
 }
 
 #[derive(Clone)]
@@ -96,13 +114,14 @@ impl SessionSetup {
             prompt: prompt.into(),
             options: QueryOptions::new(model),
             answer_permission: false,
-            question_answer: None,
+            questions: None,
             plan_reviews: VecDeque::new(),
             hook_log: None,
             elicitation_content: None,
             dialog_result: None,
             defer_prompt: false,
             prompt_uuid: None,
+            prompt_image: None,
         }
     }
 
@@ -123,7 +142,19 @@ impl SessionSetup {
     }
 
     pub(crate) fn answer_question(&mut self, answer: impl Into<String>) {
-        self.question_answer = Some(answer.into());
+        let answer = answer.into();
+        self.answer_questions(move |_| answer.clone());
+    }
+
+    pub(crate) fn answer_questions(
+        &mut self,
+        answer: impl Fn(&serde_json::Value) -> String + Send + Sync + 'static,
+    ) {
+        self.questions = Some(QuestionReply::Answer(Arc::new(answer)));
+    }
+
+    pub(crate) fn dismiss_questions(&mut self, message: impl Into<String>) {
+        self.questions = Some(QuestionReply::Dismiss(message.into()));
     }
 
     pub(crate) fn review_plans(&mut self, reviews: impl IntoIterator<Item = PlanReview>) {
@@ -222,7 +253,31 @@ impl Sessions {
                     .await?
             }
         };
-        let mut prompt = crate::driver::sdk::UserMessage::text(setup.prompt);
+        let mut prompt = match setup.prompt_image {
+            None => crate::driver::sdk::UserMessage::text(setup.prompt),
+            Some(png) => crate::driver::sdk::UserMessage::new(
+                crate::driver::sdk::MessageParam {
+                    role: crate::driver::sdk::Role::User,
+                    content: MessageContent::Blocks(vec![
+                        ContentBlock::Image {
+                            source: crate::driver::sdk::ImageSource {
+                                r#type: crate::driver::sdk::ImageSourceType::Base64,
+                                media_type: "image/png".to_owned(),
+                                data: base64(png),
+                                extensions: Default::default(),
+                            },
+                            extensions: Default::default(),
+                        },
+                        ContentBlock::Text {
+                            text: setup.prompt,
+                            extensions: Default::default(),
+                        },
+                    ]),
+                    extensions: Default::default(),
+                },
+                None,
+            ),
+        };
         if let Some(uuid) = setup.prompt_uuid {
             prompt = prompt.with_uuid(uuid);
         }
@@ -245,7 +300,7 @@ impl Sessions {
             sessions: self.clone(),
             pending: Vec::new(),
             answer_permission: setup.answer_permission,
-            question_answer: setup.question_answer,
+            questions: setup.questions,
             plan_reviews: setup.plan_reviews,
             permission_requests: Vec::new(),
             hook_log: setup.hook_log,
@@ -269,7 +324,7 @@ pub struct SpecSession {
     /// to has not been given yet.
     pending: Vec<Message>,
     answer_permission: bool,
-    question_answer: Option<String>,
+    questions: Option<QuestionReply>,
     plan_reviews: VecDeque<PlanReview>,
     permission_requests: Vec<(String, serde_json::Value)>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
@@ -476,17 +531,27 @@ impl SpecSession {
                 } => {
                     self.permission_requests
                         .push((tool_name.clone(), input.clone()));
-                    let result = if tool_name == "AskUserQuestion" && self.question_answer.is_some()
-                    {
-                        crate::driver::sdk::PermissionResult::Allow {
-                            updated_input: Some(question_input_with_answer(
-                                input,
-                                self.question_answer
-                                    .as_deref()
-                                    .expect("question answer checked"),
-                            )),
-                            updated_permissions: None,
-                            tool_use_id: None,
+                    let questions = (tool_name == "AskUserQuestion")
+                        .then(|| self.questions.clone())
+                        .flatten();
+                    let result = if let Some(reply) = questions {
+                        match reply {
+                            QuestionReply::Answer(answer) => {
+                                crate::driver::sdk::PermissionResult::Allow {
+                                    updated_input: Some(question_input_with_answer(
+                                        input, &*answer,
+                                    )),
+                                    updated_permissions: None,
+                                    tool_use_id: None,
+                                }
+                            }
+                            QuestionReply::Dismiss(message) => {
+                                crate::driver::sdk::PermissionResult::Deny {
+                                    message,
+                                    interrupt: Some(true),
+                                    tool_use_id: None,
+                                }
+                            }
                         }
                     } else if tool_name == "ExitPlanMode" && !self.plan_reviews.is_empty() {
                         match self.plan_reviews.pop_front().expect("plan review checked") {
@@ -608,22 +673,42 @@ impl SpecSession {
     }
 }
 
-fn question_input_with_answer(mut input: serde_json::Value, answer: &str) -> serde_json::Value {
+fn question_input_with_answer(
+    mut input: serde_json::Value,
+    answer: &(dyn Fn(&serde_json::Value) -> String + Send + Sync),
+) -> serde_json::Value {
     let answers = input
         .get("questions")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|question| question.get("question").and_then(serde_json::Value::as_str))
-        .map(|question| {
-            (
-                question.to_owned(),
-                serde_json::Value::String(answer.to_owned()),
-            )
+        .filter_map(|question| {
+            let text = question
+                .get("question")
+                .and_then(serde_json::Value::as_str)?;
+            Some((text.to_owned(), serde_json::Value::String(answer(question))))
         })
         .collect::<serde_json::Map<_, _>>();
     input["answers"] = serde_json::Value::Object(answers);
     input
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let word = chunk.iter().enumerate().fold(0u32, |word, (index, byte)| {
+            word | u32::from(*byte) << (16 - 8 * index)
+        });
+        for index in 0..4 {
+            if index <= chunk.len() {
+                encoded.push(ALPHABET[(word >> (18 - 6 * index) & 63) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    encoded
 }
 
 fn allow_hook() -> crate::driver::sdk::HookOutput {
@@ -921,6 +1006,8 @@ static DEFINITIONS: &[&SpecDef] = &[
     &tools::PERMISSION_CALLBACK,
     &tools::QUESTION_ASKED,
     &tools::PLAN_REVIEWED,
+    &questions::EVERY_SHAPE,
+    &questions::DISMISSED,
     &tools::IN_PROCESS_MCP,
     &tools::ELICITATION_ACCEPTED,
     &tools::DIALOG_REQUESTED,
@@ -935,6 +1022,11 @@ static DEFINITIONS: &[&SpecDef] = &[
     &results::MAX_TURNS,
     &results::MAX_BUDGET,
     &results::INTERRUPTED,
+    &work::IMAGE,
+    &work::FAILING_COMMAND,
+    &work::TASK_LIST,
+    &work::BACKGROUND_SHELL,
+    &work::FAILED_TOOL_SERVER,
     &channels::CLIENT_ID,
     &channels::SIDE_CHANNEL,
 ];
@@ -960,6 +1052,8 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("tools/permission_callback", "permission_callback"),
     entry("tools/question_asked", "question_asked"),
     entry("tools/plan_reviewed", "plan_reviewed"),
+    entry("tools/question_every_shape", "question_every_shape"),
+    entry("tools/question_dismissed", "question_dismissed"),
     entry("tools/in_process_mcp", "in_process_mcp"),
     entry("tools/elicitation_accepted", "elicitation_accepted"),
     entry("tools/hook_lifecycle", "hook_lifecycle"),
@@ -973,6 +1067,11 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("results/max_turns", "max_turns"),
     entry("results/max_budget", "max_budget"),
     entry("results/interrupted", "interrupted"),
+    entry("work/image", "image"),
+    entry("work/failing_command", "failing_command"),
+    entry("work/task_list", "task_list"),
+    entry("work/background_shell", "background_shell"),
+    entry("control/failed_tool_server", "failed_tool_server"),
     entry("probes/client_id", "client_id"),
     entry("probes/side_channel", "side_channel"),
 ];

@@ -1,3 +1,21 @@
+2026-09-26 — **More headless Claude recordings.**
+Seven SDK specifications, captured against Claude Code 2.1.283, fill rows
+the corpus lacked. `tools/question_every_shape` asks four questions in one
+AskUserQuestion call (two, three and four options with header chips, a
+multi-select, previews on every option of a single-select, and a free-text
+answer); the answers go back as one map from question to text, several
+labels joined by ", ". `tools/question_dismissed` denies the question and
+stops the turn, and shows Claude writing its standard rejection into the
+tool result instead of the denial's message, as the terminal does.
+`work/image` attaches an image to the prompt and reads one back through
+Read, whose result carries the image. `work/failing_command`,
+`work/task_list` (TaskCreate and TaskUpdate after a ToolSearch),
+`work/background_shell` (a task announced with `task_started` and
+`background_tasks_changed`, read back later) and `control/failed_tool_server`
+(a server whose command cannot start is `failed` and the session goes on)
+cover the rest. SDK capture now seeds the same small files the terminal
+capture does.
+
 2026-09-26 — **A specification for Codex draining injected items.**
 `inject_drain`, captured against codex-cli 0.157.0, sends an item with
 `thread/inject_items` while the turn's `sleep` command runs. The inject is

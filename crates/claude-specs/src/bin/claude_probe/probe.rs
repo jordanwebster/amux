@@ -64,9 +64,6 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// A 32×32 solid red PNG that image-reading scenarios hand to the provider.
-const SQUARE_PNG: &[u8] = include_bytes!("../../../assets/square.png");
-
 fn usage() -> &'static str {
     "usage: claude-probe list [--sdk|--pty] | record (--sdk|--pty) <spec>... | probe [--sdk] [--pty] [--out <dir>]"
 }
@@ -289,7 +286,7 @@ async fn capture_pty(entry: SpecEntry) -> Result<PtyCapture, Box<dyn std::error:
     std::fs::create_dir_all(&work)?;
     std::fs::write(work.join("config.txt"), "VALUE=1\n")?;
     std::fs::write(work.join("README.md"), "CURRENT\n")?;
-    std::fs::write(work.join("square.png"), SQUARE_PNG)?;
+    std::fs::write(work.join("square.png"), claude_specs::specs::SQUARE_PNG)?;
     let hook_command = vec![
         std::env::current_exe()?.display().to_string(),
         "__pty-hook".to_owned(),
@@ -648,6 +645,9 @@ async fn capture_direct(entry: SpecEntry) -> Result<Capture, Box<dyn std::error:
     std::fs::create_dir_all(&capture_dir)?;
     std::fs::create_dir_all(&helpers)?;
     install_mcp_helper(&helpers)?;
+    std::fs::write(work.join("config.txt"), "VALUE=1\n")?;
+    std::fs::write(work.join("README.md"), "CURRENT\n")?;
+    std::fs::write(work.join("square.png"), claude_specs::specs::SQUARE_PNG)?;
 
     let old_path = std::env::var_os("PATH");
     let mut paths = vec![helpers];
