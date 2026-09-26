@@ -143,7 +143,80 @@ both!(
     retention_of_replicas_evicts_unfollowed_agents_by_last_use_then_trims_to_k,
     retention_of_a_replica_keeps_its_agents_row_for_the_children_here,
     retention_of_a_replica_drops_rows_a_reset_left_below_the_block_before_trimming_it,
+    retention_of_a_replica_block_under_the_floor_takes_only_the_stale_rows_below_it,
 );
+
+/// A Reset whose tail is smaller than the floor, over stale rows: the
+/// stale rows are not the block's, so they go whole and the block, under
+/// the floor, is never trimmed. Counted as the block's oldest rows they
+/// would lift it over the floor and the boundary would land among them,
+/// below the hole, claiming history the replica does not hold.
+fn retention_of_a_replica_block_under_the_floor_takes_only_the_stale_rows_below_it<S: Store>(
+    mut store: S,
+) {
+    let followed = peer("followed");
+    // Orders 1..=4, then a Reset whose tail is orders 13..=14.
+    replica(&mut store, &followed, 4, 100);
+    let tail = (13..=14)
+        .map(|order| Item {
+            key: format!("{order:02}"),
+            order,
+            revision: 20 + order,
+            text: "x".repeat(TEXT),
+            kind: "codex".into(),
+            ..Default::default()
+        })
+        .collect();
+    store
+        .absorb(
+            &followed,
+            Absorb::Reset {
+                tail,
+                snapshot: Snapshot {
+                    revision: 40,
+                    at_ms: 200,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(store.pool_bytes(false).unwrap(), 6 * ROW);
+    let sourced = HashSet::from([followed.clone()]);
+    let block = |store: &S| {
+        let row = store.agent(&followed).unwrap().unwrap();
+        let page = store.page(&followed, None, 10).unwrap();
+        let orders: Vec<u64> = page.items.iter().map(|item| item.order).collect();
+        (row.complete_from_order, orders, page.end)
+    };
+
+    // A budget the stale rows alone satisfy.
+    let sweep = store
+        .sweep_replicas(2 * ROW, 3, &sourced, &HashMap::new())
+        .unwrap();
+    assert_eq!(
+        describe(&sweep),
+        [format!(
+            "trimmed followed by 4 rows ({} bytes); history now starts at order 13",
+            4 * ROW
+        )],
+        "the stale rows go whole, and the block is left alone"
+    );
+    assert_eq!(
+        block(&store),
+        (Some(13), vec![14, 13], PageEnd::Boundary),
+        "the boundary stays on the block and paging down skips nothing"
+    );
+
+    // No budget: a block under the floor still keeps every row.
+    let sweep = store
+        .sweep_replicas(0, 3, &sourced, &HashMap::new())
+        .unwrap();
+    assert_eq!(
+        describe(&sweep),
+        ["every live agent is at its protected rows; stopping"]
+    );
+    assert_eq!(block(&store), (Some(13), vec![14, 13], PageEnd::Boundary));
+}
 
 /// A Reset leaves the old block's rows below the new one: stored for Get,
 /// not history. Trimming takes them first and whole, then trims the block

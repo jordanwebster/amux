@@ -348,19 +348,23 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         .unwrap();
 
     // The next stream to reach the laptop's source drops right after its
-    // Snapshot, once.
+    // Snapshot, once: the Snapshot is taken, the event after it is not.
     let dropped = Arc::new(AtomicBool::new(false));
     {
         let dropped = dropped.clone();
+        let snapshot_seen = AtomicBool::new(false);
         let watched = key.clone();
         net.runtime("laptop")
             .unwrap()
             .set_source_hook(Some(Arc::new(
                 move |agent: &AgentKey, event: &SessionEvent| {
-                    if *agent == watched
-                        && matches!(event.of, Some(session_event::Of::Snapshot(_)))
-                        && !dropped.swap(true, Ordering::SeqCst)
-                    {
+                    if *agent != watched || dropped.load(Ordering::SeqCst) {
+                        SourceVerdict::Keep
+                    } else if matches!(event.of, Some(session_event::Of::Snapshot(_))) {
+                        snapshot_seen.store(true, Ordering::SeqCst);
+                        SourceVerdict::Keep
+                    } else if snapshot_seen.load(Ordering::SeqCst) {
+                        dropped.store(true, Ordering::SeqCst);
                         SourceVerdict::Drop
                     } else {
                         SourceVerdict::Keep
@@ -501,6 +505,93 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         origin_rows(&net, "worker").await.len(),
         "the page and the delta together hold the origin's whole history"
     );
+    net.shutdown().await.unwrap();
+}
+
+/// A source whose stream is lost while the link stays up detaches its
+/// chat itself: the host was never lost, yet the chat sees Detached and
+/// the replica's marker reads Detached for as long as the source waits out
+/// its backoff; then it catches up again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
+    const K: u32 = 6;
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("worker", "desk")
+            .steps(turns(2, 3))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(K, |_, _| {}))
+        .await
+        .unwrap();
+    let key = net.agent("worker").unwrap().key();
+    wait_origin_says(&net, "worker", "t0-2").await;
+
+    // Once armed, the laptop's source drops the next record it is sent. A
+    // source reads the hook when its stream opens, so the link blinks to
+    // open one that has it.
+    let armed = Arc::new(AtomicBool::new(false));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let laptop = net.runtime("laptop").unwrap();
+    {
+        let armed = armed.clone();
+        let dropped = dropped.clone();
+        let watched = key.clone();
+        laptop.set_source_hook(Some(Arc::new(move |agent: &AgentKey, _: &SessionEvent| {
+            if *agent == watched && armed.swap(false, Ordering::SeqCst) {
+                dropped.store(true, Ordering::SeqCst);
+                SourceVerdict::Drop
+            } else {
+                SourceVerdict::Keep
+            }
+        })));
+    }
+    sever(&mut net).await;
+    restore(&mut net).await;
+    wait_current(&net, "laptop", "worker").await;
+    let mut chat = net.observe("laptop", "worker", 10).await.unwrap();
+    chat.observe_until(observe::caught_up, PATIENCE)
+        .await
+        .unwrap();
+    let seen = chat.events().len();
+
+    armed.store(true, Ordering::SeqCst);
+    net.send("worker", "two").await.unwrap();
+    chat.observe_until(
+        |events| marks(&events[seen..]).contains(&Mark::Detached),
+        PATIENCE,
+    )
+    .await
+    .unwrap();
+    assert!(dropped.load(Ordering::SeqCst));
+    let desk = net.host("desk").unwrap().host_id;
+    assert!(laptop.host_ready(desk), "the host was never lost");
+    holds_for(
+        "the marker to read Detached through the backoff",
+        Duration::from_millis(200),
+        || async {
+            replica_state(&net, "laptop", "worker").await.unwrap().1 == Some(Marker::Detached)
+        },
+    )
+    .await
+    .unwrap();
+
+    net.advance(Duration::from_secs(1)).unwrap();
+    chat.observe_until(
+        |events| {
+            since_last_detached(&events[seen..])
+                .iter()
+                .any(|m| matches!(m, Mark::CaughtUp(_)))
+        },
+        PATIENCE,
+    )
+    .await
+    .unwrap();
+    wait_current(&net, "laptop", "worker").await;
+    println!(
+        "the laptop's chat through a stream lost with the link up:\n{}",
+        chat.transcript()
+    );
+    drop(laptop);
     net.shutdown().await.unwrap();
 }
 
@@ -736,7 +827,8 @@ async fn trimming_after_a_reset_keeps_the_block_whole_and_runs_on_the_retention_
 /// Under OnDemand no agent gets a source until a client subscribes, and
 /// then only that one: a background wake warms one chat. Switching to
 /// Listed sweeps every other agent current. A source for an agent that
-/// exits closes once its catch-up has landed.
+/// exits closes once its catch-up has landed, and opens again when its
+/// origin resumes it.
 #[tokio::test(flavor = "multi_thread")]
 async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close() {
     const K: u32 = 6;
@@ -833,14 +925,30 @@ async fn on_demand_warms_one_chat_listed_sweeps_the_rest_and_exited_agents_close
     let row = laptop.store().await.agent(&quiet).unwrap().unwrap();
     assert_eq!(row.lifecycle, wire::Lifecycle::Exited as i32);
     assert_eq!(laptop.open_sources(), vec![named]);
+
+    // Resumed by its origin, it is followed again.
+    net.resume("quiet", Some("again")).await.unwrap();
+    observe::eventually("quiet's source to reopen", PATIENCE, || async {
+        laptop.open_sources().contains(&quiet)
+    })
+    .await
+    .unwrap();
+    wait_origin_says(&net, "quiet", "t0-0").await;
+    wait_current(&net, "laptop", "quiet").await;
+    let row = laptop.store().await.agent(&quiet).unwrap().unwrap();
+    assert_eq!(
+        (row.lifecycle, row.incarnation),
+        (wire::Lifecycle::Live as i32, 2)
+    );
     drop(laptop);
     net.shutdown().await.unwrap();
 }
 
 /// A replica of a host that lost power holds rows the host no longer has.
-/// No source of that host opens before its generation is compared, so the
-/// laptop drops them and takes a fresh tail: the chat sees a Reset and
-/// never a row the origin lost.
+/// No source of that host opens before its generation is compared, not
+/// even for a chat a client opens while the host is away, so the laptop
+/// drops them and takes a fresh tail: every chat sees a Reset and never a
+/// row the origin lost.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_never_return() {
     const K: u32 = 6;
@@ -877,6 +985,16 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
         .await
         .unwrap();
 
+    // The laptop loses desk before desk comes back rewound.
+    sever(&mut net).await;
+    let laptop = net.runtime("laptop").unwrap();
+    let desk = net.host("desk").unwrap().host_id;
+    observe::eventually("the laptop to detach desk's agents", PATIENCE, || async {
+        replica_state(&net, "laptop", "worker").await.unwrap().1 == Some(Marker::Detached)
+    })
+    .await
+    .unwrap();
+    assert!(!laptop.host_ready(desk), "an away host is not ready");
     let generation = net.generation("desk").unwrap();
     net.rewind_host(
         "desk",
@@ -888,23 +1006,53 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
     .await
     .unwrap();
     assert_eq!(net.generation("desk").unwrap(), generation + 1);
-    net.wait_link("desk", "laptop", true).await.unwrap();
-    let events = chat
-        .observe_until(
-            |events| {
-                since_last_detached(events)
-                    .iter()
-                    .any(|m| matches!(m, Mark::CaughtUp(_)))
-            },
-            PATIENCE,
-        )
-        .await
-        .unwrap();
-    assert!(
-        since_last_detached(events).contains(&Mark::Reset),
-        "{}",
-        chat.transcript()
-    );
+
+    // A client opening the chat while desk is away opens no source: none
+    // may open before desk's new inventory is in and compared.
+    let mut away = net.observe("laptop", "worker", 10).await.unwrap();
+    holds_for(
+        "no source opens while desk is away",
+        Duration::from_millis(300),
+        || {
+            let open = laptop.open_sources();
+            let ready = laptop.host_ready(desk);
+            async move { open.is_empty() && !ready }
+        },
+    )
+    .await
+    .unwrap();
+    drop(laptop);
+    restore(&mut net).await;
+    for chat in [&mut away, &mut chat] {
+        let events = chat
+            .observe_until(
+                |events| {
+                    since_last_detached(events)
+                        .iter()
+                        .any(|m| matches!(m, Mark::CaughtUp(_)))
+                },
+                PATIENCE,
+            )
+            .await
+            .unwrap();
+        assert!(
+            since_last_detached(events).contains(&Mark::Reset),
+            "{}",
+            chat.transcript()
+        );
+        let from = events
+            .iter()
+            .rposition(|event| matches!(event.of, Some(session_event::Of::Detached(_))))
+            .unwrap_or(0);
+        assert!(
+            !events[from..].iter().any(|event| matches!(
+                &event.of,
+                Some(session_event::Of::Item(item)) if item.text.contains("t1-0")
+            )),
+            "the chat never sees a row the origin lost again: {}",
+            chat.transcript()
+        );
+    }
     wait_current(&net, "laptop", "worker").await;
     let held = net
         .runtime("laptop")

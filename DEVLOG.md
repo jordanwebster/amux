@@ -1,3 +1,17 @@
+2026-09-26 — **Replication specs hold what they name.**
+Five peer-source promises passed with the code that keeps them removed.
+The dying-stream case dropped its stream on the Snapshot, before the
+source used it, so the named case (dying right after it) never ran; it
+now drops the event after the Snapshot, and absorbing a delta as live
+records fails its cursor assertion. The rewound-origin case now opens a
+chat while the origin is away and asserts no source opens and the host
+is not ready until the new inventory is compared. A new case drops a
+live record with the link up and asserts the source itself detaches the
+chat for its whole backoff. The source-policy case resumes an exited
+agent at its origin and asserts its replica is followed again. A store
+case holds that a replica block smaller than the floor keeps every row
+while the stale rows below it go.
+
 2026-09-26 — **Family specs hold dedupe, incarnations on the wire and the home-directory spawn.**
 Three promises the family specs appeared to hold passed with the code
 that keeps them removed. A duplicate message was counted as items keyed
