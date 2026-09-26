@@ -401,14 +401,7 @@ impl State {
                 }
             }
             claude_sdk_input::Of::Interrupt(_) => {
-                if self.shared.is_busy() || !self.shared.asks().is_empty() {
-                    self.interrupted = true;
-                    self.control_request(
-                        emit,
-                        Request::Interrupt,
-                        json!({ "subtype": "interrupt" }),
-                    );
-                }
+                self.interrupt(emit);
                 self.shared.accept(emit, &id, false);
             }
             claude_sdk_input::Of::Clear(_) => {
@@ -444,6 +437,14 @@ impl State {
             // Headless Claude takes its effort at launch only.
             claude_sdk_input::Of::Effort(_) => self.shared.reject(emit, &id, reason::UNSUPPORTED),
             claude_sdk_input::Of::Answer(answer) => self.answer(emit, &id, answer),
+        }
+    }
+
+    /// Cancels the running turn, which also drops an open ask's tool call.
+    fn interrupt(&mut self, emit: &mut Emit) {
+        if self.shared.is_busy() || !self.shared.asks().is_empty() {
+            self.interrupted = true;
+            self.control_request(emit, Request::Interrupt, json!({ "subtype": "interrupt" }));
         }
     }
 
@@ -769,10 +770,13 @@ impl Interpreter for ClaudeSdk {
             Event::Tick { at_ms } => state.shared.tick(at_ms),
             Event::Fact(fact) => state.fact(&mut emit, fact),
             Event::Input(input) => state.input(&mut emit, input),
-            Event::ProviderExit { code } => state.exited(&mut emit, code),
-            // Draining and stopping are the agent process's; the provider's
-            // facts report what follows.
-            Event::DaemonLost | Event::StopRequested(_) => {}
+            Event::ProviderExit { code } => state.exited(&mut emit, crate::exit_cause(code)),
+            Event::Exiting { cause } => state.exited(&mut emit, cause),
+            Event::DaemonLost => {
+                state.boundary(&mut emit, wire::BoundaryKind::DaemonLost, String::new())
+            }
+            Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
+            Event::StopRequested(_) => {}
         }
         if let Some(entry) = state.shared.next_queued() {
             state.submit(&mut emit, entry);

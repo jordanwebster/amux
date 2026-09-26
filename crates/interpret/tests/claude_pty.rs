@@ -28,6 +28,7 @@ macro_rules! goldens {
 }
 
 goldens! {
+    lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     recorded_prompt => "recorded_prompt",
     recorded_prompt_multiline => "recorded_prompt_multiline",
     recorded_tools => "recorded_tools",

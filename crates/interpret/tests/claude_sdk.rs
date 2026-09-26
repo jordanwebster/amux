@@ -30,6 +30,7 @@ macro_rules! goldens {
 }
 
 goldens! {
+    lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     permission_asks_keep_scopes_reason_and_description => "asks",
     questions_and_plan_verdicts_are_asks => "verdicts",
     usage_health_and_sign_in_are_strip_fields => "strip",

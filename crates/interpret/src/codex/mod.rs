@@ -456,6 +456,21 @@ impl State {
         self.emit_work(emit, item_key);
     }
 
+    /// Cancels the running turn; one still starting is cancelled as soon
+    /// as Codex names it.
+    fn interrupt(&mut self, emit: &mut Emit) {
+        match self.active_turn.clone() {
+            Some(turn) => self.request(
+                emit,
+                "turn/interrupt",
+                json!({ "threadId": self.thread(), "turnId": turn }),
+                Request::Interrupt,
+            ),
+            None if self.shared.is_busy() => self.interrupt_pending = true,
+            None => {}
+        }
+    }
+
     fn boundary(&mut self, emit: &mut Emit, kind: wire::BoundaryKind, cause: String) {
         self.next_boundary += 1;
         self.emit_item(
@@ -506,16 +521,7 @@ impl State {
                 }
             }
             codex_input::Of::Interrupt(_) => {
-                match self.active_turn.clone() {
-                    Some(turn) => self.request(
-                        emit,
-                        "turn/interrupt",
-                        json!({ "threadId": self.thread(), "turnId": turn }),
-                        Request::Interrupt,
-                    ),
-                    None if self.shared.is_busy() => self.interrupt_pending = true,
-                    None => {}
-                }
+                self.interrupt(emit);
                 self.shared.accept(emit, &id, false);
             }
             codex_input::Of::Approval(approval) => {
@@ -933,10 +939,13 @@ impl<A: Arm> Interpreter for CodexWith<A> {
             Event::Tick { at_ms } => state.shared.tick(at_ms),
             Event::Fact(fact) => state.fact(&mut emit, fact),
             Event::Input(input) => state.input(&mut emit, input),
-            Event::ProviderExit { code } => state.exited(&mut emit, code),
-            // Draining and stopping are the agent process's; the provider's
-            // facts report what follows.
-            Event::DaemonLost | Event::StopRequested(_) => {}
+            Event::ProviderExit { code } => state.exited(&mut emit, crate::exit_cause(code)),
+            Event::Exiting { cause } => state.exited(&mut emit, cause),
+            Event::DaemonLost => {
+                state.boundary(&mut emit, wire::BoundaryKind::DaemonLost, String::new())
+            }
+            Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
+            Event::StopRequested(_) => {}
         }
         if let Some(entry) = state.shared.next_queued() {
             state.submit(&mut emit, entry, Vec::new());

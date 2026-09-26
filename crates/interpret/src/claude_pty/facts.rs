@@ -96,12 +96,8 @@ impl State {
         provider.launches += 1;
     }
 
-    pub(super) fn exited(&mut self, emit: &mut Emit, code: Option<i32>) {
+    pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
         self.close_all_unknown(emit);
-        let cause = match code {
-            Some(code) => format!("exit code {code}"),
-            None => "killed by a signal".to_owned(),
-        };
         self.boundary(emit, BoundaryKind::Exited, cause);
         self.shared.provider_exited();
         self.local_turn = false;

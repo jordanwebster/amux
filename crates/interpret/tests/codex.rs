@@ -31,6 +31,7 @@ macro_rules! goldens {
 }
 
 goldens! {
+    lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     asks_cover_every_request_codex_makes => "asks",
     inputs_become_app_server_requests => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",

@@ -305,7 +305,7 @@ impl<const FORGET: bool> Interpreter for TestKind<FORGET> {
             }
             Event::Fact(_) => {}
             Event::Input(input) => Self::input(state, &mut emit, input),
-            Event::ProviderExit { .. } => {
+            Event::ProviderExit { .. } | Event::Exiting { .. } => {
                 // A session end closes every open ask, outcome unknown.
                 state.shared.close_all_asks();
                 state.shared.provider_exited();

@@ -579,6 +579,14 @@ impl State {
 
     // --- items -----------------------------------------------------------
 
+    /// Cancels the running turn with the interrupt key, which also
+    /// dismisses an open ask's dialog.
+    fn interrupt(&mut self, emit: &mut Emit) {
+        if self.shared.is_busy() || !self.shared.asks().is_empty() {
+            emit.effect(Effect::Terminal(TerminalInput::Interrupt));
+        }
+    }
+
     fn boundary(&mut self, emit: &mut Emit, kind: BoundaryKind, cause: String) {
         self.next_boundary += 1;
         let key = format!("boundary:{}", self.next_boundary);
@@ -682,9 +690,7 @@ impl State {
                 }
             }
             claude_pty_input::Of::Interrupt(_) => {
-                if self.shared.is_busy() || !self.shared.asks().is_empty() {
-                    emit.effect(Effect::Terminal(TerminalInput::Interrupt));
-                }
+                self.interrupt(emit);
                 self.shared.accept(emit, &id, false);
             }
             claude_pty_input::Of::Clear(_) => {
@@ -852,10 +858,13 @@ impl Interpreter for ClaudePty {
             Event::Tick { at_ms } => state.shared.tick(at_ms),
             Event::Fact(fact) => state.fact(&mut emit, fact),
             Event::Input(input) => state.input(&mut emit, input),
-            Event::ProviderExit { code } => state.exited(&mut emit, code),
-            // Draining and stopping are the agent process's; the provider's
-            // facts report what follows.
-            Event::DaemonLost | Event::StopRequested(_) => {}
+            Event::ProviderExit { code } => state.exited(&mut emit, crate::exit_cause(code)),
+            Event::Exiting { cause } => state.exited(&mut emit, cause),
+            Event::DaemonLost => {
+                state.boundary(&mut emit, wire::BoundaryKind::DaemonLost, String::new())
+            }
+            Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
+            Event::StopRequested(_) => {}
         }
         if let Some(entry) = state.shared.next_queued() {
             emit.effect(Effect::Terminal(TerminalInput::Prompt {

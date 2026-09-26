@@ -505,6 +505,9 @@ fn scripted<I: Interpreter>(value: &Value) -> Result<Scripted, String> {
                 .map(|code| code as i32),
         }),
         "daemon_lost" => Action::Event(Event::DaemonLost),
+        "exiting" => Action::Event(Event::Exiting {
+            cause: body.as_str().ok_or("exiting takes a cause")?.to_owned(),
+        }),
         "stop" => Action::Event(Event::StopRequested(
             match body.as_str().ok_or("stop takes a mode")? {
                 "graceful" => StopMode::Graceful,
@@ -1431,6 +1434,7 @@ fn event_label(event: &Event) -> String {
         Event::Tick { at_ms } => format!("tick {at_ms}"),
         Event::ProviderExit { code } => format!("provider_exit {code:?}"),
         Event::DaemonLost => "daemon_lost".into(),
+        Event::Exiting { cause } => format!("exiting {cause:?}"),
         Event::StopRequested(mode) => format!("stop {}", mode.as_str_name()),
     }
 }

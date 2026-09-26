@@ -103,9 +103,27 @@ pub enum Event {
     ProviderExit {
         code: Option<i32>,
     },
-    /// ctl.sock closed.
+    /// The grace after ctl.sock closed ran out with no daemon back: the
+    /// agent drains. The interpreter writes a daemon-lost boundary.
     DaemonLost,
+    /// A stop from the daemon. Abort cancels the running turn the
+    /// provider's own way, as the interrupt input does; graceful and kill
+    /// change nothing the interpreter holds.
     StopRequested(StopMode),
+    /// The agent process is ending this incarnation for `cause` (a drain,
+    /// a stop, the one-shot rule): the final boundary, open asks closed.
+    /// The provider's own exit that follows is not reported.
+    Exiting {
+        cause: String,
+    },
+}
+
+/// The cause the final boundary gives for a provider's own exit.
+pub fn exit_cause(code: Option<i32>) -> String {
+    match code {
+        Some(code) => format!("exit code {code}"),
+        None => "killed by a signal".to_owned(),
+    }
 }
 
 /// One provider fact exactly as it arrived; what the facts ring records.

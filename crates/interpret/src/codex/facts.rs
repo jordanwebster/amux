@@ -1554,7 +1554,7 @@ impl State {
         }
     }
 
-    pub(super) fn exited(&mut self, emit: &mut Emit, code: Option<i32>) {
+    pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
         for ask in self.shared.close_all_asks() {
             if let Some(meta) = self.asks.remove(&ask.key) {
                 self.emit_ask(emit, &ask, meta.at_ms, Some(ask_item::dismissed()));
@@ -1563,11 +1563,7 @@ impl State {
         self.settle_open(emit, false);
         self.shared.provider_exited();
         self.active_turn = None;
-        self.boundary(
-            emit,
-            wire::BoundaryKind::Exited,
-            code.map_or_else(|| "killed".to_owned(), |code| format!("exit code {code}")),
-        );
+        self.boundary(emit, wire::BoundaryKind::Exited, cause);
     }
 }
 

@@ -1,0 +1,113 @@
+{
+  "about": "The agent process's lifecycle as steps for Claude in a terminal: the grace running out writes a daemon-lost boundary; an abort presses the interrupt key the way the interrupt input does; the agent ending the incarnation closes the open ask and writes the final boundary with its cause.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.282",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "test it"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "test it"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cargo test"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cargo test"
+          },
+          "permission_suggestions": []
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "daemon_lost": {},
+      "expect": {
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "stop": "abort",
+      "expect": {
+        "effects": [
+          "terminal interrupt"
+        ]
+      }
+    },
+    {
+      "exiting": "stopped",
+      "expect": {
+        "asks": [],
+        "phase": "STARTING"
+      }
+    }
+  ],
+  "end": {
+    "queue_may_remain": false
+  }
+}

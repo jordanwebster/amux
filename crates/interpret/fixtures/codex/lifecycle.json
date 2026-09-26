@@ -1,0 +1,136 @@
+{
+  "about": "The agent process's lifecycle as steps for Codex: the grace running out writes a daemon-lost boundary; an abort sends turn/interrupt the way the interrupt input does; the agent ending the incarnation dismisses the open ask and writes the final boundary with its cause.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Deploy it."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 7,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-1",
+            "command": "/bin/zsh -lc 'curl -s https://api.example.com/status'",
+            "cwd": "/work",
+            "reason": "Reach the status API.",
+            "networkApprovalContext": {
+              "host": "api.example.com",
+              "protocol": "https"
+            },
+            "proposedExecpolicyAmendment": [
+              "curl",
+              "-s"
+            ],
+            "availableDecisions": [
+              "accept",
+              {
+                "acceptWithExecpolicyAmendment": {
+                  "execpolicy_amendment": [
+                    "curl",
+                    "-s"
+                  ]
+                }
+              },
+              {
+                "applyNetworkPolicyAmendment": {
+                  "network_policy_amendment": {
+                    "host": "api.example.com",
+                    "action": "allow"
+                  }
+                }
+              },
+              "decline",
+              "cancel"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "7"
+        ],
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "daemon_lost": {},
+      "expect": {
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "stop": "abort"
+    },
+    {
+      "exiting": "stopped",
+      "expect": {
+        "asks": [],
+        "phase": "STARTING"
+      }
+    }
+  ],
+  "end": {
+    "queue_may_remain": false
+  }
+}
