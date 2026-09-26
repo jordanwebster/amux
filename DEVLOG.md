@@ -1,3 +1,10 @@
+2026-09-26 — **amux's tool server never makes a send, spawn or stop twice.**
+Only dialling tools.sock is retried over the update window for those
+calls. Once one has gone out, a dropped connection or an unavailable answer
+means the daemon may have acted on it, so the model is told exactly that
+and the call is not repeated; reads (agents, hosts, name resolution) still
+retry a daemon that goes away mid-call.
+
 2026-09-26 — **fake-claude-sdk and fake-codex end at a script's exit step with their input still open.**
 Their runtimes shut down in the background, so the thread blocked reading
 stdin no longer holds the process until the host closes it. The exit tests

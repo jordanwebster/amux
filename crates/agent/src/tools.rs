@@ -318,12 +318,12 @@ impl Server {
             text,
         };
         let sent = self
-            .daemon(|mut client| {
+            .daemon_once(format!("the message to {to}"), |mut client| {
                 let envelope = envelope.clone();
                 async move { client.send_message(envelope).await }
             })
             .await
-            .map_err(|status| refused(&status, &to))?;
+            .map_err(|refusal| refusal.or_else(|status| refused(&status, &to)))?;
         let id = if sent.envelope_id.is_empty() {
             envelope.id
         } else {
@@ -379,12 +379,12 @@ impl Server {
             }),
         };
         let agent = self
-            .daemon(|mut client| {
+            .daemon_once("the new agent".to_owned(), |mut client| {
                 let request = request.clone();
                 async move { client.create_agent(request).await }
             })
             .await
-            .map_err(|status| Refusal(plain(&status)))?;
+            .map_err(|refusal| refusal.or_else(|status| Refusal(plain(&status))))?;
         Ok(json!({
             "name": display_name(&agent),
             "id": interpret::to_hex(&agent.agent_id),
@@ -405,12 +405,12 @@ impl Server {
             }),
         };
         let response = self
-            .daemon(|mut client| {
+            .daemon_once(format!("the stop for {name}"), |mut client| {
                 let request = request.clone();
                 async move { client.send_input(request).await }
             })
             .await
-            .map_err(|status| refused(&status, &name))?;
+            .map_err(|refusal| refusal.or_else(|status| refused(&status, &name)))?;
         match response.of {
             Some(send_input_response::Of::Rejected(rejected)) => {
                 Err(format!("{name} did not stop: {}", rejected.reason).into())
@@ -513,7 +513,7 @@ impl Server {
         .map_err(|status| Refusal(plain(&status)))
     }
 
-    /// Runs one call against the daemon, dialling afresh each attempt. A
+    /// Runs a read against the daemon, dialling afresh each attempt. A
     /// daemon that is not there, or goes away mid-call, is retried until
     /// the window closes; then the call reports that no daemon is running.
     async fn daemon<T, F, Fut>(&self, call: F) -> Result<T, Status>
@@ -521,19 +521,47 @@ impl Server {
         F: Fn(ClientServiceClient<Channel>) -> Fut,
         Fut: std::future::Future<Output = Result<tonic::Response<T>, Status>>,
     {
+        self.dial(call, true).await.map_err(|(status, _)| status)
+    }
+
+    /// Runs a call the daemon acts on (a send, spawn or stop) at most
+    /// once. Only dialling is retried over the window: once the call has
+    /// gone out, the daemon may have acted on it even if the answer never
+    /// came, so it is never made again on the model's behalf. `Ok(Err)`
+    /// is the daemon's own refusal.
+    async fn daemon_once<T, F, Fut>(&self, what: String, call: F) -> Result<T, Settled>
+    where
+        F: Fn(ClientServiceClient<Channel>) -> Fut,
+        Fut: std::future::Future<Output = Result<tonic::Response<T>, Status>>,
+    {
+        match self.dial(call, false).await {
+            Ok(answer) => Ok(answer),
+            Err((status, true)) if lost(&status) => Err(Settled::Unconfirmed(format!(
+                "the daemon went away before confirming {what}; it may have taken it, so the call was not made again"
+            ))),
+            Err((status, _)) => Err(Settled::Refused(status)),
+        }
+    }
+
+    /// The error says whether the call reached the daemon.
+    async fn dial<T, F, Fut>(&self, call: F, resend: bool) -> Result<T, (Status, bool)>
+    where
+        F: Fn(ClientServiceClient<Channel>) -> Fut,
+        Fut: std::future::Future<Output = Result<tonic::Response<T>, Status>>,
+    {
         let deadline = tokio::time::Instant::now() + self.config.retry_window;
         let mut backoff = Duration::from_millis(50);
         loop {
-            let status = match connect(&self.dir.join(TOOLS_SOCK)).await {
+            let failed = match connect(&self.dir.join(TOOLS_SOCK)).await {
                 Ok(channel) => match call(wire::client_service_client(channel)).await {
                     Ok(response) => return Ok(response.into_inner()),
-                    Err(status) if status.code() == Code::Unavailable => status,
-                    Err(status) => return Err(status),
+                    Err(status) if resend && lost(&status) => (status, true),
+                    Err(status) => return Err((status, true)),
                 },
-                Err(_) => Status::unavailable(NOT_RUNNING),
+                Err(_) => (Status::unavailable(NOT_RUNNING), false),
             };
             if tokio::time::Instant::now() + backoff > deadline {
-                return Err(status);
+                return Err(failed);
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_millis(500));
@@ -604,6 +632,31 @@ async fn connect(sock: &Path) -> std::io::Result<Channel> {
         }))
         .await
         .map_err(std::io::Error::other)
+}
+
+/// How a call the daemon acts on ended without an answer.
+enum Settled {
+    /// The daemon refused it.
+    Refused(Status),
+    /// It went out and no answer came back.
+    Unconfirmed(String),
+}
+
+impl Settled {
+    fn or_else(self, refused: impl FnOnce(Status) -> Refusal) -> Refusal {
+        match self {
+            Settled::Refused(status) => refused(status),
+            Settled::Unconfirmed(text) => Refusal(text),
+        }
+    }
+}
+
+/// The daemon went away: it said it is unavailable, or the connection
+/// failed under the call.
+fn lost(status: &Status) -> bool {
+    status.code() == Code::Unavailable
+        || std::error::Error::source(status)
+            .is_some_and(|source| source.is::<tonic::transport::Error>())
 }
 
 /// A daemon refusal as the model reads it; an unknown or ambiguous name

@@ -54,6 +54,11 @@ struct Fleet {
     refuse_send: Option<Status>,
     /// The reason SendInput rejects with, if it does.
     reject_input: Option<String>,
+    /// Set, a send, spawn or stop is taken and then its connection is
+    /// dropped before the daemon answers.
+    sever: Option<Arc<tokio::sync::Notify>>,
+    /// Set, a send, spawn or stop is taken and answered as unavailable.
+    unavailable: bool,
     calls: Arc<Mutex<Vec<Call>>>,
 }
 
@@ -64,6 +69,19 @@ impl Fleet {
 
     fn calls(&self) -> Vec<Call> {
         self.calls.lock().unwrap().clone()
+    }
+
+    /// Having taken the call, drop every connection and never answer, or
+    /// answer that the daemon is unavailable.
+    async fn severed(&self) -> Result<(), Status> {
+        if let Some(sever) = &self.sever {
+            sever.notify_waiters();
+            std::future::pending::<()>().await;
+        }
+        if self.unavailable {
+            return Err(Status::unavailable("the host went away"));
+        }
+        Ok(())
     }
 }
 
@@ -136,6 +154,7 @@ impl ClientService for Fleet {
     ) -> Result<Response<SendMessageResponse>, Status> {
         let envelope = request.into_inner();
         self.record(Call::Send(envelope.clone()));
+        self.severed().await?;
         if let Some(status) = &self.refuse_send {
             return Err(status.clone());
         }
@@ -150,6 +169,7 @@ impl ClientService for Fleet {
     ) -> Result<Response<Row>, Status> {
         let request = request.into_inner();
         self.record(Call::Create(Box::new(request.clone())));
+        self.severed().await?;
         let host = request.host_id.clone().unwrap_or(HERE.to_vec());
         let name = request.name.clone().unwrap_or_else(|| "quiet-otter".into());
         Ok(Response::new(row(&request.agent_id, &host, &name)))
@@ -160,6 +180,7 @@ impl ClientService for Fleet {
         request: Request<SendInputRequest>,
     ) -> Result<Response<SendInputResponse>, Status> {
         self.record(Call::Input(request.into_inner()));
+        self.severed().await?;
         Ok(Response::new(SendInputResponse {
             of: Some(match &self.reject_input {
                 Some(reason) => send_input_response::Of::Rejected(wire::Rejected {
@@ -238,8 +259,19 @@ impl ClientService for Fleet {
     }
 }
 
-/// A connection the stand-in daemon accepted.
-struct Conn(LocalStream);
+/// A connection the stand-in daemon accepted, which fails its reads and
+/// writes once the daemon severs its connections.
+struct Conn(LocalStream, Pin<Box<tokio::sync::futures::OwnedNotified>>);
+
+impl Conn {
+    fn severed(&mut self, cx: &mut std::task::Context<'_>) -> bool {
+        self.1.as_mut().poll(cx).is_ready()
+    }
+}
+
+fn reset() -> std::io::Error {
+    std::io::Error::from(std::io::ErrorKind::ConnectionReset)
+}
 
 impl tonic::transport::server::Connected for Conn {
     type ConnectInfo = ();
@@ -252,6 +284,9 @@ impl AsyncRead for Conn {
         cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        if self.severed(cx) {
+            return std::task::Poll::Ready(Err(reset()));
+        }
         Pin::new(&mut self.0).poll_read(cx, buf)
     }
 }
@@ -262,6 +297,9 @@ impl AsyncWrite for Conn {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.severed(cx) {
+            return std::task::Poll::Ready(Err(reset()));
+        }
         Pin::new(&mut self.0).poll_write(cx, buf)
     }
     fn poll_flush(
@@ -286,9 +324,16 @@ struct Daemon {
 impl Daemon {
     fn listen(dir: &Path, fleet: Fleet) -> Self {
         let listener = LocalListener::bind(&dir.join(TOOLS_SOCK)).expect("tools.sock binds");
-        let incoming = futures_util::stream::unfold(listener, |mut listener| async move {
-            let accepted = listener.accept().await.map(Conn);
-            Some((accepted, listener))
+        let sever = fleet.sever.clone().unwrap_or_default();
+        let incoming = futures_util::stream::unfold(listener, move |mut listener| {
+            let sever = sever.clone();
+            async move {
+                let accepted = listener
+                    .accept()
+                    .await
+                    .map(|stream| Conn(stream, Box::pin(sever.notified_owned())));
+                Some((accepted, listener))
+            }
         });
         let task = tokio::spawn(async move {
             let _ = tonic::transport::Server::builder()
@@ -779,6 +824,55 @@ async fn a_fleet_call_retries_over_an_update_and_reports_a_missing_daemon() {
         waited >= WINDOW - Duration::from_millis(600) && waited < WINDOW * 2,
         "retried for the window: {waited:?}"
     );
+}
+
+/// A send, spawn or stop is at most once: the daemon may have acted on a
+/// call whose connection dropped before it answered, so the call is never
+/// made again on the model's behalf and the model is told plainly.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_the_daemon_may_have_taken_is_never_made_again() {
+    let dropped = Fleet {
+        sever: Some(Arc::default()),
+        ..fleet()
+    };
+    let unavailable = Fleet {
+        unavailable: true,
+        ..fleet()
+    };
+    for fleet in [dropped, unavailable] {
+        let mut mcp = Mcp::start(WINDOW).await;
+        let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+        let calls = [
+            ("send", json!({ "to": "reviewer", "text": "Look at this" })),
+            (
+                "spawn",
+                json!({ "kind": "codex", "prompt": "Write the tests" }),
+            ),
+            ("stop", json!({ "name": "helper" })),
+        ];
+        for (tool, arguments) in calls {
+            let refusal = mcp.refused(tool, arguments).await;
+            assert!(
+                refusal.contains("may have taken it") && refusal.contains("not made again"),
+                "{tool}: {refusal}"
+            );
+        }
+        let taken: Vec<&str> = fleet
+            .calls()
+            .iter()
+            .filter_map(|call| match call {
+                Call::Send(_) => Some("send"),
+                Call::Create(_) => Some("create"),
+                Call::Input(_) => Some("input"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            taken,
+            ["send", "create", "input"],
+            "each call went out once"
+        );
+    }
 }
 
 // --- the whole path, per kind ----------------------------------------------
