@@ -54,6 +54,8 @@ const ROUTE_POLL: Duration = Duration::from_millis(25);
 const FETCH_PATIENCE: Duration = Duration::from_secs(10);
 /// What an agent removed because its host stopped listing it is told.
 pub const NO_LONGER_LISTED: &str = "its host no longer lists it";
+/// What an agent removed because its host is no longer trusted is told.
+pub const NOT_TRUSTED: &str = "its host is no longer trusted";
 
 /// Which replica agents the runtime keeps a source open for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -238,10 +240,16 @@ impl ProfileRuntime {
     pub(crate) fn start_replication(&self) {
         let runtime = self.me.clone();
         let manager = tokio::spawn(async move {
+            let mut first = true;
             loop {
                 {
                     let Some(me) = runtime.upgrade() else { return };
-                    me.sync_followers();
+                    let untrusted = me.sync_followers();
+                    if first || !untrusted.is_empty() {
+                        me.drop_untrusted_replicas().await;
+                        first = false;
+                    }
+                    me.sync_hosts().await;
                 }
                 tokio::time::sleep(ROUTE_POLL).await;
             }
@@ -251,8 +259,12 @@ impl ProfileRuntime {
         }
     }
 
-    fn sync_followers(&self) {
-        let Some(edge) = self.edge() else { return };
+    /// Keeps one follower per trusted host. Returns the hosts that are no
+    /// longer trusted.
+    fn sync_followers(&self) -> Vec<HostId> {
+        let Some(edge) = self.edge() else {
+            return Vec::new();
+        };
         let trusted: HashSet<HostId> = edge.trusted().into_iter().map(|(host, ..)| host).collect();
         let mut gone = Vec::new();
         {
@@ -272,8 +284,36 @@ impl ProfileRuntime {
                 }
             }
         }
+        let untrusted = gone
+            .iter()
+            .filter(|host| !trusted.contains(host))
+            .copied()
+            .collect();
         for host in gone {
             self.host_lost(host);
+        }
+        untrusted
+    }
+
+    /// Drops every replica of a host the profile no longer trusts: its
+    /// entry leaves the host set, and its agents go with it.
+    async fn drop_untrusted_replicas(&self) {
+        let Some(edge) = self.edge() else { return };
+        let trusted: HashSet<Vec<u8>> = edge
+            .trusted()
+            .into_iter()
+            .map(|(host, ..)| host.as_bytes().to_vec())
+            .collect();
+        let own = self.host().as_bytes().to_vec();
+        let mut store = self.store.lock().await;
+        let Ok(rows) = store.agents() else { return };
+        for key in rows.into_iter().map(|row| row.agent) {
+            if key.host != own
+                && !trusted.contains(&key.host)
+                && let Err(error) = self.drop_replica(&mut store, &key, NOT_TRUSTED)
+            {
+                tracing::warn!(%error, "dropping an untrusted host's replica failed");
+            }
         }
     }
 
@@ -334,6 +374,14 @@ impl ProfileRuntime {
     ) -> Result<u64, StoreError> {
         let host_bytes = host.as_bytes().to_vec();
         let mut store = self.store.lock().await;
+        let listed_keys: HashSet<Vec<u8>> =
+            listed.iter().map(|agent| agent.agent_id.clone()).collect();
+        let unlisted: Vec<AgentKey> = store
+            .agents()?
+            .into_iter()
+            .map(|row| row.agent)
+            .filter(|key| key.host == host_bytes && !listed_keys.contains(&key.agent))
+            .collect();
         if let Some(generation) = generation
             && store.host_generation(&host_bytes)? != Some(generation)
         {
@@ -345,15 +393,15 @@ impl ProfileRuntime {
             if dropped > 0 {
                 tracing::info!(%host, generation, dropped, "the host's generation changed; its replicas were dropped");
             }
-            let mut sources = self.sources.lock().unwrap();
-            sources.settled.retain(|key| key.host != host_bytes);
+            self.sources
+                .lock()
+                .unwrap()
+                .settled
+                .retain(|key| key.host != host_bytes);
+            self.host_generation_changed(&host_bytes, generation);
         }
-        let listed_keys: HashSet<Vec<u8>> =
-            listed.iter().map(|agent| agent.agent_id.clone()).collect();
-        for key in store.agents()?.iter().map(|row| row.agent.clone()) {
-            if key.host == host_bytes && !listed_keys.contains(&key.agent) {
-                self.drop_replica(&mut store, &key)?;
-            }
+        for key in &unlisted {
+            self.drop_replica(&mut store, key, NO_LONGER_LISTED)?;
         }
         for agent in &listed {
             self.put_replica_row(&mut store, agent)?;
@@ -374,7 +422,12 @@ impl ProfileRuntime {
         self.publish_row(store, &row.agent)
     }
 
-    fn drop_replica(&self, store: &mut store::Sqlite, key: &AgentKey) -> Result<(), StoreError> {
+    fn drop_replica(
+        &self,
+        store: &mut store::Sqlite,
+        key: &AgentKey,
+        reason: &str,
+    ) -> Result<(), StoreError> {
         let source = {
             let mut sources = self.sources.lock().unwrap();
             sources.settled.remove(key);
@@ -406,7 +459,7 @@ impl ProfileRuntime {
             .publish_inventory(inventory(inventory_event::Of::AgentRemoved(AgentRemoved {
                 host_id: key.host.clone(),
                 agent_id: key.agent.clone(),
-                reason: Some(NO_LONGER_LISTED.to_owned()),
+                reason: Some(reason.to_owned()),
             })));
         Ok(())
     }
@@ -784,7 +837,7 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
                 let mut store = me.store.lock().await;
                 let key = AgentKey::new(removed.host_id, removed.agent_id);
                 match store.agent(&key) {
-                    Ok(Some(_)) => me.drop_replica(&mut store, &key),
+                    Ok(Some(_)) => me.drop_replica(&mut store, &key, NO_LONGER_LISTED),
                     Ok(None) => Ok(()),
                     Err(error) => Err(error),
                 }

@@ -1,3 +1,25 @@
+2026-09-26 — **The inventory carries one host set, and reconciliation closes chats on agents a host no longer has.**
+SubscribeInventory now lists this host, every trusted host with its
+presence (online or offline, from whether it has a route) and the
+generation this store last recorded for it, and the machines discovery has
+found in this profile's exact scope as candidates. A trusted host stays in
+every snapshot while unreachable; only untrusting it removes it, and its
+replicas go with it. The set is recomputed on the replication manager's
+tick and published as HostEntry and HostRemoved deltas under the store
+lock, the same lock an inventory opening reads the published set under.
+Reconciliation had a hole: on a generation change the rewind dropped every
+replica of the host before the runtime looked for agents the host no
+longer lists, so an agent the rewound host lost kept its open chats and
+never reached the fleet as removed. The unlisted set is now taken before
+the rewind. `crates/testnet/tests/spec_inventory.rs` holds the host set,
+scoped candidates, reconciliation live and after a break, a generation
+change touching one host only, untrust, and the origin-rewind journey: a
+checkpoint taken while a prompt was queued, the prompt withdrawn, power
+lost, and the paired chat seeing Detached, Reset, the fresh tail and
+CaughtUp with the withdrawn prompt never shown queued again. The testnet
+gains `input`, `delete` and `untrust` verbs and an `until_closed`
+observation.
+
 2026-09-26 — **Daemons replicate each other's agents: peer sources keep one contiguous block per replica.**
 Each profile follows every trusted host's inventory while the host has a
 route. At the inventory's CaughtUp it compares the host's generation with

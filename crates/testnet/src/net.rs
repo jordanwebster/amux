@@ -27,8 +27,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 use wire::{
     AgentParent, ClaudeCreateConfig, ClaudePtyInput, ClaudeSdkInput, CodexCreateConfig, CodexInput,
-    CreateAgentRequest, Input, PromptInput, StopMode, claude_pty_input, claude_sdk_input,
-    codex_input, create_agent_request, input,
+    CreateAgentRequest, Input, PromptInput, StopMode, WithdrawQueued, claude_pty_input,
+    claude_sdk_input, codex_input, create_agent_request, input,
 };
 
 use crate::binaries::Binaries;
@@ -473,6 +473,35 @@ impl Net {
             })
     }
 
+    /// Sends the agent any input through its own host: an answer, a
+    /// withdrawal, an interrupt.
+    pub async fn input(
+        &self,
+        name: &str,
+        input: Input,
+    ) -> Result<wire::SendInputResponse, NetError> {
+        let agent = self.agent(name)?;
+        let runtime = self.runtime(&agent.host)?;
+        runtime
+            .send_input(&wire::SendInputRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+                input: Some(input),
+            })
+            .await
+            .map_err(|error| NetError::Host {
+                host: agent.host.clone(),
+                error: error.to_string(),
+            })
+    }
+
+    /// Deletes the agent on its own host.
+    pub async fn delete(&mut self, name: &str) -> Result<Ack, NetError> {
+        let agent = self.agent(name)?.clone();
+        self.runtime(&agent.host)?.delete(agent.id).await?;
+        self.agents.remove(name);
+        Ok(self.ack(format!("{name} deleted")))
+    }
+
     fn write_script(&self, name: &str, mut script: Script) -> Result<PathBuf, NetError> {
         let gates = self.gates();
         let resolve = |path: &mut PathBuf| {
@@ -645,6 +674,25 @@ impl Net {
         host.runtime = Arc::downgrade(&runtime);
         host.daemon = Some(std::sync::Mutex::new(daemon));
         Ok(())
+    }
+
+    /// Makes `a` forget `b`, as unpairing does: `b`'s key leaves `a`'s
+    /// trust store and the links between them close.
+    pub async fn untrust(&mut self, a: &str, b: &str) -> Result<Ack, NetError> {
+        let peer = self.host(b)?.host_id;
+        self.edge(a)?
+            .unpair(
+                wire::PeerRef {
+                    identifier: Some(wire::peer_ref::Identifier::HostId(peer.as_bytes().to_vec())),
+                },
+                "testnet".to_owned(),
+            )
+            .await
+            .map_err(|error| NetError::Host {
+                host: a.to_owned(),
+                error: error.message().to_owned(),
+            })?;
+        Ok(self.ack(format!("{a} no longer trusts {b}")))
     }
 
     /// Takes a host's daemon down: `clean` shuts it down, otherwise it
@@ -984,6 +1032,27 @@ pub fn prompt(kind: FakeKind, id: &[u8], text: &str) -> Input {
             }),
             FakeKind::Codex => input::Of::Codex(CodexInput {
                 of: Some(codex_input::Of::Prompt(prompt)),
+            }),
+        }),
+    }
+}
+
+/// Withdraws a queued prompt, in the kind's own input arm.
+pub fn withdraw(kind: FakeKind, id: &[u8], queued: &[u8]) -> Input {
+    let withdraw = WithdrawQueued {
+        queued_input_id: queued.to_vec(),
+    };
+    Input {
+        input_id: id.to_vec(),
+        of: Some(match kind {
+            FakeKind::ClaudePty => input::Of::ClaudePty(ClaudePtyInput {
+                of: Some(claude_pty_input::Of::Withdraw(withdraw)),
+            }),
+            FakeKind::ClaudeSdk => input::Of::ClaudeSdk(ClaudeSdkInput {
+                of: Some(claude_sdk_input::Of::Withdraw(withdraw)),
+            }),
+            FakeKind::Codex => input::Of::Codex(CodexInput {
+                of: Some(codex_input::Of::Withdraw(withdraw)),
             }),
         }),
     }

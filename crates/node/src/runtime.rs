@@ -291,6 +291,8 @@ pub struct ProfileRuntime {
     pub(crate) sources: Mutex<crate::sources::Sources>,
     /// Replica blob files by last read, indexed at the first sweep.
     pub(crate) replica_blobs: Mutex<Option<store::BlobLru>>,
+    /// The host set as last published on the inventory.
+    pub(crate) hosts: Mutex<crate::hosts::HostSet>,
 }
 
 pub(crate) struct AgentHandle {
@@ -478,6 +480,7 @@ impl ProfileRuntime {
             edge: std::sync::OnceLock::new(),
             sources: Mutex::new(crate::sources::Sources::default()),
             replica_blobs: Mutex::new(None),
+            hosts: Mutex::new(crate::hosts::HostSet::new()),
         })
     }
 

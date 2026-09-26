@@ -61,7 +61,7 @@ pub use clock::DrivenClock;
 pub use invariant::BlockViolation;
 pub use net::{
     Ack, AgentRef, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetError,
-    NetOptions, prompt,
+    NetOptions, prompt, withdraw,
 };
 pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 pub use topology::{AgentDecl, FakeKind, HostDecl, LinkDecl, Topology, TopologyError};

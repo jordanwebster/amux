@@ -12,8 +12,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self};
 use wire::{
     Agent, AmbiguousAgentName, CaughtUp, ErrorCode, ErrorDetail, FetchRequest, FetchResponse,
-    GetRequest, HostEntry, InventoryEvent, Item, Lagged, Presence, SessionEvent, Snapshot, Trust,
-    inventory_event, session_event,
+    GetRequest, InventoryEvent, Item, Lagged, SessionEvent, Snapshot, inventory_event,
+    session_event,
 };
 
 use crate::runtime::{ProfileRuntime, to_wire};
@@ -323,19 +323,20 @@ impl ProfileRuntime {
             .ok_or_else(|| ServeError::NoItem(request.key.clone()))
     }
 
-    /// Opens a SubscribeInventory stream: this host and every agent row the
-    /// store holds, CaughtUp, then every change.
+    /// Opens a SubscribeInventory stream: the host set and every agent row
+    /// the store holds, CaughtUp, then every change.
     pub async fn subscribe_inventory(&self) -> Result<InventorySubscription, ServeError> {
         // Locked across the join and the read for the reason Subscribe is:
         // every row change publishes while it holds the store.
         let store = self.store.lock().await;
         let live = self.fanout.join_inventory();
         let rows = store.agents()?;
+        let hosts = self.published_hosts();
         drop(store);
-        let mut opening = VecDeque::with_capacity(rows.len() + 2);
-        opening.push_back(Arc::new(inventory(inventory_event::Of::Host(
-            self.host_entry(),
-        ))));
+        let mut opening = VecDeque::with_capacity(rows.len() + hosts.len() + 1);
+        for host in hosts {
+            opening.push_back(Arc::new(inventory(inventory_event::Of::Host(host))));
+        }
         for row in &rows {
             opening.push_back(Arc::new(inventory(inventory_event::Of::Agent(to_wire(
                 row,
@@ -349,18 +350,6 @@ impl ProfileRuntime {
             live,
             ended: false,
         })
-    }
-
-    /// This host's entry: always trusted and online to itself.
-    pub fn host_entry(&self) -> HostEntry {
-        HostEntry {
-            host_id: self.host().as_bytes().to_vec(),
-            generation: self.generation(),
-            trust: Trust::Trusted as i32,
-            presence: Presence::Online as i32,
-            version: Some(crate::VERSION.to_owned()),
-            ..HostEntry::default()
-        }
     }
 
     /// The one agent with this name across the fleet the store knows.

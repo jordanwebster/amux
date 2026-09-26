@@ -116,6 +116,15 @@ impl<E: Describe + Clone + Send + 'static> ObserverOf<E> {
         }
     }
 
+    /// Waits until the stream ends, and returns everything it carried.
+    pub async fn until_closed(&mut self, deadline: Duration) -> Result<&[E], Stuck> {
+        match self.observe_until(|_| false, deadline).await {
+            Err(Stuck::Closed { .. }) => Ok(&self.events),
+            Err(stuck) => Err(stuck),
+            Ok(_) => unreachable!("nothing satisfies a false predicate"),
+        }
+    }
+
     /// Everything seen so far, without waiting.
     pub fn events(&mut self) -> &[E] {
         while let Ok(event) = self.incoming.try_recv() {
@@ -224,6 +233,27 @@ pub fn inventory_agents(events: &[InventoryEvent]) -> Vec<wire::Agent> {
     agents
 }
 
+/// The newest entry of every host an inventory stream has named, without
+/// the ones it removed since.
+pub fn inventory_hosts(events: &[InventoryEvent]) -> Vec<wire::HostEntry> {
+    let mut hosts: Vec<wire::HostEntry> = Vec::new();
+    for event in events {
+        match &event.of {
+            Some(inventory_event::Of::Host(host)) => {
+                match hosts.iter_mut().find(|held| held.host_id == host.host_id) {
+                    Some(held) => *held = host.clone(),
+                    None => hosts.push(host.clone()),
+                }
+            }
+            Some(inventory_event::Of::HostRemoved(removed)) => {
+                hosts.retain(|held| held.host_id != removed.host_id);
+            }
+            _ => {}
+        }
+    }
+    hosts
+}
+
 impl Describe for SessionEvent {
     fn describe(&self) -> String {
         match &self.of {
@@ -264,7 +294,8 @@ impl Describe for InventoryEvent {
     fn describe(&self) -> String {
         match &self.of {
             Some(inventory_event::Of::Host(host)) => format!(
-                "Host {} generation={} trust={:?} presence={:?}",
+                "Host {} {} generation={} trust={:?} presence={:?}",
+                host.name,
                 short(&host.host_id),
                 host.generation,
                 wire::Trust::try_from(host.trust).unwrap_or_default(),

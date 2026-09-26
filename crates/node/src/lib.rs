@@ -24,6 +24,7 @@ mod fanout;
 mod front_door;
 mod generation;
 mod grpc;
+mod hosts;
 mod identity;
 mod install;
 mod link;
@@ -70,7 +71,7 @@ pub use runtime::{
     ProfileRuntime, RegistryError, SweepReport, TAIL_ROWS, locked, to_wire,
 };
 pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
-pub use sources::{NO_LONGER_LISTED, SourceHook, SourcePolicy, SourceVerdict};
+pub use sources::{NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict};
 
 /// Internals the testnet harness assembles topologies from. Hidden and
 /// unstable: reachable only for test infrastructure, never for products.
