@@ -37,8 +37,8 @@ use store::{
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
-    Agent, AgentRemoved, Detached, Empty, FetchRequest, FetchResponse, Item, SessionEvent,
-    SubscribeRequest, inventory_event, session_event, subscribe_request,
+    Agent, AgentRemoved, Detached, Empty, FetchRequest, FetchResponse, InventoryEvent, Item,
+    SessionEvent, SubscribeRequest, inventory_event, session_event, subscribe_request,
 };
 
 use crate::HostId;
@@ -69,7 +69,8 @@ pub enum SourcePolicy {
     OnDemand,
 }
 
-/// For tests: what a source does with an event it has just received.
+/// For tests: what a source or an inventory follower does with an event
+/// it has just received.
 #[doc(hidden)]
 pub enum SourceVerdict {
     Keep,
@@ -84,6 +85,11 @@ pub enum SourceVerdict {
 /// before the event is used.
 #[doc(hidden)]
 pub type SourceHook = Arc<dyn Fn(&AgentKey, &SessionEvent) -> SourceVerdict + Send + Sync>;
+
+/// For tests: consulted by every inventory follower for every event it
+/// receives from the host it follows, before the event is used.
+#[doc(hidden)]
+pub type InventoryHook = Arc<dyn Fn(HostId, &InventoryEvent) -> SourceVerdict + Send + Sync>;
 
 /// The runtime's replication state.
 #[derive(Default)]
@@ -107,6 +113,7 @@ pub(crate) struct Sources {
     /// clock: the replica retention sweep's least-recently-used order.
     last_used: HashMap<AgentKey, i64>,
     hook: Option<SourceHook>,
+    inventory_hook: Option<InventoryHook>,
 }
 
 impl Sources {
@@ -213,6 +220,13 @@ impl ProfileRuntime {
     #[doc(hidden)]
     pub fn set_source_hook(&self, hook: Option<SourceHook>) {
         self.sources.lock().unwrap().hook = hook;
+    }
+
+    /// For tests: consulted by every inventory follower for every event it
+    /// receives.
+    #[doc(hidden)]
+    pub fn set_inventory_hook(&self, hook: Option<InventoryHook>) {
+        self.sources.lock().unwrap().inventory_hook = hook;
     }
 
     /// The agents with a source open, and when clients last used each
@@ -792,6 +806,22 @@ async fn wait_while_reachable(
     }
 }
 
+/// Runs the test hook on an inventory event, if one is set: false when
+/// it drops the stream here.
+async fn hook_keeps(runtime: &Weak<ProfileRuntime>, host: HostId, event: &InventoryEvent) -> bool {
+    let hook = runtime
+        .upgrade()
+        .and_then(|me| me.sources.lock().unwrap().inventory_hook.clone());
+    match hook.map(|hook| hook(host, event)) {
+        None | Some(SourceVerdict::Keep) => true,
+        Some(SourceVerdict::Drop) => false,
+        Some(SourceVerdict::Hold(held)) => {
+            held.await;
+            true
+        }
+    }
+}
+
 /// One inventory stream: returns once it ends, saying whether it had
 /// caught up.
 async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
@@ -820,6 +850,9 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
         let Ok(Some(message)) = stream.message().await else {
             return false;
         };
+        if !hook_keeps(runtime, host, &message).await {
+            return false;
+        }
         match message.of {
             Some(inventory_event::Of::Host(entry)) if entry.host_id == host_bytes => {
                 generation = Some(entry.generation);
@@ -851,6 +884,9 @@ async fn follow_once(runtime: &Weak<ProfileRuntime>, host: HostId) -> bool {
         let Ok(Some(message)) = stream.message().await else {
             return true;
         };
+        if !hook_keeps(runtime, host, &message).await {
+            return true;
+        }
         let Some(me) = runtime.upgrade() else {
             return true;
         };

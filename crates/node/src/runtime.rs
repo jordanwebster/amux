@@ -922,8 +922,9 @@ impl ProfileRuntime {
     }
 
     /// Deletes an agent: aborts its process if live, deletes its children
-    /// on this host the same way, then removes its rows and its directory.
-    /// Children on other hosts are reported, not reached.
+    /// on this host the same way and forwards the delete of each child on
+    /// another host to that host, then removes its rows and its directory.
+    /// A child whose host cannot be reached is reported as unreachable.
     pub async fn delete(&self, id: AgentId) -> Result<DeleteAgentResponse, RegistryError> {
         let mut response = DeleteAgentResponse::default();
         self.delete_into(id, &mut response).await?;

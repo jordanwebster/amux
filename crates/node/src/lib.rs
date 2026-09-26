@@ -73,7 +73,9 @@ pub use runtime::{
     Launch, Profile, ProfileRuntime, RegistryError, SweepReport, TAIL_ROWS, locked, to_wire,
 };
 pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
-pub use sources::{NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict};
+pub use sources::{
+    InventoryHook, NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict,
+};
 
 /// Internals the testnet harness assembles topologies from. Hidden and
 /// unstable: reachable only for test infrastructure, never for products.

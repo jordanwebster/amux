@@ -106,6 +106,11 @@ pub struct AgentDecl {
     /// An agent declared before this one, on any host.
     #[serde(default)]
     pub parent: Option<String>,
+    /// The directory it starts in; none is its host's work directory. An
+    /// empty one names none, as an agent's spawn tool sends it, and leaves
+    /// the choice to the host that starts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// Which fake provider an agent runs, and so which interpreter reads it.
@@ -387,6 +392,11 @@ impl AgentDecl {
 
     pub fn parent(mut self, parent: &str) -> Self {
         self.parent = Some(parent.to_owned());
+        self
+    }
+
+    pub fn cwd(mut self, cwd: &str) -> Self {
+        self.cwd = Some(cwd.to_owned());
         self
     }
 }

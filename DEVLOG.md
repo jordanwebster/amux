@@ -1,3 +1,18 @@
+2026-09-26 — **Family specs hold dedupe, incarnations on the wire and the home-directory spawn.**
+Three promises the family specs appeared to hold passed with the code
+that keeps them removed. A duplicate message was counted as items keyed
+by its input id, which upsert to one, so a really relayed duplicate went
+unseen; the testnet now points each fake's input log beside its script
+(`Net::provider_input`), and the duplicate-send and link-drop-retry
+cases count what the recipient's provider was actually sent once the
+recipient is idle with nothing queued. A new case holds the child's
+host's view of the parent (`set_inventory_hook`, the inventory
+follower's counterpart of the source hook) while the parent is resumed,
+so the row goes out stamped with the old incarnation and only the
+parent's host can refuse it. Agent declarations take a `cwd`, and a
+spawn naming no directory, as the spawn tool sends it, is asserted to
+start in the target host's home directory.
+
 2026-09-26 — **The flood smoke no longer races the clock.**
 Under load the smoke failed most runs: its capacity phase let the agents
 write for a fixed second, then priced ingest over seven fixed 71 ms

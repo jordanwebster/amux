@@ -21,7 +21,7 @@ use node::{
     ClientApi, Daemon, Edge, EdgeOptions, LanOptions, Launch, LoopbackLink, ProfileId,
     ProfileRuntime,
 };
-use provider_fakes::script::{SCRIPT_ENV, Script, Step};
+use provider_fakes::script::{INPUT_LOG_ENV, SCRIPT_ENV, Script, Step};
 use serde::{Deserialize, Serialize};
 use store::AgentKey;
 use tokio::sync::mpsc;
@@ -41,6 +41,10 @@ use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 use crate::relay::Relay;
 use crate::topology::{AgentDecl, FakeKind, HostDecl, Topology, TopologyError, link_key};
+
+/// The extension of the file beside an agent's script that its provider
+/// logs every line it reads to.
+const INPUT_LOG: &str = "input";
 
 /// Lets a caller adjust a host's edge beyond what the topology declares,
 /// such as pointing its cloud link at a stand-in relay.
@@ -451,6 +455,23 @@ impl Net {
             .join(agent.id.to_string()))
     }
 
+    /// Every line `name`'s provider has read from its agent process, over
+    /// all its incarnations: what it was really sent, whatever the store
+    /// made of it. Only the stdio fakes (headless Claude, Codex) log.
+    pub fn provider_input(&self, name: &str) -> Result<Vec<String>, NetError> {
+        self.agent(name)?;
+        let path = self
+            .root
+            .path()
+            .join("scripts")
+            .join(format!("{name}.{INPUT_LOG}"));
+        match std::fs::read_to_string(path) {
+            Ok(text) => Ok(text.lines().map(str::to_owned).collect()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Where the agent's journal ends now.
     pub fn journal_end(&self, name: &str) -> Result<u64, NetError> {
         Ok(journal::end(
@@ -490,7 +511,10 @@ impl Net {
                 .prompt
                 .as_deref()
                 .map(|text| prompt(decl.kind, b"testnet-first", text)),
-            cwd: host.work.to_string_lossy().into_owned(),
+            cwd: decl
+                .cwd
+                .clone()
+                .unwrap_or_else(|| host.work.to_string_lossy().into_owned()),
             kind: decl.kind.wire() as i32,
             config: Some(match decl.kind {
                 FakeKind::Codex => {
@@ -645,7 +669,10 @@ impl Net {
                 .prompt
                 .as_deref()
                 .map(|text| prompt(decl.kind, b"testnet-first", text)),
-            cwd: host.work.to_string_lossy().into_owned(),
+            cwd: decl
+                .cwd
+                .clone()
+                .unwrap_or_else(|| host.work.to_string_lossy().into_owned()),
             kind: decl.kind.wire() as i32,
             config: Some(match decl.kind {
                 FakeKind::Codex => {
@@ -788,6 +815,13 @@ impl Net {
             launch
                 .provider_env
                 .insert(SCRIPT_ENV.to_owned(), script.to_string_lossy().into_owned());
+            launch.provider_env.insert(
+                INPUT_LOG_ENV.to_owned(),
+                script
+                    .with_extension(INPUT_LOG)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
         // Long enough to ride out a daemon restart, short enough that an
         // agent a failed run leaves behind goes away on its own.

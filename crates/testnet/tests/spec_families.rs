@@ -9,8 +9,10 @@
 
 #![cfg(unix)]
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use node::SourceVerdict;
 use prost::Message as _;
 use provider_fakes::script::{Ask, Question, Script, Step};
 use store::{AgentKey, AgentRow, Store as _};
@@ -23,7 +25,7 @@ use wire::client_service_server::ClientService as _;
 use wire::{
     AgentParent, AgentSender, AmbiguousHostName, ClaudeCreateConfig, ClaudeSdkInput,
     CreateAgentRequest, Envelope, EnvelopeKind, InventoryEvent, Kind, Lifecycle, Phase, Sender,
-    claude_sdk_input, create_agent_request, input, sender,
+    claude_sdk_input, create_agent_request, input, inventory_event, sender,
 };
 
 fn text(text: &str) -> Step {
@@ -119,6 +121,37 @@ async fn with_input(net: &Net, agent: &str, input_id: &[u8]) -> usize {
         .count()
 }
 
+/// How many lines `agent`'s provider has read that carry `text`, once
+/// everything its process had accepted when this was called has reached
+/// the provider: its host has ingested the journal as far as it went then,
+/// and the agent is idle with nothing queued. An accepted input is queued
+/// until it is delivered, and a delivered one is read before the turn it
+/// starts can end, so a duplicate accepted by then is counted.
+async fn taken(net: &Net, agent: &str, text: &str) -> usize {
+    let end = net.journal_end(agent).unwrap();
+    eventually(
+        &format!("{agent} idle past {end}"),
+        PATIENCE,
+        || async move {
+            let Some(row) = row(net, &net.agent(agent).unwrap().host, agent).await else {
+                return false;
+            };
+            row.ingest_cursor >= end
+                && row.phase == Phase::Idle as i32
+                && row
+                    .snapshot
+                    .is_some_and(|snapshot| snapshot.queue.is_empty())
+        },
+    )
+    .await
+    .unwrap();
+    net.provider_input(agent)
+        .unwrap()
+        .iter()
+        .filter(|line| line.contains(text))
+        .count()
+}
+
 async fn outbox(net: &Net, host: &str) -> usize {
     net.runtime(host)
         .unwrap()
@@ -184,8 +217,9 @@ fn three_hosts() -> Topology {
 /// and the trusted ones, exactly and then ignoring case. No match is
 /// NOT_FOUND naming the hosts there are; two are ambiguous, with both as
 /// candidates. A match elsewhere forwards the create to that host with the
-/// parent as host and id, and a directory there; the parent's host and a
-/// third host list the child under its own host in the parent's family.
+/// parent as host and id, and a directory there, or none, which starts the
+/// child in its host's home directory; the parent's host and a third host
+/// list the child under its own host in the parent's family.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
     let mut net = Net::start(
@@ -301,6 +335,17 @@ async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
         assert_eq!(family, ["lead@desk", "helper@box"]);
         println!("{host}'s fleet: family {family:?}");
     }
+
+    // The spawn tool names no directory: the child starts in the home
+    // directory of the user its host runs as.
+    let homed = net
+        .spawn_child("lead", child("wanderer", "box", says("Here.")).cwd(""))
+        .await
+        .unwrap();
+    let home = std::env::var("HOME").unwrap();
+    assert_eq!(homed.cwd, home);
+    assert_eq!(row(&net, "box", "wanderer").await.unwrap().cwd, home);
+    println!("spawn on \"box\" naming no directory: wanderer starts in {home}");
 
     // A host creates children only for its own agents.
     let desk = net.edge("desk").unwrap();
@@ -646,6 +691,103 @@ async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
     net.shutdown().await.unwrap();
 }
 
+/// The row's incarnation rides the wire. A parent resumed where the
+/// child's host has not seen it yet still shows the incarnation the row
+/// is for there, so the child's host sends it; the parent's host, which
+/// knows better, answers NOT_FOUND, and the row is dropped unsent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_for_a_parent_resumed_out_of_sight_is_refused_where_the_parent_lives() {
+    let mut net = Net::start(
+        Topology::new()
+            .host("desk")
+            .host("server")
+            .link("desk", "server")
+            .agent(lead()),
+    )
+    .await
+    .unwrap();
+    net.spawn_child(
+        "lead",
+        child(
+            "helper",
+            "server",
+            vec![waits("finish"), text("Suite green."), Step::TurnEnd],
+        ),
+    )
+    .await
+    .unwrap();
+    eventually("server to hold lead's replica", PATIENCE, || {
+        let net = &net;
+        async move { row(net, "server", "lead").await.is_some() }
+    })
+    .await
+    .unwrap();
+
+    // From here server's follower holds every change to lead it hears of.
+    let lead = net.agent("lead").unwrap().id;
+    let (release, released) = tokio::sync::watch::channel(false);
+    let (heard, mut hearing) = tokio::sync::mpsc::unbounded_channel();
+    net.runtime("server")
+        .unwrap()
+        .set_inventory_hook(Some(Arc::new(move |_, event: &InventoryEvent| {
+            let about_lead = matches!(
+                &event.of,
+                Some(inventory_event::Of::Agent(agent)) if agent.agent_id == lead.as_bytes()
+            );
+            if !about_lead {
+                return SourceVerdict::Keep;
+            }
+            let _ = heard.send(());
+            let mut released = released.clone();
+            SourceVerdict::Hold(Box::pin(async move {
+                let _ = released.wait_for(|released| *released).await;
+            }))
+        })));
+    net.runtime("desk")
+        .unwrap()
+        .stop(lead, wire::StopMode::Graceful)
+        .await
+        .unwrap();
+    net.resume("lead", None).await.unwrap();
+    hearing.recv().await.expect("server hears lead stop");
+    let seen = row(&net, "server", "lead").await.unwrap();
+    assert_eq!(
+        (seen.incarnation, seen.lifecycle),
+        (1, Lifecycle::Live as i32)
+    );
+    assert_eq!(row(&net, "desk", "lead").await.unwrap().incarnation, 2);
+    println!("lead resumed on desk as incarnation 2; server still shows incarnation 1, live");
+
+    net.open_gate("finish").unwrap();
+    let helper = net.agent("helper").unwrap().key();
+    let end = net.journal_end("helper").unwrap();
+    eventually("helper's turn end to be ingested", PATIENCE, || {
+        let net = &net;
+        let helper = helper.clone();
+        async move {
+            let store = net.runtime("server").unwrap();
+            let store = store.store().await;
+            let row = store.agent(&helper).unwrap().unwrap();
+            !row.turn_open && row.ingest_cursor >= end
+        }
+    })
+    .await
+    .unwrap();
+    eventually("the row to be settled", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 0 }
+    })
+    .await
+    .unwrap();
+    assert!(received(&net, "lead").await.is_empty());
+    assert_eq!(taken(&net, "lead", "Suite green.").await, 0);
+    println!(
+        "helper finishes; server sends its row for incarnation 1; desk refuses it and it is dropped"
+    );
+    release.send_replace(true);
+    net.shutdown().await.unwrap();
+}
+
 /// The same message sent twice at once, across hosts, reaches its
 /// recipient once: the recipient's lane takes one at a time and the second
 /// finds the first's item.
@@ -674,7 +816,12 @@ async fn concurrent_duplicate_sends_across_hosts_yield_one_item() {
     first.expect("the first send");
     second.expect("the duplicate is answered as sent");
     assert_eq!(with_input(&net, "reviewer", b"twice").await, 1);
-    println!("two concurrent sends of one envelope to reviewer on server: one item");
+    assert_eq!(
+        taken(&net, "reviewer", "Please review the survey.").await,
+        1,
+        "reviewer's provider was sent the message once"
+    );
+    println!("two concurrent sends of one envelope to reviewer on server: one item, one turn");
     net.shutdown().await.unwrap();
 }
 
@@ -821,6 +968,11 @@ async fn cross_host_family_journey() {
     .unwrap();
     let got = received(&net, "lead").await;
     assert_eq!(got.len(), 1, "one finished message: {got:?}");
+    assert_eq!(
+        taken(&net, "lead", "Ran the unit suite: 214 passed.").await,
+        1,
+        "desk found the envelope id already accepted and relayed nothing"
+    );
     say(format!(
         "5. link back: server retries, desk finds the envelope id already accepted; lead holds one finished message: {:?}",
         got[0].text
