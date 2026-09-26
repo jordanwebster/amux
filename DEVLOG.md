@@ -1,3 +1,15 @@
+2026-09-26 — **A credential refresh no longer undoes a sign-out or a pause.**
+A refresh copied the account record, waited on the token exchange, then
+wrote the rotated refresh token over the stale copy; a sign-out or pause
+made meanwhile was undone, and after a restart the profile signed back in
+or unpaused. Now binding, signing out and pausing take the same lock the
+refresh holds from the exchange to the save, the refresh re-reads the
+record and writes only the rotated token onto the binding it was made
+for, and the exchange and save run as their own task, so a cloud link
+stopping while it connects cannot lose a rotated single-use token. Unit
+tests hold a stand-in token endpoint across a sign-out, a pause and an
+abandoned call.
+
 2026-09-26 — **Replication specs hold what they name.**
 Five peer-source promises passed with the code that keeps them removed.
 The dying-stream case dropped its stream on the Snapshot, before the

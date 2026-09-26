@@ -43,8 +43,11 @@ pub(crate) struct Account {
     path: PathBuf,
     record: Mutex<Option<AccountRecord>>,
     access: Mutex<Option<AccessToken>>,
-    /// One refresh at a time: a refresh token may be single use.
-    refresh: tokio::sync::Mutex<()>,
+    /// One change to the record at a time, a refresh's exchange and save
+    /// included: a refresh token may be single use, and a refresh that
+    /// saved its rotated token over a sign-out or a pause made meanwhile
+    /// would undo it.
+    changes: tokio::sync::Mutex<()>,
 }
 
 impl Account {
@@ -62,7 +65,7 @@ impl Account {
             path,
             record: Mutex::new(record),
             access: Mutex::new(None),
-            refresh: tokio::sync::Mutex::new(()),
+            changes: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -109,14 +112,17 @@ impl Account {
     }
 
     /// Binds the profile to an account, or signs a bound profile in again.
-    pub(crate) fn bind(&self, record: AccountRecord, access: AccessToken) -> io::Result<()> {
+    pub(crate) async fn bind(&self, record: AccountRecord, access: AccessToken) -> io::Result<()> {
+        let _change = self.changes.lock().await;
         self.write(Some(record))?;
         *self.access.lock().unwrap() = Some(access);
         Ok(())
     }
 
-    /// Forgets the credential and keeps the binding.
-    pub(crate) fn sign_out(&self) -> io::Result<()> {
+    /// Forgets the credential and keeps the binding. A refresh under way
+    /// finishes first.
+    pub(crate) async fn sign_out(&self) -> io::Result<()> {
+        let _change = self.changes.lock().await;
         let record = self.record().map(|record| AccountRecord {
             refresh_token: None,
             ..record
@@ -126,32 +132,27 @@ impl Account {
         Ok(())
     }
 
-    pub(crate) fn set_paused(&self, paused: bool) -> io::Result<()> {
+    /// A refresh under way finishes first.
+    pub(crate) async fn set_paused(&self, paused: bool) -> io::Result<()> {
+        let _change = self.changes.lock().await;
         let record = self
             .record()
             .ok_or_else(|| io::Error::other("the profile is not bound to an account"))?;
         self.write(Some(AccountRecord { paused, ..record }))
     }
-}
 
-/// The credential the cloud link presents: an access token minted from the
-/// account's refresh token, which the identity service may rotate.
-#[derive(Clone)]
-pub(crate) struct AccountCredentials(pub(crate) Arc<Account>);
-
-#[async_trait::async_trait]
-impl CredentialProvider for AccountCredentials {
+    /// The access token, refreshed first if it is missing or about to
+    /// expire. Holds the record still from the exchange to the save.
     async fn access_token(&self) -> Result<AccessToken, AuthError> {
-        let account = &self.0;
-        let _refreshing = account.refresh.lock().await;
-        if let Some(access) = account.access.lock().unwrap().clone()
+        let _change = self.changes.lock().await;
+        if let Some(access) = self.access.lock().unwrap().clone()
             && access
                 .expires_at
                 .is_none_or(|at| at > SystemTime::now() + ACCESS_TOKEN_MARGIN)
         {
             return Ok(access);
         }
-        let record = account.record().ok_or(AuthError::Unauthenticated)?;
+        let record = self.record().ok_or(AuthError::Unauthenticated)?;
         let refresh = record
             .refresh_token
             .clone()
@@ -162,20 +163,48 @@ impl CredentialProvider for AccountCredentials {
                 OAuthError::RefreshTokenExpired => AuthError::Unauthenticated,
                 other => AuthError::Provider(other.to_string()),
             })?;
+        // Only onto the binding the exchange was made for, still signed in
+        // with the token it spent and not paused, and only the token.
+        let current = self
+            .record()
+            .filter(|current| {
+                current.service == record.service
+                    && current.subject == record.subject
+                    && current.refresh_token.as_deref() == Some(refresh.as_str())
+                    && !current.paused
+            })
+            .ok_or(AuthError::Unauthenticated)?;
         if let Some(rotated) = rotated
             && rotated != refresh
         {
             // Written before the access token is used: a refresh token the
             // service rotated is the only one that works from now on.
-            account
-                .write(Some(AccountRecord {
-                    refresh_token: Some(rotated),
-                    ..record
-                }))
-                .map_err(|error| AuthError::Provider(error.to_string()))?;
+            self.write(Some(AccountRecord {
+                refresh_token: Some(rotated),
+                ..current
+            }))
+            .map_err(|error| AuthError::Provider(error.to_string()))?;
         }
-        *account.access.lock().unwrap() = Some(access.clone());
+        *self.access.lock().unwrap() = Some(access.clone());
         Ok(access)
+    }
+}
+
+/// The credential the cloud link presents: an access token minted from the
+/// account's refresh token, which the identity service may rotate.
+#[derive(Clone)]
+pub(crate) struct AccountCredentials(pub(crate) Arc<Account>);
+
+#[async_trait::async_trait]
+impl CredentialProvider for AccountCredentials {
+    /// The exchange and its save run apart from the caller, so a caller
+    /// that stops waiting, such as a cloud link told to stop while it
+    /// connects, cannot cancel between the two and lose a rotated token.
+    async fn access_token(&self) -> Result<AccessToken, AuthError> {
+        let account = self.0.clone();
+        tokio::spawn(async move { account.access_token().await })
+            .await
+            .map_err(|error| AuthError::Provider(error.to_string()))?
     }
 
     fn invalidate(&self, token: &AccessToken) {
@@ -336,4 +365,179 @@ async fn pristine(
 ) -> Result<bool, store::StoreError> {
     use store::Store as _;
     Ok(edge.has_no_peers() && runtime.store().await.agents()?.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+    use tokio::sync::{Notify, mpsc};
+
+    use super::*;
+
+    /// A token endpoint that answers each refresh only when released,
+    /// rotating the refresh token to `r2`, `r3`, ...
+    struct TokenEndpoint {
+        url: String,
+        arrived: mpsc::UnboundedReceiver<()>,
+        release: Arc<Notify>,
+    }
+
+    impl TokenEndpoint {
+        async fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let (arrive, arrived) = mpsc::unbounded_channel();
+            let release = Arc::new(Notify::new());
+            let released = release.clone();
+            tokio::spawn(async move {
+                for n in 2.. {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    read_request(&mut socket).await;
+                    arrive.send(()).unwrap();
+                    released.notified().await;
+                    let body = format!(
+                        r#"{{"access_token":"a{n}","token_type":"bearer","expires_in":3600,"refresh_token":"r{n}"}}"#
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                }
+            });
+            Self {
+                url,
+                arrived,
+                release,
+            }
+        }
+
+        /// Waits for a refresh to reach the endpoint and be held there.
+        async fn held(&mut self) {
+            self.arrived.recv().await.unwrap();
+        }
+
+        fn release(&self) {
+            self.release.notify_one();
+        }
+    }
+
+    async fn read_request(socket: &mut tokio::net::TcpStream) {
+        let mut request = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let read = socket.read(&mut buffer).await.unwrap();
+            request.extend_from_slice(&buffer[..read]);
+            let text = String::from_utf8_lossy(&request);
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if request.len() >= end + 4 + length {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Bound, signed in with `r1`, holding an access token that has
+    /// expired, so the next use refreshes.
+    async fn signed_in(dir: &Path, endpoint: &TokenEndpoint) -> Arc<Account> {
+        let account = Account::open(dir).unwrap();
+        let record = AccountRecord {
+            service: CloudServiceId::canonicalize(&endpoint.url).unwrap(),
+            subject: "subject".into(),
+            name: None,
+            email: None,
+            bound_at_ms: 1,
+            refresh_token: Some("r1".into()),
+            paused: false,
+        };
+        let expired = AccessToken {
+            bearer: "a1".into(),
+            expires_at: Some(SystemTime::now() - Duration::from_secs(1)),
+            tier: None,
+        };
+        account.bind(record, expired).await.unwrap();
+        account
+    }
+
+    #[tokio::test]
+    async fn a_sign_out_during_a_refresh_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut endpoint = TokenEndpoint::start().await;
+        let account = signed_in(dir.path(), &endpoint).await;
+        let refreshing = tokio::spawn(AccountCredentials(account.clone()).access_token_owned());
+        endpoint.held().await;
+        let signing_out = tokio::spawn({
+            let account = account.clone();
+            async move { account.sign_out().await }
+        });
+        endpoint.release();
+        let _ = refreshing.await.unwrap();
+        signing_out.await.unwrap().unwrap();
+
+        let reopened = Account::open(dir.path()).unwrap().record().unwrap();
+        assert_eq!(reopened.refresh_token, None, "still signed out");
+    }
+
+    #[tokio::test]
+    async fn a_pause_during_a_refresh_survives_a_restart_with_the_rotated_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut endpoint = TokenEndpoint::start().await;
+        let account = signed_in(dir.path(), &endpoint).await;
+        let refreshing = tokio::spawn(AccountCredentials(account.clone()).access_token_owned());
+        endpoint.held().await;
+        let pausing = tokio::spawn({
+            let account = account.clone();
+            async move { account.set_paused(true).await }
+        });
+        endpoint.release();
+        refreshing.await.unwrap().unwrap();
+        pausing.await.unwrap().unwrap();
+
+        let reopened = Account::open(dir.path()).unwrap().record().unwrap();
+        assert!(reopened.paused, "still paused");
+        assert_eq!(
+            reopened.refresh_token.as_deref(),
+            Some("r2"),
+            "the rotated token, the only one that works now"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refresh_whose_caller_stops_waiting_still_saves_the_rotated_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut endpoint = TokenEndpoint::start().await;
+        let account = signed_in(dir.path(), &endpoint).await;
+        let credentials = AccountCredentials(account.clone());
+        let refreshing = tokio::spawn({
+            let credentials = credentials.clone();
+            async move { credentials.access_token().await }
+        });
+        endpoint.held().await;
+        refreshing.abort();
+        endpoint.release();
+        // Served from the refresh the abandoned call started, once it saved.
+        let access = credentials.access_token().await.unwrap();
+        assert_eq!(access.bearer, "a2");
+
+        let reopened = Account::open(dir.path()).unwrap().record().unwrap();
+        assert_eq!(reopened.refresh_token.as_deref(), Some("r2"));
+    }
+
+    impl AccountCredentials {
+        async fn access_token_owned(self) -> Result<AccessToken, AuthError> {
+            self.access_token().await
+        }
+    }
 }

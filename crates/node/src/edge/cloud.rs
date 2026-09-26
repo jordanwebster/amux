@@ -287,6 +287,8 @@ async fn run_cloud_connection(
     ctx: &CloudConnectionContext,
     mut stop_rx: watch::Receiver<bool>,
 ) -> std::result::Result<(), CloudConnectionError> {
+    // A stop may drop the fetch mid-refresh: the credential's exchange and
+    // the save of a rotated token run apart from it and finish anyway.
     let prepared = tokio::select! {
         biased;
         _ = wait_for_stop(&mut stop_rx) => return Ok(()),

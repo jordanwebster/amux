@@ -656,19 +656,19 @@ impl Edge {
         access: AccessToken,
     ) -> std::io::Result<()> {
         self.stop_cloud().await;
-        self.account.bind(record, access)?;
+        self.account.bind(record, access).await?;
         self.start_cloud().await;
         Ok(())
     }
 
     pub(crate) async fn sign_out(&self) -> std::io::Result<()> {
-        self.account.sign_out()?;
+        self.account.sign_out().await?;
         self.stop_cloud().await;
         Ok(())
     }
 
     pub(crate) async fn set_paused(&self, paused: bool) -> std::io::Result<()> {
-        self.account.set_paused(paused)?;
+        self.account.set_paused(paused).await?;
         if paused {
             self.stop_cloud().await;
         } else {
