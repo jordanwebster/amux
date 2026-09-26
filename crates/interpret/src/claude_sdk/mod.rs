@@ -19,10 +19,10 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wire::{
-    AgentSpec, Ask, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem, ClaudeSdkSnapshot,
-    ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, SignIn, Step, ToolCall,
-    ToolDecision, ToolServerHealth, UsageLimits, claude_answer, claude_sdk_input, claude_sdk_item,
-    input, permission_answer, plan_answer,
+    AgentSpec, Ask, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
+    ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, SignIn,
+    Step, ToolCall, ToolDecision, ToolServerHealth, UsageLimits, claude_answer, claude_sdk_input,
+    claude_sdk_item, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
@@ -97,6 +97,9 @@ struct Tool {
     ended_at_ms: Option<i64>,
     parent_key: String,
     hidden: bool,
+    /// Images the tool read, by the blobs that hold them.
+    #[serde(with = "serde_pb::msgs")]
+    images: Vec<Attachment>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
@@ -205,6 +208,17 @@ fn control_response(request_id: &str, response: Value) -> Effect {
     )
 }
 
+/// The value of `--flag value` or `--flag=value` in launch arguments.
+fn launch_arg(args: &[String], flag: &str) -> Option<String> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        if arg == flag {
+            args.get(index + 1).cloned()
+        } else {
+            arg.strip_prefix(flag)?.strip_prefix('=').map(str::to_owned)
+        }
+    })
+}
+
 impl State {
     /// The kind-neutral state: the agent process reads the pending
     /// agent-message set and quiescence from here.
@@ -219,7 +233,9 @@ impl State {
             session: None,
             version: (!spec.provider_version.is_empty()).then(|| spec.provider_version.clone()),
             model: None,
-            effort: None,
+            // Claude reports its effort nowhere; the launch argument is the
+            // effort it runs at.
+            effort: launch_arg(&spec.provider_args, "--effort"),
             permission_mode: None,
             inits: 0,
             exited: false,
@@ -487,7 +503,7 @@ impl State {
             state: tool.state,
             outcome_text: tool.outcome_text.clone(),
             outcome_json: tool.outcome_json.clone().into_bytes(),
-            attachments: Vec::new(),
+            attachments: tool.images.clone(),
             class: tool.class,
             decision: tool.decision.as_ref().map(|decision| ToolDecision {
                 outcome: decision.outcome,

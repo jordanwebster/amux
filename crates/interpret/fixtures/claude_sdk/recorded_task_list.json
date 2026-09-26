@@ -1,0 +1,10 @@
+{
+  "about": "The task tools through the SDK: the snapshot task list.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/task_list/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

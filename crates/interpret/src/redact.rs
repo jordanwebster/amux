@@ -90,6 +90,7 @@ pub fn redact(kind: Kind, target: RedactTarget) -> RedactTarget {
                 payload: Vec::new(),
             }),
             RedactTarget::Checkpoint(_) => RedactTarget::Checkpoint(Vec::new()),
+            RedactTarget::Spec(_) => RedactTarget::Spec(Vec::new()),
         },
     }
 }
@@ -124,6 +125,10 @@ pub(crate) fn redact_kind<ItemBody: Name, SnapshotBody: Name, AnswerBody: Name, 
         }),
         RedactTarget::Checkpoint(bytes) => {
             RedactTarget::Checkpoint(scrubber.twice(|s| checkpoint::<S>(s, &bytes)))
+        }
+        RedactTarget::Spec(spec) => {
+            let name = type_name::<wire::AgentSpec>();
+            RedactTarget::Spec(scrubber.twice(|s| s.message(&name, &spec)))
         }
     }
 }
@@ -246,7 +251,11 @@ impl Scrubber {
         match field.ty {
             Type::String => {
                 let text = String::from_utf8_lossy(payload);
-                if is_session_key(&normalized(&field.name)) {
+                // A protobuf map<string, string> of environment variables:
+                // the names stay, every value goes.
+                if message.ends_with("EnvEntry") && field.name == "value" {
+                    SECRET_PLACEHOLDER.as_bytes().to_vec()
+                } else if is_session_key(&normalized(&field.name)) {
                     self.session(&text).into_bytes()
                 } else {
                     self.string(&text).into_bytes()

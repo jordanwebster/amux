@@ -1,0 +1,22 @@
+{
+  "about": "Files created, edited and removed through the shell, and a command that fails: the work rows and the failed flag.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "prelude": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    }
+  ],
+  "recording": {
+    "path": "../../../claude-specs/fixtures/pty/file_changes_and_failure/io.jsonl",
+    "format": "claude_pty_io"
+  }
+}

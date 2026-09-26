@@ -1,0 +1,22 @@
+{
+  "about": "The task tools: created, updated and completed tasks become the snapshot task list, not rows.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "prelude": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    }
+  ],
+  "recording": {
+    "path": "../../../claude-specs/fixtures/pty/task_list/io.jsonl",
+    "format": "claude_pty_io"
+  }
+}

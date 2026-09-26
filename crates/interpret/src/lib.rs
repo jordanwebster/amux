@@ -153,6 +153,11 @@ pub enum Effect {
     Inject { envelope: Envelope, via: Carrier },
     /// The agent process should exit with this cause.
     Exit { cause: String },
+    /// Write `bytes` to the agent's blob directory as `blobs/<hex of
+    /// hash>`, the SHA-256 of the bytes: an image the model read, which an
+    /// item in this step references. The agent process writes it before it
+    /// journals the step.
+    WriteBlob { hash: Vec<u8>, bytes: Vec<u8> },
     /// Claude in a terminal: a semantic input the agent process types into
     /// the PTY through the keymap it resolved for the running Claude.
     Terminal(claude_pty::TerminalInput),
@@ -200,6 +205,8 @@ pub enum RedactTarget {
     Input(Vec<u8>),
     /// An encoded checkpoint of the kind's state.
     Checkpoint(Vec<u8>),
+    /// An encoded `wire::AgentSpec`: its environment values and prompt.
+    Spec(Vec<u8>),
 }
 
 /// An item body as the harness and goldens read it.

@@ -12,7 +12,8 @@ use wire::{
 use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    question_ask, scope_choices, split_tool_name, text, tool_class,
+    question_ask, result_images, scope_choices, split_tool_name, text, tool_class,
+    without_image_bytes,
 };
 use crate::{Channel, Effect, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
 
@@ -25,6 +26,9 @@ fn str_field(value: &Value, key: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
 }
+
+/// The error Claude reports when the API rejects its credential.
+const AUTHENTICATION_FAILED: &str = "authentication_failed";
 
 impl State {
     pub(super) fn fact(&mut self, emit: &mut Emit, fact: Fact) {
@@ -149,6 +153,9 @@ impl State {
                 self.boundary(emit, BoundaryKind::Compacted, String::new());
             }
             "api_retry" => {
+                if text(line, "error") == AUTHENTICATION_FAILED {
+                    self.sign_in_failed(text(line, "error"));
+                }
                 let attempt = line.get("attempt").and_then(Value::as_u64).unwrap_or(0) as u32;
                 let max_attempts =
                     line.get("max_retries").and_then(Value::as_u64).unwrap_or(0) as u32;
@@ -504,6 +511,21 @@ impl State {
         }
     }
 
+    /// Claude rejected the credential: the sign-in problem the strip
+    /// shows until Claude reports an account again.
+    fn sign_in_failed(&mut self, message: &str) {
+        let account = self
+            .sign_in
+            .as_ref()
+            .map(|sign_in| sign_in.account.clone())
+            .unwrap_or_default();
+        self.sign_in = Some(SignIn {
+            state: SignInState::Failed as i32,
+            account,
+            message: message.to_owned(),
+        });
+    }
+
     // --- whole messages --------------------------------------------------
 
     fn assistant(&mut self, emit: &mut Emit, line: &Value) {
@@ -522,13 +544,17 @@ impl State {
             .cloned()
             .unwrap_or_default();
         if let Some(error) = str_field(line, "error") {
+            let message = content_text(message.get("content").unwrap_or(&Value::Null));
+            if error == AUTHENTICATION_FAILED {
+                self.sign_in_failed(&message);
+            }
             self.shared.item(
                 emit,
                 ItemDraft {
                     key: text(line, "uuid").to_owned(),
                     body: item_body(Kind::ApiError(wire::ApiError {
                         error_kind: error,
-                        message: content_text(message.get("content").unwrap_or(&Value::Null)),
+                        message,
                         ..Default::default()
                     })),
                     complete: true,
@@ -602,6 +628,7 @@ impl State {
             decision: None,
             ended_at_ms: None,
             parent_key: text(line, "parent_tool_use_id").to_owned(),
+            images: Vec::new(),
             emitted: Vec::new(),
         });
         if let Some(input) = input {
@@ -664,8 +691,16 @@ impl State {
             ToolState::Succeeded
         } as i32;
         tool.outcome_text = output;
+        let images = result_images(block.get("content").unwrap_or(&Value::Null));
+        if !images.is_empty() {
+            tool.images = Vec::new();
+            for (image, write) in images {
+                tool.images.push(image);
+                emit.effect(write);
+            }
+        }
         if let Some(result) = result {
-            tool.outcome_json = compact_json(result);
+            tool.outcome_json = compact_json(&without_image_bytes(result));
         }
         tool.ended_at_ms.get_or_insert(now);
         if tool.server.is_empty() && TASK_TOOLS.contains(&tool.name.as_str()) {
@@ -723,14 +758,17 @@ impl State {
         }
         let subtype = text(line, "subtype");
         let aborted = text(line, "terminal_reason").starts_with("aborted");
+        // An API failure ends the turn with subtype success and is_error;
+        // the assistant row before it already carried the error.
+        let api_failure = line.get("is_error").and_then(Value::as_bool) == Some(true);
         let outcome = if std::mem::take(&mut self.interrupted) || aborted {
             TurnOutcome::Interrupted
-        } else if subtype == "success" {
+        } else if subtype == "success" && !api_failure {
             TurnOutcome::Completed
         } else {
             TurnOutcome::Failed
         };
-        if outcome == TurnOutcome::Failed {
+        if outcome == TurnOutcome::Failed && subtype != "success" {
             let errors = line
                 .get("errors")
                 .and_then(Value::as_array)

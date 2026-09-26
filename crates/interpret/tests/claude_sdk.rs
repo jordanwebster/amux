@@ -60,6 +60,18 @@ goldens! {
     recorded_streamed_turn => "recorded_streamed_turn",
     recorded_subagent_task => "recorded_subagent_task",
     recorded_text_turn => "recorded_text_turn",
+    recorded_background_shell => "recorded_background_shell",
+    recorded_client_id => "recorded_client_id",
+    recorded_elicitation_declined => "recorded_elicitation_declined",
+    recorded_elicitation_link_refused => "recorded_elicitation_link_refused",
+    recorded_failed_tool_server => "recorded_failed_tool_server",
+    recorded_failing_command => "recorded_failing_command",
+    recorded_image => "recorded_image",
+    recorded_question_dismissed => "recorded_question_dismissed",
+    recorded_question_every_shape => "recorded_question_every_shape",
+    recorded_side_channel => "recorded_side_channel",
+    recorded_sign_in_problem => "recorded_sign_in_problem",
+    recorded_task_list => "recorded_task_list",
 }
 
 #[test]

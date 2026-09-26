@@ -784,12 +784,15 @@ dependencies = [
 name = "interpret"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "prost",
  "prost-types",
  "redaction",
  "serde",
  "serde_json",
+ "sha2",
+ "toml",
  "wire",
 ]
 

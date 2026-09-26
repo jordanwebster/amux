@@ -1,5 +1,5 @@
 {
-  "about": "Rows no recording shows: thinking with its text kept, a message with several blocks, API errors with retries and without, an unknown content block made visible, the status tool setting working_on without a row, the old todo tool setting the task list, background shells counted from the Stop hook, and a subagent's own rows left to its call.",
+  "about": "Rows no recording shows: thinking with its text kept, a message with several blocks, API errors with retries and without, an unknown content block made visible, the status tool setting working_on without a row, the old todo tool setting the task list, background shells counted from the Stop hook, and a subagent's own rows left to its call. A rejected credential is an API error row, the one way a terminal session shows a sign-in problem. A tool-server call is a tool row under its server and tool.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -206,6 +206,34 @@
       "fact": {
         "channel": "transcript",
         "json": {
+          "type": "system",
+          "uuid": "e1a",
+          "timestamp": "2027-01-15T08:00:09.500Z",
+          "sessionId": "s1",
+          "subtype": "api_error",
+          "level": "error",
+          "retryInMs": 0.0,
+          "retryAttempt": 1,
+          "maxRetries": 10,
+          "error": {
+            "status": 401,
+            "error": {
+              "type": "authentication_error",
+              "message": "invalid x-api-key"
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "e1a"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
           "type": "assistant",
           "uuid": "e2",
           "timestamp": "2027-01-15T08:00:15.000Z",
@@ -301,6 +329,50 @@
       "expect": {
         "items": [
           "t3"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t4",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Flaky test",
+            "body": "fails on CI"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "t4"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PostToolUse",
+          "tool_use_id": "t4",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Flaky test",
+            "body": "fails on CI"
+          },
+          "tool_response": [
+            {
+              "type": "text",
+              "text": "Created issue #42"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "items": [
+          "t4"
         ]
       }
     },

@@ -207,6 +207,9 @@ struct Tool {
     /// and the task tools the task list.
     hidden: bool,
     /// The body last emitted, so an unchanged revision is not re-emitted.
+    /// Images the tool read, by the blobs that hold them.
+    #[serde(with = "serde_pb::msgs")]
+    images: Vec<Attachment>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
@@ -394,7 +397,7 @@ impl State {
             state: tool.state,
             outcome_text: tool.outcome_text.clone(),
             outcome_json: tool.outcome_json.clone().into_bytes(),
-            attachments: Vec::new(),
+            attachments: tool.images.clone(),
             class: tool.class,
             decision: tool.decision.as_ref().map(Decision::to_wire),
             background: tool.background,

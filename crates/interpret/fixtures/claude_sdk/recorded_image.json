@@ -1,0 +1,10 @@
+{
+  "about": "Claude reads an image file: the Read row carries the image it read.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/image/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

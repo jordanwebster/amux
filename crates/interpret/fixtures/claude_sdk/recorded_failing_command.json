@@ -1,0 +1,10 @@
+{
+  "about": "A command that exits non-zero: the tool row fails with its output.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/failing_command/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

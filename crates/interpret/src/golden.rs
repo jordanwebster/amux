@@ -6,7 +6,8 @@
 //! ```json
 //! {
 //!   "about": "what this fixture shows",
-//!   "spec": { "agent_id": "a1", "created_at_ms": 1000, "initial_prompt": "fix it" },
+//!   "spec": { "agent_id": "a1", "created_at_ms": 1000, "initial_prompt": "fix it",
+//!             "provider_args": ["--effort", "low"] },
 //!   "recording": { "path": "corpus.jsonl", "format": "transcript" },
 //!   "events": [
 //!     { "tick": 1500 },
@@ -155,6 +156,10 @@ struct FixtureSpec {
     parent: bool,
     initial_prompt: Option<String>,
     producer_version: Option<String>,
+    /// The provider arguments the daemon resolved, as a recording's spawn
+    /// passed them.
+    #[serde(default)]
+    provider_args: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -362,6 +367,7 @@ fn spec<I: Interpreter>(spec: &FixtureSpec) -> AgentSpec {
         kind: I::KIND.to_owned(),
         created_at_ms: spec.created_at_ms,
         incarnation: 1,
+        provider_args: spec.provider_args.clone(),
         parent: spec.parent.then(|| wire::AgentParent {
             host_id: b"parent-host".to_vec(),
             agent_id: b"parent".to_vec(),
@@ -1268,6 +1274,11 @@ fn render_effect(effect: &Effect) -> String {
             "write {} attachments={}",
             display_bytes(request),
             attachments.len()
+        ),
+        Effect::WriteBlob { hash, bytes } => format!(
+            "blob {} {} bytes",
+            crate::to_hex(&hash[..hash.len().min(4)]),
+            bytes.len()
         ),
         Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
         Effect::Terminal(input) => format!("terminal {input}"),

@@ -245,7 +245,8 @@ fn target_bytes(target: &RedactTarget) -> &[u8] {
         RedactTarget::ItemBody(bytes)
         | RedactTarget::SnapshotBody(bytes)
         | RedactTarget::Input(bytes)
-        | RedactTarget::Checkpoint(bytes) => bytes,
+        | RedactTarget::Checkpoint(bytes)
+        | RedactTarget::Spec(bytes) => bytes,
         RedactTarget::Fact(fact) => &fact.payload,
     }
 }
@@ -431,6 +432,59 @@ fn run<I: Interpreter>(events: Vec<Event>) -> (String, BTreeSet<&'static str>) {
             );
         }
     }
+    let launched = AgentSpec {
+        provider_args: vec![
+            "--settings".into(),
+            format!("{{\"env\": {{\"ANTHROPIC_API_KEY\": \"{ANTHROPIC_KEY}\"}}}}"),
+        ],
+        provider_env: [("GITHUB_TOKEN", GITHUB_TOKEN), ("LANG", "en_US.UTF-8")]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        config: Some(wire::EffectiveConfig {
+            env: [("AWS_SECRET_ACCESS_KEY".to_owned(), ENV_VALUE.to_owned())].into(),
+            ..Default::default()
+        }),
+        initial_prompt: I::fixture_input(
+            b"initial".to_vec(),
+            &FixtureInput::Prompt {
+                text: prompt(),
+                steer: false,
+            },
+        ),
+        ..spec
+    };
+    transcript.check::<I>(
+        "spec",
+        RedactTarget::Spec(launched.encode_to_vec()),
+        |before, after| {
+            let (before, after) = (AgentSpec::decode(before).unwrap(), AgentSpec::decode(after));
+            let after = after.map_err(|error| error.to_string())?;
+            let names =
+                |spec: &AgentSpec| spec.provider_env.keys().cloned().collect::<BTreeSet<_>>();
+            if names(&before) == names(&after)
+                && before.initial_prompt.is_some() == after.initial_prompt.is_some()
+            {
+                Ok("decodes as a spec with the same environment names".to_owned())
+            } else {
+                Err(format!("{before:?} became {after:?}"))
+            }
+        },
+        |bytes| {
+            let spec = AgentSpec::decode(bytes).unwrap();
+            let env = spec
+                .provider_env
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>();
+            format!(
+                "args={:?} env={env:?} config.env={:?} prompt={:?}",
+                spec.provider_args,
+                spec.config.unwrap_or_default().env,
+                spec.initial_prompt
+                    .map(|input| readable(&input.encode_to_vec())),
+            )
+        },
+    );
     let checkpoint = encode_checkpoint(&state);
     transcript.check::<I>(
         "checkpoint",

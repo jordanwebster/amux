@@ -1,0 +1,64 @@
+## 0 initial
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.283"}}
+## 3 recorded 1: fact Hook hook_event_name=SessionStart
+effect follow "<TRANSCRIPT_1>"
+item boundary:1 boundary final at=1790386586650 text="" BOUNDARY_KIND_STARTED session=25684f7a-23c0-4c0b-99b6-86b602773586 version=2.1.283 keymap=claude-2.1
+snapshot IDLE queue=[] working_on=- at=1790386586650 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
+## 7 recorded 5: fact Transcript type=permission-mode
+snapshot IDLE queue=[] working_on=- at=1790386586852 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=?
+## 13 recorded 11: fact Transcript type=user uuid=d29ee71d-c85f-4683-b701-24355b98540c
+item d29ee71d-c85f-4683-b701-24355b98540c prompt final at=1790386587219 text="Do these in order, one tool call each. 1: use Write to overwrite README.md with the single line REPLACED. 2: use Bash to run exactly: mv config.txt moved.txt. 3: use Bash to run exactly: rm moved.txt. 4: use Bash to run exactly: ls missing-file.txt. The last one fails; that is expected. Then stop."
+snapshot WORKING queue=[] working_on=- at=1790386586954 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=? tasks=? background=?
+## 41 recorded 39: fact Transcript type=assistant uuid=8c15fca5-6590-41d2-95b9-bf9579d66f9a
+item 8c15fca5-6590-41d2-95b9-bf9579d66f9a thinking final at=1790386589306 text=""
+snapshot WORKING queue=[] working_on=- at=1790386589731 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36274 tasks=? background=?
+## 42 recorded 40: fact Transcript type=assistant uuid=2e1dffa1-1904-4686-894b-f0db8b0d0e4b
+item toolu_013jHbVUB15dSPqzs7eZGPEQ tool final at=1790386590057 text="" Write TOOL_STATE_RUNNING input="{\"content\":\"REPLACED\",\"file_path\":\"<MACHINE_PATH>\"}"
+## 44 recorded 42: fact Transcript type=user uuid=cd2f4280-d2ab-4df8-9dd1-d69e1e2652e9
+item toolu_013jHbVUB15dSPqzs7eZGPEQ tool final at=1790386590057 text="" Write TOOL_STATE_FAILED ended=1790386590067 input="{\"content\":\"REPLACED\",\"file_path\":\"<MACHINE_PATH>\"}" out="<tool_use_error>File has not been read yet. Read it first be…"
+## 55 recorded 53: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01FJjmDBCY6HDDDbVQ3CHCss
+item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591105 text="" Read TOOL_STATE_RUNNING exploration input="{\"file_path\":\"<MACHINE_PATH>\"}"
+## 57 recorded 55: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01FJjmDBCY6HDDDbVQ3CHCss
+item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591105 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1790386591109 input="{\"file_path\":\"<MACHINE_PATH>\"}"
+## 59 recorded 57: fact Transcript type=assistant uuid=b0b4f4f4-706e-43ad-b644-230ec57ba06b
+item b0b4f4f4-706e-43ad-b644-230ec57ba06b thinking final at=1790386591270 text=""
+snapshot WORKING queue=[] working_on=- at=1790386591276 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36582 tasks=? background=?
+## 61 recorded 59: fact Transcript type=user uuid=042a6a79-cbbe-4c50-aa97-7eb7ad9c6fc7
+item toolu_01FJjmDBCY6HDDDbVQ3CHCss tool final at=1790386591105 text="" Read TOOL_STATE_SUCCEEDED exploration ended=1790386591109 input="{\"file_path\":\"<MACHINE_PATH>\"}" out="1\tCURRENT\n2\t"
+## 65 recorded 63: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu
+item toolu_012R6FqWBi8NJXv2M4XPgTYu tool final at=1790386592660 text="" Write TOOL_STATE_RUNNING input="{\"content\":\"REPLACED\",\"file_path\":\"<MACHINE_PATH>\"}"
+## 67 recorded 65: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_012R6FqWBi8NJXv2M4XPgTYu
+item toolu_012R6FqWBi8NJXv2M4XPgTYu tool final at=1790386592660 text="" Write TOOL_STATE_SUCCEEDED ended=1790386592673 input="{\"content\":\"REPLACED\",\"file_path\":\"<MACHINE_PATH>\"}"
+## 69 recorded 67: fact Transcript type=assistant uuid=a166af93-b071-4ec3-a472-13dcd72d496b
+item a166af93-b071-4ec3-a472-13dcd72d496b thinking final at=1790386592719 text=""
+snapshot WORKING queue=[] working_on=- at=1790386592822 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36743 tasks=? background=?
+## 72 recorded 70: fact Transcript type=user uuid=3bc34769-2eae-4647-bd07-6c71d2b31680
+item toolu_012R6FqWBi8NJXv2M4XPgTYu tool final at=1790386592660 text="" Write TOOL_STATE_SUCCEEDED ended=1790386592673 input="{\"content\":\"REPLACED\",\"file_path\":\"<MACHINE_PATH>\"}" out="The file /private<MACHINE_PATH> has been updated successfull…"
+## 76 recorded 74: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01NgKbJgjWP2HSRNH9ffGnoB
+item toolu_01NgKbJgjWP2HSRNH9ffGnoB tool final at=1790386594253 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"mv config.txt moved.txt\",\"description\":\"Move con…"
+## 78 recorded 76: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01NgKbJgjWP2HSRNH9ffGnoB
+item toolu_01NgKbJgjWP2HSRNH9ffGnoB tool final at=1790386594253 text="" Bash TOOL_STATE_SUCCEEDED ended=1790386594374 input="{\"command\":\"mv config.txt moved.txt\",\"description\":\"Move con…"
+## 80 recorded 78: fact Transcript type=assistant uuid=e27a2974-aaec-4834-bf51-0d2a63b93473
+item e27a2974-aaec-4834-bf51-0d2a63b93473 thinking final at=1790386594314 text=""
+snapshot WORKING queue=[] working_on=- at=1790386594470 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36953 tasks=? background=?
+## 83 recorded 81: fact Transcript type=user uuid=0e326cfe-40c9-4063-9046-fe001a2d3558
+item toolu_01NgKbJgjWP2HSRNH9ffGnoB tool final at=1790386594253 text="" Bash TOOL_STATE_SUCCEEDED ended=1790386594374 input="{\"command\":\"mv config.txt moved.txt\",\"description\":\"Move con…" out="(Bash completed with no output)"
+## 87 recorded 85: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01S6s6y1T4QecL8TWjDQdvTE
+item toolu_01S6s6y1T4QecL8TWjDQdvTE tool final at=1790386595740 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"rm moved.txt\",\"description\":\"Remove moved.txt\"}"
+## 89 recorded 87: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01S6s6y1T4QecL8TWjDQdvTE
+item toolu_01S6s6y1T4QecL8TWjDQdvTE tool final at=1790386595740 text="" Bash TOOL_STATE_SUCCEEDED ended=1790386595759 input="{\"command\":\"rm moved.txt\",\"description\":\"Remove moved.txt\"}"
+## 91 recorded 89: fact Transcript type=assistant uuid=c1e947b7-f0fd-4b43-a6ee-6571cccbd507
+item c1e947b7-f0fd-4b43-a6ee-6571cccbd507 thinking final at=1790386595905 text=""
+snapshot WORKING queue=[] working_on=- at=1790386595905 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37118 tasks=? background=?
+## 93 recorded 91: fact Transcript type=user uuid=69248f41-5a0e-4c89-8ed0-1bd8969736d3
+item toolu_01S6s6y1T4QecL8TWjDQdvTE tool final at=1790386595740 text="" Bash TOOL_STATE_SUCCEEDED ended=1790386595759 input="{\"command\":\"rm moved.txt\",\"description\":\"Remove moved.txt\"}" out="(Bash completed with no output)"
+## 97 recorded 95: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_018cH8azshatUkXvdDF85BWn
+item toolu_018cH8azshatUkXvdDF85BWn tool final at=1790386597400 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"ls missing-file.txt\",\"description\":\"List missing…"
+## 99 recorded 97: fact Transcript type=assistant uuid=9cbe6bef-ed22-4696-ac84-014103c40973
+item 9cbe6bef-ed22-4696-ac84-014103c40973 thinking final at=1790386597471 text=""
+snapshot WORKING queue=[] working_on=- at=1790386597545 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37271 tasks=? background=?
+## 101 recorded 99: fact Transcript type=user uuid=8d868614-b24b-4754-80d7-5914fa8867ba
+item toolu_018cH8azshatUkXvdDF85BWn tool final at=1790386597400 text="" Bash TOOL_STATE_FAILED ended=1790386597978 input="{\"command\":\"ls missing-file.txt\",\"description\":\"List missing…" out="Exit code 1\nls: missing-file.txt: No such file or directory"
+## 105 recorded 103: fact Hook hook_event_name=Stop
+snapshot WORKING queue=[] working_on=- at=1790386598761 asks=[] session=25684f7a-23c0-4c0b-99b6-86b602773586 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37271 tasks=? background=0

@@ -1,0 +1,10 @@
+{
+  "about": "A tool server that fails to start: tool server health turns failed.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/failed_tool_server/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

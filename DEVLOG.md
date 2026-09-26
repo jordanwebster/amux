@@ -1,3 +1,17 @@
+2026-09-26 — **The chat vocabulary is covered per kind.**
+`crates/interpret/tests/vocabulary.toml` holds every row of the chat
+vocabulary's catalogue with each kind's availability mark, the item arm,
+snapshot field or ask that carries it, and a golden line that shows it; the
+`vocabulary_coverage` test fails when a row a kind can show has no place in
+that kind's bodies or no golden. Getting there wired twenty newer Claude
+recordings into the interpreter goldens and closed what they exposed: an
+image Claude reads is now a blob reference on its tool row, with a
+`WriteBlob` effect for the agent process to store the bytes (the base64 copy
+is dropped from the row's result); headless Claude takes its effort from the
+launch arguments, since it reports it nowhere; a rejected credential sets
+the sign-in state to failed and fails the turn. Dump redaction also covers
+agent specs now, blanking their environment values.
+
 2026-09-26 — **Dump redaction per kind.**
 `interpret::redact(kind, target)` removes secrets from what a dump carries
 for an agent — item bodies, snapshot bodies, facts-ring entries (provider

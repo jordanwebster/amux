@@ -10,7 +10,8 @@ use wire::{
 use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Tool, item_body};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    question_ask, scope_choices, split_tool_name, text, timestamp_ms, tool_class,
+    question_ask, result_images, scope_choices, split_tool_name, text, timestamp_ms, tool_class,
+    without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
 
@@ -234,7 +235,7 @@ impl State {
                 }
             }
             if tool.outcome_json.is_empty() {
-                tool.outcome_json = compact_json(&response);
+                tool.outcome_json = compact_json(&without_image_bytes(&response));
             }
             if tool.ended_at_ms.is_none() {
                 tool.ended_at_ms = Some(match hook.get("duration_ms").and_then(Value::as_i64) {
@@ -297,6 +298,7 @@ impl State {
                     message_id: None,
                     finished: false,
                     hidden,
+                    images: Vec::new(),
                     emitted: Vec::new(),
                 },
             );
@@ -342,8 +344,16 @@ impl State {
             ToolState::Succeeded as i32
         };
         tool.outcome_text = output.clone();
+        let images = result_images(block.get("content").unwrap_or(&Value::Null));
+        if !images.is_empty() {
+            tool.images = Vec::new();
+            for (image, write) in images {
+                tool.images.push(image);
+                emit.effect(write);
+            }
+        }
         if !result.is_null() {
-            tool.outcome_json = compact_json(&result);
+            tool.outcome_json = compact_json(&without_image_bytes(&result));
         }
         if tool.ended_at_ms.is_none() {
             tool.ended_at_ms = at_ms.or(Some(self.shared.now_ms()));

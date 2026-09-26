@@ -1,0 +1,10 @@
+{
+  "about": "A background shell through the SDK: the tool rows, the task events and the running count.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/background_shell/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

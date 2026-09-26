@@ -1,5 +1,5 @@
 {
-  "about": "Inputs become stream-JSON writes: prompts wait for the provider and a running turn, carrying their input id as the message uuid; model and mode changes are control requests whose success reaches the snapshot; effort cannot change after launch; clear is a /clear message; interrupt is a control request only while something runs.",
+  "about": "Inputs become stream-JSON writes: prompts wait for the provider and a running turn, carrying their input id as the message uuid; model and mode changes are control requests whose success reaches the snapshot; effort cannot change after launch; clear is a /clear message; interrupt is a control request only while something runs. An agent message goes to Claude's own queue on stdin at once and is its own row.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -222,6 +222,16 @@
       },
       "expect": {
         "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "agent_message": {
+          "envelope": "env-1",
+          "from": "reviewer",
+          "text": "please look at the diff"
+        }
       }
     }
   ]

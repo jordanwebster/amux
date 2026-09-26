@@ -5,10 +5,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    Ask, DecisionOutcome, Question, QuestionAsk, QuestionOption, ScopeChoice, TaskList,
-    TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState,
+    Ask, Attachment, BlobRef, DecisionOutcome, Question, QuestionAsk, QuestionOption, ScopeChoice,
+    TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState, attachment,
 };
 
+use crate::Effect;
 use crate::claude_pty::QuestionShape;
 
 /// Built-in tools that only look: views fold runs of them together.
@@ -70,6 +71,55 @@ pub(crate) fn content_text(content: &Value) -> String {
             .join("\n"),
         _ => String::new(),
     }
+}
+
+/// The images in a tool result's content blocks, each as the attachment a
+/// tool row carries and the blob write that stores its bytes.
+pub(crate) fn result_images(content: &Value) -> Vec<(Attachment, Effect)> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+
+    let Value::Array(blocks) = content else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter(|block| text(block, "type") == "image")
+        .filter_map(|block| {
+            let source = block.get("source")?;
+            if text(source, "type") != "base64" {
+                return None;
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(text(source, "data"))
+                .ok()?;
+            let hash = sha2::Sha256::digest(&bytes).to_vec();
+            let image = Attachment {
+                of: Some(attachment::Of::Image(BlobRef {
+                    hash: hash.clone(),
+                    name: String::new(),
+                    mime: text(source, "media_type").to_owned(),
+                    size: bytes.len() as u64,
+                })),
+            };
+            Some((image, Effect::WriteBlob { hash, bytes }))
+        })
+        .collect()
+}
+
+/// A tool's structured result without the base64 copy of an image it
+/// read; the bytes live in the blob its row references.
+pub(crate) fn without_image_bytes(result: &Value) -> Value {
+    let mut result = result.clone();
+    if let Some(file) = result.get_mut("file").and_then(Value::as_object_mut)
+        && file
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|mime| mime.starts_with("image/"))
+    {
+        file.remove("base64");
+    }
+    result
 }
 
 pub(crate) fn task_status(status: &str) -> Option<i32> {
@@ -145,6 +195,16 @@ pub(crate) fn describe_tool(tool: &ToolCall) -> String {
     }
     if let Some(ended) = tool.ended_at_ms {
         text.push_str(&format!(" ended={ended}"));
+    }
+    for attachment in &tool.attachments {
+        if let Some(attachment::Of::Image(image)) = &attachment.of {
+            text.push_str(&format!(
+                " image={}:{}:{}",
+                image.mime,
+                image.size,
+                crate::to_hex(&image.hash[..image.hash.len().min(4)])
+            ));
+        }
     }
     let input = String::from_utf8_lossy(&tool.input_json);
     text.push_str(&format!(" input={}", clip(&input, 60)));
