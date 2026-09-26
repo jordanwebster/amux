@@ -266,23 +266,26 @@ impl<I: Interpreter> Host<I> {
                 Some(at) => self.clock.sleep_until(at),
                 None => Box::pin(std::future::pending()),
             };
-            tokio::select! {
+            let handled = tokio::select! {
                 event = channels.provider.recv() => {
                     // The host holds a sender, so the channel never closes.
                     match event {
                         Some(ProviderEvent::Exited(code)) => {
-                            self.last_words(&mut channels.provider).await?;
-                            self.on_provider(ProviderEvent::Exited(code)).await?;
+                            match self.last_words(&mut channels.provider).await {
+                                Ok(()) => self.on_provider(ProviderEvent::Exited(code)).await,
+                                Err(error) => Err(error),
+                            }
                         }
-                        Some(event) => self.on_provider(event).await?,
-                        None => {}
+                        Some(event) => self.on_provider(event).await,
+                        None => Ok(()),
                     }
                 }
                 Some(stream) = channels.connections.recv() => {
                     self.on_connect(stream, &channels.frames_tx);
+                    Ok(())
                 }
                 Some((id, frame)) = channels.frames.recv() => {
-                    self.on_frame(id, frame).await?;
+                    self.on_frame(id, frame).await
                 }
                 Some(control) = channels.control.recv() => {
                     if let Some(provider) = &self.provider {
@@ -291,11 +294,17 @@ impl<I: Interpreter> Host<I> {
                             attach::Control::Resize { rows, cols } => provider.resize(rows, cols),
                         }
                     }
+                    Ok(())
                 }
-                () = sleep => self.on_deadline().await?,
+                () = sleep => self.on_deadline().await,
+            };
+            if let Err(error) = handled {
+                self.write_failed(error).await?;
             }
-            if self.done.is_none() {
-                self.settle().await?;
+            if self.done.is_none()
+                && let Err(error) = self.settle().await
+            {
+                self.write_failed(error).await?;
             }
             if let Some(cause) = self.done.take() {
                 return Ok(cause);
@@ -575,17 +584,49 @@ impl<I: Interpreter> Host<I> {
         Ok(())
     }
 
+    /// A write to the agent directory failed, which in practice is a full
+    /// disk: nothing the provider does from here can be recorded, so the
+    /// incarnation ends now. The provider is stopped and the final
+    /// boundary written if the disk takes it; if it does not, the ring
+    /// holds nothing the journal lacks, so the next incarnation writes the
+    /// missing boundary when it starts. Any other error ends the agent.
+    async fn write_failed(&mut self, error: AgentError) -> Result<(), AgentError> {
+        let AgentError::Journal(error) = error else {
+            return Err(error);
+        };
+        eprintln!("amux agent: {error}; exiting");
+        let cause = ExitCause::WriteFailed(error.to_string());
+        if matches!(self.mode, Mode::Exiting { .. }) || self.exit(cause.clone()).await.is_err() {
+            if let Some(provider) = &mut self.provider {
+                provider.kill();
+            }
+            self.done = Some(cause);
+        }
+        Ok(())
+    }
+
     // --- the interpreter -------------------------------------------------
 
     async fn feed(&mut self, event: Event) -> Result<(), AgentError> {
         let now = self.clock.now_ms();
         if now > self.last_tick {
             self.last_tick = now;
-            let stepped = self.step(Event::Tick { at_ms: now })?;
-            self.apply(stepped).await?;
+            self.feed_one(Event::Tick { at_ms: now }).await?;
         }
+        self.feed_one(event).await
+    }
+
+    /// One event through the ring, the interpreter and the journal. An
+    /// event whose step could not be journaled leaves the ring too, so the
+    /// ring never claims more than the journal holds.
+    async fn feed_one(&mut self, event: Event) -> Result<(), AgentError> {
+        let mark = self.ring.offset();
         let stepped = self.step(event)?;
-        self.apply(stepped).await
+        let applied = self.apply(stepped).await;
+        if applied.is_err() {
+            self.ring.undo(mark);
+        }
+        applied
     }
 
     /// Records the event in the facts ring, then steps the interpreter. A

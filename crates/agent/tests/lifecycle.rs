@@ -281,6 +281,64 @@ async fn a_one_shot_child_runs_its_queued_follow_up_then_exits_and_refuses_late_
     agent.assert_released();
 }
 
+// A directory the agent may not write stands in for a full disk: both fail
+// the same write, and permissions are what a test can set.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_journal_write_that_fails_ends_the_incarnation_and_the_next_writes_its_boundary() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // One frame per segment: every append after the first creates a file.
+    let agent = Agent::start(Setup {
+        initial_prompt: Some("go"),
+        journal_bytes: 1,
+        steps: vec![
+            text("recorded"),
+            Step::WaitFor {
+                path: agent_release(),
+            },
+            text("never recorded"),
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    agent
+        .wait("the turn is under way", |log| log.has_text("recorded"))
+        .await;
+    let journal = agent.dir.join(agent::JOURNAL);
+    let end = agent.journal_end();
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    agent.release();
+    let cause = agent.exit().await;
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        matches!(cause, ExitCause::WriteFailed(_)),
+        "the incarnation ends on the failed write, not with the turn: {cause:?}"
+    );
+    agent.assert_released();
+    assert_eq!(
+        agent.journal_end(),
+        end,
+        "the journal ends at its last whole frame"
+    );
+    assert!(!agent.log().has_text("never recorded"));
+
+    agent.resume();
+    agent
+        .wait("the failed incarnation's final boundary", |log| {
+            log.boundaries()
+                .iter()
+                .any(|boundary| boundary == "EXITED ended unexpectedly")
+        })
+        .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    daemon.stop(StopMode::Kill).await;
+    assert_eq!(agent.exit().await, ExitCause::Killed);
+}
+
 // The straggler is started by a POSIX shell.
 #[cfg(unix)]
 #[test]

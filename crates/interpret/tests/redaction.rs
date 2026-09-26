@@ -243,7 +243,9 @@ fn target_bytes(target: &RedactTarget) -> &[u8] {
         | RedactTarget::SnapshotBody(bytes)
         | RedactTarget::Input(bytes)
         | RedactTarget::Checkpoint(bytes)
-        | RedactTarget::Spec(bytes) => bytes,
+        | RedactTarget::Spec(bytes)
+        | RedactTarget::Step(bytes)
+        | RedactTarget::Agent(bytes) => bytes,
         RedactTarget::Fact(fact) => &fact.payload,
     }
 }
@@ -429,6 +431,72 @@ fn run<I: Interpreter>(events: Vec<Event>) -> (String, BTreeSet<&'static str>) {
             );
         }
     }
+    // The daemon's side of a dump: each journal frame, and the store's
+    // rows for the agent as one step.
+    let slice = wire::Step {
+        items: steps.iter().flat_map(|step| step.items.clone()).collect(),
+        snapshot: steps.iter().rev().find_map(|step| step.snapshot.clone()),
+        ..wire::Step::default()
+    };
+    for (what, step) in steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| (format!("journal frame {index}"), step))
+        .chain([("store slice".to_owned(), &slice)])
+    {
+        transcript.check::<I>(
+            &what,
+            RedactTarget::Step(step.encode_to_vec()),
+            |before, after| {
+                let before = wire::Step::decode(before).unwrap();
+                let after = wire::Step::decode(after).map_err(|error| error.to_string())?;
+                let arms = |step: &wire::Step| {
+                    step.items
+                        .iter()
+                        .map(|item| I::describe_item(&item.body).arm)
+                        .collect::<Vec<_>>()
+                };
+                if arms(&before) == arms(&after)
+                    && before.snapshot.is_some() == after.snapshot.is_some()
+                    && before.turn_end.is_some() == after.turn_end.is_some()
+                {
+                    Ok(format!(
+                        "decodes as a step with the same {} items",
+                        after.items.len()
+                    ))
+                } else {
+                    Err(format!("{before:?} became {after:?}"))
+                }
+            },
+            readable,
+        );
+    }
+    let row = wire::Agent {
+        agent_id: vec![7; 16],
+        name: Some(format!("deploy with {GITHUB_TOKEN}")),
+        cwd: "/Users/planted/work".to_owned(),
+        working_on: Some(wire::WorkingOn {
+            text: format!("mailing {EMAIL}"),
+            updated_at_ms: 1,
+        }),
+        exit_cause: Some(format!("export AWS_SECRET_ACCESS_KEY={ASSIGNED}")),
+        kind: wire::Kind::ClaudeSdk as i32,
+        ..wire::Agent::default()
+    };
+    transcript.check::<I>(
+        "inventory row",
+        RedactTarget::Agent(row.encode_to_vec()),
+        |before, after| {
+            let before = wire::Agent::decode(before).unwrap();
+            let after = wire::Agent::decode(after).map_err(|error| error.to_string())?;
+            if before.agent_id == after.agent_id && before.kind == after.kind {
+                Ok("decodes as the same agent".to_owned())
+            } else {
+                Err(format!("{before:?} became {after:?}"))
+            }
+        },
+        readable,
+    );
     let launched = AgentSpec {
         provider_args: vec![
             "--settings".into(),

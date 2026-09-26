@@ -158,12 +158,33 @@ impl Ring {
         self.prune()
     }
 
+    /// The global offset of the next entry.
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Appends one entry. A failed write leaves the ring as it was, since a
+    /// torn line would hide every entry written after it from a resume.
     pub fn append(&mut self, entry: &Entry) -> io::Result<()> {
         let mut line = serde_json::to_vec(entry).map_err(io::Error::other)?;
         line.push(b'\n');
-        self.segment.1.write_all(&line)?;
+        if let Err(error) = self.segment.1.write_all(&line) {
+            self.undo(self.offset);
+            return Err(error);
+        }
         self.offset += line.len() as u64;
         Ok(())
+    }
+
+    /// Takes the open segment back to `offset`, forgetting the entries
+    /// after it: their steps never reached the journal, so a resume must
+    /// not count them as written. Best effort; a rotation since `offset`
+    /// keeps what it wrote.
+    pub fn undo(&mut self, offset: u64) {
+        let (start, file) = &self.segment;
+        if offset >= *start && file.set_len(offset - start).is_ok() {
+            self.offset = offset;
+        }
     }
 
     fn prune(&self) -> io::Result<()> {

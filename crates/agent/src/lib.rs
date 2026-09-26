@@ -67,6 +67,9 @@ pub enum ExitCause {
     Unstarted(String),
     /// The interpreter ended the incarnation.
     Interpreter(String),
+    /// A write to the agent directory failed, most often because the disk
+    /// is full.
+    WriteFailed(String),
 }
 
 impl fmt::Display for ExitCause {
@@ -81,6 +84,7 @@ impl fmt::Display for ExitCause {
             ExitCause::Finished => f.write_str("finished"),
             ExitCause::Unstarted(why) => write!(f, "could not start the provider: {why}"),
             ExitCause::Interpreter(why) => f.write_str(why),
+            ExitCause::WriteFailed(why) => write!(f, "could not write to its directory: {why}"),
         }
     }
 }

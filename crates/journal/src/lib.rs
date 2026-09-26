@@ -186,13 +186,22 @@ impl Writer {
 
     /// Appends one framed step with a plain write and no fsync, and returns
     /// the global offset after it. An empty step writes nothing. Disk full is
-    /// the error the agent drains on.
+    /// the error the agent drains on. A failed write leaves the journal
+    /// ending at the last whole frame, so a later append that succeeds is
+    /// not stuck behind a frame that can never complete.
     pub fn append(&mut self, step: &Step) -> io::Result<u64> {
         if step.encoded_len() == 0 {
             return Ok(self.offset);
         }
         let frame = encode_frame(step);
-        self.write_frame_bytes(&frame)?;
+        if let Err(error) = self.write_frame_bytes(&frame) {
+            if let Some((start, file)) = &self.segment {
+                // Best effort: a disk too full to write may still truncate,
+                // and a failure here leaves a torn tail a reopen cuts off.
+                let _ = file.set_len(self.offset - start);
+            }
+            return Err(error);
+        }
         Ok(self.offset)
     }
 

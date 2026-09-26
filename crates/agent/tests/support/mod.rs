@@ -108,6 +108,8 @@ pub struct Setup {
     pub replay: Option<&'static str>,
     /// The provider's own session id, as if an earlier start had made it.
     pub session: Option<&'static str>,
+    /// The journal's segment size; the agent's default when zero.
+    pub journal_bytes: u64,
 }
 
 impl Setup {
@@ -125,6 +127,7 @@ impl Setup {
             socketless: false,
             replay: None,
             session: None,
+            journal_bytes: 0,
         }
     }
 }
@@ -289,6 +292,7 @@ impl Agent {
                 grace_ms: GRACE as u32,
                 drain_ms: DRAIN as u32,
                 facts_ring_bytes: setup.ring_bytes,
+                journal_segment_bytes: setup.journal_bytes,
                 // What the harness runs for hooks and the tool server.
                 install_path: install_path(),
                 ..Default::default()

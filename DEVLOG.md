@@ -1,3 +1,15 @@
+2026-09-26 — **An agent whose directory cannot be written ends its incarnation cleanly; dumps can redact whole records.**
+A failed write to the journal, the facts ring or a blob (in practice a
+full disk) no longer kills the agent with an error. The journal and the
+ring are cut back to their last whole entry, so nothing torn is left for a
+reader to stall on, and the ring forgets the event whose step never reached
+the journal. The agent then stops its provider and writes its final
+boundary if the disk takes it; when it does not, the next incarnation
+finds the ring ending mid-turn and writes the missing boundary as it
+starts. The per-kind redactor gains two targets for the daemon's side of a
+dump: a whole step (a journal frame, or a store slice written as one step)
+and an inventory row; the redaction test plants secrets in both.
+
 2026-09-26 — **The daemon relays inputs and agent messages and drains the deliveries and push outboxes.**
 A person's SendInput goes to the agent over its control socket and returns
 the interpreter's verdict; the daemon answers only for an exited agent, and

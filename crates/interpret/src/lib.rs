@@ -242,6 +242,13 @@ pub enum RedactTarget {
     Checkpoint(Vec<u8>),
     /// An encoded `wire::AgentSpec`: its environment values and prompt.
     Spec(Vec<u8>),
+    /// An encoded `wire::Step` of the kind: its items, appends and
+    /// snapshot, bodies included. A journal frame is one; so is a slice of
+    /// the store written as one step.
+    Step(Vec<u8>),
+    /// An encoded `wire::Agent`, the inventory row: its name, directory,
+    /// what it is working on and its exit cause.
+    Agent(Vec<u8>),
 }
 
 /// An item body as the harness and goldens read it.

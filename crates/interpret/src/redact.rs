@@ -91,6 +91,9 @@ pub fn redact(kind: Kind, target: RedactTarget) -> RedactTarget {
             }),
             RedactTarget::Checkpoint(_) => RedactTarget::Checkpoint(Vec::new()),
             RedactTarget::Spec(_) => RedactTarget::Spec(Vec::new()),
+            RedactTarget::Step(_) => RedactTarget::Step(Vec::new()),
+            // A row has no body, so any kind's redactor reads it.
+            RedactTarget::Agent(agent) => ClaudeSdk::redact(RedactTarget::Agent(agent)),
         },
     }
 }
@@ -129,6 +132,14 @@ pub(crate) fn redact_kind<ItemBody: Name, SnapshotBody: Name, AnswerBody: Name, 
         RedactTarget::Spec(spec) => {
             let name = type_name::<wire::AgentSpec>();
             RedactTarget::Spec(scrubber.twice(|s| s.message(&name, &spec)))
+        }
+        RedactTarget::Step(step) => {
+            let name = type_name::<wire::Step>();
+            RedactTarget::Step(scrubber.twice(|s| s.message(&name, &step)))
+        }
+        RedactTarget::Agent(agent) => {
+            let name = type_name::<wire::Agent>();
+            RedactTarget::Agent(scrubber.twice(|s| s.message(&name, &agent)))
         }
     }
 }
