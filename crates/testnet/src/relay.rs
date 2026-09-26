@@ -65,6 +65,8 @@ struct CloudState {
     connects: Vec<String>,
     /// Every credential the relay was shown, in order.
     presented: Vec<String>,
+    /// How far the relay's clock runs ahead of the hosts'.
+    ahead: Duration,
 }
 
 struct Cloud {
@@ -197,6 +199,13 @@ impl Relay {
         if let Some(known) = self.cloud.state.lock().unwrap().accounts.get_mut(account) {
             known.revoked = true;
         }
+    }
+
+    /// Runs the relay's clock `ahead` of the hosts': each credential minted
+    /// from now on lapses at the relay that much sooner than the expiry its
+    /// host is told, as for a host whose clock is behind.
+    pub fn run_ahead(&self, ahead: Duration) {
+        self.cloud.state.lock().unwrap().ahead = ahead;
     }
 
     /// Every connect call so far, by account.
@@ -364,11 +373,12 @@ impl Cloud {
         let known = state.accounts[account].clone();
         let token = format!("relay-{account}-{}", state.connects.len());
         let expires_ms = self.clock.now_ms() + CREDENTIAL_TTL.as_millis() as i64;
+        let lapses_ms = expires_ms - state.ahead.as_millis() as i64;
         state.minted.insert(
             token.clone(),
             Minted {
                 user: known.user,
-                expires_ms,
+                expires_ms: lapses_ms,
                 tier: known.tier,
             },
         );

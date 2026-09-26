@@ -89,6 +89,38 @@ async fn hosts_on_one_account_reach_each_other_through_the_relay_over_quic_or_tc
     net.shutdown().await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_relay_link_whose_credential_lapses_at_the_relay_first_comes_back_on_a_fresh_one() {
+    let net = Net::start(Topology::new().relay(&["ada"]).host("desk"))
+        .await
+        .unwrap();
+    // The desk's clock is six minutes behind the relay's: it refreshes five
+    // minutes before the expiry it is told, a minute after the relay has
+    // already let the credential lapse.
+    let ahead = Duration::from_secs(6 * 60);
+    net.relay().unwrap().run_ahead(ahead);
+    net.sign_in("desk", "ada").await.unwrap();
+    let connects = net.relay().unwrap().connects().len();
+
+    net.advance(testnet::CREDENTIAL_TTL - ahead + Duration::from_secs(1))
+        .unwrap();
+    until("the desk to fetch a fresh credential", || async {
+        net.relay().unwrap().connects().len() > connects
+    })
+    .await;
+    until("the desk's relay link to come back", || async {
+        carrier(&net, "desk").is_some()
+    })
+    .await;
+    assert_eq!(
+        net.relay().unwrap().links("ada").await,
+        vec![(host_id(&net, "desk"), 1)]
+    );
+    println!("the relay let the credential lapse first; the desk reconnected on a fresh one");
+
+    net.shutdown().await.unwrap();
+}
+
 /// Pauses and resumes the host's profile, which closes its relay link and
 /// dials a new one, and waits for the new one.
 async fn reconnect(net: &Net, host: &str) {

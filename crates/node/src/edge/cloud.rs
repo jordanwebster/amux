@@ -544,6 +544,17 @@ async fn run_cloud_connection_with_details(
 
     match result {
         Ok(()) => Ok(()),
+        // The relay took these credentials when the link came up, so turning
+        // them away now means they lapsed first: a refresh lost the race with
+        // the relay's clock, or the host slept past the expiry. A new
+        // connection fetches fresh ones; credentials that are really gone
+        // fail there and ask for a sign-in.
+        Err(error) if error.code() == tonic::Code::Unauthenticated => {
+            Err(CloudConnectionError::Retriable {
+                msg: error.to_string(),
+                reset_backoff: should_reset_backoff_after_connection(connected_at.elapsed()),
+            })
+        }
         Err(error) => {
             Err(
                 cloud_connection_error_from_status(&ctx.status, error, connected_at.elapsed())
