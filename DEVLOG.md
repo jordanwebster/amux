@@ -1,3 +1,14 @@
+2026-09-26 — **A child's delivery waiting behind its parent's lane is dropped when the parent resumes meanwhile.**
+The deliveries drain checked the parent's incarnation before taking the
+parent's lane, so a message that held the lane and resumed the parent let a
+row written for the old incarnation reach the new one. The lane now checks
+the incarnation again once it has the lane and drops the row as stale. New
+tests hold the message-lane promises to account: a message is answered only
+once its acceptance item commits, two sends of one envelope hand it over
+once, a child answering "exiting" to its parent's message is resumed with
+that message as its first input, and a person's input answered "exiting"
+lets a resume wait for the process to let go of its directory.
+
 2026-09-26 — **Ingest rewinds its cursor when a power cut leaves the journal shorter than the store.**
 The store can reach the drive after committing frames that the agent's
 journal, which is never synced, then loses to a power cut. The daemon read

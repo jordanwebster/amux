@@ -41,6 +41,9 @@ pub enum Answer {
     /// Write the agent message's item but never reply: the agent accepted
     /// and the answer was lost on the way back.
     AcceptSilently,
+    /// Write the agent message's item and reply accepted, but hold the
+    /// Nudge back: the item is in the journal and not yet committed.
+    AcceptWithoutNudge,
     Reject(String),
 }
 
@@ -142,6 +145,29 @@ impl SyntheticAgent {
 
     pub fn append(&mut self, step: &Step) -> u64 {
         self.journal().append(step).unwrap()
+    }
+
+    /// Writes the first incarnation's spec, as the spawn that created this
+    /// agent would have, so a resume can start its next incarnation.
+    pub fn write_spec(&self, install: &Install) {
+        let spec = wire::AgentSpec {
+            agent_id: self.id.as_bytes().to_vec(),
+            profile_id: install.profile.as_bytes().to_vec(),
+            kind: KIND.to_owned(),
+            cwd: self.cwd.to_string_lossy().into_owned(),
+            name: self.name.clone(),
+            parent: self.parent.as_ref().map(|parent| wire::AgentParent {
+                host_id: parent.host.clone(),
+                agent_id: parent.agent.clone(),
+            }),
+            incarnation: 1,
+            ..wire::AgentSpec::default()
+        };
+        std::fs::write(
+            self.dir.join("spec.1"),
+            prost::Message::encode_to_vec(&spec),
+        )
+        .unwrap();
     }
 
     /// Takes the directory's lock and answers dials with a Hello, as a
@@ -268,7 +294,7 @@ async fn answer_input(
         Answer::Reject(reason) => send_input_response::Of::Rejected(Rejected {
             reason: reason.clone(),
         }),
-        Answer::Accept | Answer::AcceptSilently => {
+        Answer::Accept | Answer::AcceptSilently | Answer::AcceptWithoutNudge => {
             if let Some(envelope) = message {
                 let step = Step {
                     items: vec![Item {
@@ -302,7 +328,7 @@ async fn answer_input(
         };
         let _ = agent_dir::write_frame(writer, &reply).await;
     }
-    if message.is_some() {
+    if message.is_some() && !matches!(answer, Answer::AcceptWithoutNudge) {
         let nudge = CtlFrame {
             of: Some(ctl_frame::Of::Nudge(Nudge {})),
         };

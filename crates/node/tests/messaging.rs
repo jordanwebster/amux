@@ -309,6 +309,242 @@ async fn a_message_is_accepted_once_its_item_commits_and_a_retry_is_deduped() {
 
 /// A child whose journal already holds a finished turn: its last message,
 /// then the turn end.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_waits_for_its_item_to_commit_and_one_envelope_is_handed_over_once() {
+    let install = Install::new();
+    let mut recipient = SyntheticAgent::new(&install, "recipient", SEGMENTS);
+    recipient.register_offline(&install);
+    recipient.go_live();
+    recipient.answer_with(Answer::AcceptWithoutNudge);
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    let envelope = Envelope {
+        id: b"envelope-1".to_vec(),
+        to: to(&recipient, &install),
+        text: "can you look at the build?".into(),
+        ..Envelope::default()
+    };
+    let send = || {
+        let runtime = runtime.clone();
+        let envelope = envelope.clone();
+        tokio::spawn(async move { runtime.send_message(envelope, None).await })
+    };
+
+    let first = send();
+    until("the hand-off", async || recipient.inputs().len() == 1).await;
+    // The same envelope again, as a sender retrying after a lost answer.
+    let second = send();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !first.is_finished(),
+        "the recipient said accepted, but its item has not committed"
+    );
+    assert!(!second.is_finished(), "the retry waits in the lane");
+    assert_eq!(
+        recipient.inputs().len(),
+        1,
+        "the retry is not handed over while the first is in the lane"
+    );
+
+    recipient.nudge().await;
+    first
+        .await
+        .unwrap()
+        .expect("accepted once its item committed");
+    second
+        .await
+        .unwrap()
+        .expect("the retry finds the committed item");
+    assert_eq!(recipient.inputs().len(), 1, "one hand-off");
+    assert_eq!(
+        items_with_input(&runtime, &recipient.key(&install))
+            .await
+            .len(),
+        1,
+        "one item"
+    );
+    crash(daemon, runtime).await;
+}
+
+/// A daemon that starts real agent processes on the fake provider, for
+/// resumes of synthetic agents.
+async fn start_resuming(install: &Install) -> (Daemon, Arc<ProfileRuntime>) {
+    let daemon = install
+        .start(
+            "boot-1",
+            install.launch("resumed", vec![text("done"), wire_turn_end()]),
+        )
+        .await;
+    let runtime = runtime(&daemon, install);
+    (daemon, runtime)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_answering_exiting_to_its_parents_message_is_resumed_with_it() {
+    let install = Install::new();
+    let parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    let mut child = SyntheticAgent::new(&install, "child", SEGMENTS);
+    child.parent = Some(parent.key(&install));
+    child.register_offline(&install);
+    child.write_spec(&install);
+    child.go_live();
+    child.answer_with(Answer::Reject(node::EXITING.into()));
+    let (daemon, runtime) = start_resuming(&install).await;
+
+    let envelope = Envelope {
+        id: b"wrap-up".to_vec(),
+        to: to(&child, &install),
+        text: "wrap up and report".into(),
+        ..Envelope::default()
+    };
+    let sent = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.send_message(envelope, Some(parent.id)).await }
+    });
+    until("the hand-off", async || child.inputs().len() == 1).await;
+    // The child was on its way out; its process ends.
+    child.die().await;
+    sent.await
+        .unwrap()
+        .expect("the parent's message resumes the child");
+
+    assert_eq!(runtime.agent(child.id).await.unwrap().incarnation, 2);
+    let spec = std::fs::read(child.dir.join("spec.2")).unwrap();
+    let spec = <wire::AgentSpec as prost::Message>::decode(spec.as_slice()).unwrap();
+    let first = spec
+        .initial_prompt
+        .expect("the message starts the incarnation");
+    assert_eq!(first.input_id, b"wrap-up");
+    match first.of {
+        Some(input::Of::AgentMessage(message)) => {
+            assert_eq!(message.text, "wrap up and report");
+        }
+        other => panic!("the parent's message, not {other:?}"),
+    }
+    assert!(
+        runtime
+            .store()
+            .await
+            .item_by_input(&child.key(&install), b"wrap-up")
+            .unwrap()
+            .is_some(),
+        "the new incarnation accepted it"
+    );
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_input_answered_exiting_lets_a_resume_wait_for_the_lock() {
+    let install = Install::new();
+    let mut agent = SyntheticAgent::new(&install, "leaving", SEGMENTS);
+    agent.register_offline(&install);
+    agent.write_spec(&install);
+    agent.go_live();
+    agent.answer_with(Answer::Reject(node::EXITING.into()));
+    let (daemon, runtime) = start_resuming(&install).await;
+
+    let answer = runtime
+        .send_input(&SendInputRequest {
+            agent_id: agent.id.as_bytes().to_vec(),
+            input: Some(prompt(b"i1", "one more thing")),
+        })
+        .await
+        .unwrap();
+    assert_eq!(verdict(&answer), "rejected exiting");
+    let resumed = tokio::spawn({
+        let runtime = runtime.clone();
+        let id = agent.id;
+        async move { runtime.resume(id, None).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !resumed.is_finished(),
+        "the resume waits for the leaving process instead of refusing a live agent"
+    );
+    agent.die().await;
+    let resumed = resumed
+        .await
+        .unwrap()
+        .expect("resumed once the lock is free");
+    assert_eq!(resumed.incarnation, 2);
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delivery_waiting_on_its_parents_lane_is_dropped_when_the_parent_resumes() {
+    let install = Install::new();
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    parent.go_live();
+    let mut child = SyntheticAgent::new(&install, "child", SEGMENTS);
+    child.parent = Some(parent.key(&install));
+    child.register_offline(&install);
+    child.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+
+    // A person's message holds the parent's lane until its item commits.
+    parent.answer_with(Answer::AcceptWithoutNudge);
+    let held = tokio::spawn({
+        let runtime = runtime.clone();
+        let envelope = Envelope {
+            id: b"hold".to_vec(),
+            to: to(&parent, &install),
+            text: "a word".into(),
+            ..Envelope::default()
+        };
+        async move { runtime.send_message(envelope, None).await }
+    });
+    until("the hand-off", async || parent.inputs().len() == 1).await;
+    parent.answer_with(Answer::Accept);
+
+    // The child finishes a turn for the parent's first incarnation, and the
+    // drain queues behind the held lane.
+    child.append(&snapshot(wire::Phase::Working, &[], 2_000));
+    child.append(&item("last", "the tests pass"));
+    child.append(&turn_end(1, "last"));
+    child.nudge().await;
+    until("the delivery row", async || deliveries(&runtime).await == 1).await;
+    let drained = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.drain_deliveries().await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !drained.is_finished(),
+        "the drain waits for the parent's lane"
+    );
+
+    // While it waits, the parent becomes its second incarnation.
+    {
+        let mut store = runtime.store().await;
+        let mut row = store.agent(&parent.key(&install)).unwrap().unwrap();
+        row.incarnation = 2;
+        store.put_agent(&row).unwrap();
+    }
+    parent.nudge().await;
+    held.await.unwrap().unwrap();
+    let report = drained.await.unwrap();
+    assert_eq!(
+        (report.delivered, report.stale),
+        (0, 1),
+        "the row was for an incarnation that is gone"
+    );
+    until("the outbox to empty", async || {
+        deliveries(&runtime).await == 0
+    })
+    .await;
+    assert_eq!(
+        messages(&parent),
+        vec![(EnvelopeKind::Message, "a word".to_owned())],
+        "the new incarnation never hears of the old one's child"
+    );
+    crash(daemon, runtime).await;
+}
+
 fn finished_child(install: &Install, parent: &SyntheticAgent) -> SyntheticAgent {
     let mut child = SyntheticAgent::new(install, "child", SEGMENTS);
     child.parent = Some(parent.key(install));

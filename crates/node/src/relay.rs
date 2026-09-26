@@ -52,6 +52,8 @@ pub enum RelayError {
     Lost,
     #[error("rejected: {0}")]
     Rejected(String),
+    #[error("the recipient's incarnation the message was for has ended")]
+    Stale,
     #[error("resuming the agent: {0}")]
     Resume(Box<RegistryError>),
     #[error("the store: {0}")]
@@ -66,7 +68,7 @@ impl RelayError {
             Self::OtherHost => ErrorCode::Unimplemented,
             Self::Unavailable => ErrorCode::Unavailable,
             Self::Lost => ErrorCode::Aborted,
-            Self::Rejected(_) => ErrorCode::FailedPrecondition,
+            Self::Rejected(_) | Self::Stale => ErrorCode::FailedPrecondition,
             Self::Resume(_) | Self::Store(_) => ErrorCode::Internal,
         };
         wire::Error {
@@ -233,7 +235,7 @@ impl ProfileRuntime {
         };
         envelope.from = Some(from);
         let envelope_id = envelope.id.clone();
-        self.deliver(id, envelope, is_parent).await?;
+        self.deliver(id, envelope, is_parent, None).await?;
         Ok(SendMessageResponse { envelope_id })
     }
 
@@ -250,12 +252,14 @@ impl ProfileRuntime {
 
     /// The recipient's lane: one message at a time, answered only once
     /// accepted and committed. `resume` lets an exited recipient be resumed
-    /// with the message, which only its parent may do.
+    /// with the message, which only its parent may do. A message for one
+    /// `incarnation` of the recipient is stale once another has begun.
     pub(crate) async fn deliver(
         &self,
         id: AgentId,
         envelope: Envelope,
         resume: bool,
+        incarnation: Option<u32>,
     ) -> Result<(), RelayError> {
         let lane = self.lane(id);
         let _turn = lane.lock().await;
@@ -272,6 +276,11 @@ impl ProfileRuntime {
             }
             store.agent(&key)?.ok_or(RelayError::NoAgent)?
         };
+        // Checked again under the lane: whoever held it may have resumed
+        // the recipient while this message waited.
+        if incarnation.is_some_and(|incarnation| incarnation != row.incarnation) {
+            return Err(RelayError::Stale);
+        }
         let input = Input {
             input_id: envelope.id.clone(),
             of: Some(input::Of::AgentMessage(envelope.clone())),

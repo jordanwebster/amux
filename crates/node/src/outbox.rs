@@ -215,10 +215,17 @@ impl ProfileRuntime {
             kind: row.kind,
             text: row.body.clone(),
         };
-        match self.deliver(parent_id, envelope, false).await {
+        match self
+            .deliver(parent_id, envelope, false, Some(row.parent_incarnation))
+            .await
+        {
             Ok(()) => {
                 self.store.lock().await.remove_delivery(&row)?;
                 Ok(Outcome::Delivered)
+            }
+            Err(RelayError::Stale) => {
+                self.store.lock().await.remove_delivery(&row)?;
+                Ok(Outcome::Stale)
             }
             Err(RelayError::Rejected(reason)) => {
                 tracing::debug!(%reason, "a parent turned a delivery away; it stays");
