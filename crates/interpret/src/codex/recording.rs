@@ -3,7 +3,7 @@
 //!
 //! What the server wrote is facts. What the recording's host wrote becomes
 //! the inputs that would make this interpreter write the same: a turn with
-//! text is a prompt, a steer a steered prompt, an injected item an agent
+//! text is a prompt, a steer a prompt then its send-now, an injected item an agent
 //! message, an interrupt an interrupt, a compaction a `/compact` prompt, and
 //! a response to a server request an answer. The handshake and the host's
 //! own introspection are left out; their responses stay in as facts. An
@@ -144,11 +144,21 @@ pub(super) fn read(format: &str, bytes: &[u8]) -> Result<Vec<Event>, String> {
                     ..Default::default()
                 })
             }
-            "turn/steer" => codex_input::Of::Prompt(PromptInput {
-                text: input_text(&params),
-                steer: true,
-                ..Default::default()
-            }),
+            "turn/steer" => {
+                let queued = format!("stdin-{inputs}-queued").into_bytes();
+                push(Event::Input(Input {
+                    input_id: queued.clone(),
+                    of: Some(input::Of::Codex(CodexInput {
+                        of: Some(codex_input::Of::Prompt(PromptInput {
+                            text: input_text(&params),
+                            ..Default::default()
+                        })),
+                    })),
+                }));
+                codex_input::Of::SendNow(wire::SendQueuedNow {
+                    queued_input_id: queued,
+                })
+            }
             "turn/interrupt" => codex_input::Of::Interrupt(Interrupt {}),
             "thread/compact/start" => codex_input::Of::Prompt(PromptInput {
                 text: "/compact".into(),

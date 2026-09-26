@@ -1,19 +1,34 @@
 {
-  "about": "Inputs become app-server requests: a prompt waits for the thread and a running turn; a queued prompt sent now goes into the running turn as a steer and reads steered until Codex reflects it; withdraw works only while queued; model, effort and approval changes ride on the next turn start; an interrupt stops the named turn, or the next one to start; a failed turn start ends the turn; /compact is a compaction request; the provider's exit is a boundary, an agent message waits for the thread to be resumed, and the resume is a boundary.",
+  "about": "Send now: a queued prompt goes into the running turn as turn/steer, reads steered in the queue until Codex reflects it, and cannot be withdrawn or sent again meanwhile. With no turn running it is refused; once the turn's end has submitted the prompt it is no longer queued; an agent message is never a queue entry to steer; and a steer that loses the race with the turn's end is refused by Codex quietly, the prompt starting the next turn.",
   "spec": {
     "created_at_ms": 1800000000000
   },
   "events": [
     {
       "input": {
-        "id": "p1",
+        "id": "p0",
         "prompt": {
-          "text": "Start."
+          "text": "Plan it."
         }
       },
       "expect": {
         "reply": "queued",
+        "queue": [
+          "p0"
+        ],
         "phase": "STARTING"
+      }
+    },
+    {
+      "input": {
+        "id": "n0",
+        "send_now": {
+          "target": "p0"
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
       }
     },
     {
@@ -39,6 +54,18 @@
       "expect": {
         "phase": "WORKING",
         "queue": []
+      }
+    },
+    {
+      "input": {
+        "id": "n1",
+        "send_now": {
+          "target": "p1"
+        }
+      },
+      "expect": {
+        "reply": "rejected:not_queued",
+        "silent": true
       }
     },
     {
@@ -76,24 +103,24 @@
           "method": "item/completed",
           "params": {
             "threadId": "t1",
+            "turnId": "turn-1",
             "item": {
               "type": "userMessage",
               "id": "u-1",
               "content": [
                 {
                   "type": "text",
-                  "text": "Start."
+                  "text": "Plan it."
                 }
               ]
-            },
-            "turnId": "turn-1"
+            }
           }
         }
       }
     },
     {
       "input": {
-        "id": "s1",
+        "id": "p1",
         "prompt": {
           "text": "Use the staging config."
         }
@@ -101,22 +128,46 @@
       "expect": {
         "reply": "queued",
         "queue": [
-          "s1"
+          "p1"
         ]
       }
     },
     {
       "input": {
-        "id": "n1",
+        "id": "n2",
         "send_now": {
-          "target": "s1"
+          "target": "p1"
         }
       },
       "expect": {
         "reply": "accepted",
         "queue": [
-          "s1(steered)"
+          "p1(steered)"
         ]
+      }
+    },
+    {
+      "input": {
+        "id": "w1",
+        "withdraw": {
+          "target": "p1"
+        }
+      },
+      "expect": {
+        "reply": "rejected:not_queued",
+        "silent": true
+      }
+    },
+    {
+      "input": {
+        "id": "n3",
+        "send_now": {
+          "target": "p1"
+        }
+      },
+      "expect": {
+        "reply": "rejected:not_queued",
+        "silent": true
       }
     },
     {
@@ -137,6 +188,7 @@
           "method": "item/completed",
           "params": {
             "threadId": "t1",
+            "turnId": "turn-1",
             "item": {
               "type": "userMessage",
               "id": "u-2",
@@ -146,13 +198,50 @@
                   "text": "Use the staging config."
                 }
               ]
-            },
-            "turnId": "turn-1"
+            }
           }
         }
       },
       "expect": {
+        "queue": [],
+        "items": [
+          "steer:7031"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "m1",
+        "agent_message": {
+          "envelope": "e1",
+          "from": "lead",
+          "text": "Status?"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
         "queue": []
+      }
+    },
+    {
+      "input": {
+        "id": "n4",
+        "send_now": {
+          "target": "e1"
+        }
+      },
+      "expect": {
+        "reply": "rejected:not_queued",
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-3",
+          "result": {}
+        }
       }
     },
     {
@@ -170,82 +259,6 @@
       }
     },
     {
-      "input": {
-        "id": "w1",
-        "withdraw": {
-          "target": "p2"
-        }
-      },
-      "expect": {
-        "reply": "accepted",
-        "queue": []
-      }
-    },
-    {
-      "input": {
-        "id": "w2",
-        "withdraw": {
-          "target": "p2"
-        }
-      },
-      "expect": {
-        "reply": "rejected:not_queued"
-      }
-    },
-    {
-      "input": {
-        "id": "c1",
-        "model": {
-          "model": "gpt-5.6"
-        }
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "input": {
-        "id": "c2",
-        "effort": {
-          "effort": "high"
-        }
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "input": {
-        "id": "c3",
-        "mode": {
-          "mode": "never/read-only"
-        }
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "input": {
-        "id": "p3",
-        "prompt": {
-          "text": "Next."
-        }
-      },
-      "expect": {
-        "reply": "queued"
-      }
-    },
-    {
-      "input": {
-        "id": "i1",
-        "interrupt": {}
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
       "fact": {
         "channel": "rpc",
         "json": {
@@ -254,18 +267,25 @@
             "threadId": "t1",
             "turn": {
               "id": "turn-1",
-              "status": "interrupted"
+              "status": "completed"
             }
           }
         }
       },
       "expect": {
-        "phase": "WORKING",
-        "queue": [],
-        "turn_end": {
-          "turn_id": 1,
-          "last_message_key": ""
+        "queue": []
+      }
+    },
+    {
+      "input": {
+        "id": "n5",
+        "send_now": {
+          "target": "p2"
         }
+      },
+      "expect": {
+        "reply": "rejected:not_queued",
+        "silent": true
       }
     },
     {
@@ -273,43 +293,12 @@
         "channel": "rpc",
         "json": {
           "id": "amux-4",
-          "error": {
-            "code": -32600,
-            "message": "model gpt-5.6 is not available"
+          "result": {
+            "turn": {
+              "id": "turn-2"
+            }
           }
         }
-      },
-      "expect": {
-        "phase": "IDLE"
-      }
-    },
-    {
-      "input": {
-        "id": "c4",
-        "model": {}
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "input": {
-        "id": "p4",
-        "prompt": {
-          "text": "Try again."
-        }
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "input": {
-        "id": "i2",
-        "interrupt": {}
-      },
-      "expect": {
-        "reply": "accepted"
       }
     },
     {
@@ -331,29 +320,96 @@
       "fact": {
         "channel": "rpc",
         "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "item": {
+              "type": "userMessage",
+              "id": "u-3",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Then summarise."
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p3",
+        "prompt": {
+          "text": "Also check the logs."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "queue": [
+          "p3"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "n6",
+        "send_now": {
+          "target": "p3"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "queue": [
+          "p3(steered)"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
           "method": "turn/completed",
           "params": {
             "threadId": "t1",
             "turn": {
               "id": "turn-2",
-              "status": "interrupted"
+              "status": "completed"
             }
           }
         }
       },
       "expect": {
-        "phase": "IDLE"
+        "queue": []
       }
     },
     {
-      "input": {
-        "id": "p5",
-        "prompt": {
-          "text": "/compact"
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-5",
+          "error": {
+            "code": -32600,
+            "message": "no active turn to steer"
+          }
         }
       },
       "expect": {
-        "reply": "accepted"
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-6",
+          "result": {
+            "turn": {
+              "id": "turn-3"
+            }
+          }
+        }
       }
     },
     {
@@ -375,32 +431,25 @@
       "fact": {
         "channel": "rpc",
         "json": {
-          "method": "item/started",
-          "params": {
-            "threadId": "t1",
-            "item": {
-              "type": "contextCompaction",
-              "id": "cc-1"
-            },
-            "turnId": "turn-3"
-          }
-        }
-      }
-    },
-    {
-      "fact": {
-        "channel": "rpc",
-        "json": {
           "method": "item/completed",
           "params": {
             "threadId": "t1",
+            "turnId": "turn-3",
             "item": {
-              "type": "contextCompaction",
-              "id": "cc-1"
-            },
-            "turnId": "turn-3"
+              "type": "userMessage",
+              "id": "u-4",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Also check the logs."
+                }
+              ]
+            }
           }
         }
+      },
+      "expect": {
+        "items": []
       }
     },
     {
@@ -416,61 +465,9 @@
             }
           }
         }
-      }
-    },
-    {
-      "provider_exit": {
-        "code": 1
-      }
-    },
-    {
-      "input": {
-        "id": "m1",
-        "agent_message": {
-          "envelope": "e9",
-          "from": "lead",
-          "text": "Status?"
-        }
       },
       "expect": {
-        "reply": "queued"
-      }
-    },
-    {
-      "fact": {
-        "channel": "rpc",
-        "json": {
-          "id": 2,
-          "result": {
-            "thread": {
-              "id": "t1",
-              "cliVersion": "0.157.0",
-              "turns": []
-            },
-            "model": "gpt-5.6-luna",
-            "approvalPolicy": "on-request",
-            "sandbox": {
-              "type": "workspaceWrite"
-            },
-            "reasoningEffort": null
-          }
-        }
-      },
-      "expect": {
-        "phase": "WORKING"
-      }
-    },
-    {
-      "fact": {
-        "channel": "rpc",
-        "json": {
-          "id": "amux-9",
-          "result": {
-            "turn": {
-              "id": "turn-5"
-            }
-          }
-        }
+        "phase": "IDLE"
       }
     }
   ]

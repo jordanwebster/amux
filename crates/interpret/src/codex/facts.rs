@@ -243,6 +243,12 @@ impl State {
             return;
         };
         if let Some(error) = error {
+            // A steer that lost the race with the turn's end is not a
+            // failure: the prompt waits for the next turn.
+            if let Request::Steer { input_id } = &request {
+                self.shared.steer_refused(input_id);
+                return;
+            }
             let key = format!("error:rpc:{}", id.as_str().unwrap_or_default());
             self.error_item(
                 emit,
@@ -263,7 +269,7 @@ impl State {
                     }
                 }
                 Request::Compact => self.shared.turn_abandoned(),
-                Request::Steer => self.steers = self.steers.saturating_sub(1),
+                Request::Steer { .. } => {}
                 Request::Inject { envelope_id, .. } => {
                     self.shared.message_consumed(&envelope_id);
                 }
@@ -288,7 +294,7 @@ impl State {
                     self.shared.message_consumed(&envelope_id);
                 }
             }
-            Request::Steer | Request::Interrupt | Request::Compact => {}
+            Request::Steer { .. } | Request::Interrupt | Request::Compact => {}
         }
     }
 
@@ -1132,8 +1138,19 @@ impl State {
         if self.shared.reflect_prompt().is_some() {
             return;
         }
-        if self.steers > 0 {
-            self.steers -= 1;
+        if let Some(entry) = self.shared.steer_reflected(|_| true) {
+            self.emit_item(
+                emit,
+                ItemDraft {
+                    key: format!("steer:{}", crate::serde_pb::to_hex(&entry.input_id)),
+                    text: entry.text,
+                    attachments: entry.attachments,
+                    input_id: entry.input_id,
+                    body: item_body(codex_item::Kind::Steer(wire::Steer {})),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
             return;
         }
         let text = item
@@ -1404,6 +1421,22 @@ impl State {
             );
         }
         self.settle_open(emit, outcome == TurnOutcome::Completed);
+        // A steer lives in the turn it was sent into. One Codex has not
+        // answered yet reached it after the turn ended and will be refused
+        // (Codex answers a steer it took before announcing the turn's end),
+        // so it waits in the queue again.
+        let unanswered = self
+            .requests
+            .values()
+            .filter_map(|request| match request {
+                Request::Steer { input_id } => Some(input_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for input_id in &unanswered {
+            self.shared.steer_refused(input_id);
+        }
+        self.shared.steers_lost();
         let at_ms = self.shared.now_ms();
         let duration = int(turn, "durationMs");
         if let Some(ended) = self.shared.turn_ended(emit) {

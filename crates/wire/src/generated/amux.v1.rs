@@ -471,6 +471,19 @@ impl ::prost::Name for Prompt {
         "/amux.v1.Prompt".into()
     }
 }
+/// A prompt delivered into the running turn; the text is the envelope's.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Steer {}
+impl ::prost::Name for Steer {
+    const NAME: &'static str = "Steer";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.Steer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.Steer".into()
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Text {
     #[prost(bool, tag = "1")]
@@ -1204,9 +1217,6 @@ pub struct PromptInput {
     pub text: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
     pub attachments: ::prost::alloc::vec::Vec<Attachment>,
-    /// Codex: deliver into the active turn instead of queueing.
-    #[prost(bool, tag = "3")]
-    pub steer: bool,
 }
 impl ::prost::Name for PromptInput {
     const NAME: &'static str = "PromptInput";
@@ -1253,6 +1263,25 @@ impl ::prost::Name for WithdrawQueued {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.WithdrawQueued".into()
+    }
+}
+/// Delivers one queued prompt into the running turn through the provider's
+/// own steering path; the entry reads steered until its reflection lands.
+/// Rejected not_queued if the target is not waiting in the queue, and
+/// unsupported if no turn is running.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SendQueuedNow {
+    #[prost(bytes = "vec", tag = "1")]
+    pub queued_input_id: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for SendQueuedNow {
+    const NAME: &'static str = "SendQueuedNow";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.SendQueuedNow".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.SendQueuedNow".into()
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1909,7 +1938,7 @@ impl ::prost::Name for ClaudeCreateConfig {
 pub struct ClaudePtyItem {
     #[prost(
         oneof = "claude_pty_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
     )]
     pub kind: ::core::option::Option<claude_pty_item::Kind>,
 }
@@ -1945,6 +1974,9 @@ pub mod claude_pty_item {
         Slash(super::SlashOutput),
         #[prost(message, tag = "14")]
         Unrecognized(super::Unrecognized),
+        /// A prompt delivered into the running turn; the text is the envelope's.
+        #[prost(message, tag = "15")]
+        Steer(super::Steer),
     }
 }
 impl ::prost::Name for ClaudePtyItem {
@@ -2041,7 +2073,7 @@ impl ::prost::Name for ClaudePtySnapshot {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudePtyInput {
-    #[prost(oneof = "claude_pty_input::Of", tags = "1, 2, 3, 4, 5, 6")]
+    #[prost(oneof = "claude_pty_input::Of", tags = "1, 2, 3, 4, 5, 6, 7")]
     pub of: ::core::option::Option<claude_pty_input::Of>,
 }
 /// Nested message and enum types in `ClaudePtyInput`.
@@ -2060,6 +2092,8 @@ pub mod claude_pty_input {
         Interrupt(super::Interrupt),
         #[prost(message, tag = "6")]
         Withdraw(super::WithdrawQueued),
+        #[prost(message, tag = "7")]
+        SendNow(super::SendQueuedNow),
     }
 }
 impl ::prost::Name for ClaudePtyInput {
@@ -2094,7 +2128,7 @@ impl ::prost::Name for Key {
 pub struct ClaudeSdkItem {
     #[prost(
         oneof = "claude_sdk_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
     )]
     pub kind: ::core::option::Option<claude_sdk_item::Kind>,
 }
@@ -2130,6 +2164,9 @@ pub mod claude_sdk_item {
         ModelSwitch(super::ModelSwitch),
         #[prost(message, tag = "14")]
         Compaction(super::Compaction),
+        /// A prompt delivered into the running turn; the text is the envelope's.
+        #[prost(message, tag = "15")]
+        Steer(super::Steer),
     }
 }
 impl ::prost::Name for ClaudeSdkItem {
@@ -2228,7 +2265,7 @@ impl ::prost::Name for ClaudeSdkSnapshot {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudeSdkInput {
-    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof = "claude_sdk_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<claude_sdk_input::Of>,
 }
 /// Nested message and enum types in `ClaudeSdkInput`.
@@ -2251,6 +2288,8 @@ pub mod claude_sdk_input {
         Withdraw(super::WithdrawQueued),
         #[prost(message, tag = "8")]
         Effort(super::SetEffort),
+        #[prost(message, tag = "9")]
+        SendNow(super::SendQueuedNow),
     }
 }
 impl ::prost::Name for ClaudeSdkInput {
@@ -2798,18 +2837,6 @@ impl ::prost::Name for McpStartup {
         "/amux.v1.McpStartup".into()
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct Steer {}
-impl ::prost::Name for Steer {
-    const NAME: &'static str = "Steer";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.Steer".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.Steer".into()
-    }
-}
 /// The whole-turn diff Codex reports at turn end.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TurnDiff {
@@ -3022,7 +3049,7 @@ impl ::prost::Name for AccessGrant {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CodexInput {
-    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
+    #[prost(oneof = "codex_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<codex_input::Of>,
 }
 /// Nested message and enum types in `CodexInput`.
@@ -3045,6 +3072,8 @@ pub mod codex_input {
         Answer(super::AnswerInput),
         #[prost(message, tag = "8")]
         Effort(super::SetEffort),
+        #[prost(message, tag = "9")]
+        SendNow(super::SendQueuedNow),
     }
 }
 impl ::prost::Name for CodexInput {

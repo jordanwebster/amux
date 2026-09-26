@@ -35,6 +35,7 @@ goldens! {
     usage_health_and_sign_in_are_strip_fields => "strip",
     refusal_fallback_is_a_model_switch_row => "rows",
     inputs_become_stream_json_writes => "inputs",
+    send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
     recorded_cleared => "recorded_cleared",
     recorded_compacted => "recorded_compacted",
     recorded_configured_turn => "recorded_configured_turn",

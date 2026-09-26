@@ -121,8 +121,6 @@ message McpStartup {
   string error = 3;
 }
 
-message Steer {}
-
 // The whole-turn diff Codex reports at turn end.
 message TurnDiff {
   string patch = 1;
@@ -214,6 +212,7 @@ message CodexInput {
     WithdrawQueued withdraw = 6;
     AnswerInput answer = 7;
     SetEffort effort = 8;
+    SendQueuedNow send_now = 9;
   }
 }
 

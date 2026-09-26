@@ -56,10 +56,12 @@ goldens! {
     recorded_subagent => "recorded_subagent",
     recorded_task_list => "recorded_task_list",
     recorded_thinking => "recorded_thinking",
+    recorded_steer_queued => "recorded_steer_queued",
     hook_before_row_and_row_before_hook_yield_one_tool_call => "hook_row_order",
     asks_open_on_the_hook_and_close_only_on_facts => "ask_rules",
     answers_through_amux_become_terminal_inputs => "answers",
     semantic_inputs_become_effects => "inputs",
+    send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
     boundaries_carry_the_provider_session_and_version => "boundaries",
     rows_no_recording_shows => "rows",
 }

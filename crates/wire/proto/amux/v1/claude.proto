@@ -36,6 +36,8 @@ message ClaudePtyItem {
     Boundary boundary = 12;
     SlashOutput slash = 13;
     Unrecognized unrecognized = 14;
+    // A prompt delivered into the running turn; the text is the envelope's.
+    Steer steer = 15;
   }
 }
 
@@ -77,6 +79,7 @@ message ClaudePtyInput {
     Clear clear = 4;
     Interrupt interrupt = 5;
     WithdrawQueued withdraw = 6;
+    SendQueuedNow send_now = 7;
   }
 }
 
@@ -118,6 +121,8 @@ message ClaudeSdkItem {
     Unrecognized unrecognized = 12;
     ModelSwitch model_switch = 13;
     Compaction compaction = 14;
+    // A prompt delivered into the running turn; the text is the envelope's.
+    Steer steer = 15;
   }
 }
 
@@ -174,6 +179,7 @@ message ClaudeSdkInput {
     Clear clear = 6;
     WithdrawQueued withdraw = 7;
     SetEffort effort = 8;
+    SendQueuedNow send_now = 9;
   }
 }
 

@@ -57,6 +57,10 @@ impl OpenAsk for wire::CodexAsk {
 /// The person's queue: prompts waiting for the provider to go idle, in
 /// arrival order, whichever client sent them. Nothing is edited in place;
 /// an edit is a withdraw and a new prompt.
+///
+/// An entry sent into the running turn stays in place marked `steer` until
+/// its reflection lands. It is in the provider's hands by then: it cannot be
+/// withdrawn or sent again, and it is never submitted from here.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Queue {
     #[serde(with = "serde_pb::msgs")]
@@ -68,15 +72,60 @@ impl Queue {
         self.entries.push(entry);
     }
 
-    /// Removes the entry with this input id; false when it is not queued.
+    /// Removes the waiting entry with this input id; false when it is not
+    /// waiting.
     pub fn withdraw(&mut self, input_id: &[u8]) -> bool {
         let before = self.entries.len();
-        self.entries.retain(|entry| entry.input_id != input_id);
+        self.entries
+            .retain(|entry| entry.steer || entry.input_id != input_id);
         self.entries.len() != before
     }
 
+    /// The oldest waiting entry, removed.
     pub fn pop(&mut self) -> Option<QueuedInput> {
-        (!self.entries.is_empty()).then(|| self.entries.remove(0))
+        let at = self.entries.iter().position(|entry| !entry.steer)?;
+        Some(self.entries.remove(at))
+    }
+
+    /// Marks the waiting entry with this input id as sent into the running
+    /// turn and returns it; None when it is not waiting.
+    pub fn steer(&mut self, input_id: &[u8]) -> Option<QueuedInput> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| !entry.steer && entry.input_id == input_id)?;
+        entry.steer = true;
+        Some(entry.clone())
+    }
+
+    /// Returns a steered entry to waiting: the provider refused it.
+    pub fn unsteer(&mut self, input_id: &[u8]) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.steer && entry.input_id == input_id)
+        {
+            entry.steer = false;
+        }
+    }
+
+    /// Removes and returns the oldest steered entry that `matches`: its
+    /// reflection landed.
+    pub fn take_steered(&mut self, matches: impl Fn(&QueuedInput) -> bool) -> Option<QueuedInput> {
+        let at = self
+            .entries
+            .iter()
+            .position(|entry| entry.steer && matches(entry))?;
+        Some(self.entries.remove(at))
+    }
+
+    /// Forgets every steered entry: the provider will not reflect them.
+    pub fn drop_steered(&mut self) {
+        self.entries.retain(|entry| !entry.steer);
+    }
+
+    pub fn has_steered(&self) -> bool {
+        self.entries.iter().any(|entry| entry.steer)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -455,8 +504,11 @@ impl<A: OpenAsk> Shared<A> {
         });
     }
 
+    /// The provider takes the next prompt: started, no turn, no ask, and
+    /// no steered prompt still waiting to be reflected (the provider may run
+    /// it as a turn of its own, which a new submission must not overtake).
     fn ready(&self) -> bool {
-        self.started && !self.busy && self.asks.is_empty()
+        self.started && !self.busy && self.asks.is_empty() && !self.queue.has_steered()
     }
 
     /// A person's prompt from any client. Submitted now when the provider
@@ -473,7 +525,7 @@ impl<A: OpenAsk> Shared<A> {
             input_id: input_id.to_vec(),
             text: prompt.text,
             attachments: prompt.attachments,
-            steer: prompt.steer,
+            steer: false,
             sender: Some(sender),
         };
         if self.ready() && self.queue.is_empty() {
@@ -522,6 +574,64 @@ impl<A: OpenAsk> Shared<A> {
         } else {
             self.reject(emit, input_id, reason::NOT_QUEUED);
         }
+    }
+
+    /// Sends a queued prompt into the running turn: marked steered and
+    /// returned, so the kind hands it to the provider's steering path.
+    /// Rejected{not_queued} if it is not waiting in the queue, and
+    /// rejected{unsupported} if no turn is `running` or the entry is an
+    /// agent's message, which only ever arrives through its own channel.
+    pub fn send_now(
+        &mut self,
+        emit: &mut Emit,
+        input_id: &[u8],
+        target: &[u8],
+        running: bool,
+    ) -> Option<QueuedInput> {
+        let Some(waiting) = self
+            .queue
+            .entries()
+            .iter()
+            .find(|entry| !entry.steer && entry.input_id == target)
+        else {
+            self.reject(emit, input_id, reason::NOT_QUEUED);
+            return None;
+        };
+        let from_person = matches!(
+            waiting
+                .sender
+                .as_ref()
+                .and_then(|sender| sender.value.as_ref()),
+            Some(sender::Value::Human(_))
+        );
+        if !running || !from_person {
+            self.reject(emit, input_id, reason::UNSUPPORTED);
+            return None;
+        }
+        let entry = self.queue.steer(target);
+        self.accept(emit, input_id, false);
+        entry
+    }
+
+    /// The reflection of a steered prompt landed: its entry leaves the
+    /// queue and is returned.
+    pub fn steer_reflected(
+        &mut self,
+        matches: impl Fn(&QueuedInput) -> bool,
+    ) -> Option<QueuedInput> {
+        self.queue.take_steered(matches)
+    }
+
+    /// The provider refused a steered prompt: it waits again.
+    pub fn steer_refused(&mut self, input_id: &[u8]) {
+        self.queue.unsteer(input_id);
+    }
+
+    /// Steered prompts the provider will not reflect any more (the turn was
+    /// interrupted, the conversation cleared or the provider exited): they
+    /// leave the queue.
+    pub fn steers_lost(&mut self) {
+        self.queue.drop_steered();
     }
 
     /// Queues an agent message on a provider with no injection channel, as
@@ -649,6 +759,7 @@ impl<A: OpenAsk> Shared<A> {
         self.started = false;
         self.busy = false;
         self.submitted.clear();
+        self.queue.drop_steered();
         self.turn.end()
     }
 

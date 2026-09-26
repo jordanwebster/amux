@@ -649,6 +649,7 @@ impl State {
             if let Some(output) = local_output(&whole) {
                 return self.slash_output(emit, uuid, &output);
             }
+            self.steer_replayed(emit, &uuid);
             return self.taken(&uuid);
         }
         if let Value::Array(blocks) = content {
@@ -663,6 +664,39 @@ impl State {
         if whole.trim_start().starts_with(INTERRUPTED) {
             self.interrupted = true;
         }
+    }
+
+    /// Claude replays a prompt sent into the running turn when it takes it:
+    /// before the turn's result it joined that turn at a tool boundary and
+    /// its item is marked steered; after it, no boundary was left and it
+    /// opened a turn of its own as an ordinary prompt.
+    fn steer_replayed(&mut self, emit: &mut Emit, uuid: &str) {
+        let Some(client) = self.clients.get(uuid).filter(|client| !client.message) else {
+            return;
+        };
+        let id = client.id.clone();
+        let Some(entry) = self.shared.steer_reflected(|entry| entry.input_id == id) else {
+            return;
+        };
+        self.clients.remove(uuid);
+        let body = if self.shared.is_busy() {
+            Kind::Steer(wire::Steer {})
+        } else {
+            self.shared.turn_started();
+            Kind::Prompt(wire::Prompt {})
+        };
+        self.shared.item(
+            emit,
+            ItemDraft {
+                key: uuid.to_owned(),
+                text: entry.text,
+                attachments: entry.attachments,
+                input_id: entry.input_id,
+                body: item_body(body),
+                complete: true,
+                ..Default::default()
+            },
+        );
     }
 
     fn tool_result(&mut self, emit: &mut Emit, block: &Value, line: &Value) {

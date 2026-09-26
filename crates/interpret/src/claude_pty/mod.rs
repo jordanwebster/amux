@@ -631,6 +631,23 @@ impl State {
             claude_pty_input::Of::Withdraw(withdraw) => {
                 self.shared.withdraw(emit, &id, &withdraw.queued_input_id)
             }
+            // Typed while the turn runs, a prompt joins it at the next tool
+            // boundary, as Codex's steer and headless Claude's mid-turn
+            // message do. Claude's send-now chord is not used: it moves a
+            // running command to the background or cancels the reply being
+            // written. Nothing is typed over an open menu.
+            claude_pty_input::Of::SendNow(send) => {
+                let running = self.shared.is_busy() && self.shared.asks().is_empty();
+                if let Some(entry) = self
+                    .shared
+                    .send_now(emit, &id, &send.queued_input_id, running)
+                {
+                    emit.effect(Effect::Terminal(TerminalInput::Prompt {
+                        text: entry.text,
+                        attachments: entry.attachments,
+                    }));
+                }
+            }
             claude_pty_input::Of::Interrupt(_) => {
                 if self.shared.is_busy() || !self.shared.asks().is_empty() {
                     emit.effect(Effect::Terminal(TerminalInput::Interrupt));
@@ -853,6 +870,7 @@ fn describe_item(body: &[u8]) -> ItemView {
     let (arm, complete, text) = match item.kind {
         None => ("none", true, String::new()),
         Some(Kind::Prompt(_)) => ("prompt", true, String::new()),
+        Some(Kind::Steer(_)) => ("steer", true, String::new()),
         Some(Kind::Message(text)) => ("message", text.complete, String::new()),
         Some(Kind::Thinking(thinking)) => ("thinking", thinking.complete, String::new()),
         Some(Kind::Tool(tool)) => ("tool", true, describe_tool(&tool)),

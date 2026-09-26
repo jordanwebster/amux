@@ -230,6 +230,9 @@ message ReviewComment {
 // in the envelope.
 message Prompt {}
 
+// A prompt delivered into the running turn; the text is the envelope's.
+message Steer {}
+
 message Text {
   bool complete = 1;
 }
@@ -590,8 +593,9 @@ message BackgroundProcesses {
 message PromptInput {
   string text = 1;
   repeated Attachment attachments = 2;
-  // Codex: deliver into the active turn instead of queueing.
-  bool steer = 3;
+  // Prompts always queue; steering is SendQueuedNow on a queued entry.
+  reserved 3;
+  reserved "steer";
 }
 
 // Rejected if ask_key is not open. `body` is the per-kind answer message
@@ -604,6 +608,14 @@ message AnswerInput {
 
 // Rejected if the target is not queued.
 message WithdrawQueued {
+  bytes queued_input_id = 1;
+}
+
+// Delivers one queued prompt into the running turn through the provider's
+// own steering path; the entry reads steered until its reflection lands.
+// Rejected not_queued if the target is not waiting in the queue, and
+// unsupported if no turn is running.
+message SendQueuedNow {
   bytes queued_input_id = 1;
 }
 

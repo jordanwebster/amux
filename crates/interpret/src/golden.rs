@@ -44,9 +44,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use wire::{
     AgentSpec, AnswerInput, ClaudeAnswer, CodexAnswer, Envelope, EnvelopeKind, Input, Item, Key,
-    KeyName, Phase, PromptInput, SendInputResponse, Sender, Snapshot, Step, StopMode,
-    WithdrawQueued, claude_answer, claude_pty_input, claude_sdk_input, codex_input, input,
-    send_input_response, sender,
+    KeyName, Phase, PromptInput, SendInputResponse, SendQueuedNow, Sender, Snapshot, Step,
+    StopMode, WithdrawQueued, claude_answer, claude_pty_input, claude_sdk_input, codex_input,
+    input, send_input_response, sender,
 };
 
 use crate::serde_pb::{from_hex, to_hex};
@@ -79,10 +79,12 @@ pub struct EndRules {
 pub enum FixtureInput {
     Prompt {
         text: String,
-        #[serde(default)]
-        steer: bool,
     },
     Withdraw {
+        target: String,
+    },
+    /// Send a queued prompt into the running turn.
+    SendNow {
         target: String,
     },
     Interrupt {},
@@ -176,7 +178,8 @@ struct Expect {
     phase: Option<String>,
     /// accepted | queued | rejected:<reason>, for this event's input.
     reply: Option<String>,
-    /// Input ids queued in the newest snapshot, in order.
+    /// Input ids queued in the newest snapshot, in order; a steered entry
+    /// reads `<id>(steered)`.
     queue: Option<Vec<String>>,
     /// Open ask keys in the newest snapshot, in order.
     asks: Option<Vec<String>>,
@@ -375,10 +378,7 @@ fn spec<I: Interpreter>(spec: &FixtureSpec) -> AgentSpec {
         initial_prompt: spec.initial_prompt.as_ref().and_then(|text| {
             I::fixture_input(
                 b"initial".to_vec(),
-                &FixtureInput::Prompt {
-                    text: text.clone(),
-                    steer: false,
-                },
+                &FixtureInput::Prompt { text: text.clone() },
             )
         }),
         ..Default::default()
@@ -517,11 +517,26 @@ fn input_of<I: Interpreter>(body: &Value) -> Result<Input, String> {
     }
 }
 
-fn prompt(text: &str, steer: bool) -> PromptInput {
+fn prompt(text: &str) -> PromptInput {
     PromptInput {
         text: text.to_owned(),
         attachments: Vec::new(),
-        steer,
+    }
+}
+
+/// A queue entry as goldens and expectations name it: its input id, marked
+/// when it was sent into the running turn and awaits its reflection.
+fn queue_label(entry: &wire::QueuedInput) -> String {
+    if entry.steer {
+        format!("{}(steered)", display_id(&entry.input_id))
+    } else {
+        display_id(&entry.input_id)
+    }
+}
+
+fn send_now(target: &str) -> SendQueuedNow {
+    SendQueuedNow {
+        queued_input_id: target.as_bytes().to_vec(),
     }
 }
 
@@ -603,8 +618,9 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
 pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
     use claude_pty_input::Of;
     let of = match input {
-        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Prompt { text } => Of::Prompt(prompt(text)),
         FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::SendNow { target } => Of::SendNow(send_now(target)),
         FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
         FixtureInput::Clear {} => Of::Clear(wire::Clear {}),
         FixtureInput::Answer { ask, answer } => {
@@ -629,8 +645,9 @@ pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
 pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
     use claude_sdk_input::Of;
     let of = match input {
-        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Prompt { text } => Of::Prompt(prompt(text)),
         FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::SendNow { target } => Of::SendNow(send_now(target)),
         FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
         FixtureInput::Clear {} => Of::Clear(wire::Clear {}),
         FixtureInput::Answer { ask, answer } => {
@@ -657,8 +674,9 @@ pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
 pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
     use codex_input::Of;
     let of = match input {
-        FixtureInput::Prompt { text, steer } => Of::Prompt(prompt(text, *steer)),
+        FixtureInput::Prompt { text } => Of::Prompt(prompt(text)),
         FixtureInput::Withdraw { target } => Of::Withdraw(withdraw(target)),
+        FixtureInput::SendNow { target } => Of::SendNow(send_now(target)),
         FixtureInput::Interrupt {} => Of::Interrupt(wire::Interrupt {}),
         FixtureInput::Answer { ask, answer } => {
             match answer.get("decision").and_then(Value::as_str) {
@@ -1095,11 +1113,7 @@ fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> 
                 format!("{queue:?}"),
                 format!(
                     "{:?}",
-                    current
-                        .queue
-                        .iter()
-                        .map(|entry| display_id(&entry.input_id))
-                        .collect::<Vec<_>>()
+                    current.queue.iter().map(queue_label).collect::<Vec<_>>()
                 ),
             );
         }
@@ -1230,7 +1244,7 @@ fn render<I: Interpreter>(frames: &[Frame]) -> String {
                 snapshot
                     .queue
                     .iter()
-                    .map(|entry| display_id(&entry.input_id))
+                    .map(queue_label)
                     .collect::<Vec<_>>()
                     .join(","),
                 snapshot

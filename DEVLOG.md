@@ -1,3 +1,27 @@
+2026-09-26 — **Send now steers a queued prompt into the running turn.**
+The wire gains `SendQueuedNow { queued_input_id }` on every kind's input,
+and `PromptInput.steer` is gone (field 3 reserved; the proto baseline is
+updated for that one deliberate removal): prompts always queue, and
+steering is an action on a queued entry. The interpreter refuses it as
+`not_queued` when the entry is not waiting (already submitted, already sent
+now, or an agent's message, which never enters the queue) and as
+`unsupported` when no turn runs (terminal Claude also while a menu is open,
+since typing would answer it). Otherwise the entry stays in the snapshot's
+queue marked steered until its reflection lands, cannot be withdrawn, and
+holds back every prompt queued behind it so a prompt the provider runs as
+its own turn is not overtaken. Codex sends `turn/steer`; a steer that loses
+the race with the turn's end is refused quietly and the prompt starts the
+next turn. Headless Claude writes a default-priority stdin message with the
+input id as uuid; replayed before the turn's result it is a steer, after it
+an ordinary prompt. Terminal Claude types the text and Enter, without the
+ctrl+x ctrl+s chord, which moves a running command to the background or
+cancels the reply being written; a `queued_command` attachment is the
+steer, a dequeued user row an ordinary prompt, and an interrupt hands the
+typed prompt back to Claude's composer so it leaves the queue. Both Claude
+item kinds gain the `Steer` item Codex already had (moved to the shared
+records). A prompt typed straight into a busy terminal now draws as a steer
+too, where it used to draw nothing.
+
 2026-09-26 — **Terminal Claude steering is specified.**
 Two PTY probe specifications record a prompt typed while terminal Claude
 runs a tool. Pressed Enter alone, it goes into Claude's own queue (an

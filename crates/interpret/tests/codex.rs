@@ -33,6 +33,7 @@ macro_rules! goldens {
 goldens! {
     asks_cover_every_request_codex_makes => "asks",
     inputs_become_app_server_requests => "inputs",
+    send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
     rows_for_reroutes_errors_and_the_strip => "rows",
     recorded_access_grant => "recorded_access_grant",
     recorded_approval_allow => "recorded_approval_allow",
@@ -257,7 +258,6 @@ fn a_prompt_with_attachments_leaves_them_to_the_agent_process() {
                 of: Some(wire::codex_input::Of::Prompt(wire::PromptInput {
                     text: "What is this? \u{FFFC}".into(),
                     attachments: vec![wire::Attachment::default()],
-                    steer: false,
                 })),
             })),
         }),

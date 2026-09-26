@@ -97,7 +97,11 @@ enum Request {
         #[serde(with = "serde_pb::bytes_vec")]
         consumes: Vec<Vec<u8>>,
     },
-    Steer,
+    /// `turn/steer` for the queued prompt with this input id.
+    Steer {
+        #[serde(with = "serde_pb::bytes")]
+        input_id: Vec<u8>,
+    },
     Interrupt,
     Compact,
     Inject {
@@ -176,8 +180,6 @@ pub struct State {
     /// arm only).
     #[serde(with = "serde_pb::bytes_vec")]
     parked: Vec<Vec<u8>>,
-    /// Steers sent and not yet reflected.
-    steers: u32,
     works: BTreeMap<String, WorkState>,
     streamed: BTreeMap<String, Streamed>,
     asks: BTreeMap<String, AskMeta>,
@@ -245,7 +247,6 @@ impl State {
             next_boundary: 0,
             held: Vec::new(),
             parked: Vec::new(),
-            steers: 0,
             works: BTreeMap::new(),
             streamed: BTreeMap::new(),
             asks: BTreeMap::new(),
@@ -443,21 +444,22 @@ impl State {
         };
         match arm {
             codex_input::Of::Prompt(prompt) => {
-                if prompt.steer
-                    && let Some(turn) = self.active_turn.clone()
-                {
-                    return self.steer(emit, &id, &turn, prompt);
-                }
-                let prompt = wire::PromptInput {
-                    steer: false,
-                    ..prompt
-                };
                 if let Some(entry) = self.shared.admit_prompt(emit, &id, prompt, human()) {
                     self.submit(emit, entry, Vec::new());
                 }
             }
             codex_input::Of::Withdraw(withdraw) => {
                 self.shared.withdraw(emit, &id, &withdraw.queued_input_id)
+            }
+            codex_input::Of::SendNow(send) => {
+                let turn = self.active_turn.clone();
+                if let Some(entry) =
+                    self.shared
+                        .send_now(emit, &id, &send.queued_input_id, turn.is_some())
+                    && let Some(turn) = turn
+                {
+                    self.steer(emit, &turn, entry);
+                }
             }
             codex_input::Of::Interrupt(_) => {
                 match self.active_turn.clone() {
@@ -556,35 +558,29 @@ impl State {
         params
     }
 
-    fn steer(&mut self, emit: &mut Emit, id: &[u8], turn: &str, prompt: wire::PromptInput) {
+    /// Delivers a queued prompt into the running turn. Its item waits for
+    /// Codex's reflection; a refused steer returns it to the queue.
+    fn steer(&mut self, emit: &mut Emit, turn: &str, entry: QueuedInput) {
         let params = json!({
             "threadId": self.thread(),
             "expectedTurnId": turn,
-            "input": [{ "type": "text", "text": prompt.text, "text_elements": [] }],
+            "input": [{ "type": "text", "text": entry.text, "text_elements": [] }],
         });
-        let request = self.request_bytes("turn/steer", params, Request::Steer);
-        emit.effect(if prompt.attachments.is_empty() {
+        let request = self.request_bytes(
+            "turn/steer",
+            params,
+            Request::Steer {
+                input_id: entry.input_id,
+            },
+        );
+        emit.effect(if entry.attachments.is_empty() {
             Effect::ProviderWrite(request)
         } else {
             Effect::CodexTurnInput {
                 request,
-                attachments: prompt.attachments.clone(),
+                attachments: entry.attachments,
             }
         });
-        self.steers += 1;
-        self.emit_item(
-            emit,
-            ItemDraft {
-                key: format!("steer:{}", serde_pb::to_hex(id)),
-                text: prompt.text,
-                attachments: prompt.attachments,
-                input_id: id.to_vec(),
-                body: item_body(codex_item::Kind::Steer(wire::Steer {})),
-                complete: true,
-                ..Default::default()
-            },
-        );
-        self.shared.accept(emit, id, false);
     }
 
     /// An agent message: its item now, since Codex reports nothing about an

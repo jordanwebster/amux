@@ -75,10 +75,7 @@ fn fact(channel: Channel, value: Value) -> Event {
 }
 
 fn prompt_input<I: Interpreter>(id: &str) -> Event {
-    let input = FixtureInput::Prompt {
-        text: prompt(),
-        steer: false,
-    };
+    let input = FixtureInput::Prompt { text: prompt() };
     Event::Input(I::fixture_input(id.as_bytes().to_vec(), &input).expect("a prompt input"))
 }
 
@@ -447,10 +444,7 @@ fn run<I: Interpreter>(events: Vec<Event>) -> (String, BTreeSet<&'static str>) {
         }),
         initial_prompt: I::fixture_input(
             b"initial".to_vec(),
-            &FixtureInput::Prompt {
-                text: prompt(),
-                steer: false,
-            },
+            &FixtureInput::Prompt { text: prompt() },
         ),
         ..spec
     };

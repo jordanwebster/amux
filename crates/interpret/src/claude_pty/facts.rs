@@ -157,8 +157,11 @@ impl State {
             self.context_tokens = None;
             self.end_local_turn();
         }
-        if kind == BoundaryKind::Cleared && self.tasks.is_some() {
-            self.tasks = Some(Vec::new());
+        if kind == BoundaryKind::Cleared {
+            self.shared.steers_lost();
+            if self.tasks.is_some() {
+                self.tasks = Some(Vec::new());
+            }
         }
         self.boundary(emit, kind, String::new());
     }
@@ -421,6 +424,15 @@ impl State {
                     self.provider.permission_mode = Some(mode.to_owned());
                 }
             }
+            "attachment" => {
+                let attachment = row.get("attachment").unwrap_or(&Value::Null);
+                if text(attachment, "type") == "queued_command"
+                    && matches!(text(attachment, "commandMode"), "" | "prompt")
+                {
+                    let prompt = text(attachment, "prompt").to_owned();
+                    self.joined_prompt(emit, text(row, "uuid").to_owned(), prompt, at_ms);
+                }
+            }
             // Everything else is bookkeeping for Claude's own interface:
             // titles, modes, file history, queue operations, reminders.
             _ => {}
@@ -545,13 +557,17 @@ impl State {
     }
 
     /// A person's prompt, typed in the terminal or submitted through amux.
+    /// A prompt sent into a turn that had no tool boundary left lands here
+    /// too, as a turn of its own after that turn ended: an ordinary prompt.
     fn prompt_row(&mut self, emit: &mut Emit, key: String, text: String, at_ms: Option<i64>) {
         self.close_all_unknown(emit);
         let input_id = match self.shared.reflect_prompt() {
             Some(input_id) => input_id,
             None => {
                 self.shared.turn_started();
-                Vec::new()
+                self.steered_entry(&text)
+                    .map(|entry| entry.input_id)
+                    .unwrap_or_default()
             }
         };
         self.local_turn = false;
@@ -567,6 +583,39 @@ impl State {
                 ..Default::default()
             },
         );
+    }
+
+    /// A prompt typed while a turn ran that Claude folded into that turn at
+    /// a tool boundary: a queued-command attachment, with no user row. Its
+    /// item is the prompt, marked steered; one sent through amux carries
+    /// its input id.
+    fn joined_prompt(&mut self, emit: &mut Emit, key: String, text: String, at_ms: Option<i64>) {
+        let entry = self.steered_entry(&text);
+        let (input_id, attachments) = entry
+            .map(|entry| (entry.input_id, entry.attachments))
+            .unwrap_or_default();
+        self.shared.item(
+            emit,
+            ItemDraft {
+                key,
+                text,
+                attachments,
+                input_id,
+                body: item_body(Kind::Steer(wire::Steer {})),
+                at_ms,
+                complete: true,
+            },
+        );
+    }
+
+    /// The steered queue entry a reflection with this text stands for.
+    /// Claude takes its own queue in order and echoes no id, so the entry
+    /// with the same text wins and the oldest one otherwise.
+    fn steered_entry(&mut self, text: &str) -> Option<wire::QueuedInput> {
+        let text = text.trim();
+        self.shared
+            .steer_reflected(|entry| entry.text.trim() == text)
+            .or_else(|| self.shared.steer_reflected(|_| true))
     }
 
     /// Agent messages that arrived on the messaging socket, as Claude
@@ -588,6 +637,8 @@ impl State {
 
     fn interrupted(&mut self, emit: &mut Emit, key: String, at_ms: Option<i64>) {
         self.close_all_unknown(emit);
+        // Claude hands prompts still in its own queue back to its composer.
+        self.shared.steers_lost();
         let running = self
             .tools
             .iter()

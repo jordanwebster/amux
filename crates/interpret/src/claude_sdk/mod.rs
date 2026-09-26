@@ -376,6 +376,30 @@ impl State {
             claude_sdk_input::Of::Withdraw(withdraw) => {
                 self.shared.withdraw(emit, &id, &withdraw.queued_input_id)
             }
+            // A message at the default priority joins the running turn at
+            // its next tool boundary. Priority "now" is not steering: it
+            // abandons the rest of the turn.
+            claude_sdk_input::Of::SendNow(send) => {
+                let running = self.shared.is_busy();
+                if let Some(entry) = self
+                    .shared
+                    .send_now(emit, &id, &send.queued_input_id, running)
+                {
+                    let uuid = client_uuid(&entry.input_id);
+                    self.clients.insert(
+                        uuid.clone(),
+                        Client {
+                            id: entry.input_id,
+                            message: false,
+                        },
+                    );
+                    emit.effect(Effect::UserMessage {
+                        uuid,
+                        text: entry.text,
+                        attachments: entry.attachments,
+                    });
+                }
+            }
             claude_sdk_input::Of::Interrupt(_) => {
                 if self.shared.is_busy() || !self.shared.asks().is_empty() {
                     self.interrupted = true;
@@ -751,6 +775,7 @@ fn describe_item(body: &[u8]) -> ItemView {
     let (arm, complete, text) = match item.kind {
         None => ("none", true, String::new()),
         Some(Kind::Prompt(_)) => ("prompt", true, String::new()),
+        Some(Kind::Steer(_)) => ("steer", true, String::new()),
         Some(Kind::Message(text)) => ("message", text.complete, String::new()),
         Some(Kind::Thinking(thinking)) => ("thinking", thinking.complete, String::new()),
         Some(Kind::Tool(tool)) => ("tool", true, describe_tool(&tool)),
