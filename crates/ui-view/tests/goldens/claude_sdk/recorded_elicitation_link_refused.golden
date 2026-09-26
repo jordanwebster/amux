@@ -1,11 +1,10 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 10 recorded 9: fact Stream type=system subtype=init uuid=5bdc23c1-8917-4022-94a4-ec3fe17cf07d
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 10 recorded 9: fact Stream type=system subtype=init uuid=5bdc23c1-8917-4022-94a4-ec3fe17cf07d
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 16 recorded 15: fact Stream type=assistant uuid=7576b173-e1f1-4bab-ac9a-29e80e269927
   row    3 msg_011CfREjt7BsR1zX1G9WnNxD:0 Thinking { text: "", open: false, duration_ms: Some(1281) }
 ## 18 recorded 17: fact Stream type=assistant uuid=ec53b6fb-b701-436d-b641-8b3f17023553
@@ -31,8 +30,8 @@
   row    7 turn:1 TurnEnd { duration_ms: Some(2804), cost_usd: Some(0.0277359), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to LINK, then reply with exactly what it returned.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 msg_011CfREjt7BsR1zX1G9WnNxD:0 Thinking { text: "", open: false, duration_ms: Some(1281) }
      4 toolu_015Z2eFD6HNF5MaAwp8Vsuxp ToolCall { server: "external", tool: "ask_the_operator", fact: "LINK", state: Succeeded, result: "elicitation failed: {\"code\":-32602,\"message\":\"Client does not support URL-mode elicitation requests\"}" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
      5 msg_011CfREjzoXASzH2PTT581ix:0 Thinking { text: "", open: false, duration_ms: Some(1017) }

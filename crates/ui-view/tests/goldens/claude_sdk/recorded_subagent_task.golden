@@ -1,11 +1,10 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 6 recorded 5: fact Stream type=system subtype=init uuid=001334b5-a099-499d-90fb-35f3866b8d54
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 6 recorded 5: fact Stream type=system subtype=init uuid=001334b5-a099-499d-90fb-35f3866b8d54
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=6445ce99-6033-4647-8666-130a4d784844
   row    3 msg_011CeW3XC4b5psuZgBvbF9NG:0 Thinking { text: "The user is asking me to delegate to the `counter` subagent and reply with exactly what it said. Looking at the available agent types, I can see that `counter` is listed as \"Counts to three and reports the result. (Tools: All tools)\"\n\nI'll use the Agent tool to invoke the counter agent and then return its exact response.", open: false, dura…
 ## 24 recorded 23: fact Stream type=assistant uuid=fc7328cc-764b-4f1e-ad6b-846b77998e96
@@ -44,8 +43,8 @@
   row   13 turn:2 TurnEnd { duration_ms: Some(1346), cost_usd: Some(0.034572900000000004), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Delegate to the `counter` subagent, then reply with exactly what it said.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 msg_011CeW3XC4b5psuZgBvbF9NG:0 Thinking { text: "The user is asking me to delegate to the `counter` subagent and reply with exactly what it said. Looking at the available agent types, I can see that `counter` is listed as \"Counts to three and reports the result. (Tools: All tools)\"\n\nI'll use the Agent tool to invoke the counter agent and then return its exact response.", open: false, dura…
      4 toolu_011tXt8wWZsDcqNkmr2GAzYp Subagent { description: "Count to three", running: false, tool_count: 0, last_tool: "", answer: "", duration_ms: None }
      5 task:a13375edde10d56ab Hidden collapsed

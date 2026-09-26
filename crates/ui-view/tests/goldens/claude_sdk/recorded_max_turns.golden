@@ -1,11 +1,10 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 6 recorded 5: fact Stream type=system subtype=init uuid=10294872-15fb-4c3f-ae88-9dbb1a466976
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE.")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 6 recorded 5: fact Stream type=system subtype=init uuid=10294872-15fb-4c3f-ae88-9dbb1a466976
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 17 recorded 16: fact Stream type=assistant uuid=9d7a59fd-c7f7-4d46-b66c-c457a7d3c15e
   row    3 msg_011CeW3b54XB6nryTMhQa4kE:0 Thinking { text: "The user wants me to:\n1. Create a.txt containing \"A\"\n2. Create b.txt containing \"B\"\n3. Reply DONE\n\nThese are independent operations, so I can make both Write calls in parallel.", open: false, duration_ms: Some(1453) }
 ## 19 recorded 18: fact Stream type=assistant uuid=f3f22b0e-01fa-4e0a-b775-9c41e173413b
@@ -43,8 +42,8 @@
   row    7 turn:1 TurnEnd { duration_ms: Some(3410), cost_usd: Some(0.0239205), failed: true }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE.")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 msg_011CeW3b54XB6nryTMhQa4kE:0 Thinking { text: "The user wants me to:\n1. Create a.txt containing \"A\"\n2. Create b.txt containing \"B\"\n3. Reply DONE\n\nThese are independent operations, so I can make both Write calls in parallel.", open: false, duration_ms: Some(1453) }
      4 toolu_01BKZvAXFn8dyHs4jMMgWxEc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
      5 toolu_01HdQGvREG7VZBP1bzkm6xCa FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }

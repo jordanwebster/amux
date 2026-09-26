@@ -1,11 +1,10 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 8 recorded 7: fact Stream type=system subtype=init uuid=18a86f4b-07ed-4170-ad53-941f3957ca82
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 8 recorded 7: fact Stream type=system subtype=init uuid=18a86f4b-07ed-4170-ad53-941f3957ca82
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 24 recorded 23: fact Stream type=assistant uuid=f3a4b6ee-413e-4034-83d8-c83334979779
   row    3 msg_011CeW3ZnutMUX3RhuixDvsg:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis seems like a test or a memory check. The user has explicitly asked me to remember something and to respond with a specific word.\n\nI should:\n1. Reply with exactly \"REMEMBERED\" as requested\n2. Not save this to memory file system - this is…
 ## 26 recorded 25: fact Stream type=assistant uuid=5d7379b7-359e-496d-8023-1779c53a3584
@@ -26,8 +25,8 @@
   row   10 turn:2 TurnEnd { duration_ms: Some(1316), cost_usd: Some(0.0034633000000000003), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 msg_011CeW3ZnutMUX3RhuixDvsg:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis seems like a test or a memory check. The user has explicitly asked me to remember something and to respond with a specific word.\n\nI should:\n1. Reply with exactly \"REMEMBERED\" as requested\n2. Not save this to memory file system - this is…
      4 msg_011CeW3ZnutMUX3RhuixDvsg:1 Prose { text: [Text("REMEMBERED.")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(2335), cost_usd: Some(0.022981), failed: false }

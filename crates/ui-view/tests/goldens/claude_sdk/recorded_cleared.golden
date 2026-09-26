@@ -1,19 +1,18 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("/clear")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 6 recorded 5: fact Stream type=conversation_reset uuid=90c51d45-4ba1-41c3-ad9d-e94f961d30f8
-  row    1 boundary:1 Boundary { kind: Cleared, cause: "" }
-## 8 recorded 7: fact Stream type=system subtype=init uuid=c3d005a9-fb76-4ae7-a143-7bfd6bb27b27
-  row    2 boundary:2 Boundary { kind: Started, cause: "" }
-  row    3 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 6 recorded 5: fact Stream type=conversation_reset uuid=90c51d45-4ba1-41c3-ad9d-e94f961d30f8
+  row    2 boundary:1 Boundary { kind: Cleared, cause: "" }
+## 8 recorded 7: fact Stream type=system subtype=init uuid=c3d005a9-fb76-4ae7-a143-7bfd6bb27b27
+  row    3 boundary:2 Boundary { kind: Started, cause: "" }
 ## 10 recorded 9: fact Stream type=result subtype=success uuid=d5673ad0-69c1-4bb2-9469-80354dfd604a
   row    4 turn:1 TurnEnd { duration_ms: Some(28), cost_usd: Some(0.0), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Cleared, cause: "" }
-     2 boundary:2 Boundary { kind: Started, cause: "" }
-     3 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
+     2 boundary:1 Boundary { kind: Cleared, cause: "" }
+     3 boundary:2 Boundary { kind: Started, cause: "" }
      4 turn:1 TurnEnd { duration_ms: Some(28), cost_usd: Some(0.0), failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

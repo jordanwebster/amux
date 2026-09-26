@@ -1,14 +1,14 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
-snapshot STARTING queue=[] working_on=- at=1787961155660 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+snapshot IDLE queue=[] working_on=- at=1787961155660 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-2
-effect reply stdin-2 queued
-snapshot STARTING queue=[stdin-2] working_on=- at=1787961155665 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 6 recorded 5: fact Stream type=system subtype=init uuid=6b50886a-2108-4fe4-beb0-2af0b5f17796
+effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Count slowly from one to two hundred, one number per line."
+item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1787961155665 text="Count slowly from one to two hundred, one number per line."
+snapshot WORKING queue=[] working_on=- at=1787961155665 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 6 recorded 5: fact Stream type=system subtype=init uuid=6b50886a-2108-4fe4-beb0-2af0b5f17796
 item boundary:1 boundary final at=1787961156251 text="" BOUNDARY_KIND_STARTED session=82044520-de4a-469b-aab1-7874aa383634 version=2.1.247
-item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1787961156251 text="Count slowly from one to two hundred, one number per line."
 snapshot WORKING queue=[] working_on=- at=1787961156251 asks=[] session=82044520-de4a-469b-aab1-7874aa383634 model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 8 recorded 7: fact Stream type=rate_limit_event uuid=69288793-1dc2-438f-93f2-8f42bdbf2bdc
 snapshot WORKING queue=[] working_on=- at=1787961156462 asks=[] session=82044520-de4a-469b-aab1-7874aa383634 model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=USAGE_STATE_NEAR_LIMIT five_hour:19% seven_day:83% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?

@@ -1,11 +1,10 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input 0x22222222222242228222222222222201
-  composer Send activity=None queue=[QueuedRow { input_id: [34, 34, 34, 34, 34, 34, 66, 34, 130, 34, 34, 34, 34, 34, 34, 1], text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], from_agent: None, mine: true, steer…
-## 14 recorded 13: fact Stream type=system subtype=init uuid=9666e2b2-05ed-4c4e-8f5c-dd3d49778b79
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
+  row    1 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 14 recorded 13: fact Stream type=system subtype=init uuid=9666e2b2-05ed-4c4e-8f5c-dd3d49778b79
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=963fb830-55bd-4c65-b112-1f7a0c852eb4
   row    3 msg_011CfRNe1t23dJ2KG6srDKvt:0 Thinking { text: "", open: false, duration_ms: Some(2663) }
 ## 24 recorded 23: fact Stream type=assistant uuid=647a623f-306d-4e97-867b-c50154ff4f3f
@@ -50,8 +49,8 @@
   row   13 turn:2 TurnEnd { duration_ms: Some(8630), cost_usd: Some(0.032968800000000006), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
+     1 22222222-2222-4222-8222-222222222201 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly DONE-N plus any extra words the user asked for.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 msg_011CfRNe1t23dJ2KG6srDKvt:0 Thinking { text: "", open: false, duration_ms: Some(2663) }
      4 toolu_01V8KNRp5VHwLZsBWWh8nwpU Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15162) }
      5 task:bq1m36189 Hidden collapsed

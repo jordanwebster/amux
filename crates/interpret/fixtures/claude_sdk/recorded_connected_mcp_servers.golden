@@ -1,18 +1,18 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 2 recorded 1: fact Stream type=control_response
-snapshot STARTING queue=[] working_on=- at=1788014855803 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+snapshot IDLE queue=[] working_on=- at=1788014855803 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 4 recorded 3: input stdin-3
-effect reply stdin-3 queued
-snapshot STARTING queue=[stdin-3] working_on=- at=1788014855806 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 6 recorded 5: fact Stream type=control_response
-snapshot STARTING queue=[stdin-3] working_on=- at=1788014855808 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_STARTING,linear-server:TOOL_SERVER_STATUS_STARTING,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_STARTING,claude.ai Gmail:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 14 recorded 13: fact Stream type=control_response
-snapshot STARTING queue=[stdin-3] working_on=- at=1788014855875 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_STARTING,linear-server:TOOL_SERVER_STATUS_READY,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_STARTING,claude.ai Gmail:TOOL_SERVER_STATUS_STARTING,added_later:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 16 recorded 15: fact Stream type=system subtype=init uuid=39c554a5-4ffb-4c02-be83-2989d9bca114
+effect reply stdin-3 accepted
 effect user 73746469-6e2d-4300-8000-000000000000 "Reply with exactly SERVERS_OK and nothing else."
+item 73746469-6e2d-4300-8000-000000000000 prompt final input=stdin-3 at=1788014855806 text="Reply with exactly SERVERS_OK and nothing else."
+snapshot WORKING queue=[] working_on=- at=1788014855806 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 6 recorded 5: fact Stream type=control_response
+snapshot WORKING queue=[] working_on=- at=1788014855808 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_STARTING,linear-server:TOOL_SERVER_STATUS_STARTING,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_STARTING,claude.ai Gmail:TOOL_SERVER_STATUS_STARTING] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 14 recorded 13: fact Stream type=control_response
+snapshot WORKING queue=[] working_on=- at=1788014855875 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_STARTING,linear-server:TOOL_SERVER_STATUS_READY,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_STARTING,claude.ai Gmail:TOOL_SERVER_STATUS_STARTING,added_later:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 16 recorded 15: fact Stream type=system subtype=init uuid=39c554a5-4ffb-4c02-be83-2989d9bca114
 item boundary:1 boundary final at=1788014856389 text="" BOUNDARY_KIND_STARTED session=c6e416d5-93d2-4922-be4c-1e2208f87966 version=2.1.247
-item 73746469-6e2d-4300-8000-000000000000 prompt final input=stdin-3 at=1788014856389 text="Reply with exactly SERVERS_OK and nothing else."
 snapshot WORKING queue=[] working_on=- at=1788014856389 asks=[] session=c6e416d5-93d2-4922-be4c-1e2208f87966 model=claude-sonnet-5 effort=? mode=default context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY,added_later:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 18 recorded 17: fact Stream type=rate_limit_event uuid=53cccb45-c216-47bc-885c-2a227c75d9f9
 snapshot WORKING queue=[] working_on=- at=1788014856713 asks=[] session=c6e416d5-93d2-4922-be4c-1e2208f87966 model=claude-sonnet-5 effort=? mode=default context=? tasks=? active=[] usage=USAGE_STATE_OK five_hour:12% seven_day:2% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,external:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY,added_later:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?

@@ -1,14 +1,14 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 6 recorded 5: fact Stream type=control_response
-snapshot STARTING queue=[] working_on=- at=1790388240794 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+snapshot IDLE queue=[] working_on=- at=1790388240794 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 8 recorded 7: input stdin-2
-effect reply stdin-2 queued
-snapshot STARTING queue=[stdin-2] working_on=- at=1790388240796 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 10 recorded 9: fact Stream type=system subtype=init uuid=bdd6a304-0c5b-4b8f-8fba-b38fffc93b71
+effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed."
+item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1790388240796 text="Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed."
+snapshot WORKING queue=[] working_on=- at=1790388240796 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 10 recorded 9: fact Stream type=system subtype=init uuid=bdd6a304-0c5b-4b8f-8fba-b38fffc93b71
 item boundary:1 boundary final at=1790388240860 text="" BOUNDARY_KIND_STARTED session=f794b836-8108-4b22-9ffa-cbd79688f8f1 version=2.1.283
-item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1790388240860 text="Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed."
 snapshot WORKING queue=[] working_on=- at=1790388240860 asks=[] session=f794b836-8108-4b22-9ffa-cbd79688f8f1 model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_NEEDS_AUTH,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Claude Docs:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 22 recorded 21: fact Stream type=assistant uuid=60fd25f3-8f91-4c96-bb37-25c95ed1b217
 item msg_011CfREJ4aGE46RUmqafQsPv:0 thinking final at=1790388246448 text=""

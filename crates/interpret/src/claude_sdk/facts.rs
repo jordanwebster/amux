@@ -1021,6 +1021,13 @@ impl State {
             Some(Request::Mode(mode)) if ok => self.permission_mode = Some(mode),
             Some(_) => {}
             None => {
+                // Claude reports its init only once the first message
+                // arrives, so the answer to initialize is what says it
+                // takes input; without it a queued first prompt would wait
+                // for an init that only a prompt can bring.
+                if ok && body.get("commands").is_some() {
+                    self.shared.provider_started();
+                }
                 if let Some(account) = body.get("account") {
                     self.sign_in = Some(SignIn {
                         state: SignInState::SignedIn as i32,

@@ -1,14 +1,14 @@
 ## 0 initial
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=? background=?
 ## 6 recorded 5: fact Stream type=control_response
-snapshot STARTING queue=[] working_on=- at=1790388214520 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+snapshot IDLE queue=[] working_on=- at=1790388214520 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 8 recorded 7: input stdin-2
-effect reply stdin-2 queued
-snapshot STARTING queue=[stdin-2] working_on=- at=1790388214523 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
-## 10 recorded 9: fact Stream type=system subtype=init uuid=9753e62a-eb1e-4c8f-bba1-5ff62bba2c59
+effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Run exactly this Bash command once: ls does-not-exist. Then tell me whether it failed."
+item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1790388214523 text="Run exactly this Bash command once: ls does-not-exist. Then tell me whether it failed."
+snapshot WORKING queue=[] working_on=- at=1790388214523 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+## 10 recorded 9: fact Stream type=system subtype=init uuid=9753e62a-eb1e-4c8f-bba1-5ff62bba2c59
 item boundary:1 boundary final at=1790388214589 text="" BOUNDARY_KIND_STARTED session=d2e5a8c9-c088-4e42-a795-7d5115bf585f version=2.1.283
-item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1790388214589 text="Run exactly this Bash command once: ls does-not-exist. Then tell me whether it failed."
 snapshot WORKING queue=[] working_on=- at=1790388214589 asks=[] session=d2e5a8c9-c088-4e42-a795-7d5115bf585f model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_NEEDS_AUTH,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Claude Docs:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 18 recorded 17: fact Stream type=assistant uuid=7d9fd29b-a4b2-41aa-a7fa-61faa6e30fef
 item msg_011CfREG8FTymnVx8yb32RAH:0 thinking final at=1790388218106 text=""

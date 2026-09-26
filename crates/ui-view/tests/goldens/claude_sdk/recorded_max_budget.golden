@@ -1,18 +1,17 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  composer Send activity=None queue=[QueuedRow { input_id: [115, 116, 100, 105, 110, 45, 50], text: [Text("Write a detailed 500 word essay about the history of rope.")], from_agent: None, mine: true, steered: false, can_withdraw: true, can_send_now: true }] outbox=[]
-## 6 recorded 5: fact Stream type=system subtype=init uuid=41891ede-78a7-4301-a8bc-241ceeb0afbe
-  row    1 boundary:1 Boundary { kind: Started, cause: "" }
-  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write a detailed 500 word essay about the history of rope.")], steered: false }
+  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write a detailed 500 word essay about the history of rope.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
+## 6 recorded 5: fact Stream type=system subtype=init uuid=41891ede-78a7-4301-a8bc-241ceeb0afbe
+  row    2 boundary:1 Boundary { kind: Started, cause: "" }
 ## 10 recorded 9: fact Stream type=result subtype=error_max_budget_usd uuid=79c56c71-8cc7-4abf-9e63-d4c7385326be
   row    3 79c56c71-8cc7-4abf-9e63-d4c7385326be:error Error { error_kind: "error_max_budget_usd", message: "Reached maximum budget ($0.00001)", attempts: 0, gave_up: true } attention
   row    4 turn:1 TurnEnd { duration_ms: Some(869), cost_usd: Some(0.000961), failed: true }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 boundary:1 Boundary { kind: Started, cause: "" }
-     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write a detailed 500 word essay about the history of rope.")], steered: false }
+     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write a detailed 500 word essay about the history of rope.")], steered: false }
+     2 boundary:1 Boundary { kind: Started, cause: "" }
      3 79c56c71-8cc7-4abf-9e63-d4c7385326be:error Error { error_kind: "error_max_budget_usd", message: "Reached maximum budget ($0.00001)", attempts: 0, gave_up: true } attention
      4 turn:1 TurnEnd { duration_ms: Some(869), cost_usd: Some(0.000961), failed: true }
 == strip Strip { tasks: None, context: None, model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: false, windows: [("five_hour", 19.0, Some(1787970000000)), ("seven_day", 83.0, Some(1787976000000))], credits: None }), failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

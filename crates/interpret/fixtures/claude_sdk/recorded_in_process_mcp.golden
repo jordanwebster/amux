@@ -3,18 +3,18 @@ snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? effort=? 
 ## 2 recorded 1: fact Stream type=control_request
 effect write "{\"response\":{\"error\":\"amux does not handle mcp_message\",\"request_id\":\"0db82653-0da4-4aaa-b6d7-b9b44638010b\",\"subtype\":\"error\"},\"type\":\"control_response\"}"
 ## 4 recorded 3: fact Stream type=control_response
-snapshot STARTING queue=[] working_on=- at=1787961013419 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+snapshot IDLE queue=[] working_on=- at=1787961013419 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 6 recorded 5: fact Stream type=control_request
 effect write "{\"response\":{\"error\":\"amux does not handle mcp_message\",\"request_id\":\"6a3f87ca-ed61-4d9e-8a70-2db8e32d1b69\",\"subtype\":\"error\"},\"type\":\"control_response\"}"
 ## 8 recorded 7: input stdin-3
-effect reply stdin-3 queued
-snapshot STARTING queue=[stdin-3] working_on=- at=1787961013421 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
+effect reply stdin-3 accepted
+effect user 73746469-6e2d-4300-8000-000000000000 "Call the echo tool with text set to HELLO, then reply with exactly what it returned."
+item 73746469-6e2d-4300-8000-000000000000 prompt final input=stdin-3 at=1787961013421 text="Call the echo tool with text set to HELLO, then reply with exactly what it returned."
+snapshot WORKING queue=[] working_on=- at=1787961013421 asks=[] session=? model=? effort=? mode=? context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 10 recorded 9: fact Stream type=control_request
 effect write "{\"response\":{\"error\":\"amux does not handle mcp_message\",\"request_id\":\"37dea1c8-2b1e-421d-92b7-d5716ce6b5c0\",\"subtype\":\"error\"},\"type\":\"control_response\"}"
 ## 12 recorded 11: fact Stream type=system subtype=init uuid=d5759f3a-ec0e-42f7-95d2-60aca92d3178
-effect user 73746469-6e2d-4300-8000-000000000000 "Call the echo tool with text set to HELLO, then reply with exactly what it returned."
 item boundary:1 boundary final at=1787961014141 text="" BOUNDARY_KIND_STARTED session=b9f5fb6d-edc3-4ed0-b2bb-8f151daf5efd version=2.1.247
-item 73746469-6e2d-4300-8000-000000000000 prompt final input=stdin-3 at=1787961014141 text="Call the echo tool with text set to HELLO, then reply with exactly what it returned."
 snapshot WORKING queue=[] working_on=- at=1787961014141 asks=[] session=b9f5fb6d-edc3-4ed0-b2bb-8f151daf5efd model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=? servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY,spec:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 14 recorded 13: fact Stream type=rate_limit_event uuid=4e70bc23-6b26-4f7a-a5e8-6a842bf3c09f
 snapshot WORKING queue=[] working_on=- at=1787961014506 asks=[] session=b9f5fb6d-edc3-4ed0-b2bb-8f151daf5efd model=claude-haiku-4-5-20251001 effort=? mode=default context=? tasks=? active=[] usage=USAGE_STATE_NEAR_LIMIT five_hour:19% seven_day:83% servers=HEALTH_STATE_HEALTHY[plugin:stripe:stripe:TOOL_SERVER_STATUS_READY,linear-server:TOOL_SERVER_STATUS_READY,claude.ai Google Drive:TOOL_SERVER_STATUS_NEEDS_AUTH,claude.ai Google Calendar:TOOL_SERVER_STATUS_READY,claude.ai Gmail:TOOL_SERVER_STATUS_READY,spec:TOOL_SERVER_STATUS_READY] sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
