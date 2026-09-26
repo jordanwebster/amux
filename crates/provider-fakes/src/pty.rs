@@ -8,6 +8,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+pub use engine::RAISES;
 use serde_json::Value;
 
 use crate::claude::Args;
@@ -145,11 +146,4 @@ fn play(process: &Process, args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-mod engine {
-    use super::Args;
-    use crate::Script;
-
-    pub async fn run(_script: Script, _args: Args) -> i32 {
-        0
-    }
-}
+mod engine;

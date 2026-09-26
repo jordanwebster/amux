@@ -1,3 +1,20 @@
+2026-09-26 — **fake-claude-pty plays authored scripts as terminal Claude, without the TUI.**
+Keys arrive the way the claude-2.1 keymap types them — a bracketed paste
+and Enter submit a prompt, Escape interrupts, Shift+Tab cycles the mode,
+permission and plan menus take their digit (a deny ends the turn; a plan
+sent back takes typed feedback), and question forms take digits, arrows,
+Space, Tab, typed answers and the review page's Enter. The fake reports
+what Claude would show the way a host reads it: rows appended to the
+session transcript under `CLAUDE_CONFIG_DIR/projects/<cwd slug>/<session>.jsonl`
+and payloads handed to the hook commands `--settings` names (SessionStart,
+PreToolUse, PostToolUse, PermissionRequest, Stop, SessionEnd — the events
+the corpus records). A prompt typed mid-turn is queued and folded in at the
+next tool boundary as a `queued_command` attachment; Ctrl+X Ctrl+S sends it
+now. `--messaging-socket-path` binds a 0700 socket whose token reaches hook
+commands only through their environment; an authenticated message runs as
+a turn from a peer. SIGTERM or SIGHUP ends the session cleanly with exit 0.
+Rows and payloads are shape-checked against the terminal corpus.
+
 2026-09-26 — **fake-codex plays authored scripts as the Codex app server.**
 The fake answers the handshake, starts and resumes threads, and runs a
 turn per `turn/start` with items reported as started, streamed and

@@ -927,7 +927,7 @@ fn usage() -> Value {
 }
 
 /// A turn's token tally, as its result carries it.
-fn turn_usage() -> Value {
+pub(crate) fn turn_usage() -> Value {
     let mut usage = usage();
     usage["iterations"] = json!([]);
     usage["output_tokens_details"] = json!({ "thinking_tokens": 0 });
