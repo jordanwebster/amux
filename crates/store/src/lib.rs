@@ -13,7 +13,7 @@
 //! (the profile file) and [`InMemory`] (tests, replay) differ only in how
 //! they keep rows, so one conformance suite holds both to the same reads.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
@@ -23,8 +23,13 @@ mod memory;
 mod migrations;
 mod sqlite;
 
+mod blobs;
+mod retention;
+
+pub use blobs::BlobLru;
 pub use memory::InMemory;
 pub use migrations::{MIGRATIONS, SCHEMA_STAMP, migration_hash};
+pub use retention::{Sweep, SweepStep};
 pub use sqlite::{OpenError, Sqlite};
 
 /// An agent by the host that owns it and its id.
@@ -304,7 +309,30 @@ pub trait Tables {
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
     fn set_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError>;
+    fn agents(&self) -> Result<Vec<AgentRow>, StoreError>;
+    /// The agent's held rows: their total [`item_bytes`] and count.
+    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError>;
+    /// The oldest held rows' orders and [`item_bytes`], oldest first.
+    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError>;
+    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError>;
 }
+
+/// What one held row costs against a retention budget: its envelope's
+/// variable fields plus a fixed allowance for the integers and the index
+/// entries beside them.
+pub fn item_bytes(item: &Item) -> u64 {
+    (item.key.len()
+        + item.text.len()
+        + item.body.len()
+        + encode_attachments(&item.attachments).len()
+        + item.input_id.len()
+        + item.producer_version.len()
+        + item.kind.len()) as u64
+        + ITEM_OVERHEAD_BYTES
+}
+
+/// The fixed per-row allowance in [`item_bytes`].
+pub const ITEM_OVERHEAD_BYTES: u64 = 48;
 
 /// How a store keeps its rows: transactions over [`Tables`] and the
 /// in-memory marker flags.
@@ -363,6 +391,26 @@ pub trait Store {
     /// transaction. Returns how many agents were dropped.
     fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError>;
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
+
+    /// The bytes own rows (or replica rows) hold against their budget.
+    fn pool_bytes(&self, own: bool) -> Result<u64, StoreError>;
+    /// Brings own rows under `budget` bytes: exited agents whole, least
+    /// recently active first, never an exited child whose parent's row says
+    /// live; then the largest remaining agent trimmed by about `chunk`
+    /// bytes per round, never below its newest `floor_k` rows. Returns what
+    /// it removed, so the daemon deletes the removed agents' directories.
+    fn sweep_own(&mut self, budget: u64, chunk: u64, floor_k: u32) -> Result<Sweep, StoreError>;
+    /// Brings replica rows under `budget` bytes: whole agents with no open
+    /// source, least recently used first by `last_used` (the runtime's
+    /// clock; the row's last activity where it has no entry); then sourced
+    /// agents trimmed to their newest `floor_k` rows, largest first.
+    fn sweep_replicas(
+        &mut self,
+        budget: u64,
+        floor_k: u32,
+        sourced: &HashSet<AgentRef>,
+        last_used: &HashMap<AgentRef, i64>,
+    ) -> Result<Sweep, StoreError>;
 
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
     fn deliveries(&self) -> Result<Vec<Delivery>, StoreError>;
@@ -552,6 +600,38 @@ impl<B: Backend> Store for B {
 
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError> {
         self.read(|tables| tables.host_generation(host))
+    }
+
+    fn pool_bytes(&self, own: bool) -> Result<u64, StoreError> {
+        let own_host = Backend::own_host(self).to_vec();
+        self.read(|tables| retention::pool_bytes(tables, &own_host, own))
+    }
+
+    fn sweep_own(&mut self, budget: u64, chunk: u64, floor_k: u32) -> Result<Sweep, StoreError> {
+        let own_host = Backend::own_host(self).to_vec();
+        let sweep =
+            self.write(|tables| retention::sweep_own(tables, &own_host, budget, chunk, floor_k))?;
+        for agent in &sweep.removed {
+            self.markers_mut().remove(agent);
+        }
+        Ok(sweep)
+    }
+
+    fn sweep_replicas(
+        &mut self,
+        budget: u64,
+        floor_k: u32,
+        sourced: &HashSet<AgentRef>,
+        last_used: &HashMap<AgentRef, i64>,
+    ) -> Result<Sweep, StoreError> {
+        let own_host = Backend::own_host(self).to_vec();
+        let sweep = self.write(|tables| {
+            retention::sweep_replicas(tables, &own_host, budget, floor_k, sourced, last_used)
+        })?;
+        for agent in &sweep.removed {
+            self.markers_mut().remove(agent);
+        }
+        Ok(sweep)
     }
 
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError> {

@@ -167,6 +167,11 @@ const AGENT_COLUMNS: &str = "origin_host, agent_id, kind, name, cwd, parent, par
     ingest_cursor, next_revision, source_cursor, complete_from_order, exhausted, created_at, \
     producer_version, incarnation";
 
+/// `crate::item_bytes`, in SQL: byte lengths, not character counts.
+const ITEM_BYTES: &str = "(length(CAST(key AS BLOB)) + length(CAST(text AS BLOB)) + length(body) \
+    + IFNULL(length(attachments), 0) + IFNULL(length(input_id), 0) \
+    + length(CAST(producer_version AS BLOB)) + length(CAST(kind AS BLOB)) + 48)";
+
 const ITEM_COLUMNS: &str =
     "key, \"order\", revision, at_ms, producer_version, input_id, text, kind, attachments, body";
 
@@ -516,6 +521,57 @@ impl Tables for SqlTables<'_> {
             "INSERT INTO hosts (host_id, generation) VALUES (?1, ?2) \
              ON CONFLICT (host_id) DO UPDATE SET generation = excluded.generation",
             params![host, generation as i64],
+        )?;
+        Ok(())
+    }
+
+    fn agents(&self) -> Result<Vec<AgentRow>, StoreError> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {AGENT_COLUMNS} FROM agents ORDER BY origin_host, agent_id"
+        ))?;
+        let rows = statement
+            .query_map([], agent_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(mut row, snapshot)| {
+                row.snapshot = snapshot
+                    .map(|bytes| Snapshot::decode(bytes.as_slice()))
+                    .transpose()
+                    .map_err(|error| StoreError::Corrupt(error.to_string()))?;
+                Ok(row)
+            })
+            .collect()
+    }
+
+    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError> {
+        let (bytes, rows): (i64, i64) = self.conn.query_row(
+            &format!(
+                "SELECT IFNULL(SUM({ITEM_BYTES}), 0), COUNT(*) FROM items \
+                 WHERE origin_host = ?1 AND agent_id = ?2"
+            ),
+            params![agent.host, agent.agent],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((bytes as u64, rows as u64))
+    }
+
+    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT \"order\", {ITEM_BYTES} FROM items WHERE origin_host = ?1 AND agent_id = ?2 \
+             ORDER BY \"order\" LIMIT ?3"
+        ))?;
+        let rows = statement
+            .query_map(params![agent.host, agent.agent, limit], |row| {
+                Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM items WHERE origin_host = ?1 AND agent_id = ?2 AND \"order\" < ?3",
+            params![agent.host, agent.agent, order as i64],
         )?;
         Ok(())
     }

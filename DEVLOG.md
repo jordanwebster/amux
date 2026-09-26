@@ -1,3 +1,18 @@
+2026-09-26 — **Retention: own rows under their budget, replicas and their blobs under theirs.**
+The profile store now sweeps. `sweep_own` removes exited agents whole,
+least recently active first — never an exited child whose parent's row says
+live, since the parent can still continue it, and a finished parent together
+with its finished descendants, as delete would take them — then trims the
+currently largest live agent by about one chunk of bytes per round, never
+below its newest K rows, marking its history as trimmed so paging says
+"no older history" truthfully, and stops when only protected rows remain.
+`sweep_replicas` evicts whole agents nobody is following, least recently
+used first by the runtime's clock, then trims followed ones to their newest
+K rows with the block's boundary advanced. `BlobLru` keeps replica blob files
+under a byte budget of their own, least recently read first. Row sizes are
+counted the same way by both store implementations, and every sweep runs
+against both.
+
 2026-09-26 — **The profile store: one SQLite file per profile, own rows and replicas.**
 `crates/store` is rewritten as the store the daemon keeps per profile, with
 the old client cache, its fixture binary and its tests gone. The schema is

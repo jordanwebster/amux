@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     AgentRef, AgentRow, Backend, Delivery, Item, Marker, Notification, StoreError, Tables,
+    item_bytes,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -204,6 +205,39 @@ impl Tables for Data {
 
     fn set_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError> {
         self.hosts.insert(host.to_vec(), generation);
+        Ok(())
+    }
+
+    fn agents(&self) -> Result<Vec<AgentRow>, StoreError> {
+        Ok(self.agents.values().cloned().collect())
+    }
+
+    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError> {
+        Ok(self.items.get(agent).map_or((0, 0), |items| {
+            (items.values().map(item_bytes).sum(), items.len() as u64)
+        }))
+    }
+
+    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
+        let (Some(orders), Some(items)) = (self.orders.get(agent), self.items.get(agent)) else {
+            return Ok(Vec::new());
+        };
+        Ok(orders
+            .iter()
+            .take(limit as usize)
+            .map(|(order, key)| (*order, item_bytes(&items[key])))
+            .collect())
+    }
+
+    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError> {
+        if let (Some(orders), Some(items)) = (self.orders.get_mut(agent), self.items.get_mut(agent))
+        {
+            let kept = orders.split_off(&order);
+            for key in orders.values() {
+                items.remove(key);
+            }
+            *orders = kept;
+        }
         Ok(())
     }
 }
