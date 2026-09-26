@@ -17,6 +17,7 @@ members = [
     "crates/interpret",
     "crates/journal",
     "crates/model",
+    "crates/provider-fakes",
     "crates/pty-host",
     "crates/redaction",
     "crates/replay-support",
@@ -73,6 +74,7 @@ ui-state = { path = "crates/ui-state" }
 ui-view = { path = "crates/ui-view" }
 tui = { path = "crates/tui" }
 pty-host = { path = "crates/pty-host" }
+provider-fakes = { path = "crates/provider-fakes" }
 claude = { path = "crates/claude" }
 redaction = { path = "crates/redaction" }
 

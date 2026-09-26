@@ -1,0 +1,30 @@
+[package]
+name = "provider-fakes"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Scripted stand-ins for the Claude and Codex binaries, for tests"
+publish = false
+
+[dependencies]
+chrono = { workspace = true }
+libc = { workspace = true }
+pty-host = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[[bin]]
+name = "fake-claude-sdk"
+path = "src/bin/fake_claude_sdk.rs"
+
+[[bin]]
+name = "fake-claude-pty"
+path = "src/bin/fake_claude_pty.rs"
+
+[[bin]]
+name = "fake-codex"
+path = "src/bin/fake_codex.rs"

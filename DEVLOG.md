@@ -1,3 +1,13 @@
+2026-09-26 — **provider-fakes: fake Claude and Codex binaries that replay the recorded corpora.**
+A new crate ships fake-claude-pty, fake-claude-sdk and fake-codex. Pointed
+at a claude-specs or codex-specs recording, each becomes that provider
+process: it writes every recorded output where the real one did (stdout
+lines, terminal bytes, transcript rows under the Claude configuration
+directory, hook payloads through the commands `--settings` names) and
+requires every host input byte for byte. The conformance tests play all
+102 recordings through the real binaries over their real transports, one
+test per recording with a completeness check, in well under a second.
+
 2026-09-26 — **Asks that are the work leave their decision row in the chat.**
 A Codex question, access grant, tool-server form or link, and a headless
 Claude tool-server form or link, used to live only in the snapshot's ask
