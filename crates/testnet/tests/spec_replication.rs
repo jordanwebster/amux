@@ -515,29 +515,21 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
     const K: u32 = 6;
-    let topology = desk_and_laptop().agent(
-        AgentDecl::new("worker", "desk")
-            .steps(turns(2, 3))
-            .prompt("go"),
-    );
-    let mut net = Net::start_with(topology, options(K, |_, _| {}))
+    let mut net = Net::start_with(desk_and_laptop(), options(K, |_, _| {}))
         .await
         .unwrap();
-    let key = net.agent("worker").unwrap().key();
-    wait_origin_says(&net, "worker", "t0-2").await;
 
     // Once armed, the laptop's source drops the next record it is sent. A
-    // source reads the hook when its stream opens, so the link blinks to
-    // open one that has it.
+    // source reads the hook when its stream opens, so it is set before the
+    // agent exists.
     let armed = Arc::new(AtomicBool::new(false));
     let dropped = Arc::new(AtomicBool::new(false));
     let laptop = net.runtime("laptop").unwrap();
     {
         let armed = armed.clone();
         let dropped = dropped.clone();
-        let watched = key.clone();
-        laptop.set_source_hook(Some(Arc::new(move |agent: &AgentKey, _: &SessionEvent| {
-            if *agent == watched && armed.swap(false, Ordering::SeqCst) {
+        laptop.set_source_hook(Some(Arc::new(move |_: &AgentKey, _: &SessionEvent| {
+            if armed.swap(false, Ordering::SeqCst) {
                 dropped.store(true, Ordering::SeqCst);
                 SourceVerdict::Drop
             } else {
@@ -545,8 +537,14 @@ async fn a_stream_lost_with_the_link_up_detaches_through_the_backoff() {
             }
         })));
     }
-    sever(&mut net).await;
-    restore(&mut net).await;
+    net.spawn(
+        AgentDecl::new("worker", "desk")
+            .steps(turns(2, 3))
+            .prompt("go"),
+    )
+    .await
+    .unwrap();
+    wait_origin_says(&net, "worker", "t0-2").await;
     wait_current(&net, "laptop", "worker").await;
     let mut chat = net.observe("laptop", "worker", 10).await.unwrap();
     chat.observe_until(observe::caught_up, PATIENCE)
@@ -1085,30 +1083,32 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
 /// ends with the origin's newest row.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() {
-    let topology = desk_and_laptop().agent(
-        AgentDecl::new("brief", "desk")
-            .steps(turns(1, 2))
-            .prompt("go"),
-    );
-    let mut net = Net::start_with(topology, options(6, |_, _| {}))
+    let mut net = Net::start_with(desk_and_laptop(), options(6, |_, _| {}))
         .await
         .unwrap();
-    let brief = net.agent("brief").unwrap().clone();
-    let key = brief.key();
-    wait_origin_says(&net, "brief", "t0-1").await;
 
     // Once armed, the laptop's sources hold the first record they are sent
-    // until the gate opens. A source reads the hook when its stream opens,
-    // so the link blinks to open one that has it.
+    // until the gate opens; markers pass. A source reads the hook when its
+    // stream opens, so it is set before the agent exists.
     let armed = Arc::new(AtomicBool::new(false));
+    let holding = Arc::new(AtomicBool::new(false));
     let gate = Arc::new(tokio::sync::Notify::new());
     let laptop = net.runtime("laptop").unwrap();
     {
         let armed = armed.clone();
+        let holding = holding.clone();
         let gate = gate.clone();
-        let watched = key.clone();
-        laptop.set_source_hook(Some(Arc::new(move |agent: &AgentKey, _: &SessionEvent| {
-            if *agent == watched && armed.swap(false, Ordering::SeqCst) {
+        laptop.set_source_hook(Some(Arc::new(move |_: &AgentKey, event: &SessionEvent| {
+            let record = matches!(
+                event.of,
+                Some(
+                    session_event::Of::Snapshot(_)
+                        | session_event::Of::Item(_)
+                        | session_event::Of::Append(_)
+                )
+            );
+            if record && armed.swap(false, Ordering::SeqCst) {
+                holding.store(true, Ordering::SeqCst);
                 let gate = gate.clone();
                 SourceVerdict::Hold(Box::pin(async move { gate.notified().await }))
             } else {
@@ -1116,8 +1116,16 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
             }
         })));
     }
-    sever(&mut net).await;
-    restore(&mut net).await;
+    net.spawn(
+        AgentDecl::new("brief", "desk")
+            .steps(turns(1, 2))
+            .prompt("go"),
+    )
+    .await
+    .unwrap();
+    let brief = net.agent("brief").unwrap().clone();
+    let key = brief.key();
+    wait_origin_says(&net, "brief", "t0-1").await;
     wait_current(&net, "laptop", "brief").await;
     armed.store(true, Ordering::SeqCst);
     net.runtime("desk")
@@ -1125,14 +1133,19 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
         .stop(brief.id, StopMode::Graceful)
         .await
         .unwrap();
-    observe::eventually("the laptop to list brief exited", PATIENCE, || async {
-        laptop
-            .store()
-            .await
-            .agent(&key)
-            .unwrap()
-            .is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32)
-    })
+    observe::eventually(
+        "the laptop to list brief exited while holding an exit record",
+        PATIENCE,
+        || async {
+            holding.load(Ordering::SeqCst)
+                && laptop
+                    .store()
+                    .await
+                    .agent(&key)
+                    .unwrap()
+                    .is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32)
+        },
+    )
     .await
     .unwrap();
     let (cursor, _) = replica_state(&net, "laptop", "brief").await.unwrap();
