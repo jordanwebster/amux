@@ -64,6 +64,8 @@ mod sdk_replays {
         control_failed_tool_server => "control/failed_tool_server",
         probes_client_id => "probes/client_id",
         probes_side_channel => "probes/side_channel",
+        probes_steer_folded => "probes/steer_folded",
+        probes_steer_preempted => "probes/steer_preempted",
     );
 
     #[test]

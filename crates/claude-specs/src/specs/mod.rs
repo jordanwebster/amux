@@ -42,6 +42,7 @@ pub mod pty;
 pub mod questions;
 pub mod results;
 pub mod session;
+pub mod steering;
 pub mod tools;
 pub mod work;
 
@@ -441,6 +442,12 @@ impl SpecSession {
         self.control()
             .prompt(crate::driver::sdk::UserMessage::text(text))
             .await
+    }
+
+    /// Send a message built by the specification, when its id or queue
+    /// priority is part of the claim.
+    pub(crate) async fn send(&self, message: crate::driver::sdk::UserMessage) -> Result<(), Error> {
+        self.control().prompt(message).await
     }
 
     pub async fn set_permission_mode(
@@ -1060,6 +1067,8 @@ static DEFINITIONS: &[&SpecDef] = &[
     &work::FAILED_TOOL_SERVER,
     &channels::CLIENT_ID,
     &channels::SIDE_CHANNEL,
+    &steering::FOLDED,
+    &steering::PREEMPTED,
 ];
 
 const fn entry(name: &'static str, recording: &'static str) -> SpecEntry {
@@ -1108,6 +1117,8 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("control/failed_tool_server", "failed_tool_server"),
     entry("probes/client_id", "client_id"),
     entry("probes/side_channel", "side_channel"),
+    entry("probes/steer_folded", "steer_folded"),
+    entry("probes/steer_preempted", "steer_preempted"),
 ];
 
 /// The donor's executable SDK specifications in stable reading order.

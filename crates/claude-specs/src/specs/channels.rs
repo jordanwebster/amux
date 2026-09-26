@@ -149,14 +149,14 @@ fn peer_reflection(message: &Message) -> Option<Value> {
 }
 
 /// Every frame in the order it arrived, as Claude wrote it.
-fn raw(turn: &Turn) -> Vec<Value> {
+pub(super) fn raw(turn: &Turn) -> Vec<Value> {
     turn.messages()
         .iter()
         .map(|message| serde_json::to_value(message).expect("a parsed frame serialises"))
         .collect()
 }
 
-fn lifecycle_states(frames: &[Value], id: &str) -> Vec<String> {
+pub(super) fn lifecycle_states(frames: &[Value], id: &str) -> Vec<String> {
     frames
         .iter()
         .filter(|frame| frame["type"] == "command_lifecycle" && frame["command_uuid"] == id)

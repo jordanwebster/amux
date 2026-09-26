@@ -778,8 +778,13 @@ fn api_error_row(row: &serde_json::Value) -> bool {
 /// spent.
 fn synthetic_error_reply(row: &serde_json::Value) -> bool {
     row.get("type").and_then(serde_json::Value::as_str) == Some("assistant")
-        && (row.get("isApiErrorMessage").and_then(serde_json::Value::as_bool) == Some(true)
-            || row.pointer("/message/model").and_then(serde_json::Value::as_str)
+        && (row
+            .get("isApiErrorMessage")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+            || row
+                .pointer("/message/model")
+                .and_then(serde_json::Value::as_str)
                 == Some("<synthetic>"))
 }
 

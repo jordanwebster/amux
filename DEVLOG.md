@@ -1,3 +1,14 @@
+2026-09-26 — **Headless Claude steering is specified.**
+Two probe specifications in claude-specs record what happens to a stdin
+message sent while a headless turn runs a tool. With Claude's default
+priority it joins the running turn at the next tool boundary: it is
+reflected and started before that turn's single result, and completes with
+it. With priority `later` it waits and runs as its own turn. With priority
+`now` the running tool finishes, then the turn ends early with
+`terminal_reason: aborted_tools`, its prompt is cancelled, and the message
+runs as a new turn. The spec driver's stdin message gained a `priority`
+field for this.
+
 2026-09-26 — **The chat vocabulary is covered per kind.**
 `crates/interpret/tests/vocabulary.toml` holds every row of the chat
 vocabulary's catalogue with each kind's availability mark, the item arm,

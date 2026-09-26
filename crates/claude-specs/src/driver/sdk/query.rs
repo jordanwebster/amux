@@ -28,6 +28,10 @@ use crate::driver::sdk::types::{MessageContent, MessageParam, Role};
 #[derive(Debug, Clone)]
 pub struct UserMessage {
     pub uuid: Option<String>,
+    /// Claude's queue priority for the message: `now`, `next` or `later`.
+    /// Absent means Claude's default, which folds a message sent mid-turn
+    /// into the running turn at its next tool boundary.
+    pub priority: Option<String>,
     pub message: MessageParam,
     pub parent_tool_use_id: Option<String>,
 }
@@ -36,6 +40,7 @@ impl UserMessage {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             uuid: None,
+            priority: None,
             message: MessageParam {
                 role: Role::User,
                 content: MessageContent::Text(text.into()),
@@ -48,6 +53,7 @@ impl UserMessage {
     pub fn new(message: MessageParam, parent_tool_use_id: Option<String>) -> Self {
         Self {
             uuid: None,
+            priority: None,
             message,
             parent_tool_use_id,
         }
@@ -55,6 +61,11 @@ impl UserMessage {
 
     pub fn with_uuid(mut self, uuid: impl Into<String>) -> Self {
         self.uuid = Some(uuid.into());
+        self
+    }
+
+    pub fn with_priority(mut self, priority: impl Into<String>) -> Self {
+        self.priority = Some(priority.into());
         self
     }
 }
@@ -65,6 +76,8 @@ struct WireUserMessage<'a> {
     wire_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     uuid: &'a Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: &'a Option<String>,
     session_id: &'a str,
     message: &'a MessageParam,
     parent_tool_use_id: &'a Option<String>,
@@ -420,6 +433,7 @@ pub(crate) async fn send_user_message(
     let wire = WireUserMessage {
         wire_type: "user",
         uuid: &message.uuid,
+        priority: &message.priority,
         session_id: &inner.session_id,
         message: &message.message,
         parent_tool_use_id: &message.parent_tool_use_id,
