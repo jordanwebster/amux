@@ -154,6 +154,32 @@ impl Agent {
             .collect()
     }
 
+    /// The facts ring's entries, oldest first: every event the
+    /// interpreter was fed, as private/facts/ holds them.
+    pub fn facts(&self) -> Vec<serde_json::Value> {
+        let dir = self.dir.join(agent::PRIVATE).join("facts");
+        let mut segments: Vec<(u64, PathBuf)> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                let start = path.file_name()?.to_str()?.parse().ok()?;
+                Some((start, path))
+            })
+            .collect();
+        segments.sort();
+        segments
+            .into_iter()
+            .flat_map(|(_, path)| {
+                std::fs::read_to_string(path)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     pub async fn start(setup: Setup) -> Self {
         let root = tempfile::tempdir().expect("a temp dir");
         let dir = root.path().join("agents").join("a1");

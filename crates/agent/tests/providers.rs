@@ -300,7 +300,44 @@ async fn a_message_mid_turn_is_consumed_before_a_one_shot_child_exits(
             .contains_key(&interpret::agent_message_key(b"m1")),
         "the message has its item"
     );
-    assert!(log.turn_ends() >= 1);
+    // The provider's own record of taking the message comes before the
+    // agent's exit: headless Claude's reflection of it, terminal Claude's
+    // user row for it. Codex drains an item injected mid-turn into that
+    // turn, so the message is consumed at the inject's acknowledgement and
+    // no turn is started for it.
+    let facts = agent.facts();
+    let exiting = facts
+        .iter()
+        .position(|entry| entry["event"] == "exiting")
+        .expect("the exit is in the facts ring");
+    let taken = |channel: &str, took: &dyn Fn(&serde_json::Value) -> bool| {
+        facts[..exiting].iter().any(|entry| {
+            entry["event"] == "fact"
+                && entry["channel"] == channel
+                && entry["text"]
+                    .as_str()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .is_some_and(|fact: serde_json::Value| {
+                        fact.to_string().contains("a note from the parent") && took(&fact)
+                    })
+        })
+    };
+    match kind {
+        "claude_sdk" => assert!(
+            taken("stream", &|line| line["type"] == "user"
+                && line["isReplay"] == true),
+            "Claude reflected the message before the exit"
+        ),
+        "claude_pty" => assert!(
+            taken("transcript", &|row| row["type"] == "user"),
+            "Claude's transcript shows the message taken before the exit"
+        ),
+        _ => assert_eq!(
+            log.sequence(),
+            ["boundary STARTED", "turn end", "boundary EXITED finished"],
+            "the message was drained into the running turn"
+        ),
+    }
     if kind == "claude_pty" {
         assert_eq!(
             agent

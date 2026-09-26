@@ -1,3 +1,10 @@
+2026-09-26 — **The agent-message tests check the provider took the message before a one-shot child exits.**
+They read the agent's facts ring: headless Claude's reflection of the
+message and terminal Claude's user row for it must come before the exit
+entry, and Codex, which drains an item injected mid-turn, must end with a
+single turn. Without the pending-message check in the one-shot exit, every
+Claude case now fails.
+
 2026-09-26 — **A person's images reach headless Claude as native image blocks.**
 When a prompt or steer carries image attachments, the stream-JSON user
 message's content is a block array: the text with each attachment's
