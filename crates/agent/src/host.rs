@@ -288,6 +288,11 @@ impl<I: Interpreter> Host<I> {
                 }
                 self.feed(Event::Fact(fact)).await?;
             }
+            ProviderEvent::Messaging(messaging) => {
+                if let Some(provider) = &mut self.provider {
+                    provider.set_messaging(messaging);
+                }
+            }
             ProviderEvent::Exited(code) => {
                 if let Mode::Exiting { cause, .. } = &self.mode {
                     self.done = Some(cause.clone());
@@ -680,19 +685,31 @@ async fn refuse(mut listener: LocalListener) {
 }
 
 /// Each connection on hooks.sock carries one hook payload, then closes.
-async fn hook_payloads(mut listener: LocalListener, facts: mpsc::Sender<ProviderEvent>) {
+/// The hook binary wraps the payload with the messaging socket's
+/// credentials when Claude gave it them; they go to the provider, and only
+/// the payload Claude wrote becomes a fact. Payloads are read one
+/// connection at a time, in the order Claude ran its hooks.
+async fn hook_payloads(mut listener: LocalListener, events: mpsc::Sender<ProviderEvent>) {
     while let Ok(mut stream) = listener.accept().await {
-        let facts = facts.clone();
-        tokio::spawn(async move {
-            let mut payload = Vec::new();
-            if stream.read_to_end(&mut payload).await.is_ok() && !payload.is_empty() {
-                let _ = facts
-                    .send(ProviderEvent::Fact(interpret::Fact {
-                        channel: interpret::Channel::Hook,
-                        payload,
-                    }))
-                    .await;
-            }
-        });
+        let mut bytes = Vec::new();
+        if stream.read_to_end(&mut bytes).await.is_err() || bytes.is_empty() {
+            continue;
+        }
+        let (payload, messaging) = claude::hooks::unwrap_forwarded(&bytes).unwrap_or((bytes, None));
+        if let Some(messaging) = messaging
+            && events
+                .send(ProviderEvent::Messaging(messaging))
+                .await
+                .is_err()
+        {
+            return;
+        }
+        let fact = interpret::Fact {
+            channel: interpret::Channel::Hook,
+            payload,
+        };
+        if events.send(ProviderEvent::Fact(fact)).await.is_err() {
+            return;
+        }
     }
 }

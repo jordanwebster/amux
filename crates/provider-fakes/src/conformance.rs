@@ -225,11 +225,9 @@ async fn terminal(binary: &Path, recording: &Path, process: &Process) -> Result<
         return Err(format!("the fake exited {status:?}"));
     }
     let hooks_written = std::fs::read(&hook_log).unwrap_or_default();
-    let hooks_recorded: Vec<u8> = process
-        .events
-        .iter()
-        .filter(|event| event.channel == Channel::Hook)
-        .flat_map(|event| event.bytes.iter().copied().chain(*b"\n"))
+    let hooks_recorded: Vec<u8> = playback::local_hooks(&process.events, &config, &cwd)
+        .into_iter()
+        .flat_map(|payload| payload.into_iter().chain(*b"\n"))
         .collect();
     if hooks_written != hooks_recorded {
         return Err(format!(

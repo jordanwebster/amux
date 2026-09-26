@@ -27,6 +27,10 @@ use crate::{DRIFT_EXIT, Mode};
 pub const RAISES: &[&str] = &["permission", "question", "plan", "form"];
 
 pub fn main() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if crate::claude::answered_version(&args) {
+        return 0;
+    }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,
         Err(error) => {
@@ -34,7 +38,6 @@ pub fn main() -> i32 {
             return DRIFT_EXIT;
         }
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -35,8 +35,15 @@ pub struct McpServerConfig {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ManagedSettings {
     pub hook_command: Vec<String>,
+    /// The hook events the command is registered for; a default set when
+    /// empty.
+    pub hook_events: Vec<String>,
     pub mcp_servers: Vec<McpServerConfig>,
     pub permissions_allow: Vec<String>,
+    /// Let messages from other sessions on the messaging socket through at
+    /// once. Without it a session in bypass-permissions mode holds them
+    /// behind an approval nobody is there to give.
+    pub accept_cross_session: bool,
 }
 
 /// Fully merged settings passed as Claude's one managed `--settings` value.
@@ -85,7 +92,10 @@ pub fn load_user_settings(cwd: &Path, sources: &[String]) -> Result<Option<Value
 pub fn merged_settings(user: Option<Value>, managed: &ManagedSettings) -> MergedSettings {
     let mut merged = user.unwrap_or_else(|| Value::Object(serde_json::Map::new()));
     if !managed.hook_command.is_empty() {
-        deep_merge(&mut merged, managed_hook_settings(&managed.hook_command));
+        deep_merge(
+            &mut merged,
+            managed_hook_settings(&managed.hook_command, &managed.hook_events),
+        );
     }
     if !managed.mcp_servers.is_empty() {
         let servers = managed
@@ -96,6 +106,12 @@ pub fn merged_settings(user: Option<Value>, managed: &ManagedSettings) -> Merged
         deep_merge(
             &mut merged,
             serde_json::json!({"mcpServers": Value::Object(servers)}),
+        );
+    }
+    if managed.accept_cross_session {
+        deep_merge(
+            &mut merged,
+            serde_json::json!({"crossSessionInbound": "accept"}),
         );
     }
     if !managed.permissions_allow.is_empty() {
@@ -273,7 +289,18 @@ fn deep_merge(destination: &mut Value, addition: Value) {
     }
 }
 
-fn managed_hook_settings(command: &[String]) -> Value {
+/// The hook events registered when a caller names none.
+const DEFAULT_HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "SessionEnd",
+    "PermissionRequest",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "Notification",
+];
+
+fn managed_hook_settings(command: &[String], events: &[String]) -> Value {
     let command = command
         .iter()
         .map(|part| shell_words::quote(part))
@@ -285,15 +312,18 @@ fn managed_hook_settings(command: &[String]) -> Value {
             "command": command
         }]}])
     };
-    serde_json::json!({"hooks": {
-        "SessionStart": registration(),
-        "SessionEnd": registration(),
-        "PermissionRequest": registration(),
-        "PreToolUse": registration(),
-        "PostToolUse": registration(),
-        "Stop": registration(),
-        "Notification": registration()
-    }})
+    let hooks: serde_json::Map<String, Value> = if events.is_empty() {
+        DEFAULT_HOOK_EVENTS
+            .iter()
+            .map(|event| ((*event).to_owned(), registration()))
+            .collect()
+    } else {
+        events
+            .iter()
+            .map(|event| (event.clone(), registration()))
+            .collect()
+    };
+    serde_json::json!({ "hooks": hooks })
 }
 
 #[cfg(test)]
@@ -318,9 +348,12 @@ mod tests {
                 config: serde_json::json!({"command":"/bin/amux","args":["mcp","agent"]}),
             }],
             permissions_allow: vec!["Read(/managed/artifacts/**)".into()],
+            accept_cross_session: true,
+            ..Default::default()
         };
         let settings = merged_settings(Some(user), &managed).into_value();
         assert_eq!(settings["theme"], "dark");
+        assert_eq!(settings["crossSessionInbound"], "accept");
         assert_eq!(settings["mcpServers"]["amux"]["command"], "/bin/amux");
         assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(

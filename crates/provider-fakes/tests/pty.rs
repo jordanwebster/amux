@@ -433,7 +433,12 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
     terminal.hook("Stop").await;
     let rows = terminal.rows();
     let user = rows.iter().find(|row| row["type"] == "user").unwrap();
-    assert_eq!(user["message"]["content"], "hello from a peer");
+    let content = user["message"]["content"].as_str().unwrap();
+    assert!(
+        content.starts_with("Another Claude session sent a message:\n<cross-session-message")
+            && content.contains(">\nhello from a peer\n</cross-session-message>"),
+        "the socket message is wrapped as terminal Claude records it: {content}"
+    );
     assert_eq!(user["origin"]["kind"], "peer");
     assert!(contents(&rows).contains(&"assistant text from a peer".to_owned()));
     terminal.check_shapes();

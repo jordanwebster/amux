@@ -7,6 +7,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("CLAUDE_HOOK_SOCKET is not set")?;
     let mut payload = Vec::new();
     std::io::stdin().read_to_end(&mut payload)?;
-    claude::hooks::forward(&payload, &socket)?;
+    claude::hooks::forward_from_env(&payload, &socket)?;
     Ok(())
 }

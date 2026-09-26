@@ -858,6 +858,9 @@ impl Interpreter for ClaudePty {
         // the session it resumes is a resume, not a restart.
         state.provider.launches = 0;
         state.provider.relaunched = false;
+        // The new process's transcript is followed anew, from wherever the
+        // agent process last read it.
+        state.provider.transcript = None;
         state.resume()
     }
 

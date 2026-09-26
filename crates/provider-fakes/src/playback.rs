@@ -227,6 +227,48 @@ pub fn transcript_path(config_dir: &Path, cwd: &Path, session: &str) -> PathBuf 
         .join(format!("{session}.jsonl"))
 }
 
+/// A recorded hook payload as a fake hands it over on this machine: a
+/// transcript path the recorder sanitised becomes the file the fake writes
+/// that session's rows to, so a host following the path reads them.
+pub fn localize_hook(payload: &[u8], transcript: &Path) -> Vec<u8> {
+    const SANITISED: &str = r#""transcript_path":"<MACHINE_PATH>""#;
+    let Ok(text) = std::str::from_utf8(payload) else {
+        return payload.to_vec();
+    };
+    if !text.contains(SANITISED) {
+        return payload.to_vec();
+    }
+    let local = format!(
+        r#""transcript_path":{}"#,
+        Value::String(transcript.display().to_string())
+    );
+    text.replace(SANITISED, &local).into_bytes()
+}
+
+/// Every hook payload of a recorded process, localized as the fake hands
+/// them over when it plays in `cwd` with `config` as Claude's directory.
+pub fn local_hooks(events: &[Event], config: &Path, cwd: &Path) -> Vec<Vec<u8>> {
+    let mut session = String::from("unnamed");
+    let mut hooks = Vec::new();
+    for event in events {
+        match event.channel {
+            Channel::Hook | Channel::Transcript => {
+                if let Some(named) = row_session(&event.bytes) {
+                    session = named;
+                }
+            }
+            _ => continue,
+        }
+        if event.channel == Channel::Hook {
+            hooks.push(localize_hook(
+                &event.bytes,
+                &transcript_path(config, cwd, &session),
+            ));
+        }
+    }
+    hooks
+}
+
 /// Claude's configuration directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
 pub fn claude_config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")

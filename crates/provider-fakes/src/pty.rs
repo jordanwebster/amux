@@ -8,7 +8,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
-pub use engine::RAISES;
+pub use engine::{NO_MESSAGING_ENV, RAISES};
 use serde_json::Value;
 
 use crate::claude::Args;
@@ -16,6 +16,10 @@ use crate::playback::{self, Channel, Process};
 use crate::{DRIFT_EXIT, Mode};
 
 pub fn main() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if crate::claude::answered_version(&args) {
+        return 0;
+    }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,
         Err(error) => {
@@ -23,7 +27,6 @@ pub fn main() -> i32 {
             return DRIFT_EXIT;
         }
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -138,7 +141,11 @@ fn play(process: &Process, args: &Args) -> Result<(), String> {
                 if let Some(named) = playback::row_session(&event.bytes) {
                     session = named;
                 }
-                run_hooks(args, &event.bytes, &[])
+                let payload = playback::localize_hook(
+                    &event.bytes,
+                    &playback::transcript_path(&config, &cwd, &session),
+                );
+                run_hooks(args, &payload, &[])
                     .map_err(|error| format!("event {index}: hook: {error}"))?;
             }
         }

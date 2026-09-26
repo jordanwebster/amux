@@ -15,7 +15,11 @@ pub const JOURNAL: &str = "journal";
 pub const PTY: &str = "pty";
 pub const PRIVATE: &str = "private";
 pub const HOOKS_SOCK: &str = "hooks.sock";
+/// Terminal Claude's messaging socket, under private/, which Claude binds.
+pub const MESSAGING_SOCK: &str = "messaging.sock";
 pub const BLOBS: &str = "blobs";
+/// How far the agent has read Claude's transcript, and which one.
+pub const TRANSCRIPT_CURSOR: &str = "transcript-cursor";
 /// The facts ring and its checkpoints, under private/.
 pub const FACTS: &str = "facts";
 /// The provider's own session id, kept so a resume continues it.

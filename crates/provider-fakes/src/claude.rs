@@ -75,6 +75,16 @@ impl Args {
     }
 }
 
+/// `claude --version`, which a host runs before it launches a session:
+/// true when that is what was asked, after answering it as Claude does.
+pub fn answered_version(args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("--version") {
+        return false;
+    }
+    println!("{VERSION} (Claude Code)");
+    true
+}
+
 /// A timestamp as Claude writes one: UTC, milliseconds, `Z`.
 pub fn timestamp() -> String {
     chrono::Utc::now()

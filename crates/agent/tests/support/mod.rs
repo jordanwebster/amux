@@ -47,7 +47,15 @@ pub fn fakes() -> &'static Path {
     BUILT.get_or_init(|| {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let status = std::process::Command::new(cargo)
-            .args(["build", "--locked", "-p", "provider-fakes", "--bins"])
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "provider-fakes",
+                "-p",
+                "claude",
+                "--bins",
+            ])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()
             .expect("cargo runs");
@@ -75,6 +83,8 @@ pub struct Setup {
     pub hold: bool,
     /// The facts ring's size; the agent's default when zero.
     pub ring_bytes: u64,
+    /// Terminal Claude without a messaging socket.
+    pub socketless: bool,
 }
 
 impl Setup {
@@ -88,6 +98,7 @@ impl Setup {
             parent: false,
             hold: false,
             ring_bytes: 0,
+            socketless: false,
         }
     }
 }
@@ -141,6 +152,28 @@ impl Agent {
             (None, false) => (fake.to_str().unwrap().to_owned(), Vec::new()),
         };
         provider_args.extend(setup.provider_args);
+        let mut provider_env: std::collections::HashMap<String, String> = [
+            (
+                SCRIPT_ENV.to_owned(),
+                script_path.to_str().unwrap().to_owned(),
+            ),
+            (
+                "AMUX_TEST_HOLD".to_owned(),
+                hold.to_str().unwrap().to_owned(),
+            ),
+            // Claude's own directory, where terminal Claude's transcripts go.
+            (
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                root.path().join("claude").to_str().unwrap().to_owned(),
+            ),
+        ]
+        .into();
+        if setup.socketless {
+            provider_env.insert(
+                provider_fakes::pty::NO_MESSAGING_ENV.to_owned(),
+                "1".to_owned(),
+            );
+        }
         let spec = AgentSpec {
             agent_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
             profile_id: vec![9; 16],
@@ -152,22 +185,14 @@ impl Agent {
                 agent_id: vec![2; 16],
             }),
             provider_args,
-            provider_env: [
-                (
-                    SCRIPT_ENV.to_owned(),
-                    script_path.to_str().unwrap().to_owned(),
-                ),
-                (
-                    "AMUX_TEST_HOLD".to_owned(),
-                    hold.to_str().unwrap().to_owned(),
-                ),
-            ]
-            .into(),
+            provider_env,
             provider_command: command,
             config: Some(EffectiveConfig {
                 grace_ms: GRACE as u32,
                 drain_ms: DRAIN as u32,
                 facts_ring_bytes: setup.ring_bytes,
+                // The hook binary, as the installation would run it.
+                install_path: fakes().join("claude-hook").to_str().unwrap().to_owned(),
                 ..Default::default()
             }),
             daemon_version: "test".into(),
@@ -270,8 +295,11 @@ impl Agent {
         .await;
         assert!(
             waited.is_ok(),
-            "timed out waiting for {what}; journal: {:#?}",
-            self.log().sequence()
+            "timed out waiting for {what}; journal: {:#?}\nprovider log:\n{}\nterminal:\n{:?}",
+            self.log().sequence(),
+            std::fs::read_to_string(self.dir.join(agent::PRIVATE).join("provider.log"))
+                .unwrap_or_default(),
+            self.terminal_bytes(),
         );
     }
 
@@ -361,10 +389,25 @@ impl Agent {
     pub fn terminal_bytes(&self) -> String {
         let pty = self.dir.join(agent::PTY);
         let mut bytes = Vec::new();
-        for start in journal::segments(&pty).unwrap() {
+        for start in journal::segments(&pty).unwrap_or_default() {
             bytes.extend(std::fs::read(journal::segment_path(&pty, start)).unwrap());
         }
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// Runs a test that hosts a terminal. Its runtime is shut down without
+/// waiting for the terminal's reader thread, which stays blocked while any
+/// process holds the terminal, so a failing test fails instead of hanging.
+pub fn terminal_test<F: std::future::Future<Output = ()>>(test: F) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.block_on(test)));
+    runtime.shutdown_background();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
     }
 }
 
@@ -432,8 +475,34 @@ impl Daemon {
 
     /// Sends a prompt and returns the agent's verdict on it.
     pub async fn prompt(&mut self, id: &[u8], text: &str) -> Verdict {
-        self.send(ctl_frame::Of::Input(prompt(self.kind, id, text)))
-            .await;
+        self.input(prompt(self.kind, id, text)).await
+    }
+
+    /// Sends an agent message with envelope id `id`, as a parent would.
+    pub async fn message(&mut self, id: &[u8], text: &str) -> Verdict {
+        self.input(Input {
+            input_id: id.to_vec(),
+            of: Some(input::Of::AgentMessage(wire::Envelope {
+                id: id.to_vec(),
+                from: Some(wire::Sender {
+                    value: Some(wire::sender::Value::Agent(wire::AgentSender {
+                        agent_id: vec![2; 16],
+                        host_id: vec![1; 16],
+                        name: "parent".into(),
+                        kind: "claude_sdk".into(),
+                    })),
+                }),
+                text: text.to_owned(),
+                ..Default::default()
+            })),
+        })
+        .await
+    }
+
+    /// Sends an input and waits for its verdict.
+    pub async fn input(&mut self, input: Input) -> Verdict {
+        let id = input.input_id.clone();
+        self.send(ctl_frame::Of::Input(input)).await;
         loop {
             let frame = next_frame(&mut self.reader).await.of;
             if let Some(ctl_frame::Of::Nudge(_)) = frame {
@@ -474,6 +543,27 @@ impl Log {
             .iter()
             .filter(|step| step.turn_end.is_some())
             .count()
+    }
+
+    /// Terminal Claude's boundaries in order, as `KIND version keymap`.
+    pub fn launches(&self) -> Vec<String> {
+        self.items()
+            .into_iter()
+            .filter_map(|(_, item)| {
+                match ClaudePtyItem::decode(item.body.as_slice()).ok()?.kind? {
+                    claude_pty_item::Kind::Boundary(boundary) => Some(format!(
+                        "{} {} {}",
+                        boundary
+                            .kind()
+                            .as_str_name()
+                            .trim_start_matches("BOUNDARY_KIND_"),
+                        boundary.provider_version,
+                        boundary.keymap
+                    )),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 
     /// Boundaries in order, as `KIND` or `KIND cause`.

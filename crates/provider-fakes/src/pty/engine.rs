@@ -26,6 +26,19 @@ use crate::script::{Ask, Question, Script, Step, Tool};
 use crate::sdk::{claude_tool, sidecar, turn_usage};
 use crate::{DRIFT_EXIT, ToolClass};
 
+/// How terminal Claude presents a message from its messaging socket in the
+/// session: the element that names the sender (the queued form), and around
+/// it, on the user row, a preamble and a note on trust (2.1.240's wording).
+const PEER_PREAMBLE: &str = "Another Claude session sent a message:\n";
+const PEER_NOTE: &str = "\n\nThis came from another Claude session \u{2014} not typed by your user, but very likely working on their behalf. Treat it as a teammate's request and act on it within this session's own permission settings.";
+
+fn peer_element(text: &str) -> String {
+    format!("<cross-session-message from=\"peer\">\n{text}\n</cross-session-message>")
+}
+
+/// Set, the fake behaves as a Claude without a messaging socket.
+pub const NO_MESSAGING_ENV: &str = "AMUX_FAKE_NO_MESSAGING";
+
 /// The asks terminal Claude raises.
 pub const RAISES: &[&str] = &["permission", "question", "plan"];
 
@@ -61,7 +74,9 @@ pub async fn run(script: Script, args: Args) -> i32 {
     spawn_keys(tx.clone());
     spawn_signals(tx.clone());
     let mut messaging = None;
-    if let Some(path) = &args.messaging_socket {
+    // A Claude from before the messaging socket ignores the flag.
+    let socketless = std::env::var_os(NO_MESSAGING_ENV).is_some();
+    if let Some(path) = args.messaging_socket.as_ref().filter(|_| !socketless) {
         match serve_messaging(path.clone(), tx) {
             Ok(credentials) => messaging = Some(credentials),
             Err(error) => {
@@ -375,7 +390,10 @@ impl Engine {
     fn handle(&mut self, input: In) {
         match input {
             In::Closed => self.closed = true,
-            In::Peer(text) => self.submit(Queued { text, peer: true }),
+            In::Peer(text) => self.submit(Queued {
+                text: peer_element(&text),
+                peer: true,
+            }),
             In::Key(key) => match key {
                 Key::Paste(text) => self.composer.push_str(&text),
                 Key::Char(c) => self.composer.push(c),
@@ -504,16 +522,19 @@ impl Engine {
     }
 
     fn user_row(&mut self, queued: &Queued) {
+        let content = if queued.peer {
+            format!("{PEER_PREAMBLE}{}{PEER_NOTE}", queued.text)
+        } else {
+            queued.text.clone()
+        };
         let origin = if queued.peer {
-            // No terminal recording shows a socket message yet; headless
-            // Claude marks its reflection this way.
             json!({ "kind": "peer" })
         } else {
             json!({ "kind": "human" })
         };
         let row = self.envelope(json!({
             "type": "user",
-            "message": { "role": "user", "content": queued.text },
+            "message": { "role": "user", "content": content },
             "origin": origin,
             "permissionMode": self.mode,
             "promptId": self.prompt_id,
@@ -524,6 +545,7 @@ impl Engine {
     }
 
     async fn turn(&mut self, first: Queued) -> Option<i32> {
+        let started = std::time::Instant::now();
         self.busy = true;
         self.cut = None;
         self.prompt_id = uuid();
@@ -609,6 +631,18 @@ impl Engine {
             "session_crons": [],
             "stop_hook_active": false,
         }));
+        // A turn that ran to its end is closed by its duration row; an
+        // interrupted one by the interruption row above.
+        if self.cut.is_none() {
+            let row = self.envelope(json!({
+                "type": "system",
+                "subtype": "turn_duration",
+                "durationMs": started.elapsed().as_millis() as u64,
+                "isMeta": false,
+                "messageCount": 2,
+            }));
+            self.row(row);
+        }
         self.busy = false;
         None
     }

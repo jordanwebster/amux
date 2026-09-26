@@ -219,6 +219,34 @@ fn parse_common(raw: &Value) -> Result<HookCommon, HookParseError> {
     })
 }
 
+/// The variables Claude sets on a hook command for its messaging socket.
+pub const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
+pub const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
+
+/// Splits a forwarded connection's bytes into the hook payload Claude wrote
+/// and the messaging credentials the forwarder added, if any. A payload
+/// that arrived without the envelope is returned as it came.
+pub fn unwrap_forwarded(
+    bytes: &[u8],
+) -> Result<(Vec<u8>, Option<MessagingCredentials>), HookParseError> {
+    let raw: Value = serde_json::from_slice(bytes)?;
+    let Some(envelope) = raw.get(FORWARD_ENVELOPE_FIELD) else {
+        return Ok((bytes.to_vec(), None));
+    };
+    if envelope.get("version").and_then(Value::as_u64) != Some(1) {
+        return Err(HookParseError::Invalid("amux_hook_forward_v1.version"));
+    }
+    let payload = envelope
+        .get("payload")
+        .ok_or(HookParseError::Missing("amux_hook_forward_v1.payload"))?;
+    let messaging = envelope
+        .get("messaging")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?;
+    Ok((serde_json::to_vec(payload)?, messaging))
+}
+
 fn parse_forwarded(payload: &[u8]) -> Result<HookPayload, HookParseError> {
     let raw: Value = serde_json::from_slice(payload)?;
     let Some(envelope) = raw.get(FORWARD_ENVELOPE_FIELD) else {
@@ -370,6 +398,24 @@ pub fn forward_with_messaging(
         std::io::ErrorKind::Unsupported,
         "Claude hook sockets require Unix",
     ))
+}
+
+/// What a hook command does: forward its stdin to `socket`, with the
+/// messaging credentials Claude put in its environment when there are any.
+pub fn forward_from_env(stdin: &[u8], socket: &Path) -> Result<(), std::io::Error> {
+    let socket_path = std::env::var_os(MESSAGING_SOCKET_ENV);
+    let token = std::env::var(MESSAGING_TOKEN_ENV).ok();
+    match (socket_path, token) {
+        (Some(socket_path), Some(token)) if !token.is_empty() => forward_with_messaging(
+            stdin,
+            socket,
+            &MessagingCredentials {
+                socket_path: PathBuf::from(socket_path),
+                token,
+            },
+        ),
+        _ => forward(stdin, socket),
+    }
 }
 
 #[cfg(not(unix))]

@@ -21,6 +21,7 @@ mod host;
 pub mod local_socket;
 mod provider;
 mod ring;
+mod terminal;
 
 use std::fmt;
 use std::path::PathBuf;

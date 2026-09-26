@@ -57,6 +57,13 @@ pub async fn connect(path: &Path) -> io::Result<LocalStream> {
     imp::connect(&std::path::absolute(path)?).await
 }
 
+/// The path a Unix socket named `path` is bound and dialled at: the path
+/// itself, or one through a short link when it is too long.
+#[cfg(unix)]
+pub fn unix_address(path: &Path) -> io::Result<PathBuf> {
+    imp::address(&std::path::absolute(path)?)
+}
+
 /// FNV-1a: stable across processes and versions, which is all a derived
 /// address needs.
 fn fnv(bytes: &[u8]) -> u64 {
@@ -104,7 +111,7 @@ mod imp {
     }
 
     /// The path to bind or dial for the socket named `path`.
-    fn address(path: &Path) -> io::Result<PathBuf> {
+    pub fn address(path: &Path) -> io::Result<PathBuf> {
         // SAFETY: sockaddr_un is plain old data; zeroed is a valid value.
         let limit = unsafe { std::mem::zeroed::<libc::sockaddr_un>() }
             .sun_path

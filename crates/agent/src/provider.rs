@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 use wire::{AgentSpec, Attachment};
 
 use crate::dir;
+use crate::terminal::{self, Keys};
 
 /// How long output still in flight is collected after the child exits.
 const TRAILING_OUTPUT: Duration = Duration::from_millis(300);
@@ -34,6 +35,19 @@ const CODEX_INITIALIZE: &str = "agent-initialize";
 const CODEX_THREAD: &str = "agent-thread";
 /// How often a followed transcript is read for new rows.
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(25);
+/// The hook events terminal Claude reports to the agent, when the spec's
+/// hook policy names none.
+const HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "Stop",
+    "Notification",
+];
 
 /// What the provider did.
 #[derive(Debug)]
@@ -43,6 +57,9 @@ pub enum ProviderEvent {
     Output(Vec<u8>),
     /// The child exited, with its code when it had one.
     Exited(Option<i32>),
+    /// Terminal Claude's messaging socket and the token it takes, as its
+    /// hooks report them.
+    Messaging(claude::hooks::MessagingCredentials),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -60,7 +77,8 @@ type Stdin = Arc<tokio::sync::Mutex<Option<ChildStdin>>>;
 
 enum Input {
     Stdin(Stdin),
-    Terminal(pty_host::PtyHandle),
+    /// Keystrokes for the typing task.
+    Terminal(mpsc::UnboundedSender<Vec<claude::pty::keymap::KeyStep>>),
     Closed,
 }
 
@@ -74,6 +92,9 @@ pub struct Provider {
     #[cfg_attr(unix, allow(dead_code))]
     kill: Option<oneshot::Sender<()>>,
     terminal: Option<pty_host::PtyHandle>,
+    /// Terminal Claude's keymap, when one covers its version.
+    keys: Option<Keys>,
+    messaging: Option<claude::hooks::MessagingCredentials>,
     session: String,
     dir: PathBuf,
     events: mpsc::Sender<ProviderEvent>,
@@ -88,7 +109,7 @@ impl Provider {
     ) -> Result<Self, ProviderError> {
         match spec.kind.as_str() {
             "claude_sdk" => Self::spawn_sdk(spec, dir, events).await,
-            "claude_pty" => Self::spawn_terminal(spec, dir, events),
+            "claude_pty" => Self::spawn_terminal(spec, dir, events).await,
             "codex" => Self::spawn_codex(spec, dir, events),
             other => Err(ProviderError::Unhosted(other.to_owned())),
         }
@@ -102,9 +123,10 @@ impl Provider {
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
         let (session, resume) = provider_session(spec, dir)?;
+        let (args, settings) = claude_launch(spec, false)?;
         let mut command = tokio::process::Command::new(&spec.provider_command);
         command
-            .args(&spec.provider_args)
+            .args(&args)
             .args([
                 "--print",
                 "--input-format",
@@ -117,6 +139,8 @@ impl Provider {
                 "--replay-user-messages",
                 if resume { "--resume" } else { "--session-id" },
                 &session,
+                "--settings",
+                &settings,
             ])
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())
@@ -167,6 +191,8 @@ impl Provider {
             pid,
             kill: Some(kill),
             terminal: None,
+            keys: None,
+            messaging: None,
             session,
             dir: dir.to_owned(),
             events,
@@ -302,6 +328,8 @@ impl Provider {
             pid,
             kill: Some(kill),
             terminal: None,
+            keys: None,
+            messaging: None,
             session: String::new(),
             dir: dir.to_owned(),
             events,
@@ -309,17 +337,38 @@ impl Provider {
         })
     }
 
-    /// Claude in a terminal. Its hooks report to private/hooks.sock.
-    fn spawn_terminal(
+    /// Claude in a terminal. The agent reads its version and resolves the
+    /// keymap for it first, and reports both as the launch fact before
+    /// anything Claude says. Its hooks report to private/hooks.sock; its
+    /// messaging socket is private/messaging.sock.
+    async fn spawn_terminal(
         spec: &AgentSpec,
         dir: &Path,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
         let (session, resume) = provider_session(spec, dir)?;
-        let mut args = spec.provider_args.clone();
+        let keys = Keys::resolve(Path::new(&spec.provider_command)).await;
+        let launch = interpret::claude_pty::launch_fact(
+            keys.as_ref().map_or("", |keys| keys.version.as_str()),
+            keys.as_ref().map_or("", Keys::name),
+        );
+        let _ = events
+            .send(ProviderEvent::Fact(Fact {
+                channel: Channel::Agent,
+                payload: launch,
+            }))
+            .await;
+        let private = dir.join(dir::PRIVATE);
+        let (mut args, settings) = claude_launch(spec, true)?;
         args.extend([
             if resume { "--resume" } else { "--session-id" }.to_owned(),
             session.clone(),
+            "--settings".to_owned(),
+            settings,
+            "--messaging-socket-path".to_owned(),
+            socket_address(&private.join(dir::MESSAGING_SOCK))?
+                .display()
+                .to_string(),
         ]);
         let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = spec
             .config
@@ -330,7 +379,7 @@ impl Provider {
             .collect();
         env.push((
             claude::hooks::HOOK_SOCKET_ENV.into(),
-            dir.join(dir::PRIVATE).join(dir::HOOKS_SOCK).into(),
+            socket_address(&private.join(dir::HOOKS_SOCK))?.into(),
         ));
         let process = pty_host::spawn(pty_host::PtySpawn {
             command: PathBuf::from(&spec.provider_command),
@@ -376,10 +425,12 @@ impl Provider {
             let _ = forward.send(ProviderEvent::Exited(code)).await;
         });
         Ok(Self {
-            input: Input::Terminal(handle.clone()),
+            input: Input::Terminal(terminal::typist(handle.clone())),
             pid: Some(handle.pid()),
             kill: None,
             terminal: Some(handle),
+            keys,
+            messaging: None,
             session,
             dir: dir.to_owned(),
             events,
@@ -414,11 +465,88 @@ impl Provider {
                 self.follow(PathBuf::from(path));
                 Ok(())
             }
+            Effect::Terminal(input) => {
+                let text = match &input {
+                    interpret::claude_pty::TerminalInput::Prompt { text, attachments } => {
+                        self.with_attachments(text, attachments)
+                    }
+                    _ => String::new(),
+                };
+                let keys = self.keys.as_ref().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "no keymap covers this Claude, so nothing can be typed",
+                    )
+                })?;
+                let steps = keys.steps(&input, &text)?;
+                self.type_keys(steps)
+            }
+            Effect::Inject {
+                envelope,
+                via: interpret::Carrier::MessagingSocket,
+            } => self.message_terminal(&envelope.text).await,
             other => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!("this agent cannot carry out {other:?} yet"),
             )),
         }
+    }
+
+    /// The text a provider reads for a prompt: its attachments written in
+    /// as elements naming their blobs.
+    fn with_attachments(&self, text: &str, attachments: &[Attachment]) -> String {
+        if attachments.is_empty() {
+            return text.to_owned();
+        }
+        attachments::format(
+            &attachments::Positioned {
+                text: text.to_owned(),
+                attachments: attachments.to_vec(),
+            },
+            &self.dir.join(dir::BLOBS),
+        )
+    }
+
+    fn type_keys(&self, steps: Vec<claude::pty::keymap::KeyStep>) -> io::Result<()> {
+        match &self.input {
+            Input::Terminal(keys) => keys.send(steps).map_err(|_| closed()),
+            _ => Err(closed()),
+        }
+    }
+
+    pub fn set_messaging(&mut self, messaging: claude::hooks::MessagingCredentials) {
+        self.messaging = Some(messaging);
+    }
+
+    /// An agent message for terminal Claude: onto its messaging socket,
+    /// which queues it the way Claude queues a peer's message; pasted into
+    /// the terminal when the socket is not known yet or refuses it.
+    async fn message_terminal(&mut self, text: &str) -> io::Result<()> {
+        if let Some(messaging) = &self.messaging {
+            let sent = async {
+                let mut socket = claude::messaging::MessagingSocket::connect(
+                    &messaging.socket_path,
+                    &messaging.token,
+                )
+                .await?;
+                socket.send(text).await
+            }
+            .await;
+            match sent {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    eprintln!("amux agent: the messaging socket failed ({error}); pasting")
+                }
+            }
+        }
+        let keys = self.keys.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no messaging socket and no keymap to paste an agent message with",
+            )
+        })?;
+        let steps = keys.prompt(&terminal::pasted_message(text))?;
+        self.type_keys(steps)
     }
 
     async fn user_message(
@@ -427,17 +555,7 @@ impl Provider {
         text: &str,
         attachments: &[Attachment],
     ) -> io::Result<()> {
-        let content = if attachments.is_empty() {
-            text.to_owned()
-        } else {
-            attachments::format(
-                &attachments::Positioned {
-                    text: text.to_owned(),
-                    attachments: attachments.to_vec(),
-                },
-                &self.dir.join(dir::BLOBS),
-            )
-        };
+        let content = self.with_attachments(text, attachments);
         let line = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": content },
@@ -451,40 +569,48 @@ impl Provider {
     async fn write_line(&mut self, bytes: &[u8]) -> io::Result<()> {
         match &mut self.input {
             Input::Stdin(stdin) => write_line(stdin, bytes).await,
-            Input::Terminal(terminal) => terminal.write(bytes).await.map_err(io::Error::other),
-            Input::Closed => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "the provider's input is closed",
+            Input::Terminal(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "terminal Claude takes keystrokes, not lines",
             )),
+            Input::Closed => Err(closed()),
         }
     }
 
-    /// Reads a transcript's rows as they are written, from its start.
+    /// Reads a transcript's rows as they are written. A transcript an
+    /// earlier incarnation followed is read on from where it stopped, so a
+    /// resumed session's old rows are not read twice; any other from its
+    /// start. The position is kept in private/ after every read.
     fn follow(&mut self, path: PathBuf) {
         let events = self.events.clone();
+        let cursor_path = self.dir.join(dir::PRIVATE).join(dir::TRANSCRIPT_CURSOR);
         self.followers.push(tokio::spawn(async move {
-            let mut offset = 0usize;
-            let mut partial = Vec::new();
+            let mut offset = saved_cursor(&cursor_path, &path);
             loop {
                 if let Ok(bytes) = tokio::fs::read(&path).await
                     && bytes.len() > offset
                 {
-                    partial.extend_from_slice(&bytes[offset..]);
-                    offset = bytes.len();
-                    while let Some(end) = partial.iter().position(|byte| *byte == b'\n') {
-                        let line: Vec<u8> = partial.drain(..=end).collect();
-                        let row = line[..line.len() - 1].to_vec();
+                    // Only whole rows: a row still being written waits for
+                    // the next read.
+                    let Some(end) = bytes[offset..].iter().rposition(|byte| *byte == b'\n') else {
+                        tokio::time::sleep(TRANSCRIPT_POLL).await;
+                        continue;
+                    };
+                    let whole = &bytes[offset..offset + end + 1];
+                    for row in whole.split(|byte| *byte == b'\n') {
                         if row.is_empty() {
                             continue;
                         }
                         let fact = Fact {
                             channel: Channel::Transcript,
-                            payload: row,
+                            payload: row.to_vec(),
                         };
                         if events.send(ProviderEvent::Fact(fact)).await.is_err() {
                             return;
                         }
                     }
+                    offset += end + 1;
+                    let _ = std::fs::write(&cursor_path, format!("{offset}\n{}", path.display()));
                 }
                 tokio::time::sleep(TRANSCRIPT_POLL).await;
             }
@@ -498,8 +624,10 @@ impl Provider {
             Input::Stdin(stdin) => {
                 tokio::spawn(async move { stdin.lock().await.take() });
             }
-            Input::Terminal(terminal) => {
-                let _ = terminal.signal_process_group(pty_host::ProcessGroupSignal::Terminate);
+            Input::Terminal(_) => {
+                if let Some(terminal) = &self.terminal {
+                    let _ = terminal.signal_process_group(pty_host::ProcessGroupSignal::Terminate);
+                }
             }
             Input::Closed => {}
         }
@@ -571,6 +699,74 @@ fn codex_turn_input(
         });
     }
     serde_json::to_vec(&request).map_err(io::Error::other)
+}
+
+/// Where an earlier follower of `path` stopped; the start for any other
+/// file, or one that is shorter now.
+fn saved_cursor(cursor: &Path, path: &Path) -> usize {
+    let Ok(saved) = std::fs::read_to_string(cursor) else {
+        return 0;
+    };
+    let Some((offset, saved_path)) = saved.split_once('\n') else {
+        return 0;
+    };
+    let length = std::fs::metadata(path).map_or(0, |metadata| metadata.len() as usize);
+    match offset.parse::<usize>() {
+        Ok(offset) if Path::new(saved_path) == path && offset <= length => offset,
+        _ => 0,
+    }
+}
+
+fn closed() -> io::Error {
+    io::Error::new(io::ErrorKind::BrokenPipe, "the provider's input is closed")
+}
+
+/// Claude's launch arguments from the spec, less any `--settings`, and the
+/// one settings value the agent passes instead: the user's settings with
+/// the agent's merged over them. Every Claude accepts messages from other
+/// sessions at once, so a bypass-permissions agent does not hold an agent
+/// message behind an approval nobody is there to give; terminal Claude
+/// also reports its hook events to the agent through the hook binary at the
+/// install path.
+fn claude_launch(spec: &AgentSpec, hooks: bool) -> io::Result<(Vec<String>, String)> {
+    let mut args = spec.provider_args.clone();
+    let sources = claude::launch::take_settings_args(&mut args).map_err(io::Error::other)?;
+    let user = claude::launch::load_user_settings(Path::new(&spec.cwd), &sources)
+        .map_err(io::Error::other)?;
+    let config = spec.config.clone().unwrap_or_default();
+    let managed = claude::launch::ManagedSettings {
+        hook_command: if hooks && !config.install_path.is_empty() {
+            vec![config.install_path, "hooks".into(), "claude".into()]
+        } else {
+            Vec::new()
+        },
+        hook_events: if config.hooks.is_empty() {
+            HOOK_EVENTS
+                .iter()
+                .map(|event| (*event).to_owned())
+                .collect()
+        } else {
+            config.hooks
+        },
+        accept_cross_session: true,
+        ..Default::default()
+    };
+    let settings = claude::launch::merged_settings(user, &managed).into_value();
+    Ok((args, settings.to_string()))
+}
+
+/// The path a Unix socket in the agent directory is bound and dialled at,
+/// for a child that dials it with no knowledge of the short links long
+/// paths need.
+fn socket_address(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        crate::local_socket::unix_address(path)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(path.to_owned())
+    }
 }
 
 async fn write_line(stdin: &Stdin, bytes: &[u8]) -> io::Result<()> {

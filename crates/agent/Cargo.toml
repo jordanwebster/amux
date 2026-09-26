@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 attachments = { workspace = true }
-claude = { workspace = true }
+claude = { workspace = true, features = ["pty"] }
 interpret = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
