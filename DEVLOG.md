@@ -1,3 +1,14 @@
+2026-09-26 — **The discovery spec holds the desk's old port without a gap.**
+The case stopped the desk, then bound the desk's old UDP port so the stale
+address would answer nothing. A stopped edge still holds its port for a
+moment: quinn's endpoint driver keeps the socket until closed connections
+finish draining, after the profile runtime is gone (measured about 1.4 ms
+past `stop_daemon`, every run), so under load the bind lost the race. The
+LAN listener can now take an already-bound socket and listen on a
+duplicate; the case binds the desk's socket before the desk starts and
+keeps its own handle, so the old port stays bound and silent across the
+stop.
+
 2026-09-26 — **Terminal Claude 2.1.283 takes its first prompt.**
 The agent typed the first prompt the moment bracketed paste came on.
 Claude 2.1.283 turns it on as its very first output, queries the

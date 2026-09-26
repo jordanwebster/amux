@@ -518,7 +518,11 @@ fn stored_addrs(net: &Net, host: &str, peer: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_address() {
     // The phone listens for nothing, as a phone does: it dials, and only
-    // what discovery finds or it stored tells it where.
+    // what discovery finds or it stored tells it where. The desk first
+    // listens on a socket the case holds, so its old port stays bound and
+    // answers nothing once it stops.
+    let held = std::sync::Arc::new(std::net::UdpSocket::bind("127.0.0.1:0").unwrap());
+    let handed = std::sync::Mutex::new(Some(held.clone()));
     let mut net = Net::start_with(
         Topology::new()
             .host_decl(lan_host("desk", "home"))
@@ -528,10 +532,15 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
                 ..lan_host("quiet", "home")
             }),
         testnet::NetOptions {
-            edge: Some(std::sync::Arc::new(|host, edge| {
+            edge: Some(std::sync::Arc::new(move |host, edge| {
                 if host == "phone" {
                     edge.lan = None;
                     edge.dial = true;
+                }
+                if host == "desk"
+                    && let Some(lan) = &mut edge.lan
+                {
+                    lan.socket = handed.lock().unwrap().take();
                 }
             })),
             ..testnet::NetOptions::default()
@@ -572,6 +581,7 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
     )
     .await;
     let first = edge(&net, "desk").lan_addr().unwrap();
+    assert_eq!(first, held.local_addr().unwrap());
     net.discovery()
         .announce(advert(&net, "desk", first, "home"));
     until_via(&net, "phone", "desk", HostVia::Direct).await;
@@ -589,7 +599,6 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
             .any(|advert| advert.host_id == desk)
     })
     .await;
-    let _held = std::net::UdpSocket::bind(first).expect("the desk's old port");
     net.restart_daemon("desk").await.unwrap();
     let second = edge(&net, "desk").lan_addr().unwrap();
     assert_ne!(second, first);

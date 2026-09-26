@@ -911,6 +911,7 @@ impl Net {
             ],
             lan: decl.lan.then(|| LanOptions {
                 bind: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                socket: None,
             }),
             discovery: decl.discovery.then(|| scripted_discovery(&self.bus)),
             discovery_scope: decl

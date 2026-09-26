@@ -127,17 +127,23 @@ impl Default for EdgeOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct LanOptions {
     /// Where the QUIC listener binds. Port zero reuses the profile's last
     /// port when it is free and asks for any port otherwise.
     pub bind: SocketAddr,
+    /// Listen on this bound socket instead of binding one. The edge listens
+    /// on a duplicate, so the port stays bound, answering nothing once the
+    /// profile stops, for as long as the caller keeps its handle. Every
+    /// profile's edge would share it: give it to one profile only.
+    pub socket: Option<Arc<std::net::UdpSocket>>,
 }
 
 impl Default for LanOptions {
     fn default() -> Self {
         Self {
             bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+            socket: None,
         }
     }
 }
@@ -291,9 +297,9 @@ impl Edge {
         ];
 
         let quic_server = identity.quic_server_config(trust.clone())?;
-        let (quic_endpoint, lan_addr) = match options.lan {
+        let (quic_endpoint, lan_addr) = match &options.lan {
             Some(lan) => {
-                let endpoint = bind_lan(dir, lan.bind, quic_server).map_err(EdgeError::Lan)?;
+                let endpoint = bind_lan(dir, lan, quic_server).map_err(EdgeError::Lan)?;
                 let addr = endpoint.local_addr().map_err(EdgeError::Lan)?;
                 let _ = crate::install::write_durably(
                     &dir.join(LAN_PORT_FILE),
@@ -800,9 +806,22 @@ impl Drop for LoopbackLink {
 /// Binds the LAN listener, preferring the profile's last port.
 fn bind_lan(
     dir: &Path,
-    bind: SocketAddr,
+    lan: &LanOptions,
     server: quinn::ServerConfig,
 ) -> std::io::Result<quinn::Endpoint> {
+    if let Some(socket) = &lan.socket {
+        let socket = socket.try_clone()?;
+        socket.set_nonblocking(true)?;
+        let runtime = quinn::default_runtime()
+            .ok_or_else(|| std::io::Error::other("no async runtime for the LAN listener"))?;
+        return quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(server),
+            socket,
+            runtime,
+        );
+    }
+    let bind = lan.bind;
     if bind.port() == 0
         && let Some(port) = std::fs::read_to_string(dir.join(LAN_PORT_FILE))
             .ok()
