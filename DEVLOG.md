@@ -1,3 +1,11 @@
+2026-09-26 — **A person can deny any Codex command.**
+Codex sometimes offers a command approval without a decline choice (only
+accept, accept-similar and cancel), which left the person able to approve or
+stop the whole turn but not refuse the one command. The recorded approval
+shows Codex honours a decline it did not offer, so every command ask now
+offers Deny, answered with decline; the recorded deny golden shows the
+answer accepted and the command denied.
+
 2026-09-26 — **Terminal Claude's background subagent is one Agent row with its answer.**
 A subagent Claude runs in the background used to draw as an Agent call that
 succeeded at once with launch metadata, its Read as a parent tool row, and

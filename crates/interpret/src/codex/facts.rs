@@ -381,11 +381,20 @@ impl State {
                 if let Some(context) = params.get("networkApprovalContext") {
                     hosts(context, &mut network_hosts);
                 }
-                let offered = params
+                let mut offered = params
                     .get("availableDecisions")
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_else(|| DEFAULT_DECISIONS.iter().map(|d| json!(d)).collect());
+                // Codex honours decline even when its offer leaves it out, and
+                // a person must always be able to refuse a command.
+                if !offered.contains(&json!("decline")) {
+                    let at = offered
+                        .iter()
+                        .position(|decision| *decision == json!("cancel"))
+                        .unwrap_or(offered.len());
+                    offered.insert(at, json!("decline"));
+                }
                 for decision in &offered {
                     if decision.get("applyNetworkPolicyAmendment").is_some() {
                         hosts(decision, &mut network_hosts);

@@ -1,5 +1,5 @@
 {
-  "about": "Every request Codex makes of the person is an ask: a command with allow-similar and a network rule, a file change, questions including a secret answer that reaches Codex and nothing else, an access grant answered with a subset for the session, a tool server's link and form. Stale and unoffered answers are refused and write nothing; an ask the server resolves elsewhere or a turn end closes it drawn dismissed; a request amux cannot read is answered with an error.",
+  "about": "Every request Codex makes of the person is an ask: a command with allow-similar and a network rule, a command whose offer leaves out decline and is denied all the same, a file change, questions including a secret answer that reaches Codex and nothing else, an access grant answered with a subset for the session, a tool server's link and form. Stale and unoffered answers are refused and write nothing; an ask the server resolves elsewhere or a turn end closes it drawn dismissed; a request amux cannot read is answered with an error.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -586,6 +586,90 @@
       },
       "expect": {
         "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 34,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-4",
+            "command": "/bin/zsh -lc 'touch notes.txt'",
+            "cwd": "/work",
+            "reason": "Create notes.txt.",
+            "proposedExecpolicyAmendment": [
+              "touch"
+            ],
+            "availableDecisions": [
+              "accept",
+              {
+                "acceptWithExecpolicyAmendment": {
+                  "execpolicy_amendment": [
+                    "touch"
+                  ]
+                }
+              },
+              "cancel"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "34"
+        ],
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "input": {
+        "id": "a9",
+        "answer": {
+          "ask": "34",
+          "answer": {
+            "decision": "deny"
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "effects": [
+          "write \"{\\\"id\\\":34,\\\"result\\\":{\\\"decision\\\":\\\"decline\\\"}}\"",
+          "reply a9 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-4",
+              "command": "/bin/zsh -lc 'touch notes.txt'",
+              "cwd": "/work",
+              "status": "declined",
+              "commandActions": [],
+              "aggregatedOutput": null,
+              "exitCode": null,
+              "durationMs": null
+            }
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "cmd-4"
+        ]
       }
     },
     {
