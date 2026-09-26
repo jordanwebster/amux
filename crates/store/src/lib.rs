@@ -400,10 +400,11 @@ pub trait Store {
     /// bytes per round, never below its newest `floor_k` rows. Returns what
     /// it removed, so the daemon deletes the removed agents' directories.
     fn sweep_own(&mut self, budget: u64, chunk: u64, floor_k: u32) -> Result<Sweep, StoreError>;
-    /// Brings replica rows under `budget` bytes: whole agents with no open
-    /// source, least recently used first by `last_used` (the runtime's
-    /// clock; the row's last activity where it has no entry); then sourced
-    /// agents trimmed to their newest `floor_k` rows, largest first.
+    /// Brings replica rows under `budget` bytes: every row of agents with
+    /// no open source, least recently used first by `last_used` (the
+    /// runtime's clock; the row's last activity where it has no entry),
+    /// keeping their agents rows with an empty block; then sourced agents
+    /// trimmed to their newest `floor_k` rows, largest first.
     fn sweep_replicas(
         &mut self,
         budget: u64,

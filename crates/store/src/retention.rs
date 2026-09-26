@@ -6,8 +6,9 @@
 //! a chunk at a time, never below the newest rows a stream may still be
 //! appending to. An exited child whose parent's row says live is live work,
 //! since its parent can still continue it. Replica rows are a cache, so
-//! agents nobody is following go whole, least recently used first, and the
-//! rest keep their newest rows as one contiguous block.
+//! agents nobody is following lose all their rows, least recently used
+//! first, keeping only their agents row, and the rest keep their newest rows
+//! as one contiguous block.
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,14 +20,16 @@ pub struct Sweep {
     pub pool_before: u64,
     pub pool_after: u64,
     /// Agents removed whole, in removal order: the daemon deletes their
-    /// directories.
+    /// directories. A replica keeps its agents row; only its rows and blobs
+    /// go.
     pub removed: Vec<AgentRef>,
     pub steps: Vec<SweepStep>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SweepStep {
-    /// An agent removed whole, with its rows' bytes.
+    /// An agent removed whole, with its rows' bytes; a replica keeps its
+    /// agents row with an empty block.
     Removed { agent: AgentRef, bytes: u64 },
     /// An agent's oldest rows removed; its block now starts at `from_order`.
     Trimmed {
@@ -231,6 +234,21 @@ fn trim_rounds(
     Ok(pool)
 }
 
+/// Drops a replica's rows and empties its block, keeping its agents row:
+/// the row is the origin's registry entry, which says whether a parent is
+/// live and which incarnation a child's delivery names. It goes only when
+/// the origin stops listing the agent or its host rewinds.
+fn evict_replica(tables: &mut dyn Tables, row: &AgentRow) -> Result<(), StoreError> {
+    if let Some(max) = tables.max_order(&row.agent)? {
+        tables.remove_items_below(&row.agent, max + 1)?;
+    }
+    let mut row = row.clone();
+    row.complete_from_order = None;
+    row.exhausted = false;
+    row.source_cursor = 0;
+    tables.put_agent(&row)
+}
+
 pub(crate) fn sweep_replicas(
     tables: &mut dyn Tables,
     own_host: &[u8],
@@ -267,8 +285,12 @@ pub(crate) fn sweep_replicas(
         if pool <= budget {
             break;
         }
-        let (bytes, _) = tables.agent_bytes(&row.agent)?;
-        tables.remove_agent(&row.agent)?;
+        let (bytes, rows) = tables.agent_bytes(&row.agent)?;
+        if rows == 0 {
+            // Evicted already, or never held anything.
+            continue;
+        }
+        evict_replica(tables, row)?;
         pool = pool.saturating_sub(bytes);
         sweep.removed.push(row.agent.clone());
         sweep.steps.push(SweepStep::Removed {

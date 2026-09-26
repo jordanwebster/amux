@@ -1,3 +1,15 @@
+2026-09-26 — **Replica eviction keeps the agent's registry row.**
+When the replica sweep evicts an agent nobody is following, it now drops the
+agent's rows and empties its block but keeps its agents row, which goes only
+when the origin stops listing the agent or its host rewinds. The row is what
+says a parent on another host is live and which incarnation it is: removing
+it let the own-row sweep delete that parent's exited children here, and a
+child's next turn end enqueued its delivery for parent incarnation 0, which
+the parent's daemon would drop as a mismatch. The evicted agent is still
+reported as removed so the daemon deletes its replica blobs, and a row
+already empty is not reported again. A test against both store
+implementations shows both consequences are gone.
+
 2026-09-26 — **Retention: own rows under their budget, replicas and their blobs under theirs.**
 The profile store now sweeps. `sweep_own` removes exited agents whole,
 least recently active first — never an exited child whose parent's row says

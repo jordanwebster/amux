@@ -7,7 +7,7 @@ use store::{
     Absorb, AgentRef, AgentRow, BlobLru, CommitClock, ITEM_OVERHEAD_BYTES, PageEnd, Store, Sweep,
     SweepStep,
 };
-use wire::{Item, Lifecycle, Phase, Snapshot, Step};
+use wire::{Item, Lifecycle, Phase, Snapshot, Step, TurnEnd};
 
 const OWN: &[u8] = b"own-host";
 const PEER: &[u8] = b"peer-host";
@@ -141,6 +141,7 @@ both!(
     retention_takes_a_family_whole_unless_a_member_is_live,
     retention_never_trims_below_the_protected_rows,
     retention_of_replicas_evicts_unfollowed_agents_by_last_use_then_trims_to_k,
+    retention_of_a_replica_keeps_its_agents_row_for_the_children_here,
 );
 
 /// The accepted scenario: a profile over its budget with a live parent,
@@ -369,6 +370,70 @@ fn retention_of_replicas_evicts_unfollowed_agents_by_last_use_then_trims_to_k<S:
     assert_eq!(page.end, PageEnd::Boundary);
     // Own rows are a different pool.
     assert_eq!(store.pool_bytes(true).unwrap(), 10 * ROW);
+}
+
+/// Evicting a live parent's replica frees its rows, not its registry entry:
+/// its exited child here is still live work, and the child's next turn end
+/// still names the parent's incarnation.
+fn retention_of_a_replica_keeps_its_agents_row_for_the_children_here<S: Store>(mut store: S) {
+    let parent = peer("parent");
+    replica(&mut store, &parent, 4, 100);
+    store.absorb(&parent, Absorb::CaughtUp(5)).unwrap();
+    let mut row = store.agent(&parent).unwrap().unwrap();
+    row.incarnation = 3;
+    store.put_agent(&row).unwrap();
+    let child = own("child");
+    add(&mut store, &child, 2, 50, false, Some(&parent));
+
+    let sweep = store
+        .sweep_replicas(0, 3, &HashSet::new(), &HashMap::new())
+        .unwrap();
+    assert_eq!(sweep.removed, std::slice::from_ref(&parent));
+    assert_eq!(
+        describe(&sweep),
+        [format!("removed parent whole ({} bytes)", 4 * ROW)]
+    );
+    assert_eq!(store.pool_bytes(false).unwrap(), 0);
+    let row = store.agent(&parent).unwrap().unwrap();
+    assert_eq!(
+        (
+            row.complete_from_order,
+            row.exhausted,
+            row.source_cursor,
+            row.lifecycle,
+            row.incarnation
+        ),
+        (None, false, 0, Lifecycle::Live as i32, 3)
+    );
+    assert!(store.get(&parent, "01").unwrap().is_none());
+    let page = store.page(&parent, None, 10).unwrap();
+    assert!(page.items.is_empty());
+    assert_eq!(page.end, PageEnd::Boundary);
+
+    // (a) The parent's row still says live, so its exited child stays.
+    let sweep = store.sweep_own(0, ROW, 1).unwrap();
+    assert!(sweep.removed.is_empty());
+    assert_eq!(store.page(&child, None, 10).unwrap().items.len(), 2);
+
+    // (b) The child's next turn end names the parent's real incarnation.
+    let step = Step {
+        items: vec![Item {
+            key: "final".into(),
+            text: "done".into(),
+            kind: "codex".into(),
+            ..Default::default()
+        }],
+        turn_end: Some(TurnEnd {
+            turn_id: 9,
+            last_message_key: "final".into(),
+        }),
+        ..Default::default()
+    };
+    store.commit(&child, &[(2, step)], CLOCK).unwrap();
+    let deliveries = store.deliveries().unwrap();
+    assert_eq!(deliveries.len(), 1);
+    assert_eq!(deliveries[0].parent, parent);
+    assert_eq!(deliveries[0].parent_incarnation, 3);
 }
 
 #[test]
