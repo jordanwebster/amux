@@ -1,3 +1,24 @@
+2026-09-26 — **One session model for both clients: ui-state is rebuilt on the journal records.**
+The old reducer, its effects, the per-kind folds, the client store and its
+commit protocol are gone from ui-state. A chat is now a `SessionState`: the
+agent's inventory entry, its newest Snapshot decoded by a thin per-kind layer
+(asks, model, mode, tasks, context, and the usage, tool-server, sign-in and
+background strip facts), a transcript window of items by order, and the
+inputs this client sent. The window appends above its head, upserts inside
+by key only when newer, drops rows below its oldest, and grows downward only
+through pages. A Reset keeps the rows on screen and swaps the rebuilt
+transcript in at the next CaughtUp; Detached and Lagged clear caught-up, so
+send waits while drafting never does. Inputs move through sent, queued,
+settled, rejected and uncertain; an uncertain one is judged only at CaughtUp
+against the queue and the items and is never resent. Before CaughtUp an ask
+is drawn only when the entry says needs you; an exited entry turns the
+composer into Resume. Run membership, the changed keys of each update and
+the activity line are derived in the state; `FleetState` holds hosts, rows
+and families with family attention. The spec checks, after every message,
+that the run index equals a rebuild and that the changed keys name exactly
+the rows that differ, and covers replay from any checkpoint, catch-up plus
+live at every cut, and arrival order.
+
 2026-09-26 — **A message injected into Codex as its turn ends is still answered.**
 Codex drains a message injected into a running turn, so the interpreter
 counted it consumed at the inject's acknowledgement. When the turn ended

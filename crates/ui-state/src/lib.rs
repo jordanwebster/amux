@@ -1,87 +1,29 @@
-//! Pure, transport-independent state transitions for amux UIs.
+//! The pure session and fleet model both amux clients reduce their streams
+//! into.
 //!
-//! A reducer over reified inputs (`docs/UI.md` is the normative design):
-//! every stimulus is a serializable [`Msg`], transitions are the pure
-//! [`update`] function, and side effects leave as [`Effect`] data. There is exactly one
-//! reducer implementation — this crate; renderers borrow the [`Model`] and
-//! format, never derive.
-//!
-//! Purity boundary: `msg`, `model`, and `update` are the reducer core — no
-//! IO, clocks, or randomness are imported there.
+//! A [`SessionState`] is one open chat: the agent's inventory entry, its
+//! newest Snapshot decoded by the thin per-kind layer in [`body`], the
+//! [`Transcript`] window of items by order, and the [`Inputs`] this client
+//! sent. A [`FleetState`] is the inventory: hosts, agent rows and families.
+//! Neither does I/O, reads a clock or holds a handle, and neither is ever
+//! persisted: the local runtime can re-serve every record they are built
+//! from. The driver in ui-runtime owns the streams and forwards each event
+//! as a [`Msg`]; the views in ui-view read the state.
 
-pub mod attachments;
-pub mod claude;
-pub mod claude_sdk;
-pub mod codex;
-pub mod diff;
-mod effect;
-mod model;
-mod msg;
-pub mod provider;
-pub mod queue;
-pub mod restored;
-pub mod review;
-pub mod store;
-mod update;
+pub mod body;
+mod fleet;
+mod inputs;
+mod session;
+mod transcript;
 
-// Kernel entity vocabulary re-exported so renderers depend on ui-state alone.
-// The profile a runtime is bound to. Renderers name accounts, so the id
-// travels with the rest of the entity vocabulary rather than making the
-// TUI depend on the kernel crate.
-pub use ::model::{
-    Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
-    BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
-    HostTrustStatus, HostVia, ProfileId, Progress, Protocol, RelayCarrier, Summary,
-    SummaryEnvelope, SummaryField, Tier, WorkingOn,
+pub use body::{AgentState, Explore, ItemBody, ItemClass, OpenAsk, ToolFacts, decode_snapshot};
+pub use fleet::{AgentRef, Attention, Families, FleetMsg, FleetState, HostId};
+pub use inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
+pub use session::{
+    Activity, ActivityKind, BlobStatus, Composer, Connection, Msg, Outcome, PhaseView, QueueRow,
+    SessionState, Waiting,
 };
-pub use attachments::{
-    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DIFF_MIME, DraftAttachment,
-    Mention, MentionKind, PASTE_TOKEN_CHARS, PASTE_TOKEN_LINES, PASTED_NAME, Pasted, REVIEW_NAME,
-    Segment, format_mention, paste, review_mention, split_mentions, text_mention,
-};
-pub use claude::{ClaudeCommand, SendGate};
-pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};
-pub use codex::{CodexCommand, CodexDecision, CodexInput};
-pub use effect::{DumpReason, Effect, InputPayload};
-pub use fold::claude_pty::{
-    ClaudeBody as StoredClaudeBody, ClaudeEntry as StoredClaudeEntry,
-    ClaudeEntryKind as StoredClaudeEntryKind,
-};
-pub use fold::claude_sdk::{
-    ClaudeSdkBody as StoredClaudeSdkBody, ClaudeSdkEntry as StoredClaudeSdkEntry,
-    ClaudeSdkEntryKind as StoredClaudeSdkEntryKind,
-};
-pub use fold::codex::{
-    CodexBody as StoredCodexBody, CodexEntry as StoredCodexEntry,
-    CodexEntryKind as StoredCodexEntryKind,
-};
-pub use fold::{
-    Boundary, BoundaryAt, Entry as DurableEntry, EntryKey, FleetDelta, Order, StoreError,
-    StreamAttempt,
-};
-pub use msg::{
-    Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
-    StreamCloseReason, StreamEntry, StreamMsg,
-};
-pub use provider::ProviderFacts;
-pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage};
-pub use store::{
-    AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, ChatWindowRetention,
-    FLUSH_DEADLINE, HeadDto, LoadedDto, MutationBatchDto, PageDto, ProfileGeneration,
-    ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto,
-    WINDOW_MAX_BYTES, WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, WindowItem, behind,
-};
-pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
+pub use transcript::{Held, Run, RunIndex, Transcript};
 
-/// Durable summary version accepted for one structured provider protocol.
-pub fn summary_producer_version(protocol: StructuredProtocol) -> u32 {
-    fold::AgentFold::for_protocol(protocol).tip_version()
-}
-
-pub use self::model::{
-    AccountPrompt, AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation,
-    AgentMessageSender, AgentPhase, Attention, ClaudeSdkLayer, CloudState, Connection,
-    FamilyMember, FamilyNeed, FinishedOp, FleetItem, HostState, MessageDigest, Model,
-    ModelRetention, PendingOp, StreamPhase, StreamState, StructuredProtocol, Violation, Why,
-    agent_type_label, display_name_fallback, format_relative_age, message_digest,
-};
+/// An item key: the row id, which never moves.
+pub type Key = String;

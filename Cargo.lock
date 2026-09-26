@@ -1905,17 +1905,10 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ui-state"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
- "chrono",
- "fold",
- "model",
- "postcard",
- "serde",
- "serde_json",
- "similar",
- "thiserror 2.0.20",
- "uuid",
+ "prost",
+ "wire",
 ]
 
 [[package]]

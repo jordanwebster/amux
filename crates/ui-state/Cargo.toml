@@ -1,18 +1,11 @@
 [package]
 name = "ui-state"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 license.workspace = true
-description = "Pure reducer state and effects for amux UIs"
+description = "The pure session and fleet model both amux clients reduce their streams into"
 publish = false
 
 [dependencies]
-fold = { workspace = true }
-model = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-chrono = { workspace = true }
-uuid = { workspace = true }
-similar = { workspace = true }
-thiserror = { workspace = true }
-postcard = { workspace = true }
+prost = { workspace = true }
+wire = { workspace = true }

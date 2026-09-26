@@ -1,0 +1,147 @@
+//! The activity line: derived from the newest items and the phase, timed
+//! against item timestamps with the caller's clock.
+
+use ui_state::{ActivityKind, SessionState};
+use wire::{Kind, Phase, ToolState};
+
+use crate::harness::*;
+
+fn working(kind: Kind) -> SessionState {
+    let mut state = SessionState::new(agent(kind));
+    apply_checked(
+        &mut state,
+        ev_snapshot(snapshot(kind, 1, Phase::Working, &[], &[])),
+    );
+    apply_checked(
+        &mut state,
+        ev_item(prompt(kind, 1, 1, "run the tests", b"p1")),
+    );
+    apply_checked(&mut state, caught_up(1));
+    state
+}
+
+fn kind_at(state: &SessionState, now_ms: i64) -> (ActivityKind, i64) {
+    let activity = state.activity(now_ms).expect("an activity while working");
+    (activity.kind, activity.elapsed_ms)
+}
+
+#[test]
+fn working_is_the_default_timed_from_the_turns_start() {
+    for kind in KINDS {
+        let state = working(kind);
+        assert_eq!(kind_at(&state, 25_000), (ActivityKind::Working, 24_000));
+        assert_eq!(
+            state.activity(0).unwrap().elapsed_ms,
+            0,
+            "a clock behind the item never goes negative"
+        );
+    }
+}
+
+#[test]
+fn an_in_flight_tool_is_running_named_by_its_call() {
+    for kind in KINDS {
+        let mut state = working(kind);
+        apply_checked(&mut state, ev_item(command(kind, 2, 2, ToolState::Running)));
+        assert_eq!(
+            kind_at(&state, 14_000),
+            (ActivityKind::Running { key: "k2".into() }, 12_000)
+        );
+        apply_checked(
+            &mut state,
+            ev_item(command(kind, 2, 3, ToolState::Succeeded)),
+        );
+        assert_eq!(kind_at(&state, 14_000).0, ActivityKind::Working);
+    }
+}
+
+#[test]
+fn an_open_thinking_block_is_thinking() {
+    for kind in KINDS {
+        let mut state = working(kind);
+        apply_checked(
+            &mut state,
+            ev_item(item(kind, 2, 2, "", Body::Thinking { complete: false })),
+        );
+        assert_eq!(kind_at(&state, 3_000).0, ActivityKind::Thinking);
+        // Terminal Claude's thinking row lands complete: it stays on Working.
+        apply_checked(
+            &mut state,
+            ev_item(item(kind, 2, 3, "", Body::Thinking { complete: true })),
+        );
+        assert_eq!(kind_at(&state, 3_000).0, ActivityKind::Working);
+    }
+}
+
+#[test]
+fn a_parent_waiting_on_subagents_counts_them() {
+    for kind in KINDS {
+        let mut state = working(kind);
+        for order in 2..=4 {
+            let call = Body::Tool {
+                name: "Task",
+                state: ToolState::Running,
+                explore: false,
+                subagent: true,
+            };
+            apply_checked(&mut state, ev_item(item(kind, order, order, "", call)));
+        }
+        assert_eq!(
+            kind_at(&state, 9_000).0,
+            ActivityKind::Subagents { count: 3 }
+        );
+    }
+}
+
+#[test]
+fn a_provider_retry_shows_its_attempt() {
+    for kind in KINDS {
+        let mut state = working(kind);
+        apply_checked(
+            &mut state,
+            ev_item(item(
+                kind,
+                2,
+                2,
+                "",
+                Body::Retry {
+                    attempt: 2,
+                    max: 10,
+                },
+            )),
+        );
+        assert_eq!(
+            kind_at(&state, 2_500).0,
+            ActivityKind::Retrying {
+                attempt: 2,
+                max_attempts: 10,
+                retry_at_ms: None
+            }
+        );
+    }
+}
+
+#[test]
+fn compacting_shows_until_the_compaction_lands() {
+    let kind = Kind::ClaudeSdk;
+    let mut state = working(kind);
+    apply_checked(&mut state, ev_item(item(kind, 2, 2, "", Body::Compacting)));
+    assert_eq!(kind_at(&state, 2_000).0, ActivityKind::Compacting);
+}
+
+#[test]
+fn nothing_shows_unless_the_agent_works() {
+    for kind in KINDS {
+        for phase in [Phase::Idle, Phase::NeedsYou, Phase::Starting] {
+            let mut state = SessionState::new(agent(kind));
+            apply_checked(&mut state, ev_snapshot(snapshot(kind, 1, phase, &[], &[])));
+            assert_eq!(state.activity(5_000), None);
+        }
+        let mut state = working(kind);
+        apply_checked(
+            &mut state,
+            ui_state::Msg::Entry(exited(agent(kind), "killed")),
+        );
+        assert_eq!(state.activity(5_000), None);
+    }
+}

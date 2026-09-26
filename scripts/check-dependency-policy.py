@@ -19,7 +19,7 @@ ALLOWED_LOCAL = {
     "node": {"client", "host-api", "model", "settings", "wire"},
     "agent-runtime": {"artifacts", "claude", "codex", "fold", "host-api", "model", "pty-host"},
     "redaction": set(),
-    "ui-state": {"fold", "model"},
+    "ui-state": {"wire"},
     "ui-runtime": {"artifacts", "client", "model", "store", "ui-state"},
     # Report replay reconstructs canonical store-backed windows using the
     # provider folds, while ordinary rendering still consumes ui-state.

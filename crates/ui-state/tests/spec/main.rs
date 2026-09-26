@@ -1,73 +1,15 @@
-//! The ui-state spec suite.
-//!
-//! Reducer prose specs: ordered Msg sequences in, Model assertions out.
-//! Chapters read as documentation; the
-//! normative design is `docs/UI.md`, and where prose and passing spec
-//! disagree, the spec wins.
-//!
-//! Run with: `just spec`
-//!
-//! No tokio, no network, no clocks anywhere in this suite — everything is a
-//! pure fold. Every chapter registers its Msg sequences with the harness so
-//! the differential property in `wire_free` wraps them all: after every Msg,
-//! fold-from-recording must equal live state.
+//! The client-model spec: authored records, snapshots, inputs and driver
+//! messages in; the session and fleet state out, with the window, run and
+//! changed-key invariants checked after every message.
 
 mod harness;
 
-mod diff; // Neutral unified patch facts shared by every client
-
-mod attachments; // Attachment rows, mention folds, and replay
-
-mod model_effort;
-mod provider_commands;
-mod queue;
-mod sdk_integration;
-mod todos;
-
-mod draft; // Drafts: what a message's attachments become when it is sent
-
-// Declared in reading order (blank lines keep rustfmt from re-sorting).
-
-mod connection; // Chapter 1 — Connection: epochs, snapshots, auth expiry
-
-mod cloud_state; // Cloud state, route derivation, and cached remote inventory
-
-mod inventory; // Chapter 2 — Inventory: upserts, unknown types, authority
-
-mod ops; // Chapter 3 — Operations: the Command write surface
-
-mod sessions; // Chapter 4 — Session streams: lifecycle facts
-
-mod attention; // Chapter 5 — Attention: summarizer folds, subscription policy
-
-mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde
-
-mod asks; // Chapter 11 — Asks: extraction, correlation, lifecycle
-
-mod phase; // Chapter 12 — Phase: the E1 derivation table
-
-mod write; // Chapter 13 — The write path: intents, programs, optimism
-
-mod codex_asks; // Chapter 15 — Codex asks: raw/synth correlation and blocking
-
-mod codex_write; // Chapter 16 — Codex writes: protobuf-native typed effects
-
-mod codex_agreement; // Chapter 17 — Codex phase/attention/gate agreement
-
-mod claude_agreement; // Chapter 18 — Claude classification/projection agreement
-
-mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows
-
-mod fleet_mixed; // One fleet: both Claude drivers rank, sort and group alike
-
-mod fleet_summary; // Host/local summary selection and visible freshness
-
-mod store_lifecycle; // Store effects, chat fencing, and recorded lifecycle rows
-
-mod a2a_family_needs; // Chapter 23 — Family needs: a child's ask, composed into its parent
-
-mod claude_sdk_agreement; // Claude session classification and public projection agreement
-
-mod claude_sdk_write; // Typed SDK commands and authoritative write reconciliation
-
-mod claude_sdk_runtime; // Subscription, attachments and session facts
+mod activity;
+mod asks;
+mod fleet;
+mod inputs;
+mod open;
+mod properties;
+mod runs;
+mod snapshot;
+mod window;

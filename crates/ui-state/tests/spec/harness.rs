@@ -1,552 +1,628 @@
-//! Spec harness: fixture builders for Msg sequences and pure fold helpers.
-//!
-//! No tokio, no network, no clocks — chapters build ordered Msg vectors,
-//! fold them, and assert on the Model. Ids and times are derived
-//! deterministically from names so sequences replay identically forever.
+//! Authored records and a tape that applies messages and prints what the
+//! session looks like after each one.
 
-use chrono::{DateTime, TimeDelta, Utc};
-use model::{Agent, AgentId, Capabilities, HostEntry, HostId, HostTrustStatus};
-use ui_state::claude::ClaudeLayer;
-use ui_state::codex::CodexLayer;
-use ui_state::{
-    Command, DisconnectReason, Effect, Model, Msg, OpId, OpOutcome, ServerMsg, StreamEntry,
-    StreamMsg, update,
+#![allow(dead_code)]
+
+use prost::Message;
+use ui_state::{Connection, InputOutcome, Msg, Outcome, RunIndex, SessionState, Transcript};
+use wire::{
+    Agent, Ask, CodexAsk, Input, Item, Kind, Lifecycle, Phase, QueuedInput, SendInputResponse,
+    SessionEvent, Snapshot, ToolClass, ToolState, session_event,
 };
-use uuid::Uuid;
 
-/// Fixed epoch for all fixture times: 2026-08-09 00:00:00 UTC.
-pub fn t0() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture epoch")
-}
+pub const KINDS: [Kind; 3] = [Kind::ClaudePty, Kind::ClaudeSdk, Kind::Codex];
 
-pub fn t0_plus(seconds: i64) -> DateTime<Utc> {
-    t0() + TimeDelta::seconds(seconds)
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-/// Deterministic host id, domain-tagged so host and agent names never
-/// collide.
-pub fn host_id(name: &str) -> HostId {
-    Uuid::from_u128((1u128 << 64) | u128::from(fnv1a(name.as_bytes())))
-}
-
-pub fn agent_id(name: &str) -> AgentId {
-    Uuid::from_u128((2u128 << 64) | u128::from(fnv1a(name.as_bytes())))
-}
-
-pub fn op(n: u8) -> OpId {
-    OpId(Uuid::from_u128((3u128 << 64) | u128::from(n)))
-}
-
-/// An online, trusted host.
-pub fn a_host(name: &str) -> HostEntry {
-    HostEntry {
-        id: host_id(name),
-        name: name.to_string(),
-        online: true,
-        version: Some("0.4.0".to_string()),
-        capabilities: Some(Capabilities::default()),
-        trust_status: HostTrustStatus::Trusted,
-        last_dial_error: None,
-        via: ui_state::HostVia::Direct,
-        signed_in: Some(true),
-        platform: None,
-    }
-}
-
-/// A known-but-offline host (renders dim with unknown agents).
-pub fn an_offline_host(name: &str) -> HostEntry {
-    HostEntry {
-        id: host_id(name),
-        name: name.to_string(),
-        online: false,
-        version: None,
-        capabilities: None,
-        trust_status: HostTrustStatus::Trusted,
-        last_dial_error: Some("dial tcp: connection refused".to_string()),
-        via: ui_state::HostVia::Offline,
-        signed_in: Some(true),
-        platform: None,
-    }
-}
-
-/// A claude agent on the named host, created at `t0`.
-pub fn an_agent(name: &str, on: &str) -> Agent {
+pub fn agent(kind: Kind) -> Agent {
     Agent {
-        id: agent_id(name),
-        host_id: host_id(on),
-        name: Some(name.to_string()),
-        command: "claude".to_string(),
-        working_dir: std::path::PathBuf::from("/work"),
-        kind: model::AgentKind::Claude {
-            driver: model::ClaudeDriver::Pty,
-        },
-        readonly: false,
-        args: Vec::new(),
-        created_at: t0(),
-        last_activity: t0(),
-        parent: None,
-        working_on: None,
-        summary: None,
-        progress: None,
-        inventory_revision: 0,
+        agent_id: b"agent-1".to_vec(),
+        host_id: b"host-a".to_vec(),
+        kind: kind as i32,
+        name: Some("worker".into()),
+        cwd: "/src".into(),
+        lifecycle: Lifecycle::Live as i32,
+        phase: Phase::Idle as i32,
+        incarnation: 1,
+        ..Agent::default()
     }
 }
 
-/// A Codex agent advertising its native structured protocol.
-pub fn a_codex_agent(name: &str, on: &str) -> Agent {
-    Agent {
-        id: agent_id(name),
-        host_id: host_id(on),
-        name: Some(name.to_string()),
-        command: "codex".to_string(),
-        working_dir: std::path::PathBuf::from("/work"),
-        kind: model::AgentKind::Codex,
-        readonly: false,
-        args: Vec::new(),
-        created_at: t0(),
-        last_activity: t0(),
-        parent: None,
-        working_on: None,
-        summary: None,
-        progress: None,
-        inventory_revision: 0,
-    }
+pub fn with_phase(mut agent: Agent, phase: Phase) -> Agent {
+    agent.phase = phase as i32;
+    agent
 }
 
-// --- Msg constructors -----------------------------------------------------
-
-pub fn connected(local: &str) -> Msg {
-    Msg::Server(ServerMsg::Connected {
-        local_host_id: Some(host_id(local)),
-    })
+pub fn exited(mut agent: Agent, cause: &str) -> Agent {
+    agent.lifecycle = Lifecycle::Exited as i32;
+    agent.exit_cause = Some(cause.into());
+    agent
 }
 
-pub fn disconnected(reason: DisconnectReason) -> Msg {
-    Msg::Server(ServerMsg::Disconnected { reason })
+/// An item body, authored once and encoded for any kind.
+#[derive(Clone, Debug)]
+pub enum Body {
+    Prompt,
+    Text {
+        complete: bool,
+    },
+    Thinking {
+        complete: bool,
+    },
+    Tool {
+        name: &'static str,
+        state: ToolState,
+        explore: bool,
+        subagent: bool,
+    },
+    Turn,
+    Retry {
+        attempt: u32,
+        max: u32,
+    },
+    Compacting,
+    Boundary,
 }
 
-pub fn host_up(host: &HostEntry) -> Msg {
-    Msg::Server(ServerMsg::HostUpserted { host: host.clone() })
-}
-
-pub fn hosts_synced() -> Msg {
-    Msg::Server(ServerMsg::HostsSynchronized)
-}
-
-pub fn agent_up(agent: &Agent) -> Msg {
-    Msg::Server(ServerMsg::AgentUpserted {
-        agent: agent.clone(),
-    })
-}
-
-pub fn agent_gone(name: &str) -> Msg {
-    Msg::Server(ServerMsg::AgentRemoved { id: agent_id(name) })
-}
-
-pub fn agents_synced() -> Msg {
-    Msg::Server(ServerMsg::AgentsSynchronized)
-}
-
-/// Both snapshot markers: the transition from catch-up to live.
-pub fn synced() -> Vec<Msg> {
-    vec![hosts_synced(), agents_synced()]
-}
-
-pub fn command(op: OpId, command: Command) -> Msg {
-    Msg::Command { op, command }
-}
-
-pub fn create_cmd(name: &str, host: Option<&str>) -> Command {
-    Command::CreateAgent {
-        host: host.map(host_id),
-        name: name.to_string(),
-        agent_type: model::AgentType::Claude {
-            driver: model::ClaudeDriver::Pty,
-        },
-        working_dir: std::path::PathBuf::from("/work"),
-    }
-}
-
-pub fn rename_cmd(agent: &str, name: &str) -> Command {
-    Command::RenameAgent {
-        agent: agent_id(agent),
-        name: name.to_string(),
-    }
-}
-
-pub fn delete_cmd(agent: &str) -> Command {
-    Command::DeleteAgent {
-        agent: agent_id(agent),
-    }
-}
-
-pub fn op_result(op: OpId, outcome: OpOutcome) -> Msg {
-    Msg::OpResult { op, outcome }
-}
-
-pub fn op_failed(op: OpId, message: &str) -> Msg {
-    op_result(
-        op,
-        OpOutcome::Error {
-            error: ui_state::OpError::general(message),
-        },
-    )
-}
-
-pub fn op_failed_auth(op: OpId) -> Msg {
-    op_result(
-        op,
-        OpOutcome::Error {
-            error: ui_state::OpError::classified("Invalid or missing credentials", true, false),
-        },
-    )
-}
-
-pub fn op_failed_subscription(op: OpId) -> Msg {
-    op_result(
-        op,
-        OpOutcome::Error {
-            error: ui_state::OpError::classified("Cloud subscription required", false, true),
-        },
-    )
-}
-
-pub fn stream(agent: &str, event: StreamMsg) -> Msg {
-    Msg::Stream {
-        agent: agent_id(agent),
-        event,
-    }
-}
-
-pub fn batch(agent: &str, at_seconds: i64, rows: Vec<serde_json::Value>) -> Msg {
-    let base = 1 + at_seconds.max(0) as u64;
-    stream(
-        agent,
-        StreamMsg::Batch {
-            at: t0_plus(at_seconds),
-            entries: rows
-                .into_iter()
-                .enumerate()
-                .map(|(offset, payload)| {
-                    StreamEntry::observed(base + offset as u64, t0_plus(at_seconds), payload)
-                })
-                .collect(),
-        },
-    )
-}
-
-pub fn tick(at_seconds: i64) -> Msg {
-    Msg::Tick {
-        now: t0_plus(at_seconds),
-    }
-}
-
-// --- Chat fixtures ----------------------------------------------------------
-
-/// Rows of a committed Claude PTY fixture: a redacted, provenance-stamped
-/// stream derived from a canonical Claude PTY provider recording
-/// (`crates/claude-specs/fixtures/claude-pty/`). Referenced across
-/// crates by compile-time include so the spec suite stays IO-free.
-pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
-    let raw = match fixture {
-        "pong" => include_str!("../../../claude-specs/fixtures/claude-pty/pong.rows.jsonl"),
-        "tools" => include_str!("../../../claude-specs/fixtures/claude-pty/tools.rows.jsonl"),
-        "permission" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/permission.rows.jsonl")
-        }
-        "question_single" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/question_single.rows.jsonl")
-        }
-        "question_multi" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/question_multi.rows.jsonl")
-        }
-        "interrupt" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/interrupt.rows.jsonl")
-        }
-        "plan_approve" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/plan_approve.rows.jsonl")
-        }
-        "plan_reject" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/plan_reject.rows.jsonl")
-        }
-        "compact" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/compact.rows.jsonl")
-        }
-        "clear" => include_str!("../../../claude-specs/fixtures/claude-pty/clear.rows.jsonl"),
-        "mode_cycle" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/mode_cycle.rows.jsonl")
-        }
-        "permission_session" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/permission_session.rows.jsonl")
-        }
-        "permission_deny_feedback" => {
-            include_str!(
-                "../../../claude-specs/fixtures/claude-pty/permission_deny_feedback.rows.jsonl"
-            )
-        }
-        "question_tabs" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/question_tabs.rows.jsonl")
-        }
-        "question_mixed" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/question_mixed.rows.jsonl")
-        }
-        "question_other_single" => {
-            include_str!(
-                "../../../claude-specs/fixtures/claude-pty/question_other_single.rows.jsonl"
-            )
-        }
-        "plan_auto" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/plan_auto.rows.jsonl")
-        }
-        "prompt_multiline" => {
-            include_str!("../../../claude-specs/fixtures/claude-pty/prompt_multiline.rows.jsonl")
-        }
-        other => panic!("unknown chat fixture {other}"),
+pub fn encode(kind: Kind, body: &Body) -> Vec<u8> {
+    use wire::{claude_pty_item as pty, claude_sdk_item as sdk, codex_item as codex};
+    let class = |explore: bool| {
+        (if explore {
+            ToolClass::Exploration
+        } else {
+            ToolClass::Consequential
+        }) as i32
     };
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("fixture row parses"))
+    let tool = |name: &str, state: ToolState, explore: bool, subagent: bool| wire::ToolCall {
+        name: name.into(),
+        state: state as i32,
+        class: class(explore),
+        subagent: subagent.then(|| wire::SubagentProgress {
+            tool_count: 1,
+            last_tool: "Read".into(),
+            finished: false,
+        }),
+        ..wire::ToolCall::default()
+    };
+    let retry = |attempt: u32, max: u32| wire::ApiError {
+        error_kind: "overloaded".into(),
+        will_retry: true,
+        attempt,
+        max_attempts: max,
+        ..wire::ApiError::default()
+    };
+    match kind {
+        Kind::ClaudePty => {
+            let kind = match body.clone() {
+                Body::Prompt => pty::Kind::Prompt(wire::Prompt {}),
+                Body::Text { complete } => pty::Kind::Message(wire::Text { complete }),
+                Body::Thinking { complete } => pty::Kind::Thinking(wire::Thinking { complete }),
+                Body::Tool {
+                    name,
+                    state,
+                    explore,
+                    subagent,
+                } => pty::Kind::Tool(tool(name, state, explore, subagent)),
+                Body::Turn => pty::Kind::Turn(wire::Turn::default()),
+                Body::Retry { attempt, max } => pty::Kind::ApiError(retry(attempt, max)),
+                Body::Compacting => pty::Kind::Compaction(wire::Compaction::default()),
+                Body::Boundary => pty::Kind::Boundary(wire::Boundary::default()),
+            };
+            wire::ClaudePtyItem { kind: Some(kind) }.encode_to_vec()
+        }
+        Kind::ClaudeSdk => {
+            let kind = match body.clone() {
+                Body::Prompt => sdk::Kind::Prompt(wire::Prompt {}),
+                Body::Text { complete } => sdk::Kind::Message(wire::Text { complete }),
+                Body::Thinking { complete } => sdk::Kind::Thinking(wire::Thinking { complete }),
+                Body::Tool {
+                    name,
+                    state,
+                    explore,
+                    subagent,
+                } => sdk::Kind::Tool(tool(name, state, explore, subagent)),
+                Body::Turn => sdk::Kind::Turn(wire::Turn::default()),
+                Body::Retry { attempt, max } => sdk::Kind::ApiError(retry(attempt, max)),
+                Body::Compacting => sdk::Kind::Status(wire::Status {
+                    status: "compacting".into(),
+                }),
+                Body::Boundary => sdk::Kind::Boundary(wire::Boundary::default()),
+            };
+            wire::ClaudeSdkItem { kind: Some(kind) }.encode_to_vec()
+        }
+        Kind::Codex => {
+            let kind = match body.clone() {
+                Body::Prompt => codex::Kind::Prompt(wire::Prompt {}),
+                Body::Text { complete } => codex::Kind::Message(wire::Text { complete }),
+                Body::Thinking { complete } => codex::Kind::Reasoning(wire::Reasoning {
+                    complete,
+                    summary: vec![],
+                }),
+                Body::Tool {
+                    name,
+                    state,
+                    explore,
+                    subagent,
+                } => {
+                    let of = if subagent {
+                        wire::work::Of::Collab(wire::CollabWork::default())
+                    } else {
+                        let action = match name {
+                            "Read" => "read",
+                            "Grep" | "Glob" => "search",
+                            _ => "",
+                        };
+                        wire::work::Of::Command(wire::CommandWork {
+                            command: name.into(),
+                            action: action.into(),
+                            ..wire::CommandWork::default()
+                        })
+                    };
+                    codex::Kind::Work(wire::Work {
+                        of: Some(of),
+                        state: state as i32,
+                        class: class(explore),
+                        ..wire::Work::default()
+                    })
+                }
+                Body::Turn => codex::Kind::Turn(wire::Turn::default()),
+                Body::Retry { attempt, max } => codex::Kind::Error(retry(attempt, max)),
+                // Codex has no compacting status item; a boundary stands in.
+                Body::Compacting => codex::Kind::Boundary(wire::Boundary::default()),
+                Body::Boundary => codex::Kind::Boundary(wire::Boundary::default()),
+            };
+            wire::CodexItem { kind: Some(kind) }.encode_to_vec()
+        }
+        Kind::Unspecified => Vec::new(),
+    }
+}
+
+pub fn item(kind: Kind, order: u64, revision: u64, text: &str, body: Body) -> Item {
+    Item {
+        agent: b"agent-1".to_vec(),
+        key: format!("k{order}"),
+        order,
+        revision,
+        producer_version: "test".into(),
+        text: text.into(),
+        kind: wire::kind_tag(kind).into(),
+        body: encode(kind, &body),
+        at_ms: 1_000 * order as i64,
+        ..Item::default()
+    }
+}
+
+pub fn text(kind: Kind, order: u64, revision: u64, text: &str) -> Item {
+    item(kind, order, revision, text, Body::Text { complete: true })
+}
+
+pub fn streaming(kind: Kind, order: u64, revision: u64, text: &str) -> Item {
+    item(kind, order, revision, text, Body::Text { complete: false })
+}
+
+pub fn prompt(kind: Kind, order: u64, revision: u64, text: &str, input_id: &[u8]) -> Item {
+    let mut item = item(kind, order, revision, text, Body::Prompt);
+    item.input_id = input_id.to_vec();
+    item
+}
+
+pub fn read(kind: Kind, order: u64, revision: u64) -> Item {
+    item(
+        kind,
+        order,
+        revision,
+        "",
+        Body::Tool {
+            name: "Read",
+            state: ToolState::Succeeded,
+            explore: true,
+            subagent: false,
+        },
+    )
+}
+
+pub fn grep(kind: Kind, order: u64, revision: u64) -> Item {
+    item(
+        kind,
+        order,
+        revision,
+        "",
+        Body::Tool {
+            name: "Grep",
+            state: ToolState::Succeeded,
+            explore: true,
+            subagent: false,
+        },
+    )
+}
+
+pub fn command(kind: Kind, order: u64, revision: u64, state: ToolState) -> Item {
+    item(
+        kind,
+        order,
+        revision,
+        "",
+        Body::Tool {
+            name: "Bash",
+            state,
+            explore: false,
+            subagent: false,
+        },
+    )
+}
+
+/// An open ask in the kind's own shape.
+pub fn ask(kind: Kind, key: &str) -> Vec<u8> {
+    match kind {
+        Kind::Codex => CodexAsk {
+            key: key.into(),
+            body: Some(wire::codex_ask::Body::Command(wire::CommandApproval {
+                command: "cargo test".into(),
+                ..wire::CommandApproval::default()
+            })),
+            ..CodexAsk::default()
+        }
+        .encode_to_vec(),
+        _ => Ask {
+            key: key.into(),
+            body: Some(wire::ask::Body::Permission(wire::PermissionAsk {
+                tool_name: "Bash".into(),
+                ..wire::PermissionAsk::default()
+            })),
+            ..Ask::default()
+        }
+        .encode_to_vec(),
+    }
+}
+
+/// A snapshot body with these asks open and every other field at its
+/// explicit unknown.
+pub fn snapshot_body(kind: Kind, asks: &[&str]) -> Vec<u8> {
+    match kind {
+        Kind::ClaudePty => wire::ClaudePtySnapshot {
+            asks: asks
+                .iter()
+                .map(|key| Ask::decode(&ask(kind, key)[..]).unwrap())
+                .collect(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        Kind::ClaudeSdk => wire::ClaudeSdkSnapshot {
+            asks: asks
+                .iter()
+                .map(|key| Ask::decode(&ask(kind, key)[..]).unwrap())
+                .collect(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        Kind::Codex => wire::CodexSnapshot {
+            asks: asks
+                .iter()
+                .map(|key| CodexAsk::decode(&ask(kind, key)[..]).unwrap())
+                .collect(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        Kind::Unspecified => Vec::new(),
+    }
+}
+
+pub fn snapshot(
+    kind: Kind,
+    revision: u64,
+    phase: Phase,
+    asks: &[&str],
+    queue: &[(&[u8], bool)],
+) -> Snapshot {
+    Snapshot {
+        agent: b"agent-1".to_vec(),
+        revision,
+        queue: queue
+            .iter()
+            .map(|(id, steer)| QueuedInput {
+                input_id: id.to_vec(),
+                text: format!("queued {}", String::from_utf8_lossy(id)),
+                steer: *steer,
+                ..QueuedInput::default()
+            })
+            .collect(),
+        kind: wire::kind_tag(kind).into(),
+        body: snapshot_body(kind, asks),
+        phase: phase as i32,
+        working_on: None,
+        at_ms: 1_000 * revision as i64,
+    }
+}
+
+fn event(of: session_event::Of) -> Msg {
+    Msg::Event(SessionEvent { of: Some(of) })
+}
+
+pub fn ev_item(item: Item) -> Msg {
+    event(session_event::Of::Item(item))
+}
+
+pub fn ev_snapshot(snapshot: Snapshot) -> Msg {
+    event(session_event::Of::Snapshot(snapshot))
+}
+
+pub fn ev_append(key: &str, base: u64, revision: u64, text: &str) -> Msg {
+    event(session_event::Of::Append(wire::Append {
+        agent: b"agent-1".to_vec(),
+        key: key.into(),
+        base_revision: base,
+        revision,
+        text: text.into(),
+    }))
+}
+
+pub fn caught_up(revision: u64) -> Msg {
+    event(session_event::Of::CaughtUp(wire::CaughtUp { revision }))
+}
+
+pub fn reset() -> Msg {
+    event(session_event::Of::Reset(wire::Reset {}))
+}
+
+pub fn detached() -> Msg {
+    event(session_event::Of::Detached(wire::Detached {}))
+}
+
+pub fn lagged() -> Msg {
+    event(session_event::Of::Lagged(wire::Lagged {}))
+}
+
+pub fn reconnecting() -> Msg {
+    Msg::Connection(Connection::Reconnecting)
+}
+
+/// A page requested now, under the state's current epoch.
+pub fn apply_page(state: &mut SessionState, items: Vec<Item>, exhausted: bool) -> Outcome {
+    let epoch = state.epoch();
+    apply_checked(
+        state,
+        Msg::Page {
+            items,
+            exhausted,
+            epoch,
+        },
+    )
+}
+
+pub fn prompt_input(kind: Kind, id: &[u8], text: &str) -> Input {
+    use wire::input::Of;
+    let prompt = wire::PromptInput {
+        text: text.into(),
+        attachments: vec![],
+    };
+    let of = match kind {
+        Kind::ClaudePty => Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::Prompt(prompt)),
+        }),
+        Kind::ClaudeSdk => Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Prompt(prompt)),
+        }),
+        _ => Of::Codex(wire::CodexInput {
+            of: Some(wire::codex_input::Of::Prompt(prompt)),
+        }),
+    };
+    Input {
+        input_id: id.to_vec(),
+        of: Some(of),
+    }
+}
+
+pub fn answer_input(kind: Kind, id: &[u8], ask_key: &str) -> Input {
+    use wire::input::Of;
+    let answer = wire::AnswerInput {
+        ask_key: ask_key.into(),
+        kind: "permission".into(),
+        body: vec![],
+    };
+    let of = match kind {
+        Kind::ClaudePty => Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::Answer(answer)),
+        }),
+        Kind::ClaudeSdk => Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Answer(answer)),
+        }),
+        _ => Of::Codex(wire::CodexInput {
+            of: Some(wire::codex_input::Of::Approve(wire::Approve {
+                request_id: ask_key.into(),
+                decision: wire::Decision::Approve as i32,
+            })),
+        }),
+    };
+    Input {
+        input_id: id.to_vec(),
+        of: Some(of),
+    }
+}
+
+pub fn send_now_input(kind: Kind, id: &[u8], target: &[u8]) -> Input {
+    use wire::input::Of;
+    let now = wire::SendQueuedNow {
+        queued_input_id: target.to_vec(),
+    };
+    let of = match kind {
+        Kind::ClaudePty => Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(wire::claude_pty_input::Of::SendNow(now)),
+        }),
+        Kind::ClaudeSdk => Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::SendNow(now)),
+        }),
+        _ => Of::Codex(wire::CodexInput {
+            of: Some(wire::codex_input::Of::SendNow(now)),
+        }),
+    };
+    Input {
+        input_id: id.to_vec(),
+        of: Some(of),
+    }
+}
+
+pub fn accepted(queued: bool) -> InputOutcome {
+    InputOutcome::Reply(SendInputResponse {
+        of: Some(wire::send_input_response::Of::Accepted(wire::Accepted {
+            queued,
+        })),
+    })
+}
+
+pub fn rejected(reason: &str) -> InputOutcome {
+    InputOutcome::Reply(SendInputResponse {
+        of: Some(wire::send_input_response::Of::Rejected(wire::Rejected {
+            reason: reason.into(),
+        })),
+    })
+}
+
+/// Every held row's projection: what a view reads for it.
+pub fn projection(transcript: &Transcript) -> Vec<(String, String)> {
+    transcript
+        .iter()
+        .map(|held| {
+            (
+                held.item.key.clone(),
+                format!("{:?}|{:?}", held, transcript.run_at(held.item.order)),
+            )
+        })
         .collect()
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum ChatAnchor {
-    Prompt(usize),
-    PermissionMode(usize),
-    TranscriptReady,
-    PermissionRequest(usize),
-    ToolUse {
-        name: &'static str,
-        occurrence: usize,
-    },
-    ToolResult(usize),
-    StopHook(usize),
-    TurnDuration(usize),
-}
-
-fn chat_anchor_index(rows: &[serde_json::Value], anchor: ChatAnchor) -> usize {
-    let mut matched = 0;
-    rows.iter()
-        .position(|row| {
-            let is_match = match anchor {
-                ChatAnchor::Prompt(_) => row["type"] == "user" && row["origin"]["kind"] == "human",
-                ChatAnchor::PermissionMode(_) => row["type"] == "permission-mode",
-                ChatAnchor::TranscriptReady => row["type"] == "amux.transcript_ready",
-                ChatAnchor::PermissionRequest(_) => row["type"] == "hook.permission_request",
-                ChatAnchor::ToolUse { name, .. } => {
-                    row["message"]["content"].as_array().is_some_and(|content| {
-                        content
-                            .iter()
-                            .any(|block| block["type"] == "tool_use" && block["name"] == name)
-                    })
-                }
-                ChatAnchor::ToolResult(_) => {
-                    row["message"]["content"].as_array().is_some_and(|content| {
-                        content.iter().any(|block| block["type"] == "tool_result")
-                    })
-                }
-                ChatAnchor::StopHook(_) => row["type"] == "hook.stop",
-                ChatAnchor::TurnDuration(_) => {
-                    row["type"] == "system" && row["subtype"] == "turn_duration"
-                }
-            };
-            if !is_match {
-                return false;
-            }
-            let wanted = match anchor {
-                ChatAnchor::Prompt(occurrence)
-                | ChatAnchor::PermissionMode(occurrence)
-                | ChatAnchor::PermissionRequest(occurrence)
-                | ChatAnchor::ToolResult(occurrence)
-                | ChatAnchor::StopHook(occurrence)
-                | ChatAnchor::TurnDuration(occurrence) => occurrence,
-                ChatAnchor::ToolUse { occurrence, .. } => occurrence,
-                ChatAnchor::TranscriptReady => 0,
-            };
-            if matched == wanted {
-                true
-            } else {
-                matched += 1;
-                false
-            }
-        })
-        .unwrap_or_else(|| panic!("chat anchor {anchor:?} is absent"))
-}
-
-pub fn chat_row(fixture: &str, anchor: ChatAnchor) -> serde_json::Value {
-    let rows = chat_rows(fixture);
-    rows[chat_anchor_index(&rows, anchor)].clone()
-}
-
-pub fn chat_rows_before(fixture: &str, anchor: ChatAnchor) -> Vec<serde_json::Value> {
-    let rows = chat_rows(fixture);
-    rows[..chat_anchor_index(&rows, anchor)].to_vec()
-}
-
-pub fn chat_rows_through(fixture: &str, anchor: ChatAnchor) -> Vec<serde_json::Value> {
-    let rows = chat_rows(fixture);
-    rows[..=chat_anchor_index(&rows, anchor)].to_vec()
-}
-
-pub fn chat_rows_from_through(
-    fixture: &str,
-    start: ChatAnchor,
-    end: ChatAnchor,
-) -> Vec<serde_json::Value> {
-    let rows = chat_rows(fixture);
-    let start = chat_anchor_index(&rows, start);
-    let end = chat_anchor_index(&rows, end);
-    assert!(start <= end, "chat anchor range is ordered");
-    rows[start..=end].to_vec()
-}
-
-pub fn chat_feed_through(agent: &str, fixture: &str, anchor: ChatAnchor) -> Vec<Msg> {
-    seq([
-        chat_base(agent),
-        vec![batch(agent, 10, chat_rows_through(fixture, anchor))],
-    ])
-}
-
-pub fn chat_session_id(fixture: &str) -> String {
-    chat_rows(fixture)
-        .into_iter()
-        .find_map(|row| {
-            row.get("sessionId")
-                .or_else(|| row.get("session_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .expect("chat fixture carries a session id")
-}
-
-/// A local claude agent with a live structured stream (complete window):
-/// the base every feed chapter folds fixture batches onto.
-pub fn chat_base(agent: &str) -> Vec<Msg> {
-    seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&an_agent(agent, "nova")),
-        ],
-        synced(),
-        vec![
-            stream(agent, StreamMsg::Opened { truncated: false }),
-            stream(agent, StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-/// The base plus one coalesced batch of a fixture's rows.
-pub fn chat_feed(agent: &str, fixture: &str) -> Vec<Msg> {
-    seq([chat_base(agent), vec![batch(agent, 10, chat_rows(fixture))]])
-}
-
-/// The folded Claude layer for an agent.
-pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
-    model.claude(agent_id(agent)).expect("claude layer folded")
-}
-
-pub fn codex_base(agent: &str) -> Vec<Msg> {
-    seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&a_codex_agent(agent, "nova")),
-        ],
-        synced(),
-        vec![
-            stream(agent, StreamMsg::Opened { truncated: false }),
-            stream(agent, StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-pub fn codex_layer<'m>(model: &'m Model, agent: &str) -> &'m CodexLayer {
-    model.codex(agent_id(agent)).expect("Codex layer folded")
-}
-
-pub fn claude_sdk_base(agent: &str) -> Vec<Msg> {
-    let mut sdk = an_agent(agent, "nova");
-    sdk.kind = model::AgentKind::Claude {
-        driver: model::ClaudeDriver::Sdk,
-    };
-    seq([
-        vec![connected("nova"), host_up(&a_host("nova")), agent_up(&sdk)],
-        synced(),
-        vec![
-            stream(agent, StreamMsg::Opened { truncated: false }),
-            stream(agent, StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-pub fn claude_sdk_layer<'m>(model: &'m Model, agent: &str) -> &'m ui_state::ClaudeSdkLayer {
-    model
-        .claude_sdk(agent_id(agent))
-        .expect("Claude SDK layer folded")
-}
-
-// --- Folding --------------------------------------------------------------
-
-/// Fold a sequence into a Model, discarding effects (replay semantics).
-pub fn fold(msgs: impl IntoIterator<Item = Msg>) -> Model {
-    fold_with_effects(msgs).0
-}
-
-/// Fold a sequence, collecting every effect in order.
-pub fn fold_with_effects(msgs: impl IntoIterator<Item = Msg>) -> (Model, Vec<Effect>) {
-    let mut model = Model::default();
-    let mut effects = Vec::new();
-    for msg in msgs {
-        effects.extend(update(&mut model, msg));
+/// Checks the invariants every update must keep: the run index equals a
+/// rebuild; the changed set names exactly the rows that differ.
+pub fn apply_checked(state: &mut SessionState, msg: Msg) -> Outcome {
+    let before = projection(state.transcript());
+    let outcome = state.update(msg.clone());
+    let after = projection(state.transcript());
+    assert_eq!(
+        state.transcript().runs(),
+        &RunIndex::rebuild(state.transcript()),
+        "run index drifted from a rebuild after {msg:?}"
+    );
+    let mut differs: Vec<String> = Vec::new();
+    for (key, row) in &after {
+        if before.iter().find(|(k, _)| k == key).map(|(_, r)| r) != Some(row) {
+            differs.push(key.clone());
+        }
     }
-    (model, effects)
+    for (key, _) in &before {
+        if !after.iter().any(|(k, _)| k == key) {
+            differs.push(key.clone());
+        }
+    }
+    let mut changed = outcome.changed.clone();
+    changed.sort();
+    differs.sort();
+    assert_eq!(changed, differs, "changed keys wrong after {msg:?}");
+    outcome
 }
 
-/// Concatenate sequence fragments.
-pub fn seq(fragments: impl IntoIterator<Item = Vec<Msg>>) -> Vec<Msg> {
-    fragments.into_iter().flatten().collect()
+/// One line per held row, then the session's state.
+pub fn describe(state: &SessionState) -> String {
+    let mut out = String::new();
+    let transcript = state.transcript();
+    for held in transcript.iter() {
+        let run = transcript
+            .run_at(held.item.order)
+            .map(|run| format!(" run[{}..{} x{}]", run.oldest, run.newest, run.len))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "    {:>3} {} r{} {:?} {:?}{run}\n",
+            held.item.order, held.item.key, held.item.revision, held.class, held.item.text
+        ));
+    }
+    let asks: Vec<&str> = state.open_asks().iter().map(|ask| ask.key()).collect();
+    let queue: Vec<String> = state
+        .queue()
+        .iter()
+        .map(|row| {
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&row.entry.input_id),
+                if row.steered { "(steered)" } else { "" }
+            )
+        })
+        .collect();
+    let inputs: Vec<String> = state
+        .inputs()
+        .iter()
+        .map(|sent| format!("{}={:?}", String::from_utf8_lossy(&sent.id), sent.state))
+        .collect();
+    out.push_str(&format!(
+        "    caught_up={} reset_pending={} composer={:?} phase={:?} asks={asks:?} queue={queue:?} inputs={inputs:?}\n",
+        state.caught_up(),
+        state.reset_pending(),
+        state.composer(),
+        state.phase(),
+    ));
+    out
 }
 
-/// Every chapter's registered sequences: the differential spec wraps each of
-/// them (`wire_free::differential_fold_matches_live_state_after_every_msg`).
-pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
-    let mut sequences = Vec::new();
-    sequences.extend(crate::attachments::sequences());
-    sequences.extend(crate::draft::sequences());
-    sequences.extend(crate::queue::sequences());
-    sequences.extend(crate::sdk_integration::sequences());
-    sequences.extend(crate::connection::sequences());
-    sequences.extend(crate::cloud_state::sequences());
-    sequences.extend(crate::inventory::sequences());
-    sequences.extend(crate::ops::sequences());
-    sequences.extend(crate::sessions::sequences());
-    sequences.extend(crate::attention::sequences());
-    sequences.extend(crate::asks::sequences());
-    sequences.extend(crate::phase::sequences());
-    sequences.extend(crate::write::sequences());
-    sequences.extend(crate::claude_sdk_agreement::sequences());
-    sequences.extend(crate::claude_sdk_write::sequences());
-    sequences.extend(crate::claude_sdk_runtime::sequences());
-    sequences.extend(crate::codex_asks::sequences());
-    sequences.extend(crate::codex_write::sequences());
-    sequences.extend(crate::model_effort::sequences());
-    sequences.extend(crate::provider_commands::sequences());
-    sequences.extend(crate::todos::sequences());
-    sequences.extend(crate::codex_agreement::sequences());
-    sequences.extend(crate::claude_agreement::sequences());
-    sequences.extend(crate::a2a_fleet::sequences());
-    sequences.extend(crate::fleet_mixed::sequences());
-    sequences.extend(crate::store_lifecycle::sequences());
-    sequences.extend(crate::a2a_family_needs::sequences());
-    sequences
+/// Applies messages with the invariants checked, recording a readable
+/// transcript of what the session showed after each.
+pub struct Tape {
+    pub state: SessionState,
+    pub lines: String,
+}
+
+impl Tape {
+    pub fn new(agent: Agent) -> Tape {
+        let state = SessionState::new(agent);
+        let mut tape = Tape {
+            lines: String::new(),
+            state,
+        };
+        tape.lines.push_str("open\n");
+        tape.lines.push_str(&describe(&tape.state));
+        tape
+    }
+
+    pub fn apply(&mut self, label: &str, msg: Msg) -> Outcome {
+        let outcome = apply_checked(&mut self.state, msg);
+        self.lines.push_str(&format!(
+            "{label}  (changed {:?}{}{})\n",
+            outcome.changed,
+            if outcome.reloaded { ", reloaded" } else { "" },
+            outcome
+                .need_get
+                .as_ref()
+                .map(|key| format!(", get {key}"))
+                .unwrap_or_default()
+        ));
+        self.lines.push_str(&describe(&self.state));
+        outcome
+    }
+
+    pub fn print(&self, title: &str) {
+        println!("== {title}\n{}", self.lines);
+    }
+}
+
+/// A small deterministic generator for property cases.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    pub fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    pub fn shuffle<T>(&mut self, items: &mut [T]) {
+        for i in (1..items.len()).rev() {
+            let j = self.below(i as u64 + 1) as usize;
+            items.swap(i, j);
+        }
+    }
 }

@@ -624,7 +624,7 @@ contract = "Ordered messages reduce to the documented client model and remain eq
 paths = ["crates/ui-state/tests"]
 recipe = "just spec"
 boundary = "Client model"
-oracle = "Explicit model and effect assertions, invariants, and differential replay at every registered prefix."
+oracle = "Explicit state assertions, the window, run-index and changed-key invariants after every message, and replay equality at every checkpoint cut."
 real = []
 substituted = ["network", "store", "provider", "wall clock"]
 time = "none"
@@ -634,7 +634,7 @@ evidence = ""
 update = ""
 cargo = [
   { package = "ui-state", kind = "lib", targets = ["ui_state"], features = [] },
-  { package = "ui-state", targets = ["attachments_docs", "spec"], features = [] },
+  { package = "ui-state", targets = ["spec"], features = [] },
 ]
 
 [[suite]]
