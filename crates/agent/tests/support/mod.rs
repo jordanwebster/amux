@@ -90,6 +90,8 @@ pub struct Setup {
     /// The provider command; the kind's fake when None.
     pub command: Option<String>,
     pub provider_args: Vec<String>,
+    /// More of the provider's environment, as the spec carries it.
+    pub env: Vec<(&'static str, &'static str)>,
     pub steps: Vec<Step>,
     pub initial_prompt: Option<&'static str>,
     /// Whether the agent has a parent, which makes it one-shot.
@@ -114,6 +116,7 @@ impl Setup {
             kind: "claude_sdk",
             command: None,
             provider_args: Vec::new(),
+            env: Vec::new(),
             steps: Vec::new(),
             initial_prompt: None,
             parent: false,
@@ -191,6 +194,12 @@ impl Agent {
             ),
         ]
         .into();
+        provider_env.extend(
+            setup
+                .env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+        );
         if let Some(name) = setup.replay {
             let played = root.path().join("replay");
             std::fs::create_dir_all(&played).unwrap();
@@ -609,6 +618,24 @@ impl Daemon {
                     }
                     None => panic!("a reply without a verdict"),
                 };
+            }
+        }
+    }
+
+    /// Asks for the agent's part of a dump and waits for it.
+    pub async fn dump(&mut self, id: &[u8]) -> wire::DumpPart {
+        self.send(ctl_frame::Of::Input(Input {
+            input_id: id.to_vec(),
+            of: Some(input::Of::Dump(wire::DumpInput {
+                dump_id: id.to_vec(),
+            })),
+        }))
+        .await;
+        loop {
+            match next_frame(&mut self.reader).await.of {
+                Some(ctl_frame::Of::Dump(part)) if part.dump_id == id => return part,
+                Some(ctl_frame::Of::Nudge(_)) => self.nudges += 1,
+                _ => {}
             }
         }
     }

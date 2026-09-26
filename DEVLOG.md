@@ -1,3 +1,10 @@
+2026-09-26 — **An agent answers a dump input with its own redacted part.**
+A `Dump` input on ctl.sock gets a `DumpPart` back in any mode, draining
+included: the facts ring's segments with each entry redacted in place, the
+checkpoint at each segment's start and every spec file, all through the
+kind's own redactor, so a secret never leaves the agent process. A file
+that cannot be read is named in `dump-errors` rather than sent unredacted.
+
 2026-09-26 — **The store's host-plus-agent key is `AgentKey`.**
 It was `AgentRef`, the name of a wire message the rewrite removed; the
 deletion ledger proves the old message gone by searching for its name, and

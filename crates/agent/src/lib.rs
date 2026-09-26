@@ -17,6 +17,7 @@
 pub mod clock;
 mod ctl;
 mod dir;
+mod dump;
 mod host;
 pub mod local_socket;
 mod provider;
@@ -35,6 +36,7 @@ use interpret::codex::Codex;
 pub use crate::clock::{Clock, ManualClock, SystemClock};
 pub use crate::ctl::{read_frame, write_frame};
 pub use crate::dir::{BLOBS, CTL_SOCK, HOOKS_SOCK, JOURNAL, LOCK, PRIVATE, PTY, PTY_SOCK};
+pub use crate::dump::DUMP_ERRORS;
 pub use crate::tools::{
     NOT_RUNNING, RETRY_WINDOW, TOOLS_SOCK, ToolsConfig, ToolsError, serve_tools, serve_tools_on,
 };

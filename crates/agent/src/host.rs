@@ -25,7 +25,7 @@ use std::sync::Arc;
 use interpret::{Effect, Event, Interpreter, Stepped, reason, reply};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
-use wire::{AgentHello, AgentSpec, CtlFrame, InputReply, Nudge, Phase, StopMode, ctl_frame};
+use wire::{AgentHello, AgentSpec, CtlFrame, InputReply, Nudge, Phase, StopMode, ctl_frame, input};
 
 use crate::clock::Clock;
 use crate::dir::{self, PtyLog};
@@ -390,6 +390,15 @@ impl<I: Interpreter> Host<I> {
             return Ok(());
         };
         match frame.of {
+            // A dump is answered in any mode: a draining agent is often the
+            // one someone wants to look at.
+            Some(ctl_frame::Of::Input(wire::Input {
+                of: Some(input::Of::Dump(dump)),
+                ..
+            })) => {
+                let part = crate::dump::part::<I>(&self.dir, dump.dump_id);
+                self.send(ctl_frame::Of::Dump(part));
+            }
             Some(ctl_frame::Of::Input(input)) => match self.mode {
                 Mode::Running => self.feed(Event::Input(input)).await?,
                 Mode::Draining { .. } => {
