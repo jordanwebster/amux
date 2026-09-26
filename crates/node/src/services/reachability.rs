@@ -503,14 +503,16 @@ async fn establish_reachability_link(
     match attempt.reachability.clone() {
         Reachability::Cloud => None,
         Reachability::Direct { addrs } => {
-            let mut last_error = None;
+            // Each address's failure, so the person learns why every one
+            // of them was refused and not only the last.
+            let mut failures = Vec::new();
             for addr in addrs {
                 let prepared = tokio::time::timeout(
                     DIRECT_QUIC_HANDSHAKE_TIMEOUT,
                     prepare_direct_carrier(&context, attempt.peer, addr),
                 )
                 .await
-                .map_err(|_| format!("direct QUIC handshake to {addr} timed out"))
+                .map_err(|_| "the QUIC handshake timed out".to_owned())
                 .and_then(|result| result);
                 match prepared {
                     Ok(carrier) => match establish_carrier(
@@ -533,12 +535,16 @@ async fn establish_reachability_link(
                             await_connector(connector_task, abort_on_drop).await;
                             return Some(established);
                         }
-                        Err(error) => last_error = Some(error),
+                        Err(error) => failures.push(format!("{addr}: {error}")),
                     },
-                    Err(error) => last_error = Some(error),
+                    Err(error) => failures.push(format!("{addr}: {error}")),
                 }
             }
-            let error = last_error.unwrap_or_else(|| "no direct addresses available".to_string());
+            let error = if failures.is_empty() {
+                "no direct addresses available".to_owned()
+            } else {
+                failures.join("; ")
+            };
             context
                 .connections
                 .record_reachability_error(attempt.peer, error.clone())

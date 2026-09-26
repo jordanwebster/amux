@@ -312,6 +312,12 @@ impl Net {
         self.relay.as_ref().ok_or(NetError::NoRelay)
     }
 
+    /// The scripted local network the hosts with discovery advertise and
+    /// browse on, for announcing what no host would.
+    pub fn discovery(&self) -> &ScriptedDiscovery {
+        &self.bus
+    }
+
     pub fn binaries(&self) -> &Binaries {
         &self.binaries
     }

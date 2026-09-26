@@ -81,6 +81,7 @@ pub use sources::{NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, Sourc
 pub mod harness {
     pub use crate::auth::claims::Tier;
     pub use crate::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscovery};
+    pub use crate::identity::device_key_path;
     pub use crate::pairing::qr::{
         QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, parse_qr_pairing_payload,
     };
