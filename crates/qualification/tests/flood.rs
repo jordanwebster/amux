@@ -22,6 +22,7 @@ async fn flood_smoke_with_three_agents_measures_every_metric() {
             "flood catch-up over K",
             "flood backlog growth with the daemon killed",
             "flood backlog drain after restart",
+            "flood ingest cost per frame",
         ]
     );
     for run in &runs {

@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -275,6 +275,9 @@ pub struct ProfileRuntime {
     pub(crate) lanes: Mutex<HashMap<AgentId, Arc<tokio::sync::Mutex<()>>>>,
     /// Counts commits, so a message can wait for its acceptance item.
     pub(crate) commits: watch::Sender<u64>,
+    /// Journal frames committed since start: what ingest has done, so its
+    /// cost per frame can be measured from outside.
+    ingested_frames: AtomicU64,
     /// Set once every own journal has been read to its end after start.
     pub(crate) journals_read: watch::Sender<bool>,
     deliveries_due: Arc<Notify>,
@@ -469,6 +472,7 @@ impl ProfileRuntime {
             join_hook: Mutex::new(None),
             lanes: Mutex::new(HashMap::new()),
             commits: watch::Sender::new(0),
+            ingested_frames: AtomicU64::new(0),
             journals_read: watch::Sender::new(false),
             deliveries_due: Arc::new(Notify::new()),
             notifications_due: Arc::new(Notify::new()),
@@ -530,6 +534,12 @@ impl ProfileRuntime {
     /// The installation's generation as of this run's start.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// How many journal frames ingest has committed since this runtime
+    /// started.
+    pub fn ingested_frames(&self) -> u64 {
+        self.ingested_frames.load(Ordering::Relaxed)
     }
 
     /// The store, held exclusively while the guard lives.
@@ -1231,6 +1241,8 @@ impl ProfileRuntime {
             };
             let committed = store.commit(&key, &batch.frames, clock)?;
             self.commits.send_modify(|commits| *commits += 1);
+            self.ingested_frames
+                .fetch_add(batch.frames.len() as u64, Ordering::Relaxed);
             if batch.frames.iter().any(|(_, step)| step.turn_end.is_some()) {
                 self.deliveries_due.notify_one();
             }

@@ -7,6 +7,11 @@
 //! journals grow while the daemon is dead and how long it takes to drain
 //! them after, what a replica's catch-up costs at a distance under and
 //! over K, and each agent process's memory.
+//!
+//! "Full rate" is the fastest a real provider streams, not the fastest a
+//! fake can write: see [`PACE_MS`]. What the daemon could take beyond that
+//! is measured apart, with the agents unthrottled, as ingest's cost per
+//! committed frame.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -87,7 +92,19 @@ impl FloodOptions {
 /// taken to have ended under the workload.
 const STALL: Duration = Duration::from_secs(2);
 
-/// The pause between one agent's messages in the measured flood.
+/// The pause between one agent's messages in the measured flood: full
+/// rate, the fastest a real provider streams.
+///
+/// Every recording in the claude-specs (headless and terminal) and
+/// codex-specs corpora peaks at 47 provider frames in any one second, the
+/// next highest at 40, with median gaps between frames of 20 to 90 ms. A
+/// message every 20 ms is about 25 messages and 46 revisions a second per
+/// agent, at or above any recorded provider, so twenty of them put about
+/// a thousand frames a second on one host. An unthrottled fake writes tens
+/// of thousands a second per process, which no provider does; nothing
+/// holds an agent back while ingest trails (its journal is the buffer), so
+/// under that load ingest lag grows without bound by design, and the
+/// capacity phase measures that load as a cost per frame instead.
 pub const PACE_MS: u64 = 20;
 
 /// One agent's name in the flood.
@@ -138,7 +155,7 @@ pub fn topology(options: &FloodOptions) -> Topology {
 }
 
 const WORKLOAD: Workload = Workload {
-    description: "flood: agents streaming a message every 20 ms on one host, a second runtime with no block opening the fleet and one chat",
+    description: "flood: agents streaming at full rate, a message every 20 ms (at or above the fastest recorded provider, 47 frames in one second), on one host, a second runtime with no block opening the fleet and one chat",
     seed: 0,
     identity_growth: "one agent per flood slot, fixed",
     warm_up: "agents run before the viewer connects, so each history is past K",
@@ -174,7 +191,19 @@ mod budgets {
     /// (1 MiB each) and the interpreter's state, with room for the
     /// runtime.
     pub const AGENT_MEMORY_MIB: f64 = 48.0;
+    /// Ingest's cost per committed frame draining a backlog. Tens of
+    /// microseconds a frame is what `INGEST_BATCH` is sized by; at 100 µs
+    /// one host still commits ten thousand frames a second, ten times the
+    /// full-rate flood's demand of about a thousand.
+    pub const INGEST_COST_US: f64 = 100.0;
 }
+
+const CAPACITY_WORKLOAD: Workload = Workload {
+    description: "flood capacity: agents write unthrottled on one host, far faster than any provider, then pause while ingest drains their backlog alone; cost is wall time over frames committed in each window",
+    seed: 0,
+    identity_growth: "one agent per flood slot, fixed",
+    warm_up: "agents write unthrottled until each journal holds a backlog",
+};
 
 /// A metric held to its budget alone. The flood's timings are one
 /// observation each, or sub-millisecond medians, and vary several-fold
@@ -238,10 +267,25 @@ fn ms(elapsed: Duration) -> f64 {
     elapsed.as_secs_f64() * 1_000.0
 }
 
-/// Runs the flood and returns its measurements.
+/// Runs the flood, then its capacity phase, and returns their
+/// measurements.
 pub async fn run(options: &FloodOptions) -> Result<Vec<MetricRun>> {
-    let k = options.k;
-    let mut net = Net::start_with(
+    let mut net = start(options.k).await?;
+    let measured = measure(&mut net, options).await;
+    let shutdown = net.shutdown().await;
+    let mut runs = measured?;
+    shutdown.context("shut the flood's hosts down")?;
+
+    let mut net = start(options.k).await?;
+    let measured = capacity(&mut net, options).await;
+    let shutdown = net.shutdown().await;
+    runs.push(measured?);
+    shutdown.context("shut the capacity phase's hosts down")?;
+    Ok(runs)
+}
+
+async fn start(k: u32) -> Result<Net> {
+    Net::start_with(
         Topology::new()
             .host_decl(HostDecl {
                 name: ORIGIN.to_owned(),
@@ -260,12 +304,91 @@ pub async fn run(options: &FloodOptions) -> Result<Vec<MetricRun>> {
         },
     )
     .await
-    .context("start the flood's hosts")?;
-    let measured = measure(&mut net, options).await;
-    let shutdown = net.shutdown().await;
-    let runs = measured?;
-    shutdown.context("shut the flood's hosts down")?;
-    Ok(runs)
+    .context("start the flood's hosts")
+}
+
+/// The windows the capacity phase prices ingest over.
+const CAPACITY_WINDOWS: usize = 7;
+
+/// Ingest's cost per committed frame: the agents write unthrottled until
+/// every journal holds a backlog far past what ingest can keep up with,
+/// then stop writing, and each window's wall time is divided by the
+/// frames the origin committed in it. Pausing the writers leaves ingest
+/// the machine to itself, so the figure is ingest's own cost rather than
+/// how twenty busy writers share the cores with it, and it stays steady
+/// enough between runs to track drift.
+async fn capacity(net: &mut Net, options: &FloodOptions) -> Result<MetricRun> {
+    let mut run = Recording::start(Metric {
+        workload: CAPACITY_WORKLOAD,
+        ..drifting(
+            "flood ingest cost per frame",
+            Statistic::Median,
+            budgets::INGEST_COST_US,
+            Unit::Microseconds,
+        )
+    });
+    let unthrottled = FloodOptions {
+        pace_ms: None,
+        ..options.clone()
+    };
+    for agent in topology(&unthrottled).agents {
+        net.spawn(agent).await?;
+    }
+    let names: Vec<String> = (0..options.agents).map(agent_name).collect();
+    tokio::time::sleep(options.warm_up).await;
+    let pids = agent_pids(net, &names)?;
+    ensure!(
+        pids.len() == names.len(),
+        "found {} of {} agent processes",
+        pids.len(),
+        names.len()
+    );
+    signal(&pids, "-STOP")?;
+    let runtime = net.runtime(ORIGIN)?;
+    let window = options.sampling / CAPACITY_WINDOWS as u32;
+    for _ in 0..CAPACITY_WINDOWS {
+        let (frames, started) = (runtime.ingested_frames(), Instant::now());
+        tokio::time::sleep(window).await;
+        let (committed, elapsed) = (runtime.ingested_frames() - frames, started.elapsed());
+        ensure!(committed > 0, "ingest committed nothing in {elapsed:?}");
+        run.add(elapsed.as_secs_f64() * 1e6 / committed as f64);
+    }
+    drop(runtime);
+    // A window in which ingest ran out of backlog timed idleness too.
+    let backlog = backlog(net, &names).await?;
+    ensure!(
+        backlog > 0,
+        "ingest drained the whole backlog within the windows; lengthen the warm-up"
+    );
+    // A stop ingests its agent's journal to the end, and these backlogs
+    // take far longer to drain than the phase took to write them: crash
+    // the origin instead, and the shutdown kills its agents unread.
+    signal(&pids, "-CONT")?;
+    net.kill_daemon(ORIGIN).await?;
+    Ok(run.finish())
+}
+
+fn signal(pids: &[u32], signal: &str) -> Result<()> {
+    let status = std::process::Command::new("kill")
+        .arg(signal)
+        .args(pids.iter().map(u32::to_string))
+        .status()
+        .context("run kill")?;
+    ensure!(status.success(), "kill {signal} failed: {status}");
+    Ok(())
+}
+
+/// The bytes written to the named agents' journals that the origin has not
+/// committed yet.
+async fn backlog(net: &Net, names: &[String]) -> Result<u64> {
+    let mut behind = 0;
+    for name in names {
+        let end = net.journal_end(name)?;
+        let key = net.agent(name)?.key();
+        let cursor = net.runtime(ORIGIN)?.store().await.cursor(&key)?;
+        behind += end.saturating_sub(cursor);
+    }
+    Ok(behind)
 }
 
 async fn measure(net: &mut Net, options: &FloodOptions) -> Result<Vec<MetricRun>> {

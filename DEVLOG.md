@@ -1,3 +1,17 @@
+2026-09-26 — **The flood states what full rate is, and prices ingest per frame.**
+The flood's pace is full rate defined as the fastest a real provider
+streams: the busiest second in any claude-specs or codex-specs recording
+holds 47 provider frames, so a message every 20 ms per agent (about 71
+frames a second) is at or above every recording. The pace's doc comment and
+the report's workload line say so. A capacity phase then lets twenty fakes
+write unthrottled until each journal holds a backlog, pauses them, and
+divides wall time by the frames ingest commits: about 20 µs a frame on the
+reference machine, some 50,000 frames a second against the full-rate
+flood's 1,000. It is drift-tracked with a baseline, so a regression in the
+ingest path shows. The phase crashes its origin instead of shutting it down,
+since a clean stop would ingest the whole backlog first. The profile
+runtime counts the frames it commits for this measure.
+
 2026-09-26 — **wt starts a worktree daemon on the rebuilt binary.**
 `.wt.toml` points `AMUX_CONFIG` at the installation file wt renders, and
 that file now carries only keys the settings parser accepts: keep-awake off

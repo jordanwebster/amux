@@ -5,13 +5,14 @@
   "features": "bundled,perf",
   "reference_state": "one busy core (cluster warmer)",
   "medians": {
-    "flood agent process memory": 3.0472412109375,
+    "flood agent process memory": 3.0159912109375,
     "flood backlog drain after restart": null,
     "flood backlog growth with the daemon killed": null,
     "flood catch-up over K": null,
     "flood catch-up under K": null,
     "flood chat caught up": null,
     "flood fleet caught up": null,
+    "flood ingest cost per frame": 21.002018261718753,
     "flood ingest lag": null
   }
 }
