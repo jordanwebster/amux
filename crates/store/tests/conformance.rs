@@ -1,0 +1,826 @@
+//! One reader and writer suite, run against every store implementation.
+
+use store::{
+    Absorb, AgentRef, AgentRow, CommitClock, Cut, Delivery, InMemory, Marker, NotificationBody,
+    PageEnd, Record, SourceEvent, Sqlite, Store, StoreError,
+};
+use wire::{Append, EnvelopeKind, Item, Phase, Snapshot, Step, TurnEnd};
+
+const OWN: &[u8] = b"own-host";
+const PEER: &[u8] = b"peer-host";
+const CLOCK: CommitClock = CommitClock {
+    now_ms: 1_000,
+    notify_delay_ms: 30_000,
+};
+
+fn own(agent: &str) -> AgentRef {
+    AgentRef::new(OWN, agent.as_bytes())
+}
+
+fn peer(agent: &str) -> AgentRef {
+    AgentRef::new(PEER, agent.as_bytes())
+}
+
+fn item(key: &str, text: &str) -> Item {
+    Item {
+        key: key.into(),
+        text: text.into(),
+        kind: "claude_sdk".into(),
+        body: vec![1, 2, 3],
+        at_ms: 5,
+        producer_version: "1.0.0".into(),
+        ..Default::default()
+    }
+}
+
+/// An item as an origin sends it: order and revision assigned.
+fn origin_item(key: &str, order: u64, revision: u64, text: &str) -> Item {
+    Item {
+        agent: b"remote".to_vec(),
+        order,
+        revision,
+        ..item(key, text)
+    }
+}
+
+fn snapshot(phase: Phase, working_on: Option<&str>, at_ms: i64) -> Snapshot {
+    Snapshot {
+        kind: "claude_sdk".into(),
+        body: vec![9],
+        phase: phase as i32,
+        working_on: working_on.map(str::to_owned),
+        at_ms,
+        ..Default::default()
+    }
+}
+
+fn items_step(items: &[Item]) -> Step {
+    Step {
+        items: items.to_vec(),
+        ..Default::default()
+    }
+}
+
+fn keys(items: &[Item]) -> Vec<&str> {
+    items.iter().map(|item| item.key.as_str()).collect()
+}
+
+fn with_agent<S: Store>(mut store: S, agent: &AgentRef) -> S {
+    let mut row = AgentRow::new(agent.clone(), "claude_sdk", "/src/amux");
+    row.name = Some("worker".into());
+    store.put_agent(&row).unwrap();
+    store
+}
+
+macro_rules! conformance {
+    ($($name:ident),* $(,)?) => {
+        mod in_memory {
+            $(#[test] fn $name() { super::$name(store::InMemory::new(super::OWN)); })*
+        }
+        mod sqlite {
+            $(#[test] fn $name() {
+                let dir = tempfile::tempdir().unwrap();
+                super::$name(store::Sqlite::open(&dir.path().join("store.sqlite"), super::OWN).unwrap());
+            })*
+        }
+    };
+}
+
+conformance!(
+    commit_assigns_revisions_per_record_and_orders_once_per_key,
+    appends_extend_text_and_carry_their_base,
+    snapshots_copy_their_envelope_onto_the_row,
+    a_turn_end_with_a_parent_inserts_a_delivery,
+    turning_to_needs_you_inserts_one_notification_and_leaving_removes_it,
+    commit_writes_the_cursor_and_serves_pages_newest_first,
+    commit_refuses_replica_rows_and_unknown_agents,
+    delete_removes_an_agent_whole,
+    put_agent_keeps_committed_state,
+    a_reset_replaces_the_block_and_keeps_older_rows_for_get,
+    a_delta_joins_above_and_only_live_records_move_the_cursor,
+    older_revisions_never_overwrite_newer,
+    pages_extend_the_block_downwards_only_when_they_join,
+    a_replica_without_a_block_serves_nothing,
+    cut_reads_snapshot_rows_and_marker_together,
+    rewind_host_drops_that_hosts_replicas_and_records_the_generation,
+    absorb_refuses_own_rows,
+);
+
+fn commit_assigns_revisions_per_record_and_orders_once_per_key<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let committed = store
+        .commit(
+            &agent,
+            &[
+                (10, items_step(&[item("m1", "one"), item("m2", "two")])),
+                (
+                    20,
+                    items_step(&[item("m1", "one, revised"), item("m3", "three")]),
+                ),
+            ],
+            CLOCK,
+        )
+        .unwrap();
+    let assigned = committed
+        .records
+        .iter()
+        .map(|record| match record {
+            Record::Item(item) => (item.key.as_str(), item.order, item.revision),
+            other => panic!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        assigned,
+        [("m1", 1, 1), ("m2", 2, 2), ("m1", 1, 3), ("m3", 3, 4)]
+    );
+    assert_eq!(committed.cursor, 20);
+
+    // A re-derivation after a restart re-emits a known key: same order, a
+    // fresh revision; a new key takes the next order.
+    let again = store
+        .commit(
+            &agent,
+            &[(30, items_step(&[item("m2", "two"), item("m4", "four")]))],
+            CLOCK,
+        )
+        .unwrap();
+    let orders = again
+        .records
+        .iter()
+        .map(|record| match record {
+            Record::Item(item) => (item.order, item.revision),
+            other => panic!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(orders, [(2, 5), (4, 6)]);
+    let stored = store.get(&agent, "m1").unwrap().unwrap();
+    assert_eq!((stored.order, stored.revision), (1, 3));
+    assert_eq!(stored.text, "one, revised");
+    assert_eq!(stored.agent, b"a");
+    assert_eq!(stored.body, vec![1, 2, 3]);
+    assert_eq!(store.agent(&agent).unwrap().unwrap().next_revision, 7);
+}
+
+fn appends_extend_text_and_carry_their_base<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    store
+        .commit(&agent, &[(1, items_step(&[item("msg", "Hel")]))], CLOCK)
+        .unwrap();
+    let step = Step {
+        appends: vec![
+            Append {
+                key: "msg".into(),
+                text: "lo w".into(),
+                ..Default::default()
+            },
+            Append {
+                key: "missing".into(),
+                text: "x".into(),
+                ..Default::default()
+            },
+            Append {
+                key: "msg".into(),
+                text: "orld".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let committed = store.commit(&agent, &[(2, step)], CLOCK).unwrap();
+    assert_eq!(committed.skipped_appends, 1);
+    assert_eq!(
+        committed.records,
+        vec![
+            Record::Append(Append {
+                agent: b"a".to_vec(),
+                key: "msg".into(),
+                base_revision: 1,
+                revision: 2,
+                text: "lo w".into(),
+            }),
+            Record::Append(Append {
+                agent: b"a".to_vec(),
+                key: "msg".into(),
+                base_revision: 2,
+                revision: 3,
+                text: "orld".into(),
+            }),
+        ]
+    );
+    let held = store.get(&agent, "msg").unwrap().unwrap();
+    assert_eq!(
+        (held.text.as_str(), held.revision, held.order),
+        ("Hello world", 3, 1)
+    );
+}
+
+fn snapshots_copy_their_envelope_onto_the_row<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let step = Step {
+        items: vec![item("m1", "hi")],
+        snapshot: Some(snapshot(Phase::Working, Some("fixing the build"), 777)),
+        ..Default::default()
+    };
+    let committed = store.commit(&agent, &[(5, step)], CLOCK).unwrap();
+    let Record::Snapshot(snap) = &committed.records[1] else {
+        panic!("{:?}", committed.records)
+    };
+    assert_eq!(snap.revision, 2);
+    assert_eq!(snap.agent, b"a");
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.phase, Phase::Working as i32);
+    assert_eq!(row.working_on.as_deref(), Some("fixing the build"));
+    assert_eq!(row.last_activity, Some(777));
+    assert_eq!(row.snapshot_revision, 2);
+    assert_eq!(row.snapshot.as_ref(), Some(snap));
+}
+
+fn a_turn_end_with_a_parent_inserts_a_delivery<S: Store>(store: S) {
+    let parent = peer("parent");
+    let child = own("child");
+    let lone = own("lone");
+    let mut store = with_agent(with_agent(store, &child), &lone);
+    let mut parent_row = AgentRow::new(parent.clone(), "codex", "/p");
+    parent_row.incarnation = 3;
+    store.put_agent(&parent_row).unwrap();
+    let mut child_row = store.agent(&child).unwrap().unwrap();
+    child_row.parent = Some(parent.clone());
+    child_row.incarnation = 2;
+    store.put_agent(&child_row).unwrap();
+
+    let turn = |key: &str| Step {
+        items: vec![item(key, "the answer")],
+        turn_end: Some(TurnEnd {
+            turn_id: 7,
+            last_message_key: key.into(),
+        }),
+        ..Default::default()
+    };
+    store.commit(&child, &[(1, turn("final"))], CLOCK).unwrap();
+    store.commit(&lone, &[(1, turn("final"))], CLOCK).unwrap();
+    // The same turn end ingested twice is one row.
+    store.commit(&child, &[(2, turn("final"))], CLOCK).unwrap();
+    assert_eq!(
+        store.deliveries().unwrap(),
+        vec![Delivery {
+            child_id: b"child".to_vec(),
+            incarnation: 2,
+            turn_id: 7,
+            parent: parent.clone(),
+            parent_incarnation: 3,
+            kind: EnvelopeKind::Finished as i32,
+            body: "the answer".into(),
+        }]
+    );
+    let delivery = store.deliveries().unwrap().remove(0);
+    store.remove_delivery(&delivery).unwrap();
+    assert!(store.deliveries().unwrap().is_empty());
+}
+
+fn turning_to_needs_you_inserts_one_notification_and_leaving_removes_it<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let snap = |phase| Step {
+        snapshot: Some(snapshot(phase, Some("deploying"), 9)),
+        ..Default::default()
+    };
+    store
+        .commit(
+            &agent,
+            &[
+                (1, items_step(&[item("m1", "May I run the migration?")])),
+                (2, snap(Phase::NeedsYou)),
+            ],
+            CLOCK,
+        )
+        .unwrap();
+    // Still needs you: no second notification for the same transition.
+    store
+        .commit(&agent, &[(3, snap(Phase::NeedsYou))], CLOCK)
+        .unwrap();
+    let notifications = store.notifications().unwrap();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].revision, 2);
+    assert_eq!(notifications[0].due_at, 31_000);
+    assert_eq!(
+        notifications[0].body,
+        NotificationBody {
+            name: Some("worker".into()),
+            working_on: Some("deploying".into()),
+            text: "May I run the migration?".into(),
+        }
+    );
+    store
+        .commit(&agent, &[(4, snap(Phase::Working))], CLOCK)
+        .unwrap();
+    assert!(store.notifications().unwrap().is_empty());
+    store
+        .commit(&agent, &[(5, snap(Phase::NeedsYou))], CLOCK)
+        .unwrap();
+    assert_eq!(store.notifications().unwrap().len(), 1);
+    store.remove_notifications(b"a").unwrap();
+    assert!(store.notifications().unwrap().is_empty());
+}
+
+fn commit_writes_the_cursor_and_serves_pages_newest_first<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let frames = (1..=7)
+        .map(|n| (n * 100, items_step(&[item(&format!("k{n}"), "")])))
+        .collect::<Vec<_>>();
+    store.commit(&agent, &frames, CLOCK).unwrap();
+    assert_eq!(store.cursor(&agent).unwrap(), 700);
+
+    let first = store.page(&agent, None, 3).unwrap();
+    assert_eq!(keys(&first.items), ["k7", "k6", "k5"]);
+    assert_eq!(first.end, PageEnd::More);
+    let second = store.page(&agent, Some(5), 3).unwrap();
+    assert_eq!(keys(&second.items), ["k4", "k3", "k2"]);
+    let last = store.page(&agent, Some(2), 3).unwrap();
+    assert_eq!(keys(&last.items), ["k1"]);
+    assert_eq!(last.end, PageEnd::Exhausted);
+    assert_eq!(keys(&store.last_n(&agent, 2).unwrap()), ["k6", "k7"]);
+    assert!(store.get(&agent, "nope").unwrap().is_none());
+}
+
+fn commit_refuses_replica_rows_and_unknown_agents<S: Store>(store: S) {
+    let replica = peer("r");
+    let mut store = with_agent(store, &replica);
+    assert!(matches!(
+        store.commit(&replica, &[(1, items_step(&[item("k", "")]))], CLOCK),
+        Err(StoreError::NotOwn)
+    ));
+    assert!(matches!(
+        store.commit(&own("ghost"), &[(1, items_step(&[item("k", "")]))], CLOCK),
+        Err(StoreError::UnknownAgent)
+    ));
+    assert!(store.get(&own("ghost"), "k").unwrap().is_none());
+}
+
+fn delete_removes_an_agent_whole<S: Store>(store: S) {
+    let parent = own("parent");
+    let child = own("child");
+    let mut store = with_agent(with_agent(store, &parent), &child);
+    let mut row = store.agent(&child).unwrap().unwrap();
+    row.parent = Some(parent.clone());
+    store.put_agent(&row).unwrap();
+    let step = Step {
+        items: vec![item("m", "done")],
+        snapshot: Some(snapshot(Phase::NeedsYou, None, 1)),
+        turn_end: Some(TurnEnd {
+            turn_id: 1,
+            last_message_key: "m".into(),
+        }),
+        ..Default::default()
+    };
+    store.commit(&child, &[(1, step)], CLOCK).unwrap();
+    store.set_marker(&child, Some(Marker::CaughtUp));
+    assert_eq!(store.deliveries().unwrap().len(), 1);
+    assert_eq!(store.notifications().unwrap().len(), 1);
+
+    store.delete_agent(&child).unwrap();
+    assert!(store.agent(&child).unwrap().is_none());
+    assert!(store.get(&child, "m").unwrap().is_none());
+    assert!(store.deliveries().unwrap().is_empty());
+    assert!(store.notifications().unwrap().is_empty());
+    assert!(store.agent(&parent).unwrap().is_some());
+}
+
+fn put_agent_keeps_committed_state<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let step = Step {
+        items: vec![item("m", "x")],
+        snapshot: Some(snapshot(Phase::Idle, Some("w"), 3)),
+        ..Default::default()
+    };
+    store.commit(&agent, &[(42, step)], CLOCK).unwrap();
+    let mut rename = AgentRow::new(agent.clone(), "claude_sdk", "/src/amux");
+    rename.name = Some("renamed".into());
+    rename.lifecycle = wire::Lifecycle::Exited as i32;
+    rename.exit_cause = Some("stopped".into());
+    rename.incarnation = 2;
+    store.put_agent(&rename).unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.name.as_deref(), Some("renamed"));
+    assert_eq!(row.exit_cause.as_deref(), Some("stopped"));
+    assert_eq!(row.incarnation, 2);
+    assert_eq!((row.ingest_cursor, row.next_revision), (42, 3));
+    assert_eq!(row.phase, Phase::Idle as i32);
+    assert!(row.snapshot.is_some());
+}
+
+fn a_reset_replaces_the_block_and_keeps_older_rows_for_get<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    let absorbed = store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![
+                    origin_item("k1", 1, 10, "one"),
+                    origin_item("k2", 2, 11, "two"),
+                ],
+                snapshot: Snapshot {
+                    revision: 12,
+                    ..snapshot(Phase::Idle, None, 50)
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(absorbed.stored.len(), 3);
+    assert_eq!(
+        store.agent(&agent).unwrap().unwrap().complete_from_order,
+        Some(1)
+    );
+    assert_eq!(keys(&store.last_n(&agent, 10).unwrap()), ["k1", "k2"]);
+
+    // The origin moved on beyond the cap: a fresh tail replaces the block.
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![
+                    origin_item("k8", 8, 40, "eight"),
+                    origin_item("k9", 9, 41, "nine"),
+                ],
+                snapshot: Snapshot {
+                    revision: 42,
+                    ..snapshot(Phase::Working, Some("more"), 60)
+                },
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.complete_from_order, Some(8));
+    assert_eq!(row.phase, Phase::Working as i32);
+    assert_eq!(row.snapshot_revision, 42);
+    assert_eq!(keys(&store.last_n(&agent, 10).unwrap()), ["k8", "k9"]);
+    let page = store.page(&agent, None, 10).unwrap();
+    assert_eq!(keys(&page.items), ["k9", "k8"]);
+    assert_eq!(page.end, PageEnd::Boundary);
+    // The old rows are held, but not counted.
+    assert_eq!(store.get(&agent, "k1").unwrap().unwrap().text, "one");
+}
+
+fn a_delta_joins_above_and_only_live_records_move_the_cursor<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![origin_item("k1", 1, 10, "one")],
+                snapshot: Snapshot {
+                    revision: 11,
+                    ..snapshot(Phase::Idle, None, 1)
+                },
+            },
+        )
+        .unwrap();
+    // Catch-up records do not move the cursor; CaughtUp does.
+    store
+        .absorb(
+            &agent,
+            Absorb::Delta {
+                events: vec![SourceEvent::Item(origin_item("k2", 2, 12, "two"))],
+                live: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(store.cursor(&agent).unwrap(), 0);
+    store.absorb(&agent, Absorb::CaughtUp(12)).unwrap();
+    assert_eq!(store.cursor(&agent).unwrap(), 12);
+
+    let absorbed = store
+        .absorb(
+            &agent,
+            Absorb::Delta {
+                events: vec![
+                    SourceEvent::Item(origin_item("k3", 3, 13, "Hel")),
+                    SourceEvent::Append(Append {
+                        agent: b"remote".to_vec(),
+                        key: "k3".into(),
+                        base_revision: 13,
+                        revision: 14,
+                        text: "lo".into(),
+                    }),
+                    // A base the replica does not hold is left for the full
+                    // item every stream ends with.
+                    SourceEvent::Append(Append {
+                        agent: b"remote".to_vec(),
+                        key: "k3".into(),
+                        base_revision: 99,
+                        revision: 100,
+                        text: "??".into(),
+                    }),
+                    SourceEvent::Snapshot(Snapshot {
+                        revision: 15,
+                        ..snapshot(Phase::NeedsYou, Some("asking"), 70)
+                    }),
+                ],
+                live: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(absorbed.stored.len(), 3);
+    assert_eq!(store.cursor(&agent).unwrap(), 15);
+    assert_eq!(store.get(&agent, "k3").unwrap().unwrap().text, "Hello");
+    assert_eq!(keys(&store.last_n(&agent, 10).unwrap()), ["k1", "k2", "k3"]);
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.phase, Phase::NeedsYou as i32);
+    assert_eq!(row.working_on.as_deref(), Some("asking"));
+    // Replicas never enqueue notifications: that is the origin's outbox.
+    assert!(store.notifications().unwrap().is_empty());
+}
+
+fn older_revisions_never_overwrite_newer<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![origin_item("k1", 1, 20, "new")],
+                snapshot: Snapshot {
+                    revision: 30,
+                    ..snapshot(Phase::Idle, Some("newer"), 1)
+                },
+            },
+        )
+        .unwrap();
+    let absorbed = store
+        .absorb(
+            &agent,
+            Absorb::Delta {
+                events: vec![
+                    SourceEvent::Item(origin_item("k1", 1, 19, "old")),
+                    SourceEvent::Snapshot(Snapshot {
+                        revision: 29,
+                        ..snapshot(Phase::Working, Some("older"), 1)
+                    }),
+                ],
+                live: true,
+            },
+        )
+        .unwrap();
+    assert!(absorbed.stored.is_empty());
+    assert_eq!(store.get(&agent, "k1").unwrap().unwrap().text, "new");
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.working_on.as_deref(), Some("newer"));
+    assert_eq!(row.source_cursor, 0);
+}
+
+fn pages_extend_the_block_downwards_only_when_they_join<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![origin_item("k5", 5, 50, ""), origin_item("k6", 6, 60, "")],
+                snapshot: Snapshot {
+                    revision: 61,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    // A page for some other boundary does not join and is not stored.
+    let stray = store
+        .absorb(
+            &agent,
+            Absorb::Page {
+                before_order: 3,
+                items: vec![origin_item("k2", 2, 20, "")],
+                exhausted: false,
+            },
+        )
+        .unwrap();
+    assert!(!stray.joined);
+    assert!(store.get(&agent, "k2").unwrap().is_none());
+
+    let joined = store
+        .absorb(
+            &agent,
+            Absorb::Page {
+                before_order: 5,
+                items: vec![origin_item("k4", 4, 40, ""), origin_item("k3", 3, 30, "")],
+                exhausted: false,
+            },
+        )
+        .unwrap();
+    assert!(joined.joined);
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.complete_from_order, Some(3));
+    assert!(!row.exhausted);
+    // A page never moves the source cursor.
+    assert_eq!(row.source_cursor, 0);
+    let page = store.page(&agent, None, 10).unwrap();
+    assert_eq!(keys(&page.items), ["k6", "k5", "k4", "k3"]);
+    assert_eq!(page.end, PageEnd::Boundary);
+
+    store
+        .absorb(
+            &agent,
+            Absorb::Page {
+                before_order: 3,
+                items: vec![origin_item("k2", 2, 20, ""), origin_item("k1", 1, 10, "")],
+                exhausted: true,
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!((row.complete_from_order, row.exhausted), (Some(1), true));
+    let page = store.page(&agent, Some(3), 10).unwrap();
+    assert_eq!(keys(&page.items), ["k2", "k1"]);
+    assert_eq!(page.end, PageEnd::Exhausted);
+
+    // A Reset forgets that the origin was exhausted below the new block.
+    store
+        .absorb(
+            &agent,
+            Absorb::Reset {
+                tail: vec![origin_item("k7", 7, 70, "")],
+                snapshot: Snapshot::default(),
+            },
+        )
+        .unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!((row.complete_from_order, row.exhausted), (Some(7), false));
+}
+
+fn a_replica_without_a_block_serves_nothing<S: Store>(store: S) {
+    let agent = peer("r");
+    let mut store = with_agent(store, &agent);
+    // Rows a Get or stray delta left behind do not make a block.
+    store
+        .absorb(
+            &agent,
+            Absorb::Delta {
+                events: vec![SourceEvent::Item(origin_item("k1", 1, 1, ""))],
+                live: false,
+            },
+        )
+        .unwrap();
+    assert!(store.last_n(&agent, 10).unwrap().is_empty());
+    let page = store.page(&agent, None, 10).unwrap();
+    assert!(page.items.is_empty());
+    assert_eq!(page.end, PageEnd::Boundary);
+    assert!(store.get(&agent, "k1").unwrap().is_some());
+    let page = store
+        .absorb(
+            &agent,
+            Absorb::Page {
+                before_order: 1,
+                items: vec![],
+                exhausted: true,
+            },
+        )
+        .unwrap();
+    assert!(!page.joined);
+}
+
+fn cut_reads_snapshot_rows_and_marker_together<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    assert_eq!(store.cut(&agent, 5).unwrap(), Cut::default());
+    let step = Step {
+        items: vec![item("k1", ""), item("k2", ""), item("k3", "")],
+        snapshot: Some(snapshot(Phase::Idle, None, 1)),
+        ..Default::default()
+    };
+    store.commit(&agent, &[(1, step)], CLOCK).unwrap();
+    let cut = store.cut(&agent, 2).unwrap();
+    assert_eq!(cut.snapshot.unwrap().revision, 4);
+    assert_eq!(keys(&cut.held), ["k2", "k3"]);
+    assert_eq!(cut.marker, None);
+    store.set_marker(&agent, Some(Marker::CaughtUp));
+    assert_eq!(store.cut(&agent, 2).unwrap().marker, Some(Marker::CaughtUp));
+
+    let replica = peer("r");
+    let mut store = with_agent(store, &replica);
+    store.absorb(&replica, Absorb::CaughtUp(3)).unwrap();
+    assert_eq!(
+        store.cut(&replica, 2).unwrap().marker,
+        Some(Marker::CaughtUp)
+    );
+    store.set_marker(&replica, Some(Marker::Detached));
+    assert_eq!(
+        store.cut(&replica, 2).unwrap().marker,
+        Some(Marker::Detached)
+    );
+    store
+        .absorb(
+            &replica,
+            Absorb::Reset {
+                tail: vec![],
+                snapshot: Snapshot::default(),
+            },
+        )
+        .unwrap();
+    assert_eq!(store.cut(&replica, 2).unwrap().marker, None);
+    assert!(store.cut(&own("ghost"), 1).is_err());
+}
+
+fn rewind_host_drops_that_hosts_replicas_and_records_the_generation<S: Store>(store: S) {
+    let mine = own("a");
+    let theirs = [peer("r1"), peer("r2")];
+    let other = AgentRef::new(b"third-host".to_vec(), b"x".to_vec());
+    let mut store = with_agent(
+        with_agent(with_agent(with_agent(store, &mine), &theirs[0]), &theirs[1]),
+        &other,
+    );
+    for agent in &theirs {
+        store
+            .absorb(
+                agent,
+                Absorb::Reset {
+                    tail: vec![origin_item("k", 1, 1, "")],
+                    snapshot: Snapshot::default(),
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(store.host_generation(PEER).unwrap(), None);
+    assert_eq!(store.rewind_host(PEER, 4).unwrap(), 2);
+    assert_eq!(store.host_generation(PEER).unwrap(), Some(4));
+    for agent in &theirs {
+        assert!(store.agent(agent).unwrap().is_none());
+        assert!(store.get(agent, "k").unwrap().is_none());
+    }
+    assert!(store.agent(&mine).unwrap().is_some());
+    assert!(store.agent(&other).unwrap().is_some());
+    assert!(matches!(
+        store.rewind_host(OWN, 1),
+        Err(StoreError::OwnHost)
+    ));
+}
+
+fn absorb_refuses_own_rows<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    assert!(matches!(
+        store.absorb(&agent, Absorb::CaughtUp(1)),
+        Err(StoreError::NotReplica)
+    ));
+    assert!(matches!(
+        store.absorb(&peer("ghost"), Absorb::CaughtUp(1)),
+        Err(StoreError::UnknownAgent)
+    ));
+}
+
+#[test]
+fn both_implementations_answer_a_mixed_history_identically() {
+    fn run<S: Store>(store: S) -> Vec<String> {
+        let agent = own("a");
+        let replica = peer("r");
+        let mut store = with_agent(with_agent(store, &agent), &replica);
+        store
+            .commit(
+                &agent,
+                &[
+                    (1, items_step(&[item("a", "1"), item("b", "2")])),
+                    (
+                        2,
+                        Step {
+                            appends: vec![Append {
+                                key: "b".into(),
+                                text: "+".into(),
+                                ..Default::default()
+                            }],
+                            snapshot: Some(snapshot(Phase::NeedsYou, Some("w"), 3)),
+                            ..Default::default()
+                        },
+                    ),
+                ],
+                CLOCK,
+            )
+            .unwrap();
+        store
+            .absorb(
+                &replica,
+                Absorb::Reset {
+                    tail: vec![origin_item("z", 3, 3, "z")],
+                    snapshot: Snapshot::default(),
+                },
+            )
+            .unwrap();
+        let mut out = Vec::new();
+        for agent in [&agent, &replica] {
+            out.push(format!("{:?}", store.agent(agent).unwrap()));
+            out.push(format!("{:?}", store.page(agent, None, 10).unwrap()));
+            out.push(format!("{:?}", store.cut(agent, 10).unwrap()));
+        }
+        out.push(format!("{:?}", store.notifications().unwrap()));
+        out
+    }
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        run(InMemory::new(OWN)),
+        run(Sqlite::open(&dir.path().join("s.sqlite"), OWN).unwrap())
+    );
+}

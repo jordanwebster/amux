@@ -37,9 +37,9 @@ test-crate CRATE *ARGS:
 test-fold *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; if [ "${2-}" = --nocapture ]; then filter=$1; shift 2; {{bounded}} 1200 cargo test --locked -p fold "$filter" -- --nocapture "$@"; else {{bounded}} 1200 cargo test --locked -p fold "$@"; fi
 
-# Exercise the shared SQLite lifecycle and materialisation contract.
+# Exercise the profile store against both of its implementations.
 test-store *ARGS:
-    set -e; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked -p store --bin store-family-v2-fixture --features bundled,family-definition-v2-fixture; scripts/python -B scripts/sqlite_linkage.py target/debug/store-family-v2-fixture; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
 
 # Cross-compile every store test and run it against bundled SQLite on the
 # leased, booted iOS simulator, including linkage and runtime identity proof.

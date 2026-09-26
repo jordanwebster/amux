@@ -1,578 +1,833 @@
-//! SQLite-backed client store.
+//! The profile store: one database per profile, the truth for this host's
+//! own agents and a cache of its peers' agents, and the only history any
+//! client on the machine reads, through its runtime.
 //!
-//! Each open store owns one worker thread and one SQLite connection. The
-//! public async facade sends operations to that thread, which also owns the
-//! sidecar lease for the connection's lifetime.
+//! Own rows are written by [`Store::commit`] from an agent's journal: the
+//! store assigns every record the agent's next revision and every new key
+//! the next order, in journal order. Replica rows are written only by
+//! [`Store::absorb`], which copies the origin's revisions and orders and
+//! keeps the replica's rows one contiguous block ending at the origin's
+//! newest (see [`Absorb`]). Both are single transactions.
+//!
+//! The logic lives here once, over the [`Tables`] primitives; [`Sqlite`]
+//! (the profile file) and [`InMemory`] (tests, replay) differ only in how
+//! they keep rows, so one conformance suite holds both to the same reads.
 
-#![forbid(unsafe_code)]
+use std::collections::HashMap;
 
-mod chat;
-mod db;
-mod dump;
-mod families;
-mod fleet;
-mod maintain;
-mod quarantine;
-mod view;
+use prost::Message as _;
+use serde::{Deserialize, Serialize};
+pub use wire::{Append, Attachment, Item, Snapshot, Step};
 
-use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+mod memory;
+mod migrations;
+mod sqlite;
 
-pub use db::{LibraryReport, OpenReport, StoreGenerations, linked_library_report, qualify_library};
-pub use families::{
-    CHAT, CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET, FLEET_SHAPE, Family, META, Migration,
-    REGISTRY, Regime, Registry, VIEW,
-};
-pub use fleet::FleetChange;
-pub use fold::{
-    AttemptId, CommitOutcome, Fleet, FleetAgent, FleetDelta, FleetHost, FleetSnapshot, Generations,
-    Loaded, Membership, OpId, ProviderFold, StoreError, claude_pty, claude_sdk, codex,
-};
-use fold::{
-    Entry, ExpectedHead, Head, Mutation, Page, PageToken, SegmentTransition, WindowBudget,
-    WindowInterest,
-};
-pub use maintain::{Budget, MaintenanceReport};
-use model::AgentId;
-pub use quarantine::{QuarantineDurableState, QuarantineRecord, QuarantineReport};
+pub use memory::InMemory;
+pub use migrations::{MIGRATIONS, SCHEMA_STAMP, migration_hash};
+pub use sqlite::{OpenError, Sqlite};
 
-const LEASE_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Clone, Copy)]
-enum LockMode {
-    Shared,
-    Exclusive,
+/// An agent by the host that owns it and its id.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AgentRef {
+    pub host: Vec<u8>,
+    pub agent: Vec<u8>,
 }
 
-pub struct Store {
-    sender: Option<Sender<Command>>,
-    worker: Option<JoinHandle<()>>,
-    path: PathBuf,
-    generations: StoreGenerations,
-    library: LibraryReport,
-    open_report: OpenReport,
-}
-
-impl Store {
-    pub async fn open(path: &Path) -> Result<Self, StoreError> {
-        let path = path.to_owned();
-        let worker_path = path.clone();
-        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
-        let (sender, receiver) = mpsc::channel();
-        let worker = std::thread::Builder::new()
-            .name("amux-store".to_owned())
-            .spawn(move || worker(worker_path, receiver, ready_sender))
-            .map_err(|_| StoreError::Io)?;
-
-        match ready_receiver.recv().map_err(|_| StoreError::Io)? {
-            Ok(ready) => Ok(Self {
-                sender: Some(sender),
-                worker: Some(worker),
-                path,
-                generations: ready.generations,
-                library: ready.library,
-                open_report: ready.open_report,
-            }),
-            Err(error) => {
-                let _ = worker.join();
-                Err(error)
-            }
-        }
-    }
-
-    pub fn generations(&self) -> StoreGenerations {
-        self.generations
-    }
-
-    pub fn library_report(&self) -> &LibraryReport {
-        &self.library
-    }
-
-    pub fn open_report(&self) -> OpenReport {
-        self.open_report
-    }
-
-    pub async fn maintain(
-        &self,
-        budget: Budget,
-        deadline: Duration,
-    ) -> Result<MaintenanceReport, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.sender
-            .as_ref()
-            .ok_or(StoreError::Corrupt)?
-            .send(Command::Maintain {
-                budget,
-                deadline,
-                reply: reply_sender,
-            })
-            .map_err(|_| StoreError::Corrupt)?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn apply_fleet(
-        &self,
-        generations: fold::Generations,
-        delta: FleetDelta,
-    ) -> Result<FleetChange, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.sender
-            .as_ref()
-            .ok_or(StoreError::Corrupt)?
-            .send(Command::ApplyFleet {
-                generations,
-                delta: Box::new(delta),
-                reply: reply_sender,
-            })
-            .map_err(|_| StoreError::Corrupt)?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn fleet(&self, generations: fold::Generations) -> Result<Fleet, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.sender
-            .as_ref()
-            .ok_or(StoreError::Corrupt)?
-            .send(Command::Fleet {
-                generations,
-                reply: reply_sender,
-            })
-            .map_err(|_| StoreError::Corrupt)?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn load<F>(
-        &self,
-        agent: AgentId,
-        window: WindowBudget,
-    ) -> Result<fold::Loaded<F>, StoreError>
-    where
-        F: ProviderFold + Send + 'static,
-        F::Entry: Send,
-    {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = chat::load::<F>(connection, agent, window);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the public store API mirrors the complete optimistic commit contract"
-    )]
-    pub async fn commit<F>(
-        &self,
-        agent: AgentId,
-        generations: Generations,
-        expected: ExpectedHead,
-        head: Head<F>,
-        transition: Option<SegmentTransition>,
-        mutations: Vec<Mutation<F::Entry>>,
-        interest: WindowInterest,
-    ) -> CommitOutcome<F>
-    where
-        F: ProviderFold + Send + 'static,
-        F::Entry: Send,
-        <F::Entry as Entry>::Partial: Send,
-    {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        if let Err(error) = self.send_run(move |connection| {
-            let result = chat::commit(
-                connection,
-                agent,
-                generations,
-                expected,
-                head,
-                transition,
-                mutations,
-                interest,
-            );
-            let corrupt = matches!(result, CommitOutcome::Refused(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        }) {
-            return CommitOutcome::Refused(error);
-        }
-        reply_receiver
-            .recv()
-            .unwrap_or(CommitOutcome::Refused(StoreError::Corrupt))
-    }
-
-    pub async fn page<F>(
-        &self,
-        agent: AgentId,
-        token: PageToken,
-        n: usize,
-    ) -> Result<Page<F::Entry>, StoreError>
-    where
-        F: ProviderFold + Send + 'static,
-        F::Entry: Send,
-    {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = chat::page::<F>(connection, agent, token, n);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn invalidate<F>(
-        &self,
-        agent: AgentId,
-        generations: Generations,
-        expected: ExpectedHead,
-        reason: fold::BaselineReason,
-    ) -> CommitOutcome<F>
-    where
-        F: ProviderFold + Send + 'static,
-        F::Entry: Send,
-    {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        if let Err(error) = self.send_run(move |connection| {
-            let result = chat::invalidate::<F>(connection, agent, generations, expected, reason);
-            let corrupt = matches!(result, CommitOutcome::Refused(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        }) {
-            return CommitOutcome::Refused(error);
-        }
-        reply_receiver
-            .recv()
-            .unwrap_or(CommitOutcome::Refused(StoreError::Corrupt))
-    }
-
-    pub async fn view_get(&self, kind: &str, key: &str) -> Result<Option<String>, StoreError> {
-        let kind = kind.to_owned();
-        let key = key.to_owned();
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = view::get(connection, &kind, &key);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn view_set(&self, kind: &str, key: &str, value: &str) -> Result<(), StoreError> {
-        let kind = kind.to_owned();
-        let key = key.to_owned();
-        let value = value.to_owned();
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = view::set(connection, &kind, &key, &value);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn data_version(&self) -> Result<u64, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = connection
-                .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
-                .map_err(db::map_sqlite_error)
-                .and_then(|value| u64::try_from(value).map_err(|_| StoreError::Corrupt));
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn record_chat_opened(&self, agent: AgentId) -> Result<(), StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = connection
-                .execute(
-                    "UPDATE agent SET last_opened_at=?2 WHERE id=?1",
-                    rusqlite::params![agent.to_string(), chrono::Utc::now().timestamp_millis()],
-                )
-                .map(|_| ())
-                .map_err(db::map_sqlite_error);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn dump(&self, agent: AgentId) -> Result<String, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = dump::render(connection, agent);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn quarantine_report(&self) -> Result<QuarantineReport, StoreError> {
-        let path = self.path.clone();
-        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
-        self.send_run(move |connection| {
-            let result = quarantine::inspect(connection, &path);
-            let corrupt = matches!(result, Err(StoreError::Corrupt));
-            let _ = reply_sender.send(result);
-            corrupt
-        })?;
-        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
-    }
-
-    pub async fn resolve_quarantine(
-        path: &Path,
-        report: &QuarantineReport,
-    ) -> Result<(), StoreError> {
-        if report.is_empty() {
-            return Err(StoreError::Invalid);
-        }
-        let parent = path.parent().ok_or(StoreError::Io)?;
-        std::fs::create_dir_all(parent).map_err(map_io)?;
-        let lock_file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(parent.join("store.lock"))
-            .map_err(map_io)?;
-        acquire_lock(&lock_file, LockMode::Exclusive)?;
-
-        if quarantine::has_pending(path)? {
-            return Err(StoreError::Invalid);
-        }
-        let mut opened = db::open_database(path, &[])?;
-        quarantine::resolve(&mut opened.connection, &report.ids())
-    }
-
-    fn send_run(
-        &self,
-        run: impl FnOnce(&mut rusqlite::Connection) -> bool + Send + 'static,
-    ) -> Result<(), StoreError> {
-        self.sender
-            .as_ref()
-            .ok_or(StoreError::Corrupt)?
-            .send(Command::Run(Box::new(run)))
-            .map_err(|_| StoreError::Corrupt)
-    }
-
-    pub async fn close(mut self) {
-        self.close_inner();
-    }
-
-    fn close_inner(&mut self) {
-        if let Some(sender) = self.sender.take() {
-            let _ = sender.send(Command::Close);
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+impl AgentRef {
+    pub fn new(host: impl Into<Vec<u8>>, agent: impl Into<Vec<u8>>) -> Self {
+        Self {
+            host: host.into(),
+            agent: agent.into(),
         }
     }
 }
 
-impl Drop for Store {
-    fn drop(&mut self) {
-        self.close_inner();
+/// The agents row. Lifecycle and phase are kept as their wire integers so
+/// a value from a newer peer is stored and served, never refused.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentRow {
+    pub agent: AgentRef,
+    pub kind: String,
+    pub name: Option<String>,
+    pub cwd: String,
+    pub parent: Option<AgentRef>,
+    pub lifecycle: i32,
+    pub exit_cause: Option<String>,
+    /// Copied from the snapshot envelope at commit.
+    pub phase: i32,
+    pub working_on: Option<String>,
+    /// The newest snapshot's at_ms, never commit time.
+    pub last_activity: Option<i64>,
+    pub snapshot: Option<Snapshot>,
+    pub snapshot_revision: u64,
+    /// Own rows: the journal offset committed through.
+    pub ingest_cursor: u64,
+    pub next_revision: u64,
+    /// Replica rows: the origin revision the source is complete through.
+    pub source_cursor: u64,
+    /// The block runs from this order to the newest held row. Replicas:
+    /// none means no block; set by a Reset, moved down by joining pages.
+    /// Own rows: none means all history is held; set only by retention.
+    pub complete_from_order: Option<u64>,
+    /// Replicas: the origin said no older history exists. Own rows:
+    /// retention trimmed the older history away.
+    pub exhausted: bool,
+    pub created_at: i64,
+    pub producer_version: String,
+    pub incarnation: u32,
+}
+
+impl AgentRow {
+    /// A new live row in phase starting, with nothing committed yet.
+    pub fn new(agent: AgentRef, kind: impl Into<String>, cwd: impl Into<String>) -> Self {
+        Self {
+            agent,
+            kind: kind.into(),
+            name: None,
+            cwd: cwd.into(),
+            parent: None,
+            lifecycle: wire::Lifecycle::Live as i32,
+            exit_cause: None,
+            phase: wire::Phase::Starting as i32,
+            working_on: None,
+            last_activity: None,
+            snapshot: None,
+            snapshot_revision: 0,
+            ingest_cursor: 0,
+            next_revision: 1,
+            source_cursor: 0,
+            complete_from_order: None,
+            exhausted: false,
+            created_at: 0,
+            producer_version: String::new(),
+            incarnation: 1,
+        }
     }
 }
 
-enum Command {
-    Run(Box<dyn FnOnce(&mut rusqlite::Connection) -> bool + Send>),
-    ApplyFleet {
-        generations: fold::Generations,
-        delta: Box<FleetDelta>,
-        reply: mpsc::SyncSender<Result<FleetChange, StoreError>>,
+/// One committed or absorbed record, as it is broadcast after the
+/// transaction: items with their order and revision, appends with the base
+/// revision a client must hold to apply them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Record {
+    Item(Item),
+    Append(Append),
+    Snapshot(Snapshot),
+}
+
+impl Record {
+    pub fn revision(&self) -> u64 {
+        match self {
+            Self::Item(item) => item.revision,
+            Self::Append(append) => append.revision,
+            Self::Snapshot(snapshot) => snapshot.revision,
+        }
+    }
+}
+
+/// What the daemon needs from the clock and its parameters at commit.
+#[derive(Clone, Copy, Debug)]
+pub struct CommitClock {
+    pub now_ms: i64,
+    /// How long a notification waits before it is sent, so an answer from
+    /// the desktop cancels it.
+    pub notify_delay_ms: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Committed {
+    pub records: Vec<Record>,
+    /// The journal offset the row is now committed through.
+    pub cursor: u64,
+    /// Appends naming a key the store does not hold; the item they extend
+    /// was never committed, so there is nothing to extend.
+    pub skipped_appends: usize,
+}
+
+/// A record from a peer source.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SourceEvent {
+    Item(Item),
+    Append(Append),
+    Snapshot(Snapshot),
+}
+
+/// The one write primitive for replica rows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Absorb {
+    /// Records that join the block above its newest row. `live` is false
+    /// during a catch-up, which leaves the source cursor alone; live
+    /// records advance it to their revision.
+    Delta {
+        events: Vec<SourceEvent>,
+        live: bool,
     },
-    Fleet {
-        generations: fold::Generations,
-        reply: mpsc::SyncSender<Result<Fleet, StoreError>>,
+    /// Forget the block: the tail replaces it and complete_from_order moves
+    /// to the tail's oldest order. Rows below stay stored for Get but no
+    /// longer count.
+    Reset { tail: Vec<Item>, snapshot: Snapshot },
+    /// An origin page for orders below `before_order`. Stored only when it
+    /// joins the block, that is when `before_order` is the block's
+    /// boundary; otherwise it is served to its requester and dropped,
+    /// because only a source starts a block.
+    Page {
+        before_order: u64,
+        items: Vec<Item>,
+        exhausted: bool,
     },
-    Maintain {
-        budget: Budget,
-        deadline: Duration,
-        reply: mpsc::SyncSender<Result<MaintenanceReport, StoreError>>,
-    },
-    Close,
+    /// The origin's replay is complete through this revision.
+    CaughtUp(u64),
 }
 
-struct Ready {
-    generations: StoreGenerations,
-    library: LibraryReport,
-    open_report: OpenReport,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Absorbed {
+    /// Records that changed a row, in the order applied.
+    pub stored: Vec<Record>,
+    /// False for a page that did not join the block and was not stored.
+    pub joined: bool,
 }
 
-fn worker(
-    path: PathBuf,
-    receiver: Receiver<Command>,
-    ready: mpsc::SyncSender<Result<Ready, StoreError>>,
-) {
-    let opened = open_on_worker(&path);
-    let (mut connection, lock_file, metadata) = match opened {
-        Ok(opened) => opened,
-        Err(error) => {
-            if error == StoreError::Corrupt {
-                let _ = quarantine::request(&path, QuarantineDurableState::Unknown);
-            }
-            let _ = ready.send(Err(error));
-            return;
-        }
-    };
-    if ready.send(Ok(metadata)).is_err() {
-        return;
+/// The marker a subscriber reads once at join, after its held rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Marker {
+    CaughtUp,
+    Detached,
+}
+
+/// A subscription's opening: one point in the commit sequence.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cut {
+    pub snapshot: Option<Snapshot>,
+    /// The newest rows of the block, oldest first.
+    pub held: Vec<Item>,
+    pub marker: Option<Marker>,
+}
+
+/// How a page ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageEnd {
+    /// The limit was reached; ask again below the oldest item.
+    More,
+    /// No older history exists anywhere.
+    Exhausted,
+    /// The block ends here; older history is at the origin.
+    Boundary,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Page {
+    /// Newest first.
+    pub items: Vec<Item>,
+    pub end: PageEnd,
+}
+
+/// The outbox row that tells a parent its child finished or failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Delivery {
+    pub child_id: Vec<u8>,
+    pub incarnation: u32,
+    pub turn_id: u64,
+    pub parent: AgentRef,
+    pub parent_incarnation: u32,
+    /// `wire::EnvelopeKind` as an integer: finished or failed.
+    pub kind: i32,
+    /// The child's last message, or the failure's cause.
+    pub body: String,
+}
+
+/// The push outbox row for one turn into needs_you.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notification {
+    pub agent_id: Vec<u8>,
+    pub revision: u64,
+    pub due_at: i64,
+    pub body: NotificationBody,
+}
+
+/// Envelope fields only: nothing here needs a body decoded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationBody {
+    pub name: Option<String>,
+    pub working_on: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("no agent row for this agent")]
+    UnknownAgent,
+    #[error("commit writes own rows only")]
+    NotOwn,
+    #[error("absorb writes replica rows only")]
+    NotReplica,
+    #[error("a host's replicas cannot be rewound on the host itself")]
+    OwnHost,
+    #[error("sqlite: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("stored data does not decode: {0}")]
+    Corrupt(String),
+}
+
+/// The primitive row operations, inside one transaction. Everything else
+/// is written once, over these.
+pub trait Tables {
+    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError>;
+    fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
+    /// Removes the row, its items, its deliveries and its notifications.
+    fn remove_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError>;
+    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentRef>, StoreError>;
+    fn item(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError>;
+    /// Inserts or replaces by key. A second key at an order already taken
+    /// is an error: one key per order.
+    fn put_item(&mut self, agent: &AgentRef, item: &Item) -> Result<(), StoreError>;
+    fn max_order(&self, agent: &AgentRef) -> Result<Option<u64>, StoreError>;
+    /// Items with `min_order <= order < below`, newest first.
+    fn items_desc(
+        &self,
+        agent: &AgentRef,
+        below: Option<u64>,
+        min_order: u64,
+        limit: u32,
+    ) -> Result<Vec<Item>, StoreError>;
+    fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
+    fn deliveries(&self) -> Result<Vec<Delivery>, StoreError>;
+    fn remove_delivery(
+        &mut self,
+        child_id: &[u8],
+        incarnation: u32,
+        kind: i32,
+        turn_id: u64,
+    ) -> Result<(), StoreError>;
+    fn put_notification(&mut self, notification: &Notification) -> Result<(), StoreError>;
+    fn notifications(&self) -> Result<Vec<Notification>, StoreError>;
+    fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
+    fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
+    fn set_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError>;
+}
+
+/// How a store keeps its rows: transactions over [`Tables`] and the
+/// in-memory marker flags.
+pub trait Backend {
+    fn own_host(&self) -> &[u8];
+    fn read<R>(
+        &self,
+        f: impl FnOnce(&dyn Tables) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError>;
+    /// Runs `f` in one transaction: all of it lands or none of it does.
+    fn write<R>(
+        &mut self,
+        f: impl FnOnce(&mut dyn Tables) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError>;
+    fn markers(&self) -> &HashMap<AgentRef, Marker>;
+    fn markers_mut(&mut self) -> &mut HashMap<AgentRef, Marker>;
+}
+
+/// The runtime's interface to its store.
+pub trait Store {
+    fn own_host(&self) -> &[u8];
+    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError>;
+    /// Items by order, newest first, from the block only.
+    fn page(
+        &self,
+        agent: &AgentRef,
+        before_order: Option<u64>,
+        limit: u32,
+    ) -> Result<Page, StoreError>;
+    /// One held item, in the block or not.
+    fn get(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError>;
+    /// The newest `n` rows of the block, oldest first.
+    fn last_n(&self, agent: &AgentRef, n: u32) -> Result<Vec<Item>, StoreError>;
+    /// Replica rows: the source cursor. Own rows: the ingest cursor.
+    fn cursor(&self, agent: &AgentRef) -> Result<u64, StoreError>;
+    /// The snapshot, the newest `n` rows and the marker, read together.
+    fn cut(&self, agent: &AgentRef, n: u32) -> Result<Cut, StoreError>;
+    fn set_marker(&mut self, agent: &AgentRef, marker: Option<Marker>);
+
+    /// Creates a row or updates its registry fields: kind, name, cwd,
+    /// parent, lifecycle, exit cause, creation time, producer version and
+    /// incarnation, and for a replica the phase, working_on and last
+    /// activity its inventory row carries. Committed state is kept.
+    fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
+    /// Removes an agent whole: row, items, deliveries and notifications.
+    fn delete_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError>;
+    /// Commits journal frames to an own row in one transaction.
+    fn commit(
+        &mut self,
+        agent: &AgentRef,
+        frames: &[(u64, Step)],
+        clock: CommitClock,
+    ) -> Result<Committed, StoreError>;
+    fn absorb(&mut self, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError>;
+    /// Drops every replica of `host` and records its new generation in one
+    /// transaction. Returns how many agents were dropped.
+    fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError>;
+    fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
+
+    fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
+    fn deliveries(&self) -> Result<Vec<Delivery>, StoreError>;
+    fn remove_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
+    fn notifications(&self) -> Result<Vec<Notification>, StoreError>;
+    fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
+}
+
+fn is_own(backend: &impl Backend, agent: &AgentRef) -> bool {
+    agent.host == backend.own_host()
+}
+
+/// The lowest order the block counts from.
+fn block_floor(row: &AgentRow, own: bool) -> Option<u64> {
+    match (own, row.complete_from_order) {
+        (_, Some(order)) => Some(order),
+        (true, None) => Some(0),
+        (false, None) => None,
+    }
+}
+
+impl<B: Backend> Store for B {
+    fn own_host(&self) -> &[u8] {
+        Backend::own_host(self)
     }
 
-    let mut corrupt = false;
-    let mut pending = None;
-    loop {
-        let command = match pending.take() {
-            Some(command) => command,
-            None => match receiver.recv() {
-                Ok(command) => command,
-                Err(_) => break,
-            },
-        };
-        match command {
-            Command::Run(run) => {
-                corrupt = run(&mut connection);
-                if corrupt {
-                    break;
-                }
-            }
-            Command::ApplyFleet {
-                generations,
-                delta,
-                reply,
-            } => {
-                let result = fleet::apply(&mut connection, generations, *delta, chrono::Utc::now());
-                corrupt = result == Err(StoreError::Corrupt);
-                let _ = reply.send(result);
-                if corrupt {
-                    break;
-                }
-            }
-            Command::Fleet { generations, reply } => {
-                let result = fleet::load(&mut connection, generations);
-                corrupt = result == Err(StoreError::Corrupt);
-                let _ = reply.send(result);
-                if corrupt {
-                    break;
-                }
-            }
-            Command::Maintain {
-                budget,
-                deadline,
-                reply,
-            } => {
-                let mut queued = None;
-                let result = maintain::run(&connection, budget, deadline, || {
-                    if queued.is_none() {
-                        queued = receiver.try_recv().ok();
-                    }
-                    queued.is_some()
+    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError> {
+        self.read(|tables| tables.agent(agent))
+    }
+
+    fn page(
+        &self,
+        agent: &AgentRef,
+        before_order: Option<u64>,
+        limit: u32,
+    ) -> Result<Page, StoreError> {
+        let own = is_own(self, agent);
+        self.read(|tables| {
+            let row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+            let bottom = if own || row.exhausted {
+                PageEnd::Exhausted
+            } else {
+                PageEnd::Boundary
+            };
+            let Some(floor) = block_floor(&row, own) else {
+                return Ok(Page {
+                    items: Vec::new(),
+                    end: PageEnd::Boundary,
                 });
-                corrupt = result == Err(StoreError::Corrupt);
-                let _ = reply.send(result);
-                if corrupt {
-                    break;
-                }
-                pending = queued;
+            };
+            if limit == 0 {
+                return Ok(Page {
+                    items: Vec::new(),
+                    end: PageEnd::More,
+                });
             }
-            Command::Close => break,
-        }
+            let items = tables.items_desc(agent, before_order, floor, limit)?;
+            let end = if items.len() == limit as usize {
+                PageEnd::More
+            } else {
+                bottom
+            };
+            Ok(Page { items, end })
+        })
     }
 
-    drop(connection);
-    drop(lock_file);
-    if corrupt {
-        let _ = quarantine::request(&path, quarantine::known_durable_state());
+    fn get(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError> {
+        self.read(|tables| tables.item(agent, key))
     }
-}
 
-fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), StoreError> {
-    let parent = path.parent().ok_or(StoreError::Io)?;
-    std::fs::create_dir_all(parent).map_err(map_io)?;
-    let lock_path = parent.join("store.lock");
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_path)
-        .map_err(map_io)?;
+    fn last_n(&self, agent: &AgentRef, n: u32) -> Result<Vec<Item>, StoreError> {
+        let own = is_own(self, agent);
+        self.read(|tables| last_n(tables, agent, own, n))
+    }
 
-    let pending_before_lock = quarantine::has_pending(path)?;
-    acquire_lock(
-        &lock_file,
-        if pending_before_lock {
-            LockMode::Exclusive
+    fn cursor(&self, agent: &AgentRef) -> Result<u64, StoreError> {
+        let own = is_own(self, agent);
+        let row = self.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+        Ok(if own {
+            row.ingest_cursor
         } else {
-            LockMode::Shared
-        },
-    )?;
-
-    let mut exclusive = pending_before_lock;
-    if !exclusive && quarantine::has_pending(path)? {
-        lock_file.unlock().map_err(map_io)?;
-        acquire_lock(&lock_file, LockMode::Exclusive)?;
-        exclusive = true;
+            row.source_cursor
+        })
     }
 
-    let pending = if exclusive {
-        quarantine::prepare_pending(path)?
-    } else {
-        Vec::new()
-    };
-    let opened = match db::open_database(path, &pending) {
-        Err(StoreError::Busy) => db::open_database(path, &pending)?,
-        result => result?,
-    };
-    if exclusive {
-        quarantine::finish_pending(&pending)?;
-        lock_file.unlock().map_err(map_io)?;
-        acquire_lock(&lock_file, LockMode::Shared)?;
+    fn cut(&self, agent: &AgentRef, n: u32) -> Result<Cut, StoreError> {
+        let own = is_own(self, agent);
+        let marker = self.markers().get(agent).copied();
+        self.read(|tables| {
+            let row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+            Ok(Cut {
+                snapshot: row.snapshot,
+                held: last_n(tables, agent, own, n)?,
+                marker,
+            })
+        })
     }
-    let ready = Ready {
-        generations: opened.generations,
-        library: opened.library,
-        open_report: opened.open_report,
-    };
-    Ok((opened.connection, lock_file, ready))
-}
 
-fn acquire_lock(file: &File, mode: LockMode) -> Result<(), StoreError> {
-    let started = Instant::now();
-    loop {
-        let result = match mode {
-            LockMode::Shared => file.try_lock_shared(),
-            LockMode::Exclusive => file.try_lock(),
-        };
-        match result {
-            Ok(()) => return Ok(()),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if started.elapsed() >= LEASE_TIMEOUT {
-                    return Err(StoreError::Busy);
-                }
-                std::thread::sleep(Duration::from_millis(10));
+    fn set_marker(&mut self, agent: &AgentRef, marker: Option<Marker>) {
+        match marker {
+            Some(marker) => {
+                self.markers_mut().insert(agent.clone(), marker);
             }
-            Err(std::fs::TryLockError::Error(error)) => return Err(map_io(error)),
+            None => {
+                self.markers_mut().remove(agent);
+            }
         }
     }
+
+    fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError> {
+        let own = is_own(self, &row.agent);
+        self.write(|tables| {
+            let merged = match tables.agent(&row.agent)? {
+                None => row.clone(),
+                Some(mut held) => {
+                    held.kind = row.kind.clone();
+                    held.name = row.name.clone();
+                    held.cwd = row.cwd.clone();
+                    held.parent = row.parent.clone();
+                    held.lifecycle = row.lifecycle;
+                    held.exit_cause = row.exit_cause.clone();
+                    held.created_at = row.created_at;
+                    held.producer_version = row.producer_version.clone();
+                    held.incarnation = row.incarnation;
+                    if !own {
+                        held.phase = row.phase;
+                        held.working_on = row.working_on.clone();
+                        held.last_activity = row.last_activity;
+                    }
+                    held
+                }
+            };
+            tables.put_agent(&merged)
+        })
+    }
+
+    fn delete_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError> {
+        self.markers_mut().remove(agent);
+        self.write(|tables| tables.remove_agent(agent))
+    }
+
+    fn commit(
+        &mut self,
+        agent: &AgentRef,
+        frames: &[(u64, Step)],
+        clock: CommitClock,
+    ) -> Result<Committed, StoreError> {
+        if !is_own(self, agent) {
+            return Err(StoreError::NotOwn);
+        }
+        self.write(|tables| commit(tables, agent, frames, clock))
+    }
+
+    fn absorb(&mut self, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError> {
+        if is_own(self, agent) {
+            return Err(StoreError::NotReplica);
+        }
+        let marker = match &what {
+            Absorb::CaughtUp(_) => Some(Some(Marker::CaughtUp)),
+            Absorb::Reset { .. } => Some(None),
+            _ => None,
+        };
+        let absorbed = self.write(|tables| absorb(tables, agent, what))?;
+        if let Some(marker) = marker {
+            self.set_marker(agent, marker);
+        }
+        Ok(absorbed)
+    }
+
+    fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError> {
+        if host == Backend::own_host(self) {
+            return Err(StoreError::OwnHost);
+        }
+        let dropped = self.write(|tables| {
+            let agents = tables.agents_of_host(host)?;
+            for agent in &agents {
+                tables.remove_agent(agent)?;
+            }
+            tables.set_host_generation(host, generation)?;
+            Ok(agents)
+        })?;
+        for agent in &dropped {
+            self.markers_mut().remove(agent);
+        }
+        Ok(dropped.len())
+    }
+
+    fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError> {
+        self.read(|tables| tables.host_generation(host))
+    }
+
+    fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError> {
+        self.write(|tables| tables.put_delivery(delivery))
+    }
+
+    fn deliveries(&self) -> Result<Vec<Delivery>, StoreError> {
+        self.read(|tables| tables.deliveries())
+    }
+
+    fn remove_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError> {
+        self.write(|tables| {
+            tables.remove_delivery(
+                &delivery.child_id,
+                delivery.incarnation,
+                delivery.kind,
+                delivery.turn_id,
+            )
+        })
+    }
+
+    fn notifications(&self) -> Result<Vec<Notification>, StoreError> {
+        self.read(|tables| tables.notifications())
+    }
+
+    fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError> {
+        self.write(|tables| tables.remove_notifications(agent_id))
+    }
 }
 
-fn map_io(error: std::io::Error) -> StoreError {
-    match error.kind() {
-        std::io::ErrorKind::PermissionDenied => StoreError::Permission,
-        _ => StoreError::Io,
+fn last_n(
+    tables: &dyn Tables,
+    agent: &AgentRef,
+    own: bool,
+    n: u32,
+) -> Result<Vec<Item>, StoreError> {
+    let row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+    let Some(floor) = block_floor(&row, own) else {
+        return Ok(Vec::new());
+    };
+    let mut items = tables.items_desc(agent, None, floor, n)?;
+    items.reverse();
+    Ok(items)
+}
+
+fn commit(
+    tables: &mut dyn Tables,
+    agent: &AgentRef,
+    frames: &[(u64, Step)],
+    clock: CommitClock,
+) -> Result<Committed, StoreError> {
+    let mut row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+    let mut committed = Committed::default();
+    let mut next_order = tables.max_order(agent)?.map_or(1, |order| order + 1);
+    for (offset, step) in frames {
+        for item in &step.items {
+            let mut item = item.clone();
+            item.agent = agent.agent.clone();
+            item.revision = row.next_revision;
+            row.next_revision += 1;
+            item.order = match tables.item(agent, &item.key)? {
+                Some(held) => held.order,
+                None => {
+                    next_order += 1;
+                    next_order - 1
+                }
+            };
+            tables.put_item(agent, &item)?;
+            committed.records.push(Record::Item(item));
+        }
+        for append in &step.appends {
+            let Some(mut held) = tables.item(agent, &append.key)? else {
+                committed.skipped_appends += 1;
+                continue;
+            };
+            let base_revision = held.revision;
+            held.text.push_str(&append.text);
+            held.revision = row.next_revision;
+            row.next_revision += 1;
+            tables.put_item(agent, &held)?;
+            committed.records.push(Record::Append(Append {
+                agent: agent.agent.clone(),
+                key: append.key.clone(),
+                base_revision,
+                revision: held.revision,
+                text: append.text.clone(),
+            }));
+        }
+        if let Some(snapshot) = &step.snapshot {
+            let mut snapshot = snapshot.clone();
+            snapshot.agent = agent.agent.clone();
+            snapshot.revision = row.next_revision;
+            row.next_revision += 1;
+            let was = row.phase;
+            copy_envelope(&mut row, &snapshot);
+            let needs_you = wire::Phase::NeedsYou as i32;
+            if snapshot.phase == needs_you && was != needs_you {
+                let text = newest_text(tables, agent)?;
+                tables.put_notification(&Notification {
+                    agent_id: agent.agent.clone(),
+                    revision: snapshot.revision,
+                    due_at: clock.now_ms + clock.notify_delay_ms,
+                    body: NotificationBody {
+                        name: row.name.clone(),
+                        working_on: row.working_on.clone(),
+                        text,
+                    },
+                })?;
+            } else if snapshot.phase != needs_you && was == needs_you {
+                tables.remove_notifications(&agent.agent)?;
+            }
+            committed.records.push(Record::Snapshot(snapshot));
+        }
+        if let (Some(turn_end), Some(parent)) = (&step.turn_end, &row.parent) {
+            let body = if turn_end.last_message_key.is_empty() {
+                String::new()
+            } else {
+                tables
+                    .item(agent, &turn_end.last_message_key)?
+                    .map(|item| item.text)
+                    .unwrap_or_default()
+            };
+            let parent_incarnation = tables.agent(parent)?.map_or(0, |parent| parent.incarnation);
+            tables.put_delivery(&Delivery {
+                child_id: agent.agent.clone(),
+                incarnation: row.incarnation,
+                turn_id: turn_end.turn_id,
+                parent: parent.clone(),
+                parent_incarnation,
+                kind: wire::EnvelopeKind::Finished as i32,
+                body,
+            })?;
+        }
+        row.ingest_cursor = *offset;
     }
+    committed.cursor = row.ingest_cursor;
+    tables.put_agent(&row)?;
+    Ok(committed)
+}
+
+/// Copies the envelope fields a snapshot carries onto its row.
+fn copy_envelope(row: &mut AgentRow, snapshot: &Snapshot) {
+    row.phase = snapshot.phase;
+    row.working_on = snapshot.working_on.clone();
+    row.last_activity = Some(snapshot.at_ms);
+    row.snapshot_revision = snapshot.revision;
+    row.snapshot = Some(snapshot.clone());
+}
+
+fn newest_text(tables: &dyn Tables, agent: &AgentRef) -> Result<String, StoreError> {
+    Ok(tables
+        .items_desc(agent, None, 0, 1)?
+        .into_iter()
+        .next()
+        .map(|item| item.text)
+        .unwrap_or_default())
+}
+
+/// Stores an item unless the row already holds a newer revision of its key.
+fn upsert_newer(
+    tables: &mut dyn Tables,
+    agent: &AgentRef,
+    item: &Item,
+) -> Result<bool, StoreError> {
+    if let Some(held) = tables.item(agent, &item.key)?
+        && held.revision >= item.revision
+    {
+        return Ok(false);
+    }
+    let mut item = item.clone();
+    item.agent = agent.agent.clone();
+    tables.put_item(agent, &item)?;
+    Ok(true)
+}
+
+fn absorb(tables: &mut dyn Tables, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError> {
+    let mut row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
+    let mut absorbed = Absorbed {
+        stored: Vec::new(),
+        joined: true,
+    };
+    match what {
+        Absorb::Delta { events, live } => {
+            for event in events {
+                let record = match event {
+                    SourceEvent::Item(item) => {
+                        upsert_newer(tables, agent, &item)?.then_some(Record::Item(item))
+                    }
+                    SourceEvent::Append(append) => match tables.item(agent, &append.key)? {
+                        Some(mut held) if held.revision == append.base_revision => {
+                            held.text.push_str(&append.text);
+                            held.revision = append.revision;
+                            tables.put_item(agent, &held)?;
+                            Some(Record::Append(append))
+                        }
+                        // The stream ends with the full item; nothing to do.
+                        _ => None,
+                    },
+                    SourceEvent::Snapshot(snapshot) => (snapshot.revision > row.snapshot_revision)
+                        .then(|| {
+                            copy_envelope(&mut row, &snapshot);
+                            Record::Snapshot(snapshot)
+                        }),
+                };
+                if let Some(record) = record {
+                    if live {
+                        row.source_cursor = row.source_cursor.max(record.revision());
+                    }
+                    absorbed.stored.push(record);
+                }
+            }
+        }
+        Absorb::Reset { tail, snapshot } => {
+            let floor = match tail.iter().map(|item| item.order).min() {
+                Some(order) => order,
+                None => tables.max_order(agent)?.map_or(0, |order| order + 1),
+            };
+            for item in tail {
+                if upsert_newer(tables, agent, &item)? {
+                    absorbed.stored.push(Record::Item(item));
+                }
+            }
+            row.complete_from_order = Some(floor);
+            row.exhausted = false;
+            if snapshot.revision > row.snapshot_revision {
+                copy_envelope(&mut row, &snapshot);
+                absorbed.stored.push(Record::Snapshot(snapshot));
+            }
+        }
+        Absorb::Page {
+            before_order,
+            items,
+            exhausted,
+        } => {
+            if row.complete_from_order != Some(before_order)
+                || items.iter().any(|item| item.order >= before_order)
+            {
+                absorbed.joined = false;
+                return Ok(absorbed);
+            }
+            if let Some(lowest) = items.iter().map(|item| item.order).min() {
+                row.complete_from_order = Some(lowest);
+            }
+            for item in items {
+                if upsert_newer(tables, agent, &item)? {
+                    absorbed.stored.push(Record::Item(item));
+                }
+            }
+            row.exhausted = exhausted;
+        }
+        Absorb::CaughtUp(revision) => {
+            row.source_cursor = revision;
+        }
+    }
+    tables.put_agent(&row)?;
+    Ok(absorbed)
+}
+
+/// Encodes an attachment list for its column.
+pub(crate) fn encode_attachments(attachments: &[Attachment]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for attachment in attachments {
+        attachment
+            .encode_length_delimited(&mut bytes)
+            .expect("a Vec grows to fit");
+    }
+    bytes
+}
+
+pub(crate) fn decode_attachments(mut bytes: &[u8]) -> Result<Vec<Attachment>, StoreError> {
+    let mut attachments = Vec::new();
+    while !bytes.is_empty() {
+        attachments.push(
+            Attachment::decode_length_delimited(&mut bytes)
+                .map_err(|error| StoreError::Corrupt(error.to_string()))?,
+        );
+    }
+    Ok(attachments)
 }

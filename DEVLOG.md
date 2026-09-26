@@ -1,3 +1,26 @@
+2026-09-26 — **The profile store: one SQLite file per profile, own rows and replicas.**
+`crates/store` is rewritten as the store the daemon keeps per profile, with
+the old client cache, its fixture binary and its tests gone. The schema is
+the journal architecture's (agents, items, deliveries, notifications, hosts)
+as migration 1 under a fresh stamp; migrations are forward-only, each one
+transaction, their hashes recorded in the file and pinned by a test, and a
+file that is not an amux store, that a newer build stamped past this one, or
+whose applied migration text differs is refused. Own rows are written by
+`commit`, one transaction per batch of journal frames: every record takes the
+agent's next revision, a new key takes the next order and a known key keeps
+its own, appends extend the item's text, a snapshot's phase, working_on and
+time are copied onto the row, a turn end on a child enqueues the parent's
+delivery with a copy of the last message, a turn into needs-you enqueues
+one notification and leaving it removes them, and the journal cursor lands
+last. Replica rows are written only by `absorb`: deltas join above the
+block, a Reset's tail replaces it, a page is stored only when it joins the
+block from below, older revisions never overwrite newer ones, and only
+live records and CaughtUp move the source cursor. `cut` reads a
+subscription's snapshot, newest rows and marker together; `rewind_host`
+drops a host's replicas and records its generation in one transaction. The
+logic is written once over a small table interface, and a conformance suite
+runs every case against both the SQLite and the in-memory implementation.
+
 2026-09-26 — **Settings for the supervisor, updates, retention and discovery.**
 The installation config gains the keys the new daemon reads: `supervisor`
 (on | off, written by the install; the desktop installer says on),

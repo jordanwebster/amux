@@ -1633,17 +1633,14 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 name = "store"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "fold",
- "model",
- "postcard",
+ "prost",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
- "tokio",
- "tracing",
+ "thiserror 2.0.20",
+ "wire",
 ]
 
 [[package]]
