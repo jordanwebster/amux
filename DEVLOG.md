@@ -1,3 +1,12 @@
+2026-09-26 — **The agent process hosts Codex.**
+One `codex app-server` per agent over stdio: the agent does the handshake
+(initialize, initialized, thread/start) and records the thread id in
+`private/provider-session`, so a later incarnation sends thread/resume on
+the same thread and its boundary reads resumed. Turn requests with
+attachments get them appended as Codex input items (images as local images
+by blob path, the rest as element text). A provider test runs a turn
+against fake-codex and resumes it in a second incarnation.
+
 2026-09-26 — **The agent process hosts one provider and decides its own lifecycle.**
 New crate `agent`: `agent::run(dir, clock)` (the future `amux agent <dir>`)
 takes the directory's lock, reads the newest `spec.<n>`, listens on
