@@ -71,11 +71,13 @@ pub enum SourcePolicy {
 
 /// For tests: what a source does with an event it has just received.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceVerdict {
     Keep,
     /// Drop the stream here, as a link dying at this point would.
     Drop,
+    /// Hold the event until the future finishes, as a slow stream would,
+    /// then use it.
+    Hold(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
 }
 
 /// For tests: consulted by every source for every event it receives,
@@ -99,6 +101,8 @@ pub(crate) struct Sources {
     /// Exited agents whose catch-up has landed: nothing more will come, so
     /// no source opens for them until their host lists them live again.
     settled: HashSet<AgentKey>,
+    /// Exited agents whose source was reopened to settle them.
+    settling: HashSet<AgentKey>,
     /// When a client last subscribed to or paged a replica, on the policy
     /// clock: the replica retention sweep's least-recently-used order.
     last_used: HashMap<AgentKey, i64>,
@@ -117,6 +121,7 @@ impl Sources {
         for (_, (_, source)) in self.open.drain() {
             source.abort();
         }
+        self.settling.clear();
         self.ready.clear();
     }
 }
@@ -419,7 +424,9 @@ impl ProfileRuntime {
     fn put_replica_row(&self, store: &mut store::Sqlite, agent: &Agent) -> Result<(), StoreError> {
         let row = from_wire(agent);
         if row.lifecycle != wire::Lifecycle::Exited as i32 {
-            self.sources.lock().unwrap().settled.remove(&row.agent);
+            let mut sources = self.sources.lock().unwrap();
+            sources.settled.remove(&row.agent);
+            sources.settling.remove(&row.agent);
         }
         store.put_agent(&row)?;
         self.publish_row(store, &row.agent)
@@ -434,6 +441,7 @@ impl ProfileRuntime {
         let source = {
             let mut sources = self.sources.lock().unwrap();
             sources.settled.remove(key);
+            sources.settling.remove(key);
             sources.last_used.remove(key);
             sources.open.remove(key)
         };
@@ -479,7 +487,7 @@ impl ProfileRuntime {
     }
 
     /// Opens a source for every replica agent the policy wants and none is
-    /// open for, and closes the ones for exited agents that have caught up.
+    /// open for, and settles the ones for exited agents.
     pub(crate) async fn sweep_sources(&self) {
         let store = self.store.lock().await;
         let Ok(rows) = store.agents() else { return };
@@ -492,7 +500,7 @@ impl ProfileRuntime {
                 let exited = row.lifecycle == wire::Lifecycle::Exited as i32;
                 let caught_up = store.markers().get(key) == Some(&Marker::CaughtUp);
                 if sources.open.contains_key(key) {
-                    if exited && caught_up {
+                    if exited && caught_up && !sources.settling.contains(key) {
                         settle.push(key.clone());
                     }
                     continue;
@@ -501,11 +509,18 @@ impl ProfileRuntime {
                     self.open_source(&mut sources, key);
                 }
             }
-            for key in &settle {
-                if let Some((_, task)) = sources.open.remove(key) {
+            // A live source's marker reads CaughtUp throughout, which says
+            // nothing of the records written up to the exit: the origin
+            // publishes them before the Exited row, but on another stream,
+            // so they may still be on their way. The source starts again
+            // after its cursor; the origin has committed them by now, and
+            // the catch-up that brings them settles the agent.
+            for key in settle {
+                if let Some((_, task)) = sources.open.remove(&key) {
                     task.abort();
                 }
-                sources.settled.insert(key.clone());
+                self.open_source(&mut sources, &key);
+                sources.settling.insert(key);
             }
         }
     }
@@ -542,6 +557,7 @@ impl ProfileRuntime {
             .is_some_and(|(open, _)| *open == session)
         {
             sources.open.remove(key);
+            sources.settling.remove(key);
             if settled {
                 sources.settled.insert(key.clone());
             }
@@ -966,10 +982,12 @@ async fn source_once(
             Ok(Some(message)) => message,
             _ => return Ended::Lost { caught_up },
         };
-        if let Some(hook) = &hook
-            && hook(key, &message) == SourceVerdict::Drop
-        {
-            return Ended::Lost { caught_up };
+        if let Some(hook) = &hook {
+            match hook(key, &message) {
+                SourceVerdict::Keep => {}
+                SourceVerdict::Drop => return Ended::Lost { caught_up },
+                SourceVerdict::Hold(held) => held.await,
+            }
         }
         let Some(me) = runtime.upgrade() else {
             return Ended::Stale;

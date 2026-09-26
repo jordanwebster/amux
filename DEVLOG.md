@@ -1,3 +1,18 @@
+2026-09-26 — **An exited replica settles from its own stream.**
+A replica closed the source of an agent its origin listed exited as soon
+as its marker read CaughtUp. During live following it always does, so the
+marker said nothing of the records written up to the exit: the origin
+publishes them before the Exited row, but on the session stream rather
+than the inventory stream, and the row could win. The source was aborted
+with the final records (often the last answer) still on their way, and
+the agent, settled, never got a source again: the replica read CaughtUp at
+a stale cursor forever. Now the sweep that sees an exited agent restarts
+its source after its cursor, and the catch-up that brings the exit's
+records settles it. Sources can be held on an event in tests
+(`SourceVerdict::Hold`); `an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit`
+holds the session stream until the Exited row is applied and fails against
+the old sweep.
+
 2026-09-26 — **Live provider compatibility, and terminal Claude's messaging socket.**
 The qualification crate has a `live` feature again, with one target per
 provider entry point (`claude_pty_live`, `claude_sdk_live`, `codex_live`).

@@ -5,10 +5,10 @@
 //! block ending at the origin's newest row. These cases hold that under a
 //! first tail, live records, a delta after a break, a Reset beyond the cap,
 //! a stream that dies right after its Snapshot while a page lands a newer
-//! revision of an old row, a link back before the follower looks, pages
-//! from the origin, trimming after a Reset, the source policy and a
-//! rewound origin; and they hold the markers in sequence with the rows
-//! they cover.
+//! revision of an old row, a link back before the follower looks, an exit
+//! whose records arrive after its Exited row, pages from the origin,
+//! trimming after a Reset, the source policy and a rewound origin; and they
+//! hold the markers in sequence with the rows they cover.
 
 #![cfg(unix)]
 
@@ -927,5 +927,87 @@ async fn a_rewound_origin_is_compared_before_any_source_opens_and_its_lost_rows_
             .unwrap(),
         Some(generation + 1)
     );
+    net.shutdown().await.unwrap();
+}
+
+/// An exited agent's replica settles only once its own stream has passed
+/// the exit. The origin publishes the final records and then the Exited
+/// row, on streams that travel independently; here the session stream is
+/// held back until the Exited row has been applied, and the replica still
+/// ends with the origin's newest row.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() {
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("brief", "desk")
+            .steps(turns(1, 2))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(6, |_, _| {}))
+        .await
+        .unwrap();
+    let brief = net.agent("brief").unwrap().clone();
+    let key = brief.key();
+    wait_origin_says(&net, "brief", "t0-1").await;
+
+    // Once armed, the laptop's sources hold the first record they are sent
+    // until the gate opens. A source reads the hook when its stream opens,
+    // so the link blinks to open one that has it.
+    let armed = Arc::new(AtomicBool::new(false));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let laptop = net.runtime("laptop").unwrap();
+    {
+        let armed = armed.clone();
+        let gate = gate.clone();
+        let watched = key.clone();
+        laptop.set_source_hook(Some(Arc::new(move |agent: &AgentKey, _: &SessionEvent| {
+            if *agent == watched && armed.swap(false, Ordering::SeqCst) {
+                let gate = gate.clone();
+                SourceVerdict::Hold(Box::pin(async move { gate.notified().await }))
+            } else {
+                SourceVerdict::Keep
+            }
+        })));
+    }
+    sever(&mut net).await;
+    restore(&mut net).await;
+    wait_current(&net, "laptop", "brief").await;
+    armed.store(true, Ordering::SeqCst);
+    net.runtime("desk")
+        .unwrap()
+        .stop(brief.id, StopMode::Graceful)
+        .await
+        .unwrap();
+    observe::eventually("the laptop to list brief exited", PATIENCE, || async {
+        laptop
+            .store()
+            .await
+            .agent(&key)
+            .unwrap()
+            .is_some_and(|row| row.lifecycle == wire::Lifecycle::Exited as i32)
+    })
+    .await
+    .unwrap();
+    let (cursor, _) = replica_state(&net, "laptop", "brief").await.unwrap();
+    assert!(
+        cursor < origin_revision(&net, "brief").await,
+        "the exit's records have not landed when the Exited row has"
+    );
+    gate.notify_one();
+
+    wait_current(&net, "laptop", "brief").await;
+    let origin = origin_rows(&net, "brief").await;
+    let mut replica = laptop.store().await.cut(&key, u32::MAX).unwrap().held;
+    replica.sort_by_key(|item| item.order);
+    assert_eq!(
+        replica.last().map(|item| (&item.key, item.revision)),
+        origin.last().map(|item| (&item.key, item.revision)),
+        "the replica ends with the origin's newest row"
+    );
+    observe::eventually("brief's source to close", PATIENCE, || async {
+        !laptop.open_sources().contains(&key)
+    })
+    .await
+    .unwrap();
+    drop(laptop);
     net.shutdown().await.unwrap();
 }
