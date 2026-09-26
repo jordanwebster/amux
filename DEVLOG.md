@@ -1,3 +1,17 @@
+2026-09-26 — **The provider recording pass is complete.**
+Every chat catalogue row now has, for each of terminal Claude, headless
+Claude and Codex, either a real recording or a stated reason it cannot be
+recorded here and must be authored instead. This pass added 12 terminal
+Claude, 15 headless Claude and 19 Codex recordings (Claude Code 2.1.283,
+codex-cli 0.157.0), covering images, subagents, background work, failing
+commands, file moves and deletes, questions, forms, access grants,
+automatic review, compaction, API errors with retries, task lists and
+sign-in problems. What stays authored: a server's link form in headless
+Claude (Claude refuses it), model switches (the provider decides), blocked
+usage limits (they need an exhausted account), Codex's task list (the model
+never calls the plan tool) and an image in a terminal prompt (it arrives
+only by clipboard paste).
+
 2026-09-26 — **Headless Claude's cancelled form is recorded.**
 A new SDK specification has the tool server ask for a form and the caller
 answer Cancel rather than Decline. Claude 2.1.283 passes the cancel through
