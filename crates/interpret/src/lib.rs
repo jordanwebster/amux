@@ -14,6 +14,7 @@
 mod claude_common;
 pub mod claude_pty;
 pub mod claude_sdk;
+pub mod codex;
 mod golden;
 mod serde_pb;
 mod shared;
@@ -148,8 +149,6 @@ pub enum Effect {
     },
     /// Hand an agent message to the provider's own injection channel.
     Inject { envelope: Envelope, via: Carrier },
-    /// Start an empty turn so the provider consumes parked injected items.
-    KickTurn,
     /// The agent process should exit with this cause.
     Exit { cause: String },
     /// Claude in a terminal: a semantic input the agent process types into
@@ -166,6 +165,15 @@ pub enum Effect {
     /// Claude in a terminal: a session started on this transcript file;
     /// the agent process tails it from now on.
     FollowTranscript { path: String },
+    /// Codex: a `turn/start` or `turn/steer` request whose input carries
+    /// attachments. The agent process appends each attachment to
+    /// `params.input` as a Codex input item (an image blob by its path in
+    /// the agent's blob directory, inline text and files as text) and
+    /// writes the request.
+    CodexTurnInput {
+        request: Vec<u8>,
+        attachments: Vec<wire::Attachment>,
+    },
 }
 
 /// The provider's own injection channel for agent messages.
@@ -175,8 +183,6 @@ pub enum Carrier {
     MessagingSocket,
     /// Headless Claude: a user message on stdin.
     Stdin,
-    /// Codex: inject_items on the app server.
-    InjectItems,
 }
 
 /// What [`Interpreter::redact`] works on.

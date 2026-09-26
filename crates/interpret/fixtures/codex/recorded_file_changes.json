@@ -1,0 +1,10 @@
+{
+  "about": "File added, modified and deleted: one file-change row each and the whole-turn diff.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/file_changes/io.jsonl",
+    "format": "codex_io"
+  }
+}

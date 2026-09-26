@@ -93,8 +93,9 @@ pub enum FixtureInput {
     /// question: an index, indices, or a typed answer),
     /// `{"form": {"action": "accept", "content": {…}}}`,
     /// `{"link": {"action": "decline"}}`; for Codex
-    /// `{"decision": "approve"}` answers an approval and anything else is a
-    /// CodexAnswer.
+    /// `{"decision": "approve"}` answers an approval, and a question, form,
+    /// link or `{"grant": {"read": […], "write": […], "network": true,
+    /// "for_session": true}}` is a CodexAnswer.
     Answer {
         ask: String,
         #[serde(default)]
@@ -669,10 +670,22 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
                 }),
             }
         }
+        FixtureInput::Model { model } => Of::Model(wire::SetModel {
+            model: model.clone(),
+        }),
+        FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
+            effort: effort.clone(),
+        }),
+        // Codex's mode is its approval policy and sandbox:
+        // "on-request/workspace-write".
+        FixtureInput::Mode { mode } => {
+            let (policy, sandbox) = mode.split_once('/')?;
+            Of::Approval(wire::SetApproval {
+                approval_policy: policy.to_owned(),
+                sandbox: sandbox.to_owned(),
+            })
+        }
         FixtureInput::Clear {}
-        | FixtureInput::Model { .. }
-        | FixtureInput::Mode { .. }
-        | FixtureInput::Effort { .. }
         | FixtureInput::Key { .. }
         | FixtureInput::AgentMessage { .. }
         | FixtureInput::Raw { .. } => return None,
@@ -710,8 +723,38 @@ fn question_answer(selected: &[Value], note: String) -> wire::QuestionAnswer {
 
 fn codex_answer(answer: &Value) -> Option<CodexAnswer> {
     use wire::codex_answer::Of;
+    let action = |value: &Value| {
+        wire::FormAction::from_str_name(&format!(
+            "FORM_ACTION_{}",
+            value
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_uppercase()
+        ))
+        .map(|action| action as i32)
+    };
     let of = if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
-        Of::Question(question_answer(selected, String::new()))
+        Of::Question(question_answer(
+            selected,
+            answer
+                .get("note")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        ))
+    } else if let Some(link) = answer.get("link") {
+        Of::Link(wire::LinkAnswer {
+            action: action(link)?,
+        })
+    } else if let Some(form) = answer.get("form") {
+        Of::Form(wire::FormAnswer {
+            action: action(form)?,
+            content_json: form
+                .get("content")
+                .map(|content| content.to_string().into_bytes())
+                .unwrap_or_default(),
+        })
     } else {
         let grant = answer.get("grant")?;
         let paths = |key: &str| {
@@ -1218,7 +1261,14 @@ fn render_effect(effect: &Effect) -> String {
         Effect::Inject { envelope, via } => {
             format!("inject {} via {via:?}", display_id(&envelope.id))
         }
-        Effect::KickTurn => "kick_turn".to_owned(),
+        Effect::CodexTurnInput {
+            request,
+            attachments,
+        } => format!(
+            "write {} attachments={}",
+            display_bytes(request),
+            attachments.len()
+        ),
         Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
         Effect::Terminal(input) => format!("terminal {input}"),
         Effect::FollowTranscript { path } => format!("follow {}", Value::String(path.clone())),

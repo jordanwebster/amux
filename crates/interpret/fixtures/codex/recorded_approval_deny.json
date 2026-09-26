@@ -1,0 +1,10 @@
+{
+  "about": "A command approval declined; the command is denied on its row.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/approval_deny/io.jsonl",
+    "format": "codex_io"
+  }
+}

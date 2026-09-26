@@ -1,0 +1,10 @@
+{
+  "about": "The automatic reviewer approves a command; its verdict is an item and the command's row shows the automatic approval.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/automatic_review/io.jsonl",
+    "format": "codex_io"
+  }
+}

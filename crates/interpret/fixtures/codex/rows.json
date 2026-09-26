@@ -1,0 +1,724 @@
+{
+  "about": "Rows beyond the recordings: a reroute, a failing tool server, a blocked usage limit, reasoning with its summary, the plan, working_on from the status tool with no row, a working note apart from the answer, a repeated whole-turn diff written once, a retrying typed error then a failed turn, unknown items and notifications made visible, a child thread's activity left out, and a command that outlives its turn in the background.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "mcpServer/startupStatus/updated",
+          "params": {
+            "threadId": "t1",
+            "name": "docs",
+            "status": "starting",
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "mcpServer/startupStatus/updated",
+          "params": {
+            "threadId": "t1",
+            "name": "docs",
+            "status": "failed",
+            "error": "connection refused"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "account/updated",
+          "params": {
+            "threadId": "t1",
+            "authMode": "chatgpt",
+            "planType": "pro"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "account/rateLimits/updated",
+          "params": {
+            "threadId": "t1",
+            "rateLimits": {
+              "primary": {
+                "usedPercent": 100,
+                "windowDurationMins": 300,
+                "resetsAt": 1800003600
+              },
+              "secondary": {
+                "usedPercent": 40,
+                "windowDurationMins": 10080,
+                "resetsAt": 1800600000
+              },
+              "credits": {
+                "balance": "0",
+                "hasCredits": false,
+                "unlimited": false
+              },
+              "rateLimitReachedType": "primary"
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Refactor the parser."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "model/rerouted",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "fromModel": "gpt-5.6-luna",
+            "toModel": "gpt-5.6-mini",
+            "reason": "highRiskCyberActivity"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "reasoning",
+              "id": "rs-1",
+              "summary": [],
+              "content": []
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/reasoning/summaryPartAdded",
+          "params": {
+            "threadId": "t1",
+            "itemId": "rs-1",
+            "summaryIndex": 0,
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/reasoning/summaryTextDelta",
+          "params": {
+            "threadId": "t1",
+            "itemId": "rs-1",
+            "summaryIndex": 0,
+            "delta": "**Reading the parser**",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/reasoning/textDelta",
+          "params": {
+            "threadId": "t1",
+            "itemId": "rs-1",
+            "delta": "The parser has two entry points.",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "reasoning",
+              "id": "rs-1",
+              "summary": [
+                "**Reading the parser**"
+              ],
+              "content": [
+                "The parser has two entry points."
+              ]
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/plan/updated",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "explanation": null,
+            "plan": [
+              {
+                "step": "Read the parser",
+                "status": "completed"
+              },
+              {
+                "step": "Split the lexer",
+                "status": "inProgress"
+              },
+              {
+                "step": "Run the tests",
+                "status": "pending"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "st-1",
+              "server": "amux",
+              "tool": "status",
+              "status": "inProgress",
+              "arguments": {
+                "working_on": "Splitting the lexer"
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "working_on": "Splitting the lexer",
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "st-1",
+              "server": "amux",
+              "tool": "status",
+              "status": "completed",
+              "arguments": {
+                "working_on": "Splitting the lexer"
+              },
+              "result": {}
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "note-1",
+              "text": "",
+              "phase": "commentary"
+            },
+            "turnId": "turn-1",
+            "startedAtMs": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/agentMessage/delta",
+          "params": {
+            "threadId": "t1",
+            "itemId": "note-1",
+            "delta": "Splitting the lexer out first.",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "note-1",
+              "text": "Splitting the lexer out first.",
+              "phase": "commentary"
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-1",
+              "command": "/bin/zsh -lc 'cargo watch'",
+              "cwd": "/work",
+              "commandActions": [
+                {
+                  "type": "unknown",
+                  "command": "cargo watch"
+                }
+              ],
+              "status": "inProgress",
+              "exitCode": null
+            },
+            "turnId": "turn-1",
+            "startedAtMs": 1800000001000
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/commandExecution/outputDelta",
+          "params": {
+            "threadId": "t1",
+            "itemId": "cmd-1",
+            "delta": "[watching]\n",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/diff/updated",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "diff": "diff --git a/lexer.rs b/lexer.rs\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/diff/updated",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "diff": "diff --git a/lexer.rs b/lexer.rs\n"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/tokenUsage/updated",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "tokenUsage": {
+              "last": {
+                "totalTokens": 48000
+              },
+              "total": {
+                "totalTokens": 90000
+              },
+              "modelContextWindow": 258400
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "enteredReviewMode",
+              "id": "rv-1",
+              "review": "current changes"
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "thread/started",
+          "params": {
+            "threadId": "t1",
+            "thread": {
+              "id": "child-thread",
+              "cliVersion": "0.157.0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "child-thread",
+            "turn": {
+              "id": "child-turn"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/somethingNew",
+          "params": {
+            "threadId": "t1",
+            "itemId": "x"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-1",
+              "text": "",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-1",
+            "startedAtMs": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/agentMessage/delta",
+          "params": {
+            "threadId": "t1",
+            "itemId": "msg-1",
+            "delta": "The lexer is split.",
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-1",
+              "text": "The lexer is split.",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed",
+              "durationMs": 4000
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "commandExecution",
+              "id": "cmd-1",
+              "command": "/bin/zsh -lc 'cargo watch'",
+              "cwd": "/work",
+              "commandActions": [
+                {
+                  "type": "unknown",
+                  "command": "cargo watch"
+                }
+              ],
+              "status": "completed",
+              "exitCode": 0,
+              "aggregatedOutput": "[watching]\n[done]\n",
+              "durationMs": 9000
+            },
+            "turnId": "turn-1",
+            "completedAtMs": 1800000010000
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Run the tests."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turn": {
+              "id": "turn-2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "error",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "willRetry": true,
+            "error": {
+              "message": "Reconnecting... 1/3",
+              "codexErrorInfo": {
+                "responseStreamDisconnected": {
+                  "httpStatusCode": 502
+                }
+              },
+              "additionalDetails": "upstream returned 502"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "error",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-2",
+            "willRetry": true,
+            "error": {
+              "message": "Reconnecting... 2/3",
+              "codexErrorInfo": {
+                "responseStreamDisconnected": {
+                  "httpStatusCode": 502
+                }
+              },
+              "additionalDetails": "upstream returned 502"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "failed",
+              "error": {
+                "message": "stream closed",
+                "codexErrorInfo": "other",
+                "additionalDetails": null
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "account/updated",
+          "params": {
+            "threadId": "t1",
+            "authMode": null,
+            "planType": null
+          }
+        }
+      }
+    }
+  ]
+}

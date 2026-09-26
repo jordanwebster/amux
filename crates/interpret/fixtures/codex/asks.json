@@ -1,0 +1,662 @@
+{
+  "about": "Every request Codex makes of the person is an ask: a command with allow-similar and a network rule, a file change, questions including a secret answer that reaches Codex and nothing else, an access grant answered with a subset for the session, a tool server's link and form. Stale and unoffered answers are refused and write nothing; an ask the server resolves elsewhere or a turn end closes it drawn dismissed; a request amux cannot read is answered with an error.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Deploy it."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 7,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-1",
+            "command": "/bin/zsh -lc 'curl -s https://api.example.com/status'",
+            "cwd": "/work",
+            "reason": "Reach the status API.",
+            "networkApprovalContext": {
+              "host": "api.example.com",
+              "protocol": "https"
+            },
+            "proposedExecpolicyAmendment": [
+              "curl",
+              "-s"
+            ],
+            "availableDecisions": [
+              "accept",
+              {
+                "acceptWithExecpolicyAmendment": {
+                  "execpolicy_amendment": [
+                    "curl",
+                    "-s"
+                  ]
+                }
+              },
+              {
+                "applyNetworkPolicyAmendment": {
+                  "network_policy_amendment": {
+                    "host": "api.example.com",
+                    "action": "allow"
+                  }
+                }
+              },
+              "decline",
+              "cancel"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "7"
+        ],
+        "phase": "NEEDS_YOU"
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "7",
+          "answer": {
+            "decision": "approve_network"
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "phase": "WORKING"
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "7",
+          "answer": {
+            "decision": "approve"
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:closed_ask"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "fileChange",
+              "id": "fc-1",
+              "status": "inProgress",
+              "changes": [
+                {
+                  "path": "/work/a.txt",
+                  "kind": {
+                    "type": "update",
+                    "move_path": null
+                  },
+                  "diff": "@@ -1 +1 @@\n-a\n+b\n"
+                }
+              ]
+            },
+            "turnId": "turn-1",
+            "startedAtMs": 1800000000500
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 8,
+          "method": "item/fileChange/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "fc-1",
+            "reason": "Edit outside the workspace",
+            "grantRoot": "/work"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "8"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a3",
+        "answer": {
+          "ask": "8",
+          "answer": {
+            "decision": "approve_similar"
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "8"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a4",
+        "answer": {
+          "ask": "8",
+          "answer": {
+            "decision": "deny"
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "fileChange",
+              "id": "fc-1",
+              "status": "declined",
+              "changes": [
+                {
+                  "path": "/work/a.txt",
+                  "kind": {
+                    "type": "update",
+                    "move_path": null
+                  },
+                  "diff": "@@ -1 +1 @@\n-a\n+b\n"
+                }
+              ]
+            },
+            "turnId": "turn-1",
+            "completedAtMs": 1800000000600
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 9,
+          "method": "item/tool/requestUserInput",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "call-1",
+            "questions": [
+              {
+                "id": "token",
+                "header": "Token",
+                "question": "Paste the deploy token.",
+                "isOther": true,
+                "isSecret": true,
+                "options": null
+              },
+              {
+                "id": "env",
+                "header": "Env",
+                "question": "Which environment?",
+                "isOther": false,
+                "isSecret": false,
+                "options": [
+                  {
+                    "label": "staging (Recommended)",
+                    "description": "Safe first."
+                  },
+                  {
+                    "label": "production",
+                    "description": "Live."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "9"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a5",
+        "answer": {
+          "ask": "9",
+          "answer": {
+            "selected": [
+              "tok-SECRET-1234",
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 20,
+          "method": "item/permissions/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "exec-9",
+            "reason": "Read the shared config and reach the registry.",
+            "permissions": {
+              "fileSystem": {
+                "read": [
+                  "/etc/shared"
+                ],
+                "write": [
+                  "/var/cache"
+                ]
+              },
+              "network": {
+                "enabled": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "a6",
+        "answer": {
+          "ask": "20",
+          "answer": {
+            "grant": {
+              "read": [
+                "/etc/shared"
+              ],
+              "write": [
+                "/elsewhere"
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "20"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a7",
+        "answer": {
+          "ask": "20",
+          "answer": {
+            "grant": {
+              "read": [
+                "/etc/shared"
+              ],
+              "network": true,
+              "for_session": true
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "mcp-1",
+              "server": "docs",
+              "tool": "sign_in",
+              "status": "inProgress",
+              "arguments": {},
+              "result": null,
+              "error": null
+            },
+            "turnId": "turn-1",
+            "startedAtMs": 1800000000700
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "elicit-1",
+          "method": "mcpServer/elicitation/request",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "serverName": "docs",
+            "mode": "url",
+            "message": "Sign in to the docs server.",
+            "url": "https://docs.example.com/login"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "\"elicit-1\""
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a8",
+        "answer": {
+          "ask": "\"elicit-1\"",
+          "answer": {
+            "link": {
+              "action": "accept"
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "elicit-2",
+          "method": "mcpServer/elicitation/request",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "serverName": "docs",
+            "mode": "form",
+            "message": "Which space?",
+            "requestedSchema": {
+              "type": "object",
+              "properties": {
+                "space": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "\"elicit-2\""
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "a9",
+        "answer": {
+          "ask": "\"elicit-2\"",
+          "answer": {
+            "form": {
+              "action": "accept",
+              "content": {
+                "space": "eng"
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "mcp-1",
+              "server": "docs",
+              "tool": "sign_in",
+              "status": "completed",
+              "arguments": {},
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ok"
+                  }
+                ]
+              },
+              "error": null
+            },
+            "turnId": "turn-1",
+            "completedAtMs": 1800000000800
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 30,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-2",
+            "command": "/bin/zsh -lc 'curl -s https://api.example.com/status'",
+            "cwd": "/work",
+            "reason": "Reach the status API.",
+            "networkApprovalContext": {
+              "host": "api.example.com",
+              "protocol": "https"
+            },
+            "proposedExecpolicyAmendment": [
+              "curl",
+              "-s"
+            ],
+            "availableDecisions": null
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "30"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 30
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 31,
+          "method": "account/chatgptAuthTokens/refresh",
+          "params": {
+            "reason": "unauthorized"
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 32,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "cmd-3",
+            "command": "/bin/zsh -lc 'curl -s https://api.example.com/status'",
+            "cwd": "/work",
+            "reason": "Reach the status API.",
+            "networkApprovalContext": {
+              "host": "api.example.com",
+              "protocol": "https"
+            },
+            "proposedExecpolicyAmendment": [
+              "curl",
+              "-s"
+            ],
+            "availableDecisions": [
+              "accept",
+              {
+                "acceptWithExecpolicyAmendment": {
+                  "execpolicy_amendment": [
+                    "curl",
+                    "-s"
+                  ]
+                }
+              },
+              {
+                "applyNetworkPolicyAmendment": {
+                  "network_policy_amendment": {
+                    "host": "api.example.com",
+                    "action": "allow"
+                  }
+                }
+              },
+              "decline",
+              "cancel"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "32"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "interrupted"
+            }
+          }
+        }
+      },
+      "expect": {
+        "asks": [],
+        "phase": "IDLE"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "about": "An agent message injected mid-turn is answered by the same turn; it leaves the pending set at the inject acknowledgement and no turn is kicked.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/inject_drain/io.jsonl",
+    "format": "codex_io"
+  }
+}

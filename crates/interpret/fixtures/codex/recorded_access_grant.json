@@ -1,0 +1,10 @@
+{
+  "about": "Codex asks for network access through its permissions tool; the grant for this turn is written back and the command runs with its output, exit code and duration.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/access_grant/io.jsonl",
+    "format": "codex_io"
+  }
+}

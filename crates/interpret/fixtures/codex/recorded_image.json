@@ -1,0 +1,10 @@
+{
+  "about": "An image in the prompt and an image Codex viewed.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/image/io.jsonl",
+    "format": "codex_io"
+  }
+}

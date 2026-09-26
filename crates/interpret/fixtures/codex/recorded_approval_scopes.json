@@ -1,0 +1,10 @@
+{
+  "about": "Allow-similar on a command, then allow-for-session on a file change; per-file diffs and the whole-turn diff.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/approval_scopes/io.jsonl",
+    "format": "codex_io"
+  }
+}

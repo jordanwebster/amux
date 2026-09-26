@@ -1,0 +1,10 @@
+{
+  "about": "An interrupt stops the running turn; the turn ends interrupted.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/interrupt/io.jsonl",
+    "format": "codex_io"
+  }
+}

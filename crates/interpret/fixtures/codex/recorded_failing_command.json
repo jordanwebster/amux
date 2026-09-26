@@ -1,0 +1,10 @@
+{
+  "about": "A command that exits non-zero is failed, with its exit code and output.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/failing_command/io.jsonl",
+    "format": "codex_io"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "about": "An agent message injected into an idle thread: the interpreter kicks an empty turn and the message is consumed at that turn's acknowledgement.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/inject_idle/io.jsonl",
+    "format": "codex_io"
+  }
+}

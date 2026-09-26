@@ -1,0 +1,10 @@
+{
+  "about": "Reasoning with its summary kept beside the text.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/reasoning_summary/io.jsonl",
+    "format": "codex_io"
+  }
+}

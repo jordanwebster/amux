@@ -1,0 +1,10 @@
+{
+  "about": "A file moved with apply_patch: the change names its new path.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/file_moved/io.jsonl",
+    "format": "codex_io"
+  }
+}

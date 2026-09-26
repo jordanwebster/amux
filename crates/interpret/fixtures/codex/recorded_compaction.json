@@ -1,0 +1,10 @@
+{
+  "about": "A compaction requested between turns is a compaction boundary.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/compaction/io.jsonl",
+    "format": "codex_io"
+  }
+}

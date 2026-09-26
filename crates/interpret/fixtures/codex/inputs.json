@@ -1,0 +1,459 @@
+{
+  "about": "Inputs become app-server requests: a prompt waits for the thread and a running turn; a steer goes into the running turn; withdraw works only while queued; model, effort and approval changes ride on the next turn start; an interrupt stops the named turn, or the next one to start; a failed turn start ends the turn; /compact is a compaction request; the provider's exit is a boundary, an agent message waits for the thread to be resumed, and the resume is a boundary.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Start."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "phase": "STARTING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING",
+        "queue": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-1",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Start."
+                }
+              ]
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "s1",
+        "prompt": {
+          "text": "Use the staging config.",
+          "steer": true
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "queue": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "userMessage",
+              "id": "u-2",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Use the staging config."
+                }
+              ]
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Then summarise."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "queue": [
+          "p2"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "w1",
+        "withdraw": {
+          "target": "p2"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "queue": []
+      }
+    },
+    {
+      "input": {
+        "id": "w2",
+        "withdraw": {
+          "target": "p2"
+        }
+      },
+      "expect": {
+        "reply": "rejected:not_queued"
+      }
+    },
+    {
+      "input": {
+        "id": "c1",
+        "model": {
+          "model": "gpt-5.6"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "c2",
+        "effort": {
+          "effort": "high"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "c3",
+        "mode": {
+          "mode": "never/read-only"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "p3",
+        "prompt": {
+          "text": "Next."
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    },
+    {
+      "input": {
+        "id": "i1",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "interrupted"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING",
+        "queue": [],
+        "turn_end": {
+          "turn_id": 1,
+          "last_message_key": ""
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-4",
+          "error": {
+            "code": -32600,
+            "message": "model gpt-5.6 is not available"
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "c4",
+        "model": {}
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "p4",
+        "prompt": {
+          "text": "Try again."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "input": {
+        "id": "i2",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "interrupted"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p5",
+        "prompt": {
+          "text": "/compact"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "contextCompaction",
+              "id": "cc-1"
+            },
+            "turnId": "turn-3"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "contextCompaction",
+              "id": "cc-1"
+            },
+            "turnId": "turn-3"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-3",
+              "status": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "provider_exit": {
+        "code": 1
+      }
+    },
+    {
+      "input": {
+        "id": "m1",
+        "agent_message": {
+          "envelope": "e9",
+          "from": "lead",
+          "text": "Status?"
+        }
+      },
+      "expect": {
+        "reply": "queued"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-9",
+          "result": {
+            "turn": {
+              "id": "turn-5"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

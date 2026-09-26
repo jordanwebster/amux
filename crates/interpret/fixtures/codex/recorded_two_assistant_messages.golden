@@ -1,0 +1,52 @@
+## 0 initial
+snapshot STARTING queue=[] working_on=- at=0 asks=[] thread=? turn=- model=? effort=? approval=? sandbox=? context=? plan=? usage=? servers=? sign_in=? background=?
+## 6 recorded 5: fact Rpc "{\"id\":2,\"result\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"on-…
+item boundary:1 boundary final at=1788037213409 text="" BOUNDARY_KIND_STARTED session=01a04f52-acd1-77d3-92d0-83a744b3d5b2 version=0.150.1
+snapshot IDLE queue=[] working_on=- at=1788037213409 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=? sign_in=? background=?
+## 9 recorded 8: input stdin-4
+effect reply stdin-4 accepted
+effect write "{\"id\":\"amux-1\",\"method\":\"turn/start\",\"params\":{\"input\":[{\"text\":\"Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer.\",\"text_elements\":[],\"type\":\"text\"}],\"threadId\":\"01a04f52-acd1-77d3-92d0-83a744b3d5b2\"}}"
+item prompt:737464696e2d34 prompt final input=stdin-4 at=1788037213410 text="Send two separate assistant messages in this turn: first exactly CODEX_SPEC_FIRST in commentary, then exactly CODEX_SPEC_SECOND as the final answer."
+snapshot WORKING queue=[] working_on=- at=1788037213410 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=? sign_in=? background=?
+## 10 recorded 9: fact Rpc method=mcpServer/startupStatus/updated
+snapshot WORKING queue=[] working_on=- at=1788037213410 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=? background=?
+## 12 recorded 11: fact Rpc "{\"id\":\"amux-1\",\"result\":{\"turn\":{\"completedAt\":null,\"durationMs\":nu…
+snapshot WORKING queue=[] working_on=- at=1788037213413 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=01a04f52-ace4-7382-af1e-79fccc32713c model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_STARTING] sign_in=? background=?
+## 17 recorded 16: fact Rpc method=mcpServer/startupStatus/updated
+snapshot WORKING queue=[] working_on=- at=1788037214120 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=01a04f52-ace4-7382-af1e-79fccc32713c model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=? background=?
+## 22 recorded 21: fact Rpc method=item/started
+item rs_0c55feb572459127016a93486173c887d28317ad03147fec76 reasoning open at=1788037217553 text="" summary=[]
+## 24 recorded 23: fact Rpc method=item/completed
+item rs_0c55feb572459127016a93486173c887d28317ad03147fec76 reasoning final at=1788037217553 text="" summary=[]
+## 26 recorded 25: fact Rpc method=item/started
+item msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b working_note open at=1788037217917 text=""
+## 28 recorded 27: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b "CODE"
+## 29 recorded 28: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b "X"
+## 31 recorded 30: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b "_SPEC"
+## 33 recorded 32: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b "_FIRST"
+## 35 recorded 34: fact Rpc method=item/completed
+item msg_0c55feb572459127016a934861bf6887d28dfc52e3aa94f16b working_note final at=1788037217917 text="CODEX_SPEC_FIRST"
+## 37 recorded 36: fact Rpc method=item/started
+item msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e message open at=1788037218075 text=""
+## 39 recorded 38: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e "CODE"
+## 40 recorded 39: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e "X"
+## 42 recorded 41: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e "_SPEC"
+## 44 recorded 43: fact Rpc method=item/agentMessage/delta
+append msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e "_SECOND"
+## 46 recorded 45: fact Rpc method=item/completed
+item msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e message final at=1788037218075 text="CODEX_SPEC_SECOND"
+## 48 recorded 47: fact Rpc method=thread/tokenUsage/updated
+snapshot WORKING queue=[] working_on=- at=1788037218252 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=01a04f52-ace4-7382-af1e-79fccc32713c model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=14560/258400 plan=? usage=? servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=? background=?
+## 50 recorded 49: fact Rpc method=account/rateLimits/updated
+snapshot WORKING queue=[] working_on=- at=1788037218253 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=01a04f52-ace4-7382-af1e-79fccc32713c model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=14560/258400 plan=? usage=USAGE_STATE_OK 7d:13% credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=? background=?
+## 53 recorded 52: fact Rpc method=turn/completed
+item turn:1 turn final at=1788037218254 text="" #1 TURN_OUTCOME_COMPLETED started=1788037213413
+snapshot IDLE queue=[] working_on=- at=1788037218254 asks=[] thread=01a04f52-acd1-77d3-92d0-83a744b3d5b2 turn=- model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=14560/258400 plan=? usage=USAGE_STATE_OK 7d:13% credits=0 servers=HEALTH_STATE_HEALTHY[codex_apps:TOOL_SERVER_STATUS_READY] sign_in=? background=?
+turn_end 1 last=msg_0c55feb572459127016a934861f11087d2a954de2ba1465f7e

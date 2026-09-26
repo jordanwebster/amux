@@ -1,0 +1,10 @@
+{
+  "about": "No credentials: typed errors with will-retry and attempt counts, then the final error; sign-in becomes a problem.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/signed_out/io.jsonl",
+    "format": "codex_io"
+  }
+}

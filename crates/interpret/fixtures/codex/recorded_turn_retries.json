@@ -1,0 +1,10 @@
+{
+  "about": "A connection that keeps failing: two retrying errors, then the final one; the turn fails.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/turn_retries/io.jsonl",
+    "format": "codex_io"
+  }
+}

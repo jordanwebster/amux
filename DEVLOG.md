@@ -1,3 +1,25 @@
+2026-09-26 — **The Codex interpreter.**
+`interpret::codex` turns what the Codex app server writes into chat items
+and snapshots: commands with exit code, duration, streamed output and
+Codex's read/search/list classification; per-file changes (moves included)
+and the whole-turn diff; tool-server calls, web searches, images and child
+threads; reasoning with its summary; working notes apart from the final
+answer; typed errors with will-retry and the attempt count; reroutes;
+automatic-reviewer verdicts, with the verdict also on the command's row.
+Every request Codex makes of the person is an ask — commands (allow,
+for the session, similar commands by prefix, a network rule), file changes,
+tool-server approvals, forms and links, access grants answered with a
+subset, and questions whose secret answers reach Codex and nothing else.
+The interpreter writes every request after the handshake itself, with its
+own ids, so acknowledgements are matched to what they acknowledge. An agent
+message goes in through `thread/inject_items`; Codex reports nothing about
+an injected item, so the interpreter writes the agent-message item. Probing
+codex-cli 0.157.0 showed a running turn drains injected items, so a message
+injected mid-turn is consumed at the inject's acknowledgement and no empty
+turn is started for it; an idle thread still gets an empty turn. The parked
+alternative is kept behind the same constant with its own golden. Goldens
+cover all 29 recorded Codex sessions plus authored asks, inputs and rows.
+
 2026-09-26 — **Codex recordings for decisions and background work.**
 Eight more Codex specifications, captured against codex-cli 0.157.0. Work
 rows: a live web search as its own item, a file renamed through apply_patch

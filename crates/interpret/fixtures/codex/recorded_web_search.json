@@ -1,0 +1,10 @@
+{
+  "about": "A web search, marked as exploration.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/web_search/io.jsonl",
+    "format": "codex_io"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "about": "One prompt, streamed answer, token usage and rate limits, turn end.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../codex-specs/fixtures/runtime/turn_round_trip/io.jsonl",
+    "format": "codex_io"
+  }
+}
