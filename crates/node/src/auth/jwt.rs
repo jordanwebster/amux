@@ -4,9 +4,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use agent_dir::SystemClock;
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
 use reqwest::Client;
@@ -79,11 +78,6 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
-    /// Create a new validator for the given cloud URL
-    pub fn new(cloud_url: &str) -> Self {
-        Self::new_with_clock(cloud_url, Arc::new(SystemClock))
-    }
-
     pub(crate) fn new_with_clock(cloud_url: &str, clock: Arc<dyn Clock>) -> Self {
         Self {
             jwks_url: format!("{}/.well-known/openid-configuration/jwks", cloud_url),
@@ -196,9 +190,6 @@ impl JwtValidator {
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::sync::Mutex;
 
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use serde::Serialize;
@@ -219,7 +210,8 @@ mod tests {
     }
 
     async fn validator_with_hs256_key(secret: &[u8]) -> JwtValidator {
-        let validator = JwtValidator::new("http://cloud.test");
+        let validator =
+            JwtValidator::new_with_clock("http://cloud.test", Arc::new(agent_dir::SystemClock));
         validator
             .keys
             .write()

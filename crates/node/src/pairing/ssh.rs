@@ -1,13 +1,15 @@
 //! SSH pairing identity exchange and stdio relay helpers.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::pin::Pin;
+#[cfg(unix)]
 use std::task::{Context, Poll};
 
 use prost::Message as _;
-use tokio::io::{
-    AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, copy_bidirectional,
-};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+#[cfg(unix)]
+use tokio::io::{ReadBuf, copy_bidirectional};
 
 use super::PairingAdmin;
 use crate::identity::{DeviceIdentity, IdentityError, load_or_create_device_identity_in};

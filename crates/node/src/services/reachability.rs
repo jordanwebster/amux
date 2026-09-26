@@ -139,20 +139,6 @@ impl ReachabilityLinkConnector {
         *inner.context.quic_endpoint.lock().unwrap() = Some(quic_endpoint);
     }
 
-    pub fn set_test_quic_transport(&self, transport: Option<Arc<quinn::TransportConfig>>) {
-        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return;
-        };
-        *inner.context.quic_transport.lock().unwrap() = transport;
-    }
-
-    pub fn quic_endpoint(&self) -> Option<quinn::Endpoint> {
-        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return None;
-        };
-        inner.context.quic_endpoint.lock().unwrap().clone()
-    }
-
     pub fn rebind_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return Ok(());
@@ -160,21 +146,6 @@ impl ReachabilityLinkConnector {
         let endpoint = inner.context.quic_endpoint.lock().unwrap();
         let endpoint = endpoint.as_ref().expect("QUIC endpoint is configured");
         QuicCarrier::rebind(endpoint, socket)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn trust_store(&self) -> Option<SharedTrustStore> {
-        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return None;
-        };
-        Some(inner.context.trust_store.clone())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn disabled() -> Self {
-        Self {
-            mode: ReachabilityLinkConnectorMode::Disabled,
-        }
     }
 
     pub(crate) fn spawn_startup_links(&self) -> Vec<JoinHandle<()>> {
@@ -316,20 +287,6 @@ impl ReachabilityLinkConnector {
         }
     }
 
-    pub(crate) fn found_candidates(&self) -> Vec<crate::discovery::Advertisement> {
-        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return Vec::new();
-        };
-        inner
-            .context
-            .runtime
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|runtime| runtime.found_hosts.candidates())
-            .unwrap_or_default()
-    }
-
     /// Records the whole set an outside browser resolved, so a caller that
     /// hands one over and then asks what it may pair with is answered from
     /// that set rather than from whatever the browse task has caught up with.
@@ -381,17 +338,6 @@ impl ReachabilityLinkConnector {
         }
         inner.dialing.lock().unwrap().clear();
         inner.queued_found.lock().unwrap().clear();
-    }
-
-    pub(crate) fn resume_direct_links(&self) -> Vec<JoinHandle<()>> {
-        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return Vec::new();
-        };
-        *inner.direct_shutdown.lock().unwrap() = watch::channel(false).0;
-        inner.direct_enabled.store(true, Ordering::SeqCst);
-        let tasks = self.spawn_startup_links();
-        self.requery();
-        tasks
     }
 
     fn spawn_attempt(&self, attempt: ReachabilityLinkAttempt) -> Option<JoinHandle<()>> {

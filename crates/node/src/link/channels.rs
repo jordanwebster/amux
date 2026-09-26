@@ -65,13 +65,6 @@ pub enum ChannelError {
     Tls(String),
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ChannelDebug {
-    pub peer: HostId,
-    pub route: String,
-    pub class: ChannelClass,
-}
-
 #[derive(Clone)]
 struct ChannelSecurity {
     identity: DeviceIdentity,
@@ -85,31 +78,6 @@ pub struct ChannelPool {
     security: Option<ChannelSecurity>,
     handshake_timeout: Duration,
     bulk_response_holds: std::sync::Mutex<HashMap<HostId, PendingBulkResponseHold>>,
-}
-
-pub struct BulkResponseHold {
-    entered: oneshot::Receiver<()>,
-    release: Option<oneshot::Sender<()>>,
-}
-
-impl BulkResponseHold {
-    pub async fn entered(&mut self) -> Result<(), oneshot::error::RecvError> {
-        (&mut self.entered).await
-    }
-
-    pub fn release(mut self) {
-        if let Some(release) = self.release.take() {
-            let _ = release.send(());
-        }
-    }
-}
-
-impl Drop for BulkResponseHold {
-    fn drop(&mut self) {
-        if let Some(release) = self.release.take() {
-            let _ = release.send(());
-        }
-    }
 }
 
 struct PendingBulkResponseHold {
@@ -163,27 +131,6 @@ impl ChannelPool {
             }),
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
             bulk_response_holds: std::sync::Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn hold_next_bulk_response_for_test(&self, peer: HostId) -> BulkResponseHold {
-        let (entered_tx, entered) = oneshot::channel();
-        let (release, release_rx) = oneshot::channel();
-        let previous = self
-            .bulk_response_holds
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(
-                peer,
-                PendingBulkResponseHold {
-                    entered: Some(entered_tx),
-                    release: release_rx,
-                },
-            );
-        assert!(previous.is_none(), "a bulk stream hold is already armed");
-        BulkResponseHold {
-            entered,
-            release: Some(release),
         }
     }
 
@@ -251,75 +198,6 @@ impl ChannelPool {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|key, _| key.peer != peer || key.route != route);
         self.cancel_where(|key| key.peer == peer && key.route == route);
-    }
-
-    pub fn debug_view(&self) -> Vec<ChannelDebug> {
-        let state = self
-            .by_key
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut channels = state
-            .keys()
-            .map(|key| ChannelDebug {
-                peer: key.peer,
-                route: key.route.to_string(),
-                class: key.class,
-            })
-            .collect::<Vec<_>>();
-        channels.sort_unstable_by_key(|channel| {
-            (
-                channel.peer,
-                channel.route.clone(),
-                format!("{:?}", channel.class),
-            )
-        });
-        channels
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.by_key
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .len()
-    }
-
-    pub fn active_session_agents(&self, peer: HostId) -> Vec<AgentId> {
-        let lifetimes = self
-            .lifetimes
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut agents = lifetimes
-            .iter()
-            .filter_map(|(key, streams)| match key.class {
-                ChannelClass::Session { agent }
-                    if key.peer == peer
-                        && streams.iter().any(|stream| stream.strong_count() > 0) =>
-                {
-                    Some(agent)
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        agents.sort_unstable();
-        agents
-    }
-
-    pub fn active_bulk_streams(&self, peer: HostId) -> usize {
-        let lifetimes = self
-            .lifetimes
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        lifetimes
-            .iter()
-            .filter(|(key, _)| key.peer == peer && key.class == ChannelClass::Bulk)
-            .map(|(_, streams)| {
-                streams
-                    .iter()
-                    .filter(|stream| stream.strong_count() > 0)
-                    .count()
-            })
-            .sum()
     }
 
     async fn open_stream(&self, peer: HostId, route: Route) -> Result<ByteStream, ChannelError> {

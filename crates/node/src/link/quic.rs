@@ -64,6 +64,7 @@ pub struct QuicCarrier {
 }
 
 impl QuicCarrier {
+    #[cfg(test)]
     pub async fn connect_direct(
         endpoint: &quinn::Endpoint,
         addr: SocketAddr,

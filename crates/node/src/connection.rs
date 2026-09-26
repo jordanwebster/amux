@@ -52,11 +52,6 @@ impl ConnectionManager {
         self.trusted_connections.clone()
     }
 
-    #[cfg(test)]
-    pub(crate) fn pool(&self) -> Arc<ChannelPool> {
-        self.channels.clone()
-    }
-
     pub(crate) async fn attach_routing_events(self: Arc<Self>) -> JoinHandle<()> {
         for event in self.routing.routing_events_snapshot().await {
             self.handle_event(event).await;
@@ -133,8 +128,14 @@ impl ConnectionManager {
         self.cloud_relay_for(peer).await.is_ok()
     }
 
-    pub(crate) async fn mark_client_visible_hosts(&self, host_ids: &[HostId]) {
-        self.routing.mark_client_visible_hosts(host_ids).await;
+    #[cfg(test)]
+    pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
+        &self.routing
+    }
+
+    #[cfg(test)]
+    pub async fn known_routes(&self, peer: HostId) -> Vec<Route> {
+        self.routing.routes_to(peer).await
     }
 
     pub(crate) async fn stored_reachability_error(&self, peer: HostId) -> Option<String> {
@@ -365,21 +366,6 @@ impl ConnectionManager {
             }
         }
         Err(ChannelError::CloudPairingUnavailable)
-    }
-
-    pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
-        &self.routing
-    }
-    pub(crate) fn channels(&self) -> &Arc<ChannelPool> {
-        &self.channels
-    }
-
-    pub async fn active_route(&self, peer: HostId) -> Option<Route> {
-        self.state.read().await.active.get(&peer).copied()
-    }
-
-    pub async fn known_routes(&self, peer: HostId) -> Vec<Route> {
-        self.routing.routes_to(peer).await
     }
 }
 

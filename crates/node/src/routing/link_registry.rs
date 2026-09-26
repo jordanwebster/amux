@@ -123,28 +123,6 @@ pub(crate) struct Registration {
 }
 
 impl LinkRegistry {
-    pub async fn cloud_link_ids(&self) -> Vec<String> {
-        let state = self.state.read().await;
-        let mut ids: Vec<_> = state
-            .writers
-            .iter()
-            .filter(|(_, writer)| writer.role == LinkRole::CloudRelay)
-            .map(|(id, _)| format!("{id:?}"))
-            .collect();
-        ids.sort();
-        ids
-    }
-
-    pub async fn cloud_relay_carrier(&self) -> Option<Arc<dyn NativeLinkCarrier>> {
-        self.state
-            .read()
-            .await
-            .writers
-            .values()
-            .find(|writer| writer.role == LinkRole::CloudRelay)
-            .and_then(|writer| writer.native_carrier.clone())
-    }
-
     /// Registers a live link and runs the adjacency discipline atomically:
     /// other links learn `NeighborUp(peer)` if this is the first link to the
     /// peer, and this link receives the diff between `advertised_snapshot`
@@ -546,6 +524,10 @@ impl LinkRegistry {
         })
     }
 
+    /// Whether any live link to `peer` is the authenticated cloud link.
+    /// Pairing route selection keys on the link role, never on the peer's
+    /// self-asserted capabilities.
+    #[cfg(test)]
     pub(crate) async fn link_role(&self, link: &LinkId) -> Option<LinkRole> {
         self.state
             .read()
@@ -555,9 +537,6 @@ impl LinkRegistry {
             .map(|writer| writer.role)
     }
 
-    /// Whether any live link to `peer` is the authenticated cloud link.
-    /// Pairing route selection keys on the link role, never on the peer's
-    /// self-asserted capabilities.
     pub(crate) async fn has_cloud_relay_link_to(&self, peer: HostId) -> bool {
         self.state
             .read()

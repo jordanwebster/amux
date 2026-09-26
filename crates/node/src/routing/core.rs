@@ -20,9 +20,9 @@ use tokio::time::Instant;
 
 use crate::HostId;
 use crate::resource_limits::{CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW, ROUTING_HOST_CAP};
+use crate::routing::Host;
 use crate::routing::events::{EventSource, HostReachabilityEvent, RoutingEvent};
 use crate::routing::types::{LinkId, Route};
-use crate::routing::{Host, LinkRegistry, LinkRole};
 use crate::trust::SharedTrustStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +137,7 @@ impl RoutingCore {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub async fn host_entry(&self, host_id: HostId) -> Option<Host> {
         let state = self.state.read().await;
         state
@@ -144,6 +145,18 @@ impl RoutingCore {
             .get(&host_id)
             .map(|entry| entry.host.clone())
             .or_else(|| state.claims.get(&host_id).map(|entry| entry.host.clone()))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn mark_client_visible_hosts(&self, host_ids: &[HostId]) {
+        let mut state = self.state.write().await;
+        let now = Instant::now();
+        prune_client_visible_activity(&mut state, now);
+        for host_id in host_ids {
+            if state.is_present(*host_id) {
+                state.client_visible_activity.insert(*host_id, now);
+            }
+        }
     }
 
     /// Records a channel-backed direct link to `host`. Emits `NeighborUp`
@@ -338,17 +351,6 @@ impl RoutingCore {
         self.state.write().await.replacing.remove(&host_id);
     }
 
-    pub(crate) async fn mark_client_visible_hosts(&self, host_ids: &[HostId]) {
-        let mut state = self.state.write().await;
-        let now = Instant::now();
-        prune_client_visible_activity(&mut state, now);
-        for host_id in host_ids {
-            if state.is_present(*host_id) {
-                state.client_visible_activity.insert(*host_id, now);
-            }
-        }
-    }
-
     pub(crate) async fn subscribe_routing_events(&self) -> mpsc::Receiver<RoutingEvent> {
         self.state.write().await.routing_events.subscribe()
     }
@@ -380,6 +382,7 @@ impl RoutingCore {
         events
     }
 
+    #[cfg(test)]
     #[doc(hidden)]
     pub async fn subscribe_hosts(&self) -> mpsc::Receiver<HostReachabilityEvent> {
         self.state.write().await.host_events.subscribe()
@@ -588,7 +591,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::routing::{Capabilities, LinkRegistry, LinkRole};
+    use crate::routing::Capabilities;
     use crate::trust::{Reachability, TrustEntry, TrustStore};
 
     fn host(id: u128, name: &str) -> Host {

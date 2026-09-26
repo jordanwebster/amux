@@ -81,6 +81,7 @@ struct EventSubscriber<E> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OverflowPolicy {
     Critical,
+    #[cfg(test)]
     DropSubscriber,
 }
 
@@ -102,6 +103,7 @@ impl<E> EventSource<E> {
         self.subscribe_with_policy(OverflowPolicy::Critical)
     }
 
+    #[cfg(test)]
     pub(crate) fn subscribe_drop_on_overflow(&mut self) -> mpsc::Receiver<E> {
         self.subscribe_with_policy(OverflowPolicy::DropSubscriber)
     }

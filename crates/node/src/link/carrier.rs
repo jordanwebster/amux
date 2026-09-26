@@ -100,19 +100,4 @@ pub async fn read_message(source: &mut ControlSource) -> io::Result<Option<pb::M
     source.rx.recv().await.transpose()
 }
 
-pub async fn write_raw_control_frame(sink: &mut ControlSink, declared_len: u32) -> io::Result<()> {
-    let (result, completed) = oneshot::channel();
-    sink.tx
-        .send(ControlWrite {
-            bytes: Vec::new(),
-            declared_len: Some(declared_len),
-            result,
-        })
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control stream closed"))?;
-    completed
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control stream closed"))?
-}
-
 pub(super) type BoxIoFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;

@@ -69,7 +69,6 @@ pub struct UserInfo {
     pub sub: String,
     pub name: Option<String>,
     pub email: Option<String>,
-    pub picture: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]

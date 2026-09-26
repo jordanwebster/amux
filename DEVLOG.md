@@ -1,3 +1,21 @@
+2026-09-26 — **A test pairs, links, refreshes and unpairs whole daemons in one process.**
+`crates/node/tests/edge.rs` starts daemons with their LAN listeners on
+loopback and a scripted discovery bus: one pairs with another through both
+front doors with a PIN, both link directly and answer each other's
+PeerService calls, a host that sends as another host's agent is refused, a
+stranger's pinned dial never links and its unpinned stream reaches only
+pairing, unpairing closes the link and refuses the redial, and discovery
+lists only hosts in the same scope. Another binds a profile through the
+front door against a stand-in cloud and relay: a free account's link
+refreshes on the runtime clock's interval and carries the Pro tier the
+account bought, a Pro credential refreshes before it expires on the relay's
+clock, and pause, resume and sign-out take the link down and back. Trusted
+edges also link in process for the testnet, until the link is severed. The
+restored code sheds what nothing uses any more; what later work needs
+(per-agent and bulk peer channels, the last dial error, moving the LAN
+listener to a new socket, the relay's TLS setup and the device-flow login)
+is reachable from the edge or the crate root.
+
 2026-09-26 — **Each profile runs its network edge again: identity, trust, links, pairing, discovery and the cloud link.**
 The daemon rewrite had removed the whole network edge along with the old
 agent hosting. It is back, rebuilt on the profile runtime from the code it

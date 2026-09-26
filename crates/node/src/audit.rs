@@ -2,9 +2,9 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 
+use crate::HostId;
 use crate::routing::{LinkId, LinkRole};
 use crate::trust::TrustStorePairingUpdate;
-use crate::{AgentId, HostId};
 
 const TARGET: &str = "amux::audit";
 
@@ -21,7 +21,6 @@ pub(crate) mod category {
     pub(crate) const TRUST_REMOVE: &str = "trust.remove";
     pub(crate) const LINK_UP: &str = "link.up";
     pub(crate) const LINK_DOWN: &str = "link.down";
-    pub(crate) const CLIENT_SERVICE_DISRUPTIVE_CALL: &str = "client_service.disruptive_call";
 
     #[cfg(test)]
     pub(crate) const ALL: &[&str] = &[
@@ -37,7 +36,6 @@ pub(crate) mod category {
         TRUST_REMOVE,
         LINK_UP,
         LINK_DOWN,
-        CLIENT_SERVICE_DISRUPTIVE_CALL,
     ];
 }
 
@@ -164,21 +162,6 @@ pub(crate) fn link_down(host_id: HostId, link: &LinkId, reason: impl fmt::Displa
     );
 }
 
-pub(crate) fn client_service_disruptive_call(
-    method: &str,
-    caller: &str,
-    agent_id: Option<AgentId>,
-) {
-    tracing::info!(
-        target: TARGET,
-        category = category::CLIENT_SERVICE_DISRUPTIVE_CALL,
-        method,
-        caller,
-        agent_id = ?agent_id,
-        "client_service.disruptive_call"
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::category;
@@ -200,7 +183,6 @@ mod tests {
                 "trust.remove",
                 "link.up",
                 "link.down",
-                "client_service.disruptive_call",
             ]
         );
     }

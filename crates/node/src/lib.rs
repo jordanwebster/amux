@@ -98,6 +98,8 @@ pub type HostId = uuid::Uuid;
 
 pub use agent_dir::Clock;
 pub use auth::claims::Tier;
+pub use auth::oauth::{OAuthError, run_device_flow};
+pub use transport::{TransportError, create_tls_acceptor, relay_quic_server_config};
 pub use wire::PROTOCOL_VERSION;
 
 /// The version this daemon writes into every spec.

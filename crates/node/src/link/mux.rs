@@ -130,26 +130,6 @@ impl MuxCarrier {
             Ok(Err(DriverOpenError::Io(error))) => Err(OpenError::Io(io::Error::other(error))),
         }
     }
-
-    pub async fn open_without_preface(&self) -> io::Result<pb::StreamRefusal> {
-        let mut stream = self
-            .request_stream()
-            .await
-            .map_err(|error| io::Error::other(error.to_string()))?
-            .compat();
-        // A zero-length protobuf frame contains no StreamPreface destination.
-        stream.write_all(&0_u32.to_be_bytes()).await?;
-        stream.flush().await?;
-        let status = stream.read_u8().await?;
-        if status != STREAM_REFUSED {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("expected stream refusal, got status {status}"),
-            ));
-        }
-        let code = stream.read_u8().await?;
-        Ok(pb::StreamRefusal::try_from(i32::from(code)).unwrap_or(pb::StreamRefusal::Unspecified))
-    }
 }
 
 impl LinkCarrier for MuxCarrier {

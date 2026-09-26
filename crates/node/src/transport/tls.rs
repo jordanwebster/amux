@@ -198,7 +198,7 @@ impl ServerCertVerifier for NoServerVerification {
 
 /// Create a TLS acceptor for cloud server mode.
 /// Requires TLS certificate and private key files.
-pub(crate) fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
+pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
     let (certs, key) = parse_server_identity(cert_pem, key_pem)?;
 
     let config = rustls::ServerConfig::builder()
@@ -211,10 +211,7 @@ pub(crate) fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<Tls
 
 /// Builds the relay's QUIC server configuration from the same WebPKI
 /// certificate and key used by its TCP/TLS listener.
-pub(crate) fn relay_quic_server_config(
-    cert_pem: &[u8],
-    key_pem: &[u8],
-) -> Result<quinn::ServerConfig> {
+pub fn relay_quic_server_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<quinn::ServerConfig> {
     let (certs, key) = parse_server_identity(cert_pem, key_pem)?;
     relay_quic_server_config_from_der(certs, key)
 }

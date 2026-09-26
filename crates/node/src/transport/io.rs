@@ -13,72 +13,12 @@ use tonic::transport::server::Connected;
 
 use crate::HostId;
 
-pub struct GrpcIo<T> {
-    inner: T,
-}
-
-impl<T> GrpcIo<T> {
-    pub fn new(inner: T) -> Self {
-        Self { inner }
-    }
-}
-
-impl<T> AsyncRead for GrpcIo<T>
-where
-    T: AsyncRead + Unpin,
-{
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl<T> AsyncWrite for GrpcIo<T>
-where
-    T: AsyncWrite + Unpin,
-{
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
-impl<T> Connected for GrpcIo<T>
-where
-    T: Send + Sync + 'static,
-{
-    type ConnectInfo = ();
-
-    fn connect_info(&self) -> Self::ConnectInfo {}
-}
-
 pub(crate) trait BoxedGrpcInner: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
 
 impl<T> BoxedGrpcInner for T where T: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BoxedGrpcAuth {
-    LocalTrusted,
     TlsTrusted {
         peer: HostId,
     },
@@ -105,13 +45,6 @@ pub(crate) struct BoxedGrpcIo {
 }
 
 impl BoxedGrpcIo {
-    pub(crate) fn local_trusted<T>(inner: T) -> Self
-    where
-        T: BoxedGrpcInner,
-    {
-        Self::new(inner, BoxedGrpcAuth::LocalTrusted)
-    }
-
     pub(crate) fn tls_trusted<T>(inner: T, peer: HostId) -> Self
     where
         T: BoxedGrpcInner,

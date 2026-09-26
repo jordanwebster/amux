@@ -55,16 +55,6 @@ impl LiveLocalHost {
         }
     }
 
-    /// The same runtime, describing itself with a binding fact of its own
-    /// that later credential changes do not move.
-    pub(crate) fn with_signed_in(&self, signed_in: bool) -> Self {
-        Self {
-            host: self.host.clone(),
-            signed_in: Arc::new(AtomicBool::new(signed_in)),
-            incarnation: self.incarnation,
-        }
-    }
-
     pub(crate) fn id(&self) -> Uuid {
         self.host.id
     }

@@ -6,47 +6,21 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
+#[cfg(test)]
+use tokio::io::DuplexStream;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::sync::CancellationToken;
+#[cfg(test)]
 use tonic::transport::{Channel, Endpoint};
 
-use super::{GrpcIo, channel_from_single_io};
+#[cfg(test)]
+use super::channel_from_single_io;
 
-pub(crate) const IN_PROCESS_BUF_SIZE: usize = 64 * 1024;
-
-pub(crate) type InProcessTransport = GrpcIo<DuplexStream>;
-
-#[doc(hidden)]
-pub struct InProcessConnection {
-    cancellation: CancellationToken,
-}
-
-impl InProcessConnection {
-    pub(crate) fn close(&self) {
-        self.cancellation.cancel();
-    }
-}
-
-pub(crate) fn in_process_transport_pair() -> (InProcessTransport, InProcessTransport) {
-    let (client_io, server_io) = tokio::io::duplex(IN_PROCESS_BUF_SIZE);
-    (
-        InProcessTransport::new(client_io),
-        InProcessTransport::new(server_io),
-    )
-}
-
-pub(crate) fn managed_in_process_transport_pair() -> (
-    InProcessTransport,
-    impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    InProcessConnection,
-) {
-    let (client, server) = in_process_transport_pair();
-    let cancellation = CancellationToken::new();
-    (
-        client,
-        ShutdownIo::new(server, cancellation.clone()),
-        InProcessConnection { cancellation },
-    )
+/// Two ends of an in-process byte stream, for tests that serve a service on
+/// one end and call it on the other.
+#[cfg(test)]
+pub(crate) fn in_process_transport_pair() -> (DuplexStream, DuplexStream) {
+    tokio::io::duplex(64 * 1024)
 }
 
 pub(crate) struct ShutdownIo<T> {
@@ -56,10 +30,6 @@ pub(crate) struct ShutdownIo<T> {
 }
 
 impl<T> ShutdownIo<T> {
-    pub(crate) fn new(inner: T, cancellation: CancellationToken) -> Self {
-        Self::new_shared(inner, Arc::new(cancellation))
-    }
-
     pub(crate) fn new_shared(inner: T, cancellation: Arc<CancellationToken>) -> Self {
         Self {
             inner,
@@ -119,7 +89,8 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ShutdownIo<T> {
     }
 }
 
-pub(crate) fn in_process_channel(transport: InProcessTransport) -> Channel {
+#[cfg(test)]
+pub(crate) fn in_process_channel(transport: DuplexStream) -> Channel {
     channel_from_single_io(
         Endpoint::from_static("http://in-process"),
         "in-process transport",

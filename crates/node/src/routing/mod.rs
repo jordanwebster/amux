@@ -17,7 +17,6 @@ pub(crate) use core::RouteUpdateOutcome;
 pub use core::RoutingCore;
 
 pub use events::RoutingEvent;
-pub(crate) use events::{EventSource, HostReachabilityEvent};
 pub(crate) use host::{
     FEATURE_CLOUD_RELAY, Incarnation, LiveLocalHost, local_host, validate_remote_host,
 };
@@ -33,8 +32,6 @@ pub(crate) use types::host_from_wire;
 pub use types::{Capabilities, Host, HostVia, LinkId, Route, host_to_wire};
 pub(crate) use wire::{inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire};
 
-#[cfg(test)]
-pub(crate) use crate::link::run::spawn_connector_with_bearer_token;
 pub(crate) use crate::link::run::{
     AuthenticatedLinkContextProvider, LinkConnectorCtx, LinkConnectorRefreshReceiver,
     LinkConnectorRefreshRequest, LinkCtx, spawn_connector_with_auth_establishment_and_shutdown,
@@ -42,5 +39,5 @@ pub(crate) use crate::link::run::{
 };
 pub use crate::link::run::{
     AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
-    LinkTokenAuthenticator, bearer_token_auth, spawn_connector_with_establishment,
+    LinkTokenAuthenticator,
 };

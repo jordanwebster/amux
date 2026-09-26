@@ -494,6 +494,45 @@ impl Edge {
         Ok(wire::peer_service_client(channel))
     }
 
+    /// A PeerService client for one of a host's agents, on a channel of its
+    /// own so that agent's subscription neither waits behind nor holds up
+    /// the host's other calls.
+    pub async fn session_peer(
+        &self,
+        host: HostId,
+        agent: crate::AgentId,
+    ) -> Result<
+        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
+        crate::link::ChannelError,
+    > {
+        let channel = self.connections.session_channel_to(host, agent).await?;
+        Ok(wire::peer_service_client(channel))
+    }
+
+    /// A PeerService client for bulk transfers, blobs, apart from calls.
+    pub async fn bulk_peer(
+        &self,
+        host: HostId,
+    ) -> Result<
+        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
+        crate::link::ChannelError,
+    > {
+        let channel = self.connections.bulk_channel_to(host).await?;
+        Ok(wire::peer_service_client(channel))
+    }
+
+    /// Why the last dial to a host failed, until a route to it comes up.
+    pub async fn last_dial_error(&self, host: HostId) -> Option<String> {
+        self.connections.stored_reachability_error(host).await
+    }
+
+    /// Moves the LAN listener onto a new socket, for a device whose network
+    /// changed under it: links migrate with the QUIC connection.
+    pub fn rebind_lan(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        socket.set_nonblocking(true)?;
+        self.reachability.rebind_quic(socket)
+    }
+
     /// What the cloud link is doing.
     pub fn observed(&self) -> Observed {
         self.status.current()
@@ -592,22 +631,16 @@ impl Edge {
         let acceptor = Arc::new(MuxCarrier::new(far, MuxRole::Acceptor, CarrierKind::Quic));
         let accept_ctx = other.link_ctx().with_authenticated_peer(self.host_id());
         let connect_ctx = self.link_ctx().with_expected_peer(other.host_id());
-        let accepting = tokio::spawn({
+        tokio::spawn({
             let acceptor = acceptor.clone();
             async move {
                 let _ = run_link(accept_ctx, acceptor, ConnectRole::Acceptor).await;
             }
         });
-        let (connecting, _) =
+        let _ =
             crate::link::run::spawn_connector_with_establishment(connect_ctx, connector.clone());
         Ok(LoopbackLink {
             carriers: [connector, acceptor],
-            tasks: vec![
-                accepting,
-                tokio::spawn(async move {
-                    let _ = connecting.await;
-                }),
-            ],
         })
     }
 
@@ -684,18 +717,15 @@ impl Drop for Edge {
 /// An in-process link between two edges.
 pub struct LoopbackLink {
     carriers: [Arc<MuxCarrier>; 2],
-    tasks: Vec<JoinHandle<()>>,
 }
 
 impl LoopbackLink {
     /// Cuts the link the way a dead connection would: no LinkClose, the
-    /// carrier just stops.
+    /// carrier just stops, and each side's link runtime cleans up as it
+    /// does for any connection that went away.
     pub fn sever(&self) {
         for carrier in &self.carriers {
             crate::link::LinkCarrier::close(carrier.as_ref(), wire::LinkCloseReason::Unspecified);
-        }
-        for task in &self.tasks {
-            task.abort();
         }
     }
 }

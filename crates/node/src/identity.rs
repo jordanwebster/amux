@@ -85,6 +85,7 @@ impl DeviceIdentity {
         &self.pubkey
     }
 
+    #[cfg(test)]
     pub fn private_key_pkcs8(&self) -> &[u8] {
         &self.private_key_pkcs8
     }
@@ -409,52 +410,31 @@ impl ServerCertVerifier for PinnedServerCertVerifier {
     }
 }
 
-pub(crate) struct DeviceFiles {
-    pub(crate) identity: DeviceIdentity,
-    pub(crate) trust_store: TrustStore,
+#[cfg(all(test, unix))]
+fn ensure_device_files_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
+    TrustStore::load_or_create_in(data_dir)?;
+    load_or_create_device_identity_in(data_dir)
 }
 
-#[doc(hidden)]
-pub fn device_files_ready_in(data_dir: &Path) -> bool {
-    data_dir_mode_ready(data_dir)
-        && load_device_identity_in(data_dir).is_ok()
-        && TrustStore::load_in(data_dir).is_ok()
-}
-
-#[doc(hidden)]
-pub fn ensure_device_files_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
-    Ok(ensure_device_files_with_trust_in(data_dir)?.identity)
-}
-
-pub(crate) fn ensure_device_files_with_trust_in(
-    data_dir: &Path,
-) -> Result<DeviceFiles, IdentityError> {
-    let identity = load_or_create_device_identity_in(data_dir)?;
-    let trust_store = TrustStore::load_or_create_in(data_dir)?;
-    Ok(DeviceFiles {
-        identity,
-        trust_store,
-    })
+#[cfg(all(test, unix))]
+fn data_dir_mode_ready(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(metadata) = fs::metadata(path) else {
+            return false;
+        };
+        metadata.permissions().mode() & 0o777 == 0o700
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_dir()
+    }
 }
 
 pub fn load_or_create_device_identity_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
     ensure_data_dir(data_dir)?;
     let host_id = load_or_create_host_id(&host_id_path(data_dir))?;
     let private_key_pkcs8 = load_or_create_device_key(&device_key_path(data_dir))?;
-    DeviceIdentity::from_parts(host_id, private_key_pkcs8)
-}
-
-/// Read the stored host id without touching key material. Read-only client
-/// plumbing: UIs use it to recognize the local host in inventory (the wire
-/// does not mark the local host).
-#[doc(hidden)]
-pub fn stored_host_id_in(data_dir: &Path) -> Option<HostId> {
-    load_host_id(&host_id_path(data_dir)).ok()
-}
-
-fn load_device_identity_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
-    let host_id = load_host_id(&host_id_path(data_dir))?;
-    let private_key_pkcs8 = load_device_key(&device_key_path(data_dir))?;
     DeviceIdentity::from_parts(host_id, private_key_pkcs8)
 }
 
@@ -625,23 +605,11 @@ fn ensure_data_dir(path: &Path) -> Result<(), IdentityError> {
     Ok(())
 }
 
-fn data_dir_mode_ready(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        let Ok(metadata) = fs::metadata(path) else {
-            return false;
-        };
-        metadata.permissions().mode() & 0o777 == 0o700
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_dir()
-    }
-}
-
 pub(crate) fn ensure_private_file_mode(path: &Path) -> Result<(), IdentityError> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

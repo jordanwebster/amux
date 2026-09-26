@@ -151,14 +151,6 @@ pub struct LinkConnectorAuth {
 }
 
 impl LinkConnectorAuth {
-    pub(crate) fn tier(&self) -> crate::Tier {
-        self.token.tier
-    }
-
-    pub fn new(token: LinkConnectorToken, refresher: Arc<dyn LinkConnectorTokenRefresher>) -> Self {
-        Self::with_free_refresh_interval(token, refresher, None)
-    }
-
     pub fn with_free_refresh_interval(
         token: LinkConnectorToken,
         refresher: Arc<dyn LinkConnectorTokenRefresher>,
@@ -266,6 +258,7 @@ type EstablishmentSender = oneshot::Sender<Result<Host, tonic::Status>>;
 pub(crate) type EstablishmentReceiver = oneshot::Receiver<Result<Host, tonic::Status>>;
 
 impl LinkCtx {
+    #[cfg(test)]
     pub fn new(local_host: Host, routing: Arc<RoutingCore>, links: Arc<LinkRegistry>) -> Self {
         Self::new_live(LiveLocalHost::new(local_host), routing, links)
     }
@@ -873,7 +866,7 @@ async fn handle_control_body(
 fn accept_peer_hello(
     ctx: &LinkCtx,
     hello: wire::pb::Hello,
-    auth_session: Option<&LinkAuthSession>,
+    _auth_session: Option<&LinkAuthSession>,
 ) -> Result<(Host, Vec<Host>, Incarnation), wire::pb::Error> {
     if !hello
         .supported_protocol_versions
@@ -1160,37 +1153,6 @@ fn link_error_status(error: LinkError) -> tonic::Status {
         LinkError::Status(status) => status,
         LinkError::Io(error) => tonic::Status::unavailable(error.to_string()),
     }
-}
-
-/// Authentication for a link whose token was minted outside the daemon and
-/// never changes: a fixture relay's own registry decides what the token is
-/// worth, so re-authenticating can only hand back the same string.
-pub fn bearer_token_auth(token: String) -> LinkConnectorAuth {
-    #[derive(Clone)]
-    struct StaticTokenRefresher(LinkConnectorToken);
-
-    #[tonic::async_trait]
-    impl LinkConnectorTokenRefresher for StaticTokenRefresher {
-        async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
-            Ok(self.0.clone())
-        }
-    }
-
-    let token = LinkConnectorToken {
-        token,
-        expires_at: SystemTime::now() + Duration::from_secs(3600),
-        tier: crate::Tier::Pro,
-    };
-    LinkConnectorAuth::new(token.clone(), Arc::new(StaticTokenRefresher(token)))
-}
-
-#[cfg(test)]
-pub(crate) fn spawn_connector_with_bearer_token(
-    ctx: LinkConnectorCtx,
-    carrier: Arc<dyn Carrier>,
-    token: String,
-) -> ConnectorTask {
-    spawn_connector(ctx, carrier, Some(bearer_token_auth(token)), None, None).0
 }
 
 #[cfg(test)]

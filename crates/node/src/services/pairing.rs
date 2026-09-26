@@ -929,7 +929,7 @@ fn pairing_request_reachability<T>(
                 PreTrustPairingReachability::Cloud => Some(Reachability::Cloud),
                 PreTrustPairingReachability::NoReusableReachability => None,
             }),
-            BoxedGrpcAuth::LocalTrusted | BoxedGrpcAuth::TlsTrusted { .. } => None,
+            BoxedGrpcAuth::TlsTrusted { .. } => None,
         })
         .ok_or_else(|| {
             Status::permission_denied("pairing RPC requires pre-trust pairing transport")
@@ -1432,7 +1432,10 @@ mod tests {
     ) {
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = stream::once(async move {
-            Ok::<_, std::io::Error>(BoxedGrpcIo::local_trusted(server_transport))
+            Ok::<_, std::io::Error>(BoxedGrpcIo::tls_trusted(
+                server_transport,
+                HostId::from_u128(0x7e57),
+            ))
         });
         let task = tokio::spawn(async move {
             crate::transport::tonic_server_builder()

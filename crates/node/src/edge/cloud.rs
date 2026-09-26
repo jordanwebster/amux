@@ -100,10 +100,6 @@ impl UdpBlockedMemory {
         blocked_at.contains_key(host)
     }
 
-    pub(crate) fn subscribe(&self) -> watch::Receiver<u64> {
-        self.changed.subscribe()
-    }
-
     fn record(&self, host: &str) {
         self.blocked_at
             .lock()
@@ -140,21 +136,6 @@ struct CloudConnectionContext {
     status: RuntimeStatus,
     refresh_rx: LinkConnectorRefreshReceiver,
     transport: CloudTransport,
-}
-
-#[derive(Clone)]
-pub enum TestCloudTransport {
-    Auto {
-        client_config: quinn::ClientConfig,
-        server_name: String,
-        quic_addr: std::net::SocketAddr,
-    },
-    Quic {
-        client_config: quinn::ClientConfig,
-        server_name: String,
-        quic_addr: std::net::SocketAddr,
-    },
-    Tcp,
 }
 
 impl CloudLink {
@@ -194,116 +175,6 @@ impl CloudLink {
         };
         self.status.report(Observed::Connected { tier, carrier });
         Ok(tier)
-    }
-
-    pub(crate) fn testnet_with_auth(
-        connector_ctx: LinkConnectorCtx,
-        address: std::net::SocketAddr,
-        auth: LinkConnectorAuth,
-        status: RuntimeStatus,
-        quic_endpoint: quinn::Endpoint,
-        transport: TestCloudTransport,
-        udp_blocked: Arc<UdpBlockedMemory>,
-    ) -> Self {
-        let (stop_tx, stop_rx) = watch::channel(false);
-        let tier = auth.tier();
-        let refresh_status = status.clone();
-        let (refresh_tx, refresh_rx) = mpsc::channel(1);
-        status.report(Observed::Connecting);
-        let task_status = status.clone();
-        let task_stop_tx = stop_tx.clone();
-        let task = tokio::spawn(async move {
-            let selected =
-                dial_test_cloud_carrier(quic_endpoint, address, transport, udp_blocked).await;
-            let (carrier, relay_carrier) = match selected {
-                Ok(selected) => selected,
-                Err(error) => {
-                    tracing::warn!(%error, "test cloud connection failed");
-                    task_status.report(Observed::Retrying);
-                    return;
-                }
-            };
-            let auth = auth.with_refresh_observer(move |tier| {
-                refresh_status.report(Observed::Connected {
-                    tier,
-                    carrier: relay_carrier,
-                });
-            });
-            let (connector_task, established_rx) =
-                spawn_connector_with_auth_establishment_and_shutdown(
-                    connector_ctx,
-                    carrier,
-                    auth,
-                    stop_rx.clone(),
-                    Some(Arc::new(tokio::sync::Mutex::new(refresh_rx))),
-                );
-            observe_fixture_connector(
-                connector_task,
-                established_rx,
-                task_stop_tx,
-                stop_rx,
-                task_status,
-                tier,
-                relay_carrier,
-            )
-            .await;
-        });
-        Self {
-            stop_tx,
-            refresh_tx: Some(refresh_tx),
-            status,
-            task,
-        }
-    }
-}
-
-async fn observe_fixture_connector(
-    connector_task: JoinHandle<Result<(), tonic::Status>>,
-    established_rx: oneshot::Receiver<Result<Host, tonic::Status>>,
-    stop_tx: watch::Sender<bool>,
-    stop_rx: watch::Receiver<bool>,
-    status: RuntimeStatus,
-    tier: crate::Tier,
-    carrier: RelayCarrier,
-) {
-    let connected_at = std::time::Instant::now();
-    let established = await_cloud_establishment(
-        &status,
-        established_rx,
-        connected_at,
-        CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
-        tier,
-        carrier,
-    )
-    .await;
-    let stopped = *stop_rx.borrow();
-    let establishment_failed = established.is_err();
-    let result = match established {
-        Ok(()) => match connector_task.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                Err(
-                    cloud_connection_error_from_status(&status, error, connected_at.elapsed())
-                        .await,
-                )
-            }
-            Err(error) => Err(CloudConnectionError::Retriable {
-                msg: error.to_string(),
-                reset_backoff: false,
-            }),
-        },
-        Err(error) => {
-            stop_tx.send_replace(true);
-            let _ = connector_task.await;
-            Err(error)
-        }
-    };
-    if stopped || (!establishment_failed && *stop_rx.borrow()) {
-        return;
-    }
-    match result {
-        Err(CloudConnectionError::NonRetriable(_)) => {}
-        _ => status.report(Observed::Retrying),
     }
 }
 
@@ -544,71 +415,6 @@ where
 fn close_ready_loser(result: Option<CloudDialResult>) {
     if let Some(Ok(carrier)) = result {
         carrier.close(wire::pb::LinkCloseReason::UserShutdown);
-    }
-}
-
-async fn dial_test_cloud_carrier(
-    quic_endpoint: quinn::Endpoint,
-    tcp_addr: std::net::SocketAddr,
-    transport: TestCloudTransport,
-    udp_blocked: Arc<UdpBlockedMemory>,
-) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String> {
-    let tcp = async move {
-        TcpStream::connect(tcp_addr)
-            .await
-            .map(|stream| {
-                Arc::new(MuxCarrier::new(
-                    stream,
-                    MuxRole::Connector,
-                    CarrierKind::RelayTcp,
-                )) as Arc<dyn LinkCarrier>
-            })
-            .map_err(|error| error.to_string())
-    };
-
-    let (client_config, server_name, quic_addr, automatic) = match transport {
-        TestCloudTransport::Auto {
-            client_config,
-            server_name,
-            quic_addr,
-        } => (client_config, server_name, quic_addr, true),
-        TestCloudTransport::Quic {
-            client_config,
-            server_name,
-            quic_addr,
-        } => (client_config, server_name, quic_addr, false),
-        TestCloudTransport::Tcp => return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp)),
-    };
-    let connections_before_probe = quic_endpoint.open_connections();
-    let quic = async move {
-        let result = QuicCarrier::connect_relay_candidates_with_config(
-            &quic_endpoint,
-            [quic_addr],
-            &server_name,
-            quic_addr.port(),
-            client_config,
-        )
-        .await
-        .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
-        .map_err(|error| error.to_string());
-        if result.is_err() {
-            // Wait for this failed attempt to leave the endpoint, but never
-            // wait for unrelated direct QUIC connections owned by the same
-            // profile. The bound is a real transport-readiness fallback, not
-            // product-policy time.
-            let _ = tokio::time::timeout(TCP_FALLBACK_DELAY, async {
-                while quic_endpoint.open_connections() > connections_before_probe {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await;
-        }
-        result
-    };
-    if automatic {
-        select_cloud_carrier("testnet-relay", udp_blocked, TCP_FALLBACK_DELAY, quic, tcp).await
-    } else {
-        quic.await.map(|carrier| (carrier, RelayCarrier::Quic))
     }
 }
 

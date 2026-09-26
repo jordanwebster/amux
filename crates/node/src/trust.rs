@@ -56,10 +56,6 @@ pub(crate) enum TrustStorePairingUpdate {
 }
 
 impl TrustStore {
-    pub(crate) fn load_in(data_dir: &Path) -> Result<Self, IdentityError> {
-        load_trust_store_from_path(&trust_path(data_dir))
-    }
-
     #[doc(hidden)]
     pub fn load_or_create_in(data_dir: &Path) -> Result<Self, IdentityError> {
         let path = trust_path(data_dir);
@@ -96,6 +92,7 @@ impl TrustStore {
             .map(|(host_id, entry)| (*host_id, entry))
     }
 
+    #[cfg(test)]
     pub fn insert_for_test(&mut self, host_id: HostId, entry: TrustEntry) {
         self.entries.insert(host_id, entry);
     }
