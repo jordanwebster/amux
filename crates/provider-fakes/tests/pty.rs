@@ -101,13 +101,25 @@ impl Terminal {
         }
     }
 
-    /// Start and wait for the session to announce itself.
+    /// Start and wait for the terminal to take input: Claude turns on
+    /// bracketed paste then. Its session starts only with the first prompt.
     async fn started(script: Value) -> Self {
         let terminal = Self::start(script);
-        // Nothing reads the screen; drain it so the fake never blocks on it.
         let mut output = terminal.handle.output();
+        let mut seen = Vec::new();
+        let live = tokio::time::timeout(DEADLINE, async {
+            while let Some(bytes) = output.recv().await {
+                seen.extend_from_slice(&bytes);
+                if seen.windows(8).any(|window| window == b"\x1b[?2004h") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+        assert_eq!(live.ok(), Some(true), "bracketed paste is turned on");
+        // Nothing reads the screen; drain it so the fake never blocks on it.
         tokio::spawn(async move { while output.recv().await.is_some() {} });
-        terminal.hook("SessionStart").await;
         terminal
     }
 
@@ -399,10 +411,15 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
 async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() {
     use tokio::io::AsyncWriteExt;
     let terminal = Terminal::started(json!({"steps": [
+        {"text": {"chunks": ["first"]}},
+        "turn_end",
         {"text": {"chunks": ["from a peer"]}},
         "turn_end",
     ]}))
     .await;
+    // The session, and with it the first hook, starts with the first prompt.
+    terminal.prompt("hello").await;
+    terminal.hook("Stop").await;
     // The token reaches hook commands through their environment only.
     let token = std::fs::read_to_string(&terminal.token).unwrap();
     assert_eq!(token.len(), 32);
@@ -430,9 +447,12 @@ async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() 
     );
     stream.write_all(message.as_bytes()).await.unwrap();
     drop(stream);
-    terminal.hook("Stop").await;
+    terminal.hooks_of("Stop", 2).await;
     let rows = terminal.rows();
-    let user = rows.iter().find(|row| row["type"] == "user").unwrap();
+    let user = rows
+        .iter()
+        .find(|row| row["type"] == "user" && row["origin"]["kind"] == "peer")
+        .unwrap();
     let content = user["message"]["content"].as_str().unwrap();
     assert!(
         content.starts_with("Another Claude session sent a message:\n<cross-session-message")

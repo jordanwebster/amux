@@ -85,8 +85,10 @@ impl State {
     }
 
     fn agent_fact(&mut self, value: &Value) {
-        if text(value, "type") != "launch" {
-            return;
+        match text(value, "type") {
+            "launch" => {}
+            "ready" => return self.shared.provider_started(),
+            _ => return,
         }
         let provider = &mut self.provider;
         let version = text(value, "version");

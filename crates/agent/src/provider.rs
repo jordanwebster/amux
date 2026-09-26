@@ -401,11 +401,19 @@ impl Provider {
         let mut exit = process.exit;
         let forward = events.clone();
         tokio::spawn(async move {
+            let mut ready = Ready::default();
             let status = loop {
                 tokio::select! {
                     bytes = output.recv() => match bytes {
                         Some(bytes) => {
                             let _ = forward.send(ProviderEvent::Output(bytes.to_vec())).await;
+                            if ready.watch(&bytes) {
+                                let fact = Fact {
+                                    channel: Channel::Agent,
+                                    payload: interpret::claude_pty::ready_fact(),
+                                };
+                                let _ = forward.send(ProviderEvent::Fact(fact)).await;
+                            }
                         }
                         None => break exit.wait().await,
                     },
@@ -699,6 +707,39 @@ fn codex_turn_input(
         });
     }
     serde_json::to_vec(&request).map_err(io::Error::other)
+}
+
+/// Watches terminal output for Claude turning on bracketed paste, which it
+/// does when its input goes live: the first moment a prompt can be typed.
+#[derive(Default)]
+struct Ready {
+    seen: bool,
+    /// The end of the output so far, for a sequence split across reads.
+    tail: Vec<u8>,
+}
+
+impl Ready {
+    const SEQUENCE: &[u8] = b"\x1b[?2004h";
+
+    /// True the first time the sequence appears.
+    fn watch(&mut self, bytes: &[u8]) -> bool {
+        if self.seen {
+            return false;
+        }
+        self.tail.extend_from_slice(bytes);
+        if self
+            .tail
+            .windows(Self::SEQUENCE.len())
+            .any(|window| window == Self::SEQUENCE)
+        {
+            self.seen = true;
+            self.tail = Vec::new();
+            return true;
+        }
+        let keep = self.tail.len().saturating_sub(Self::SEQUENCE.len() - 1);
+        self.tail.drain(..keep);
+        false
+    }
 }
 
 /// Where an earlier follower of `path` stopped; the start for any other

@@ -175,6 +175,14 @@ pub fn launch_fact(version: &str, keymap: &str) -> Vec<u8> {
     .expect("json")
 }
 
+/// The fact the agent process sends when Claude's terminal turns on
+/// bracketed paste: its input is live, so a prompt can be typed. Claude
+/// reports its session start only after the first prompt, so nothing else
+/// says a new terminal takes input.
+pub fn ready_fact() -> Vec<u8> {
+    br#"{"type":"ready"}"#.to_vec()
+}
+
 /// What the interpreter knows about the Claude process and its session.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Provider {

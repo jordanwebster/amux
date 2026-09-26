@@ -36,6 +36,8 @@ fn peer_element(text: &str) -> String {
     format!("<cross-session-message from=\"peer\">\n{text}\n</cross-session-message>")
 }
 
+const BRACKETED_PASTE_ON: &[u8] = b"\x1b[?2004h";
+
 /// Set, the fake behaves as a Claude without a messaging socket.
 pub const NO_MESSAGING_ENV: &str = "AMUX_FAKE_NO_MESSAGING";
 
@@ -282,6 +284,8 @@ struct Engine {
     parent: Option<String>,
     prompt_id: String,
     last_text: String,
+    /// The session has started: the first prompt arrived.
+    started: bool,
 }
 
 impl Engine {
@@ -324,10 +328,43 @@ impl Engine {
             parent: None,
             prompt_id: uuid(),
             last_text: String::new(),
+            started: false,
         }
     }
 
     async fn run(mut self) -> i32 {
+        // Input is live once bracketed paste is on, as Claude's TUI turns it
+        // on when it starts reading keys.
+        {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(BRACKETED_PASTE_ON);
+            let _ = stdout.flush();
+        }
+        self.screen("Claude Code (scripted)");
+        loop {
+            if !self.busy
+                && let Some(next) = self.queue.pop_front()
+            {
+                self.session_start();
+                if let Some(code) = self.turn(next).await {
+                    return code;
+                }
+                continue;
+            }
+            if self.closed {
+                self.hook(json!({ "hook_event_name": "SessionEnd", "reason": "other" }));
+                return 0;
+            }
+            self.wait().await;
+        }
+    }
+
+    /// Claude starts its session, runs the SessionStart hooks and writes
+    /// its first rows only when the first prompt arrives.
+    fn session_start(&mut self) {
+        if std::mem::replace(&mut self.started, true) {
+            return;
+        }
         let source = if self.args.resume.is_some() {
             "resume"
         } else {
@@ -343,22 +380,6 @@ impl Engine {
             "permissionMode": self.mode,
             "sessionId": self.session,
         }));
-        self.screen("Claude Code (scripted)");
-        loop {
-            if !self.busy
-                && let Some(next) = self.queue.pop_front()
-            {
-                if let Some(code) = self.turn(next).await {
-                    return code;
-                }
-                continue;
-            }
-            if self.closed {
-                self.hook(json!({ "hook_event_name": "SessionEnd", "reason": "other" }));
-                return 0;
-            }
-            self.wait().await;
-        }
     }
 
     /// Wait for the next input and act on it.
