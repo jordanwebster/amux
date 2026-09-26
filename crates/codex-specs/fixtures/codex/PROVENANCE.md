@@ -52,3 +52,12 @@ backend-visible event shapes.
 in a provider-derived file. The UI A2A specification appends its explicit
 carrier-row fixture after folding this corpus, keeping provider provenance and
 daemon synthesis separate.
+
+## Inject drain
+
+`crates/codex-specs/fixtures/runtime/inject_drain` was captured with
+codex-cli 0.157.0 and explicit model `gpt-5.6-luna` by
+`codex-probe record inject_drain`, through the same sanitizer. It pins that
+an item sent with `thread/inject_items` while a command runs is acknowledged
+at once with an empty result, produces no item of its own, and is answered by
+the running turn under the same turn id before that turn completes.

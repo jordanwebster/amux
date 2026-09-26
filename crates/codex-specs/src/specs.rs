@@ -27,6 +27,7 @@ const REGISTRY: &[SpecEntry] = &[
     entry("inject_idle"),
     entry("inject_busy"),
     entry("two_assistant_messages"),
+    entry("inject_drain"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -230,6 +231,7 @@ async fn run_scenario(
         "inject_idle" => inject_idle(codex, model, project).await,
         "inject_busy" => inject_busy(codex, model, project).await,
         "two_assistant_messages" => two_assistant_messages(codex, model, project).await,
+        "inject_drain" => inject_drain(codex, model, project).await,
         other => Err(format!("unknown registered specification {other}")),
     }
 }
@@ -535,6 +537,90 @@ async fn inject_busy(codex: &Codex, model: &str, project: &Path) -> Result<Scena
     Ok(report(&thread))
 }
 
+/// An item injected while a turn runs is drained by that turn: the model
+/// samples again with the item in context and answers it under the same turn
+/// id, so nothing waits for a next turn. The inject is acknowledged at once
+/// and produces no item of its own, so a client that wants the injected
+/// message in its transcript must write it there itself.
+async fn inject_drain(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let mut config = thread_config(model, project);
+    config.approval_policy = Some(ApprovalPolicy::Never);
+    let thread = codex
+        .start_thread(config)
+        .await
+        .map_err(|error| format!("model {model}: thread/start failed: {error}"))?;
+    let mut events = thread.events().await.map_err(stringify)?;
+    thread
+        .start_turn(
+            "Run the shell command `sleep 5`, then reply with exactly CODEX_SPEC_DONE_A and \
+             nothing else.",
+        )
+        .await
+        .map_err(stringify)?;
+    let turn_id = loop {
+        if let TurnEvent::TurnStarted { turn } = next_event(&mut events, "turn start").await?.event
+        {
+            break turn.id;
+        }
+    };
+    loop {
+        if matches!(
+            next_event(&mut events, "the command").await?.event,
+            TurnEvent::ItemStarted(ThreadItem::CommandExecution { .. })
+        ) {
+            break;
+        }
+    }
+    thread
+        .inject_items(vec![injected_item(
+            "Ignore the earlier instruction about the final reply. Reply with exactly \
+             CODEX_SPEC_INJECT_DRAIN and nothing else.",
+        )])
+        .await
+        .map_err(stringify)?;
+
+    let mut messages = Vec::new();
+    loop {
+        match next_event(&mut events, "turn completion").await?.event {
+            TurnEvent::ItemStarted(ThreadItem::UserMessage { .. })
+            | TurnEvent::ItemCompleted(ThreadItem::UserMessage { .. }) => {
+                return Err("the injected item surfaced as a userMessage item".to_string());
+            }
+            TurnEvent::TurnStarted { turn } => {
+                return Err(format!(
+                    "turn {} started before the running turn completed",
+                    turn.id
+                ));
+            }
+            TurnEvent::ItemCompleted(ThreadItem::AgentMessage { text, .. }) => messages.push(text),
+            TurnEvent::TurnCompleted { turn } => {
+                if turn.id != turn_id || turn.status != TurnStatus::Completed {
+                    return Err(format!(
+                        "expected turn {turn_id} to complete, got {} with status {:?}",
+                        turn.id, turn.status
+                    ));
+                }
+                break;
+            }
+            TurnEvent::Error { message, .. } => return Err(format!("turn error: {message}")),
+            _ => {}
+        }
+    }
+    if !messages
+        .iter()
+        .any(|text| text.contains("CODEX_SPEC_INJECT_DRAIN"))
+    {
+        return Err(format!(
+            "the running turn did not answer the injected item: {messages:?}"
+        ));
+    }
+    Ok(report(&thread))
+}
+
 async fn two_assistant_messages(
     codex: &Codex,
     model: &str,
@@ -620,7 +706,7 @@ mod tests {
 
     #[test]
     fn registry_names_the_provider_side_of_the_c_suite() {
-        assert_eq!(registry().len(), 10);
+        assert_eq!(registry().len(), 11);
         assert_eq!(registry()[0].name, "initialize_and_start");
         assert_eq!(registry()[9].name, "two_assistant_messages");
         assert!(

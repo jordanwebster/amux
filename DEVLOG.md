@@ -1,3 +1,12 @@
+2026-09-26 — **A specification for Codex draining injected items.**
+`inject_drain`, captured against codex-cli 0.157.0, sends an item with
+`thread/inject_items` while the turn's `sleep` command runs. The inject is
+acknowledged within milliseconds with an empty result and produces no item;
+after the command finishes the model samples again and answers the injected
+message under the same turn id, then the turn completes. This is the
+recorded evidence behind the Codex interpreter clearing an injected agent
+message at the inject's acknowledgement when a turn is running.
+
 2026-09-26 — **Specifications for how a message reaches headless Claude.**
 Two recorded specifications, captured against Claude Code 2.1.283, pin what
 the SDK probe found. `probes/client_id`: a stdin message's `uuid` comes back
