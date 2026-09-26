@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 gethostname = { workspace = true }
-model = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }

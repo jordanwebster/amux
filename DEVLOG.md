@@ -1,3 +1,19 @@
+2026-09-26 — **Settings for the supervisor, updates, retention and discovery.**
+The installation config gains the keys the new daemon reads: `supervisor`
+(on | off, written by the install; the desktop installer says on),
+`updates` (auto | manual; absent means auto under a supervisor and manual
+without one, and auto without a supervisor is an error, since only a
+supervisor installs releases), `channel` (stable | preview, default
+stable), `keep_awake` (on | off, default on), `retention` (own budget per
+profile, replica row and blob budgets), `discovery.scope`, and `agent`
+(grace, drain and facts-ring sizes copied into each agent's spec). Each
+starting point carries a comment naming its basis until it is measured.
+`ui.artifact_cache_mib` and `prevent_idle_sleep` are gone; a config that
+still has them fails with what replaced them rather than a bare
+unknown-field error. `claude.driver` stays as the preference for how a new
+Claude agent runs (pty | sdk), now a settings type of its own, so settings
+no longer depends on the model crate.
+
 2026-09-26 — **The attachments crate: one element syntax, seen only by the model.**
 Inputs and items carry attachments one way: text with a U+FFFC placeholder
 per attachment and the ordered typed list. `crates/attachments` validates that

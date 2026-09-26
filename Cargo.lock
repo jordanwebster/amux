@@ -1511,7 +1511,6 @@ version = "0.1.0"
 dependencies = [
  "gethostname",
  "libc",
- "model",
  "semver",
  "serde",
  "serde_yaml",

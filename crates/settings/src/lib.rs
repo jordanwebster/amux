@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gethostname::gethostname;
-use model::ClaudeDriver;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -304,8 +303,111 @@ pub struct Keybinds {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ClaudeSettings {
-    /// The driver used when a creation surface has no explicit override.
-    pub driver: ClaudeDriver,
+    /// How a new Claude agent runs when a creation surface does not say.
+    pub driver: ClaudeInterface,
+}
+
+/// Claude in a terminal, or headless through its SDK.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeInterface {
+    #[default]
+    Pty,
+    Sdk,
+}
+
+/// A setting that is on or off, spelled `on` or `off`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Switch {
+    On,
+    Off,
+}
+
+/// Whether the supervisor installs releases itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Updates {
+    Auto,
+    Manual,
+}
+
+/// Which release manifest the supervisor follows. Preview is for people who
+/// asked for builds ahead of stable, so it is never the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    #[default]
+    Stable,
+    Preview,
+}
+
+/// Storage budgets. The starting points are not measured yet; each comment
+/// names its basis so a measurement can replace it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RetentionSettings {
+    /// Per profile, for the agents this host runs: rows, directories and
+    /// their blobs. Basis: a generous multiple of the largest transcripts
+    /// seen so far, pending measurement against typical sizes.
+    pub own_budget_mib: u64,
+    /// Per runtime, for rows replicated from other hosts. Basis: the bound
+    /// the old client cache had, 256 MiB.
+    pub replica_rows_mib: u64,
+    /// Per runtime, for blobs fetched from other hosts, evicted least
+    /// recently read first. Basis: twice the row budget, since images
+    /// dominate what is fetched; to be measured.
+    pub replica_blobs_mib: u64,
+}
+
+impl Default for RetentionSettings {
+    fn default() -> Self {
+        Self {
+            own_budget_mib: 2048,
+            replica_rows_mib: 256,
+            replica_blobs_mib: 512,
+        }
+    }
+}
+
+/// Local-network discovery.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DiscoverySettings {
+    /// Matched exactly against other daemons' advertised scope: a daemon
+    /// lists only candidates in its own scope. Empty for real machines; a
+    /// worktree or a test network sets its own so it never meets them.
+    pub scope: String,
+}
+
+/// What each agent process is started with, copied into its spec at spawn.
+/// A change affects the next spawn or resume, never a running agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentSettings {
+    /// How long an agent keeps running after its daemon disappears before
+    /// it drains and exits. Basis: minutes, enough to ride out a daemon
+    /// update or crash restart.
+    pub grace_secs: u64,
+    /// How long an orphaned agent waits on an open ask while draining.
+    /// Basis: minutes, the same order as the grace.
+    pub drain_secs: u64,
+    /// The interpreter's facts ring: bytes per segment and segments kept.
+    /// Basis: 2–4 MB and two segments, enough to replay recent history into
+    /// a dump without keeping a second transcript.
+    pub facts_ring_mib: u64,
+    pub facts_ring_segments: u32,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            grace_secs: 300,
+            drain_secs: 300,
+            facts_ring_mib: 4,
+            facts_ring_segments: 2,
+        }
+    }
 }
 
 /// Which mode Enter opens a Claude agent in from the fleet
@@ -377,7 +479,7 @@ pub enum ColorSetting {
 
 /// Client UI configuration (the TUI; future desktop clients read the same
 /// keys).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
     /// The mode the fleet's Enter opens; the non-default mode opens via
@@ -387,19 +489,6 @@ pub struct UiSettings {
     pub theme: ThemeSetting,
     /// Whether to detect, force, or disable truecolor output.
     pub color: ColorSetting,
-    /// Viewing-host attachment cache bound, in mebibytes.
-    pub artifact_cache_mib: u64,
-}
-
-impl Default for UiSettings {
-    fn default() -> Self {
-        Self {
-            default_open_mode: OpenMode::default(),
-            theme: ThemeSetting::default(),
-            color: ColorSetting::default(),
-            artifact_cache_mib: 256,
-        }
-    }
 }
 
 /// Preferences shared by every profile in an installation.
@@ -411,7 +500,20 @@ pub struct InstallationConfig {
     pub root: PathBuf,
     pub front_door_socket: PathBuf,
     pub host_name: String,
-    pub prevent_idle_sleep: Option<bool>,
+    /// Whether this install runs the daemon under `amux supervise`. Decided
+    /// by the install, not chosen: the desktop installer writes `on`; a host
+    /// whose service manager runs the daemon directly leaves it `off`.
+    pub supervisor: Switch,
+    /// Whether the supervisor also installs releases. Absent means `auto`
+    /// under a supervisor and `manual` without one; `auto` without a
+    /// supervisor is an error. Read it through [`InstallationConfig::updates`].
+    pub updates: Option<Updates>,
+    pub channel: Channel,
+    /// Whether the supervisor holds the machine's sleep assertion.
+    pub keep_awake: Switch,
+    pub retention: RetentionSettings,
+    pub discovery: DiscoverySettings,
+    pub agent: AgentSettings,
     pub keybinds: Keybinds,
     pub ui: UiSettings,
     pub reports_dir: Option<PathBuf>,
@@ -430,7 +532,13 @@ impl Default for InstallationConfig {
             root: default_data_dir(),
             front_door_socket: default_socket_path(),
             host_name: default_host_name(),
-            prevent_idle_sleep: None,
+            supervisor: Switch::Off,
+            updates: None,
+            channel: Channel::default(),
+            keep_awake: Switch::On,
+            retention: RetentionSettings::default(),
+            discovery: DiscoverySettings::default(),
+            agent: AgentSettings::default(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
             reports_dir: None,
@@ -447,9 +555,32 @@ impl InstallationConfig {
         amux_xdg_dir("XDG_CONFIG_HOME", ".config").join("config.yaml")
     }
 
+    /// Parses installation YAML, rejecting retired keys by name and an
+    /// impossible supervisor and updates pair.
+    pub fn from_yaml(yaml: &str) -> Result<Self, ConfigError> {
+        let config: Self = parse_yaml(yaml)?;
+        config.updates()?;
+        Ok(config)
+    }
+
+    /// The effective updates mode; `auto` without a supervisor is an error,
+    /// since only a supervisor installs releases.
+    pub fn updates(&self) -> Result<Updates, ConfigError> {
+        match (self.supervisor, self.updates) {
+            (Switch::Off, Some(Updates::Auto)) => Err(ConfigError::Invalid(
+                "updates: auto needs supervisor: on; without a supervisor, updates are deploys (updates: manual)".into(),
+            )),
+            (_, Some(updates)) => Ok(updates),
+            (Switch::On, None) => Ok(Updates::Auto),
+            (Switch::Off, None) => Ok(Updates::Manual),
+        }
+    }
+
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let path = absolute_path(path, &std::env::current_dir()?)?;
-        let mut config: Self = read_yaml(&path)?;
+        let yaml = std::fs::read_to_string(&path)?;
+        let mut config = Self::from_yaml(&yaml)
+            .map_err(|error| ConfigError::Invalid(format!("{}: {error}", path.display())))?;
         let base = path.parent().unwrap();
         config.root = absolute_path(&config.root, base)?;
         config.front_door_socket = absolute_path(&config.front_door_socket, base)?;
@@ -468,6 +599,7 @@ impl InstallationConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.updates()?;
         Config {
             host_name: self.host_name.clone(),
             keybinds: self.keybinds.clone(),
@@ -523,15 +655,43 @@ impl ProfileConfig {
         }
         Ok(config)
     }
-
-    pub fn artifact_cache_dir(&self) -> PathBuf {
-        self.data_dir.join("cache/artifacts")
-    }
 }
 
 fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
-    serde_yaml::from_slice(&std::fs::read(path)?)
+    parse_yaml(&std::fs::read_to_string(path)?)
         .map_err(|error| ConfigError::Invalid(format!("{}: {error}", path.display())))
+}
+
+/// Keys that used to exist, each with what replaced it, so an old config
+/// file fails with the reason rather than a bare unknown-field error.
+const RETIRED_KEYS: &[(&[&str], &str)] = &[
+    (
+        &["ui", "artifact_cache_mib"],
+        "clients keep no attachment cache; attachment bytes live in each agent's directory and go with it",
+    ),
+    (
+        &["prevent_idle_sleep"],
+        "replaced by keep_awake (on | off), which the supervisor holds for its lifetime",
+    ),
+];
+
+/// Parses YAML into a config type after rejecting retired keys by name.
+fn parse_yaml<T: serde::de::DeserializeOwned>(yaml: &str) -> Result<T, ConfigError> {
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(yaml).map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    for (path, why) in RETIRED_KEYS {
+        let mut node = Some(&value);
+        for key in *path {
+            node = node.and_then(|node| node.get(*key));
+        }
+        if node.is_some() {
+            return Err(ConfigError::Invalid(format!(
+                "`{}` is no longer a setting: {why}",
+                path.join(".")
+            )));
+        }
+    }
+    serde_yaml::from_value(value).map_err(|error| ConfigError::Invalid(error.to_string()))
 }
 
 // Resolve aliases in the existing ancestor, even before a socket or state file
@@ -602,15 +762,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reports_dir: Option<PathBuf>,
 
-    /// Whether to prevent idle system sleep while the server is running. `None`
-    /// = not yet asked (init will prompt); `Some(true/false)` = explicit user
-    /// choice.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prevent_idle_sleep: Option<bool>,
-
     /// Per-auth-client minimum version requirements (e.g. {"cli": "0.2.0"}).
     /// Cloud peers whose token client_id matches a key and whose host version
-    /// is below the value will be rejected with UpdateRequired.
+    /// is below the value are refused as a version mismatch.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
@@ -646,7 +800,6 @@ impl Default for Config {
             state_path: default_state_path(),
             data_dir: default_data_dir(),
             reports_dir: None,
-            prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
             repository_roots: Vec::new(),
             keybinds: Keybinds::default(),
@@ -661,7 +814,10 @@ impl Default for Config {
 ///
 /// A creation-time override wins over the configured default. With neither,
 /// the shipped default remains the PTY driver.
-pub fn resolve_claude_driver(explicit: Option<ClaudeDriver>, config: &Config) -> ClaudeDriver {
+pub fn resolve_claude_driver(
+    explicit: Option<ClaudeInterface>,
+    config: &Config,
+) -> ClaudeInterface {
     explicit.unwrap_or(config.claude.driver)
 }
 
@@ -675,11 +831,6 @@ impl Config {
         self.reports_dir
             .clone()
             .unwrap_or_else(|| self.data_dir.join("reports"))
-    }
-
-    /// The viewing-host artifact cache owned by this configured device.
-    pub fn artifact_cache_dir(&self) -> PathBuf {
-        self.data_dir.join("cache/artifacts")
     }
 
     /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
@@ -718,11 +869,15 @@ impl Config {
         Ok(())
     }
 
+    /// Parses server YAML, rejecting retired keys by name.
+    pub fn from_yaml(yaml: &str) -> std::result::Result<Self, ConfigError> {
+        parse_yaml(yaml)
+    }
+
     /// Load config from a YAML file
     pub fn from_file(path: &Path) -> std::result::Result<Self, ConfigError> {
         let contents = std::fs::read_to_string(path)?;
-        let mut config: Config =
-            serde_yaml::from_str(&contents).map_err(|e| ConfigError::Invalid(e.to_string()))?;
+        let mut config = Self::from_yaml(&contents)?;
         config.path = Some(path.to_path_buf());
         Ok(config)
     }
@@ -735,13 +890,13 @@ mod tests {
     #[test]
     fn claude_driver_config_defaults_to_pty_and_accepts_sdk() {
         let absent: Config = serde_yaml::from_str("host_name: test\n").unwrap();
-        assert_eq!(resolve_claude_driver(None, &absent), ClaudeDriver::Pty);
+        assert_eq!(resolve_claude_driver(None, &absent), ClaudeInterface::Pty);
 
         let sdk: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
-        assert_eq!(resolve_claude_driver(None, &sdk), ClaudeDriver::Sdk);
+        assert_eq!(resolve_claude_driver(None, &sdk), ClaudeInterface::Sdk);
         assert_eq!(
-            resolve_claude_driver(Some(ClaudeDriver::Pty), &sdk),
-            ClaudeDriver::Pty
+            resolve_claude_driver(Some(ClaudeInterface::Pty), &sdk),
+            ClaudeInterface::Pty
         );
     }
 
@@ -934,17 +1089,6 @@ mod tests {
     }
 
     #[test]
-    fn artifact_cache_bound_defaults_and_parses_from_yaml() {
-        assert_eq!(Config::default().ui.artifact_cache_mib, 256);
-        let parsed: Config = serde_yaml::from_str("ui:\n  artifact_cache_mib: 48\n").unwrap();
-        assert_eq!(parsed.ui.artifact_cache_mib, 48);
-
-        let serialized = serde_yaml::to_string(&parsed).unwrap();
-        let reparsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(reparsed.ui.artifact_cache_mib, 48);
-    }
-
-    #[test]
     fn ui_theme_file_path_yaml_roundtrip() {
         let yaml = "ui:\n  theme: themes/forest.yaml\n  color: truecolor\n";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
@@ -979,7 +1123,6 @@ mod tests {
         assert_eq!(config.tcp_port, None);
         assert_eq!(config.udp_port, None);
         assert_eq!(config.lan, LanConfig::default());
-        assert_eq!(config.prevent_idle_sleep, None);
     }
 
     #[test]
@@ -996,24 +1139,6 @@ mod tests {
                 port: 4242,
             }
         );
-    }
-
-    #[test]
-    fn prevent_idle_sleep_yaml_roundtrip() {
-        let yaml = "prevent_idle_sleep: true\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.prevent_idle_sleep, Some(true));
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(parsed.prevent_idle_sleep, Some(true));
-    }
-
-    #[test]
-    fn prevent_idle_sleep_absent_deserializes_as_none() {
-        let yaml = "tcp_port: 9999\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.prevent_idle_sleep, None);
     }
 
     #[test]
@@ -1112,5 +1237,156 @@ mod tests {
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("minimum_client_versions"));
         assert!(err.to_string().contains("cli"));
+    }
+
+    fn installation(yaml: &str) -> Result<InstallationConfig, ConfigError> {
+        InstallationConfig::from_yaml(yaml)
+    }
+
+    #[test]
+    fn supervisor_and_updates_cover_every_cell_of_the_table() {
+        // (supervisor, updates) as written -> effective updates, or an error.
+        let cells: &[(&str, Option<Updates>)] = &[
+            ("supervisor: on\nupdates: auto\n", Some(Updates::Auto)),
+            ("supervisor: on\nupdates: manual\n", Some(Updates::Manual)),
+            ("supervisor: off\nupdates: manual\n", Some(Updates::Manual)),
+            ("supervisor: off\nupdates: auto\n", None),
+            ("supervisor: on\n", Some(Updates::Auto)),
+            ("supervisor: off\n", Some(Updates::Manual)),
+            ("{}\n", Some(Updates::Manual)),
+            ("updates: auto\n", None),
+        ];
+        for (yaml, expected) in cells {
+            match (installation(yaml), expected) {
+                (Ok(config), Some(updates)) => {
+                    assert_eq!(config.updates().unwrap(), *updates, "{yaml}");
+                }
+                (Err(error), None) => {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("updates: auto needs supervisor: on"),
+                        "{yaml}: {error}"
+                    );
+                }
+                (outcome, expected) => panic!("{yaml}: {outcome:?}, expected {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_constructed_config_with_auto_and_no_supervisor_fails_validation() {
+        let config = InstallationConfig {
+            supervisor: Switch::Off,
+            updates: Some(Updates::Auto),
+            ..InstallationConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn supervisor_updates_channel_and_keep_awake_parse_and_default() {
+        let defaults = installation("{}\n").unwrap();
+        assert_eq!(defaults.supervisor, Switch::Off);
+        assert_eq!(defaults.channel, Channel::Stable);
+        assert_eq!(defaults.keep_awake, Switch::On);
+
+        let set = installation("supervisor: on\nchannel: preview\nkeep_awake: off\n").unwrap();
+        assert_eq!(set.supervisor, Switch::On);
+        assert_eq!(set.channel, Channel::Preview);
+        assert_eq!(set.keep_awake, Switch::Off);
+
+        for bad in [
+            "supervisor: yes\n",
+            "updates: sometimes\n",
+            "channel: beta\n",
+            "keep_awake: true\n",
+        ] {
+            assert!(installation(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn budgets_discovery_and_agent_parameters_parse_with_starting_points() {
+        let defaults = installation("{}\n").unwrap();
+        assert_eq!(defaults.retention, RetentionSettings::default());
+        assert_eq!(defaults.retention.replica_rows_mib, 256);
+        assert_eq!(defaults.discovery.scope, "");
+        assert_eq!(defaults.agent, AgentSettings::default());
+        assert_eq!(defaults.agent.facts_ring_segments, 2);
+
+        let set = installation(
+            "retention:\n  own_budget_mib: 100\n  replica_rows_mib: 10\n  replica_blobs_mib: 20\n\
+             discovery:\n  scope: rearchitect\n\
+             agent:\n  grace_secs: 60\n  drain_secs: 30\n  facts_ring_mib: 2\n  facts_ring_segments: 3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            set.retention,
+            RetentionSettings {
+                own_budget_mib: 100,
+                replica_rows_mib: 10,
+                replica_blobs_mib: 20,
+            }
+        );
+        assert_eq!(set.discovery.scope, "rearchitect");
+        assert_eq!(
+            set.agent,
+            AgentSettings {
+                grace_secs: 60,
+                drain_secs: 30,
+                facts_ring_mib: 2,
+                facts_ring_segments: 3,
+            }
+        );
+        assert!(installation("retention:\n  budget: 1\n").is_err());
+        assert_eq!(
+            installation("discovery:\n  scope: \"3\"\n")
+                .unwrap()
+                .discovery
+                .scope,
+            "3"
+        );
+    }
+
+    #[test]
+    fn retired_keys_are_rejected_with_what_replaced_them() {
+        for (yaml, key, why) in [
+            (
+                "ui:\n  artifact_cache_mib: 48\n",
+                "ui.artifact_cache_mib",
+                "agent's directory",
+            ),
+            (
+                "prevent_idle_sleep: true\n",
+                "prevent_idle_sleep",
+                "keep_awake",
+            ),
+        ] {
+            for error in [
+                installation(yaml).unwrap_err().to_string(),
+                Config::from_yaml(yaml).unwrap_err().to_string(),
+            ] {
+                assert!(
+                    error.contains(&format!("`{key}` is no longer a setting"))
+                        && error.contains(why),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn installation_config_round_trips_the_new_keys() {
+        let config = installation(
+            "supervisor: on\nupdates: manual\nchannel: preview\nkeep_awake: off\ndiscovery:\n  scope: s\n",
+        )
+        .unwrap();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let again = installation(&yaml).unwrap();
+        assert_eq!(again.updates().unwrap(), Updates::Manual);
+        assert_eq!(again.channel, Channel::Preview);
+        assert_eq!(again.keep_awake, Switch::Off);
+        assert_eq!(again.discovery.scope, "s");
     }
 }
