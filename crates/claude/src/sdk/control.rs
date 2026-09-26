@@ -7,7 +7,7 @@ use crate::sdk::options::{AgentDefinition, McpServerConfig};
 use crate::sdk::types::{Extensions, PermissionMode};
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ControlRequest<T> {
+pub struct ControlRequest<T> {
     pub r#type: &'static str,
     pub request_id: String,
     pub request: T,
@@ -15,7 +15,7 @@ pub(crate) struct ControlRequest<T> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct InitializeRequestBody {
+pub struct InitializeRequestBody {
     pub subtype: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sdk_mcp_servers: Option<Vec<String>>,
@@ -77,7 +77,7 @@ impl Default for InitializeRequestBody {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct HookMatcherConfig {
+pub struct HookMatcherConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matcher: Option<String>,
     pub hook_callback_ids: Vec<String>,
@@ -87,7 +87,7 @@ pub(crate) struct HookMatcherConfig {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
-pub(crate) enum ControlRequestBody {
+pub enum ControlRequestBody {
     Interrupt {
         #[serde(skip_serializing_if = "Option::is_none")]
         cancel_queued: Option<bool>,
@@ -149,12 +149,12 @@ pub enum McpPermissionMode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ControlResponseEnvelope {
+pub struct ControlResponseEnvelope {
     pub response: ControlResponseInner,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ControlResponseInner {
+pub struct ControlResponseInner {
     pub subtype: String,
     pub request_id: String,
     #[serde(default)]

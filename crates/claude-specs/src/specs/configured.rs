@@ -14,12 +14,11 @@
 
 use std::collections::HashMap;
 
-use claude::sdk::{
+use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::{
     Effort, HookEvent, HookSubscription, PermissionMode, SdkBeta, SettingSource, SkillsConfig,
     SystemPrompt, ThinkingConfig, ToolsConfig, ToolsPreset,
 };
-
-use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
 use crate::expect;
 
 pub(super) static CONFIGURED_TURN: SpecDef = SpecDef {

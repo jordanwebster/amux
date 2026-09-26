@@ -4,11 +4,11 @@ use std::{env, fs};
 use tokio::io::BufReader;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
-use crate::sdk::error::Error;
-use crate::sdk::options::{
+use crate::driver::sdk::error::Error;
+use crate::driver::sdk::options::{
     Effort, PluginType, QueryOptions, SdkBeta, SettingSource, ThinkingConfig, ToolsConfig,
 };
-use crate::sdk::types::PermissionMode;
+use crate::driver::sdk::types::PermissionMode;
 
 // ── CliProcess ─────────────────────────────────────────────────────
 
@@ -190,8 +190,8 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
     let mut allowed_tools = options.allowed_tools.clone();
     if let Some(skills) = &options.skills {
         match skills {
-            crate::sdk::options::SkillsConfig::All => allowed_tools.push("Skill".into()),
-            crate::sdk::options::SkillsConfig::Selected(names) => {
+            crate::driver::sdk::options::SkillsConfig::All => allowed_tools.push("Skill".into()),
+            crate::driver::sdk::options::SkillsConfig::Selected(names) => {
                 allowed_tools.extend(names.iter().map(|name| format!("Skill({name})")))
             }
         }
@@ -295,8 +295,8 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
                 cmd.arg("--thinking").arg("adaptive");
                 if let Some(display) = display {
                     cmd.arg("--thinking-display").arg(match display {
-                        crate::sdk::options::ThinkingDisplay::Summarized => "summarized",
-                        crate::sdk::options::ThinkingDisplay::Omitted => "omitted",
+                        crate::driver::sdk::options::ThinkingDisplay::Summarized => "summarized",
+                        crate::driver::sdk::options::ThinkingDisplay::Omitted => "omitted",
                     });
                 }
             }
@@ -311,8 +311,8 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
                 }
                 if let Some(display) = display {
                     cmd.arg("--thinking-display").arg(match display {
-                        crate::sdk::options::ThinkingDisplay::Summarized => "summarized",
-                        crate::sdk::options::ThinkingDisplay::Omitted => "omitted",
+                        crate::driver::sdk::options::ThinkingDisplay::Summarized => "summarized",
+                        crate::driver::sdk::options::ThinkingDisplay::Omitted => "omitted",
                     });
                 }
             }
@@ -355,8 +355,8 @@ fn apply_common_options(cmd: &mut Command, options: &QueryOptions) -> Result<(),
         cmd.env(
             "CLAUDE_CODE_QUESTION_PREVIEW_FORMAT",
             match preview_format {
-                crate::sdk::options::PreviewFormat::Markdown => "markdown",
-                crate::sdk::options::PreviewFormat::Html => "html",
+                crate::driver::sdk::options::PreviewFormat::Markdown => "markdown",
+                crate::driver::sdk::options::PreviewFormat::Html => "html",
             },
         );
     }
@@ -398,7 +398,7 @@ fn build_settings_value(options: &QueryOptions) -> Result<Option<String>, Error>
     let mut settings = serde_json::Map::new();
     if let Some(ref configured_settings) = options.settings {
         match configured_settings {
-            crate::sdk::options::SettingsConfig::Inline(value) => match value {
+            crate::driver::sdk::options::SettingsConfig::Inline(value) => match value {
                 serde_json::Value::Object(obj) => {
                     settings = obj.clone();
                 }
@@ -408,7 +408,7 @@ fn build_settings_value(options: &QueryOptions) -> Result<Option<String>, Error>
                     ));
                 }
             },
-            crate::sdk::options::SettingsConfig::Path(path) => {
+            crate::driver::sdk::options::SettingsConfig::Path(path) => {
                 let contents = fs::read_to_string(path).map_err(|error| {
                     Error::Process(format!(
                         "failed to read settings file {}: {error}",
@@ -440,10 +440,12 @@ fn build_settings_value(options: &QueryOptions) -> Result<Option<String>, Error>
     Ok(Some(serde_json::Value::Object(settings).to_string()))
 }
 
-fn settings_argument(settings: &crate::sdk::options::SettingsConfig) -> String {
+fn settings_argument(settings: &crate::driver::sdk::options::SettingsConfig) -> String {
     match settings {
-        crate::sdk::options::SettingsConfig::Inline(value) => value.to_string(),
-        crate::sdk::options::SettingsConfig::Path(path) => path.to_string_lossy().into_owned(),
+        crate::driver::sdk::options::SettingsConfig::Inline(value) => value.to_string(),
+        crate::driver::sdk::options::SettingsConfig::Path(path) => {
+            path.to_string_lossy().into_owned()
+        }
     }
 }
 
@@ -452,11 +454,11 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::sdk::options::{
+    use crate::driver::sdk::options::{
         Effort, SandboxFilesystemConfig, SandboxNetworkConfig, SandboxSettings, SystemPrompt,
         SystemPromptPreset,
     };
-    use crate::sdk::types::PermissionMode;
+    use crate::driver::sdk::types::PermissionMode;
 
     // ── apply_common_options tests ──────────────────────────────────
 
@@ -552,13 +554,15 @@ mod tests {
 
     #[test]
     fn apply_common_options_keeps_live_sdk_mcp_servers_off_process_argv() {
-        let server = crate::sdk::create_sdk_mcp_server(crate::sdk::CreateSdkMcpServerOptions {
-            name: "local".into(),
-            version: None,
-            instructions: None,
-            tools: vec![],
-            always_load: false,
-        })
+        let server = crate::driver::sdk::create_sdk_mcp_server(
+            crate::driver::sdk::CreateSdkMcpServerOptions {
+                name: "local".into(),
+                version: None,
+                instructions: None,
+                tools: vec![],
+                always_load: false,
+            },
+        )
         .unwrap();
         let mut opts = QueryOptions::new("m");
         opts.mcp_servers.insert("local".into(), server);
@@ -649,7 +653,9 @@ mod tests {
         let mut opts = QueryOptions::new("m");
         let missing_settings =
             std::env::temp_dir().join(format!("missing-settings-{}.json", std::process::id()));
-        opts.settings = Some(crate::sdk::options::SettingsConfig::Path(missing_settings));
+        opts.settings = Some(crate::driver::sdk::options::SettingsConfig::Path(
+            missing_settings,
+        ));
         opts.sandbox = Some(SandboxSettings {
             enabled: Some(true),
             auto_allow_bash_if_sandboxed: None,

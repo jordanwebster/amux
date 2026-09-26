@@ -4,9 +4,8 @@
 //! collapsed them into "it failed" would lose the only thing that tells it
 //! whether to retry, raise a limit, or stop.
 
-use claude::sdk::PermissionMode;
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::PermissionMode;
 use crate::expect;
 
 pub(super) static MAX_TURNS: SpecDef = SpecDef {
@@ -39,7 +38,7 @@ async fn max_turns(session: &mut SpecSession) {
     expect!(
         turn.saw("result.error_max_turns"),
         "the result names the budget as the reason, not a generic failure: {:?}",
-        turn.result().map(claude::sdk::ResultMessage::kind)
+        turn.result().map(crate::driver::sdk::ResultMessage::kind)
     );
     expect!(
         !turn.errors().is_empty(),
@@ -77,7 +76,7 @@ async fn max_budget(session: &mut SpecSession) {
     expect!(
         turn.saw("result.error_max_budget_usd"),
         "the result names the spend limit as the reason: {:?}",
-        turn.result().map(claude::sdk::ResultMessage::kind)
+        turn.result().map(crate::driver::sdk::ResultMessage::kind)
     );
     expect!(
         turn.text().is_empty(),
@@ -124,6 +123,6 @@ async fn interrupted(session: &mut SpecSession) {
         turn.saw("result.error_during_execution"),
         "an interrupt ends the turn through the ordinary result channel rather \
          than by dropping the stream: {:?}",
-        turn.result().map(claude::sdk::ResultMessage::kind)
+        turn.result().map(crate::driver::sdk::ResultMessage::kind)
     );
 }

@@ -9,14 +9,14 @@ use std::time::{Duration, Instant};
 
 use claude::launch::Launch;
 use claude::pty::keymap::KeymapSources;
-use claude::pty::{
-    AskAnswer, AskFacts, AskKind, Intent, PermissionAnswer, PlanAnswer, PtyEvent, QuestionAnswer,
-    QuestionResponse, RelinkReason,
-};
 use replay_support::{IoDirection, IoEvent, Manifest, ReplayReport, SpecEntry, StrictReplay};
 use tokio::sync::{mpsc, watch};
 
 use super::{ALLOWED_MODELS, HAIKU, SpecFailure};
+use crate::driver::pty::{
+    AskAnswer, AskFacts, AskKind, Intent, PermissionAnswer, PlanAnswer, PtyEvent, QuestionAnswer,
+    QuestionResponse, RelinkReason,
+};
 
 const DEFAULT_WAIT: Duration = Duration::from_secs(600);
 const WAIT_ENV: &str = "CLAUDE_PTY_SPEC_TIMEOUT_SECS";
@@ -200,7 +200,7 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
                 .map_err(|error| failure(entry, error.to_string()))?
                 .0;
             let session_id = launch.session_id.to_string();
-            let session = claude::pty::spawn(&launch, &keymaps, size)
+            let session = crate::driver::pty::spawn(&launch, &keymaps, size)
                 .await
                 .map_err(|error| failure(entry, error.to_string()))?;
             (
@@ -219,7 +219,7 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
         } => {
             let manifest = *manifest;
             let controller = replay.controller.clone();
-            let session = claude::pty::from_recording(&mut replay, &manifest, &keymaps)
+            let session = crate::driver::pty::from_recording(&mut replay, &manifest, &keymaps)
                 .map_err(|error| failure(entry, error.to_string()))?;
             if !replay.transports.is_empty() {
                 return Err(failure(entry, "recording has undeclared extra transports"));
@@ -467,8 +467,8 @@ impl Capture {
 }
 
 struct PtySpecSession {
-    events: claude::pty::EventStream,
-    control: claude::pty::Control,
+    events: crate::driver::pty::EventStream,
+    control: crate::driver::pty::Control,
     capture: Option<Capture>,
     screen: Arc<Mutex<String>>,
     screen_changes: watch::Receiver<()>,
@@ -477,7 +477,7 @@ struct PtySpecSession {
 }
 
 impl PtySpecSession {
-    fn new(session: claude::pty::Session, capture: Option<Capture>) -> Self {
+    fn new(session: crate::driver::pty::Session, capture: Option<Capture>) -> Self {
         if let Some(capture) = capture.clone() {
             let (write_tx, mut write_rx) = mpsc::unbounded_channel();
             session.control.observe_writes(write_tx);
@@ -487,7 +487,7 @@ impl PtySpecSession {
                     writes.push(
                         "pty",
                         IoDirection::Write,
-                        claude::pty::encode_recording_bytes(&bytes),
+                        crate::driver::pty::encode_recording_bytes(&bytes),
                     );
                 }
             });
@@ -503,7 +503,7 @@ impl PtySpecSession {
                         capture.push(
                             "pty",
                             IoDirection::Read,
-                            claude::pty::encode_recording_bytes(&bytes),
+                            crate::driver::pty::encode_recording_bytes(&bytes),
                         );
                     }
                     let mut screen = observed_screen.lock().expect("screen mutex poisoned");
@@ -544,9 +544,9 @@ impl PtySpecSession {
                 }
                 self.control
                     .send_program(vec![
-                        claude::pty::PtyInput::Bytes(b"\x1b[B".to_vec()),
-                        claude::pty::PtyInput::Delay(300),
-                        claude::pty::PtyInput::Bytes(b"\r".to_vec()),
+                        crate::driver::pty::PtyInput::Bytes(b"\x1b[B".to_vec()),
+                        crate::driver::pty::PtyInput::Delay(300),
+                        crate::driver::pty::PtyInput::Bytes(b"\r".to_vec()),
                     ])
                     .await
                     .map_err(|error| error.to_string())?;

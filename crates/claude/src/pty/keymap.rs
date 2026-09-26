@@ -499,7 +499,7 @@ pub fn resolve(sources: &KeymapSources, observed: &ClaudeVersion) -> Result<Reso
     Ok(resolved(selected, basis, &observed.0))
 }
 
-pub(crate) fn resolve_session(
+pub fn resolve_session(
     sources: &KeymapSources,
     observed: &ClaudeVersion,
 ) -> Result<(Resolved, Keymap), KeymapError> {
@@ -2076,13 +2076,17 @@ mod resolve {
             assert_allowed(&same_minor, *program);
         }
 
+        // A later minor extrapolates from the newest live-verified version,
+        // which moves forward each time a recording verifies a newer Claude.
+        let newest = load_str(BAKED_KEYMAPS[0].1, "baked", KeymapSource::Baked)
+            .unwrap()
+            .verified
+            .into_iter()
+            .map(|verified| verified.version)
+            .max()
+            .unwrap();
         let next_minor = resolve(&sources, &version("2.2.0")).expect("next minor");
-        assert_eq!(
-            next_minor.basis,
-            Basis::Extrapolated {
-                from: "2.1.251".parse().unwrap()
-            }
-        );
+        assert_eq!(next_minor.basis, Basis::Extrapolated { from: newest });
         assert_allowed(&next_minor, ProgramName::Prompt);
         for program in [
             ProgramName::PermissionMenu,

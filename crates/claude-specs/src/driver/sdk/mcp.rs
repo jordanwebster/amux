@@ -6,8 +6,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::sdk::error::Error;
-use crate::sdk::types::Extensions;
+use crate::driver::sdk::error::Error;
+use crate::driver::sdk::types::Extensions;
 
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2025-11-25",
@@ -194,7 +194,7 @@ pub struct CreateSdkMcpServerOptions {
     pub always_load: bool,
 }
 
-/// Live in-process MCP server configured through [`QueryOptions`](crate::sdk::QueryOptions).
+/// Live in-process MCP server configured through [`QueryOptions`](crate::driver::sdk::QueryOptions).
 #[derive(Debug, Clone)]
 pub struct SdkMcpServer {
     name: String,
@@ -207,7 +207,7 @@ pub struct SdkMcpServer {
 /// Create a live SDK MCP server config for `QueryOptions::mcp_servers`.
 pub fn create_sdk_mcp_server(
     options: CreateSdkMcpServerOptions,
-) -> Result<crate::sdk::options::McpServerConfig, Error> {
+) -> Result<crate::driver::sdk::options::McpServerConfig, Error> {
     if options.name.trim().is_empty() {
         return Err(Error::InvalidOptions(
             "SDK MCP server name must be non-empty".into(),
@@ -228,13 +228,15 @@ pub fn create_sdk_mcp_server(
             )));
         }
     }
-    Ok(crate::sdk::options::McpServerConfig::Sdk(SdkMcpServer {
-        name: options.name,
-        version,
-        instructions: options.instructions,
-        tools: Arc::new(options.tools),
-        always_load: options.always_load,
-    }))
+    Ok(crate::driver::sdk::options::McpServerConfig::Sdk(
+        SdkMcpServer {
+            name: options.name,
+            version,
+            instructions: options.instructions,
+            tools: Arc::new(options.tools),
+            always_load: options.always_load,
+        },
+    ))
 }
 
 impl SdkMcpServer {

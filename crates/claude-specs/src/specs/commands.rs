@@ -5,9 +5,8 @@
 //! itself. These are the cheapest way to reach behaviour that otherwise needs a
 //! session to run long enough to hit it by accident.
 
-use claude::sdk::{CompactTrigger, PermissionMode};
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::{CompactTrigger, PermissionMode};
 use crate::expect;
 
 pub(super) static COMPACTED: SpecDef = SpecDef {

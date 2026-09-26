@@ -8,24 +8,24 @@ use futures_core::Stream;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::watch;
 
-use crate::sdk::abort::{AbortHandle, Shutdown, ShutdownReason};
-use crate::sdk::control::{
+use crate::driver::sdk::abort::{AbortHandle, Shutdown, ShutdownReason};
+use crate::driver::sdk::control::{
     ControlRequestBody, InterruptResult, McpPermissionMode, McpPermissionModeOverrideResult,
     McpServerStatus, McpSetServersResult, ReloadPluginsResult, ReloadSkillsResult,
     RewindFilesResult,
 };
-use crate::sdk::dispatch::{IncomingRequestKind, QueryInner};
-use crate::sdk::error::Error;
-use crate::sdk::init::{
+use crate::driver::sdk::dispatch::{IncomingRequestKind, QueryInner};
+use crate::driver::sdk::error::Error;
+use crate::driver::sdk::init::{
     AccountInfo, AgentInfo, ContextUsage, InitializationResult, ModelInfo, SlashCommand,
 };
-use crate::sdk::message::Message;
-use crate::sdk::options::{
+use crate::driver::sdk::message::Message;
+use crate::driver::sdk::options::{
     ElicitationRequest, ElicitationResult, HookCallbackContext, HookInput, HookOutput,
     McpServerConfig, QueryOptions, UserDialogRequest, UserDialogResult,
 };
-use crate::sdk::query::{self, ProcessExit, Query, UserMessage};
-use crate::sdk::types::{PermissionMode, PermissionResult, PermissionUpdate};
+use crate::driver::sdk::query::{self, ProcessExit, Query, UserMessage};
+use crate::driver::sdk::types::{PermissionMode, PermissionResult, PermissionUpdate};
 
 /// The identifier Claude assigns to one incoming control request.
 pub type RequestId = String;
@@ -121,14 +121,14 @@ impl Control {
             .answer_incoming(
                 id,
                 IncomingRequestKind::Permission,
-                crate::sdk::dispatch::permission_result_to_control_value(result),
+                crate::driver::sdk::dispatch::permission_result_to_control_value(result),
             )
             .await
     }
 
     pub async fn answer_hook(&self, id: RequestId, output: HookOutput) -> Result<(), Error> {
         let response =
-            crate::sdk::dispatch::serialize_hook_output(output).map_err(Error::Control)?;
+            crate::driver::sdk::dispatch::serialize_hook_output(output).map_err(Error::Control)?;
         self.inner
             .answer_incoming(id, IncomingRequestKind::Hook, response)
             .await
@@ -186,7 +186,10 @@ impl Control {
     }
 
     /// Change effort for subsequent work; `None` clears the session override.
-    pub async fn set_effort(&self, effort: Option<crate::sdk::Effort>) -> Result<(), Error> {
+    pub async fn set_effort(
+        &self,
+        effort: Option<crate::driver::sdk::Effort>,
+    ) -> Result<(), Error> {
         self.apply_flag_settings(serde_json::json!({ "effortLevel": effort }))
             .await
     }
@@ -378,7 +381,12 @@ impl Control {
             .expect("SDK MCP server lock poisoned") = sdk_servers;
         let response = self
             .inner
-            .send_control(ControlRequestBody::McpSetServers { servers })
+            .send_control(ControlRequestBody::McpSetServers {
+                servers: servers
+                    .iter()
+                    .map(|(name, config)| (name.clone(), config.to_wire()))
+                    .collect(),
+            })
             .await?;
         serde_json::from_value(response.response)
             .map_err(|error| Error::Control(format!("failed to parse MCP server update: {error}")))
@@ -453,7 +461,7 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
 
     use super::*;
-    use crate::sdk::options::{
+    use crate::driver::sdk::options::{
         HookEvent, HookOutput, HookSubscription, SyncHookOutput, UserDialogResult,
     };
 
@@ -731,7 +739,7 @@ mod tests {
         assert!(matches!(
             next_event(&mut events).await.unwrap(),
             SdkEvent::Exited(ProcessExit {
-                termination: crate::sdk::Termination::Exited,
+                termination: crate::driver::sdk::Termination::Exited,
                 ..
             })
         ));

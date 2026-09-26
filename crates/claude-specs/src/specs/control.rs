@@ -1,9 +1,8 @@
 //! Specifications for the control protocol: requests the SDK sends alongside a
 //! turn, and the acknowledgements Claude Code sends back.
 
-use claude::sdk::PermissionMode;
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::PermissionMode;
 use crate::expect;
 
 pub(super) static PERMISSION_MODE_AND_MODEL: SpecDef = SpecDef {
@@ -313,7 +312,10 @@ async fn connected_mcp_servers(session: &mut SpecSession) {
     );
 
     let override_result = session
-        .set_mcp_permission_mode_override(EXTERNAL, Some(claude::sdk::McpPermissionMode::Auto))
+        .set_mcp_permission_mode_override(
+            EXTERNAL,
+            Some(crate::driver::sdk::McpPermissionMode::Auto),
+        )
         .await
         .expect("the permission-mode override control is answered");
     expect!(

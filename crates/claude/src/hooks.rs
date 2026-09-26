@@ -8,9 +8,13 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::sdk::PermissionSuggestion;
+use crate::sdk::PermissionUpdate;
 
 const FORWARD_ENVELOPE_FIELD: &str = "amux_hook_forward_v1";
+
+/// The variable the `claude-hook` forwarder reads to find the socket its hook
+/// payloads go to.
+pub const HOOK_SOCKET_ENV: &str = "CLAUDE_HOOK_SOCKET";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct MessagingCredentials {
@@ -49,7 +53,7 @@ pub enum HookPayload {
         common: HookCommon,
         tool_name: String,
         tool_input: Value,
-        suggestions: Vec<PermissionSuggestion>,
+        suggestions: Vec<PermissionUpdate>,
     },
     PreToolUse {
         common: HookCommon,

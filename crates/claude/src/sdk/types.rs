@@ -317,7 +317,7 @@ pub struct ApiMessage {
     pub extensions: Extensions,
 }
 
-pub(crate) fn present_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+pub fn present_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,

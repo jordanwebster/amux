@@ -18,17 +18,18 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use claude::sdk::init::ContextUsage;
-use claude::sdk::{
+use futures_core::Stream;
+use replay_support::{SpecEntry, StrictReplay};
+use semver::Version;
+use tokio::io::{AsyncBufRead, AsyncWrite};
+
+use crate::driver::sdk::init::ContextUsage;
+use crate::driver::sdk::{
     CompactBoundaryMessage, ContentBlock, Error, InitializationResult, McpServerStatus, Message,
     MessageContent, PermissionDeniedMessage, PermissionMode, ProcessExit, QueryOptions,
     ResultMessage, SdkEvent, StreamDelta, StreamEvent, TaskNotificationMessage, TaskStartedMessage,
     Usage,
 };
-use futures_core::Stream;
-use replay_support::{SpecEntry, StrictReplay};
-use semver::Version;
-use tokio::io::{AsyncBufRead, AsyncWrite};
 
 pub mod agents;
 pub mod commands;
@@ -197,7 +198,7 @@ impl Sessions {
         let session = match &mut *self.source.lock().await {
             Source::Live(environment) => {
                 environment(&mut setup.options);
-                claude::sdk::spawn(setup.options).await?
+                crate::driver::sdk::spawn(setup.options).await?
             }
             Source::Recorded(transports) => {
                 let transport = transports.pop_front().ok_or_else(|| {
@@ -212,7 +213,8 @@ impl Sessions {
                 if setup.options.session_id.is_none() && setup.options.resume.is_none() {
                     setup.options.session_id = Some(transport.session_id);
                 }
-                claude::sdk::from_io(transport.reader, transport.writer, setup.options).await?
+                crate::driver::sdk::from_io(transport.reader, transport.writer, setup.options)
+                    .await?
             }
         };
         if setup.defer_prompt {
@@ -220,12 +222,14 @@ impl Sessions {
             let prompt = setup.prompt;
             tokio::spawn(async move {
                 tokio::task::yield_now().await;
-                control.prompt(claude::sdk::UserMessage::text(prompt)).await
+                control
+                    .prompt(crate::driver::sdk::UserMessage::text(prompt))
+                    .await
             });
         } else {
             session
                 .control
-                .prompt(claude::sdk::UserMessage::text(setup.prompt))
+                .prompt(crate::driver::sdk::UserMessage::text(setup.prompt))
                 .await?;
         }
         self.opened
@@ -253,8 +257,8 @@ impl Sessions {
 /// A driven Claude session. The transport behind it is the only thing that
 /// differs between recording and replay.
 pub struct SpecSession {
-    events: claude::sdk::EventStream,
-    control: Option<claude::sdk::Control>,
+    events: crate::driver::sdk::EventStream,
+    control: Option<crate::driver::sdk::Control>,
     /// So a specification can open a further session - to resume or fork the
     /// one it is already driving - without knowing which mode it is running in.
     sessions: Sessions,
@@ -268,7 +272,7 @@ pub struct SpecSession {
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     elicitation_content: Option<serde_json::Value>,
     dialog_result: Option<serde_json::Value>,
-    dialog_requests: Vec<claude::sdk::UserDialogRequest>,
+    dialog_requests: Vec<crate::driver::sdk::UserDialogRequest>,
     exit: Option<ProcessExit>,
 }
 
@@ -320,16 +324,16 @@ impl SpecSession {
 
     pub async fn set_mcp_servers(
         &self,
-        servers: std::collections::HashMap<String, claude::sdk::McpServerConfig>,
-    ) -> Result<claude::sdk::McpSetServersResult, Error> {
+        servers: std::collections::HashMap<String, crate::driver::sdk::McpServerConfig>,
+    ) -> Result<crate::driver::sdk::McpSetServersResult, Error> {
         self.control().set_mcp_servers(servers).await
     }
 
     pub async fn set_mcp_permission_mode_override(
         &self,
         name: &str,
-        mode: Option<claude::sdk::McpPermissionMode>,
-    ) -> Result<claude::sdk::McpPermissionModeOverrideResult, Error> {
+        mode: Option<crate::driver::sdk::McpPermissionMode>,
+    ) -> Result<crate::driver::sdk::McpPermissionModeOverrideResult, Error> {
         self.control()
             .set_mcp_permission_mode_override(name, mode)
             .await
@@ -339,11 +343,11 @@ impl SpecSession {
         self.control().toggle_mcp_server(name, enabled).await
     }
 
-    pub async fn reload_skills(&self) -> Result<claude::sdk::ReloadSkillsResult, Error> {
+    pub async fn reload_skills(&self) -> Result<crate::driver::sdk::ReloadSkillsResult, Error> {
         self.control().reload_skills().await
     }
 
-    pub async fn reload_plugins(&self) -> Result<claude::sdk::ReloadPluginsResult, Error> {
+    pub async fn reload_plugins(&self) -> Result<crate::driver::sdk::ReloadPluginsResult, Error> {
         self.control().reload_plugins().await
     }
 
@@ -358,7 +362,7 @@ impl SpecSession {
     /// Send another user message into a session that is already open.
     pub async fn say(&self, text: &str) -> Result<(), Error> {
         self.control()
-            .prompt(claude::sdk::UserMessage::text(text))
+            .prompt(crate::driver::sdk::UserMessage::text(text))
             .await
     }
 
@@ -384,7 +388,7 @@ impl SpecSession {
             .count()
     }
 
-    pub(crate) fn dialog_requests(&self) -> &[claude::sdk::UserDialogRequest] {
+    pub(crate) fn dialog_requests(&self) -> &[crate::driver::sdk::UserDialogRequest] {
         &self.dialog_requests
     }
 
@@ -471,7 +475,7 @@ impl SpecSession {
                         .push((tool_name.clone(), input.clone()));
                     let result = if tool_name == "AskUserQuestion" && self.question_answer.is_some()
                     {
-                        claude::sdk::PermissionResult::Allow {
+                        crate::driver::sdk::PermissionResult::Allow {
                             updated_input: Some(question_input_with_answer(
                                 input,
                                 self.question_answer
@@ -483,13 +487,13 @@ impl SpecSession {
                         }
                     } else if tool_name == "ExitPlanMode" && !self.plan_reviews.is_empty() {
                         match self.plan_reviews.pop_front().expect("plan review checked") {
-                            PlanReview::ApproveAuto => claude::sdk::PermissionResult::Allow {
+                            PlanReview::ApproveAuto => crate::driver::sdk::PermissionResult::Allow {
                                 updated_input: Some(input),
                                 updated_permissions: Some(vec![
-                                    claude::sdk::PermissionUpdate::SetMode {
+                                    crate::driver::sdk::PermissionUpdate::SetMode {
                                         mode: PermissionMode::AcceptEdits,
                                         destination:
-                                            claude::sdk::PermissionUpdateDestination::Session,
+                                            crate::driver::sdk::PermissionUpdateDestination::Session,
                                     },
                                 ]),
                                 tool_use_id: None,
@@ -497,19 +501,19 @@ impl SpecSession {
                             // A bare allow leaves plan mode into accept-edits
                             // on the CLI's own initiative, so approving
                             // manually has to say which mode it wants.
-                            PlanReview::ApproveManual => claude::sdk::PermissionResult::Allow {
+                            PlanReview::ApproveManual => crate::driver::sdk::PermissionResult::Allow {
                                 updated_input: Some(input),
                                 updated_permissions: Some(vec![
-                                    claude::sdk::PermissionUpdate::SetMode {
+                                    crate::driver::sdk::PermissionUpdate::SetMode {
                                         mode: PermissionMode::Default,
                                         destination:
-                                            claude::sdk::PermissionUpdateDestination::Session,
+                                            crate::driver::sdk::PermissionUpdateDestination::Session,
                                     },
                                 ]),
                                 tool_use_id: None,
                             },
                             PlanReview::RequestChanges(message) => {
-                                claude::sdk::PermissionResult::Deny {
+                                crate::driver::sdk::PermissionResult::Deny {
                                     message,
                                     interrupt: Some(false),
                                     tool_use_id: None,
@@ -517,13 +521,13 @@ impl SpecSession {
                             }
                         }
                     } else if self.answer_permission {
-                        claude::sdk::PermissionResult::Allow {
+                        crate::driver::sdk::PermissionResult::Allow {
                             updated_input: Some(input),
                             updated_permissions: None,
                             tool_use_id: None,
                         }
                     } else {
-                        claude::sdk::PermissionResult::Deny {
+                        crate::driver::sdk::PermissionResult::Deny {
                             message: "the specification did not authorize this request".into(),
                             interrupt: Some(false),
                             tool_use_id: None,
@@ -547,11 +551,11 @@ impl SpecSession {
                 }
                 SdkEvent::Elicitation { id, request: _ } => {
                     let result = match self.elicitation_content.clone() {
-                        Some(content) => claude::sdk::ElicitationResult::Accept {
+                        Some(content) => crate::driver::sdk::ElicitationResult::Accept {
                             content: Some(content),
                             extensions: Default::default(),
                         },
-                        None => claude::sdk::ElicitationResult::Decline {
+                        None => crate::driver::sdk::ElicitationResult::Decline {
                             extensions: Default::default(),
                         },
                     };
@@ -563,11 +567,11 @@ impl SpecSession {
                 SdkEvent::UserDialog { id, request } => {
                     self.dialog_requests.push(request);
                     let result = match self.dialog_result.clone() {
-                        Some(result) => claude::sdk::UserDialogResult::Completed {
+                        Some(result) => crate::driver::sdk::UserDialogResult::Completed {
                             result,
                             extensions: Default::default(),
                         },
-                        None => claude::sdk::UserDialogResult::Cancelled {
+                        None => crate::driver::sdk::UserDialogResult::Cancelled {
                             extensions: Default::default(),
                         },
                     };
@@ -584,7 +588,7 @@ impl SpecSession {
         }
     }
 
-    fn control(&self) -> &claude::sdk::Control {
+    fn control(&self) -> &crate::driver::sdk::Control {
         self.control.as_ref().expect("the session is still open")
     }
 
@@ -595,7 +599,7 @@ impl SpecSession {
                 success: true,
                 code: Some(0),
                 stderr: String::new(),
-                termination: claude::sdk::Termination::Exited,
+                termination: crate::driver::sdk::Termination::Exited,
             }),
         }
     }
@@ -619,8 +623,8 @@ fn question_input_with_answer(mut input: serde_json::Value, answer: &str) -> ser
     input
 }
 
-fn allow_hook() -> claude::sdk::HookOutput {
-    claude::sdk::HookOutput::Sync(claude::sdk::SyncHookOutput {
+fn allow_hook() -> crate::driver::sdk::HookOutput {
+    crate::driver::sdk::HookOutput::Sync(crate::driver::sdk::SyncHookOutput {
         r#continue: Some(true),
         suppress_output: None,
         stop_reason: None,
@@ -631,12 +635,12 @@ fn allow_hook() -> claude::sdk::HookOutput {
     })
 }
 
-fn hook_event_name(input: &claude::sdk::HookInput) -> String {
+fn hook_event_name(input: &crate::driver::sdk::HookInput) -> String {
     match &input.event {
-        claude::sdk::HookEventData::UserPromptSubmit { .. } => "UserPromptSubmit",
-        claude::sdk::HookEventData::PreToolUse { .. } => "PreToolUse",
-        claude::sdk::HookEventData::PostToolUse { .. } => "PostToolUse",
-        claude::sdk::HookEventData::Stop { .. } => "Stop",
+        crate::driver::sdk::HookEventData::UserPromptSubmit { .. } => "UserPromptSubmit",
+        crate::driver::sdk::HookEventData::PreToolUse { .. } => "PreToolUse",
+        crate::driver::sdk::HookEventData::PostToolUse { .. } => "PostToolUse",
+        crate::driver::sdk::HookEventData::Stop { .. } => "Stop",
         other => return format!("{other:?}"),
     }
     .to_string()
@@ -774,9 +778,9 @@ impl Turn {
                             content
                                 .iter()
                                 .map(|part| match part {
-                                    claude::sdk::ToolResultContent::Text { text, .. } => {
-                                        text.clone()
-                                    }
+                                    crate::driver::sdk::ToolResultContent::Text {
+                                        text, ..
+                                    } => text.clone(),
                                     other => serde_json::to_string(other).unwrap_or_default(),
                                 })
                                 .collect::<String>(),
@@ -1039,13 +1043,13 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
                 options.cwd = Some(cwd.clone());
                 options.env = environment.clone();
                 let sandbox = serde_json::json!({"enabled": false});
-                if let Some(claude::sdk::SettingsConfig::Inline(serde_json::Value::Object(
-                    settings,
-                ))) = &mut options.settings
+                if let Some(crate::driver::sdk::SettingsConfig::Inline(
+                    serde_json::Value::Object(settings),
+                )) = &mut options.settings
                 {
                     settings.insert("sandbox".to_owned(), sandbox);
                 } else {
-                    options.settings = Some(claude::sdk::SettingsConfig::Inline(
+                    options.settings = Some(crate::driver::sdk::SettingsConfig::Inline(
                         serde_json::json!({"sandbox": sandbox}),
                     ));
                 }

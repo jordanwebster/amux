@@ -1,57 +1,22 @@
 # Provider crate boundaries
 
-amux owns the provider boundary for Claude Code and Codex. Provider-specific
-processes, wire formats, and recordings live in canonical provider crates;
-the daemon consumes those crates through thin adapters. The common boundary is
-one owned, ordered event stream paired with a cloneable control handle. No
-provider callback trait crosses into amux.
+The provider crates carry transport only: how to start Claude Code and Codex,
+the bytes and frames they read and write, and the sockets beside them. Hosting
+a provider session belongs to the agent process, and deciding what the
+provider's traffic means belongs to the per-kind interpreter in
+`crates/interpret`, which reads the same facts from a live provider and from a
+recording.
 
-The daemon remains responsible for agent identity, sequencing and fan-out,
-typed protocol exposure, outstanding obligations, agent-to-agent delivery,
-suspend records, and client layers. The provider crates own the interaction
-with the provider and expose provider-native facts without making daemon or UI
-policy.
+## Crates
 
-## Crates and session types
-
-| Crate | Boundary | Responsibility |
-|---|---|---|
-| `claude` | `claude::pty::Session { events: EventStream, control: Control }` | Hosts interactive Claude Code, combines PTY output, hooks and transcript rows, derives asks, resolves a keymap, and accepts semantic input intents. Raw terminal access is available only through the control handle for the typed terminal plane. |
-| `claude` | `claude::sdk::Session { events: EventStream, control: Control }` | Hosts Claude Code in stream-JSON mode. The ordered stream contains verbatim messages and typed permission, hook, elicitation, user-dialog and exit events; the control handle sends prompts and answers requests. It does not tail transcript files. |
-| `codex` | `codex::Session { events: ThreadEventStream, control: ThreadControl }` | Owns one Codex app-server thread event stream. The control handle starts and steers turns, interrupts, answers approvals, injects items, and exposes the durable thread id. |
-| `pty-host` | `PtyProcess { handle: PtyHandle, exit: ExitMonitor }` | Provides provider-neutral PTY spawn, one owned output stream, input, resize, process-group signalling and termination. Claude PTY, the Codex raw plane and the test agent use it. |
-| `redaction` | `Redaction`, `RedactionSummary` and structured/text redactors | Removes secrets, local paths and personal identifiers for production reports and captured test traffic. |
-| `replay-support` | `Recording`, `StrictReplay`, registries and probes | Supplies the shared, provider-neutral executable-specification corpus, inventory validation, strict replay, verification ledgers and additive drift reports. |
-
-`crates/agent-runtime/src/agents/claude` and
-`crates/agent-runtime/src/agents/codex` are adapters.
-They translate crate events into the protocol rows owned by amux, route typed
-input to the control handle, implement delivery carriers, and save the minimum
-provider identity needed to resume. Provider behavior does not belong there.
-
-## Claude PTY source bundle
-
-`claude::pty::Sources` is the complete input to the PTY session state machine:
-
-- `PtySource` supplies the single raw output stream, an input writer, optional
-  live PTY handle, and exit future.
-- `HookSource` supplies typed Claude hook payloads.
-- `TranscriptSource` supplies rows tagged with their transcript path and a
-  relink operation for compact and clear transitions.
-- `ClaudeVersion` is the observed provider version used for keymap resolution.
-- `DelaySource` sleeps with the bounded live clock or advances replay's virtual
-  clock, so keymap timing remains semantic without slowing corpus derivation.
-
-Live construction obtains those sources from `pty-host`, the hook receiver,
-the transcript tailer and a version probe. Recorded construction obtains the
-same sources from strict-replay transports and the recording manifest.
-`from_sources` is therefore the shared behavioral path; replay does not use a
-separate imitation of the provider session.
-
-The SDK and Codex boundaries use the same injection principle at their native
-transport boundary: a live process and a strict replay both feed the same
-session API. That lets amux backend tests instantiate the real adapters with a
-recorded provider session.
+| Crate | Owns |
+|---|---|
+| `claude` | Launch arguments and merged settings for both ways of running Claude (`launch`); starting it under a PTY with its hooks pointed at a socket (`pty::spawn`); the semantic PTY input and the keymaps that turn it into bytes, resolved against the observed Claude version (`pty::input`, `pty::keymap`); the hook payloads and the `claude-hook` forwarder (`hooks`); the messaging-socket client (`messaging`); the transcript tailer (`transcript`); Claude's own session files (`history`); version probing (`version`); and the stream-JSON frames, control requests and option types (`sdk`). |
+| `codex` | The app-server JSON-RPC protocol: spawning `codex app-server` over stdio, the initialize handshake, typed requests, notifications and approvals, and one handle per thread. |
+| `claude-specs`, `codex-specs` | The recorded provider corpora and the executable specifications that produced them. Each specification drives a live provider through a recording driver and asserts what must hold; the same function replays the recording strictly. `claude-specs` keeps its drivers (`driver::sdk`, a stream-JSON client shaped after the published SDK, and `driver::pty`, a terminal session that reads hooks and the transcript) because only specifications host a session outside the agent process. |
+| `pty-host` | Provider-neutral PTY spawn, one owned output stream, input, resize, process-group signalling and termination. |
+| `redaction` | Removes secrets, local paths and personal identifiers for reports and captured traffic. |
+| `replay-support` | Recordings, strict replay, registries, verification ledgers and drift reports shared by both spec crates. |
 
 ## Typed kinds and protocols
 

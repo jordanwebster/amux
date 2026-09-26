@@ -6,12 +6,6 @@ pub enum Error {
     #[error("transport closed")]
     TransportClosed,
 
-    #[error("WebSocket error: {0}")]
-    WebSocket(String),
-
-    #[error("daemon error: {0}")]
-    Daemon(String),
-
     #[error("JSON-RPC error ({code}): {message}")]
     Rpc {
         code: i64,

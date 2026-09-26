@@ -5,18 +5,18 @@ use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
-use crate::sdk::abort::{Shutdown, ShutdownReason};
-use crate::sdk::control::{ControlRequest, ControlResponseEnvelope, ControlResponseInner};
-use crate::sdk::error::{Error, ProtocolError};
-use crate::sdk::init::InitializationResult;
-use crate::sdk::mcp::SdkMcpServer;
-use crate::sdk::message::Message;
-use crate::sdk::options::{
+use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
+use crate::driver::sdk::control::{ControlRequest, ControlResponseEnvelope, ControlResponseInner};
+use crate::driver::sdk::error::{Error, ProtocolError};
+use crate::driver::sdk::init::InitializationResult;
+use crate::driver::sdk::mcp::SdkMcpServer;
+use crate::driver::sdk::message::Message;
+use crate::driver::sdk::options::{
     ElicitationRequest, HookCallbackContext, HookDecision, HookEventData, HookInput, HookOutput,
     HookPermissionDecision, HookSpecificOutput, SyncHookOutput, UserDialogRequest,
 };
-use crate::sdk::session::SdkEvent;
-use crate::sdk::types::{CanUseToolOptions, PermissionResult, PermissionUpdate};
+use crate::driver::sdk::session::SdkEvent;
+use crate::driver::sdk::types::{CanUseToolOptions, PermissionResult, PermissionUpdate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IncomingRequestKind {
@@ -567,7 +567,7 @@ fn parse_permission_request(
             agent_id: parsed.agent_id,
             request_id: request_id.to_owned(),
             matched_ask_rule: parsed.matched_ask_rule.map(|rule| {
-                crate::sdk::types::MatchedAskRule {
+                crate::driver::sdk::types::MatchedAskRule {
                     source: rule.source,
                     tool_name: rule.tool_name,
                     rule_content: rule.rule_content,
@@ -587,7 +587,7 @@ struct IncomingElicitationRequest {
     mcp_server_name: String,
     message: String,
     #[serde(default)]
-    mode: Option<crate::sdk::options::ElicitationMode>,
+    mode: Option<crate::driver::sdk::options::ElicitationMode>,
     #[serde(default)]
     url: Option<String>,
     #[serde(default)]
@@ -936,7 +936,7 @@ fn parse_hook_input(value: &serde_json::Value) -> Result<HookInput, String> {
             final_delta: required_bool_field(value, "final")?,
             delta: required_string_field(value, "delta")?,
         },
-        _ => HookEventData::Unknown(crate::sdk::types::RawFrame::new(value.clone())),
+        _ => HookEventData::Unknown(crate::driver::sdk::types::RawFrame::new(value.clone())),
     };
 
     Ok(HookInput {
@@ -1398,7 +1398,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::sdk::control::ControlRequestBody;
+    use crate::driver::sdk::control::ControlRequestBody;
 
     /// A wait here proves a task completes at all, not that it completes
     /// quickly; a loaded machine can stall a runtime for seconds, so only a

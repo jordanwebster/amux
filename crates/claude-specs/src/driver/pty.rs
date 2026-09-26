@@ -1,7 +1,6 @@
 //! One Claude PTY event stream paired with its control handle.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -9,17 +8,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
+use claude::hooks::{HookPayload, HookReceiver};
+use claude::launch::Launch;
+pub use claude::pty::*;
+use claude::transcript::{TranscriptRow, TranscriptTailer};
+use claude::version::{ClaudeVersion, VersionError, probe_version};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(test)]
 use tokio::sync::oneshot;
 use tokio::sync::{broadcast, mpsc, watch};
-
-use crate::hooks::{HookPayload, HookReceiver};
-use crate::launch::{Launch, pty_spawn_args};
-use crate::transcript::{TranscriptRow, TranscriptTailer};
-use crate::version::{ClaudeVersion, VersionError, probe_version};
 
 const CHANNEL_CAPACITY: usize = 256;
 const MAX_DELAY_MS: u32 = 5_000;
@@ -210,7 +209,7 @@ pub enum PtyEvent {
         transcript_path: PathBuf,
         reason: RelinkReason,
     },
-    Keymap(super::keymap::Resolved),
+    Keymap(claude::pty::keymap::Resolved),
     InputResult(InputResult),
     Delivery(DeliveryOutcome),
     Exited(pty_host::ExitStatus),
@@ -222,87 +221,6 @@ pub struct AskFacts {
     pub kind: AskKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AskId(pub String);
-
-impl std::fmt::Display for AskId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AskKind {
-    Permission {
-        tool_name: String,
-        suggestions: usize,
-        is_plan: bool,
-    },
-    Question {
-        questions: Vec<QuestionFact>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionFact {
-    pub options: usize,
-    pub multi_select: bool,
-    /// Options carry previews, which switches the form to a side-by-side
-    /// layout where a digit moves the cursor instead of choosing.
-    #[serde(default)]
-    pub previews: bool,
-}
-
-/// Semantic input accepted by a Claude PTY session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Intent {
-    Prompt { text: String },
-    Interrupt,
-    CyclePermissionMode,
-    Answer { ask_id: AskId, answer: AskAnswer },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AskAnswer {
-    Permission(PermissionAnswer),
-    Plan(PlanAnswer),
-    Question(QuestionResponse),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "permission", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PermissionAnswer {
-    AllowOnce,
-    AllowScoped { suggestion: usize },
-    Deny { feedback: Option<String> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "plan", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PlanAnswer {
-    ApproveAuto,
-    ApproveManual,
-    RequestChanges { feedback: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionResponse {
-    pub answers: Vec<QuestionAnswer>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionAnswer {
-    pub selected: Vec<usize>,
-    pub other: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelinkReason {
     Initial,
@@ -311,20 +229,13 @@ pub enum RelinkReason {
     Other(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub enum PtyInput {
-    Bytes(Vec<u8>),
-    Delay(u32),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputResult {
     pub intent: Intent,
-    pub keymap: super::keymap::KeymapId,
-    pub basis: super::keymap::Basis,
-    pub program: super::keymap::ProgramName,
+    pub keymap: claude::pty::keymap::KeymapId,
+    pub basis: claude::pty::keymap::Basis,
+    pub program: claude::pty::keymap::ProgramName,
     pub bytes_written: usize,
 }
 
@@ -343,28 +254,6 @@ pub enum DeliveryOutcome {
     Pty,
     Socket,
     PtyFallback { reason: String },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum InputError {
-    #[error("unknown Claude ask '{0}'")]
-    UnknownAsk(AskId),
-    #[error("unverified keymap shape for {program:?}: {reason}")]
-    UnverifiedShape {
-        program: super::keymap::ProgramName,
-        reason: String,
-    },
-    #[error("unsafe PTY input text: {reason}")]
-    UnsafeText { reason: String },
-    #[error("answer does not fit the ask: {detail}")]
-    AnswerMismatchesAsk { detail: String },
-    #[error("no keymap for Claude {version} can answer {program:?}")]
-    NoKeymap {
-        version: ClaudeVersion,
-        program: super::keymap::ProgramName,
-    },
-    #[error("PTY input failed: {0}")]
-    Pty(#[from] pty_host::PtyError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -391,8 +280,8 @@ pub struct Session {
 }
 
 struct ActiveKeymap {
-    resolved: super::keymap::Resolved,
-    keymap: super::keymap::Keymap,
+    resolved: claude::pty::keymap::Resolved,
+    keymap: claude::pty::keymap::Keymap,
 }
 
 struct SemanticState {
@@ -474,7 +363,7 @@ impl Control {
                 ),
                 _ => None,
             };
-            let program = super::keymap::program_for(&intent, ask.as_ref())?;
+            let program = claude::pty::keymap::program_for(&intent, ask.as_ref())?;
             let active = semantic
                 .active
                 .as_ref()
@@ -492,11 +381,11 @@ impl Control {
             Intent::Answer { answer, .. } => Some(answer),
             _ => None,
         };
-        let steps = super::keymap::encode(
+        let steps = claude::pty::keymap::encode(
             &keymap,
             &resolved,
             program,
-            &super::keymap::Environment {
+            &claude::pty::keymap::Environment {
                 ask: ask.as_ref(),
                 answer,
                 prompt,
@@ -550,12 +439,15 @@ impl Control {
         Ok(bytes_written)
     }
 
-    async fn write_key_steps(&self, steps: &[super::keymap::KeyStep]) -> Result<usize, InputError> {
+    async fn write_key_steps(
+        &self,
+        steps: &[claude::pty::keymap::KeyStep],
+    ) -> Result<usize, InputError> {
         let mut writer = self.writer.lock().await;
         let mut bytes_written = 0;
         for step in steps {
             match step {
-                super::keymap::KeyStep::Write(bytes) => {
+                claude::pty::keymap::KeyStep::Write(bytes) => {
                     writer
                         .write_all(bytes)
                         .await
@@ -564,7 +456,7 @@ impl Control {
                     self.observed_write(bytes);
                     bytes_written += bytes.len();
                 }
-                super::keymap::KeyStep::Delay(delay) => {
+                claude::pty::keymap::KeyStep::Delay(delay) => {
                     self.delays.wait(*delay).await;
                 }
             }
@@ -622,7 +514,7 @@ impl Control {
         confirmation: &str,
     ) -> Result<(), String> {
         let mut rows = self.confirmations.subscribe();
-        let mut socket = crate::messaging::MessagingSocket::connect(path, token)
+        let mut socket = claude::messaging::MessagingSocket::connect(path, token)
             .await
             .map_err(|e| e.to_string())?;
         socket.send(text).await.map_err(|e| e.to_string())?;
@@ -674,7 +566,7 @@ impl Control {
 
 pub async fn spawn(
     launch: &Launch,
-    keymaps: &super::keymap::KeymapSources,
+    keymaps: &claude::pty::keymap::KeymapSources,
     size: pty_host::PtySize,
 ) -> Result<Session, SpawnError> {
     let version = probe_version(&launch.binary).await?;
@@ -685,7 +577,7 @@ pub async fn spawn(
 /// version probe.
 pub fn spawn_with_version(
     launch: &Launch,
-    keymaps: &super::keymap::KeymapSources,
+    keymaps: &claude::pty::keymap::KeymapSources,
     size: pty_host::PtySize,
     version: ClaudeVersion,
 ) -> Result<Session, SpawnError> {
@@ -693,17 +585,7 @@ pub fn spawn_with_version(
     let hook_dir = std::env::temp_dir().join(format!("ac-{}", &session[..8]));
     let receiver = HookReceiver::bind_sync(&hook_dir).map_err(SpawnError::Hook)?;
     let hook_path = receiver.path.clone();
-    let process = pty_host::spawn(pty_host::PtySpawn {
-        command: launch.binary.clone(),
-        args: pty_spawn_args(launch),
-        cwd: launch.cwd.clone(),
-        env: vec![(
-            OsString::from("CLAUDE_HOOK_SOCKET"),
-            hook_path.into_os_string(),
-        )],
-        env_remove: launch.env_scrub.iter().map(OsString::from).collect(),
-        size,
-    })?;
+    let process = claude::pty::spawn(launch, size, &hook_path)?;
     let output = process.handle.output();
     let handle = process.handle.clone();
     let writer = writer_for_handle(handle.clone());
@@ -725,7 +607,7 @@ pub fn spawn_with_version(
     ))
 }
 
-pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) -> Session {
+pub fn from_sources(sources: Sources, keymaps: &claude::pty::keymap::KeymapSources) -> Session {
     let Sources {
         pty,
         hooks,
@@ -752,7 +634,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     let (event_tx, events) = mpsc::channel(CHANNEL_CAPACITY);
     let (confirmation_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (exit_tx, exit_rx) = watch::channel(None);
-    let initial = super::keymap::resolve_session(keymaps, &version).ok();
+    let initial = claude::pty::keymap::resolve_session(keymaps, &version).ok();
     let initial_event = initial.as_ref().map(|(resolved, _)| resolved.clone());
     let semantic = Arc::new(Mutex::new(SemanticState {
         version: version.clone(),
@@ -883,7 +765,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
 pub fn from_recording(
     replay: &mut replay_support::StrictReplay,
     manifest: &replay_support::Manifest,
-    keymaps: &super::keymap::KeymapSources,
+    keymaps: &claude::pty::keymap::KeymapSources,
 ) -> Result<Session, SpawnError> {
     let pty = replay
         .transports
@@ -1027,34 +909,13 @@ impl AsyncWrite for RecordingFrameWriter {
 
 fn refresh_keymap(
     semantic: &Mutex<SemanticState>,
-    keymaps: &super::keymap::KeymapSources,
-) -> Option<super::keymap::Resolved> {
+    keymaps: &claude::pty::keymap::KeymapSources,
+) -> Option<claude::pty::keymap::Resolved> {
     let mut semantic = semantic.lock().expect("semantic state mutex poisoned");
-    let active = super::keymap::resolve_session(keymaps, &semantic.version).ok();
+    let active = claude::pty::keymap::resolve_session(keymaps, &semantic.version).ok();
     let event = active.as_ref().map(|(resolved, _)| resolved.clone());
     semantic.active = active.map(|(resolved, keymap)| ActiveKeymap { resolved, keymap });
     event
-}
-
-pub fn paste_program(text: &str) -> Vec<PtyInput> {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let text: String = text
-        .chars()
-        .filter_map(|c| match c {
-            '\n' => Some('\n'),
-            '\t' => Some(' '),
-            c if c.is_control() => None,
-            c => Some(c),
-        })
-        .collect();
-    let mut paste = b"\x1b[200~".to_vec();
-    paste.extend_from_slice(text.as_bytes());
-    paste.extend_from_slice(b"\x1b[201~");
-    vec![
-        PtyInput::Bytes(paste),
-        PtyInput::Delay(400),
-        PtyInput::Bytes(b"\r".to_vec()),
-    ]
 }
 
 fn writer_for_handle(handle: pty_host::PtyHandle) -> Box<dyn AsyncWrite + Unpin + Send> {
@@ -1253,7 +1114,7 @@ async fn pump_hooks(
         match reader.read_line(&mut line).await {
             Ok(0) | Err(_) => break,
             Ok(_) => {
-                if let Ok(payload) = crate::hooks::parse(line.trim().as_bytes())
+                if let Ok(payload) = claude::hooks::parse(line.trim().as_bytes())
                     && tx.send(payload).await.is_err()
                 {
                     break;
@@ -1293,8 +1154,9 @@ async fn pump_transcript(
 
 #[cfg(test)]
 mod tests {
+    use claude::hooks::HookCommon;
+
     use super::*;
-    use crate::hooks::HookCommon;
 
     #[tokio::test]
     async fn recording_frames_preserve_arbitrary_pty_bytes() {
@@ -1383,7 +1245,7 @@ mod tests {
     }
 
     fn from_test_sources(sources: Sources) -> Session {
-        from_sources(sources, &super::super::keymap::KeymapSources::default())
+        from_sources(sources, &claude::pty::keymap::KeymapSources::default())
     }
 
     #[tokio::test]
@@ -1408,8 +1270,8 @@ mod tests {
         ));
         assert!(matches!(
             next(&mut session.events).await,
-            PtyEvent::Keymap(super::super::keymap::Resolved {
-                basis: super::super::keymap::Basis::Verified { .. },
+            PtyEvent::Keymap(claude::pty::keymap::Resolved {
+                basis: claude::pty::keymap::Basis::Verified { .. },
                 ..
             })
         ));
@@ -1491,7 +1353,7 @@ mod tests {
             "permission_suggestions":[{"type":"addDirectories","directories":["/tmp"],"destination":"session"}],
         });
         hooks
-            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {
@@ -1522,7 +1384,7 @@ mod tests {
             ]}
         });
         hooks
-            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {
@@ -1589,7 +1451,7 @@ mod tests {
             "tool_input":{"plan":"Update README.md"},
         });
         hooks
-            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         let ask = loop {
@@ -1631,7 +1493,7 @@ mod tests {
         assert_eq!(result.intent, intent);
         assert_eq!(result.keymap, resolved.keymap);
         assert_eq!(result.basis, resolved.basis);
-        assert_eq!(result.program, super::super::keymap::ProgramName::Prompt);
+        assert_eq!(result.program, claude::pty::keymap::ProgramName::Prompt);
         assert_eq!(result.bytes_written, b"\x1b[200~hello\x1b[201~\r".len());
         let mut bytes = vec![0; result.bytes_written];
         peer.read_exact(&mut bytes).await.unwrap();
@@ -1693,7 +1555,7 @@ mod tests {
         assert_eq!(result.intent, intent);
         assert_eq!(
             result.program,
-            super::super::keymap::ProgramName::QuestionForm
+            claude::pty::keymap::ProgramName::QuestionForm
         );
         assert!(matches!(
             session.control.send(result.intent).await,
@@ -1774,7 +1636,7 @@ mod tests {
             }); 7],
         });
         hooks
-            .send(crate::hooks::parse(raw.to_string().as_bytes()).unwrap())
+            .send(claude::hooks::parse(raw.to_string().as_bytes()).unwrap())
             .await
             .unwrap();
         loop {
@@ -1796,7 +1658,7 @@ mod tests {
         let (sources, _hooks, _rows, _paths, _peer, _exit) = source_bundle();
         let session = from_sources(
             sources,
-            &super::super::keymap::KeymapSources {
+            &claude::pty::keymap::KeymapSources {
                 baked: &[],
                 user_dir: None,
             },
@@ -1809,7 +1671,7 @@ mod tests {
                 })
                 .await,
             Err(InputError::NoKeymap {
-                program: super::super::keymap::ProgramName::Prompt,
+                program: claude::pty::keymap::ProgramName::Prompt,
                 ..
             })
         ));
@@ -1819,7 +1681,7 @@ mod tests {
     async fn relink_reloads_keymap_sources_and_emits_the_new_resolution() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("claude.toml");
-        let original = super::super::keymap::BAKED_KEYMAPS[0].1;
+        let original = claude::pty::keymap::BAKED_KEYMAPS[0].1;
         let verified_start = original.find("verified = ").unwrap();
         let verified_end = original[verified_start..]
             .find('\n')
@@ -1827,8 +1689,8 @@ mod tests {
         let mut user_keymap = original.to_owned();
         user_keymap.replace_range(verified_start..verified_end, "verified = []");
         std::fs::write(&path, &user_keymap).unwrap();
-        let keymaps = super::super::keymap::KeymapSources {
-            baked: super::super::keymap::BAKED_KEYMAPS,
+        let keymaps = claude::pty::keymap::KeymapSources {
+            baked: claude::pty::keymap::BAKED_KEYMAPS,
             user_dir: Some(dir.path().to_path_buf()),
         };
         let (sources, hooks, _rows, _paths, _peer, _exit) = source_bundle();
@@ -1839,7 +1701,7 @@ mod tests {
         };
         assert!(matches!(
             initial.keymap.source,
-            super::super::keymap::KeymapSource::User(_)
+            claude::pty::keymap::KeymapSource::User(_)
         ));
 
         std::fs::write(

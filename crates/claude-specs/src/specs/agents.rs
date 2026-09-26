@@ -2,9 +2,8 @@
 
 use std::collections::HashMap;
 
-use claude::sdk::{AgentDefinition, PermissionMode};
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::{AgentDefinition, PermissionMode};
 use crate::expect;
 
 pub(super) static SUBAGENT_TASK: SpecDef = SpecDef {

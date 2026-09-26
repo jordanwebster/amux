@@ -40,12 +40,12 @@ cargo = [
 ]
 
 [[suite]]
-name = "claude-sdk-boundary-policy"
-contract = "The Claude SDK adapter remains an event-stream and control-handle boundary without callback objects."
-paths = ["crates/claude/tests/boundary.rs", "crates/claude/src/sdk"]
+name = "claude-transport-boundary"
+contract = "The claude crate carries provider transport only: no session host, and the SDK modules hold stream-JSON frames and options."
+paths = ["crates/claude/tests/boundary.rs", "crates/claude/src"]
 recipe = "just test -- -p claude"
 boundary = "Provider adapter"
-oracle = "Source-boundary assertions over the public adapter modules."
+oracle = "Source-boundary assertions over the crate's modules."
 real = ["repository source"]
 substituted = ["Claude process"]
 time = "none"
@@ -76,26 +76,7 @@ update = "Run the relevant claude-probe capture and review its manifest."
 cargo = [
   { package = "claude-specs", kind = "lib", targets = ["claude_specs"], features = [] },
   { package = "claude-specs", kind = "bin", targets = ["claude-probe"], features = [] },
-  { package = "claude-specs", targets = ["keymap_provenance", "sdk_boundary", "spec_replay"], features = [] },
-]
-
-[[suite]]
-name = "codex-daemon-transport"
-contract = "The Codex app-server transport preserves JSON message framing and large bidirectional frames over its Unix socket."
-paths = ["crates/codex/tests/daemon_transport.rs"]
-recipe = "just test -- -p codex"
-boundary = "Provider adapter"
-oracle = "Exact JSON-RPC frames observed at both ends of a real local socket."
-real = ["Unix socket", "WebSocket framing"]
-substituted = ["Codex app-server process"]
-time = "real"
-capabilities = ["Unix"]
-lane = "fast"
-evidence = ""
-update = ""
-cargo = [
-  { package = "codex", kind = "lib", targets = ["codex"], features = [] },
-  { package = "codex", targets = ["daemon_transport"], features = [] },
+  { package = "claude-specs", targets = ["driver_boundary", "keymap_provenance", "sdk_boundary", "spec_replay"], features = [] },
 ]
 
 [[suite]]

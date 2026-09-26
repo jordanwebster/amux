@@ -1,3 +1,22 @@
+2026-09-26 — **The provider crates carry transport only.**
+`claude` keeps what starting and talking to Claude needs: launch arguments
+and settings, starting it under a PTY with hooks pointed at a socket, the
+semantic PTY input and the version-resolved keymaps, the hook and messaging
+sockets, the transcript tailer, and the stream-JSON frames and option types.
+The stream-JSON client that hosted a session (control-request routing,
+in-process MCP servers, permission and hook callbacks) and the PTY session
+that folded hooks and transcript rows into asks and confirmed deliveries now
+live in `claude-specs` as its recording drivers, because only the
+specifications host a Claude session outside the agent process. In the
+codec, an in-process MCP server is now just its wire shape, `{"type":
+"sdk", "name"}`; the driver keeps the server object beside it.
+
+`codex` keeps the app-server JSON-RPC client and loses the shared
+app-server daemon and its WebSocket socket transport, and the session layer
+on top of a thread. A keymap test that named the newest verified Claude
+version by hand broke when the terminal recordings verified 2.1.283; it now
+reads the newest verified version from the shipped keymap.
+
 2026-09-26 — **More real Claude terminal recordings.**
 Eight new PTY recordings against Claude Code 2.1.282 cover what the corpus
 lacked: one AskUserQuestion call with four questions (two, three and four

@@ -7,9 +7,8 @@
 //! one session: a conversation that survives inside a running process proves
 //! nothing about one that survives the process ending.
 
-use claude::sdk::PermissionMode;
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::PermissionMode;
 use crate::expect;
 
 /// The word the first session is asked to keep. Anything the second session
@@ -200,7 +199,7 @@ async fn resumed_at(session: &mut SpecSession) {
         .messages()
         .iter()
         .find_map(|message| match message {
-            claude::sdk::Message::Assistant(assistant) => Some(assistant.uuid),
+            crate::driver::sdk::Message::Assistant(assistant) => Some(assistant.uuid),
             _ => None,
         })
         .expect("an answered turn carries an assistant message to fork at");

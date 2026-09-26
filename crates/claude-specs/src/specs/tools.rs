@@ -9,12 +9,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use claude::sdk::{
+use super::{HAIKU, PlanReview, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::{
     CreateSdkMcpServerOptions, HookEvent, HookSubscription, McpServerConfig, PermissionMode,
     SdkMcpToolOptions, SdkMcpToolResult, create_sdk_mcp_server, tool,
 };
-
-use super::{HAIKU, PlanReview, SessionSetup, SpecDef, SpecSession};
 use crate::expect;
 
 pub(super) static PERMISSION_CALLBACK: SpecDef = SpecDef {
@@ -364,7 +363,7 @@ const CONFIRMED: &str = "PELICAN";
 /// built binary on `PATH` instead, which keeps the traffic the same wherever
 /// it was recorded.
 pub(super) fn external_server() -> McpServerConfig {
-    McpServerConfig::Stdio(claude::sdk::McpStdioServerConfig {
+    McpServerConfig::Stdio(crate::driver::sdk::McpStdioServerConfig {
         command: "spec-mcp-server".to_owned(),
         args: Vec::new(),
         env: HashMap::new(),
@@ -440,9 +439,11 @@ fn dialog_setup() -> SessionSetup {
          human-to-human transmission. Do not use tools.",
     );
     setup.options.fallback_model = Some(HAIKU.to_owned());
-    setup.options.settings = Some(claude::sdk::SettingsConfig::Inline(serde_json::json!({
-        "switchModelsOnFlag": false,
-    })));
+    setup.options.settings = Some(crate::driver::sdk::SettingsConfig::Inline(
+        serde_json::json!({
+            "switchModelsOnFlag": false,
+        }),
+    ));
     setup
         .options
         .supported_dialog_kinds

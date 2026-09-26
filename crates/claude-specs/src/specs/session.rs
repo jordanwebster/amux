@@ -1,9 +1,8 @@
 //! Specifications for the shape of an ordinary session: what a turn is made
 //! of, and what changes when the caller asks to watch it arrive.
 
-use claude::sdk::PermissionMode;
-
 use super::{HAIKU, SessionSetup, SpecDef, SpecSession};
+use crate::driver::sdk::PermissionMode;
 use crate::expect;
 
 pub(super) static TEXT_TURN: SpecDef = SpecDef {

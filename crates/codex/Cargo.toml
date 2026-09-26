@@ -20,7 +20,6 @@ uuid = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
-tokio-tungstenite.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

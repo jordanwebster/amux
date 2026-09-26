@@ -53,7 +53,7 @@ impl Shutdown {
 
 /// A cloneable handle that forcefully terminates an owned query.
 ///
-/// This is distinct from [`Control::interrupt`](crate::sdk::Control::interrupt), which
+/// This is distinct from [`Control::interrupt`](crate::driver::sdk::Control::interrupt), which
 /// asks Claude to stop only the active turn while keeping the query alive.
 #[derive(Clone)]
 pub struct AbortHandle {

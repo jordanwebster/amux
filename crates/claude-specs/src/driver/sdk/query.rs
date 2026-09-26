@@ -13,16 +13,16 @@ use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::process::{Child, ChildStderr};
 use tokio::sync::{Mutex, mpsc, watch};
 
-use crate::sdk::abort::{Shutdown, ShutdownReason};
-use crate::sdk::control::{HookMatcherConfig, InitializeRequestBody};
-use crate::sdk::dispatch::{self, QueryInner, WriteCommand};
-use crate::sdk::error::Error;
-use crate::sdk::options::{QueryOptions, SkillsConfig, SystemPrompt};
-use crate::sdk::process::CliProcess;
-use crate::sdk::session::SdkEvent;
-use crate::sdk::types::{MessageContent, MessageParam, Role};
+use crate::driver::sdk::abort::{Shutdown, ShutdownReason};
+use crate::driver::sdk::control::{HookMatcherConfig, InitializeRequestBody};
+use crate::driver::sdk::dispatch::{self, QueryInner, WriteCommand};
+use crate::driver::sdk::error::Error;
+use crate::driver::sdk::options::{QueryOptions, SkillsConfig, SystemPrompt};
+use crate::driver::sdk::process::CliProcess;
+use crate::driver::sdk::session::SdkEvent;
+use crate::driver::sdk::types::{MessageContent, MessageParam, Role};
 
-/// A user-role input message. The owning [`Session`](crate::sdk::Session) supplies its session ID on
+/// A user-role input message. The owning [`Session`](crate::driver::sdk::Session) supplies its session ID on
 /// the wire, so callers cannot accidentally route a streamed message to a
 /// different process.
 #[derive(Debug, Clone)]
@@ -117,7 +117,7 @@ impl ProcessExit {
 #[derive(Default)]
 pub(crate) struct QueryRuntimeConfig {
     initialize_request: InitializeRequestBody,
-    sdk_mcp_servers: HashMap<String, crate::sdk::mcp::SdkMcpServer>,
+    sdk_mcp_servers: HashMap<String, crate::driver::sdk::mcp::SdkMcpServer>,
     hook_callback_ids: HashSet<String>,
 }
 
@@ -585,7 +585,7 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
 
     use super::*;
-    use crate::sdk::message::Message;
+    use crate::driver::sdk::message::Message;
 
     const INIT_RESPONSE: &str = concat!(
         r#"{"type":"control_response","response":{"subtype":"success","request_id":"req_0","response":{"commands":[],"agents":[],"output_style":"default","available_output_styles":[],"models":[],"account":{}}}}"#,
@@ -611,7 +611,7 @@ mod tests {
     }
 
     async fn next_event(
-        events: &mut crate::sdk::session::EventStream,
+        events: &mut crate::driver::sdk::session::EventStream,
     ) -> Option<Result<SdkEvent, Error>> {
         std::future::poll_fn(|cx| Pin::new(&mut *events).poll_next(cx)).await
     }
@@ -625,7 +625,7 @@ mod tests {
         command
             .env("INIT_RESPONSE", INIT_RESPONSE)
             .kill_on_drop(true);
-        let mut process = crate::sdk::process::spawn_command(command).unwrap();
+        let mut process = crate::driver::sdk::process::spawn_command(command).unwrap();
         let mut ready = String::new();
         tokio::time::timeout(Duration::from_secs(5), process.stdout.read_line(&mut ready))
             .await
@@ -672,10 +672,10 @@ mod tests {
             }
         });
 
-        let session = crate::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, options())
+        let session = crate::driver::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, options())
             .await
             .unwrap();
-        let crate::sdk::Session {
+        let crate::driver::sdk::Session {
             mut events,
             control,
         } = session;
@@ -743,7 +743,8 @@ mod tests {
         .await
         .expect("reader did not fill the bounded output channel");
 
-        let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
+        let crate::driver::sdk::Session { events, control } =
+            crate::driver::sdk::session::from_query(query);
         let exit = tokio::time::timeout(TEST_DEADLINE, control.close())
             .await
             .expect("close parked behind the full output channel");
@@ -789,7 +790,8 @@ read eof
         .await
         .expect("reader did not fill the bounded output channel");
 
-        let crate::sdk::Session { events, control } = crate::sdk::session::from_query(query);
+        let crate::driver::sdk::Session { events, control } =
+            crate::driver::sdk::session::from_query(query);
         let exit = tokio::time::timeout(TEST_DEADLINE, control.close())
             .await
             .expect("close parked behind the full process output channel");
@@ -805,7 +807,7 @@ read eof
             fork_session: true,
             ..QueryOptions::default()
         };
-        let (fork_options, command) = crate::sdk::prepare_query(fork_options).unwrap();
+        let (fork_options, command) = crate::driver::sdk::prepare_query(fork_options).unwrap();
         let (sdk_stdin, server_stdin) = duplex(4096);
         let (server_stdout, sdk_stdout) = duplex(4096);
         let server = tokio::spawn(async move {
@@ -821,10 +823,11 @@ read eof
             }
             frames
         });
-        let session = crate::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, fork_options)
-            .await
-            .unwrap();
-        let crate::sdk::Session { events, control } = session;
+        let session =
+            crate::driver::sdk::from_io(BufReader::new(sdk_stdout), sdk_stdin, fork_options)
+                .await
+                .unwrap();
+        let crate::driver::sdk::Session { events, control } = session;
         let target = control.session_id().to_owned();
         assert_ne!(target, source);
         assert!(uuid::Uuid::parse_str(&target).is_ok());
@@ -874,8 +877,8 @@ exit 17
         let warm = Query::warm_from_process(options(), process, Duration::from_secs(1))
             .await
             .unwrap();
-        let session = crate::sdk::session::from_query(warm.into_query());
-        let crate::sdk::Session {
+        let session = crate::driver::sdk::session::from_query(warm.into_query());
+        let crate::driver::sdk::Session {
             mut events,
             control,
         } = session;

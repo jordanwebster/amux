@@ -1,13 +1,10 @@
 pub mod approval;
 pub mod config;
-#[cfg(unix)]
-pub mod daemon;
 pub(crate) mod dispatch;
 pub mod error;
 pub mod init;
 pub mod notification;
 pub mod server;
-pub mod session;
 pub mod thread;
 pub mod thread_event_stream;
 pub mod transport;
@@ -20,16 +17,10 @@ pub use config::{
     NetworkAccess, Personality, ReadOnlyAccess, ReasoningEffort, SandboxMode, SandboxPolicy,
     SummaryMode, ThreadConfig, TurnConfig, TurnInput,
 };
-#[cfg(unix)]
-pub use daemon::{
-    DaemonMode, DaemonProcess, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon,
-    ensure_daemon_with_fallback,
-};
 pub use error::Error;
 pub use init::InitializationResult;
 pub use notification::{ServerNotification, ThreadEvent, TurnEvent};
 pub use server::Codex;
-pub use session::{Session, ThreadControl, TurnId, open};
 pub use thread::Thread;
 pub use thread_event_stream::ThreadEventStream;
 pub use types::*;
