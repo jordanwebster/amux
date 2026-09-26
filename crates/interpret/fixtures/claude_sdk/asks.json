@@ -1,5 +1,5 @@
 {
-  "about": "Permission asks keep every scope choice, the reason and the description; allow names a scope by its index and sends that choice back; deny goes with or without stopping; tool-server forms and link requests are asks answered with their action; an answer to a closed ask writes nothing.",
+  "about": "Permission asks keep every scope choice, the reason and the description; allow names a scope by its index and sends that choice back; deny goes with or without stopping; tool-server forms and link requests are asks that are the work, each its own item closed with the action answered, the browser finishing it, or dismissed when the turn ends under it; an answer to a closed ask writes nothing.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -407,6 +407,34 @@
       "fact": {
         "channel": "stream",
         "json": {
+          "type": "control_request",
+          "request_id": "req-7",
+          "request": {
+            "subtype": "elicitation",
+            "mcp_server_name": "github",
+            "message": "Labels",
+            "mode": "form",
+            "requested_schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "req-7"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
           "type": "result",
           "subtype": "success",
           "uuid": "r1",
@@ -420,7 +448,8 @@
           "turn_id": 1,
           "last_message_key": ""
         }
-      }
+      },
+      "note": "the turn ends under the open form, which closes dismissed"
     }
   ]
 }

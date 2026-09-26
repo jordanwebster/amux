@@ -12,79 +12,82 @@
   row    3 rs_0dc11c88e03df63c016ab7294ce92c87d2b5752b7f44d1d1de Thinking { text: "", open: false, duration_ms: Some(2048) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 33 recorded 32: fact Rpc method=item/tool/requestUserInput
-  ask 0 -> "" 1/1 Open
+  row    4 ask:0 Ask(Questions { questions: [QuestionView { header: "Color", question: "Which color should color.txt hold?", multi_select: false, options: [OptionView { label: "Red", description: "Write Red into color.txt.", preview: "", recommended: true }, OptionView { label: "Blue", description: "Write Blue into color.txt.", preview: "", recommended: false }], allow_other: true, secret: false }], ans…
+  ask 0 -> "ask:0" 1/1 Open
     choices 
     body Question([QuestionView { header: "Color", question: "Which color should color.txt hold?", multi_select: false, options: [OptionView { label: "Red", description: "Write Red into color.txt.", preview: "", recommended: true }, OptionView { label: "Blue", description: "Write Blue into color.txt.", preview: "", recommended: false }], allow_other: true, secret: false }])
   composer Send activity=None queue=[] outbox=[]
 ## 35 recorded 34: input stdin-5
+  row    4 ask:0 Ask(Questions { questions: [QuestionView { header: "Color", question: "Which color should color.txt hold?", multi_select: false, options: [OptionView { label: "Red", description: "Write Red into color.txt.", preview: "", recommended: true }, OptionView { label: "Blue", description: "Write Blue into color.txt.", preview: "", recommended: false }], allow_other: true, secret: false }], ans…
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 45 recorded 44: fact Rpc method=item/started
-  row    4 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: true, duration_ms: None }
+  row    5 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: true, duration_ms: None }
   composer Send activity=Some(Thinking) queue=[] outbox=[]
 ## 47 recorded 46: fact Rpc method=item/completed
-  row    4 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: false, duration_ms: Some(2669) }
+  row    5 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: false, duration_ms: Some(840) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 49 recorded 48: fact Rpc method=item/started
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [], streaming: true, working_note: false }
 ## 51 recorded 50: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("##")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("##")], streaming: true, working_note: false }
 ## 53 recorded 52: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write")], streaming: true, working_note: false }
 ## 55 recorded 54: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected")], streaming: true, working_note: false }
 ## 57 recorded 56: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color")], streaming: true, working_note: false }
 ## 59 recorded 58: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n")], streaming: true, working_note: false }
 ## 61 recorded 60: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n-")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n-")], streaming: true, working_note: false }
 ## 62 recorded 61: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write")], streaming: true, working_note: false }
 ## 64 recorded 63: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `")], streaming: true, working_note: false }
 ## 66 recorded 65: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue")], streaming: true, working_note: false }
 ## 68 recorded 67: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue`")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue`")], streaming: true, working_note: false }
 ## 70 recorded 69: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to")], streaming: true, working_note: false }
 ## 72 recorded 71: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `")], streaming: true, working_note: false }
 ## 74 recorded 73: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color")], streaming: true, working_note: false }
 ## 76 recorded 75: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt")], streaming: true, working_note: false }
 ## 78 recorded 77: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n")], streaming: true, working_note: false }
 ## 80 recorded 79: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n-")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n-")], streaming: true, working_note: false }
 ## 82 recorded 81: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify")], streaming: true, working_note: false }
 ## 84 recorded 83: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the")], streaming: true, working_note: false }
 ## 85 recorded 84: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file")], streaming: true, working_note: false }
 ## 87 recorded 86: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains")], streaming: true, working_note: false }
 ## 89 recorded 88: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly")], streaming: true, working_note: false }
 ## 91 recorded 90: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `")], streaming: true, working_note: false }
 ## 93 recorded 92: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue")], streaming: true, working_note: false }
 ## 95 recorded 94: fact Rpc method=item/plan/delta
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: true, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: true, working_note: false }
 ## 97 recorded 96: fact Rpc method=item/completed
-  row    5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: false, working_note: false }
+  row    6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: false, working_note: false }
 ## 103 recorded 102: fact Rpc method=turn/completed
-  row    6 turn:1 TurnEnd { duration_ms: Some(5914), cost_usd: None, failed: false }
+  row    7 turn:1 TurnEnd { duration_ms: Some(5914), cost_usd: None, failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 prompt:737464696e2d34 Prompt { text: [Text("Before planning, ask me exactly one question with your tool for asking the user: which color should color.txt hold, with the options Red and Blue. Then propose a short plan to write my answer into color.txt.")], steered: false }
      3 rs_0dc11c88e03df63c016ab7294ce92c87d2b5752b7f44d1d1de Thinking { text: "", open: false, duration_ms: Some(2048) }
-     4 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: false, duration_ms: Some(2669) }
-     5 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: false, working_note: false }
-     6 turn:1 TurnEnd { duration_ms: Some(5914), cost_usd: None, failed: false }
+     4 ask:0 Ask(Questions { questions: [QuestionView { header: "Color", question: "Which color should color.txt hold?", multi_select: false, options: [OptionView { label: "Red", description: "Write Red into color.txt.", preview: "", recommended: true }, OptionView { label: "Blue", description: "Write Blue into color.txt.", preview: "", recommended: false }], allow_other: true, secret: false }], ans…
+     5 rs_0dc11c88e03df63c016ab7294f947487d28232a9815c234236 Thinking { text: "", open: false, duration_ms: Some(840) }
+     6 01a0db79-4c7f-7203-8634-b9dd5af5ce23-plan Prose { text: [Text("## Write selected color\n\n- Write `Blue` to `color.txt`.\n- Verify the file contains exactly `Blue`.\n")], streaming: false, working_note: false }
+     7 turn:1 TurnEnd { duration_ms: Some(5914), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 14438, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("never"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

@@ -19,7 +19,7 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wire::{
-    AgentSpec, Ask, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
+    AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
     ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, SignIn,
     Step, ToolCall, ToolDecision, ToolServerHealth, UsageLimits, claude_answer, claude_sdk_input,
     claude_sdk_item, input, permission_answer, plan_answer,
@@ -30,7 +30,7 @@ use crate::claude_common::{
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
-    RedactTarget, Shared, SnapshotView, Stepped, agent_message_body, agent_message_key,
+    RedactTarget, Shared, SnapshotView, Stepped, agent_message_body, agent_message_key, ask_item,
     claude_sdk_input, human, reason, serde_pb, unknown,
 };
 
@@ -491,6 +491,11 @@ impl State {
         let parsed = ClaudeAnswer::decode(answer.body.as_slice())
             .ok()
             .and_then(|answer| answer.of);
+        let closed = match &parsed {
+            Some(claude_answer::Of::Form(form)) => Some(ask_item::form_sent(form)),
+            Some(claude_answer::Of::Link(link)) => Some(ask_item::link_answered(link.action)),
+            _ => None,
+        };
         let Some((response, decision)) = self
             .asks
             .get(&key)
@@ -498,13 +503,50 @@ impl State {
         else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
-        self.shared.answer(emit, id, &key);
+        let ask = self.shared.answer(emit, id, &key);
         let meta = self.asks.remove(&key);
         emit.effect(control_response(&key, response));
         if let (Some(meta), Some(decision)) = (meta, decision) {
             self.decide(emit, &meta.tool_use_id, decision);
         }
+        if let (Some(ask), Some(closed)) = (ask, closed) {
+            self.emit_ask(emit, &ask, Some(closed));
+        }
         self.shared.accept(emit, id, false);
+    }
+
+    /// Writes the item of a tool-server form or link, open or closed: an ask
+    /// that is the work. A question or plan is drawn on its own tool call.
+    fn emit_ask(&mut self, emit: &mut Emit, ask: &Ask, closed: Option<AskClosed>) {
+        let asked = match &ask.body {
+            Some(wire::ask::Body::Form(form)) => wire::ask_item::Ask::Form(form.clone()),
+            Some(wire::ask::Body::Link(link)) => wire::ask_item::Ask::Link(link.clone()),
+            _ => return,
+        };
+        let item = ask_item::opened(asked);
+        let item = match closed {
+            Some(closed) => ask_item::close(item, closed),
+            None => item,
+        };
+        self.shared.item(
+            emit,
+            ItemDraft {
+                key: ask.item_key.clone(),
+                body: item_body(claude_sdk_item::Kind::Ask(item)),
+                at_ms: Some(ask.opened_at_ms),
+                complete: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Closes every open ask without an answer: the turn or the provider
+    /// ended under it.
+    fn dismiss_asks(&mut self, emit: &mut Emit) {
+        for ask in self.shared.close_all_asks() {
+            self.asks.remove(&ask.key);
+            self.emit_ask(emit, &ask, Some(ask_item::dismissed()));
+        }
     }
 
     fn decide(&mut self, emit: &mut Emit, tool_use_id: &str, decision: ToolDecisionState) {
@@ -783,6 +825,7 @@ fn describe_item(body: &[u8]) -> ItemView {
         Some(Kind::Message(text)) => ("message", text.complete, String::new()),
         Some(Kind::Thinking(thinking)) => ("thinking", thinking.complete, String::new()),
         Some(Kind::Tool(tool)) => ("tool", true, describe_tool(&tool)),
+        Some(Kind::Ask(item)) => ("ask", true, ask_item::describe(&item)),
         Some(Kind::Task(task)) => (
             "task",
             true,

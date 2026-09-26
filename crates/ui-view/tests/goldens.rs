@@ -281,11 +281,7 @@ fn check(
     }
 }
 
-fn run_all<I: Interpreter>(
-    kind: Kind,
-    dir: &str,
-    special: &Special,
-) {
+fn run_all<I: Interpreter>(kind: Kind, dir: &str, special: &Special) {
     let mut failures = Vec::new();
     let mut names: Vec<String> = std::fs::read_dir(fixtures(dir))
         .unwrap()

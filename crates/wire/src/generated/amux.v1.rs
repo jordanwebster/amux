@@ -783,8 +783,8 @@ pub struct Ask {
     /// What an answer names.
     #[prost(string, tag = "1")]
     pub key: ::prost::alloc::string::String,
-    /// The item this ask points at (a tool call); empty when the ask is itself
-    /// the work.
+    /// The item this ask points at: the tool call it would let run, or, for
+    /// an ask that is the work, its own AskItem.
     #[prost(string, tag = "2")]
     pub item_key: ::prost::alloc::string::String,
     #[prost(int64, tag = "9")]
@@ -997,6 +997,114 @@ impl ::prost::Name for LinkAsk {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.LinkAsk".into()
+    }
+}
+/// A request for file or network access beyond the sandbox.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AccessGrant {
+    #[prost(string, tag = "1")]
+    pub reason: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub read: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "3")]
+    pub write: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, tag = "4")]
+    pub network: bool,
+    #[prost(string, repeated, tag = "5")]
+    pub network_hosts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for AccessGrant {
+    const NAME: &'static str = "AccessGrant";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.AccessGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.AccessGrant".into()
+    }
+}
+/// An ask that is the work: a question, a tool server's form or link, or an
+/// access grant. It is its own item, written when the ask opens (the ask's
+/// item_key names it) and revised once with how it closed, so its decision
+/// row stays in the chat after the ask leaves the snapshot.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskItem {
+    /// Absent while the ask is open.
+    #[prost(message, optional, tag = "5")]
+    pub closed: ::core::option::Option<AskClosed>,
+    #[prost(oneof = "ask_item::Ask", tags = "1, 2, 3, 4")]
+    pub ask: ::core::option::Option<ask_item::Ask>,
+}
+/// Nested message and enum types in `AskItem`.
+pub mod ask_item {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Ask {
+        #[prost(message, tag = "1")]
+        Question(super::QuestionAsk),
+        #[prost(message, tag = "2")]
+        Form(super::FormAsk),
+        #[prost(message, tag = "3")]
+        Link(super::LinkAsk),
+        #[prost(message, tag = "4")]
+        Access(super::AccessGrant),
+    }
+}
+impl ::prost::Name for AskItem {
+    const NAME: &'static str = "AskItem";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.AskItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.AskItem".into()
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AskClosed {
+    #[prost(enumeration = "AskOutcome", tag = "1")]
+    pub outcome: i32,
+    /// A question's answers, one per question in the ask's order.
+    #[prost(message, repeated, tag = "2")]
+    pub answers: ::prost::alloc::vec::Vec<AnsweredQuestion>,
+    #[prost(string, tag = "3")]
+    pub note: ::prost::alloc::string::String,
+    /// The names of the form fields sent; the values went to the server only.
+    #[prost(string, repeated, tag = "4")]
+    pub fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// What an access grant granted.
+    #[prost(message, optional, tag = "5")]
+    pub grant: ::core::option::Option<GrantAnswer>,
+}
+impl ::prost::Name for AskClosed {
+    const NAME: &'static str = "AskClosed";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.AskClosed".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.AskClosed".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AnsweredQuestion {
+    /// The chosen options' labels.
+    #[prost(string, repeated, tag = "1")]
+    pub picked: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// A typed answer.
+    #[prost(string, optional, tag = "2")]
+    pub other: ::core::option::Option<::prost::alloc::string::String>,
+    /// A secret answer: what was typed is never recorded.
+    #[prost(bool, tag = "3")]
+    pub hidden: bool,
+}
+impl ::prost::Name for AnsweredQuestion {
+    const NAME: &'static str = "AnsweredQuestion";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.AnsweredQuestion".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.AnsweredQuestion".into()
     }
 }
 /// The provider is asking something this build cannot read; the only way out
@@ -1407,6 +1515,28 @@ impl ::prost::Name for LinkAnswer {
         "/amux.v1.LinkAnswer".into()
     }
 }
+/// A subset of what was asked; nothing granted is a deny.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GrantAnswer {
+    #[prost(string, repeated, tag = "1")]
+    pub read: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "2")]
+    pub write: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, tag = "3")]
+    pub network: bool,
+    #[prost(bool, tag = "4")]
+    pub for_session: bool,
+}
+impl ::prost::Name for GrantAnswer {
+    const NAME: &'static str = "GrantAnswer";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.GrantAnswer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.GrantAnswer".into()
+    }
+}
 /// The interpreter's verdict.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SendInputResponse {
@@ -1713,6 +1843,44 @@ impl TurnOutcome {
             "TURN_OUTCOME_COMPLETED" => Some(Self::Completed),
             "TURN_OUTCOME_INTERRUPTED" => Some(Self::Interrupted),
             "TURN_OUTCOME_FAILED" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AskOutcome {
+    Unspecified = 0,
+    /// Answered, sent, opened or granted.
+    Answered = 1,
+    /// Declined, or an access grant that granted nothing.
+    Declined = 2,
+    Cancelled = 3,
+    /// Closed by a later fact that did not say how.
+    Dismissed = 4,
+}
+impl AskOutcome {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ASK_OUTCOME_UNSPECIFIED",
+            Self::Answered => "ASK_OUTCOME_ANSWERED",
+            Self::Declined => "ASK_OUTCOME_DECLINED",
+            Self::Cancelled => "ASK_OUTCOME_CANCELLED",
+            Self::Dismissed => "ASK_OUTCOME_DISMISSED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ASK_OUTCOME_UNSPECIFIED" => Some(Self::Unspecified),
+            "ASK_OUTCOME_ANSWERED" => Some(Self::Answered),
+            "ASK_OUTCOME_DECLINED" => Some(Self::Declined),
+            "ASK_OUTCOME_CANCELLED" => Some(Self::Cancelled),
+            "ASK_OUTCOME_DISMISSED" => Some(Self::Dismissed),
             _ => None,
         }
     }
@@ -2128,7 +2296,7 @@ impl ::prost::Name for Key {
 pub struct ClaudeSdkItem {
     #[prost(
         oneof = "claude_sdk_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
     )]
     pub kind: ::core::option::Option<claude_sdk_item::Kind>,
 }
@@ -2167,6 +2335,9 @@ pub mod claude_sdk_item {
         /// A prompt delivered into the running turn; the text is the envelope's.
         #[prost(message, tag = "15")]
         Steer(super::Steer),
+        /// A tool-server form or link: an ask that is the work.
+        #[prost(message, tag = "16")]
+        Ask(super::AskItem),
     }
 }
 impl ::prost::Name for ClaudeSdkItem {
@@ -2568,7 +2739,7 @@ impl ::prost::Name for CodexCreateConfig {
 pub struct CodexItem {
     #[prost(
         oneof = "codex_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
     )]
     pub kind: ::core::option::Option<codex_item::Kind>,
 }
@@ -2609,6 +2780,10 @@ pub mod codex_item {
         TurnDiff(super::TurnDiff),
         #[prost(message, tag = "15")]
         Verdict(super::ReviewerVerdict),
+        /// A question, access grant, tool-server form or link: an ask that is
+        /// the work.
+        #[prost(message, tag = "16")]
+        Ask(super::AskItem),
     }
 }
 impl ::prost::Name for CodexItem {
@@ -2923,6 +3098,8 @@ pub struct CodexAsk {
     /// The app-server request id, JSON-encoded as the server sent it.
     #[prost(string, tag = "1")]
     pub key: ::prost::alloc::string::String,
+    /// The unit of work an approval would let run, or, for an ask that is the
+    /// work, its own AskItem.
     #[prost(string, tag = "2")]
     pub item_key: ::prost::alloc::string::String,
     /// The decisions this request offers, in the server's order.
@@ -3022,29 +3199,6 @@ impl ::prost::Name for McpToolApproval {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.McpToolApproval".into()
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AccessGrant {
-    #[prost(string, tag = "1")]
-    pub reason: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag = "2")]
-    pub read: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "3")]
-    pub write: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(bool, tag = "4")]
-    pub network: bool,
-    #[prost(string, repeated, tag = "5")]
-    pub network_hosts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-impl ::prost::Name for AccessGrant {
-    const NAME: &'static str = "AccessGrant";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.AccessGrant".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.AccessGrant".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -3150,28 +3304,6 @@ impl ::prost::Name for CodexAnswer {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.CodexAnswer".into()
-    }
-}
-/// A subset of what was asked; nothing granted is a deny.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GrantAnswer {
-    #[prost(string, repeated, tag = "1")]
-    pub read: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "2")]
-    pub write: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(bool, tag = "3")]
-    pub network: bool,
-    #[prost(bool, tag = "4")]
-    pub for_session: bool,
-}
-impl ::prost::Name for GrantAnswer {
-    const NAME: &'static str = "GrantAnswer";
-    const PACKAGE: &'static str = "amux.v1";
-    fn full_name() -> ::prost::alloc::string::String {
-        "amux.v1.GrantAnswer".into()
-    }
-    fn type_url() -> ::prost::alloc::string::String {
-        "/amux.v1.GrantAnswer".into()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

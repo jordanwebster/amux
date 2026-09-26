@@ -123,6 +123,8 @@ message ClaudeSdkItem {
     Compaction compaction = 14;
     // A prompt delivered into the running turn; the text is the envelope's.
     Steer steer = 15;
+    // A tool-server form or link: an ask that is the work.
+    AskItem ask = 16;
   }
 }
 

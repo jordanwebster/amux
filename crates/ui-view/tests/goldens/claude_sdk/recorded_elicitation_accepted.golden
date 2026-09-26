@@ -21,29 +21,32 @@
   ask none
   composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
 ## 24 recorded 23: fact Stream type=control_request
-  ask 864d404c-3373-4c07-a136-f5e9eb9cf488 -> "" 1/1 Open
+  row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Open }) attention
+  ask 864d404c-3373-4c07-a136-f5e9eb9cf488 -> "ask:864d404c-3373-4c07-a136-f5e9eb9cf488" 1/1 Open
     choices Submit*, Decline
     body Form { server: "external", message: "Confirm the word PELICAN.", schema_json: "{\"properties\":{\"confirmed\":{\"type\":\"string\"}},\"required\":[\"confirmed\"],\"type\":\"object\"}" }
   composer Send activity=None queue=[] outbox=[]
 ## 26 recorded 25: input stdin-4
+  row    5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: ["confirmed"], resolution: Answered })
   ask none
   composer Send activity=Some(Running { key: "toolu_0118rZrfDTg63Kst5bzq3YSn" }) queue=[] outbox=[]
 ## 28 recorded 27: fact Stream type=user uuid=46a508ed-77b9-4fa8-957b-b1a9632d830a
   row    4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 30 recorded 29: fact Stream type=assistant uuid=5f1da508-b38f-4af8-a02d-f57de2c86ab4
-  row    5 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1090) }
+  row    6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
 ## 32 recorded 31: fact Stream type=assistant uuid=382445fc-a798-4979-8b42-270379ae497b
-  row    6 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }
+  row    7 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }
 ## 36 recorded 35: fact Stream type=result subtype=success uuid=e3dade6a-329b-4f67-9baf-e251bb864ad5
-  row    7 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
+  row    8 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
      3 msg_011CeiyMonyQkCsamPhvvdb6:0 Thinking { text: "", open: false, duration_ms: Some(2692) }
      4 toolu_0118rZrfDTg63Kst5bzq3YSn ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "PELICAN" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
-     5 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1090) }
-     6 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }
-     7 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
+     5 ask:864d404c-3373-4c07-a136-f5e9eb9cf488 Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: ["confirmed"], resolution: Answered })
+     6 msg_011CeiyN1wiM3Dzg9UpjPo5J:0 Thinking { text: "", open: false, duration_ms: Some(1058) }
+     7 msg_011CeiyN1wiM3Dzg9UpjPo5J:1 Prose { text: [Text("PELICAN")], streaming: false, working_note: false }
+     8 turn:1 TurnEnd { duration_ms: Some(4112), cost_usd: Some(0.055543), failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 25313, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

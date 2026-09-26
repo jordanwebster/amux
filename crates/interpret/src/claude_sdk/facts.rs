@@ -15,7 +15,7 @@ use crate::claude_common::{
     question_ask, result_images, scope_choices, split_tool_name, text, tool_class,
     without_image_bytes,
 };
-use crate::{Channel, Effect, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
+use crate::{Channel, Effect, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
 const INTERRUPTED: &str = "[Request interrupted by user";
 
@@ -84,10 +84,7 @@ impl State {
     }
 
     pub(super) fn exited(&mut self, emit: &mut Emit, code: Option<i32>) {
-        for key in self.open_ask_keys() {
-            self.shared.close_ask(&key);
-            self.asks.remove(&key);
-        }
+        self.dismiss_asks(emit);
         let cause = match code {
             Some(code) => format!("exit code {code}"),
             None => "killed by a signal".to_owned(),
@@ -242,9 +239,13 @@ impl State {
                     let matches = self.shared.asks().get(&key).is_some_and(|ask| {
                         matches!(&ask.body, Some(wire::ask::Body::Link(link)) if link.url.contains(&elicitation))
                     }) || key == elicitation;
-                    if matches {
-                        self.shared.close_ask(&key);
+                    if matches && let Some(ask) = self.shared.close_ask(&key) {
                         self.asks.remove(&key);
+                        self.emit_ask(
+                            emit,
+                            &ask,
+                            Some(ask_item::outcome(wire::AskOutcome::Answered)),
+                        );
                     }
                 }
             }
@@ -772,10 +773,7 @@ impl State {
     }
 
     fn result(&mut self, emit: &mut Emit, line: &Value) {
-        for key in self.open_ask_keys() {
-            self.shared.close_ask(&key);
-            self.asks.remove(&key);
-        }
+        self.dismiss_asks(emit);
         if let Some(window) = line
             .get("modelUsage")
             .and_then(Value::as_object)
@@ -896,12 +894,14 @@ impl State {
                         shape,
                     },
                 );
-                self.shared.open_ask(wire::Ask {
+                let ask = wire::Ask {
+                    item_key: ask_item::key(&request_id),
                     key: request_id,
-                    item_key: String::new(),
                     body: Some(body),
                     opened_at_ms: self.shared.now_ms(),
-                });
+                };
+                self.emit_ask(emit, &ask, None);
+                self.shared.open_ask(ask);
             }
             other => emit.effect(Effect::ProviderWrite(
                 serde_json::to_vec(&json!({

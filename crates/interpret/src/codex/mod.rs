@@ -25,17 +25,17 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wire::{
-    AgentSpec, BackgroundProcesses, CodexAnswer, CodexAsk, CodexItem, CodexSnapshot, ContextMeter,
-    Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction, Input, QueuedInput, Step,
-    TaskList, TaskListEntry, ToolDecision, ToolServerHealth, UsageLimits, Work, codex_answer,
-    codex_ask, codex_input, codex_item, input, sender, work,
+    AgentSpec, AskClosed, AskItem, BackgroundProcesses, CodexAnswer, CodexAsk, CodexItem,
+    CodexSnapshot, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction,
+    Input, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision, ToolServerHealth, UsageLimits,
+    Work, codex_answer, codex_ask, codex_input, codex_item, input, sender, work,
 };
 
 use crate::claude_common::{clip, describe_tasks, or_dash};
 use crate::{
     Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView, RedactTarget,
-    Shared, SnapshotView, Stepped, agent_message_body, agent_message_key, codex_input, human,
-    reason, serde_pb, unknown,
+    Shared, SnapshotView, Stepped, agent_message_body, agent_message_key, ask_item, codex_input,
+    human, reason, serde_pb, unknown,
 };
 
 /// When an agent message injected into Codex counts as consumed.
@@ -127,6 +127,8 @@ struct AskMeta {
     responses: Vec<String>,
     /// For questions: each question's id and option labels.
     questions: Vec<(String, Vec<String>)>,
+    /// When it opened, for the item of an ask that is the work.
+    at_ms: i64,
 }
 
 /// A unit of work as last emitted.
@@ -401,6 +403,44 @@ impl State {
                 ..Default::default()
             },
         );
+    }
+
+    /// Writes the item of an ask that is the work, open or closed; asks that
+    /// point at a unit of work have none.
+    fn emit_ask(&mut self, emit: &mut Emit, ask: &CodexAsk, at_ms: i64, closed: Option<AskClosed>) {
+        let Some(item) = work_ask(ask) else {
+            return;
+        };
+        let item = match closed {
+            Some(closed) => ask_item::close(item, closed),
+            None => item,
+        };
+        self.emit_item(
+            emit,
+            ItemDraft {
+                key: ask.item_key.clone(),
+                body: item_body(codex_item::Kind::Ask(item)),
+                at_ms: Some(at_ms),
+                complete: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Closes an ask the server resolved without saying how: the decision
+    /// on its unit of work, or its own item, reads dismissed.
+    fn dismiss(&mut self, emit: &mut Emit, ask: &CodexAsk, meta: Option<AskMeta>) {
+        self.decide(
+            emit,
+            &ask.item_key,
+            ToolDecision {
+                outcome: DecisionOutcome::Unknown as i32,
+                ..Default::default()
+            },
+        );
+        if let Some(meta) = meta {
+            self.emit_ask(emit, ask, meta.at_ms, Some(ask_item::dismissed()));
+        }
     }
 
     /// Puts a decision on the work item an ask pointed at.
@@ -719,15 +759,13 @@ impl State {
         let Some((meta, parsed)) = self.asks.get(&key).cloned().zip(parsed) else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
-        let Some((response, decision)) = codex_answer_response(&ask, &meta, parsed) else {
+        let Some((response, closed)) = codex_answer_response(&ask, &meta, parsed) else {
             return self.shared.reject(emit, id, reason::UNSUPPORTED);
         };
         self.shared.answer(emit, id, &key);
         self.asks.remove(&key);
         self.respond(emit, &meta.id, response);
-        if let Some(decision) = decision {
-            self.decide(emit, &ask.item_key, decision);
-        }
+        self.emit_ask(emit, &ask, meta.at_ms, Some(closed));
         self.shared.accept(emit, id, false);
     }
 }
@@ -770,23 +808,15 @@ fn work_complete(work: &Work) -> bool {
     )
 }
 
-/// The response an answer sends, and the decision it puts on the item the
-/// ask points at; None when the answer does not fit the ask.
+/// The response an answer sends, and how the ask's own item closes; None
+/// when the answer does not fit the ask.
 fn codex_answer_response(
     ask: &CodexAsk,
     meta: &AskMeta,
     answer: codex_answer::Of,
-) -> Option<(Value, Option<ToolDecision>)> {
-    let decided = |outcome: DecisionOutcome, scope: &str, note: &str| {
-        Some(ToolDecision {
-            outcome: outcome as i32,
-            scope: scope.to_owned(),
-            note: note.to_owned(),
-            elsewhere: false,
-        })
-    };
+) -> Option<(Value, AskClosed)> {
     match (ask.body.as_ref()?, answer) {
-        (codex_ask::Body::Question(_), codex_answer::Of::Question(answer)) => {
+        (codex_ask::Body::Question(asked), codex_answer::Of::Question(answer)) => {
             if answer.answers.len() != meta.questions.len() {
                 return None;
             }
@@ -804,7 +834,7 @@ fn codex_answer_response(
             }
             Some((
                 json!({ "answers": answers }),
-                decided(DecisionOutcome::Allowed, "", &answer.note),
+                ask_item::answered(asked, &answer)?,
             ))
         }
         (codex_ask::Body::McpForm(_), codex_answer::Of::Form(form)) => {
@@ -814,11 +844,14 @@ fn codex_answer_response(
             } else {
                 Value::Null
             };
-            Some((json!({ "action": action, "content": content }), None))
+            Some((
+                json!({ "action": action, "content": content }),
+                ask_item::form_sent(&form),
+            ))
         }
         (codex_ask::Body::McpLink(_), codex_answer::Of::Link(link)) => Some((
             json!({ "action": form_action(link.action)?, "content": null }),
-            None,
+            ask_item::link_answered(link.action),
         )),
         (codex_ask::Body::Access(asked), codex_answer::Of::Grant(grant)) => {
             let subset = |granted: &[String], asked: &[String]| {
@@ -840,19 +873,29 @@ fn codex_answer_response(
             if grant.network {
                 permissions.insert("network".into(), json!({ "enabled": true }));
             }
-            let granted = !permissions.is_empty();
             let scope = if grant.for_session { "session" } else { "turn" };
             Some((
                 json!({ "permissions": permissions, "scope": scope }),
-                if granted {
-                    decided(DecisionOutcome::Allowed, scope, "")
-                } else {
-                    decided(DecisionOutcome::Denied, "", "")
-                },
+                ask_item::granted(&grant),
             ))
         }
         _ => None,
     }
+}
+
+/// The item an ask that is the work opens with; None for an approval,
+/// whose decision lands on the unit of work it points at.
+fn work_ask(ask: &CodexAsk) -> Option<AskItem> {
+    let asked = match ask.body.as_ref()? {
+        codex_ask::Body::Question(question) => wire::ask_item::Ask::Question(question.clone()),
+        codex_ask::Body::McpForm(form) => wire::ask_item::Ask::Form(form.clone()),
+        codex_ask::Body::McpLink(link) => wire::ask_item::Ask::Link(link.clone()),
+        codex_ask::Body::Access(access) => wire::ask_item::Ask::Access(access.clone()),
+        codex_ask::Body::Command(_)
+        | codex_ask::Body::FileChange(_)
+        | codex_ask::Body::McpTool(_) => return None,
+    };
+    Some(ask_item::opened(asked))
 }
 
 fn form_action(action: i32) -> Option<&'static str> {
@@ -1128,6 +1171,7 @@ fn describe_item(body: &[u8]) -> ItemView {
             true,
             format!("patch={}", clip(&diff.patch, 60)),
         ),
+        Some(Kind::Ask(item)) => ("ask", true, ask_item::describe(&item)),
         Some(Kind::Verdict(verdict)) => (
             "verdict",
             true,

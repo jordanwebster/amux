@@ -10,11 +10,11 @@ use wire::{
 };
 
 use super::{
-    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, item_body,
+    AskMeta, InjectConsumption, Request, State, Streamed, WorkState, ask_key, item_body, work_ask,
     work_complete,
 };
 use crate::claude_common::{compact_json, text};
-use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
+use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
 /// Notifications that carry nothing a client draws, or that another fact
 /// already covers.
@@ -523,6 +523,7 @@ impl State {
                         method: method.to_owned(),
                         responses: Vec::new(),
                         questions: shapes,
+                        at_ms: 0,
                     },
                 );
             }
@@ -574,12 +575,19 @@ impl State {
                 method: method.to_owned(),
                 responses,
                 questions: Vec::new(),
+                at_ms: 0,
             },
         );
     }
 
-    fn open(&mut self, emit: &mut Emit, ask: CodexAsk, meta: AskMeta) {
-        let _ = emit;
+    /// Opens an ask; one that is the work gets its own item, which the ask
+    /// points at.
+    fn open(&mut self, emit: &mut Emit, mut ask: CodexAsk, mut meta: AskMeta) {
+        meta.at_ms = self.shared.now_ms();
+        if work_ask(&ask).is_some() {
+            ask.item_key = ask_item::key(&ask.key);
+            self.emit_ask(emit, &ask, meta.at_ms, None);
+        }
         self.asks.insert(ask.key.clone(), meta);
         self.shared.open_ask(ask);
     }
@@ -683,6 +691,7 @@ impl State {
                 method: method.to_owned(),
                 responses,
                 questions: Vec::new(),
+                at_ms: 0,
             },
         );
     }
@@ -693,15 +702,8 @@ impl State {
         let Some(ask) = self.shared.close_ask(key) else {
             return;
         };
-        self.asks.remove(key);
-        self.decide(
-            emit,
-            &ask.item_key,
-            ToolDecision {
-                outcome: DecisionOutcome::Unknown as i32,
-                ..Default::default()
-            },
-        );
+        let meta = self.asks.remove(key);
+        self.dismiss(emit, &ask, meta);
     }
 
     // --- notifications ---------------------------------------------------
@@ -1428,15 +1430,8 @@ impl State {
         }
         self.final_error = None;
         for ask in self.shared.close_all_asks() {
-            self.asks.remove(&ask.key);
-            self.decide(
-                emit,
-                &ask.item_key,
-                ToolDecision {
-                    outcome: DecisionOutcome::Unknown as i32,
-                    ..Default::default()
-                },
-            );
+            let meta = self.asks.remove(&ask.key);
+            self.dismiss(emit, &ask, meta);
         }
         self.settle_open(emit, outcome == TurnOutcome::Completed);
         // A steer lives in the turn it was sent into. One Codex has not
@@ -1561,7 +1556,9 @@ impl State {
 
     pub(super) fn exited(&mut self, emit: &mut Emit, code: Option<i32>) {
         for ask in self.shared.close_all_asks() {
-            self.asks.remove(&ask.key);
+            if let Some(meta) = self.asks.remove(&ask.key) {
+                self.emit_ask(emit, &ask, meta.at_ms, Some(ask_item::dismissed()));
+            }
         }
         self.settle_open(emit, false);
         self.shared.provider_exited();

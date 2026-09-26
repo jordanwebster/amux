@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+mod ask_item;
 mod claude_common;
 pub mod claude_pty;
 pub mod claude_sdk;

@@ -12,7 +12,8 @@ pub struct AskCard {
     pub kind: wire::Kind,
     /// What an answer names.
     pub key: String,
-    /// The item the ask points at, empty when the ask is itself the work.
+    /// The item the ask points at: the call it would let run, or the row of
+    /// an ask that is the work.
     pub item_key: String,
     /// "1 of 3" when asks are queued.
     pub position: usize,
@@ -482,7 +483,7 @@ fn scope_of(destination: &str) -> Scope {
     }
 }
 
-fn question(q: &wire::Question) -> QuestionView {
+pub(crate) fn question(q: &wire::Question) -> QuestionView {
     QuestionView {
         header: q.header.clone(),
         question: q.question.clone(),
@@ -504,7 +505,12 @@ fn question(q: &wire::Question) -> QuestionView {
     }
 }
 
-fn lifted(label: &str, description: &str, preview: &str, recommended: bool) -> OptionView {
+pub(crate) fn lifted(
+    label: &str,
+    description: &str,
+    preview: &str,
+    recommended: bool,
+) -> OptionView {
     let trimmed = label.trim_end();
     let (label, tagged) = match trimmed.strip_suffix("(Recommended)") {
         Some(rest) => (rest.trim_end().to_owned(), true),

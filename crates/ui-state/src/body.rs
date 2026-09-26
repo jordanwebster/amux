@@ -102,6 +102,7 @@ impl ItemBody {
                 | Sdk::Unrecognized(_)
                 | Sdk::ModelSwitch(_)
                 | Sdk::Compaction(_) => ItemClass::Other,
+                Sdk::Ask(_) => ItemClass::Ask,
             },
             ItemBody::Codex(kind) => match kind {
                 Codex::Prompt(_) => ItemClass::Prompt,
@@ -122,6 +123,7 @@ impl ItemBody {
                 | Codex::Unrecognized(_)
                 | Codex::TurnDiff(_)
                 | Codex::Verdict(_) => ItemClass::Other,
+                Codex::Ask(_) => ItemClass::Ask,
             },
             ItemBody::Undecodable => ItemClass::Other,
         }
@@ -151,6 +153,9 @@ pub enum ItemClass {
     Compacting,
     Boundary,
     AgentMessage,
+    /// An ask that is the work. It is a decision, not activity: the
+    /// activity line reads past it to the work it interrupted.
+    Ask,
     Other,
 }
 
@@ -256,7 +261,8 @@ impl OpenAsk {
         }
     }
 
-    /// The item the ask points at; empty when the ask is itself the work.
+    /// The item the ask points at: the call it would let run, or the item
+    /// of an ask that is the work.
     pub fn item_key(&self) -> &str {
         match self {
             OpenAsk::Claude(ask) => &ask.item_key,

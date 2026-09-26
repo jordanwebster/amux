@@ -27,8 +27,8 @@ pub use composer::{
 pub use fleet::{FamilyHeader, FleetCard, FleetRow, family_header, fleet_card, fleet_list};
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
-    AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,
-    OUTPUT_HEAD_LINES, PlanVerdict, Row, RowKind, RunInfo, ToolRows, ToolStateView, chat_rows,
-    chat_rows_for,
+    AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,
+    Granted, OUTPUT_HEAD_LINES, PlanVerdict, Resolution, Row, RowKind, RunInfo, ToolRows,
+    ToolStateView, chat_rows, chat_rows_for,
 };
 pub use segments::{AttachmentView, Segment, segments};

@@ -1,3 +1,18 @@
+2026-09-26 — **Asks that are the work leave their decision row in the chat.**
+A Codex question, access grant, tool-server form or link, and a headless
+Claude tool-server form or link, used to live only in the snapshot's ask
+list, so once answered nothing of it stayed in the chat. Each is now its own
+item (a shared `AskItem` body on both kinds' item oneofs, keyed `ask:<ask
+key>`): written when the ask opens, with the ask pointing at it, and revised
+once when it closes — answered with the picked labels and typed answers per
+question (a secret answer is recorded only as hidden), a form with the names
+of the fields sent, a grant with what it granted and for how long; declined,
+cancelled, or dismissed when the server resolves it elsewhere, the turn ends
+under it or the provider exits. ui-view draws these as ask rows that resolve
+in place (questions, form, link, grant), and the activity line reads past a
+settled ask to the tool call it interrupted. `AccessGrant` and `GrantAnswer`
+moved into the shared records file.
+
 2026-09-26 — **Both clients get one view library: ui-view.**
 The new ui-view crate turns a session into content values: chat rows (one
 per item, the row id the item key, runs of exploration calls as an

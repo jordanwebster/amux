@@ -11,7 +11,7 @@ use wire::{
     ToolState, TurnOutcome,
 };
 
-use crate::ask::{QuestionView, question_view};
+use crate::ask::{QuestionView, lifted, question, question_view};
 use crate::segments::{Segment, segments};
 
 /// How many lines of a command's output a row carries.
@@ -196,6 +196,72 @@ pub enum AskRow {
         plan: String,
         verdict: PlanVerdict,
     },
+    /// Questions asked as the work, then the answers sent.
+    Questions {
+        questions: Vec<QuestionView>,
+        /// One per question once answered, in the ask's order.
+        answers: Vec<AnswerView>,
+        note: Option<String>,
+        resolution: Resolution,
+    },
+    /// A tool server's form: "Sent 3 fields to github".
+    Form {
+        server: String,
+        message: String,
+        /// The names of the fields sent.
+        fields: Vec<String>,
+        resolution: Resolution,
+    },
+    /// A tool server's link to open.
+    Link {
+        server: String,
+        message: String,
+        url: String,
+        resolution: Resolution,
+    },
+    /// Files and network beyond the sandbox: "Granted write target/ this
+    /// turn".
+    Grant {
+        reason: String,
+        read: Vec<String>,
+        write: Vec<String>,
+        network: bool,
+        hosts: Vec<String>,
+        granted: Option<Granted>,
+        resolution: Resolution,
+    },
+}
+
+/// How an ask that is the work closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    Open,
+    /// Answered, sent, opened or granted.
+    Answered,
+    /// Declined, or a grant that granted nothing.
+    Declined,
+    Cancelled,
+    /// Closed by a fact that did not say how.
+    Dismissed,
+}
+
+/// One question's answer: the picked options, a typed answer, or a secret
+/// answer that reads "answered (hidden)".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnswerView {
+    /// "(Recommended)" lifted off, as on the card.
+    pub picked: Vec<String>,
+    pub other: Option<String>,
+    pub hidden: bool,
+}
+
+/// What an access grant granted, and for how long.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Granted {
+    pub read: Vec<String>,
+    pub write: Vec<String>,
+    pub network: bool,
+    pub for_session: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -475,6 +541,7 @@ fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, boo
             Sdk::Unrecognized(u) => plain(unrecognized(u)),
             Sdk::ModelSwitch(m) => plain(model_switch(m)),
             Sdk::Compaction(c) => plain(compaction(c)),
+            Sdk::Ask(ask) => plain(ask_row(ask)),
         },
         ItemBody::Codex(kind) => match kind {
             Codex::Prompt(_) => plain(RowKind::Prompt {
@@ -513,12 +580,78 @@ fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, boo
                 rationale: v.rationale.clone(),
                 subject: v.item_key.clone(),
             }),
+            Codex::Ask(ask) => plain(ask_row(ask)),
         },
         ItemBody::Undecodable => plain(RowKind::Unrecognized {
             what: item.kind.clone(),
             summary: String::new(),
         }),
     }
+}
+
+/// An ask that is the work, drawn from its own item.
+fn ask_row(item: &wire::AskItem) -> RowKind {
+    use wire::ask_item::Ask;
+    let closed = item.closed.clone().unwrap_or_default();
+    let resolution = match item.closed.as_ref().map(|closed| closed.outcome()) {
+        None => Resolution::Open,
+        Some(wire::AskOutcome::Answered) => Resolution::Answered,
+        Some(wire::AskOutcome::Declined) => Resolution::Declined,
+        Some(wire::AskOutcome::Cancelled) => Resolution::Cancelled,
+        Some(wire::AskOutcome::Dismissed | wire::AskOutcome::Unspecified) => Resolution::Dismissed,
+    };
+    RowKind::Ask(match &item.ask {
+        Some(Ask::Question(asked)) => AskRow::Questions {
+            questions: asked.questions.iter().map(question).collect(),
+            answers: closed
+                .answers
+                .iter()
+                .map(|answer| AnswerView {
+                    picked: answer
+                        .picked
+                        .iter()
+                        .map(|label| lifted(label, "", "", false).label)
+                        .collect(),
+                    other: answer.other.clone(),
+                    hidden: answer.hidden,
+                })
+                .collect(),
+            note: (!closed.note.is_empty()).then_some(closed.note),
+            resolution,
+        },
+        Some(Ask::Form(form)) => AskRow::Form {
+            server: form.server.clone(),
+            message: form.message.clone(),
+            fields: closed.fields,
+            resolution,
+        },
+        Some(Ask::Link(link)) => AskRow::Link {
+            server: link.server.clone(),
+            message: link.message.clone(),
+            url: link.url.clone(),
+            resolution,
+        },
+        Some(Ask::Access(access)) => AskRow::Grant {
+            reason: access.reason.clone(),
+            read: access.read.clone(),
+            write: access.write.clone(),
+            network: access.network,
+            hosts: access.network_hosts.clone(),
+            granted: closed.grant.map(|grant| Granted {
+                read: grant.read,
+                write: grant.write,
+                network: grant.network,
+                for_session: grant.for_session,
+            }),
+            resolution,
+        },
+        None => {
+            return RowKind::Unrecognized {
+                what: "ask".into(),
+                summary: String::new(),
+            };
+        }
+    })
 }
 
 fn prose(held: &Held, complete: bool, working_note: bool) -> RowKind {

@@ -37,6 +37,9 @@ message CodexItem {
     Text working_note = 13;
     TurnDiff turn_diff = 14;
     ReviewerVerdict verdict = 15;
+    // A question, access grant, tool-server form or link: an ask that is
+    // the work.
+    AskItem ask = 16;
   }
 }
 
@@ -158,6 +161,8 @@ message CodexSnapshot {
 message CodexAsk {
   // The app-server request id, JSON-encoded as the server sent it.
   string key = 1;
+  // The unit of work an approval would let run, or, for an ask that is the
+  // work, its own AskItem.
   string item_key = 2;
   oneof body {
     CommandApproval command = 3;
@@ -192,14 +197,6 @@ message McpToolApproval {
   string server = 1;
   string tool = 2;
   bytes arguments_json = 3;
-}
-
-message AccessGrant {
-  string reason = 1;
-  repeated string read = 2;
-  repeated string write = 3;
-  bool network = 4;
-  repeated string network_hosts = 5;
 }
 
 message CodexInput {
@@ -248,12 +245,4 @@ message CodexAnswer {
     LinkAnswer link = 3;
     GrantAnswer grant = 4;
   }
-}
-
-// A subset of what was asked; nothing granted is a deny.
-message GrantAnswer {
-  repeated string read = 1;
-  repeated string write = 2;
-  bool network = 3;
-  bool for_session = 4;
 }

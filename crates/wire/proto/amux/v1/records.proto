@@ -397,8 +397,8 @@ message Unrecognized {
 message Ask {
   // What an answer names.
   string key = 1;
-  // The item this ask points at (a tool call); empty when the ask is itself
-  // the work.
+  // The item this ask points at: the tool call it would let run, or, for
+  // an ask that is the work, its own AskItem.
   string item_key = 2;
   oneof body {
     PermissionAsk permission = 3;
@@ -475,6 +475,61 @@ message LinkAsk {
   string server = 1;
   string message = 2;
   string url = 3;
+}
+
+// A request for file or network access beyond the sandbox.
+message AccessGrant {
+  string reason = 1;
+  repeated string read = 2;
+  repeated string write = 3;
+  bool network = 4;
+  repeated string network_hosts = 5;
+}
+
+// An ask that is the work: a question, a tool server's form or link, or an
+// access grant. It is its own item, written when the ask opens (the ask's
+// item_key names it) and revised once with how it closed, so its decision
+// row stays in the chat after the ask leaves the snapshot.
+message AskItem {
+  oneof ask {
+    QuestionAsk question = 1;
+    FormAsk form = 2;
+    LinkAsk link = 3;
+    AccessGrant access = 4;
+  }
+  // Absent while the ask is open.
+  AskClosed closed = 5;
+}
+
+message AskClosed {
+  AskOutcome outcome = 1;
+  // A question's answers, one per question in the ask's order.
+  repeated AnsweredQuestion answers = 2;
+  string note = 3;
+  // The names of the form fields sent; the values went to the server only.
+  repeated string fields = 4;
+  // What an access grant granted.
+  GrantAnswer grant = 5;
+}
+
+enum AskOutcome {
+  ASK_OUTCOME_UNSPECIFIED = 0;
+  // Answered, sent, opened or granted.
+  ASK_OUTCOME_ANSWERED = 1;
+  // Declined, or an access grant that granted nothing.
+  ASK_OUTCOME_DECLINED = 2;
+  ASK_OUTCOME_CANCELLED = 3;
+  // Closed by a later fact that did not say how.
+  ASK_OUTCOME_DISMISSED = 4;
+}
+
+message AnsweredQuestion {
+  // The chosen options' labels.
+  repeated string picked = 1;
+  // A typed answer.
+  optional string other = 2;
+  // A secret answer: what was typed is never recorded.
+  bool hidden = 3;
 }
 
 // The provider is asking something this build cannot read; the only way out
@@ -660,6 +715,14 @@ enum FormAction {
 
 message LinkAnswer {
   FormAction action = 1;
+}
+
+// A subset of what was asked; nothing granted is a deny.
+message GrantAnswer {
+  repeated string read = 1;
+  repeated string write = 2;
+  bool network = 3;
+  bool for_session = 4;
 }
 
 // The interpreter's verdict.

@@ -1,5 +1,5 @@
 {
-  "about": "Every request Codex makes of the person is an ask: a command with allow-similar and a network rule, a command whose offer leaves out decline and is denied all the same, a file change, questions including a secret answer that reaches Codex and nothing else, an access grant answered with a subset for the session, a tool server's link and form. Stale and unoffered answers are refused and write nothing; an ask the server resolves elsewhere or a turn end closes it drawn dismissed; a request amux cannot read is answered with an error.",
+  "about": "Every request Codex makes of the person is an ask: a command with allow-similar and a network rule, a command whose offer leaves out decline and is denied all the same, a file change, questions including a secret answer that reaches Codex and nothing else, an access grant answered with a subset for the session, a tool server's link and form. Stale and unoffered answers are refused and write nothing; an approval or question the server resolves elsewhere, or a turn end, closes it drawn dismissed; a request amux cannot read is answered with an error.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -566,6 +566,50 @@
           "params": {
             "threadId": "t1",
             "requestId": 30
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 33,
+          "method": "item/tool/requestUserInput",
+          "params": {
+            "threadId": "t1",
+            "turnId": "turn-1",
+            "itemId": "call-2",
+            "questions": [
+              {
+                "id": "region",
+                "header": "Region",
+                "question": "Which region?",
+                "isOther": true,
+                "isSecret": false,
+                "options": null
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "33"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "serverRequest/resolved",
+          "params": {
+            "threadId": "t1",
+            "requestId": 33
           }
         }
       },

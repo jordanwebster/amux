@@ -393,7 +393,11 @@ impl SessionState {
         }
         let subagents = subagents.max(running_tasks);
         let turn_start = turn_start.unwrap_or(self.state.at_ms);
-        let Some(newest) = transcript.iter().next_back() else {
+        let Some(newest) = transcript
+            .iter()
+            .rev()
+            .find(|held| held.class != ItemClass::Ask)
+        else {
             return Some(at(turn_start, ActivityKind::Working));
         };
         let since = newest.item.at_ms;
