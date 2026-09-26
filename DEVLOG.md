@@ -1,17 +1,36 @@
-2026-09-26 — **A relay in the testnet.**
+2026-09-26 — **The network edge across daemons.**
 A topology can declare a relay and the accounts its cloud knows
 (`Topology::relay`, `RelayDecl`, `HostDecl.account`). The net runs the
 production relay server on loopback, QUIC and its TCP fallback, beside a
 stand-in cloud answering the token, userinfo and connect calls, with relay
-credentials timed by the net's policy clock. Each host reaches the relay's
-QUIC carrier through its own UDP gate, so `Net::block_udp` takes UDP away
-from one host. New verbs: `sign_in` (a front-door bind as a person's login
-does), `trust`, `front_door`, `profile_runtime`/`profile_edge`. The edge
-takes a relay QUIC address and trust roots from `CloudOptions.relay_quic`
-and says whether it remembers a UDP-blocked relay. `tests/spec_network.rs`
-starts with two hosts on one account, one over QUIC and one falling back to
-TCP, calling each other through the relay, and the blocked-UDP memory
-holding TCP until it expires.
+credentials timed by the net's policy clock; the edge specification now
+uses it instead of a cloud of its own. Each host reaches the relay through
+its own `UdpGate`, which can block UDP or lose and delay datagrams. New
+verbs: `sign_in`, `trust`, `block_udp`, `front_door`, `discovery`,
+`profile_runtime`/`profile_edge`. The edge takes a relay QUIC address and
+roots from `CloudOptions.relay_quic`, and `Edge::hold_next_bulk_response`
+is back.
+
+`tests/spec_network.rs` specifies what the old edge specifications did,
+on the new harness: pairing windows (one responder, opaque refusals, the
+guess cap, one-shot, expiry, self-pairing, abandonment, QR past a silent
+address), refused keys (a spoofed advertisement, a rotated key until
+re-paired), discovery (advertising, dialling a found host, a found address
+over a stale one), revocation closing live streams over a direct link and
+over the relay, and pairing again through the relay; profile and account
+isolation; the relay's QUIC carrier, TCP fallback and blocked-UDP memory;
+the free tier and credential refresh under live links; malformed peer
+calls and handshake floods; a stalled subscriber closed beside one that
+keeps up; sign-in, pause, logout, deletion and repeated logins; presence
+and identity across restarts; and a direct link through a socket move, a
+held blob transfer and a lossy network.
+
+Writing them found four defects, fixed here. Unpairing left the host
+marked as being replaced, so a host paired again had every new stream
+closed on arrival. The revoked side kept a dead cached call channel as
+long as its relay route stayed up. A direct dial reported only its last
+address's failure, hiding a refused key behind a stale address's timeout.
+And the inventory never filled a trusted host's `signed_in`.
 
 2026-09-26 — **Families cross hosts.**
 A spawn names its host as the person does: `CreateAgentRequest.host_name`
