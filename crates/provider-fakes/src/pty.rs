@@ -99,6 +99,19 @@ pub fn raw_mode() {
     }
 }
 
+/// The terminal's size as `size <rows>x<cols>`.
+pub fn size_line() -> String {
+    #[cfg(unix)]
+    {
+        // SAFETY: TIOCGWINSZ fills the zeroed winsize owned by this frame.
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut size) } == 0 {
+            return format!("size {}x{}", size.ws_row, size.ws_col);
+        }
+    }
+    "size unknown".to_owned()
+}
+
 /// Plays a recorded terminal session; a recorded exit ends it there with
 /// its code, returned.
 fn play(process: &Process, args: &Args) -> Result<Option<i32>, String> {

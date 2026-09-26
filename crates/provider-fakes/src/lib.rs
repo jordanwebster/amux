@@ -3,7 +3,8 @@
 //! Three binaries speak the real protocols: `fake-claude-pty` (a terminal
 //! session that writes Claude's transcript JSONL, runs its hooks and serves
 //! its messaging socket, without drawing a TUI), `fake-claude-sdk`
-//! (stream-JSON over stdio) and `fake-codex` (the app server over stdio).
+//! (stream-JSON over stdio) and `fake-codex` (the app server over stdio,
+//! and `resume <thread>`, the terminal view a raw attach opens).
 //! Each plays an authored [`Script`] named by [`SCRIPT_ENV`], so tests run
 //! whole agents offline and deterministically, or plays a recorded session
 //! back verbatim ([`PLAYBACK_ENV`]).
@@ -18,6 +19,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod codex_view;
 pub mod conformance;
 pub mod lines;
 pub mod mcp;

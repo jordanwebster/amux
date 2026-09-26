@@ -130,6 +130,11 @@ impl PtyLog {
         })
     }
 
+    /// Where the log ends: the global offset of the next byte.
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
     pub fn append(&mut self, mut bytes: &[u8]) -> io::Result<()> {
         while !bytes.is_empty() {
             let full = self

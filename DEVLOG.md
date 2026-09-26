@@ -1,3 +1,16 @@
+2026-09-26 — **pty.sock serves raw attach: files mode for terminal Claude, a Codex view per connection.**
+A client on the agent's machine connects to pty.sock and gets a `PtyHello`.
+For terminal Claude the hello says where pty/ starts and ends; the client
+reads the files itself by position and gets each new end position as the
+terminal writes, while its keys and sizes go to the one terminal (typed in
+order with the interpreter's keystrokes; the last resize wins). For Codex
+each connection runs its own `codex resume <thread>` on a terminal of its
+own, streamed over the socket and ended with the connection, so two
+clients are two views on one thread. `agent::attach::Attached` is the
+client side. The fake Codex answers `resume <thread>` with a plain view and
+both fakes draw their size on a resize, so tests can see keys and sizes
+arrive.
+
 2026-09-26 — **An agent answers a dump input with its own redacted part.**
 A `Dump` input on ctl.sock gets a `DumpPart` back in any mode, draining
 included: the facts ring's segments with each entry redacted in place, the

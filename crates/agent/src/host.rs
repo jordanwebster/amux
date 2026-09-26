@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use interpret::{Effect, Event, Interpreter, Stepped, reason, reply};
 use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use wire::{AgentHello, AgentSpec, CtlFrame, InputReply, Nudge, Phase, StopMode, ctl_frame, input};
 
 use crate::clock::Clock;
@@ -32,7 +32,7 @@ use crate::dir::{self, PtyLog};
 use crate::local_socket::{LocalListener, LocalStream};
 use crate::provider::{Provider, ProviderEvent};
 use crate::ring::{self, Entry, Ring};
-use crate::{AgentError, ExitCause, VERSION, ctl};
+use crate::{AgentError, ExitCause, VERSION, attach, ctl};
 
 /// Grace after the daemon leaves, when the spec leaves it unset.
 const DEFAULT_GRACE_MS: i64 = 5 * 60 * 1000;
@@ -97,6 +97,8 @@ pub(crate) struct Host<I: Interpreter> {
     journal: journal::Writer,
     ring: Ring,
     pty_log: Option<PtyLog>,
+    /// Where the terminal log ends, for attached terminal clients.
+    written: Option<watch::Sender<u64>>,
     provider: Option<Provider>,
     daemon: Option<Daemon>,
     connections: u64,
@@ -118,6 +120,8 @@ struct Channels {
     connections: mpsc::Receiver<LocalStream>,
     frames: mpsc::UnboundedReceiver<(u64, Option<CtlFrame>)>,
     frames_tx: mpsc::UnboundedSender<(u64, Option<CtlFrame>)>,
+    /// What attached terminal clients type and their sizes.
+    control: mpsc::UnboundedReceiver<attach::Control>,
 }
 
 pub(crate) async fn run<I: Interpreter>(
@@ -147,12 +151,8 @@ pub(crate) async fn run<I: Interpreter>(
     let (provider_tx, provider_rx) = mpsc::channel(256);
     let (connections_tx, connections_rx) = mpsc::channel(4);
     let (frames_tx, frames_rx) = mpsc::unbounded_channel();
+    let (control_tx, control_rx) = mpsc::unbounded_channel();
     let mut tasks = vec![tokio::spawn(accept(ctl, connections_tx))];
-    if let Some(pty) = pty {
-        // Raw attach is served by a later change; until then a terminal
-        // client's connection is closed at once.
-        tasks.push(tokio::spawn(refuse(pty)));
-    }
     if let Some(hooks) = hooks {
         tasks.push(tokio::spawn(hook_payloads(hooks, provider_tx.clone())));
     }
@@ -171,6 +171,23 @@ pub(crate) async fn run<I: Interpreter>(
     } else {
         None
     };
+    // Terminal clients can connect as soon as the socket exists; they are
+    // served once the terminal log they read is open.
+    let written = pty_log.as_ref().map(|log| watch::channel(log.offset()).0);
+    if let Some(pty) = pty {
+        let how = match &written {
+            Some(written) => attach::Serve::Files {
+                pty: dir.join(dir::PTY),
+                written: written.subscribe(),
+                control: control_tx,
+            },
+            None => attach::Serve::Stream {
+                spec: Arc::new(spec.clone()),
+                dir: dir.clone(),
+            },
+        };
+        tasks.push(tokio::spawn(attach::serve(pty, how)));
+    }
     let facts = dir.join(dir::PRIVATE).join(dir::FACTS);
     let (state, first) = start::<I>(&facts, &spec);
     let ring = Ring::open(
@@ -192,6 +209,7 @@ pub(crate) async fn run<I: Interpreter>(
         journal,
         ring,
         pty_log,
+        written,
         provider: None,
         daemon: None,
         connections: 0,
@@ -217,6 +235,7 @@ pub(crate) async fn run<I: Interpreter>(
         connections: connections_rx,
         frames: frames_rx,
         frames_tx,
+        control: control_rx,
     };
     let result = host.run(&mut channels).await;
     // The listeners live in these tasks; waiting for each to be dropped
@@ -265,6 +284,14 @@ impl<I: Interpreter> Host<I> {
                 Some((id, frame)) = channels.frames.recv() => {
                     self.on_frame(id, frame).await?;
                 }
+                Some(control) = channels.control.recv() => {
+                    if let Some(provider) = &self.provider {
+                        match control {
+                            attach::Control::Keys(keys) => provider.type_raw(keys),
+                            attach::Control::Resize { rows, cols } => provider.resize(rows, cols),
+                        }
+                    }
+                }
                 () = sleep => self.on_deadline().await?,
             }
             if self.done.is_none() {
@@ -283,6 +310,9 @@ impl<I: Interpreter> Host<I> {
             ProviderEvent::Output(bytes) => {
                 if let Some(log) = &mut self.pty_log {
                     log.append(&bytes).map_err(AgentError::Journal)?;
+                    if let Some(written) = &self.written {
+                        written.send_replace(log.offset());
+                    }
                 }
             }
             ProviderEvent::Fact(fact) => {
@@ -712,12 +742,6 @@ async fn accept(mut listener: LocalListener, connections: mpsc::Sender<LocalStre
         if connections.send(stream).await.is_err() {
             return;
         }
-    }
-}
-
-async fn refuse(mut listener: LocalListener) {
-    while let Ok(stream) = listener.accept().await {
-        drop(stream);
     }
 }
 

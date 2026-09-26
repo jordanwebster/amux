@@ -28,6 +28,10 @@ pub const RAISES: &[&str] = &["permission", "question", "form", "link", "grant"]
 pub const VERSION: &str = "0.157.0";
 
 pub fn main() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(thread) = crate::codex_view::resumed_thread(&args) {
+        return crate::codex_view::run(thread);
+    }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,
         Err(error) => {

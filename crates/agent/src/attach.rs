@@ -1,0 +1,383 @@
+//! Raw attach on pty.sock: a terminal client on the agent's own machine,
+//! attached for as long as it holds its connection.
+//!
+//! Terminal Claude has one terminal, and its bytes are already on disk in
+//! pty/. A client is served in files mode: the hello says where the files
+//! start and how far they go, the client reads them itself by position,
+//! and the agent sends each new end position as the terminal writes. What
+//! the client types and its size go to the one terminal, typed in order
+//! with whatever the interpreter types; with two clients the last resize
+//! wins.
+//!
+//! Codex's terminal is a view, not the agent: its TUI repaints the thread
+//! from the rollout each time it starts, so nothing is retained. A client
+//! is served in stream mode: its connection gets its own `codex resume` on
+//! the agent's thread, the view's bytes stream over the socket, and the
+//! view ends with the connection. Two clients are two views on one thread.
+
+use std::fs::File;
+use std::io::{self, Read as _, Seek as _, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
+use wire::{AgentSpec, PtyFrame, PtyHello, PtyMode, PtyResize, pty_frame};
+
+use crate::ctl::{read_message, write_message};
+use crate::local_socket::{LocalListener, LocalStream};
+
+/// How long a view asked to end gets before its process group is killed.
+const VIEW_STOP: Duration = Duration::from_secs(2);
+/// How long output still in flight is collected after a view exits.
+const TRAILING_OUTPUT: Duration = Duration::from_millis(300);
+
+/// What an attached client does to the one terminal in files mode.
+#[derive(Debug)]
+pub enum Control {
+    Keys(Vec<u8>),
+    Resize { rows: u16, cols: u16 },
+}
+
+/// How pty.sock serves its clients.
+pub enum Serve {
+    /// The terminal log in `pty`, its end position, and the terminal.
+    Files {
+        pty: PathBuf,
+        written: watch::Receiver<u64>,
+        control: mpsc::UnboundedSender<Control>,
+    },
+    /// A Codex view per connection, launched from the spec.
+    Stream { spec: Arc<AgentSpec>, dir: PathBuf },
+}
+
+/// Serves every client until the task is dropped, which ends them all.
+pub async fn serve(mut listener: LocalListener, how: Serve) {
+    let how = Arc::new(how);
+    let mut clients = JoinSet::new();
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(stream) => {
+                    let how = how.clone();
+                    clients.spawn(async move {
+                        let _ = match &*how {
+                            Serve::Files { pty, written, control } => {
+                                files(stream, pty, written.clone(), control.clone()).await
+                            }
+                            Serve::Stream { spec, dir } => stream_view(stream, spec, dir).await,
+                        };
+                    });
+                }
+                Err(_) => return,
+            },
+            Some(_) = clients.join_next() => {}
+        }
+    }
+}
+
+async fn send<W: AsyncWrite + Unpin>(out: &mut W, of: pty_frame::Of) -> io::Result<()> {
+    write_message(out, &PtyFrame { of: Some(of) }).await
+}
+
+async fn next<R: AsyncRead + Unpin>(input: &mut R) -> Option<pty_frame::Of> {
+    loop {
+        match read_message::<_, PtyFrame>(input).await {
+            Ok(Some(PtyFrame { of: Some(of) })) => return Some(of),
+            // A frame this build does not know is skipped.
+            Ok(Some(PtyFrame { of: None })) => {}
+            Ok(None) | Err(_) => return None,
+        }
+    }
+}
+
+fn size(resize: &PtyResize) -> (u16, u16) {
+    let clamp = |n: u32| u16::try_from(n).unwrap_or(u16::MAX).max(1);
+    (clamp(resize.rows), clamp(resize.cols))
+}
+
+async fn files(
+    stream: LocalStream,
+    pty: &Path,
+    mut written: watch::Receiver<u64>,
+    control: mpsc::UnboundedSender<Control>,
+) -> io::Result<()> {
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let end = *written.borrow_and_update();
+    let start = journal::segments(pty)?.first().copied().unwrap_or(end);
+    send(
+        &mut writer,
+        pty_frame::Of::Hello(PtyHello {
+            mode: PtyMode::Files as i32,
+            start,
+            written: end,
+        }),
+    )
+    .await?;
+    let typing = async {
+        while let Some(of) = next(&mut reader).await {
+            let typed = match of {
+                pty_frame::Of::Keys(keys) => Control::Keys(keys),
+                pty_frame::Of::Resize(resize) => {
+                    let (rows, cols) = size(&resize);
+                    Control::Resize { rows, cols }
+                }
+                _ => continue,
+            };
+            if control.send(typed).is_err() {
+                return;
+            }
+        }
+    };
+    let telling = async {
+        // The sender goes with the agent, which ends every connection.
+        while written.changed().await.is_ok() {
+            let end = *written.borrow_and_update();
+            if send(&mut writer, pty_frame::Of::Written(end))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        () = typing => {}
+        () = telling => {}
+    }
+    Ok(())
+}
+
+/// Ends a view's process group if the connection's task is dropped with the
+/// view still running, as it is when the agent exits.
+struct View(pty_host::PtyHandle);
+
+impl Drop for View {
+    fn drop(&mut self) {
+        let _ = self
+            .0
+            .signal_process_group(pty_host::ProcessGroupSignal::Kill);
+    }
+}
+
+async fn stream_view(stream: LocalStream, spec: &AgentSpec, dir: &Path) -> io::Result<()> {
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    send(
+        &mut writer,
+        pty_frame::Of::Hello(PtyHello {
+            mode: PtyMode::Stream as i32,
+            ..Default::default()
+        }),
+    )
+    .await?;
+    let Some(thread) = crate::provider::codex_thread(dir) else {
+        let why = "the agent's Codex thread has not started yet";
+        return send(&mut writer, pty_frame::Of::Closed(why.to_owned())).await;
+    };
+    let launch = crate::provider::codex_view(spec, dir, &thread, pty_host::PtySize::default());
+    let process = match pty_host::spawn(launch) {
+        Ok(process) => process,
+        Err(error) => {
+            let why = format!("could not start codex resume: {error}");
+            return send(&mut writer, pty_frame::Of::Closed(why)).await;
+        }
+    };
+    let view = View(process.handle.clone());
+    let mut output = view.0.output();
+    let mut exit = process.exit.clone();
+    let typing = async {
+        while let Some(of) = next(&mut reader).await {
+            match of {
+                pty_frame::Of::Keys(keys) => {
+                    if view.0.write(&keys).await.is_err() {
+                        return;
+                    }
+                }
+                pty_frame::Of::Resize(resize) => {
+                    let (rows, cols) = size(&resize);
+                    let _ = view.0.resize(pty_host::PtySize { rows, cols });
+                }
+                _ => {}
+            }
+        }
+    };
+    let drawing = async {
+        let status = loop {
+            tokio::select! {
+                bytes = output.recv() => match bytes {
+                    Some(bytes) => {
+                        if send(&mut writer, pty_frame::Of::Output(bytes.to_vec())).await.is_err() {
+                            return;
+                        }
+                    }
+                    None => break exit.wait().await,
+                },
+                status = exit.wait() => break status,
+            }
+        };
+        while let Ok(Some(bytes)) = tokio::time::timeout(TRAILING_OUTPUT, output.recv()).await {
+            let _ = send(&mut writer, pty_frame::Of::Output(bytes.to_vec())).await;
+        }
+        let why = match status.signal() {
+            Some(signal) => format!("codex resume ended by {signal}"),
+            None => format!("codex resume exited with code {}", status.exit_code()),
+        };
+        let _ = send(&mut writer, pty_frame::Of::Closed(why)).await;
+    };
+    tokio::select! {
+        // The client left: the view ends with its connection.
+        () = typing => {
+            let _ = pty_host::terminate(
+                &process,
+                pty_host::Terminate::Graceful { grace: VIEW_STOP },
+            )
+            .await;
+        }
+        () = drawing => {}
+    }
+    Ok(())
+}
+
+/// A terminal client's connection to an agent's pty.sock.
+pub struct Attached {
+    reader: tokio::io::ReadHalf<LocalStream>,
+    writer: tokio::io::WriteHalf<LocalStream>,
+    mode: PtyMode,
+    pty: PathBuf,
+    /// Files mode: how far this client has read, and how far the log goes.
+    read: u64,
+    written: u64,
+    closed: Option<String>,
+}
+
+impl Attached {
+    /// Attaches to the agent in `dir` and reads its hello.
+    pub async fn connect(dir: &Path) -> io::Result<Self> {
+        let stream = crate::local_socket::connect(&dir.join(crate::dir::PTY_SOCK)).await?;
+        let (mut reader, writer) = tokio::io::split(stream);
+        let Some(pty_frame::Of::Hello(hello)) = next(&mut reader).await else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pty.sock did not start with a hello",
+            ));
+        };
+        Ok(Self {
+            reader,
+            writer,
+            mode: hello.mode(),
+            pty: dir.join(crate::dir::PTY),
+            read: hello.start,
+            written: hello.written,
+            closed: None,
+        })
+    }
+
+    pub fn mode(&self) -> PtyMode {
+        self.mode
+    }
+
+    /// Why the agent ended the connection, once it has.
+    pub fn closed(&self) -> Option<&str> {
+        self.closed.as_deref()
+    }
+
+    /// The next bytes the terminal drew, or None once the connection ended.
+    /// In files mode the first call returns everything the log still holds.
+    pub async fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
+        loop {
+            if self.mode == PtyMode::Files && self.read < self.written {
+                let (from, bytes) = read_terminal_log(&self.pty, self.read, self.written)?;
+                self.read = from + bytes.len() as u64;
+                if !bytes.is_empty() {
+                    return Ok(Some(bytes));
+                }
+                self.read = self.written;
+            }
+            match next(&mut self.reader).await {
+                Some(pty_frame::Of::Written(written)) => self.written = written,
+                Some(pty_frame::Of::Output(bytes)) => return Ok(Some(bytes)),
+                Some(pty_frame::Of::Closed(why)) => self.closed = Some(why),
+                Some(_) => {}
+                None => return Ok(None),
+            }
+        }
+    }
+
+    pub async fn keys(&mut self, bytes: &[u8]) -> io::Result<()> {
+        send(&mut self.writer, pty_frame::Of::Keys(bytes.to_vec())).await
+    }
+
+    pub async fn resize(&mut self, rows: u16, cols: u16) -> io::Result<()> {
+        send(
+            &mut self.writer,
+            pty_frame::Of::Resize(PtyResize {
+                rows: rows.into(),
+                cols: cols.into(),
+            }),
+        )
+        .await
+    }
+}
+
+/// Reads the terminal log in `pty` from `from` up to `to`, as a files-mode
+/// client does after a hello or a written frame. Bytes the agent has
+/// already rotated away are skipped: the result starts at the returned
+/// position, which is `from` unless the oldest file begins after it.
+pub fn read_terminal_log(pty: &Path, from: u64, to: u64) -> io::Result<(u64, Vec<u8>)> {
+    let starts = journal::segments(pty)?;
+    let mut at = from;
+    let mut bytes = Vec::new();
+    for (index, start) in starts.iter().copied().enumerate() {
+        let end = starts.get(index + 1).copied().unwrap_or(u64::MAX);
+        if end <= at || start >= to {
+            continue;
+        }
+        if bytes.is_empty() && start > at {
+            at = start;
+        }
+        let mut file = match File::open(journal::segment_path(pty, start)) {
+            Ok(file) => file,
+            // Rotated away between listing and opening.
+            Err(error) if error.kind() == io::ErrorKind::NotFound && bytes.is_empty() => continue,
+            Err(error) => return Err(error),
+        };
+        let offset = at + bytes.len() as u64;
+        file.seek(SeekFrom::Start(offset - start))?;
+        let want = (to.min(end) - offset) as usize;
+        let mut chunk = Vec::with_capacity(want);
+        file.take(want as u64).read_to_end(&mut chunk)?;
+        let short = chunk.len() < want;
+        bytes.extend_from_slice(&chunk);
+        if short {
+            break;
+        }
+    }
+    Ok((at, bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dir::PtyLog;
+
+    #[test]
+    fn the_terminal_log_reads_by_position_across_segments_and_past_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let pty = dir.path().join("pty");
+        let mut log = PtyLog::open(pty.clone(), 4, 2).unwrap();
+        log.append(b"0123456789").unwrap();
+        // Segments 4 and 8 are kept: bytes 0-3 are gone.
+        assert_eq!(
+            read_terminal_log(&pty, 5, 10).unwrap(),
+            (5, b"56789".to_vec())
+        );
+        assert_eq!(
+            read_terminal_log(&pty, 0, 10).unwrap(),
+            (4, b"456789".to_vec())
+        );
+        assert_eq!(read_terminal_log(&pty, 6, 7).unwrap(), (6, b"6".to_vec()));
+        assert_eq!(read_terminal_log(&pty, 10, 10).unwrap(), (10, Vec::new()));
+    }
+}

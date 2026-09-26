@@ -221,19 +221,8 @@ impl Provider {
             .map(|thread| thread.trim().to_owned())
             .filter(|thread| !thread.is_empty() && spec.incarnation > 1);
         let mut command = tokio::process::Command::new(&spec.provider_command);
-        command.args(&spec.provider_args);
-        // amux's tool server, as configuration overrides in Codex's TOML;
-        // a JSON string or array of strings is the same TOML value.
-        if let Some((server, args)) = tool_server(spec, dir) {
-            let key = format!("mcp_servers.{}", interpret::AMUX_TOOL_SERVER);
-            command.args([
-                "--config".to_owned(),
-                format!("{key}.command={}", serde_json::json!(server)),
-                "--config".to_owned(),
-                format!("{key}.args={}", serde_json::json!(args)),
-            ]);
-        }
         command
+            .args(codex_args(spec, dir))
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())
@@ -693,8 +682,13 @@ impl Provider {
         }
     }
 
+    /// Bytes an attached terminal typed, in order with the keystrokes the
+    /// interpreter asked for.
+    pub fn type_raw(&self, bytes: Vec<u8>) {
+        let _ = self.type_keys(vec![claude::pty::keymap::KeyStep::Write(bytes)]);
+    }
+
     /// Resizes the terminal, for a provider that has one.
-    #[allow(dead_code)]
     pub fn resize(&self, rows: u16, cols: u16) {
         if let Some(terminal) = &self.terminal {
             let _ = terminal.resize(pty_host::PtySize { rows, cols });
@@ -887,6 +881,61 @@ fn claude_launch(spec: &AgentSpec, dir: &Path, hooks: bool) -> io::Result<(Vec<S
     };
     let settings = claude::launch::merged_settings(user, &managed).into_value();
     Ok((args, settings.to_string()))
+}
+
+/// Codex's global arguments: the spec's, then amux's tool server as
+/// configuration overrides in Codex's TOML (a JSON string or array of
+/// strings is the same TOML value).
+fn codex_args(spec: &AgentSpec, dir: &Path) -> Vec<String> {
+    let mut args = spec.provider_args.clone();
+    if let Some((server, server_args)) = tool_server(spec, dir) {
+        let key = format!("mcp_servers.{}", interpret::AMUX_TOOL_SERVER);
+        args.extend([
+            "--config".to_owned(),
+            format!("{key}.command={}", serde_json::json!(server)),
+            "--config".to_owned(),
+            format!("{key}.args={}", serde_json::json!(server_args)),
+        ]);
+    }
+    args
+}
+
+/// A Codex terminal view on the agent's thread: `codex resume <thread>`
+/// launched as the agent's own app server is, on a terminal of its own.
+pub fn codex_view(
+    spec: &AgentSpec,
+    dir: &Path,
+    thread: &str,
+    size: pty_host::PtySize,
+) -> pty_host::PtySpawn {
+    let mut args = codex_args(spec, dir);
+    args.extend(["resume".to_owned(), thread.to_owned()]);
+    pty_host::PtySpawn {
+        command: PathBuf::from(&spec.provider_command),
+        args,
+        cwd: PathBuf::from(&spec.cwd),
+        env: spec
+            .config
+            .iter()
+            .flat_map(|config| config.env.iter())
+            .chain(spec.provider_env.iter())
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect(),
+        env_remove: claude::launch::CHILD_SESSION_ENV_SCRUB
+            .iter()
+            .map(Into::into)
+            .collect(),
+        size,
+    }
+}
+
+/// The Codex thread this agent runs, once its app server has made or
+/// resumed one.
+pub fn codex_thread(dir: &Path) -> Option<String> {
+    std::fs::read_to_string(dir.join(dir::PRIVATE).join(dir::PROVIDER_SESSION))
+        .ok()
+        .map(|thread| thread.trim().to_owned())
+        .filter(|thread| !thread.is_empty())
 }
 
 /// amux's tool server as the harness launches it: the install path's

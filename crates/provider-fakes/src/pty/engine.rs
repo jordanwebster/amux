@@ -75,6 +75,7 @@ pub async fn run(script: Script, args: Args) -> i32 {
     let (tx, rx) = mpsc::unbounded_channel();
     spawn_keys(tx.clone());
     spawn_signals(tx.clone());
+    spawn_resizes();
     let mut messaging = None;
     // A Claude from before the messaging socket ignores the flag.
     let socketless = std::env::var_os(NO_MESSAGING_ENV).is_some();
@@ -113,6 +114,23 @@ fn spawn_signals(tx: mpsc::UnboundedSender<In>) {
     });
     #[cfg(not(unix))]
     let _ = tx;
+}
+
+/// Claude redraws for a new size; the fake draws the size, so a test can
+/// see a resize reach the terminal.
+fn spawn_resizes() {
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+        let Ok(mut resized) = signal(SignalKind::window_change()) else {
+            return;
+        };
+        while resized.recv().await.is_some() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = write!(stdout, "{}\r\n", crate::pty::size_line());
+            let _ = stdout.flush();
+        }
+    });
 }
 
 fn spawn_keys(tx: mpsc::UnboundedSender<In>) {

@@ -3729,6 +3729,89 @@ impl ::prost::Name for InputReply {
         "/amux.v1.InputReply".into()
     }
 }
+/// pty.sock frames, framed as on ctl.sock. Raw attach is local only: a
+/// terminal client on the agent's machine finds pty.sock by path and is
+/// attached for as long as it holds the connection. EOF from the agent means
+/// the view ended (the agent exited, or a Codex view's process did).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PtyFrame {
+    #[prost(oneof = "pty_frame::Of", tags = "1, 2, 3, 4, 5, 6")]
+    pub of: ::core::option::Option<pty_frame::Of>,
+}
+/// Nested message and enum types in `PtyFrame`.
+pub mod pty_frame {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Of {
+        /// Agent to client, first frame.
+        #[prost(message, tag = "1")]
+        Hello(super::PtyHello),
+        /// Agent to client, files mode: the terminal log now ends at this
+        /// position.
+        #[prost(uint64, tag = "2")]
+        Written(u64),
+        /// Agent to client, stream mode: what the view's terminal drew.
+        #[prost(bytes, tag = "3")]
+        Output(::prost::alloc::vec::Vec<u8>),
+        /// Client to agent: bytes for the terminal, as typed.
+        #[prost(bytes, tag = "4")]
+        Keys(::prost::alloc::vec::Vec<u8>),
+        /// Client to agent.
+        #[prost(message, tag = "5")]
+        Resize(super::PtyResize),
+        /// Agent to client, last frame: why the connection ends.
+        #[prost(string, tag = "6")]
+        Closed(::prost::alloc::string::String),
+    }
+}
+impl ::prost::Name for PtyFrame {
+    const NAME: &'static str = "PtyFrame";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.PtyFrame".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.PtyFrame".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PtyHello {
+    #[prost(enumeration = "PtyMode", tag = "1")]
+    pub mode: i32,
+    /// Files mode: the oldest byte the pty/ files still hold, where a client
+    /// rebuilding the screen starts reading.
+    #[prost(uint64, tag = "2")]
+    pub start: u64,
+    /// Files mode: where the terminal log ends now.
+    #[prost(uint64, tag = "3")]
+    pub written: u64,
+}
+impl ::prost::Name for PtyHello {
+    const NAME: &'static str = "PtyHello";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.PtyHello".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.PtyHello".into()
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PtyResize {
+    #[prost(uint32, tag = "1")]
+    pub rows: u32,
+    #[prost(uint32, tag = "2")]
+    pub cols: u32,
+}
+impl ::prost::Name for PtyResize {
+    const NAME: &'static str = "PtyResize";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.PtyResize".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.PtyResize".into()
+    }
+}
 /// Named apart from the Interrupt input so the two are never confused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -3755,6 +3838,36 @@ impl StopMode {
             "GRACEFUL" => Some(Self::Graceful),
             "ABORT" => Some(Self::Abort),
             "KILL" => Some(Self::Kill),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PtyMode {
+    /// Terminal Claude: the one terminal's bytes are the pty/ files; the
+    /// client reads them by position and the agent says how far they go.
+    Files = 0,
+    /// Codex: each connection is its own `codex resume` on the agent's thread,
+    /// its bytes streamed and never retained.
+    Stream = 1,
+}
+impl PtyMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Files => "PTY_MODE_FILES",
+            Self::Stream => "PTY_MODE_STREAM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PTY_MODE_FILES" => Some(Self::Files),
+            "PTY_MODE_STREAM" => Some(Self::Stream),
             _ => None,
         }
     }

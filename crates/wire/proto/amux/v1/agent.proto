@@ -145,3 +145,48 @@ message InputReply {
   bytes input_id = 1;
   SendInputResponse verdict = 2;
 }
+
+// pty.sock frames, framed as on ctl.sock. Raw attach is local only: a
+// terminal client on the agent's machine finds pty.sock by path and is
+// attached for as long as it holds the connection. EOF from the agent means
+// the view ended (the agent exited, or a Codex view's process did).
+message PtyFrame {
+  oneof of {
+    // Agent to client, first frame.
+    PtyHello hello = 1;
+    // Agent to client, files mode: the terminal log now ends at this
+    // position.
+    uint64 written = 2;
+    // Agent to client, stream mode: what the view's terminal drew.
+    bytes output = 3;
+    // Client to agent: bytes for the terminal, as typed.
+    bytes keys = 4;
+    // Client to agent.
+    PtyResize resize = 5;
+    // Agent to client, last frame: why the connection ends.
+    string closed = 6;
+  }
+}
+
+enum PtyMode {
+  // Terminal Claude: the one terminal's bytes are the pty/ files; the
+  // client reads them by position and the agent says how far they go.
+  PTY_MODE_FILES = 0;
+  // Codex: each connection is its own `codex resume` on the agent's thread,
+  // its bytes streamed and never retained.
+  PTY_MODE_STREAM = 1;
+}
+
+message PtyHello {
+  PtyMode mode = 1;
+  // Files mode: the oldest byte the pty/ files still hold, where a client
+  // rebuilding the screen starts reading.
+  uint64 start = 2;
+  // Files mode: where the terminal log ends now.
+  uint64 written = 3;
+}
+
+message PtyResize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
