@@ -122,8 +122,6 @@ pub use installation::{
     InstallationHandle, Profile, RetainedProfileWork, UpdatePreparationHold, WatchProbe,
 };
 mod pairing;
-pub mod script;
-pub mod sdk;
 pub mod serve;
 mod session;
 mod sources;

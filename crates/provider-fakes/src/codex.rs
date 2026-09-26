@@ -472,6 +472,12 @@ impl Engine {
                         self.pump().await;
                     }
                 }
+                Step::Pause { ms } => {
+                    let until = tokio::time::Instant::now() + std::time::Duration::from_millis(ms);
+                    while tokio::time::Instant::now() < until && !self.interrupted {
+                        self.pump().await;
+                    }
+                }
                 Step::TurnEnd => break None,
                 Step::Exit { code } => break Some(code),
             }

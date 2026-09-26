@@ -11,7 +11,7 @@
 //! (or injected message) and then plays steps until a [`Step::TurnEnd`]. An
 //! [`Step::Ask`] blocks until the host answers it. A [`Step::WaitFor`]
 //! blocks until a file exists, so a test can hold a turn open while it
-//! kills a daemon. When the steps run out the fake stays idle until its
+//! kills a daemon; a [`Step::Pause`] keeps it busy for a while. When the steps run out the fake stays idle until its
 //! input closes, then exits 0; [`Step::Exit`] ends the process early.
 
 use std::path::{Path, PathBuf};
@@ -51,6 +51,8 @@ pub enum Step {
     Ask(Ask),
     /// Hold the turn until this file exists.
     WaitFor { path: PathBuf },
+    /// Stay busy for this long, as a model at work does.
+    Pause { ms: u64 },
     /// Finish the turn successfully.
     TurnEnd,
     /// Exit the provider process with this code, mid-turn or not.

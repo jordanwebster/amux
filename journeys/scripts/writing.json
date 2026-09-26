@@ -1,175 +1,76 @@
 {
-  "reactions": [
+  "steps": [
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
+      "pause": {
+        "ms": 3000
+      }
     },
+    "turn_end",
     {
-      "on": "Any",
-      "play": []
+      "pause": {
+        "ms": 3000
+      }
     },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    },
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {
-          "Working": {
-            "secs": 3.0
-          }
-        }
-      ]
-    },
-    {
-      "on": "Any",
-      "play": []
-    }
-  ],
-  "commands": [],
-  "models": [],
-  "efforts": []
+    "turn_end"
+  ]
 }

@@ -31,7 +31,15 @@ ALLOWED_LOCAL = {
     "app-embedded": {"app-runtime", "client", "node"},
     "app-ffi": {"app-embedded", "app-runtime"},
 }
-TEST_SUPPORT = {"testnet", "qualification", "claude-specs", "codex-specs", "test-agent", "shot"}
+TEST_SUPPORT = {
+    "testnet",
+    "qualification",
+    "claude-specs",
+    "codex-specs",
+    "provider-fakes",
+    "test-agent",
+    "shot",
+}
 SUPPORT_ALLOWED_LOCAL = {
     # The harness drives scripted Claude and Codex sessions through the
     # provider crates' own source seams, replays recordings, folds the served
@@ -71,6 +79,9 @@ SUPPORT_ALLOWED_LOCAL = {
     },
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},
+    # The fake providers speak each protocol from its recordings, not from
+    # the host crates, so a host bug cannot hide behind a shared parser.
+    "provider-fakes": {"pty-host"},
 }
 
 def local_edges(package: dict[str, object]) -> set[str]:

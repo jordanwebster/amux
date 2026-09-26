@@ -1,5 +1,12 @@
 {
-  "reactions": [
-    {"on": "AnyPrompt", "play": [{"Markdown": {"text": "The PTY session received your prompt."}}, "EndTurn"]}
+  "steps": [
+    {
+      "text": {
+        "chunks": [
+          "The PTY session received your prompt."
+        ]
+      }
+    },
+    "turn_end"
   ]
 }

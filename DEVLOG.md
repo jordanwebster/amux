@@ -1,3 +1,12 @@
+2026-09-26 — **Journey scripts move to the fake providers' format; testnet's scripted providers are gone.**
+The six scripts under journeys/scripts are rewritten as provider-fakes
+scripts (linear steps: text, pauses, a permission ask, turn ends), and a
+test loads each one and checks every fake can play it. Scripts gain a
+`pause` step that keeps a turn busy for a while. testnet's in-process
+scripted Claude providers (script.rs, sdk.rs) are deleted; testnet stays
+out of the workspace until it is rebuilt on the new runtime, driving real
+agent processes on the fake binaries.
+
 2026-09-26 — **fake-claude-pty plays authored scripts as terminal Claude, without the TUI.**
 Keys arrive the way the claude-2.1 keymap types them — a bracketed paste
 and Enter submit a prompt, Escape interrupts, Shift+Tab cycles the mode,

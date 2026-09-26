@@ -1,10 +1,32 @@
 {
-  "reactions": [
-    {"on":"AnyPrompt","play":[{"Markdown":{"text":"I received the prompt through the relay."}}]},
-    {"on":{"Answer":"Permission"},"play":[{"Markdown":{"text":"Permission received on the host."}}]},
-    {"on":{"Answer":"Permission"},"play":[]},
-    {"on":"AnyPrompt","play":["EndTurn"]},
-    {"on":"AnyPrompt","play":["EndTurn"]},
-    {"on":"AnyPrompt","play":["EndTurn"]}
+  "steps": [
+    {
+      "text": {
+        "chunks": [
+          "I received the prompt through the relay."
+        ]
+      }
+    },
+    {
+      "ask": {
+        "permission": {
+          "class": "consequential",
+          "outcome": {
+            "output": "done"
+          }
+        }
+      }
+    },
+    {
+      "text": {
+        "chunks": [
+          "Permission received on the host."
+        ]
+      }
+    },
+    "turn_end",
+    "turn_end",
+    "turn_end",
+    "turn_end"
   ]
 }

@@ -343,6 +343,25 @@ async fn every_ask_blocks_until_answered_and_resolves_the_call() {
 }
 
 #[tokio::test]
+async fn a_pause_keeps_the_turn_busy_and_interrupt_cuts_it() {
+    let mut host = Host::start(json!({"steps": [
+        {"pause": {"ms": 60000}},
+        {"text": {"chunks": ["never said"]}},
+        "turn_end",
+    ]}))
+    .await;
+    host.prompt(A, "Work", None).await;
+    host.until(|frame| frame["isReplay"] == true).await;
+    host.send(
+        json!({"type":"control_request","request_id":"req_1","request":{"subtype":"interrupt"}}),
+    )
+    .await;
+    let result = host.until(|frame| frame["type"] == "result").await;
+    assert_eq!(result["subtype"], "error_during_execution");
+    assert_eq!(host.close().await, 0);
+}
+
+#[tokio::test]
 async fn exit_ends_the_process_with_its_code_mid_turn() {
     let mut host = Host::start(json!({"steps": [
         {"text": {"chunks": ["bye"]}},
