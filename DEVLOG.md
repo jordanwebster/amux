@@ -1,3 +1,28 @@
+2026-09-26 — **The amux binary runs the daemon again, serves it on local sockets, and has its CLI verbs back.**
+`amux daemon` runs the one startup path in the foreground and stops cleanly
+on SIGTERM, SIGINT or a client's shutdown call; `amux server start` starts
+it detached and returns once its front door answers, and `amux server
+stop` returns only once the daemon has released the installation lock. The
+daemon now binds, after its sweep, the front door (the profile and
+installation services) and each profile's client socket, and serves the
+client service on every agent's tools socket with that agent as the
+caller, so the tool server's spawn and send reach the daemon. The profile
+registry keeps a label and a revision per profile; an empty installation
+gets a profile named default, and the front door creates, renames, lists,
+watches and deletes profiles. Signing in, pairing, peers and the device
+identity answer unimplemented until the network edge is served again. The
+verbs are ls (the inventory read to its CaughtUp, children beneath their
+parent), create, send, stop with a mode, resume, rename, delete and dump. A
+client that finds no daemon starts nothing: without a supervisor it says
+the service manager owns the daemon and waits for one. The fake providers'
+message and item ids no longer repeat across processes: the second process
+of a resumed agent reused its first process's ids, so its new messages
+overwrote the old ones in the store. The process test kills a real daemon
+mid-turn under a headless Claude and a Codex agent, sees both finish their
+turns into their journals, restarts the daemon, finds every item, and
+resumes each, one stopped through the CLI and one that exited while no
+daemon ran, without losing anything.
+
 2026-09-26 — **The daemon writes and reads blobs, diffs, assembles dumps and runs own retention.**
 PutBlob writes a person's attachment into the named agent's directory by
 temp-and-rename (a failed write, a full disk included, is an error to the

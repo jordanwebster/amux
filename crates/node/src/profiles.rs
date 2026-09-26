@@ -11,10 +11,25 @@ use crate::install::{AGENTS, HOST_ID, PROFILES, REGISTRY, private_dir, write_dur
 
 pub type ProfileId = Uuid;
 
+/// The client socket in each profile's directory.
+pub const PROFILE_SOCKET: &str = "sock";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registry {
-    pub profiles: Vec<ProfileId>,
+    pub profiles: Vec<ProfileEntry>,
+}
+
+/// One profile as the registry lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileEntry {
+    pub id: ProfileId,
+    /// What people call it; unique within the installation.
+    pub label: String,
+    /// Bumped by every change to the entry, so a rename or delete can say
+    /// which version it meant.
+    pub revision: u64,
 }
 
 impl Registry {
@@ -27,9 +42,25 @@ impl Registry {
         }
     }
 
-    fn write(&self, data_dir: &Path) -> io::Result<()> {
+    pub(crate) fn write(&self, data_dir: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         write_durably(&data_dir.join(REGISTRY), &bytes)
+    }
+
+    pub fn entry(&self, id: ProfileId) -> Option<&ProfileEntry> {
+        self.profiles.iter().find(|entry| entry.id == id)
+    }
+
+    /// A label no profile has yet: `wanted`, or `wanted-2`, `wanted-3`…
+    pub fn free_label(&self, wanted: &str) -> String {
+        let taken = |label: &str| self.profiles.iter().any(|entry| entry.label == label);
+        if !taken(wanted) {
+            return wanted.to_owned();
+        }
+        (2..)
+            .map(|n| format!("{wanted}-{n}"))
+            .find(|label| !taken(label))
+            .expect("some suffix is free")
     }
 }
 
@@ -39,16 +70,26 @@ pub fn profile_dir(data_dir: &Path, profile: ProfileId) -> PathBuf {
 }
 
 /// Creates a profile: its directory, a fresh host id, and its registry
-/// entry, written last so a crash leaves no half-made profile listed.
+/// entry, written last so a crash leaves no half-made profile listed. The
+/// label is made unique.
 pub fn create_profile(data_dir: &Path) -> io::Result<ProfileId> {
+    create_labelled(data_dir, "default").map(|entry| entry.id)
+}
+
+pub(crate) fn create_labelled(data_dir: &Path, label: &str) -> io::Result<ProfileEntry> {
     let profile = Uuid::new_v4();
     let dir = profile_dir(data_dir, profile);
     private_dir(&dir.join(AGENTS))?;
     write_durably(&dir.join(HOST_ID), Uuid::new_v4().to_string().as_bytes())?;
     let mut registry = Registry::read(data_dir)?;
-    registry.profiles.push(profile);
+    let entry = ProfileEntry {
+        id: profile,
+        label: registry.free_label(label),
+        revision: 1,
+    };
+    registry.profiles.push(entry.clone());
     registry.write(data_dir)?;
-    Ok(profile)
+    Ok(entry)
 }
 
 /// The profile's host id, as written when it was created.

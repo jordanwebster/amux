@@ -6,15 +6,34 @@ license.workspace = true
 description = "Agent multiplexer - CLI binary"
 publish = false
 
+[features]
+default = []
+bundled = ["store/bundled"]
+
 [[bin]]
 name = "amux"
 path = "src/main.rs"
 
 [dependencies]
 agent = { workspace = true }
+agent-dir = { workspace = true }
+anyhow = { workspace = true }
 claude = { workspace = true }
 clap = { workspace = true }
+hyper-util = { workspace = true }
+node = { workspace = true }
+settings = { workspace = true }
+store = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = { workspace = true }

@@ -374,7 +374,7 @@ impl Engine {
 
     fn item_id(&mut self, prefix: &str) -> String {
         self.next_item += 1;
-        format!("{prefix}{:024}", self.next_item)
+        crate::claude::numbered(prefix, self.next_item)
     }
 
     async fn item(&mut self, turn: &str, phase: &str, item: &Value) {

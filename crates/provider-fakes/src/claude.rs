@@ -108,7 +108,9 @@ pub fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Ids in the provider's shapes, numbered so a run is easy to read.
+/// Ids in the provider's shapes, numbered so a run is easy to read. Like
+/// the real provider's they never repeat across processes: a resumed
+/// session's new messages must not reuse the ids of the ones before it.
 #[derive(Default)]
 pub struct Ids {
     next: u64,
@@ -117,8 +119,19 @@ pub struct Ids {
 impl Ids {
     pub fn next(&mut self, prefix: &str) -> String {
         self.next += 1;
-        format!("{prefix}{:024}", self.next)
+        numbered(prefix, self.next)
     }
+}
+
+/// `prefix` then 24 digits: this process's tag, then `n`.
+pub fn numbered(prefix: &str, n: u64) -> String {
+    format!("{prefix}{:08x}{n:016}", process_tag())
+}
+
+/// A tag for this process that another fake process is unlikely to share.
+fn process_tag() -> u32 {
+    static TAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *TAG.get_or_init(|| uuid::Uuid::new_v4().as_u128() as u32)
 }
 
 /// The Claude Code version the fakes report: the newest one the corpora

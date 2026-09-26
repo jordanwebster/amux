@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 agent-dir = { workspace = true }
+futures-util = { workspace = true }
 # The dump path's redactor: the one place the daemon decodes a body.
 interpret = { workspace = true }
 journal = { workspace = true }
@@ -20,6 +21,7 @@ sha2 = { workspace = true }
 store = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }

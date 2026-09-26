@@ -15,7 +15,9 @@ mod blobs;
 mod daemon;
 mod dump;
 mod fanout;
+mod front_door;
 mod generation;
+mod grpc;
 mod install;
 mod outbox;
 mod profiles;
@@ -30,12 +32,15 @@ pub use blobs::{BlobError, PATCH_MIME};
 pub use daemon::{Daemon, StartError, StartOptions, start};
 pub use dump::{DAEMON_LOG, DUMP_LOG_BYTES, DUMP_ROWS, DUMP_SEGMENTS, DumpError, MANIFEST, pack};
 pub use generation::{Generation, boot_id};
+pub use grpc::{ClientApi, status};
 pub use install::{
     AGENTS, GENERATION, HOST_ID, INSTALLATION_LOCK, InstallationLock, LockError, PROFILES,
     REGISTRY, REPLICAS, REPORTS, STORE,
 };
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
-pub use profiles::{ProfileId, Registry, create_profile, host_id, profile_dir};
+pub use profiles::{
+    PROFILE_SOCKET, ProfileEntry, ProfileId, Registry, create_profile, host_id, profile_dir,
+};
 pub use relay::{EXITED, EXITING, RelayError};
 pub use retention::{REMOVED_BY_RETENTION, Retention};
 pub use runtime::{

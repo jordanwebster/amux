@@ -1,0 +1,142 @@
+//! Finding the daemon: the installation config, the front door, and the
+//! selected profile's client socket.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context as _, Result, anyhow, bail};
+use settings::{InstallationConfig, Switch};
+use tonic::transport::{Channel, Endpoint};
+use wire::client_service_client::ClientServiceClient;
+use wire::installation_service_client::InstallationServiceClient;
+use wire::profile_service_client::ProfileServiceClient;
+use wire::{ListProfilesRequest, ProfileInfo};
+
+/// How long a client waits for a daemon it did not find.
+const WAIT_FOR_DAEMON: Duration = Duration::from_secs(30);
+const RETRY: Duration = Duration::from_millis(200);
+
+/// The installation config: the file named by `--config` or `AMUX_CONFIG`,
+/// else the default file when it exists, else the defaults.
+pub fn load_config(path: Option<&Path>) -> Result<InstallationConfig> {
+    let path = match path {
+        Some(path) => path.to_owned(),
+        None => {
+            let default = InstallationConfig::default_path();
+            if !default.exists() {
+                return Ok(InstallationConfig::default());
+            }
+            default
+        }
+    };
+    InstallationConfig::from_file(&path).with_context(|| format!("reading {}", path.display()))
+}
+
+/// A gRPC channel over the local socket named by `path`.
+pub async fn channel(path: &Path) -> std::io::Result<Channel> {
+    let path = path.to_owned();
+    Endpoint::from_static("http://amux.local")
+        .connect_with_connector(tower::service_fn(move |_| {
+            let path = path.clone();
+            async move {
+                agent_dir::local_socket::connect(&path)
+                    .await
+                    .map(hyper_util::rt::TokioIo::new)
+            }
+        }))
+        .await
+        .map_err(std::io::Error::other)
+}
+
+/// The front door, if a daemon answers on it now.
+pub async fn front_door_now(config: &InstallationConfig) -> Option<Channel> {
+    channel(&config.front_door_socket).await.ok()
+}
+
+/// The front door. A client that finds no daemon starts nothing: without a
+/// supervisor the daemon belongs to whatever service manager runs it, so
+/// the client says so and waits for it to come up.
+pub async fn front_door(config: &InstallationConfig) -> Result<Channel> {
+    if let Some(channel) = front_door_now(config).await {
+        return Ok(channel);
+    }
+    let path = config.front_door_socket.display();
+    match config.supervisor {
+        Switch::Off => eprintln!(
+            "No amux daemon is answering on {path}. This install has no supervisor, so the \
+             daemon belongs to the service manager that runs it; waiting for it to start \
+             (`amux server start` starts one by hand)."
+        ),
+        Switch::On => eprintln!(
+            "No amux daemon is answering on {path}; waiting for amux supervise to start it."
+        ),
+    }
+    let deadline = Instant::now() + WAIT_FOR_DAEMON;
+    loop {
+        tokio::time::sleep(RETRY).await;
+        if let Some(channel) = front_door_now(config).await {
+            return Ok(channel);
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "no amux daemon answered on {path} within {}s",
+                WAIT_FOR_DAEMON.as_secs()
+            );
+        }
+    }
+}
+
+pub fn profiles(channel: Channel) -> ProfileServiceClient<Channel> {
+    ProfileServiceClient::new(channel)
+}
+
+pub fn installation(channel: Channel) -> InstallationServiceClient<Channel> {
+    InstallationServiceClient::new(channel)
+}
+
+/// The profile a reference names — its id or its label — or, with none
+/// given, the installation's first profile.
+pub async fn select(
+    profiles: &mut ProfileServiceClient<Channel>,
+    wanted: Option<&str>,
+) -> Result<ProfileInfo> {
+    let listed = profiles
+        .list_profiles(ListProfilesRequest {})
+        .await
+        .map_err(crate::plain)?
+        .into_inner()
+        .profiles;
+    let Some(wanted) = wanted else {
+        return listed
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("the installation has no profile"));
+    };
+    listed
+        .iter()
+        .find(|profile| profile.id == wanted)
+        .or_else(|| listed.iter().find(|profile| profile.label == wanted))
+        .cloned()
+        .ok_or_else(|| {
+            let known = listed
+                .iter()
+                .map(|profile| profile.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow!("no profile {wanted}; profiles: {known}")
+        })
+}
+
+/// The client service of the selected profile.
+pub async fn client(
+    config: &InstallationConfig,
+    profile: Option<&str>,
+) -> Result<ClientServiceClient<Channel>> {
+    let door = front_door(config).await?;
+    let selected = select(&mut profiles(door), profile).await?;
+    let socket = PathBuf::from(&selected.socket_path);
+    let channel = channel(&socket)
+        .await
+        .with_context(|| format!("connecting to profile {}", selected.label))?;
+    Ok(wire::client_service_client(channel))
+}

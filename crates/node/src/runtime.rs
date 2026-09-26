@@ -33,11 +33,12 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
     Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CreateAgentRequest, CtlFrame,
-    DeleteAgentResponse, DumpPart, EnvelopeKind, Input, Kind, Lifecycle, Phase, SendInputResponse,
-    Stop, StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
+    DeleteAgentResponse, DumpPart, EnvelopeKind, ErrorCode, Input, Kind, Lifecycle, Phase,
+    SendInputResponse, Stop, StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
 };
 
 use crate::fanout::Fanout;
+use crate::grpc::ClientApi;
 use crate::install::{AGENTS, private_dir};
 use crate::outbox::PushSender;
 use crate::profiles::ProfileId;
@@ -175,6 +176,21 @@ pub enum RegistryError {
     Store(#[from] StoreError),
     #[error("the agent directory: {0}")]
     Io(#[from] io::Error),
+}
+
+impl RegistryError {
+    pub fn to_wire(&self) -> wire::Error {
+        let code = match self {
+            Self::NotFound(_) | Self::NoSpec(_) => ErrorCode::NotFound,
+            Self::AlreadyExists(_) => ErrorCode::AlreadyExists,
+            Self::Live(_) | Self::StillLocked(_) => ErrorCode::FailedPrecondition,
+            Self::BadId(_) | Self::UnknownKind(_) | Self::BadCwd(_) => ErrorCode::InvalidArgument,
+            Self::OtherHost => ErrorCode::Unimplemented,
+            Self::StartTimeout(_) | Self::StopTimeout(_) => ErrorCode::Aborted,
+            Self::Store(_) | Self::Io(_) => ErrorCode::Internal,
+        };
+        crate::grpc::wire_error(code, self.to_string())
+    }
 }
 
 /// What the sweep found, each agent listed once.
@@ -688,28 +704,15 @@ impl ProfileRuntime {
         self.agent(id).await
     }
 
-    /// Listens on `<dir>/tools.sock` for the agent's MCP server. The socket
-    /// is its caller's identity: whatever arrives on it is from `id`.
+    /// Serves the client service on `<dir>/tools.sock` for the agent's MCP
+    /// server. The socket is its caller's identity: whatever arrives on it
+    /// is from `id`.
     fn bind_tools(&self, id: AgentId, dir: &Path) -> io::Result<JoinHandle<()>> {
-        let mut listener = LocalListener::bind(&dir.join(agent_dir::TOOLS_SOCK))?;
-        let runtime = self.me.clone();
-        Ok(tokio::spawn(async move {
-            while let Ok(stream) = listener.accept().await {
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                runtime.tools_connection(id, stream);
-            }
-        }))
-    }
-
-    /// One connection from an agent's tool server.
-    fn tools_connection(&self, caller: AgentId, stream: LocalStream) {
-        // No service answers on the tools socket yet; closing the
-        // connection makes the tool server report the daemon unavailable
-        // rather than wait on a call nobody reads.
-        tracing::debug!(agent = %caller, "closing a tools connection with no service to serve it");
-        drop(stream);
+        let listener = LocalListener::bind(&dir.join(agent_dir::TOOLS_SOCK))?;
+        Ok(crate::grpc::serve_client(
+            listener,
+            ClientApi::weak(self.me.clone(), Some(id)),
+        ))
     }
 
     // --- stop, delete, rename --------------------------------------------
