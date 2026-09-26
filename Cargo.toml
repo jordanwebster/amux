@@ -14,6 +14,7 @@ members = [
     "crates/claude-specs",
     "crates/codex",
     "crates/codex-specs",
+    "crates/fake-amux",
     "crates/fold",
     "crates/interpret",
     "crates/journal",

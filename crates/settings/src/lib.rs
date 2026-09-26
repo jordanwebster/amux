@@ -500,7 +500,9 @@ pub struct InstallationConfig {
     pub ui: UiSettings,
     pub reports_dir: Option<PathBuf>,
     pub keymaps_dir: PathBuf,
-    pub update_manifest_url: String,
+    /// Where channel manifests live: the supervisor reads
+    /// `<releases_url>/<channel>.json`.
+    pub releases_url: String,
     pub minimum_client_versions: HashMap<String, String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
@@ -524,7 +526,7 @@ impl Default for InstallationConfig {
             ui: UiSettings::default(),
             reports_dir: None,
             keymaps_dir: keymap_dir(&default_data_dir()),
-            update_manifest_url: format!("{DEFAULT_CLOUD_URL}/manifest.json"),
+            releases_url: format!("{DEFAULT_CLOUD_URL}/releases"),
             minimum_client_versions: HashMap::new(),
             path: None,
         }
@@ -590,6 +592,15 @@ impl InstallationConfig {
         .validate()
     }
 
+    /// The manifest the supervisor follows for the configured channel.
+    pub fn manifest_url(&self) -> String {
+        let channel = match self.channel {
+            Channel::Stable => "stable",
+            Channel::Preview => "preview",
+        };
+        format!("{}/{channel}.json", self.releases_url.trim_end_matches('/'))
+    }
+
     pub fn file_path(&self) -> PathBuf {
         self.path
             .clone()
@@ -653,6 +664,10 @@ const RETIRED_KEYS: &[(&[&str], &str)] = &[
     (
         &["prevent_idle_sleep"],
         "replaced by keep_awake (on | off), which the supervisor holds for its lifetime",
+    ),
+    (
+        &["update_manifest_url"],
+        "the supervisor reads <releases_url>/<channel>.json; set channel (stable | preview) instead",
     ),
     (
         &["claude", "driver"],

@@ -1,0 +1,18 @@
+[package]
+name = "fake-amux"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "A stand-in amux binary for the supervisor tests: the real supervisor, a scripted daemon"
+publish = false
+
+[dependencies]
+agent-dir = { workspace = true }
+node = { workspace = true }
+semver = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "fake-amux"
+path = "src/main.rs"

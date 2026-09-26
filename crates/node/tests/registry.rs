@@ -287,7 +287,7 @@ async fn spawn_writes_spec_one_and_starts_the_agent_process() {
     assert_eq!(spec.name, "first");
     assert_eq!(spec.incarnation, 1);
     assert_eq!(spec.provider_command, launch.claude_command);
-    assert_eq!(spec.daemon_version, node::VERSION);
+    assert_eq!(spec.daemon_version, node::version());
     assert!(
         spec.initial_prompt.is_some(),
         "spec.1 carries the first prompt"

@@ -800,6 +800,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake-amux"
+version = "0.1.0"
+dependencies = [
+ "agent-dir",
+ "node",
+ "semver",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1731,6 +1742,7 @@ dependencies = [
  "ring",
  "rustls",
  "rustls-pemfile",
+ "semver",
  "serde",
  "serde_json",
  "settings",

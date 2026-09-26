@@ -83,7 +83,7 @@ pub(crate) fn local_host(
     Host {
         id: host_id,
         name: host_name.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::version().to_owned(),
         capabilities,
         signed_in: Some(signed_in),
         platform: Some(local_platform().to_string()),

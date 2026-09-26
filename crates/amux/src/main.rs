@@ -6,6 +6,7 @@
 mod connect;
 mod profiles;
 mod server;
+mod supervise;
 mod verbs;
 
 use std::io::Read as _;
@@ -19,7 +20,7 @@ use tonic::Code;
 use crate::verbs::{CliKind, CliStopMode};
 
 #[derive(Debug, Parser)]
-#[command(name = "amux", version, about = "Agent multiplexer")]
+#[command(name = "amux", version = node::version(), about = "Agent multiplexer")]
 struct Cli {
     /// The installation config file.
     #[arg(long, global = true, env = "AMUX_CONFIG")]
@@ -98,6 +99,13 @@ enum Command {
     /// Run the daemon in the foreground.
     #[command(hide = true)]
     Daemon,
+    /// Run the daemon under a supervisor that restarts it and, under
+    /// `updates: auto`, installs releases.
+    Supervise {
+        /// The state a supervisor hands the binary it execs after an update.
+        #[arg(long, hide = true)]
+        inherit: Option<String>,
+    },
     /// Host one agent: the directory holds its lock, specs and sockets.
     #[command(hide = true)]
     Agent { dir: PathBuf },
@@ -148,9 +156,19 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Command::Daemon => report(
-            connect::load_config(cli.config.as_deref())
-                .and_then(|config| server::run_daemon(&config)),
+        Command::Daemon => {
+            // SAFETY: no other thread exists yet.
+            let pipe = unsafe { node::InheritedPipe::take() };
+            report(
+                pipe.map_err(anyhow::Error::from)
+                    .and_then(|pipe| Ok((pipe, connect::load_config(cli.config.as_deref())?)))
+                    .and_then(|(pipe, config)| server::run_daemon(&config, pipe)),
+            )
+        }
+        Command::Supervise { inherit } => report(
+            connect::load_config(cli.config.as_deref()).and_then(|config| {
+                supervise::run(&config, cli.config.as_deref(), inherit.as_deref())
+            }),
         ),
         command => report(run(command, cli.config, cli.profile)),
     }

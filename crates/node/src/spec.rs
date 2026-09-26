@@ -164,7 +164,7 @@ pub fn build(launch: &Launch, at: Incarnation<'_>) -> AgentSpec {
             env: HashMap::new(),
             install_path: launch.install_path.to_string_lossy().into_owned(),
         }),
-        daemon_version: crate::VERSION.to_owned(),
+        daemon_version: crate::version().to_owned(),
         created_at_ms: at.created_at_ms,
         incarnation: at.incarnation,
         initial_prompt: at.initial_prompt,

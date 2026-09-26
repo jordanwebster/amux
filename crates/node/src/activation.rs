@@ -71,6 +71,96 @@ impl ActivationPipe {
     }
 }
 
+/// The pipe's ends as the supervisor named them in the environment, taken
+/// before the runtime starts.
+#[derive(Debug)]
+pub struct InheritedPipe {
+    read: std::fs::File,
+    write: std::fs::File,
+}
+
+/// Names the pipe's two ends, `<read>,<write>`: descriptors on Unix, handle
+/// values on Windows. Only a supervisor sets it.
+pub const PIPE_ENV: &str = "AMUX_SUPERVISOR_PIPE";
+
+impl InheritedPipe {
+    /// Takes the pipe a supervisor handed this process, if one did, and
+    /// removes it from the environment so nothing the daemon starts sees it
+    /// or inherits its ends.
+    ///
+    /// # Safety
+    ///
+    /// Call before any other thread exists: it changes the environment.
+    pub unsafe fn take() -> io::Result<Option<Self>> {
+        let Some(value) = std::env::var_os(PIPE_ENV) else {
+            return Ok(None);
+        };
+        // SAFETY: the caller promises no other thread reads the
+        // environment yet.
+        unsafe { std::env::remove_var(PIPE_ENV) };
+        let value = value.to_string_lossy();
+        let bad = || io::Error::other(format!("{PIPE_ENV}={value} is not <read>,<write>"));
+        let (read, write) = value.split_once(',').ok_or_else(bad)?;
+        let read: u64 = read.parse().map_err(|_| bad())?;
+        let write: u64 = write.parse().map_err(|_| bad())?;
+        Ok(Some(Self {
+            read: own(read)?,
+            write: own(write)?,
+        }))
+    }
+
+    /// The pipe, on the current runtime.
+    pub fn into_pipe(self) -> io::Result<ActivationPipe> {
+        #[cfg(unix)]
+        {
+            let read = tokio::net::unix::pipe::Receiver::from_file(self.read)?;
+            let write = tokio::net::unix::pipe::Sender::from_file(self.write)?;
+            Ok(ActivationPipe::new(read, write))
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(ActivationPipe::new(
+                tokio::fs::File::from_std(self.read),
+                tokio::fs::File::from_std(self.write),
+            ))
+        }
+    }
+}
+
+/// Owns an end the supervisor handed over, closed on exec so the daemon's
+/// own children never hold it.
+#[cfg(unix)]
+fn own(raw: u64) -> io::Result<std::fs::File> {
+    use std::os::fd::{FromRawFd as _, RawFd};
+    let fd = RawFd::try_from(raw).map_err(io::Error::other)?;
+    // SAFETY: fcntl on a descriptor this process was handed.
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the supervisor handed the descriptor to this process alone.
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(windows)]
+fn own(raw: u64) -> io::Result<std::fs::File> {
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, RawHandle};
+
+    use windows_sys::Win32::Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation};
+    // SAFETY: the supervisor handed the handle to this process alone.
+    let file = unsafe { std::fs::File::from_raw_handle(raw as RawHandle) };
+    // SAFETY: clearing a flag on a handle this process owns.
+    if unsafe { SetHandleInformation(file.as_raw_handle() as HANDLE, HANDLE_FLAG_INHERIT, 0) } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn own(_raw: u64) -> io::Result<std::fs::File> {
+    Err(io::Error::other("no supervisor pipe on this platform"))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ActivationError {
     #[error("the supervisor went away before activation")]

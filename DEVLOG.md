@@ -1,3 +1,33 @@
+2026-09-27 — **`amux supervise` restarts the daemon and installs releases.**
+Under a desktop install the daemon now runs as the child of `amux
+supervise`, joined by one pipe: the daemon writes `prepared` once it has
+migrated and looked without writing, the supervisor answers `go`, and end
+of file on the pipe makes the daemon shut down cleanly. The supervisor
+restarts the daemon whenever it exits (backoff 1 s doubling to 30 s, reset
+after a minute up) and, under `updates: auto`, checks the channel manifest
+(`<releases_url>/<channel>.json`, keyed by target triple) every hour. It
+installs only a version newer than its own, not the rolled-back one, and
+only when hash(host id) mod 100 is under the manifest's rollout; the
+download must match the manifest's SHA-256 and an Ed25519 signature over
+target, version and hash, so a manifest cannot relabel an old build as a
+new one. The swap hard-links the binary to `amux.prev`, renames the staged
+build over the path, stops the daemon (SIGTERM, 30 s, then SIGKILL) and
+starts the new one; on `prepared` prev is deleted and the daemon told go,
+after which the supervisor execs the new binary with the same pid, child,
+pipe and lock. Three starts that never prepare (exit, or no `prepared`
+within 60 s) write the version to `amux.rejected` and only then rename
+prev back; a supervisor starting with prev present counts against it,
+finishes a recorded rollback, or deletes a prev that is the binary itself.
+Windows moves the running binary aside to prev and hands over by starting
+the new supervisor and exiting. The version lives in a stamp a tool can
+rewrite in a built binary (`node::release::restamp`), which is how the
+tests make releases: `fake-amux` runs the real supervisor with a scripted
+daemon, against a fake manifest server, and a real `amux daemon` is shown
+exiting when its supervisor is killed. Release builds trust the key named
+by `AMUX_RELEASE_PUBLIC_KEY` at build time and install nothing without
+one; debug builds trust a test key. `update_manifest_url` is replaced by
+`releases_url` and `channel`.
+
 2026-09-27 — **A relay link whose credential lapsed comes back on a fresh one.**
 The relay spec's hosts sometimes never reached each other again after the
 phone's last reconnect (about 1 run in 5-10). The case advances the policy

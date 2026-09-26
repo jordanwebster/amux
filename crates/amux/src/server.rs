@@ -25,13 +25,13 @@ const LOG_ENV: &str = "AMUX_LOG";
 /// How long `amux server start` and `stop` wait on the daemon.
 const PATIENCE: Duration = Duration::from_secs(30);
 
-fn daemon_log(config: &InstallationConfig) -> PathBuf {
+pub(crate) fn daemon_log(config: &InstallationConfig) -> PathBuf {
     std::env::var_os(LOG_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| config.root.join(DAEMON_LOG))
 }
 
-fn log_to(path: &Path) -> Result<()> {
+pub(crate) fn log_to(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
@@ -66,8 +66,9 @@ fn launch(config: &InstallationConfig) -> Result<Launch> {
 }
 
 /// Runs the daemon in the foreground until it is asked to stop: by a
-/// client's shutdown call, SIGTERM or SIGINT.
-pub fn run_daemon(config: &InstallationConfig) -> Result<()> {
+/// client's shutdown call, SIGTERM or SIGINT, or its supervisor's end of the
+/// pipe closing.
+pub fn run_daemon(config: &InstallationConfig, pipe: Option<node::InheritedPipe>) -> Result<()> {
     let log = daemon_log(config);
     log_to(&log)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -86,11 +87,16 @@ pub fn run_daemon(config: &InstallationConfig) -> Result<()> {
             front_door: Some(config.front_door_socket.clone()),
             edge: edge_options(config),
         };
-        let daemon = node::start(options, None)
+        let pipe = pipe
+            .map(node::InheritedPipe::into_pipe)
+            .transpose()
+            .context("opening the supervisor pipe")?;
+        let mut daemon = node::start(options, pipe)
             .await
             .context("starting the daemon")?;
+        let supervisor = daemon.take_supervisor();
         tracing::info!(
-            version = node::VERSION,
+            version = node::version(),
             root = %config.root.display(),
             front_door = %config.front_door_socket.display(),
             generation = daemon.generation().counter,
@@ -99,6 +105,9 @@ pub fn run_daemon(config: &InstallationConfig) -> Result<()> {
         tokio::select! {
             () = daemon.shutdown_requested() => tracing::info!("a client asked the daemon to stop"),
             () = terminated() => tracing::info!("signalled to stop"),
+            // The supervisor is gone: exit, so whoever starts a supervisor
+            // again gets a fresh daemon under it.
+            () = supervisor_gone(supervisor) => tracing::info!("the supervisor went away"),
         }
         daemon.shutdown().await.context("shutting down")?;
         tracing::info!("stopped cleanly");
@@ -123,6 +132,13 @@ fn edge_options(config: &InstallationConfig) -> node::EdgeOptions {
         dial: true,
         link_socket: true,
         cloud: node::CloudOptions::default(),
+    }
+}
+
+async fn supervisor_gone(pipe: Option<node::ActivationPipe>) {
+    match pipe {
+        Some(pipe) => pipe.closed().await,
+        None => std::future::pending().await,
     }
 }
 

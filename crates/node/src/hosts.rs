@@ -35,7 +35,7 @@ impl ProfileRuntime {
             generation: self.generation(),
             trust: Trust::Trusted as i32,
             presence: Presence::Online as i32,
-            version: Some(crate::VERSION.to_owned()),
+            version: Some(crate::version().to_owned()),
             ..HostEntry::default()
         }
     }

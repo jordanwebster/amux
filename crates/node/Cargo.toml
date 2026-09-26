@@ -36,6 +36,7 @@ interpret = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
@@ -56,7 +57,12 @@ if-addrs = { workspace = true }
 mdns-sd = "0.21"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 journal = { workspace = true, features = ["synthetic"] }

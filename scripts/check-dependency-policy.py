@@ -41,6 +41,7 @@ TEST_SUPPORT = {
     "claude-specs",
     "codex-specs",
     "provider-fakes",
+    "fake-amux",
     "shot",
 }
 SUPPORT_ALLOWED_LOCAL = {
@@ -72,6 +73,9 @@ SUPPORT_ALLOWED_LOCAL = {
     # The fake providers speak each protocol from its recordings, not from
     # the host crates, so a host bug cannot hide behind a shared parser.
     "provider-fakes": {"pty-host"},
+    # A stand-in amux binary that runs the real supervisor, so the
+    # supervisor tests exec and roll back the shipped code.
+    "fake-amux": {"agent-dir", "node"},
 }
 
 def local_edges(package: dict[str, object]) -> set[str]:

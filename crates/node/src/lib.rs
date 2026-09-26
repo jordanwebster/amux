@@ -34,6 +34,7 @@ mod outbox;
 mod pairing;
 mod profiles;
 mod relay;
+pub mod release;
 mod resource_limits;
 mod retention;
 mod routing;
@@ -42,10 +43,12 @@ mod serve;
 mod services;
 mod sources;
 mod spec;
+#[cfg(not(target_os = "ios"))]
+pub mod supervisor;
 mod transport;
 mod trust;
 
-pub use activation::{ActivationError, ActivationPipe, GO, PREPARED};
+pub use activation::{ActivationError, ActivationPipe, GO, InheritedPipe, PIPE_ENV, PREPARED};
 pub use blobs::{BlobError, PATCH_MIME};
 pub use daemon::{Daemon, StartError, StartOptions, start};
 pub use dump::{DAEMON_LOG, DUMP_LOG_BYTES, DUMP_ROWS, DUMP_SEGMENTS, DumpError, MANIFEST, pack};
@@ -107,8 +110,7 @@ pub type HostId = uuid::Uuid;
 pub use agent_dir::Clock;
 pub use auth::claims::Tier;
 pub use auth::oauth::{OAuthError, run_device_flow};
+/// This binary's version, as stamped: the one it writes into every spec.
+pub use release::version;
 pub use transport::{TransportError, create_tls_acceptor, relay_quic_server_config};
 pub use wire::PROTOCOL_VERSION;
-
-/// The version this daemon writes into every spec.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");

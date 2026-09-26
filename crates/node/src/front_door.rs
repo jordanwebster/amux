@@ -586,7 +586,7 @@ impl InstallationService for FrontDoor {
     ) -> Result<Response<InstallationInfo>, Status> {
         let installation = self.installation()?;
         Ok(Response::new(InstallationInfo {
-            version: crate::VERSION.to_owned(),
+            version: crate::version().to_owned(),
             root: installation.data_dir.to_string_lossy().into_owned(),
             front_door_path: installation
                 .front_door

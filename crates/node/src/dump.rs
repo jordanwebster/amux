@@ -126,7 +126,7 @@ impl ProfileRuntime {
             "profile": self.profile().to_string(),
             "host": self.host().to_string(),
             "generation": self.generation(),
-            "daemon_version": crate::VERSION,
+            "daemon_version": crate::version(),
             "agents": agents,
             "errors": errors,
         });

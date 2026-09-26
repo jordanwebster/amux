@@ -1,0 +1,890 @@
+//! `amux supervise`, driven as processes: the real supervisor inside a
+//! stand-in amux binary (`fake-amux`), whose daemon mode is scripted per
+//! version, against a fake manifest server. Versions are re-stamped copies
+//! of one build, and releases are signed with the test key debug builds
+//! trust.
+
+#![cfg(unix)]
+
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use node::release::{self, Choice, Manifest, Release, Skip, VerifyError};
+use node::supervisor::SUPERVISOR_LOCK;
+use semver::Version;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use uuid::Uuid;
+
+/// The private half of node's test release key.
+const TEST_SEED: [u8; 32] = [
+    0xfe, 0x91, 0xb0, 0xb9, 0x1e, 0xa7, 0x94, 0x55, 0xea, 0x7c, 0xb1, 0xa7, 0x83, 0xec, 0x33, 0x47,
+    0x28, 0x61, 0x70, 0x17, 0x17, 0xc9, 0x9b, 0x2a, 0xaa, 0x45, 0xe9, 0x43, 0xbb, 0xd6, 0x48, 0x12,
+];
+const OTHER_SEED: [u8; 32] = [7; 32];
+const PATIENCE: Duration = Duration::from_secs(30);
+
+/// fake-amux and amux, built once per run.
+fn binaries() -> &'static Path {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Command::new(cargo)
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "fake-amux",
+                "-p",
+                "amux",
+                "--bins",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "building fake-amux and amux failed");
+        let exe = std::env::current_exe().expect("the test binary's path");
+        exe.parent()
+            .and_then(Path::parent)
+            .expect("a target directory")
+            .to_owned()
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Event {
+    what: String,
+    version: String,
+    pid: u32,
+}
+
+/// A fake manifest server: `/stable.json` and `/artifacts/<name>`.
+#[derive(Clone, Default)]
+struct Server {
+    manifest: Arc<Mutex<String>>,
+    artifacts: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    manifest_reads: Arc<Mutex<u32>>,
+    base: Arc<OnceLock<String>>,
+}
+
+impl Server {
+    async fn start() -> Self {
+        let server = Self::default();
+        *server.manifest.lock().unwrap() = r#"{"targets":{}}"#.to_owned();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        server
+            .base
+            .set(format!("http://{}", listener.local_addr().unwrap()))
+            .unwrap();
+        let serving = server.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let serving = serving.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                        match socket.read(&mut buffer).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(count) => request.extend_from_slice(&buffer[..count]),
+                        }
+                    }
+                    let request = String::from_utf8_lossy(&request);
+                    let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+                    let body = if path == "/stable.json" {
+                        *serving.manifest_reads.lock().unwrap() += 1;
+                        Some(serving.manifest.lock().unwrap().clone().into_bytes())
+                    } else {
+                        path.strip_prefix("/artifacts/")
+                            .and_then(|name| serving.artifacts.lock().unwrap().get(name).cloned())
+                    };
+                    let (status, body) = match body {
+                        Some(body) => ("200 OK", body),
+                        None => ("404 Not Found", Vec::new()),
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(&body).await;
+                });
+            }
+        });
+        server
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base.get().unwrap())
+    }
+
+    fn reads(&self) -> u32 {
+        *self.manifest_reads.lock().unwrap()
+    }
+
+    /// Serves `bytes` as `version`, signed with `seed`, to `rollout`.
+    fn publish(&self, version: &str, bytes: Vec<u8>, seed: &[u8; 32], rollout: Option<u8>) {
+        let name = format!("amux-{version}");
+        let sha256 = release::sha256_of(&bytes);
+        let release = Release {
+            version: version.to_owned(),
+            url: self.url(&format!("/artifacts/{name}")),
+            signature: release::sign(seed, release::TARGET, version, &sha256),
+            sha256,
+        };
+        self.artifacts.lock().unwrap().insert(name, bytes);
+        let manifest = Manifest {
+            rollout,
+            targets: [(release::TARGET.to_owned(), release)].into(),
+        };
+        *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
+    }
+}
+
+/// An install with fake-amux 1.0.0 at `<dir>/bin/amux`.
+struct Fixture {
+    _root: tempfile::TempDir,
+    dir: PathBuf,
+    bin: PathBuf,
+    server: Server,
+    supervisor: Option<Child>,
+}
+
+impl Fixture {
+    async fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let dir = std::fs::canonicalize(root.path()).unwrap();
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::create_dir_all(dir.join("builds")).unwrap();
+        let fixture = Self {
+            bin: dir.join("bin").join("amux"),
+            dir,
+            _root: root,
+            server: Server::start().await,
+            supervisor: None,
+        };
+        std::fs::copy(fixture.build("1.0.0"), &fixture.bin).unwrap();
+        fixture
+    }
+
+    /// fake-amux stamped as `version`.
+    fn build(&self, version: &str) -> PathBuf {
+        let path = self.dir.join("builds").join(format!("amux-{version}"));
+        if !path.exists() {
+            release::restamp(&binaries().join("fake-amux"), &path, version).unwrap();
+        }
+        path
+    }
+
+    fn bytes(&self, version: &str) -> Vec<u8> {
+        std::fs::read(self.build(version)).unwrap()
+    }
+
+    fn publish(&self, version: &str) {
+        self.server
+            .publish(version, self.bytes(version), &TEST_SEED, None);
+    }
+
+    fn behave(&self, version: &str, behaviour: &str) {
+        std::fs::write(self.dir.join(format!("behave-{version}")), behaviour).unwrap();
+    }
+
+    fn prev(&self) -> PathBuf {
+        self.dir.join("bin").join("amux.prev")
+    }
+
+    fn rejected(&self) -> Option<String> {
+        std::fs::read_to_string(self.dir.join("bin").join("amux.rejected")).ok()
+    }
+
+    /// The version stamped into the binary at the path.
+    fn installed(&self) -> &'static str {
+        let bytes = std::fs::read(&self.bin).unwrap();
+        for version in ["1.0.0", "2.0.0", "2.1.0"] {
+            if bytes == self.bytes(version) {
+                return Box::leak(version.to_owned().into_boxed_str());
+            }
+        }
+        panic!("the binary at the path is none of the builds");
+    }
+
+    fn start(&mut self) -> u32 {
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join("supervisor.log"))
+            .unwrap();
+        let child = Command::new(&self.bin)
+            .arg("supervise")
+            .env("FAKE_AMUX_DIR", &self.dir)
+            .env("FAKE_AMUX_MANIFEST", self.server.url("/stable.json"))
+            .env("RUST_LOG", "info")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(log)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        self.supervisor = Some(child);
+        pid
+    }
+
+    fn events(&self) -> Vec<Event> {
+        std::fs::read_to_string(self.dir.join("events"))
+            .unwrap_or_default()
+            .split_inclusive('\n')
+            .filter_map(|line| line.strip_suffix('\n'))
+            .map(|line| {
+                let mut parts = line.split(' ');
+                Event {
+                    what: parts.next().unwrap().to_owned(),
+                    version: parts.next().unwrap().to_owned(),
+                    pid: parts.next().unwrap().parse().unwrap(),
+                }
+            })
+            .collect()
+    }
+
+    fn count(&self, what: &str, version: &str) -> usize {
+        self.events()
+            .iter()
+            .filter(|event| event.what == what && event.version == version)
+            .count()
+    }
+
+    /// Waits until `done` holds of the events so far.
+    async fn until(&self, what: &str, done: impl Fn(&[Event]) -> bool) -> Vec<Event> {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let events = self.events();
+            if done(&events) {
+                return events;
+            }
+            if Instant::now() > deadline {
+                panic!(
+                    "timed out waiting for {what}; events:\n{}\nsupervisor log:\n{}",
+                    events
+                        .iter()
+                        .map(|event| format!("{} {} {}", event.what, event.version, event.pid))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    std::fs::read_to_string(self.dir.join("supervisor.log")).unwrap_or_default()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Waits for the `n`-th event `what` of `version`, and returns it.
+    async fn nth(&self, n: usize, what: &str, version: &str) -> Event {
+        let events = self
+            .until(&format!("{what} {version} #{n}"), |events| {
+                events
+                    .iter()
+                    .filter(|event| event.what == what && event.version == version)
+                    .count()
+                    >= n
+            })
+            .await;
+        events
+            .into_iter()
+            .filter(|event| event.what == what && event.version == version)
+            .nth(n - 1)
+            .unwrap()
+    }
+
+    /// What the processes did and what the supervisor logged, with pids
+    /// named by role, for a reader.
+    fn transcript(&self, title: &str) {
+        let supervisor = self.supervisor_pid();
+        let mut daemons: Vec<u32> = Vec::new();
+        println!("== {title}");
+        for event in self.events() {
+            let who = if event.pid == supervisor {
+                "supervisor".to_owned()
+            } else {
+                if !daemons.contains(&event.pid) {
+                    daemons.push(event.pid);
+                }
+                let n = daemons.iter().position(|pid| *pid == event.pid).unwrap() + 1;
+                format!("daemon#{n}")
+            };
+            println!("  {who:<11} {:<8} {}", event.version, event.what);
+        }
+        println!("  -- supervisor log");
+        let log = std::fs::read_to_string(self.dir.join("supervisor.log")).unwrap_or_default();
+        for line in log.lines() {
+            // Drop the timestamp; keep level and message.
+            let line = line
+                .split_once(' ')
+                .map_or(line, |(_, rest)| rest.trim_start());
+            println!("  {line}");
+        }
+        println!("  -- files beside the binary");
+        let mut names: Vec<String> = std::fs::read_dir(self.dir.join("bin"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        for name in names {
+            let detail = match name.as_str() {
+                "amux" => format!("version {}", self.installed()),
+                "amux.rejected" => format!("names {}", self.rejected().unwrap_or_default()),
+                _ => String::new(),
+            };
+            println!("  {name} {detail}");
+        }
+    }
+
+    /// Waits for the manifest to be read `more` more times: ticks passing.
+    async fn ticks(&self, more: u32) {
+        let target = self.server.reads() + more;
+        let deadline = Instant::now() + PATIENCE;
+        while self.server.reads() < target {
+            assert!(Instant::now() < deadline, "the supervisor stopped checking");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn supervisor_pid(&self) -> u32 {
+        self.supervisor.as_ref().unwrap().id()
+    }
+
+    fn signal_supervisor(&self, signal: libc::c_int) {
+        kill(self.supervisor_pid(), signal);
+    }
+
+    /// Waits for the supervisor process to exit.
+    async fn supervisor_exit(&mut self) -> std::process::ExitStatus {
+        let child = self.supervisor.as_mut().unwrap();
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "the supervisor did not exit");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.supervisor.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        for event in self.events() {
+            kill(event.pid, libc::SIGKILL);
+        }
+    }
+}
+
+fn kill(pid: u32, signal: libc::c_int) {
+    // SAFETY: a signal to a test's own process.
+    unsafe {
+        libc::kill(pid as libc::pid_t, signal);
+    }
+}
+
+fn alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only probes.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+async fn until_dead(pid: u32) {
+    let deadline = Instant::now() + PATIENCE;
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "pid {pid} is still alive");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn locked(path: &Path) -> bool {
+    let file = OpenOptions::new().write(true).open(path).unwrap();
+    matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarts_the_daemon_whenever_it_exits_and_stops_it_when_asked() {
+    let mut fixture = Fixture::new().await;
+    let supervisor = fixture.start();
+    let first = fixture.nth(1, "go", "1.0.0").await;
+    assert_ne!(first.pid, supervisor);
+    let lock = fixture.dir.join("data").join(SUPERVISOR_LOCK);
+    assert!(locked(&lock), "the supervisor holds its lock");
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        supervisor.to_string(),
+        "the lock names the supervisor's pid"
+    );
+
+    kill(first.pid, libc::SIGKILL);
+    let second = fixture.nth(2, "go", "1.0.0").await;
+    assert_ne!(second.pid, first.pid);
+
+    // A crash right after go is restarted too, after a backoff.
+    fixture.behave("1.0.0", "crash-after-go");
+    kill(second.pid, libc::SIGKILL);
+    fixture.nth(1, "crash", "1.0.0").await;
+    let fourth = fixture.nth(4, "go", "1.0.0").await;
+
+    fixture.signal_supervisor(libc::SIGTERM);
+    fixture.nth(1, "term", "1.0.0").await;
+    assert!(fixture.supervisor_exit().await.success());
+    assert!(!alive(fourth.pid));
+    assert!(!locked(&lock), "a stopped supervisor releases its lock");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn installs_a_newer_signed_release_and_execs_it_keeping_pid_child_pipe_and_lock() {
+    let mut fixture = Fixture::new().await;
+    let supervisor = fixture.start();
+    let old = fixture.nth(1, "go", "1.0.0").await;
+    fixture.publish("2.0.0");
+
+    let handed = fixture.nth(1, "supervise-inherited", "2.0.0").await;
+    assert_eq!(
+        handed.pid, supervisor,
+        "the exec keeps the supervisor's pid"
+    );
+    let events = fixture.events();
+    let order: Vec<(String, String, u32)> = events
+        .iter()
+        .map(|event| (event.what.clone(), event.version.clone(), event.pid))
+        .collect();
+    let new = fixture.nth(1, "go", "2.0.0").await;
+    let at = |what: &str, version: &str, pid: u32| {
+        order
+            .iter()
+            .position(|event| *event == (what.to_owned(), version.to_owned(), pid))
+            .unwrap_or_else(|| panic!("no {what} {version} {pid} in {order:?}"))
+    };
+    assert!(at("term", "1.0.0", old.pid) < at("start", "2.0.0", new.pid));
+    assert!(at("go", "2.0.0", new.pid) < at("supervise-inherited", "2.0.0", supervisor));
+    assert_eq!(fixture.installed(), "2.0.0");
+    assert!(!fixture.prev().exists(), "activation deleted prev");
+    assert!(!fixture.dir.join("bin/amux.staged").exists());
+    let lock = fixture.dir.join("data").join(SUPERVISOR_LOCK);
+    assert!(locked(&lock), "the lock crossed the exec");
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        supervisor.to_string()
+    );
+
+    // The same manifest again installs nothing: 2.0.0 is not newer.
+    fixture.ticks(3).await;
+    assert_eq!(fixture.count("start", "2.0.0"), 1);
+    assert_eq!(
+        fixture.count("eof", "2.0.0"),
+        0,
+        "the pipe crossed the exec"
+    );
+
+    // The exec'd supervisor still waits on and restarts the child.
+    kill(new.pid, libc::SIGKILL);
+    let restarted = fixture.nth(2, "go", "2.0.0").await;
+    assert_ne!(restarted.pid, new.pid);
+    fixture.transcript("an update to 2.0.0, activated, then a crash of the new daemon");
+
+    // Killed, the supervisor takes its daemon with it: end of file on the
+    // pipe.
+    fixture.signal_supervisor(libc::SIGKILL);
+    fixture.supervisor_exit().await;
+    let eof = fixture.nth(1, "eof", "2.0.0").await;
+    assert_eq!(eof.pid, restarted.pid);
+    until_dead(restarted.pid).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_with_a_bad_signature_or_hash_is_not_installed() {
+    let mut fixture = Fixture::new().await;
+    fixture.start();
+    fixture.nth(1, "go", "1.0.0").await;
+
+    fixture
+        .server
+        .publish("2.0.0", fixture.bytes("2.0.0"), &OTHER_SEED, None);
+    fixture.ticks(3).await;
+    // A manifest whose hash names other bytes than it serves.
+    fixture.publish("2.0.0");
+    fixture
+        .server
+        .artifacts
+        .lock()
+        .unwrap()
+        .insert("amux-2.0.0".into(), fixture.bytes("1.0.0"));
+    fixture.ticks(3).await;
+    // Checks run one at a time: once an empty manifest has been read, the
+    // last bad download is over.
+    *fixture.server.manifest.lock().unwrap() = r#"{"targets":{}}"#.to_owned();
+    fixture.ticks(2).await;
+
+    assert_eq!(fixture.count("start", "2.0.0"), 0);
+    assert_eq!(fixture.installed(), "1.0.0");
+    assert!(!fixture.prev().exists());
+    assert!(!fixture.dir.join("bin/amux.staged").exists());
+    assert_eq!(
+        fixture.count("start", "1.0.0"),
+        1,
+        "the daemon was never stopped"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn k_starts_that_never_prepare_roll_back_and_the_rejected_build_is_skipped() {
+    let mut fixture = Fixture::new().await;
+    let supervisor = fixture.start();
+    fixture.nth(1, "go", "1.0.0").await;
+    fixture.behave("2.0.0", "exit");
+    fixture.publish("2.0.0");
+
+    let back = fixture.nth(2, "go", "1.0.0").await;
+    assert_eq!(fixture.count("start", "2.0.0"), 3);
+    assert_eq!(fixture.rejected().as_deref(), Some("2.0.0"));
+    assert_eq!(fixture.installed(), "1.0.0");
+    assert!(!fixture.prev().exists());
+    // prev was this supervisor's own binary: nothing to exec.
+    assert_eq!(fixture.count("supervise-inherited", "1.0.0"), 0);
+    assert!(alive(supervisor));
+
+    // The rejected build stays skipped while the channel names it.
+    fixture.ticks(4).await;
+    assert_eq!(fixture.count("start", "2.0.0"), 3);
+    assert!(alive(back.pid));
+
+    // A different version is installed.
+    fixture.publish("2.1.0");
+    fixture.nth(1, "go", "2.1.0").await;
+    fixture.nth(1, "supervise-inherited", "2.1.0").await;
+    assert_eq!(fixture.installed(), "2.1.0");
+    fixture.transcript("2.0.0 never prepares: rolled back, skipped, then 2.1.0 installed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_that_hangs_before_prepared_is_stopped_at_the_start_deadline_and_counted() {
+    let mut fixture = Fixture::new().await;
+    fixture.start();
+    fixture.nth(1, "go", "1.0.0").await;
+    fixture.behave("2.0.0", "hang");
+    fixture.publish("2.0.0");
+
+    fixture.nth(2, "go", "1.0.0").await;
+    let hung: Vec<u32> = fixture
+        .events()
+        .iter()
+        .filter(|event| event.what == "start" && event.version == "2.0.0")
+        .map(|event| event.pid)
+        .collect();
+    assert_eq!(hung.len(), 3);
+    for pid in hung {
+        until_dead(pid).await;
+    }
+    assert_eq!(fixture.rejected().as_deref(), Some("2.0.0"));
+    assert_eq!(fixture.installed(), "1.0.0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_crash_after_go_is_restarted_and_not_rolled_back() {
+    let mut fixture = Fixture::new().await;
+    fixture.start();
+    fixture.nth(1, "go", "1.0.0").await;
+    fixture.behave("2.0.0", "crash-after-go");
+    fixture.publish("2.0.0");
+
+    fixture.nth(1, "crash", "2.0.0").await;
+    fixture.nth(2, "go", "2.0.0").await;
+    assert_eq!(fixture.rejected(), None);
+    assert_eq!(fixture.installed(), "2.0.0");
+    assert_eq!(fixture.count("go", "1.0.0"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_that_ignores_the_stop_signal_is_killed_at_the_stop_deadline() {
+    let mut fixture = Fixture::new().await;
+    fixture.start();
+    fixture.behave("1.0.0", "ignore-term");
+    let old = fixture.nth(1, "go", "1.0.0").await;
+    fixture.publish("2.0.0");
+
+    fixture.nth(1, "go", "2.0.0").await;
+    assert_eq!(fixture.count("ignored-term", "1.0.0"), 1);
+    until_dead(old.pid).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_starting_supervisor_counts_failed_starts_against_prev_and_rolls_back() {
+    // A reboot in the middle of an update: 2.0.0 at the path, 1.0.0 as prev.
+    let mut fixture = Fixture::new().await;
+    std::fs::copy(fixture.build("1.0.0"), fixture.prev()).unwrap();
+    std::fs::remove_file(&fixture.bin).unwrap();
+    std::fs::copy(fixture.build("2.0.0"), &fixture.bin).unwrap();
+    fixture.behave("2.0.0", "exit");
+    let supervisor = fixture.start();
+
+    fixture.nth(1, "go", "1.0.0").await;
+    assert_eq!(fixture.count("start", "2.0.0"), 3);
+    assert_eq!(fixture.rejected().as_deref(), Some("2.0.0"));
+    // The supervisor was running 2.0.0: after go it becomes 1.0.0.
+    let handed = fixture.nth(1, "supervise-inherited", "1.0.0").await;
+    assert_eq!(handed.pid, supervisor);
+    assert_eq!(fixture.installed(), "1.0.0");
+    assert!(!fixture.prev().exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_starting_supervisor_finishes_a_recorded_rollback() {
+    // A crash between recording the rejected build and renaming prev back.
+    let mut fixture = Fixture::new().await;
+    std::fs::copy(fixture.build("1.0.0"), fixture.prev()).unwrap();
+    std::fs::remove_file(&fixture.bin).unwrap();
+    std::fs::copy(fixture.build("2.0.0"), &fixture.bin).unwrap();
+    std::fs::write(fixture.dir.join("bin/amux.rejected"), "2.0.0").unwrap();
+    let supervisor = fixture.start();
+
+    fixture.nth(1, "go", "1.0.0").await;
+    assert_eq!(
+        fixture.count("start", "2.0.0"),
+        0,
+        "the rejected build never runs"
+    );
+    let handed = fixture.nth(1, "supervise-inherited", "1.0.0").await;
+    assert_eq!(handed.pid, supervisor);
+    assert_eq!(fixture.installed(), "1.0.0");
+    assert!(!fixture.prev().exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_starting_supervisor_deletes_a_prev_that_is_the_binary() {
+    // A crash between the hard link and the rename: the swap never happened.
+    let mut fixture = Fixture::new().await;
+    std::fs::hard_link(&fixture.bin, fixture.prev()).unwrap();
+    fixture.behave("1.0.0", "exit");
+    fixture.start();
+
+    fixture
+        .until("prev removed", |_| !fixture.prev().exists())
+        .await;
+    // Its failed starts are plain crashes now: nothing is rejected.
+    fixture.nth(4, "start", "1.0.0").await;
+    assert_eq!(fixture.rejected(), None);
+    assert_eq!(fixture.installed(), "1.0.0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_amux_daemon_exits_when_its_supervisor_dies() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    let config = root.path().join("installation.yaml");
+    let socket = root.path().join("amux.sock");
+    std::fs::write(
+        &config,
+        format!(
+            "root: {}\nfront_door_socket: {}\nsupervisor: on\nupdates: manual\n",
+            data.display(),
+            socket.display()
+        ),
+    )
+    .unwrap();
+    let mut supervisor = Command::new(binaries().join("amux"))
+        .arg("supervise")
+        .env("AMUX_CONFIG", &config)
+        .env_remove("AMUX_LOG")
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let lock = data.join(node::INSTALLATION_LOCK);
+    let deadline = Instant::now() + PATIENCE;
+    while std::os::unix::net::UnixStream::connect(&socket).is_err() {
+        assert!(Instant::now() < deadline, "the daemon never answered");
+        assert!(
+            supervisor.try_wait().unwrap().is_none(),
+            "the supervisor exited"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(locked(&lock));
+    assert!(locked(&data.join(SUPERVISOR_LOCK)));
+
+    supervisor.kill().unwrap();
+    supervisor.wait().unwrap();
+    let deadline = Instant::now() + PATIENCE;
+    while locked(&lock) {
+        assert!(
+            Instant::now() < deadline,
+            "the daemon outlived its supervisor"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let log = std::fs::read_to_string(data.join("daemon.log")).unwrap();
+    assert!(log.contains("the supervisor went away"), "{log}");
+    assert!(log.contains("stopped cleanly"), "{log}");
+}
+
+#[test]
+fn choose_installs_only_a_newer_unrejected_build_inside_the_rollout() {
+    let running = Version::new(1, 0, 0);
+    let manifest = |version: &str, rollout| Manifest {
+        rollout,
+        targets: [(
+            release::TARGET.to_owned(),
+            Release {
+                version: version.to_owned(),
+                url: "http://example/amux".into(),
+                sha256: "00".into(),
+                signature: String::new(),
+            },
+        )]
+        .into(),
+    };
+    let host = Uuid::new_v4();
+    let choose = |manifest: &Manifest, rejected: Option<&Version>, host: Option<&Uuid>| {
+        release::choose(manifest, release::TARGET, &running, rejected, host)
+    };
+    assert!(matches!(
+        choose(&manifest("1.1.0", None), None, None),
+        Choice::Install { version, .. } if version == Version::new(1, 1, 0)
+    ));
+    assert_eq!(
+        choose(&manifest("1.0.0", None), None, None),
+        Choice::Skip(Skip::NotNewer(Version::new(1, 0, 0)))
+    );
+    assert_eq!(
+        choose(&manifest("0.9.0", None), None, None),
+        Choice::Skip(Skip::NotNewer(Version::new(0, 9, 0)))
+    );
+    // Prerelease ordering: a preview of 1.0.0 is below 1.0.0.
+    assert!(matches!(
+        choose(&manifest("1.0.0-preview.3", None), None, None),
+        Choice::Skip(Skip::NotNewer(_))
+    ));
+    let rejected = Version::new(1, 1, 0);
+    assert_eq!(
+        choose(&manifest("1.1.0", None), Some(&rejected), None),
+        Choice::Skip(Skip::Rejected(rejected.clone()))
+    );
+    assert!(matches!(
+        choose(&manifest("1.2.0", None), Some(&rejected), None),
+        Choice::Install { .. }
+    ));
+    let other_target = Manifest {
+        rollout: None,
+        targets: [(
+            "another-triple".to_owned(),
+            manifest("2.0.0", None)
+                .targets
+                .into_values()
+                .next()
+                .unwrap(),
+        )]
+        .into(),
+    };
+    assert_eq!(
+        choose(&other_target, None, None),
+        Choice::Skip(Skip::NoBuildForTarget)
+    );
+
+    // The rollout: inside when hash(host id) mod 100 is under the number.
+    let slot = release::rollout_slot(&host);
+    assert_eq!(
+        slot,
+        release::rollout_slot(&host),
+        "a host's place is fixed"
+    );
+    assert!(matches!(
+        choose(
+            &manifest("1.1.0", Some((slot + 1) as u8)),
+            None,
+            Some(&host)
+        ),
+        Choice::Install { .. }
+    ));
+    assert_eq!(
+        choose(&manifest("1.1.0", Some(slot as u8)), None, Some(&host)),
+        Choice::Skip(Skip::OutsideRollout)
+    );
+    assert!(matches!(
+        choose(&manifest("1.1.0", Some(100)), None, None),
+        Choice::Install { .. }
+    ));
+    assert_eq!(
+        choose(&manifest("1.1.0", Some(50)), None, None),
+        Choice::Skip(Skip::OutsideRollout),
+        "a host without an id waits for the full rollout"
+    );
+    // Across many hosts the slots cover the range.
+    let slots: std::collections::BTreeSet<u64> = (0..2000)
+        .map(|_| release::rollout_slot(&Uuid::new_v4()))
+        .collect();
+    assert_eq!(slots.len(), 100);
+}
+
+#[test]
+fn verify_checks_the_hash_and_the_signature_over_version_and_hash() {
+    let key = release::TEST_RELEASE_KEY;
+    let bytes = b"a build".to_vec();
+    let sha256 = release::sha256_of(&bytes);
+    let signed = |seed: &[u8; 32], version: &str| Release {
+        version: version.to_owned(),
+        url: String::new(),
+        sha256: sha256.clone(),
+        signature: release::sign(seed, release::TARGET, version, &sha256),
+    };
+    let good = signed(&TEST_SEED, "2.0.0");
+    assert_eq!(
+        release::verify(&good, release::TARGET, &sha256, &key),
+        Ok(())
+    );
+    assert!(matches!(
+        release::verify(&good, release::TARGET, &release::sha256_of(b"other"), &key),
+        Err(VerifyError::Hash { .. })
+    ));
+    assert_eq!(
+        release::verify(
+            &signed(&OTHER_SEED, "2.0.0"),
+            release::TARGET,
+            &sha256,
+            &key
+        ),
+        Err(VerifyError::Signature)
+    );
+    // Relabelling a signed build as a newer version breaks the signature.
+    let relabelled = Release {
+        version: "9.0.0".into(),
+        ..good.clone()
+    };
+    assert_eq!(
+        release::verify(&relabelled, release::TARGET, &sha256, &key),
+        Err(VerifyError::Signature)
+    );
+    assert_eq!(
+        release::verify(&good, "another-triple", &sha256, &key),
+        Err(VerifyError::Signature)
+    );
+    assert_eq!(
+        release::release_key(),
+        Some(key),
+        "debug builds trust the test key"
+    );
+}
+
+#[test]
+fn restamping_a_build_changes_the_version_it_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("amux");
+    release::restamp(&binaries().join("amux"), &copy, "0.0.1-previous").unwrap();
+    let output = Command::new(&copy).arg("--version").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "amux 0.0.1-previous"
+    );
+}
