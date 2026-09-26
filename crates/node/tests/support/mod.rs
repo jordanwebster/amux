@@ -126,6 +126,7 @@ impl Install {
             push: Arc::new(node::NoopSender),
             daemon_log: None,
             front_door: None,
+            edge: node::EdgeOptions::default(),
         }
     }
 

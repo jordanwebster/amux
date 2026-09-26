@@ -82,6 +82,7 @@ pub fn run_daemon(config: &InstallationConfig) -> Result<()> {
             push: Arc::new(NoopSender),
             daemon_log: Some(log),
             front_door: Some(config.front_door_socket.clone()),
+            edge: edge_options(config),
         };
         let daemon = node::start(options, None)
             .await
@@ -101,6 +102,26 @@ pub fn run_daemon(config: &InstallationConfig) -> Result<()> {
         tracing::info!("stopped cleanly");
         Ok(())
     })
+}
+
+/// What each profile serves on the network: a LAN listener, discovery in
+/// the installation's scope, dialling paired hosts, and the link socket SSH
+/// relays use.
+fn edge_options(config: &InstallationConfig) -> node::EdgeOptions {
+    node::EdgeOptions {
+        host_name: config.host_name.clone(),
+        kinds: vec![
+            wire::Kind::ClaudePty,
+            wire::Kind::ClaudeSdk,
+            wire::Kind::Codex,
+        ],
+        lan: Some(node::LanOptions::default()),
+        discovery: Some(node::mdns_discovery()),
+        discovery_scope: config.discovery.scope.clone(),
+        dial: true,
+        link_socket: true,
+        cloud: node::CloudOptions::default(),
+    }
 }
 
 #[cfg(unix)]

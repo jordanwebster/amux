@@ -53,6 +53,8 @@ pub enum RelayError {
     Stale,
     #[error("resuming the agent: {0}")]
     Resume(Box<RegistryError>),
+    #[error("{0}")]
+    Forbidden(&'static str),
     #[error("the store: {0}")]
     Store(#[from] StoreError),
 }
@@ -67,6 +69,7 @@ impl RelayError {
             Self::Lost => ErrorCode::Aborted,
             Self::Rejected(_) | Self::Stale => ErrorCode::FailedPrecondition,
             Self::Resume(_) | Self::Store(_) => ErrorCode::Internal,
+            Self::Forbidden(_) => ErrorCode::PermissionDenied,
         };
         wire::Error {
             code: code as i32,
@@ -74,6 +77,16 @@ impl RelayError {
             details: Vec::new(),
         }
     }
+}
+
+/// Who a message is from.
+enum From {
+    /// A person, on the profile socket.
+    Person,
+    /// One of this host's agents, on its tools socket.
+    Agent(AgentId),
+    /// A paired host's agent.
+    Peer(AgentSender),
 }
 
 pub(crate) fn rejected(reason: &str) -> SendInputResponse {
@@ -200,8 +213,36 @@ impl ProfileRuntime {
     /// from the request. Answers once the recipient has accepted.
     pub async fn send_message(
         &self,
-        mut envelope: Envelope,
+        envelope: Envelope,
         caller: Option<AgentId>,
+    ) -> Result<SendMessageResponse, RelayError> {
+        self.send_message_from(envelope, caller.map_or(From::Person, From::Agent))
+            .await
+    }
+
+    /// A message a paired host sends on behalf of one of its agents. The
+    /// sender it names must be that host's own agent: a host speaks only for
+    /// its own agents.
+    pub async fn send_peer_message(
+        &self,
+        envelope: Envelope,
+        host: crate::HostId,
+    ) -> Result<SendMessageResponse, RelayError> {
+        let sender = match envelope.from.clone().and_then(|from| from.value) {
+            Some(sender::Value::Agent(sender)) if sender.host_id == host.as_bytes() => sender,
+            _ => {
+                return Err(RelayError::Forbidden(
+                    "a host sends messages only from its own agents",
+                ));
+            }
+        };
+        self.send_message_from(envelope, From::Peer(sender)).await
+    }
+
+    async fn send_message_from(
+        &self,
+        mut envelope: Envelope,
+        caller: From,
     ) -> Result<SendMessageResponse, RelayError> {
         let to = envelope.to.clone().ok_or(RelayError::NoAgent)?;
         if to.host_id != self.host().as_bytes() {
@@ -219,16 +260,26 @@ impl ProfileRuntime {
             let store = self.store.lock().await;
             let recipient = store.agent(&self.key(id))?.ok_or(RelayError::NoAgent)?;
             match caller {
-                None => (
+                From::Person => (
                     Sender {
                         value: Some(sender::Value::Human(Human {})),
                     },
                     false,
                 ),
-                Some(caller) => {
+                From::Agent(caller) => {
                     let row = store.agent(&self.key(caller))?;
                     let is_parent = recipient.parent.as_ref() == Some(&self.key(caller));
                     (self.agent_sender(caller, row.as_ref()), is_parent)
+                }
+                From::Peer(sender) => {
+                    let key = AgentKey::new(sender.host_id.clone(), sender.agent_id.clone());
+                    let is_parent = recipient.parent.as_ref() == Some(&key);
+                    (
+                        Sender {
+                            value: Some(sender::Value::Agent(sender)),
+                        },
+                        is_parent,
+                    )
                 }
             }
         };

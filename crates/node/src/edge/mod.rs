@@ -1,0 +1,788 @@
+//! A profile's network edge: its identity and trust, the links it holds to
+//! paired hosts and to the relay, the LAN listener those hosts dial,
+//! discovery, pairing, and the account binding the cloud link signs in with.
+//!
+//! Every link carries the same thing whichever carrier it rides: a control
+//! stream (Hello, HelloAck, NeighborUp/Down, Reauth, LinkClose) and
+//! application streams, each opened with a preface naming the host it is
+//! for. Inside each stream the two hosts run a TLS handshake pinned to the
+//! keys they exchanged when they paired; a trusted caller reaches the
+//! profile's PeerService with its host id as the caller, and a caller that
+//! presents no trusted key reaches only PairingService, and only while the
+//! profile is in pairing mode.
+
+pub(crate) mod account;
+mod admin;
+mod binding;
+mod cloud;
+mod peer;
+mod relay_server;
+mod status;
+
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
+
+pub use account::ACCOUNT_FILE;
+pub(crate) use account::{Account, AccountCredentials};
+pub use cloud::{FREE_TIER_REFRESH_INTERVAL, UDP_BLOCKED_MEMORY};
+use futures_util::stream;
+pub use relay_server::{CloudLinkServer, JwtCloudLinkAuthenticator, RelayIdentity};
+pub use status::{Observed, RelayCarrier};
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
+
+use self::cloud::{CloudLink, CloudTransport, UdpBlockedMemory, establish_cloud_link};
+use self::status::RuntimeStatus;
+use crate::auth::CredentialProvider;
+use crate::connection::ConnectionManager;
+use crate::discovery::{Advertisement, Discovery, FoundHosts, local_pairing_addrs};
+use crate::dispatcher::TunnelDispatcher;
+use crate::identity::{DeviceIdentity, IdentityError};
+use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, run_link, serve_inbound_streams};
+use crate::pairing::PairMode;
+use crate::routing::{
+    Capabilities, ConnectRole, HostVia, LinkConnectorCtx, LinkCtx, LinkRegistry, LiveLocalHost,
+    RoutingCore, local_host,
+};
+use crate::runtime::ProfileRuntime;
+use crate::services::{LocalPairingIdentity, PairingService, ReachabilityLinkConnector};
+use crate::transport::{BoxedGrpcIo, tonic_server_builder};
+use crate::trust::{SharedTrustStore, TrustGate, TrustStore};
+use crate::{Clock, HostId};
+
+/// How long a peer has to finish its TLS handshake inside a stream.
+const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The file a profile keeps its last LAN port in, so peers holding its
+/// address find it again after a restart.
+const LAN_PORT_FILE: &str = "lan_port";
+/// The local socket an SSH relay hands a peer's link to.
+pub const LINK_SOCKET: &str = "link.sock";
+/// How long links get to carry their LinkClose before the edge stops.
+const LINK_CLOSE_FLUSH: Duration = Duration::from_millis(200);
+
+/// What an installation's edges share. The default serves nothing on the
+/// network: identity, trust and pairing state exist, and a caller links
+/// profiles in process.
+#[derive(Clone)]
+pub struct EdgeOptions {
+    /// What this machine calls itself to its peers.
+    pub host_name: String,
+    /// The agent kinds this host runs, as its handshake advertises them.
+    pub kinds: Vec<wire::Kind>,
+    /// Listen for direct links on the LAN.
+    pub lan: Option<LanOptions>,
+    /// Advertise and browse the local network. Each profile gets its own
+    /// advertisement from this factory.
+    pub discovery: Option<DiscoveryFactory>,
+    /// Discovery candidates are listed and dialled only when their scope
+    /// equals this one.
+    pub discovery_scope: String,
+    /// Dial trusted peers at their known addresses and when discovery finds
+    /// them.
+    pub dial: bool,
+    /// Serve the local socket SSH relays hand a peer's link to.
+    pub link_socket: bool,
+    /// Where the cloud link dials, when a test stands in for the cloud.
+    pub cloud: CloudOptions,
+}
+
+pub type DiscoveryFactory = Arc<dyn Fn() -> Result<Arc<dyn Discovery>, String> + Send + Sync>;
+
+/// The platform's local-network discovery: mDNS, except where only the
+/// system may browse (the phone hands its results over instead). A debug
+/// build can swap in a scripted stand-in with `AMUX_TEST_DISCOVERY_MODE`.
+pub fn mdns_discovery() -> DiscoveryFactory {
+    Arc::new(|| {
+        #[cfg(all(debug_assertions, not(target_os = "ios")))]
+        match std::env::var("AMUX_TEST_DISCOVERY_MODE").as_deref() {
+            Ok("scripted" | "disabled") => {
+                return Ok(
+                    Arc::new(crate::discovery::ScriptedDiscovery::new()) as Arc<dyn Discovery>
+                );
+            }
+            Ok("mdns") | Err(std::env::VarError::NotPresent) => {}
+            Ok(mode) => return Err(format!("unknown test discovery mode {mode:?}")),
+            Err(error) => return Err(format!("invalid test discovery mode: {error}")),
+        }
+        crate::discovery::MdnsDiscovery::new()
+            .map(|discovery| Arc::new(discovery) as Arc<dyn Discovery>)
+            .map_err(|error| error.to_string())
+    })
+}
+
+impl Default for EdgeOptions {
+    fn default() -> Self {
+        Self {
+            host_name: "amux".to_owned(),
+            kinds: Vec::new(),
+            lan: None,
+            discovery: None,
+            discovery_scope: String::new(),
+            dial: false,
+            link_socket: false,
+            cloud: CloudOptions::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LanOptions {
+    /// Where the QUIC listener binds. Port zero reuses the profile's last
+    /// port when it is free and asks for any port otherwise.
+    pub bind: SocketAddr,
+}
+
+impl Default for LanOptions {
+    fn default() -> Self {
+        Self {
+            bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+        }
+    }
+}
+
+/// Overrides for the cloud link, for tests that stand in for the cloud.
+#[derive(Clone, Default)]
+pub struct CloudOptions {
+    /// Dial the relay's TCP carrier here, in plaintext, instead of the host
+    /// and port the cloud names.
+    pub relay_tcp: Option<SocketAddr>,
+    /// How often a free account's link asks the cloud what the account
+    /// buys; a purchase reaches the link within one interval.
+    pub free_refresh_interval: Option<Duration>,
+    /// A credential the embedder supplies instead of the profile's account
+    /// file, for a host that owns its own sign-in.
+    pub credentials: Option<Arc<dyn CredentialProvider>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EdgeError {
+    #[error(transparent)]
+    Identity(#[from] IdentityError),
+    #[error("the account file: {0}")]
+    Account(std::io::Error),
+    #[error("the LAN listener: {0}")]
+    Lan(std::io::Error),
+    #[error("discovery: {0}")]
+    Discovery(String),
+    #[error("the link socket: {0}")]
+    LinkSocket(std::io::Error),
+}
+
+/// One profile's network edge.
+pub struct Edge {
+    dir: PathBuf,
+    host_name: String,
+    identity: DeviceIdentity,
+    trust: SharedTrustStore,
+    trust_gate: Arc<TrustGate>,
+    local_host: LiveLocalHost,
+    routing: Arc<RoutingCore>,
+    channels: Arc<ChannelPool>,
+    connections: Arc<ConnectionManager>,
+    incoming_streams_tx: mpsc::Sender<(HostId, crate::link::ByteStream)>,
+    pair_mode: Arc<PairMode>,
+    pending: admin::PendingPairs,
+    reachability: ReachabilityLinkConnector,
+    discovery: Option<Arc<dyn Discovery>>,
+    found: Arc<FoundHosts>,
+    scope: String,
+    lan_addr: Option<SocketAddr>,
+    quic_endpoint: quinn::Endpoint,
+    account: Arc<Account>,
+    credentials_override: Option<Arc<dyn CredentialProvider>>,
+    cloud_options: CloudOptions,
+    cloud: tokio::sync::Mutex<Option<CloudLink>>,
+    udp_blocked: Arc<UdpBlockedMemory>,
+    status: RuntimeStatus,
+    clock: Arc<dyn Clock>,
+    shutdown: watch::Sender<bool>,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl Edge {
+    /// Loads the profile's identity, trust and account, and serves what the
+    /// options ask for. `runtime` is what trusted peers reach.
+    pub(crate) async fn start(
+        dir: &Path,
+        options: &EdgeOptions,
+        clock: Arc<dyn Clock>,
+        runtime: Weak<ProfileRuntime>,
+    ) -> Result<Arc<Self>, EdgeError> {
+        let identity = crate::identity::load_or_create_device_identity_in(dir)?;
+        let trust: SharedTrustStore =
+            Arc::new(std::sync::RwLock::new(TrustStore::load_or_create_in(dir)?));
+        let account = Account::open(dir).map_err(EdgeError::Account)?;
+        let signed_in = options.cloud.credentials.is_some() || account.wants_cloud();
+        let local_host = LiveLocalHost::new(local_host(
+            identity.host_id,
+            &options.host_name,
+            Capabilities {
+                features: Vec::new(),
+                kinds: options.kinds.iter().map(|kind| *kind as i32).collect(),
+            },
+            signed_in,
+        ));
+        let routing = Arc::new(RoutingCore::with_persisted_trust_store(
+            trust.clone(),
+            dir.to_owned(),
+        ));
+        let links = Arc::new(LinkRegistry::default());
+        let channels = Arc::new(ChannelPool::with_device_tls(
+            links,
+            identity.clone(),
+            trust.clone(),
+        ));
+        let connections = Arc::new(ConnectionManager::new(routing.clone(), channels.clone()));
+        let (incoming_streams_tx, incoming_streams_rx) = mpsc::channel(64);
+        let (trusted_tx, trusted_rx) = mpsc::channel(64);
+        let (pairing_tx, pairing_rx) = mpsc::channel(64);
+        let pair_mode = Arc::new(PairMode::new());
+        let trust_gate = Arc::new(TrustGate::default());
+        let (shutdown, _) = watch::channel(false);
+
+        let link_ctx = LinkCtx::new_live(
+            local_host.clone(),
+            routing.clone(),
+            channels.link_registry(),
+        )
+        .with_incoming_streams(incoming_streams_tx.clone())
+        .with_clock(clock.clone());
+        let dispatcher = TunnelDispatcher::new(
+            &identity,
+            trust.clone(),
+            pair_mode.clone(),
+            connections.trusted_connections(),
+            trusted_tx,
+            pairing_tx,
+            DEVICE_TLS_HANDSHAKE_TIMEOUT,
+        )?
+        .with_link_ctx(link_ctx.clone());
+
+        let mut tasks = vec![
+            connections.clone().attach_routing_events().await,
+            serve_inbound_streams(Arc::new(dispatcher.clone()), incoming_streams_rx),
+            peer::serve(runtime, trusted_rx, shutdown.subscribe()),
+            serve_pairing(
+                PairingService::new(
+                    pair_mode.clone(),
+                    LocalPairingIdentity::from_device_identity(&identity),
+                    options.host_name.clone(),
+                    trust.clone(),
+                    trust_gate.clone(),
+                    connections.clone(),
+                    dir.to_owned(),
+                ),
+                pairing_rx,
+                shutdown.subscribe(),
+            ),
+        ];
+
+        let quic_server = identity.quic_server_config(trust.clone())?;
+        let (quic_endpoint, lan_addr) = match options.lan {
+            Some(lan) => {
+                let endpoint = bind_lan(dir, lan.bind, quic_server).map_err(EdgeError::Lan)?;
+                let addr = endpoint.local_addr().map_err(EdgeError::Lan)?;
+                let _ = crate::install::write_durably(
+                    &dir.join(LAN_PORT_FILE),
+                    addr.port().to_string().as_bytes(),
+                );
+                tasks.push(dispatcher.serve_quic_endpoint(endpoint.clone(), shutdown.subscribe()));
+                tracing::info!(%addr, host = %identity.host_id, "listening for direct links");
+                (endpoint, Some(addr))
+            }
+            None => (
+                quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))
+                    .map_err(EdgeError::Lan)?,
+                None,
+            ),
+        };
+
+        let discovery = options
+            .discovery
+            .as_ref()
+            .map(|factory| factory())
+            .transpose()
+            .map_err(EdgeError::Discovery)?;
+        let found = Arc::new(FoundHosts::default());
+        let reachability = ReachabilityLinkConnector::new(
+            identity.clone(),
+            trust.clone(),
+            local_host.clone(),
+            routing.clone(),
+            channels.clone(),
+            connections.clone(),
+            incoming_streams_tx.clone(),
+        );
+        reachability.configure(
+            dir.to_owned(),
+            discovery
+                .clone()
+                .unwrap_or_else(|| Arc::new(crate::discovery::ScriptedDiscovery::new())),
+            found.clone(),
+            quic_endpoint.clone(),
+            options.discovery_scope.clone(),
+        );
+        if let Some(discovery) = &discovery {
+            if let Some(addr) = lan_addr {
+                let addrs = if addr.ip().is_unspecified() {
+                    local_pairing_addrs(addr.port())
+                } else {
+                    vec![addr]
+                };
+                discovery
+                    .advertise(Advertisement {
+                        host_id: identity.host_id,
+                        name: options.host_name.clone(),
+                        version: crate::PROTOCOL_VERSION,
+                        addrs,
+                        scope: options.discovery_scope.clone(),
+                    })
+                    .map_err(|error| EdgeError::Discovery(error.to_string()))?;
+            }
+            tasks.push(reachability.spawn_dial_on_found(discovery.browse(), options.dial));
+            discovery.requery();
+        }
+        if options.dial {
+            tasks.extend(reachability.spawn_startup_links());
+        }
+        if options.link_socket {
+            tasks.push(serve_link_socket(dir, link_ctx, shutdown.subscribe())?);
+        }
+
+        let edge = Arc::new(Self {
+            dir: dir.to_owned(),
+            host_name: options.host_name.clone(),
+            identity,
+            trust,
+            trust_gate,
+            local_host,
+            routing,
+            channels,
+            connections,
+            incoming_streams_tx,
+            pair_mode,
+            pending: admin::PendingPairs::default(),
+            reachability,
+            discovery,
+            found,
+            scope: options.discovery_scope.clone(),
+            lan_addr,
+            quic_endpoint,
+            account,
+            credentials_override: options.cloud.credentials.clone(),
+            cloud_options: options.cloud.clone(),
+            cloud: tokio::sync::Mutex::new(None),
+            udp_blocked: Arc::new(UdpBlockedMemory::new(UDP_BLOCKED_MEMORY, clock.clone())),
+            status: RuntimeStatus::default(),
+            clock,
+            shutdown,
+            tasks: Mutex::new(tasks),
+        });
+        if signed_in {
+            edge.start_cloud().await;
+        }
+        Ok(edge)
+    }
+
+    pub fn host_id(&self) -> HostId {
+        self.identity.host_id
+    }
+
+    pub fn public_key(&self) -> &[u8] {
+        self.identity.public_key()
+    }
+
+    pub fn host_name(&self) -> &str {
+        &self.host_name
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Where the LAN listener answers, when there is one.
+    pub fn lan_addr(&self) -> Option<SocketAddr> {
+        self.lan_addr
+    }
+
+    /// The addresses a pairing invitation names: the LAN listener on every
+    /// interface it is reachable on.
+    pub fn pairing_addrs(&self) -> Vec<SocketAddr> {
+        match self.lan_addr {
+            Some(addr) if addr.ip().is_unspecified() => local_pairing_addrs(addr.port()),
+            Some(addr) => vec![addr],
+            None => Vec::new(),
+        }
+    }
+
+    pub fn discovery_scope(&self) -> &str {
+        &self.scope
+    }
+
+    /// Machines discovery has found in this profile's scope, newest first.
+    pub fn candidates(&self) -> Vec<Advertisement> {
+        self.found
+            .candidates()
+            .into_iter()
+            .filter(|advert| advert.host_id != self.identity.host_id)
+            .collect()
+    }
+
+    /// Hands this profile what an outside browser resolved: the phone,
+    /// where only the system may browse the local network.
+    pub fn hand_over_discovered(&self, found: Vec<Advertisement>) {
+        let found = found
+            .into_iter()
+            .filter(|advert| advert.scope == self.scope)
+            .collect::<Vec<_>>();
+        self.reachability.hand_over_found(found.clone());
+        if let Some(discovery) = &self.discovery {
+            discovery.hand_over(found);
+        }
+    }
+
+    /// The hosts this profile trusts: host id, name and key.
+    pub fn trusted(&self) -> Vec<(HostId, String, Vec<u8>)> {
+        self.trust
+            .read()
+            .map(|store| {
+                store
+                    .entries()
+                    .map(|(host, entry)| (host, entry.name.clone(), entry.pubkey.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn is_trusted(&self, host: HostId) -> bool {
+        self.trust
+            .read()
+            .is_ok_and(|store| store.entry(host).is_some())
+    }
+
+    /// How new calls to a host go now.
+    pub async fn via(&self, host: HostId) -> HostVia {
+        self.connections.via_for(host).await
+    }
+
+    /// Waits until calls to `host` have a route, or the timeout passes.
+    pub async fn wait_for_route(&self, host: HostId, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if self.via(host).await != HostVia::Offline {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// A PeerService client for a trusted host, over whichever route
+    /// reaches it: a direct link, or the relay.
+    pub async fn peer(
+        &self,
+        host: HostId,
+    ) -> Result<
+        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
+        crate::link::ChannelError,
+    > {
+        let channel = self.connections.channel_to(host).await?;
+        Ok(wire::peer_service_client(channel))
+    }
+
+    /// What the cloud link is doing.
+    pub fn observed(&self) -> Observed {
+        self.status.current()
+    }
+
+    pub fn subscribe_observed(&self) -> watch::Receiver<Observed> {
+        self.status.subscribe()
+    }
+
+    pub(crate) fn account(&self) -> &Arc<Account> {
+        &self.account
+    }
+
+    fn credentials(&self) -> Option<Arc<dyn CredentialProvider>> {
+        if let Some(credentials) = &self.credentials_override {
+            return Some(credentials.clone());
+        }
+        self.account.wants_cloud().then(|| {
+            Arc::new(AccountCredentials(self.account.clone())) as Arc<dyn CredentialProvider>
+        })
+    }
+
+    /// Starts the cloud link if the profile is signed in and none runs.
+    pub(crate) async fn start_cloud(&self) {
+        let Some(credentials) = self.credentials() else {
+            return;
+        };
+        let cloud_url = match self.account.service() {
+            Some(service) => service.as_str().to_owned(),
+            None if self.credentials_override.is_some() => String::new(),
+            None => return,
+        };
+        let mut cloud = self.cloud.lock().await;
+        if cloud.as_ref().is_some_and(|link| !link.is_finished()) {
+            return;
+        }
+        if let Some(finished) = cloud.take() {
+            finished.stop().await;
+        }
+        self.local_host.set_signed_in(true);
+        self.status.report(Observed::Connecting);
+        let connector: LinkConnectorCtx = LinkConnectorCtx::new_live(
+            self.local_host.clone(),
+            self.routing.clone(),
+            self.channels.link_registry(),
+        )
+        .with_incoming_streams(self.incoming_streams_tx.clone())
+        .with_clock(self.clock.clone());
+        *cloud = Some(establish_cloud_link(
+            cloud_url,
+            credentials,
+            connector,
+            self.status.clone(),
+            CloudTransport::new(
+                self.quic_endpoint.clone(),
+                self.udp_blocked.clone(),
+                self.cloud_options.relay_tcp,
+                self.cloud_options.free_refresh_interval,
+                self.clock.clone(),
+            ),
+        ));
+    }
+
+    /// Stops the cloud link; the profile works locally.
+    pub(crate) async fn stop_cloud(&self) {
+        if let Some(link) = self.cloud.lock().await.take() {
+            link.stop().await;
+        }
+        self.local_host
+            .set_signed_in(self.credentials_override.is_some() || self.account.wants_cloud());
+        self.status.report(Observed::Local);
+    }
+
+    /// Asks the cloud what the account buys now, over the live cloud link.
+    pub async fn refresh_entitlement(&self) -> Result<crate::Tier, String> {
+        match self.cloud.lock().await.as_ref() {
+            Some(link) => link
+                .refresh_entitlement()
+                .await
+                .map_err(|error| error.to_string()),
+            None => Err("the profile has no cloud link".to_owned()),
+        }
+    }
+
+    /// Links this edge to `other` in process, as a direct link over a
+    /// loopback carrier. Both must already trust each other: the acceptor
+    /// admits the connector as the host its trust store names, the way a
+    /// pinned handshake would. The link lives until the returned handle is
+    /// severed or dropped.
+    pub fn link_in_process(self: &Arc<Self>, other: &Arc<Edge>) -> Result<LoopbackLink, String> {
+        if !self.is_trusted(other.host_id()) || !other.is_trusted(self.host_id()) {
+            return Err("an in-process link joins two hosts that trust each other".to_owned());
+        }
+        let (near, far) = tokio::io::duplex(1 << 20);
+        let connector = Arc::new(MuxCarrier::new(near, MuxRole::Connector, CarrierKind::Quic));
+        let acceptor = Arc::new(MuxCarrier::new(far, MuxRole::Acceptor, CarrierKind::Quic));
+        let accept_ctx = other.link_ctx().with_authenticated_peer(self.host_id());
+        let connect_ctx = self.link_ctx().with_expected_peer(other.host_id());
+        let accepting = tokio::spawn({
+            let acceptor = acceptor.clone();
+            async move {
+                let _ = run_link(accept_ctx, acceptor, ConnectRole::Acceptor).await;
+            }
+        });
+        let (connecting, _) =
+            crate::link::run::spawn_connector_with_establishment(connect_ctx, connector.clone());
+        Ok(LoopbackLink {
+            carriers: [connector, acceptor],
+            tasks: vec![
+                accepting,
+                tokio::spawn(async move {
+                    let _ = connecting.await;
+                }),
+            ],
+        })
+    }
+
+    /// Opens a channel to a LAN listener without presenting a trusted key:
+    /// what a stranger, or a device about to pair, reaches.
+    pub async fn unpinned_channel(
+        &self,
+        addr: SocketAddr,
+    ) -> Result<tonic::transport::Channel, String> {
+        crate::transport::pairing_quic_channel(&self.quic_endpoint, addr)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    fn link_ctx(&self) -> LinkCtx {
+        LinkCtx::new_live(
+            self.local_host.clone(),
+            self.routing.clone(),
+            self.channels.link_registry(),
+        )
+        .with_incoming_streams(self.incoming_streams_tx.clone())
+        .with_shutdown(self.shutdown.subscribe())
+        .with_clock(self.clock.clone())
+    }
+
+    /// Dials a trusted peer's LAN listener directly.
+    pub fn dial(&self, host: HostId, addr: SocketAddr) {
+        self.reachability.spawn_pair_time_link(
+            host,
+            crate::trust::Reachability::Direct { addrs: vec![addr] },
+        );
+    }
+
+    /// Closes every link, withdraws the advertisement and stops serving.
+    pub(crate) async fn stop(&self, reason: wire::LinkCloseReason) {
+        if let Some(discovery) = &self.discovery {
+            discovery.withdraw();
+        }
+        self.channels
+            .link_registry()
+            .send_link_close_to_all(reason)
+            .await;
+        tokio::time::sleep(LINK_CLOSE_FLUSH).await;
+        self.shutdown.send_replace(true);
+        self.reachability.close_direct_links().await;
+        if let Some(link) = self.cloud.lock().await.take() {
+            link.stop().await;
+        }
+        self.trust_gate.close();
+        self.quic_endpoint
+            .close(quinn::VarInt::from_u32(0), b"profile stopping");
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap());
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for Edge {
+    fn drop(&mut self) {
+        if let Some(discovery) = &self.discovery {
+            discovery.withdraw();
+        }
+        self.shutdown.send_replace(true);
+        for task in self.tasks.lock().unwrap().drain(..) {
+            task.abort();
+        }
+    }
+}
+
+/// An in-process link between two edges.
+pub struct LoopbackLink {
+    carriers: [Arc<MuxCarrier>; 2],
+    tasks: Vec<JoinHandle<()>>,
+}
+
+impl LoopbackLink {
+    /// Cuts the link the way a dead connection would: no LinkClose, the
+    /// carrier just stops.
+    pub fn sever(&self) {
+        for carrier in &self.carriers {
+            crate::link::LinkCarrier::close(carrier.as_ref(), wire::LinkCloseReason::Unspecified);
+        }
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for LoopbackLink {
+    fn drop(&mut self) {
+        self.sever();
+    }
+}
+
+/// Binds the LAN listener, preferring the profile's last port.
+fn bind_lan(
+    dir: &Path,
+    bind: SocketAddr,
+    server: quinn::ServerConfig,
+) -> std::io::Result<quinn::Endpoint> {
+    if bind.port() == 0
+        && let Some(port) = std::fs::read_to_string(dir.join(LAN_PORT_FILE))
+            .ok()
+            .and_then(|text| text.trim().parse::<u16>().ok())
+        && let Ok(endpoint) =
+            quinn::Endpoint::server(server.clone(), SocketAddr::new(bind.ip(), port))
+    {
+        return Ok(endpoint);
+    }
+    quinn::Endpoint::server(server, bind)
+}
+
+/// Serves PairingService to callers that presented no trusted key.
+fn serve_pairing(
+    service: PairingService,
+    incoming: mpsc::Receiver<BoxedGrpcIo>,
+    shutdown: watch::Receiver<bool>,
+) -> JoinHandle<()> {
+    let incoming = stream::unfold(incoming, |mut incoming| async move {
+        incoming
+            .recv()
+            .await
+            .map(|io| (Ok::<_, std::io::Error>(io), incoming))
+    });
+    tokio::spawn(async move {
+        let served = tonic_server_builder()
+            .add_service(wire::pairing_service_server::PairingServiceServer::new(
+                service,
+            ))
+            .serve_with_incoming_shutdown(incoming, wait_for(shutdown))
+            .await;
+        if let Err(error) = served {
+            tracing::warn!(%error, "the pairing service stopped");
+        }
+    })
+}
+
+pub(crate) async fn wait_for(mut shutdown: watch::Receiver<bool>) {
+    let _ = shutdown.wait_for(|stop| *stop).await;
+}
+
+/// Accepts links SSH relays hand over on the profile's link socket.
+fn serve_link_socket(
+    dir: &Path,
+    ctx: LinkCtx,
+    shutdown: watch::Receiver<bool>,
+) -> Result<JoinHandle<()>, EdgeError> {
+    let path = dir.join(LINK_SOCKET);
+    let mut listener =
+        agent_dir::local_socket::LocalListener::bind(&path).map_err(EdgeError::LinkSocket)?;
+    let ctx = ctx
+        .with_carrier(crate::routing::LinkCarrier::Ssh)
+        .with_shutdown(shutdown);
+    Ok(tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok(stream) => {
+                    let carrier =
+                        Arc::new(MuxCarrier::new(stream, MuxRole::Acceptor, CarrierKind::Ssh));
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = run_link(ctx, carrier, ConnectRole::Acceptor).await {
+                            tracing::warn!(%error, "an SSH link ended with an error");
+                        }
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "the link socket stopped accepting");
+                    break;
+                }
+            }
+        }
+    }))
+}

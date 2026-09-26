@@ -20,6 +20,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use crate::activation::{ActivationError, ActivationPipe};
+use crate::edge::EdgeOptions;
 use crate::front_door::{self, ProfileEvent};
 use crate::generation::{self, Generation};
 use crate::grpc::{self, ClientApi};
@@ -41,6 +42,8 @@ pub struct StartOptions {
     /// Where the front door listens. None serves nothing on sockets: the
     /// runtimes are reached in process.
     pub front_door: Option<PathBuf>,
+    /// What each profile's network edge serves.
+    pub edge: EdgeOptions,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +77,11 @@ pub enum StartError {
     FrontDoorTaken(PathBuf),
     #[error("binding {}: {error}", .path.display())]
     Bind { path: PathBuf, error: io::Error },
+    #[error("profile {profile}'s network edge: {error}")]
+    Edge {
+        profile: ProfileId,
+        error: crate::edge::EdgeError,
+    },
 }
 
 /// What the daemon shares with its front door: how to open a profile, the
@@ -86,6 +94,7 @@ pub(crate) struct Installation {
     clock: Arc<dyn Clock>,
     push: Arc<dyn PushSender>,
     daemon_log: Option<PathBuf>,
+    edge: EdgeOptions,
     pub(crate) hosted: Mutex<BTreeMap<ProfileId, Hosted>>,
     /// One registry change at a time: create, rename, delete.
     pub(crate) registry_changes: tokio::sync::Mutex<()>,
@@ -102,12 +111,17 @@ pub(crate) struct Hosted {
     /// profiles in the order they were created, oldest first.
     pub(crate) position: usize,
     socket: Option<JoinHandle<()>>,
+    /// Republishes the profile when its cloud link's state moves.
+    observer: Option<JoinHandle<()>>,
 }
 
 impl Drop for Hosted {
     fn drop(&mut self) {
         if let Some(socket) = self.socket.take() {
             socket.abort();
+        }
+        if let Some(observer) = self.observer.take() {
+            observer.abort();
         }
     }
 }
@@ -152,9 +166,33 @@ impl Installation {
     }
 
     /// Puts a profile whose sweep is finished into service: its outboxes,
-    /// its socket, its place in the front door's list.
-    fn host(&self, runtime: Arc<ProfileRuntime>, entry: ProfileEntry) -> Result<(), StartError> {
+    /// its network edge, its socket, its place in the front door's list.
+    async fn host(
+        self: &Arc<Self>,
+        runtime: Arc<ProfileRuntime>,
+        entry: ProfileEntry,
+    ) -> Result<(), StartError> {
         runtime.start_background();
+        let edge = runtime
+            .start_edge(&self.edge)
+            .await
+            .map_err(|error| StartError::Edge {
+                profile: entry.id,
+                error,
+            })?;
+        let observer = {
+            let installation = Arc::downgrade(self);
+            let profile = entry.id;
+            let mut observed = edge.subscribe_observed();
+            tokio::spawn(async move {
+                while observed.changed().await.is_ok() {
+                    let Some(installation) = installation.upgrade() else {
+                        return;
+                    };
+                    installation.republish(profile);
+                }
+            })
+        };
         let socket = self.bind(&runtime)?;
         let info = {
             let mut all = self.hosted.lock().unwrap();
@@ -168,6 +206,7 @@ impl Installation {
                 entry,
                 position,
                 socket,
+                observer: Some(observer),
             };
             let info = front_door::info(&hosted);
             all.insert(hosted.entry.id, hosted);
@@ -178,7 +217,7 @@ impl Installation {
     }
 
     /// Creates, opens, sweeps and hosts a new profile.
-    pub(crate) async fn create(&self, label: &str) -> Result<ProfileId, StartError> {
+    pub(crate) async fn create(self: &Arc<Self>, label: &str) -> Result<ProfileId, StartError> {
         let entry =
             profiles::create_labelled(&self.data_dir, label).map_err(StartError::Registry)?;
         let profile = entry.id;
@@ -191,7 +230,7 @@ impl Installation {
             .finish_sweep(looked)
             .await
             .map_err(|error| StartError::Sweep { profile, error })?;
-        self.host(runtime, entry)?;
+        self.host(runtime, entry).await?;
         Ok(profile)
     }
 
@@ -199,6 +238,19 @@ impl Installation {
         let mut sequence = self.sequence.lock().unwrap();
         *sequence += 1;
         let _ = self.events.send((*sequence, event));
+    }
+
+    /// Tells the front door's watchers a profile's description moved.
+    pub(crate) fn republish(&self, profile: ProfileId) {
+        let info = self
+            .hosted
+            .lock()
+            .unwrap()
+            .get(&profile)
+            .map(front_door::info);
+        if let Some(info) = info {
+            self.publish(ProfileEvent::Upserted(Box::new(info)));
+        }
     }
 
     pub(crate) fn request_shutdown(&self) {
@@ -246,6 +298,7 @@ pub async fn start(
         push,
         daemon_log,
         front_door,
+        edge,
     } = options;
     let lock = InstallationLock::acquire(&data_dir)?;
     let boot_id = match boot_id {
@@ -264,6 +317,7 @@ pub async fn start(
         clock,
         push,
         daemon_log,
+        edge,
         hosted: Mutex::new(BTreeMap::new()),
         registry_changes: tokio::sync::Mutex::new(()),
         events: broadcast::channel(256).0,
@@ -308,7 +362,7 @@ pub async fn start(
     }
     // Every own journal has been read to its end: the outboxes may run.
     for (entry, runtime) in swept {
-        installation.host(runtime, entry)?;
+        installation.host(runtime, entry).await?;
     }
     // An installation always has a profile to serve.
     if installation.hosted.lock().unwrap().is_empty() {
@@ -401,6 +455,12 @@ impl Daemon {
             front_door.abort();
         }
         let hosted = std::mem::take(&mut *self.installation.hosted.lock().unwrap());
+        for hosted in hosted.values() {
+            hosted
+                .runtime
+                .stop_edge(wire::LinkCloseReason::UserShutdown)
+                .await;
+        }
         for hosted in hosted.values() {
             hosted.runtime.stop_background().await;
             hosted.runtime.stop_watching().await;

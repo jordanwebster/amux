@@ -8,7 +8,29 @@ publish = false
 
 [dependencies]
 agent-dir = { workspace = true }
+async-trait = { workspace = true }
+base64 = "0.22"
+bytes = { workspace = true }
+chrono = { workspace = true }
+curve25519-dalek = { workspace = true }
 futures-util = { workspace = true }
+gethostname = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+jsonwebtoken = { workspace = true }
+oauth2 = { workspace = true }
+quinn = { workspace = true }
+rcgen = { workspace = true }
+ring = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+socket2 = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-util = { workspace = true }
+tower = { workspace = true }
+webpki-roots = { workspace = true }
+yamux = { workspace = true }
 # The dump path's redactor: the one place the daemon decodes a body.
 interpret = { workspace = true }
 journal = { workspace = true }
@@ -28,6 +50,10 @@ wire = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+if-addrs = { workspace = true }
+mdns-sd = "0.21"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_SystemInformation"] }

@@ -1,3 +1,20 @@
+2026-09-26 — **Each profile runs its network edge again: identity, trust, links, pairing, discovery and the cloud link.**
+The daemon rewrite had removed the whole network edge along with the old
+agent hosting. It is back, rebuilt on the profile runtime from the code it
+replaced: each profile keeps its device key and trust store in its own
+directory, serves a mutually authenticated QUIC listener on the LAN, holds
+links (Hello, HelloAck, NeighborUp/Down, Reauth, LinkClose) to paired hosts
+directly, over SSH relays and through the cloud relay, advertises and browses
+mDNS with its discovery scope in the TXT record, pairs over SPAKE2, and signs
+in to an account whose cloud link refreshes its credential on the runtime's
+clock. A trusted host's streams reach the profile's PeerService, answered by
+the same runtime as the client service; a stranger reaches only pairing, and
+only in pairing mode. The front door's pairing, peer and account calls answer
+for real. What stays gone is the old client service's forwarding of remote
+sessions and the agent-hosting services; the host id is now the profile's
+text host_id file, and the minimum-client-version refusal gave way to the
+protocol-version break-glass.
+
 2026-09-26 — **The dump test now catches an unredacted input in an agent's facts ring.**
 The test sends a secret-bearing input to a running agent after it started,
 so the input reaches the provider and the agent's facts ring, and it looks

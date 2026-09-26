@@ -272,6 +272,8 @@ pub struct ProfileRuntime {
     pub(crate) reports: PathBuf,
     pub(crate) daemon_log: Option<PathBuf>,
     pub(crate) me: Weak<ProfileRuntime>,
+    /// The network edge, once the profile is in service.
+    edge: std::sync::OnceLock<Arc<crate::edge::Edge>>,
 }
 
 pub(crate) struct AgentHandle {
@@ -455,7 +457,35 @@ impl ProfileRuntime {
             reports,
             daemon_log,
             me: me.clone(),
+            edge: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Starts the profile's network edge: its identity and trust, and the
+    /// listeners and links the options ask for. Once per runtime.
+    pub async fn start_edge(
+        self: &Arc<Self>,
+        options: &crate::edge::EdgeOptions,
+    ) -> Result<Arc<crate::edge::Edge>, crate::edge::EdgeError> {
+        if let Some(edge) = self.edge.get() {
+            return Ok(edge.clone());
+        }
+        let edge =
+            crate::edge::Edge::start(&self.dir, options, self.clock.clone(), Arc::downgrade(self))
+                .await?;
+        Ok(self.edge.get_or_init(|| edge).clone())
+    }
+
+    /// The profile's network edge, once started.
+    pub fn edge(&self) -> Option<Arc<crate::edge::Edge>> {
+        self.edge.get().cloned()
+    }
+
+    /// Closes the edge's links with `reason` and stops serving the network.
+    pub async fn stop_edge(&self, reason: wire::LinkCloseReason) {
+        if let Some(edge) = self.edge.get() {
+            edge.stop(reason).await;
+        }
     }
 
     pub fn profile(&self) -> ProfileId {
