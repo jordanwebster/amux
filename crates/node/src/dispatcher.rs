@@ -13,8 +13,8 @@ use crate::identity::{self, DeviceIdentity, IdentityError};
 use crate::link::{ByteStream, LinkCtx, QuicCarrier, accepted_quic_bidi_stream, run_link};
 use crate::pairing::PairMode;
 use crate::resource_limits::{
-    EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
-    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, SlidingWindowRateLimiter,
+    Admission, EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, QUIC_RETRY_REPEAT_INTERVAL, RetryAdmission,
 };
 use crate::transport::{BoxedGrpcIo, PreTrustPairingReachability, TrustedPeerConnections};
 use crate::trust::SharedTrustStore;
@@ -106,7 +106,7 @@ pub(crate) struct TunnelDispatcher {
     trusted_tx: mpsc::Sender<BoxedGrpcIo>,
     pairing_tx: mpsc::Sender<BoxedGrpcIo>,
     handshake_timeout: Duration,
-    external_quic_handshake_limiter: std::sync::Arc<Mutex<SlidingWindowRateLimiter<IpAddr>>>,
+    external_quic_retries: std::sync::Arc<Mutex<RetryAdmission<IpAddr, quinn::ConnectionId>>>,
     external_quic_handshake_slots: std::sync::Arc<Semaphore>,
     link_ctx: Option<LinkCtx>,
 }
@@ -138,12 +138,11 @@ impl TunnelDispatcher {
             trusted_tx,
             pairing_tx,
             handshake_timeout,
-            external_quic_handshake_limiter: std::sync::Arc::new(Mutex::new(
-                SlidingWindowRateLimiter::new(
-                    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
-                    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW,
-                ),
-            )),
+            external_quic_retries: std::sync::Arc::new(Mutex::new(RetryAdmission::new(
+                EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+                EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW,
+                QUIC_RETRY_REPEAT_INTERVAL,
+            ))),
             external_quic_handshake_slots: std::sync::Arc::new(Semaphore::new(
                 EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY,
             )),
@@ -187,10 +186,20 @@ impl TunnelDispatcher {
                 // happen before accepting the Incoming, so quinn has not yet
                 // allocated connection or TLS handshake state.
                 if !incoming.remote_address_validated() {
-                    if !dispatcher.allow_external_quic_handshake(addr.ip()).await {
-                        tracing::warn!(peer = %addr, "external QUIC handshake rate limit exceeded");
-                        incoming.ignore();
-                        continue;
+                    match dispatcher
+                        .admit_external_quic_handshake(addr.ip(), incoming.orig_dst_cid())
+                        .await
+                    {
+                        Admission::Retry => {}
+                        Admission::Repeat => {
+                            incoming.ignore();
+                            continue;
+                        }
+                        Admission::Refused => {
+                            tracing::warn!(peer = %addr, "external QUIC handshake rate limit exceeded");
+                            incoming.ignore();
+                            continue;
+                        }
                     }
                     if let Err(error) = incoming.retry() {
                         tracing::debug!(peer = %addr, error = %error, "QUIC address was already validated");
@@ -266,11 +275,15 @@ impl TunnelDispatcher {
         self.dispatch(stream, pairing_reachability).await
     }
 
-    async fn allow_external_quic_handshake(&self, source: IpAddr) -> bool {
-        self.external_quic_handshake_limiter
+    async fn admit_external_quic_handshake(
+        &self,
+        source: IpAddr,
+        attempt: quinn::ConnectionId,
+    ) -> Admission {
+        self.external_quic_retries
             .lock()
             .await
-            .allow(source)
+            .admit(source, attempt)
     }
 
     async fn dispatch_quic(
@@ -834,10 +847,26 @@ mod tests {
         let source = "127.0.0.1".parse::<IpAddr>().unwrap();
         let other = "127.0.0.2".parse::<IpAddr>().unwrap();
 
-        for _ in 0..EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT {
-            assert!(dispatcher.allow_external_quic_handshake(source).await);
+        let attempt = |n: u8| quinn::ConnectionId::new(&[n; 8]);
+        for n in 0..EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT as u8 {
+            assert_eq!(
+                dispatcher
+                    .admit_external_quic_handshake(source, attempt(n))
+                    .await,
+                Admission::Retry
+            );
         }
-        assert!(!dispatcher.allow_external_quic_handshake(source).await);
-        assert!(dispatcher.allow_external_quic_handshake(other).await);
+        assert_eq!(
+            dispatcher
+                .admit_external_quic_handshake(source, attempt(99))
+                .await,
+            Admission::Refused
+        );
+        assert_eq!(
+            dispatcher
+                .admit_external_quic_handshake(other, attempt(99))
+                .await,
+            Admission::Retry
+        );
     }
 }

@@ -9,6 +9,12 @@ pub(crate) const CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW: Duration = Duration::fro
 pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT: usize = 10;
 pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW: Duration = Duration::from_secs(60);
 pub(crate) const EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
+/// How soon one connection attempt may be sent a Retry again. A client that
+/// lost its Retry sends its Initial again only after a probe timeout, about
+/// a second at the start of a connection; anything sooner is a closing
+/// connection, which answers every packet, a Retry included, with another
+/// close.
+pub(crate) const QUIC_RETRY_REPEAT_INTERVAL: Duration = Duration::from_millis(500);
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_LIMIT: usize = 30;
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_WINDOW: Duration = Duration::from_secs(60);
 
@@ -59,9 +65,130 @@ where
     }
 }
 
+/// Which unvalidated QUIC Initials a listener answers with a Retry. Each
+/// source may start `limit` connection attempts per window. An attempt is
+/// named by its original destination connection id, so the same attempt
+/// arriving again, after a lost Retry or from a closing client answering
+/// each Retry with a close, spends nothing and is answered at most once per
+/// `repeat`. Without that, one abandoned dial spends a source's whole budget
+/// in milliseconds and every host behind the address loses QUIC for the
+/// window.
+#[derive(Debug)]
+pub(crate) struct RetryAdmission<K, A> {
+    limit: usize,
+    window: Duration,
+    repeat: Duration,
+    entries: HashMap<K, VecDeque<Attempt<A>>>,
+}
+
+#[derive(Debug)]
+struct Attempt<A> {
+    id: A,
+    first: Instant,
+    last: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    /// Answer with a Retry.
+    Retry,
+    /// An attempt already answered moments ago: drop it quietly.
+    Repeat,
+    /// The source has started its limit of attempts this window.
+    Refused,
+}
+
+impl<K, A> RetryAdmission<K, A>
+where
+    K: Eq + Hash,
+    A: Eq,
+{
+    pub(crate) fn new(limit: usize, window: Duration, repeat: Duration) -> Self {
+        Self {
+            limit,
+            window,
+            repeat,
+            entries: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn admit(&mut self, source: K, attempt: A) -> Admission {
+        self.admit_at(source, attempt, Instant::now())
+    }
+
+    fn admit_at(&mut self, source: K, attempt: A, now: Instant) -> Admission {
+        self.prune(now);
+        let attempts = self.entries.entry(source).or_default();
+        if let Some(known) = attempts.iter_mut().find(|known| known.id == attempt) {
+            if now.duration_since(known.last) < self.repeat {
+                return Admission::Repeat;
+            }
+            known.last = now;
+            return Admission::Retry;
+        }
+        if attempts.len() >= self.limit {
+            return Admission::Refused;
+        }
+        attempts.push_back(Attempt {
+            id: attempt,
+            first: now,
+            last: now,
+        });
+        Admission::Retry
+    }
+
+    fn prune(&mut self, now: Instant) {
+        let window = self.window;
+        self.entries.retain(|_, attempts| {
+            while attempts
+                .front()
+                .is_some_and(|attempt| attempt.first + window <= now)
+            {
+                attempts.pop_front();
+            }
+            !attempts.is_empty()
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn admission(limit: usize) -> RetryAdmission<&'static str, u32> {
+        RetryAdmission::new(limit, Duration::from_secs(60), Duration::from_millis(500))
+    }
+
+    #[test]
+    fn retry_admission_caps_new_attempts_per_source_then_recovers() {
+        let start = Instant::now();
+        let mut retries = admission(2);
+        assert_eq!(retries.admit_at("peer", 1, start), Admission::Retry);
+        assert_eq!(retries.admit_at("peer", 2, start), Admission::Retry);
+        assert_eq!(retries.admit_at("peer", 3, start), Admission::Refused);
+        assert_eq!(retries.admit_at("other", 3, start), Admission::Retry);
+        let later = start + Duration::from_secs(60);
+        assert_eq!(retries.admit_at("peer", 3, later), Admission::Retry);
+    }
+
+    #[test]
+    fn a_repeated_attempt_spends_nothing_and_is_answered_at_most_once_per_interval() {
+        let start = Instant::now();
+        let mut retries = admission(2);
+        assert_eq!(retries.admit_at("peer", 1, start), Admission::Retry);
+        // A closing client answers each Retry with a close at once.
+        for step in 1..20 {
+            let at = start + Duration::from_micros(400 * step);
+            assert_eq!(retries.admit_at("peer", 1, at), Admission::Repeat);
+        }
+        // A client whose Retry was lost asks again after its probe timeout.
+        let resent = start + Duration::from_secs(1);
+        assert_eq!(retries.admit_at("peer", 1, resent), Admission::Retry);
+        assert_eq!(retries.admit_at("peer", 1, resent), Admission::Repeat);
+        // The budget still has room for a new attempt.
+        assert_eq!(retries.admit_at("peer", 2, resent), Admission::Retry);
+        assert_eq!(retries.admit_at("peer", 3, resent), Admission::Refused);
+    }
 
     #[test]
     fn sliding_window_limiter_caps_then_recovers_after_window() {

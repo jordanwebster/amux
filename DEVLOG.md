@@ -1,3 +1,17 @@
+2026-09-27 — **One abandoned QUIC dial no longer locks a network out of QUIC.**
+The relay and the LAN listener answer a first Initial with a Retry and
+allow each source address ten per minute. A client connection closed
+mid-handshake answers every packet, a Retry included, with another close
+in a tokenless Initial, so an abandoned dial ping-ponged with the listener
+and spent the whole budget in about 4 ms; every host behind that address
+then had its QUIC dials ignored for a minute and fell back to TCP. In the
+relay spec the phone's sign-in dial, abandoned while UDP was blocked,
+closed just as UDP came back, and the phone's next link came up over TCP
+(about 1 run in 17). The budget now counts each connection attempt once,
+by its original connection id; the same attempt arriving again is answered
+at most every 500 ms and spends nothing, which still covers a lost Retry
+(a client re-sends only after a probe timeout of about a second).
+
 2026-09-26 — **The discovery spec holds the desk's old port without a gap.**
 The case stopped the desk, then bound the desk's old UDP port so the stale
 address would answer nothing. A stopped edge still holds its port for a

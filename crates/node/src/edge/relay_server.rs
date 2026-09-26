@@ -19,8 +19,8 @@ use uuid::Uuid;
 use crate::auth::jwt::JwtValidator;
 use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, QuicCarrier, run_link};
 use crate::resource_limits::{
-    EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
-    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, SlidingWindowRateLimiter,
+    Admission, EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, QUIC_RETRY_REPEAT_INTERVAL, RetryAdmission,
 };
 use crate::routing::{
     AuthenticatedLinkContextProvider, AuthenticatedLinkUser, Capabilities, FEATURE_CLOUD_RELAY,
@@ -207,9 +207,10 @@ impl CloudLinkServer {
         slots: Arc<Semaphore>,
     ) -> JoinHandle<()> {
         let service = self.clone();
-        let limiter = Arc::new(tokio::sync::Mutex::new(SlidingWindowRateLimiter::new(
+        let admission = Arc::new(tokio::sync::Mutex::new(RetryAdmission::new(
             EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
             EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW,
+            QUIC_RETRY_REPEAT_INTERVAL,
         )));
         tokio::spawn(async move {
             let mut connection_tasks = tokio::task::JoinSet::new();
@@ -229,10 +230,21 @@ impl CloudLinkServer {
                 let addr = incoming.remote_address();
 
                 if !incoming.remote_address_validated() {
-                    if !limiter.lock().await.allow(addr.ip()) {
-                        tracing::warn!(peer = %addr, "cloud QUIC handshake rate limit exceeded");
-                        incoming.ignore();
-                        continue;
+                    match admission
+                        .lock()
+                        .await
+                        .admit(addr.ip(), incoming.orig_dst_cid())
+                    {
+                        Admission::Retry => {}
+                        Admission::Repeat => {
+                            incoming.ignore();
+                            continue;
+                        }
+                        Admission::Refused => {
+                            tracing::warn!(peer = %addr, "cloud QUIC handshake rate limit exceeded");
+                            incoming.ignore();
+                            continue;
+                        }
                     }
                     if let Err(error) = incoming.retry() {
                         tracing::debug!(peer = %addr, error = %error, "cloud QUIC address was already validated");
