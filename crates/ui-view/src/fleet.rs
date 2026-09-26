@@ -3,12 +3,12 @@
 
 use std::collections::HashSet;
 
-use ui_state::{AgentRef, Attention, FleetState};
+use ui_state::{AgentKey, Attention, FleetState};
 use wire::{Agent, Kind, Presence};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetCard {
-    pub agent: AgentRef,
+    pub agent: AgentKey,
     pub name: String,
     pub kind: Kind,
     pub attention: Attention,
@@ -32,7 +32,7 @@ pub struct FleetRow {
 }
 
 fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
-    let at = AgentRef::of(agent);
+    let at = AgentKey::of(agent);
     let host = fleet.host(&agent.host_id);
     FleetCard {
         name: agent.name.clone().unwrap_or_default(),
@@ -119,7 +119,7 @@ pub struct FamilyHeader {
 /// None for an agent with no parent and no children.
 pub fn family_header(fleet: &FleetState, agent_id: &[u8]) -> Option<FamilyHeader> {
     let agent = fleet.find(agent_id)?;
-    let at = AgentRef::of(agent);
+    let at = AgentKey::of(agent);
     let parent = fleet.parent(&at).map(|parent| card(fleet, parent));
     let children: Vec<FleetCard> = fleet
         .families()

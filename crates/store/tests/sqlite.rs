@@ -3,7 +3,7 @@
 
 use rusqlite::{Connection, params};
 use store::{
-    AgentRef, AgentRow, CommitClock, MIGRATIONS, OpenError, SCHEMA_STAMP, Sqlite, Store,
+    AgentKey, AgentRow, CommitClock, MIGRATIONS, OpenError, SCHEMA_STAMP, Sqlite, Store,
     StoreError, migration_hash,
 };
 use wire::{Item, Phase, Snapshot, Step};
@@ -114,7 +114,7 @@ fn a_newer_store_opens_when_its_stamp_allows_and_not_otherwise() {
         .unwrap();
     }
     let mut store = Sqlite::open(&path, OWN).unwrap();
-    let agent = AgentRef::new(OWN, b"a".to_vec());
+    let agent = AgentKey::new(OWN, b"a".to_vec());
     store
         .put_agent(&AgentRow::new(agent.clone(), "codex", "/"))
         .unwrap();
@@ -149,7 +149,7 @@ fn a_file_that_is_not_a_profile_store_is_refused() {
 fn the_unique_order_index_trips_on_a_second_key_at_one_order() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open(&dir);
-    let agent = AgentRef::new(OWN, b"a".to_vec());
+    let agent = AgentKey::new(OWN, b"a".to_vec());
     store
         .put_agent(&AgentRow::new(agent.clone(), "codex", "/"))
         .unwrap();
@@ -172,7 +172,7 @@ fn the_unique_order_index_trips_on_a_second_key_at_one_order() {
 fn a_commit_that_fails_leaves_nothing_behind() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open(&dir);
-    let agent = AgentRef::new(OWN, b"a".to_vec());
+    let agent = AgentKey::new(OWN, b"a".to_vec());
     store
         .put_agent(&AgentRow::new(agent.clone(), "codex", "/"))
         .unwrap();
@@ -215,11 +215,11 @@ fn a_commit_that_fails_leaves_nothing_behind() {
 #[test]
 fn rows_survive_a_reopen() {
     let dir = tempfile::tempdir().unwrap();
-    let agent = AgentRef::new(OWN, b"a".to_vec());
+    let agent = AgentKey::new(OWN, b"a".to_vec());
     {
         let mut store = open(&dir);
         let mut row = AgentRow::new(agent.clone(), "codex", "/src");
-        row.parent = Some(AgentRef::new(b"p-host".to_vec(), b"p".to_vec()));
+        row.parent = Some(AgentKey::new(b"p-host".to_vec(), b"p".to_vec()));
         store.put_agent(&row).unwrap();
         let mut frames = step(&["k1", "k2"]);
         frames.items[0].attachments = vec![wire::Attachment {
@@ -238,7 +238,7 @@ fn rows_survive_a_reopen() {
     assert_eq!(row.ingest_cursor, 64);
     assert_eq!(
         row.parent,
-        Some(AgentRef::new(b"p-host".to_vec(), b"p".to_vec()))
+        Some(AgentKey::new(b"p-host".to_vec(), b"p".to_vec()))
     );
     let item = store.get(&agent, "k1").unwrap().unwrap();
     assert_eq!(item.attachments.len(), 1);

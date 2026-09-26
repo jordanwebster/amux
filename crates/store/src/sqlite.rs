@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::migrations::{MIGRATIONS, SCHEMA_STAMP, migration_hash};
 use crate::{
-    AgentRef, AgentRow, Backend, Delivery, Item, Marker, Notification, Snapshot, StoreError,
+    AgentKey, AgentRow, Backend, Delivery, Item, Marker, Notification, Snapshot, StoreError,
     Tables, decode_attachments, encode_attachments,
 };
 
@@ -32,7 +32,7 @@ pub enum OpenError {
 pub struct Sqlite {
     conn: Connection,
     own_host: Vec<u8>,
-    markers: HashMap<AgentRef, Marker>,
+    markers: HashMap<AgentKey, Marker>,
 }
 
 impl std::fmt::Debug for Sqlite {
@@ -149,11 +149,11 @@ impl Backend for Sqlite {
         Ok(result)
     }
 
-    fn markers(&self) -> &HashMap<AgentRef, Marker> {
+    fn markers(&self) -> &HashMap<AgentKey, Marker> {
         &self.markers
     }
 
-    fn markers_mut(&mut self) -> &mut HashMap<AgentRef, Marker> {
+    fn markers_mut(&mut self) -> &mut HashMap<AgentKey, Marker> {
         &mut self.markers
     }
 }
@@ -181,11 +181,11 @@ fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
     let snapshot: Option<Vec<u8>> = row.get(12)?;
     Ok((
         AgentRow {
-            agent: AgentRef::new(row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?),
+            agent: AgentKey::new(row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?),
             kind: row.get(2)?,
             name: row.get(3)?,
             cwd: row.get(4)?,
-            parent: parent.map(|agent| AgentRef::new(parent_host.unwrap_or_default(), agent)),
+            parent: parent.map(|agent| AgentKey::new(parent_host.unwrap_or_default(), agent)),
             lifecycle: row.get(7)?,
             exit_cause: row.get(8)?,
             phase: row.get(9)?,
@@ -206,7 +206,7 @@ fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
     ))
 }
 
-fn item_row(row: &Row<'_>, agent: &AgentRef) -> rusqlite::Result<(Item, Option<Vec<u8>>)> {
+fn item_row(row: &Row<'_>, agent: &AgentKey) -> rusqlite::Result<(Item, Option<Vec<u8>>)> {
     Ok((
         Item {
             agent: agent.agent.clone(),
@@ -235,7 +235,7 @@ fn delivery_row(row: &Row<'_>) -> rusqlite::Result<Delivery> {
         child_id: row.get(0)?,
         incarnation: row.get(1)?,
         turn_id: row.get::<_, i64>(2)? as u64,
-        parent: AgentRef::new(row.get::<_, Vec<u8>>(3)?, row.get::<_, Vec<u8>>(4)?),
+        parent: AgentKey::new(row.get::<_, Vec<u8>>(3)?, row.get::<_, Vec<u8>>(4)?),
         parent_incarnation: row.get(5)?,
         kind: row.get(6)?,
         body: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
@@ -243,7 +243,7 @@ fn delivery_row(row: &Row<'_>) -> rusqlite::Result<Delivery> {
 }
 
 impl Tables for SqlTables<'_> {
-    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError> {
+    fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError> {
         let found = self
             .conn
             .query_row(
@@ -301,7 +301,7 @@ impl Tables for SqlTables<'_> {
         Ok(())
     }
 
-    fn remove_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError> {
+    fn remove_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError> {
         self.conn.execute(
             "DELETE FROM items WHERE origin_host = ?1 AND agent_id = ?2",
             params![agent.host, agent.agent],
@@ -321,19 +321,19 @@ impl Tables for SqlTables<'_> {
         Ok(())
     }
 
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentRef>, StoreError> {
+    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError> {
         let mut statement = self
             .conn
             .prepare("SELECT agent_id FROM agents WHERE origin_host = ?1 ORDER BY agent_id")?;
         let agents = statement
             .query_map(params![host], |row| {
-                Ok(AgentRef::new(host.to_vec(), row.get::<_, Vec<u8>>(0)?))
+                Ok(AgentKey::new(host.to_vec(), row.get::<_, Vec<u8>>(0)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(agents)
     }
 
-    fn item(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError> {
+    fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError> {
         self.conn
             .query_row(
                 &format!(
@@ -347,7 +347,7 @@ impl Tables for SqlTables<'_> {
             .transpose()
     }
 
-    fn put_item(&mut self, agent: &AgentRef, item: &Item) -> Result<(), StoreError> {
+    fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError> {
         self.conn.execute(
             &format!(
                 "INSERT INTO items (origin_host, agent_id, {ITEM_COLUMNS}) \
@@ -376,7 +376,7 @@ impl Tables for SqlTables<'_> {
         Ok(())
     }
 
-    fn max_order(&self, agent: &AgentRef) -> Result<Option<u64>, StoreError> {
+    fn max_order(&self, agent: &AgentKey) -> Result<Option<u64>, StoreError> {
         let max: Option<i64> = self.conn.query_row(
             "SELECT MAX(\"order\") FROM items WHERE origin_host = ?1 AND agent_id = ?2",
             params![agent.host, agent.agent],
@@ -387,7 +387,7 @@ impl Tables for SqlTables<'_> {
 
     fn items_desc(
         &self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         below: Option<u64>,
         min_order: u64,
         limit: u32,
@@ -543,7 +543,7 @@ impl Tables for SqlTables<'_> {
             .collect()
     }
 
-    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError> {
+    fn agent_bytes(&self, agent: &AgentKey) -> Result<(u64, u64), StoreError> {
         let (bytes, rows): (i64, i64) = self.conn.query_row(
             &format!(
                 "SELECT IFNULL(SUM({ITEM_BYTES}), 0), COUNT(*) FROM items \
@@ -555,7 +555,7 @@ impl Tables for SqlTables<'_> {
         Ok((bytes as u64, rows as u64))
     }
 
-    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
+    fn oldest_items(&self, agent: &AgentKey, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
         let mut statement = self.conn.prepare(&format!(
             "SELECT \"order\", {ITEM_BYTES} FROM items WHERE origin_host = ?1 AND agent_id = ?2 \
              ORDER BY \"order\" LIMIT ?3"
@@ -568,7 +568,7 @@ impl Tables for SqlTables<'_> {
         Ok(rows)
     }
 
-    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError> {
+    fn remove_items_below(&mut self, agent: &AgentKey, order: u64) -> Result<(), StoreError> {
         self.conn.execute(
             "DELETE FROM items WHERE origin_host = ?1 AND agent_id = ?2 AND \"order\" < ?3",
             params![agent.host, agent.agent, order as i64],

@@ -4,16 +4,16 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    AgentRef, AgentRow, Backend, Delivery, Item, Marker, Notification, StoreError, Tables,
+    AgentKey, AgentRow, Backend, Delivery, Item, Marker, Notification, StoreError, Tables,
     item_bytes,
 };
 
 #[derive(Clone, Debug, Default)]
 struct Data {
-    agents: BTreeMap<AgentRef, AgentRow>,
+    agents: BTreeMap<AgentKey, AgentRow>,
     /// Per agent: key to item, and order to key (one key per order).
-    items: BTreeMap<AgentRef, BTreeMap<String, Item>>,
-    orders: BTreeMap<AgentRef, BTreeMap<u64, String>>,
+    items: BTreeMap<AgentKey, BTreeMap<String, Item>>,
+    orders: BTreeMap<AgentKey, BTreeMap<u64, String>>,
     deliveries: BTreeMap<(Vec<u8>, u32, i32, u64), Delivery>,
     notifications: BTreeMap<(Vec<u8>, u64), Notification>,
     hosts: BTreeMap<Vec<u8>, u64>,
@@ -23,7 +23,7 @@ struct Data {
 pub struct InMemory {
     own_host: Vec<u8>,
     data: Data,
-    markers: HashMap<AgentRef, Marker>,
+    markers: HashMap<AgentKey, Marker>,
 }
 
 impl InMemory {
@@ -57,17 +57,17 @@ impl Backend for InMemory {
         Ok(result)
     }
 
-    fn markers(&self) -> &HashMap<AgentRef, Marker> {
+    fn markers(&self) -> &HashMap<AgentKey, Marker> {
         &self.markers
     }
 
-    fn markers_mut(&mut self) -> &mut HashMap<AgentRef, Marker> {
+    fn markers_mut(&mut self) -> &mut HashMap<AgentKey, Marker> {
         &mut self.markers
     }
 }
 
 impl Tables for Data {
-    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError> {
+    fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError> {
         Ok(self.agents.get(agent).cloned())
     }
 
@@ -76,7 +76,7 @@ impl Tables for Data {
         Ok(())
     }
 
-    fn remove_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError> {
+    fn remove_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError> {
         self.agents.remove(agent);
         self.items.remove(agent);
         self.orders.remove(agent);
@@ -87,7 +87,7 @@ impl Tables for Data {
         Ok(())
     }
 
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentRef>, StoreError> {
+    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError> {
         Ok(self
             .agents
             .keys()
@@ -96,7 +96,7 @@ impl Tables for Data {
             .collect())
     }
 
-    fn item(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError> {
+    fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError> {
         Ok(self
             .items
             .get(agent)
@@ -104,7 +104,7 @@ impl Tables for Data {
             .cloned())
     }
 
-    fn put_item(&mut self, agent: &AgentRef, item: &Item) -> Result<(), StoreError> {
+    fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError> {
         let orders = self.orders.entry(agent.clone()).or_default();
         if let Some(key) = orders.get(&item.order)
             && *key != item.key
@@ -123,7 +123,7 @@ impl Tables for Data {
         Ok(())
     }
 
-    fn max_order(&self, agent: &AgentRef) -> Result<Option<u64>, StoreError> {
+    fn max_order(&self, agent: &AgentKey) -> Result<Option<u64>, StoreError> {
         Ok(self
             .orders
             .get(agent)
@@ -132,7 +132,7 @@ impl Tables for Data {
 
     fn items_desc(
         &self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         below: Option<u64>,
         min_order: u64,
         limit: u32,
@@ -212,13 +212,13 @@ impl Tables for Data {
         Ok(self.agents.values().cloned().collect())
     }
 
-    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError> {
+    fn agent_bytes(&self, agent: &AgentKey) -> Result<(u64, u64), StoreError> {
         Ok(self.items.get(agent).map_or((0, 0), |items| {
             (items.values().map(item_bytes).sum(), items.len() as u64)
         }))
     }
 
-    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
+    fn oldest_items(&self, agent: &AgentKey, limit: u32) -> Result<Vec<(u64, u64)>, StoreError> {
         let (Some(orders), Some(items)) = (self.orders.get(agent), self.items.get(agent)) else {
             return Ok(Vec::new());
         };
@@ -229,7 +229,7 @@ impl Tables for Data {
             .collect())
     }
 
-    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError> {
+    fn remove_items_below(&mut self, agent: &AgentKey, order: u64) -> Result<(), StoreError> {
         if let (Some(orders), Some(items)) = (self.orders.get_mut(agent), self.items.get_mut(agent))
         {
             let kept = orders.split_off(&order);

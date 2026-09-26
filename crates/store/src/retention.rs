@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{AgentRef, AgentRow, StoreError, Tables};
+use crate::{AgentKey, AgentRow, StoreError, Tables};
 
 /// What a sweep did, in order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct Sweep {
     /// Agents removed whole, in removal order: the daemon deletes their
     /// directories. A replica keeps its agents row; only its rows and blobs
     /// go.
-    pub removed: Vec<AgentRef>,
+    pub removed: Vec<AgentKey>,
     pub steps: Vec<SweepStep>,
 }
 
@@ -30,10 +30,10 @@ pub struct Sweep {
 pub enum SweepStep {
     /// An agent removed whole, with its rows' bytes; a replica keeps its
     /// agents row with an empty block.
-    Removed { agent: AgentRef, bytes: u64 },
+    Removed { agent: AgentKey, bytes: u64 },
     /// An agent's oldest rows removed; its block now starts at `from_order`.
     Trimmed {
-        agent: AgentRef,
+        agent: AgentKey,
         rows: u64,
         bytes: u64,
         from_order: u64,
@@ -113,7 +113,7 @@ fn remove_finished(
         .iter()
         .map(|row| (row.agent.clone(), row))
         .collect::<HashMap<_, _>>();
-    let mut children: HashMap<&AgentRef, Vec<&AgentRow>> = HashMap::new();
+    let mut children: HashMap<&AgentKey, Vec<&AgentRow>> = HashMap::new();
     for row in &rows {
         if let Some(parent) = &row.parent {
             children.entry(parent).or_default().push(row);
@@ -178,7 +178,7 @@ fn remove_finished(
 #[allow(clippy::too_many_arguments)]
 fn trim_rounds(
     tables: &mut dyn Tables,
-    candidates: &[AgentRef],
+    candidates: &[AgentKey],
     budget: u64,
     mut pool: u64,
     chunk: Option<u64>,
@@ -187,7 +187,7 @@ fn trim_rounds(
     sweep: &mut Sweep,
 ) -> Result<u64, StoreError> {
     while pool > budget {
-        let mut largest: Option<(u64, &AgentRef, u64)> = None;
+        let mut largest: Option<(u64, &AgentKey, u64)> = None;
         for agent in candidates {
             let (bytes, rows) = tables.agent_bytes(agent)?;
             if rows > u64::from(floor_k) && largest.is_none_or(|(size, ..)| bytes > size) {
@@ -254,8 +254,8 @@ pub(crate) fn sweep_replicas(
     own_host: &[u8],
     budget: u64,
     floor_k: u32,
-    sourced: &HashSet<AgentRef>,
-    last_used: &HashMap<AgentRef, i64>,
+    sourced: &HashSet<AgentKey>,
+    last_used: &HashMap<AgentKey, i64>,
 ) -> Result<Sweep, StoreError> {
     let mut pool = pool_bytes(tables, own_host, false)?;
     let mut sweep = Sweep {

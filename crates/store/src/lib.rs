@@ -34,12 +34,12 @@ pub use sqlite::{OpenError, Sqlite};
 
 /// An agent by the host that owns it and its id.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AgentRef {
+pub struct AgentKey {
     pub host: Vec<u8>,
     pub agent: Vec<u8>,
 }
 
-impl AgentRef {
+impl AgentKey {
     pub fn new(host: impl Into<Vec<u8>>, agent: impl Into<Vec<u8>>) -> Self {
         Self {
             host: host.into(),
@@ -52,11 +52,11 @@ impl AgentRef {
 /// a value from a newer peer is stored and served, never refused.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentRow {
-    pub agent: AgentRef,
+    pub agent: AgentKey,
     pub kind: String,
     pub name: Option<String>,
     pub cwd: String,
-    pub parent: Option<AgentRef>,
+    pub parent: Option<AgentKey>,
     pub lifecycle: i32,
     pub exit_cause: Option<String>,
     /// Copied from the snapshot envelope at commit.
@@ -85,7 +85,7 @@ pub struct AgentRow {
 
 impl AgentRow {
     /// A new live row in phase starting, with nothing committed yet.
-    pub fn new(agent: AgentRef, kind: impl Into<String>, cwd: impl Into<String>) -> Self {
+    pub fn new(agent: AgentKey, kind: impl Into<String>, cwd: impl Into<String>) -> Self {
         Self {
             agent,
             kind: kind.into(),
@@ -233,7 +233,7 @@ pub struct Delivery {
     pub child_id: Vec<u8>,
     pub incarnation: u32,
     pub turn_id: u64,
-    pub parent: AgentRef,
+    pub parent: AgentKey,
     pub parent_incarnation: u32,
     /// `wire::EnvelopeKind` as an integer: finished or failed.
     pub kind: i32,
@@ -277,20 +277,20 @@ pub enum StoreError {
 /// The primitive row operations, inside one transaction. Everything else
 /// is written once, over these.
 pub trait Tables {
-    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError>;
+    fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError>;
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
     /// Removes the row, its items, its deliveries and its notifications.
-    fn remove_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError>;
-    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentRef>, StoreError>;
-    fn item(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError>;
+    fn remove_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError>;
+    fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError>;
+    fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError>;
     /// Inserts or replaces by key. A second key at an order already taken
     /// is an error: one key per order.
-    fn put_item(&mut self, agent: &AgentRef, item: &Item) -> Result<(), StoreError>;
-    fn max_order(&self, agent: &AgentRef) -> Result<Option<u64>, StoreError>;
+    fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError>;
+    fn max_order(&self, agent: &AgentKey) -> Result<Option<u64>, StoreError>;
     /// Items with `min_order <= order < below`, newest first.
     fn items_desc(
         &self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         below: Option<u64>,
         min_order: u64,
         limit: u32,
@@ -311,10 +311,10 @@ pub trait Tables {
     fn set_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError>;
     fn agents(&self) -> Result<Vec<AgentRow>, StoreError>;
     /// The agent's held rows: their total [`item_bytes`] and count.
-    fn agent_bytes(&self, agent: &AgentRef) -> Result<(u64, u64), StoreError>;
+    fn agent_bytes(&self, agent: &AgentKey) -> Result<(u64, u64), StoreError>;
     /// The oldest held rows' orders and [`item_bytes`], oldest first.
-    fn oldest_items(&self, agent: &AgentRef, limit: u32) -> Result<Vec<(u64, u64)>, StoreError>;
-    fn remove_items_below(&mut self, agent: &AgentRef, order: u64) -> Result<(), StoreError>;
+    fn oldest_items(&self, agent: &AgentKey, limit: u32) -> Result<Vec<(u64, u64)>, StoreError>;
+    fn remove_items_below(&mut self, agent: &AgentKey, order: u64) -> Result<(), StoreError>;
 }
 
 /// What one held row costs against a retention budget: its envelope's
@@ -347,30 +347,30 @@ pub trait Backend {
         &mut self,
         f: impl FnOnce(&mut dyn Tables) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
-    fn markers(&self) -> &HashMap<AgentRef, Marker>;
-    fn markers_mut(&mut self) -> &mut HashMap<AgentRef, Marker>;
+    fn markers(&self) -> &HashMap<AgentKey, Marker>;
+    fn markers_mut(&mut self) -> &mut HashMap<AgentKey, Marker>;
 }
 
 /// The runtime's interface to its store.
 pub trait Store {
     fn own_host(&self) -> &[u8];
-    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError>;
+    fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError>;
     /// Items by order, newest first, from the block only.
     fn page(
         &self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         before_order: Option<u64>,
         limit: u32,
     ) -> Result<Page, StoreError>;
     /// One held item, in the block or not.
-    fn get(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError>;
+    fn get(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError>;
     /// The newest `n` rows of the block, oldest first.
-    fn last_n(&self, agent: &AgentRef, n: u32) -> Result<Vec<Item>, StoreError>;
+    fn last_n(&self, agent: &AgentKey, n: u32) -> Result<Vec<Item>, StoreError>;
     /// Replica rows: the source cursor. Own rows: the ingest cursor.
-    fn cursor(&self, agent: &AgentRef) -> Result<u64, StoreError>;
+    fn cursor(&self, agent: &AgentKey) -> Result<u64, StoreError>;
     /// The snapshot, the newest `n` rows and the marker, read together.
-    fn cut(&self, agent: &AgentRef, n: u32) -> Result<Cut, StoreError>;
-    fn set_marker(&mut self, agent: &AgentRef, marker: Option<Marker>);
+    fn cut(&self, agent: &AgentKey, n: u32) -> Result<Cut, StoreError>;
+    fn set_marker(&mut self, agent: &AgentKey, marker: Option<Marker>);
 
     /// Creates a row or updates its registry fields: kind, name, cwd,
     /// parent, lifecycle, exit cause, creation time, producer version and
@@ -378,15 +378,15 @@ pub trait Store {
     /// activity its inventory row carries. Committed state is kept.
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
     /// Removes an agent whole: row, items, deliveries and notifications.
-    fn delete_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError>;
+    fn delete_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError>;
     /// Commits journal frames to an own row in one transaction.
     fn commit(
         &mut self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         frames: &[(u64, Step)],
         clock: CommitClock,
     ) -> Result<Committed, StoreError>;
-    fn absorb(&mut self, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError>;
+    fn absorb(&mut self, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError>;
     /// Drops every replica of `host` and records its new generation in one
     /// transaction. Returns how many agents were dropped.
     fn rewind_host(&mut self, host: &[u8], generation: u64) -> Result<usize, StoreError>;
@@ -409,8 +409,8 @@ pub trait Store {
         &mut self,
         budget: u64,
         floor_k: u32,
-        sourced: &HashSet<AgentRef>,
-        last_used: &HashMap<AgentRef, i64>,
+        sourced: &HashSet<AgentKey>,
+        last_used: &HashMap<AgentKey, i64>,
     ) -> Result<Sweep, StoreError>;
 
     fn put_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
@@ -420,7 +420,7 @@ pub trait Store {
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
 }
 
-fn is_own(backend: &impl Backend, agent: &AgentRef) -> bool {
+fn is_own(backend: &impl Backend, agent: &AgentKey) -> bool {
     agent.host == backend.own_host()
 }
 
@@ -438,13 +438,13 @@ impl<B: Backend> Store for B {
         Backend::own_host(self)
     }
 
-    fn agent(&self, agent: &AgentRef) -> Result<Option<AgentRow>, StoreError> {
+    fn agent(&self, agent: &AgentKey) -> Result<Option<AgentRow>, StoreError> {
         self.read(|tables| tables.agent(agent))
     }
 
     fn page(
         &self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         before_order: Option<u64>,
         limit: u32,
     ) -> Result<Page, StoreError> {
@@ -478,16 +478,16 @@ impl<B: Backend> Store for B {
         })
     }
 
-    fn get(&self, agent: &AgentRef, key: &str) -> Result<Option<Item>, StoreError> {
+    fn get(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError> {
         self.read(|tables| tables.item(agent, key))
     }
 
-    fn last_n(&self, agent: &AgentRef, n: u32) -> Result<Vec<Item>, StoreError> {
+    fn last_n(&self, agent: &AgentKey, n: u32) -> Result<Vec<Item>, StoreError> {
         let own = is_own(self, agent);
         self.read(|tables| last_n(tables, agent, own, n))
     }
 
-    fn cursor(&self, agent: &AgentRef) -> Result<u64, StoreError> {
+    fn cursor(&self, agent: &AgentKey) -> Result<u64, StoreError> {
         let own = is_own(self, agent);
         let row = self.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
         Ok(if own {
@@ -497,7 +497,7 @@ impl<B: Backend> Store for B {
         })
     }
 
-    fn cut(&self, agent: &AgentRef, n: u32) -> Result<Cut, StoreError> {
+    fn cut(&self, agent: &AgentKey, n: u32) -> Result<Cut, StoreError> {
         let own = is_own(self, agent);
         let marker = self.markers().get(agent).copied();
         self.read(|tables| {
@@ -510,7 +510,7 @@ impl<B: Backend> Store for B {
         })
     }
 
-    fn set_marker(&mut self, agent: &AgentRef, marker: Option<Marker>) {
+    fn set_marker(&mut self, agent: &AgentKey, marker: Option<Marker>) {
         match marker {
             Some(marker) => {
                 self.markers_mut().insert(agent.clone(), marker);
@@ -548,14 +548,14 @@ impl<B: Backend> Store for B {
         })
     }
 
-    fn delete_agent(&mut self, agent: &AgentRef) -> Result<(), StoreError> {
+    fn delete_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError> {
         self.markers_mut().remove(agent);
         self.write(|tables| tables.remove_agent(agent))
     }
 
     fn commit(
         &mut self,
-        agent: &AgentRef,
+        agent: &AgentKey,
         frames: &[(u64, Step)],
         clock: CommitClock,
     ) -> Result<Committed, StoreError> {
@@ -565,7 +565,7 @@ impl<B: Backend> Store for B {
         self.write(|tables| commit(tables, agent, frames, clock))
     }
 
-    fn absorb(&mut self, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError> {
+    fn absorb(&mut self, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError> {
         if is_own(self, agent) {
             return Err(StoreError::NotReplica);
         }
@@ -622,8 +622,8 @@ impl<B: Backend> Store for B {
         &mut self,
         budget: u64,
         floor_k: u32,
-        sourced: &HashSet<AgentRef>,
-        last_used: &HashMap<AgentRef, i64>,
+        sourced: &HashSet<AgentKey>,
+        last_used: &HashMap<AgentKey, i64>,
     ) -> Result<Sweep, StoreError> {
         let own_host = Backend::own_host(self).to_vec();
         let sweep = self.write(|tables| {
@@ -665,7 +665,7 @@ impl<B: Backend> Store for B {
 
 fn last_n(
     tables: &dyn Tables,
-    agent: &AgentRef,
+    agent: &AgentKey,
     own: bool,
     n: u32,
 ) -> Result<Vec<Item>, StoreError> {
@@ -680,7 +680,7 @@ fn last_n(
 
 fn commit(
     tables: &mut dyn Tables,
-    agent: &AgentRef,
+    agent: &AgentKey,
     frames: &[(u64, Step)],
     clock: CommitClock,
 ) -> Result<Committed, StoreError> {
@@ -782,7 +782,7 @@ fn copy_envelope(row: &mut AgentRow, snapshot: &Snapshot) {
     row.snapshot = Some(snapshot.clone());
 }
 
-fn newest_text(tables: &dyn Tables, agent: &AgentRef) -> Result<String, StoreError> {
+fn newest_text(tables: &dyn Tables, agent: &AgentKey) -> Result<String, StoreError> {
     Ok(tables
         .items_desc(agent, None, 0, 1)?
         .into_iter()
@@ -794,7 +794,7 @@ fn newest_text(tables: &dyn Tables, agent: &AgentRef) -> Result<String, StoreErr
 /// Stores an item unless the row already holds a newer revision of its key.
 fn upsert_newer(
     tables: &mut dyn Tables,
-    agent: &AgentRef,
+    agent: &AgentKey,
     item: &Item,
 ) -> Result<bool, StoreError> {
     if let Some(held) = tables.item(agent, &item.key)?
@@ -808,7 +808,7 @@ fn upsert_newer(
     Ok(true)
 }
 
-fn absorb(tables: &mut dyn Tables, agent: &AgentRef, what: Absorb) -> Result<Absorbed, StoreError> {
+fn absorb(tables: &mut dyn Tables, agent: &AgentKey, what: Absorb) -> Result<Absorbed, StoreError> {
     let mut row = tables.agent(agent)?.ok_or(StoreError::UnknownAgent)?;
     let mut absorbed = Absorbed {
         stored: Vec::new(),

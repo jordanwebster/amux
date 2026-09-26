@@ -1,7 +1,7 @@
 //! One reader and writer suite, run against every store implementation.
 
 use store::{
-    Absorb, AgentRef, AgentRow, CommitClock, Cut, Delivery, InMemory, Marker, NotificationBody,
+    Absorb, AgentKey, AgentRow, CommitClock, Cut, Delivery, InMemory, Marker, NotificationBody,
     PageEnd, Record, SourceEvent, Sqlite, Store, StoreError,
 };
 use wire::{Append, EnvelopeKind, Item, Phase, Snapshot, Step, TurnEnd};
@@ -13,12 +13,12 @@ const CLOCK: CommitClock = CommitClock {
     notify_delay_ms: 30_000,
 };
 
-fn own(agent: &str) -> AgentRef {
-    AgentRef::new(OWN, agent.as_bytes())
+fn own(agent: &str) -> AgentKey {
+    AgentKey::new(OWN, agent.as_bytes())
 }
 
-fn peer(agent: &str) -> AgentRef {
-    AgentRef::new(PEER, agent.as_bytes())
+fn peer(agent: &str) -> AgentKey {
+    AgentKey::new(PEER, agent.as_bytes())
 }
 
 fn item(key: &str, text: &str) -> Item {
@@ -65,7 +65,7 @@ fn keys(items: &[Item]) -> Vec<&str> {
     items.iter().map(|item| item.key.as_str()).collect()
 }
 
-fn with_agent<S: Store>(mut store: S, agent: &AgentRef) -> S {
+fn with_agent<S: Store>(mut store: S, agent: &AgentKey) -> S {
     let mut row = AgentRow::new(agent.clone(), "claude_sdk", "/src/amux");
     row.name = Some("worker".into());
     store.put_agent(&row).unwrap();
@@ -729,7 +729,7 @@ fn cut_reads_snapshot_rows_and_marker_together<S: Store>(store: S) {
 fn rewind_host_drops_that_hosts_replicas_and_records_the_generation<S: Store>(store: S) {
     let mine = own("a");
     let theirs = [peer("r1"), peer("r2")];
-    let other = AgentRef::new(b"third-host".to_vec(), b"x".to_vec());
+    let other = AgentKey::new(b"third-host".to_vec(), b"x".to_vec());
     let mut store = with_agent(
         with_agent(with_agent(with_agent(store, &mine), &theirs[0]), &theirs[1]),
         &other,

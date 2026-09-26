@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use prost::Message;
-use ui_state::{AgentRef, Attention, FleetMsg, FleetState, InputOutcome, Key, Msg, SessionState};
+use ui_state::{AgentKey, Attention, FleetMsg, FleetState, InputOutcome, Key, Msg, SessionState};
 use ui_view::*;
 use wire::{Item, Kind, Phase, SessionEvent, ToolClass, ToolState, session_event};
 
@@ -427,7 +427,7 @@ fn the_fleet_ranks_families_by_their_loudest_member() {
     assert_eq!(header.attention, Attention::NeedsYou);
     assert_eq!(
         header.children[0].agent,
-        AgentRef {
+        AgentKey {
             host: b"a".to_vec(),
             agent: b"child".to_vec()
         }

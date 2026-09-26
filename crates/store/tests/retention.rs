@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use store::{
-    Absorb, AgentRef, AgentRow, BlobLru, CommitClock, ITEM_OVERHEAD_BYTES, PageEnd, Store, Sweep,
+    Absorb, AgentKey, AgentRow, BlobLru, CommitClock, ITEM_OVERHEAD_BYTES, PageEnd, Store, Sweep,
     SweepStep,
 };
 use wire::{Item, Lifecycle, Phase, Snapshot, Step, TurnEnd};
@@ -19,22 +19,22 @@ const CLOCK: CommitClock = CommitClock {
 const TEXT: usize = 1000;
 const ROW: u64 = 2 + TEXT as u64 + 5 + ITEM_OVERHEAD_BYTES;
 
-fn own(name: &str) -> AgentRef {
-    AgentRef::new(OWN, name.as_bytes())
+fn own(name: &str) -> AgentKey {
+    AgentKey::new(OWN, name.as_bytes())
 }
 
-fn peer(name: &str) -> AgentRef {
-    AgentRef::new(PEER, name.as_bytes())
+fn peer(name: &str) -> AgentKey {
+    AgentKey::new(PEER, name.as_bytes())
 }
 
 /// An own agent with `rows` rows of ROW bytes, last active at `at_ms`.
 fn add<S: Store>(
     store: &mut S,
-    agent: &AgentRef,
+    agent: &AgentKey,
     rows: usize,
     at_ms: i64,
     live: bool,
-    parent: Option<&AgentRef>,
+    parent: Option<&AgentKey>,
 ) {
     let mut row = AgentRow::new(agent.clone(), "codex", "/src");
     row.parent = parent.cloned();
@@ -65,7 +65,7 @@ fn add<S: Store>(
 }
 
 /// A replica with rows at orders 1..=rows, as a source's Reset left it.
-fn replica<S: Store>(store: &mut S, agent: &AgentRef, rows: u64, at_ms: i64) {
+fn replica<S: Store>(store: &mut S, agent: &AgentKey, rows: u64, at_ms: i64) {
     store
         .put_agent(&AgentRow::new(agent.clone(), "codex", "/src"))
         .unwrap();
@@ -94,7 +94,7 @@ fn replica<S: Store>(store: &mut S, agent: &AgentRef, rows: u64, at_ms: i64) {
         .unwrap();
 }
 
-fn name(agent: &AgentRef) -> String {
+fn name(agent: &AgentKey) -> String {
     String::from_utf8_lossy(&agent.agent).into_owned()
 }
 

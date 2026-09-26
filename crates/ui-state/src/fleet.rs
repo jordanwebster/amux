@@ -11,21 +11,21 @@ pub type HostId = Vec<u8>;
 
 /// An agent is named by its host and its id: a parent may live elsewhere.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AgentRef {
+pub struct AgentKey {
     pub host: HostId,
     pub agent: Vec<u8>,
 }
 
-impl AgentRef {
-    pub fn of(agent: &Agent) -> AgentRef {
-        AgentRef {
+impl AgentKey {
+    pub fn of(agent: &Agent) -> AgentKey {
+        AgentKey {
             host: agent.host_id.clone(),
             agent: agent.agent_id.clone(),
         }
     }
 
-    fn parent(agent: &Agent) -> Option<AgentRef> {
-        agent.parent.as_ref().map(|parent| AgentRef {
+    fn parent(agent: &Agent) -> Option<AgentKey> {
+        agent.parent.as_ref().map(|parent| AgentKey {
             host: parent.host_id.clone(),
             agent: parent.agent_id.clone(),
         })
@@ -66,11 +66,11 @@ pub enum FleetMsg {
 /// Parent edges, derived from the agent rows.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Families {
-    children: BTreeMap<AgentRef, BTreeSet<AgentRef>>,
+    children: BTreeMap<AgentKey, BTreeSet<AgentKey>>,
 }
 
 impl Families {
-    pub fn children(&self, parent: &AgentRef) -> impl DoubleEndedIterator<Item = &AgentRef> {
+    pub fn children(&self, parent: &AgentKey) -> impl DoubleEndedIterator<Item = &AgentKey> {
         self.children.get(parent).into_iter().flatten()
     }
 }
@@ -79,13 +79,13 @@ impl Families {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FleetState {
     hosts: BTreeMap<HostId, HostEntry>,
-    agents: BTreeMap<AgentRef, Agent>,
+    agents: BTreeMap<AgentKey, Agent>,
     families: Families,
     caught_up: bool,
     connection: Connection,
     /// Rows re-listed since the stream reopened; the rest are dropped at the
     /// next CaughtUp.
-    relisted: Option<(BTreeSet<HostId>, BTreeSet<AgentRef>)>,
+    relisted: Option<(BTreeSet<HostId>, BTreeSet<AgentKey>)>,
 }
 
 impl FleetState {
@@ -113,7 +113,7 @@ impl FleetState {
         self.agents.values()
     }
 
-    pub fn agent(&self, agent: &AgentRef) -> Option<&Agent> {
+    pub fn agent(&self, agent: &AgentKey) -> Option<&Agent> {
         self.agents.get(agent)
     }
 
@@ -129,16 +129,16 @@ impl FleetState {
     }
 
     /// The agent's parent, when the fleet holds it.
-    pub fn parent(&self, agent: &AgentRef) -> Option<&Agent> {
-        let parent = AgentRef::parent(self.agents.get(agent)?)?;
+    pub fn parent(&self, agent: &AgentKey) -> Option<&Agent> {
+        let parent = AgentKey::parent(self.agents.get(agent)?)?;
         self.agents.get(&parent)
     }
 
     /// The top of the agent's family: the furthest ancestor the fleet holds.
-    pub fn root(&self, agent: &AgentRef) -> AgentRef {
+    pub fn root(&self, agent: &AgentKey) -> AgentKey {
         let mut at = agent.clone();
         let mut seen = BTreeSet::new();
-        while let Some(parent) = self.agents.get(&at).and_then(AgentRef::parent) {
+        while let Some(parent) = self.agents.get(&at).and_then(AgentKey::parent) {
             if !self.agents.contains_key(&parent) || !seen.insert(at.clone()) {
                 break;
             }
@@ -151,12 +151,12 @@ impl FleetState {
     /// hold.
     pub fn roots(&self) -> impl Iterator<Item = &Agent> {
         self.agents.values().filter(|agent| {
-            AgentRef::parent(agent).is_none_or(|parent| !self.agents.contains_key(&parent))
+            AgentKey::parent(agent).is_none_or(|parent| !self.agents.contains_key(&parent))
         })
     }
 
     /// The agent and every descendant, depth first.
-    pub fn family(&self, agent: &AgentRef) -> Vec<&Agent> {
+    pub fn family(&self, agent: &AgentKey) -> Vec<&Agent> {
         let mut out = Vec::new();
         let mut stack = vec![agent.clone()];
         let mut seen = BTreeSet::new();
@@ -174,13 +174,13 @@ impl FleetState {
 
     /// How loudly the agent's family asks for the person: its loudest
     /// member, the agent included.
-    pub fn family_attention(&self, agent: &AgentRef) -> Option<Attention> {
+    pub fn family_attention(&self, agent: &AgentKey) -> Option<Attention> {
         self.family(agent).into_iter().map(Attention::of).max()
     }
 
     /// Applies one message and returns the agents whose card or family
     /// attention may differ.
-    pub fn update(&mut self, msg: FleetMsg) -> Vec<AgentRef> {
+    pub fn update(&mut self, msg: FleetMsg) -> Vec<AgentKey> {
         let mut changed = BTreeSet::new();
         match msg {
             FleetMsg::Connection(connection) => {
@@ -219,14 +219,14 @@ impl FleetState {
                         }
                     }
                     inventory_event::Of::Agent(agent) => {
-                        let at = AgentRef::of(&agent);
+                        let at = AgentKey::of(&agent);
                         if let Some((_, agents)) = &mut self.relisted {
                             agents.insert(at.clone());
                         }
                         self.put(at, Some(agent), &mut changed);
                     }
                     inventory_event::Of::AgentRemoved(removed) => {
-                        let at = AgentRef {
+                        let at = AgentKey {
                             host: removed.host_id,
                             agent: removed.agent_id,
                         };
@@ -236,7 +236,7 @@ impl FleetState {
                         self.caught_up = true;
                         if let Some((hosts, agents)) = self.relisted.take() {
                             self.hosts.retain(|host, _| hosts.contains(host));
-                            let gone: Vec<AgentRef> = self
+                            let gone: Vec<AgentKey> = self
                                 .agents
                                 .keys()
                                 .filter(|agent| !agents.contains(agent))
@@ -255,8 +255,8 @@ impl FleetState {
 
     /// Replaces or removes one row, keeping the parent edges, and marks the
     /// row and every ancestor whose family attention may move.
-    fn put(&mut self, at: AgentRef, agent: Option<Agent>, changed: &mut BTreeSet<AgentRef>) {
-        let old_parent = self.agents.get(&at).and_then(AgentRef::parent);
+    fn put(&mut self, at: AgentKey, agent: Option<Agent>, changed: &mut BTreeSet<AgentKey>) {
+        let old_parent = self.agents.get(&at).and_then(AgentKey::parent);
         if let Some(parent) = &old_parent {
             self.mark_ancestors(parent, changed);
             if let Some(children) = self.families.children.get_mut(parent) {
@@ -269,7 +269,7 @@ impl FleetState {
         changed.insert(at.clone());
         match agent {
             Some(agent) => {
-                let parent = AgentRef::parent(&agent);
+                let parent = AgentKey::parent(&agent);
                 self.agents.insert(at.clone(), agent);
                 if let Some(parent) = parent {
                     self.families
@@ -291,13 +291,13 @@ impl FleetState {
         }
     }
 
-    fn mark_ancestors(&self, from: &AgentRef, changed: &mut BTreeSet<AgentRef>) {
+    fn mark_ancestors(&self, from: &AgentKey, changed: &mut BTreeSet<AgentKey>) {
         let mut at = Some(from.clone());
         while let Some(agent) = at {
             if !changed.insert(agent.clone()) {
                 break;
             }
-            at = self.agents.get(&agent).and_then(AgentRef::parent);
+            at = self.agents.get(&agent).and_then(AgentKey::parent);
         }
     }
 }

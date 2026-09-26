@@ -1,3 +1,8 @@
+2026-09-26 — **The store's host-plus-agent key is `AgentKey`.**
+It was `AgentRef`, the name of a wire message the rewrite removed; the
+deletion ledger proves the old message gone by searching for its name, and
+a new type with the same name would hide a survivor. No behaviour changes.
+
 2026-09-26 — **The agent's harness runs amux's tool server, which finds its daemon by its own directory.**
 `agent::serve_tools(dir)` is what `amux mcp <dir>` will run: MCP over
 stdio with seven tools. agents, hosts, send, spawn and stop dial the daemon
