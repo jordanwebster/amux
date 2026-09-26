@@ -602,8 +602,14 @@ impl PtySpecSession {
             }
             // An API key in the environment makes Claude ask whether to use
             // it, defaulting to no; a specification that sets one wants it
-            // used.
-            if !key_answered && screen.contains("use this API key") && !composer_up {
+            // used. The dialog's words are laid out with cursor moves, so
+            // match single words. Claude remembers the answer per key in
+            // ~/.claude.json and asks only the first time.
+            if !key_answered
+                && screen.contains("Detected")
+                && screen.contains("ANTHROPIC_API_KEY")
+                && !composer_up
+            {
                 if self.capture.is_some() {
                     tokio::time::sleep(Duration::from_millis(800)).await;
                 }
@@ -730,6 +736,27 @@ impl PtySpecSession {
         }
     }
 
+    /// Wait until Claude's terminal output contains every marker. Some
+    /// states, such as the retries of a failing request, reach only the
+    /// screen: neither the transcript nor a hook records them.
+    async fn wait_screen(&mut self, markers: &[&str]) -> Result<(), String> {
+        loop {
+            {
+                let screen = self.screen.lock().expect("screen mutex poisoned");
+                if markers.iter().all(|marker| screen.contains(marker)) {
+                    return Ok(());
+                }
+            }
+            if self.capture.is_some() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            } else {
+                self.screen_changes.changed().await.map_err(|_| {
+                    format!("recorded terminal output ended before showing {markers:?}")
+                })?;
+            }
+        }
+    }
+
     async fn wait_hook(
         &mut self,
         matches: impl Fn(&claude::hooks::HookPayload) -> bool,
@@ -777,13 +804,6 @@ impl PtySpecSession {
             }
         }
     }
-}
-
-/// A failed API request as terminal Claude records it: a system row
-/// naming the error and the retry it is on.
-fn api_error_row(row: &serde_json::Value) -> bool {
-    row.get("type").and_then(serde_json::Value::as_str) == Some("system")
-        && row.get("subtype").and_then(serde_json::Value::as_str) == Some("api_error")
 }
 
 /// The assistant row Claude writes in place of an answer once retries are
@@ -876,21 +896,22 @@ fn question_result_has_answers(row: &serde_json::Value, expected: &[(&str, &str)
             })
 }
 
-/// An API that cannot be reached: each failed attempt is an api_error row
-/// with its retry count, then Claude writes an error in place of an answer.
+/// An API that cannot be reached: Claude shows each retry on screen only
+/// (the transcript and hooks record none of them), then writes an error in
+/// place of an answer.
 async fn api_error(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
             text: "Reply exactly PTY_SPEC_API_ERROR and nothing else.".to_owned(),
         })
         .await?;
-    session.wait_transcript(api_error_row).await?;
+    session.wait_screen(&["Retrying", "attempt 1/2"]).await?;
     session.wait_transcript(synthetic_error_reply).await?;
     Ok(())
 }
 
-/// A credential the API rejects: the same retries, each naming the
-/// authentication failure, then the error in place of an answer.
+/// A credential the API rejects: Claude asks whether to use the key from
+/// the environment, then answers the prompt with the authentication error.
 async fn sign_in_problem(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
@@ -898,9 +919,8 @@ async fn sign_in_problem(session: &mut PtySpecSession) -> Result<(), String> {
         })
         .await?;
     session
-        .wait_transcript(|row| api_error_row(row) && row.to_string().contains("401"))
+        .wait_transcript(|row| synthetic_error_reply(row) && row.to_string().contains("401"))
         .await?;
-    session.wait_transcript(synthetic_error_reply).await?;
     Ok(())
 }
 

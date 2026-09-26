@@ -167,6 +167,8 @@ mod pty_replays {
         file_changes_and_failure,
         image,
         thinking,
+        api_error,
+        sign_in_problem,
         steer_queued,
         steer_send_now,
     );

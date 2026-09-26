@@ -1,3 +1,18 @@
+2026-09-26 — **Terminal Claude's API error and sign-in problem are recorded.**
+Two PTY specifications give terminal Claude an environment of its own: one
+points it at a port nothing listens on, one hands it an API key the API
+rejects. With the key, Claude first asks whether to use the key from the
+environment (defaulting to no); the harness now recognises that dialog by
+single words, because the terminal lays its words out with cursor moves.
+Claude remembers the answer per key in `~/.claude.json`, so a re-recording
+shows the dialog only after that approval is removed. Neither failure writes
+a retry row to the transcript or fires a hook: the retries ("Retrying in 1s
+· attempt 1/2") reach only the screen, so the specification waits on the
+screen for them, then on the assistant row Claude writes in place of an
+answer (`isApiErrorMessage`, error `server_error` or `authentication_failed`).
+The interpreter replays both as goldens; the vocabulary gate for the sign-in
+row now names the label Claude really writes, `authentication_failed`.
+
 2026-09-26 — **Send now steers a queued prompt into the running turn.**
 The wire gains `SendQueuedNow { queued_input_id }` on every kind's input,
 and `PromptInput.steer` is gone (field 3 reserved; the proto baseline is

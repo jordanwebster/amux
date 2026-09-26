@@ -237,6 +237,6 @@ codex = { mark = "full", carriers = ["snapshot:servers", "item:mcp_startup"], go
 [[row]]
 id = "C31"
 item = "Sign-in problem"
-claude_pty = { mark = "partial", carriers = ["item:api_error"], golden = [" api_error ", " authentication_error "] }
+claude_pty = { mark = "partial", carriers = ["item:api_error"], golden = [" api_error ", " authentication_failed "] }
 claude_sdk = { mark = "full", carriers = ["snapshot:sign_in"], golden = ["snapshot ", " sign_in=", "!sign_in=?", "!SIGN_IN_STATE_SIGNED_IN"] }
 codex = { mark = "full", carriers = ["snapshot:sign_in"], golden = ["snapshot ", " sign_in=", "!sign_in=?", "!SIGN_IN_STATE_SIGNED_IN"] }

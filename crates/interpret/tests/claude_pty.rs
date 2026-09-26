@@ -57,6 +57,8 @@ goldens! {
     recorded_task_list => "recorded_task_list",
     recorded_thinking => "recorded_thinking",
     recorded_steer_queued => "recorded_steer_queued",
+    recorded_api_error => "recorded_api_error",
+    recorded_sign_in_problem => "recorded_sign_in_problem",
     hook_before_row_and_row_before_hook_yield_one_tool_call => "hook_row_order",
     asks_open_on_the_hook_and_close_only_on_facts => "ask_rules",
     answers_through_amux_become_terminal_inputs => "answers",
