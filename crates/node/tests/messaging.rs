@@ -12,13 +12,16 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use node::{Daemon, ProfileRuntime, RelayError};
+use node::{ClientApi, Daemon, ProfileRuntime, RelayError};
 use store::{AgentKey, Store as _};
 use support::synthetic::*;
 use support::*;
+use tonic::{Code, Request};
+use wire::client_service_server::ClientService as _;
 use wire::{
-    AgentParent, ClaudeSdkInput, Envelope, EnvelopeKind, Input, Lifecycle, PromptInput,
-    SendInputRequest, SendInputResponse, claude_sdk_input, input, send_input_response, sender,
+    AgentParent, ClaudeSdkInput, DeleteAgentRequest, Envelope, EnvelopeKind, Input, Lifecycle,
+    PromptInput, RenameAgentRequest, SendInputRequest, SendInputResponse, StopAgentRequest,
+    claude_sdk_input, input, send_input_response, sender,
 };
 
 const SEGMENTS: u64 = 1 << 20;
@@ -146,6 +149,77 @@ async fn send_input_returns_the_interpreters_verdict_or_answers_for_an_exited_ag
     until("the input to arrive", async || live.inputs().len() == 3).await;
     live.die().await;
     assert!(matches!(pending.await.unwrap(), Err(RelayError::Lost)));
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_interrupts_only_its_own_children_and_manages_no_other_agent() {
+    let install = Install::new();
+    let caller = SyntheticAgent::new(&install, "caller", SEGMENTS);
+    caller.register_offline(&install);
+    let mut child = SyntheticAgent::new(&install, "child", SEGMENTS);
+    child.parent = Some(caller.key(&install));
+    child.register_offline(&install);
+    child.go_live();
+    let mut stranger = SyntheticAgent::new(&install, "stranger", SEGMENTS);
+    stranger.register_offline(&install);
+    stranger.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    let tools = ClientApi::new(&runtime, Some(caller.id));
+    let send = |agent: &SyntheticAgent, id: &[u8]| {
+        Request::new(SendInputRequest {
+            agent_id: agent.id.as_bytes().to_vec(),
+            input: Some(prompt(id, "stop")),
+        })
+    };
+
+    let refused = tools.send_input(send(&stranger, b"i1")).await.unwrap_err();
+    assert_eq!(refused.code(), Code::PermissionDenied);
+    let refused = tools
+        .delete_agent(Request::new(DeleteAgentRequest {
+            agent_id: stranger.id.as_bytes().to_vec(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::PermissionDenied);
+    let refused = tools
+        .stop_agent(Request::new(StopAgentRequest {
+            agent_id: child.id.as_bytes().to_vec(),
+            mode: 0,
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.code(),
+        Code::PermissionDenied,
+        "an agent stops even its child only by interrupting it"
+    );
+    let refused = tools
+        .rename_agent(Request::new(RenameAgentRequest {
+            agent_id: child.id.as_bytes().to_vec(),
+            name: "renamed".into(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::PermissionDenied);
+    assert!(stranger.inputs().is_empty(), "nothing reached the stranger");
+    let row = runtime.agent(stranger.id).await.unwrap();
+    assert_eq!(
+        (row.name.as_deref(), row.lifecycle),
+        (Some("stranger"), Lifecycle::Live as i32)
+    );
+    let row = runtime.agent(child.id).await.unwrap();
+    assert_eq!(row.name.as_deref(), Some("child"));
+
+    let answer = tools.send_input(send(&child, b"i2")).await.unwrap();
+    assert_eq!(verdict(answer.get_ref()), "queued");
+    assert_eq!(child.inputs().len(), 1, "the child's input was relayed");
+
+    // The profile socket is a person's: the same calls go through.
+    let person = ClientApi::new(&runtime, None);
+    let answer = person.send_input(send(&stranger, b"i3")).await.unwrap();
+    assert_eq!(verdict(answer.get_ref()), "queued");
+    assert_eq!(stranger.inputs().len(), 1);
     crash(daemon, runtime).await;
 }
 

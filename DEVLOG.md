@@ -1,3 +1,13 @@
+2026-09-26 — **An agent's tools socket makes only the calls its tools need.**
+The client service on an agent's tools socket now refuses, as permission
+denied, an input to any agent that is not the caller's own direct child
+(the stop tool interrupts a child and is the only input an agent sends),
+and refuses renaming, stopping, resuming, deleting, dumping, storing blobs
+and reading diffs, which only a person does on the profile socket. The
+profile socket is unchanged. A test drives the tools-socket service against
+an unrelated agent and sees its input and delete refused and the agent
+untouched, while the same input to the caller's child is relayed.
+
 2026-09-26 — **The amux binary runs the daemon again, serves it on local sockets, and has its CLI verbs back.**
 `amux daemon` runs the one startup path in the foreground and stops cleanly
 on SIGTERM, SIGINT or a client's shutdown call; `amux server start` starts

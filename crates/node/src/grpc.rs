@@ -27,7 +27,7 @@ use wire::{
     StopAgentRequest, StopMode, SubscribeRequest, subscribe_request,
 };
 
-use crate::runtime::{AgentId, ProfileRuntime};
+use crate::runtime::{AgentId, ProfileRuntime, RegistryError};
 
 /// A wire error as a gRPC status: the coarse code for generic clients, and
 /// the whole error, details included, in the status details for ours.
@@ -85,6 +85,46 @@ impl ClientApi {
         self.runtime
             .upgrade()
             .ok_or_else(|| Status::unavailable("the profile is no longer running"))
+    }
+
+    /// Refuses a call an agent's tool set never makes. An agent manages
+    /// other agents only by messaging them and interrupting its children;
+    /// renaming, stopping, resuming, deleting, dumping and writing blobs are
+    /// a person's acts, taken on the profile socket.
+    fn people_only(&self, call: &str) -> Result<(), Status> {
+        match self.caller {
+            Some(_) => Err(status(wire_error(
+                ErrorCode::PermissionDenied,
+                format!("an agent cannot {call}"),
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// On an agent's tools socket, an input goes only to the caller's own
+    /// direct child: the stop tool interrupts a child, and nothing else an
+    /// agent does sends a person's input.
+    async fn lineage(&self, runtime: &ProfileRuntime, target: &[u8]) -> Result<(), Status> {
+        let Some(caller) = self.caller else {
+            return Ok(());
+        };
+        let target = match runtime.agent(agent_id(target)?).await {
+            Ok(target) => Some(target),
+            Err(RegistryError::NotFound(_)) => None,
+            Err(error) => return Err(status(error.to_wire())),
+        };
+        let own_child = target
+            .and_then(|target| target.parent)
+            .is_some_and(|parent| {
+                parent.host_id == runtime.host().as_bytes() && parent.agent_id == caller.as_bytes()
+            });
+        if own_child {
+            return Ok(());
+        }
+        Err(status(wire_error(
+            ErrorCode::PermissionDenied,
+            "an agent sends input only to its own children",
+        )))
     }
 }
 
@@ -181,8 +221,11 @@ impl ClientService for ClientApi {
         &self,
         request: Request<SendInputRequest>,
     ) -> Result<Response<SendInputResponse>, Status> {
-        self.runtime()?
-            .send_input(&request.into_inner())
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        self.lineage(&runtime, &request.agent_id).await?;
+        runtime
+            .send_input(&request)
             .await
             .map(Response::new)
             .map_err(|error| status(error.to_wire()))
@@ -203,6 +246,7 @@ impl ClientService for ClientApi {
         &self,
         request: Request<RenameAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
+        self.people_only("rename an agent")?;
         let request = request.into_inner();
         self.runtime()?
             .rename(agent_id(&request.agent_id)?, &request.name)
@@ -215,6 +259,7 @@ impl ClientService for ClientApi {
         &self,
         request: Request<StopAgentRequest>,
     ) -> Result<Response<Empty>, Status> {
+        self.people_only("stop an agent")?;
         let request = request.into_inner();
         let mode = StopMode::try_from(request.mode).unwrap_or(StopMode::Graceful);
         self.runtime()?
@@ -228,6 +273,7 @@ impl ClientService for ClientApi {
         &self,
         request: Request<ResumeAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
+        self.people_only("resume an agent")?;
         let request = request.into_inner();
         self.runtime()?
             .resume(agent_id(&request.agent_id)?, request.initial_prompt)
@@ -240,6 +286,7 @@ impl ClientService for ClientApi {
         &self,
         request: Request<DeleteAgentRequest>,
     ) -> Result<Response<DeleteAgentResponse>, Status> {
+        self.people_only("delete an agent")?;
         let request = request.into_inner();
         self.runtime()?
             .delete(agent_id(&request.agent_id)?)
@@ -263,6 +310,7 @@ impl ClientService for ClientApi {
         &self,
         request: Request<PutBlobRequest>,
     ) -> Result<Response<BlobRef>, Status> {
+        self.people_only("store a blob")?;
         self.runtime()?
             .put_blob(request.into_inner())
             .await
@@ -282,6 +330,7 @@ impl ClientService for ClientApi {
     }
 
     async fn diff(&self, request: Request<DiffRequest>) -> Result<Response<wire::Diff>, Status> {
+        self.people_only("read a diff")?;
         self.runtime()?
             .diff(request.into_inner())
             .await
@@ -300,6 +349,7 @@ impl ClientService for ClientApi {
     }
 
     async fn dump(&self, request: Request<DumpRequest>) -> Result<Response<DumpResponse>, Status> {
+        self.people_only("write a debug report")?;
         // A local caller reads the bundle where it was written; the bytes
         // travel only to a caller on another machine.
         let path = self
