@@ -1315,6 +1315,7 @@ name = "node"
 version = "0.7.0"
 dependencies = [
  "agent-dir",
+ "interpret",
  "journal",
  "libc",
  "prost",
@@ -1323,6 +1324,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sha2",
  "store",
  "tempfile",
  "thiserror 2.0.20",

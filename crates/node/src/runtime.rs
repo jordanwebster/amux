@@ -33,14 +33,15 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
     Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CreateAgentRequest, CtlFrame,
-    DeleteAgentResponse, EnvelopeKind, Input, Kind, Lifecycle, Phase, SendInputResponse, Stop,
-    StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
+    DeleteAgentResponse, DumpPart, EnvelopeKind, Input, Kind, Lifecycle, Phase, SendInputResponse,
+    Stop, StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
 };
 
 use crate::fanout::Fanout;
 use crate::install::{AGENTS, private_dir};
 use crate::outbox::PushSender;
 use crate::profiles::ProfileId;
+use crate::retention::Retention;
 use crate::serve::{event, inventory};
 use crate::spec;
 
@@ -64,6 +65,10 @@ const HELLO_PATIENCE: Duration = Duration::from_secs(5);
 const KILL_PATIENCE: Duration = Duration::from_secs(5);
 /// Fully ingested journal segments kept below the cursor, for dumps.
 pub const KEPT_SEGMENTS: usize = 2;
+/// The tail size K: the rows a replica keeps and asks for, and the newest
+/// rows own retention never trims. About an hour of a busy agent and
+/// several screens of scroll-back.
+pub const TAIL_ROWS: u32 = 200;
 
 /// The exit causes the daemon records. It knows only what it asked for and
 /// what it saw; the agent's own account of its exit is its final boundary
@@ -106,6 +111,15 @@ pub struct Launch {
     pub delivery_retry_ms: i64,
     /// How long a push that failed waits before it is tried again.
     pub push_retry_ms: i64,
+    /// The bytes this profile's own rows may hold before retention removes
+    /// exited agents and trims live ones.
+    pub own_budget_bytes: u64,
+    /// About how much one trimming round takes from the largest live agent.
+    pub retention_chunk_bytes: u64,
+    /// The newest rows retention never trims: the tail size replicas keep.
+    pub tail_rows: u32,
+    /// How often the retention sweep runs.
+    pub retention_interval_ms: i64,
 }
 
 impl Default for Launch {
@@ -124,6 +138,11 @@ impl Default for Launch {
             inventory_capacity: 1024,
             delivery_retry_ms: 30_000,
             push_retry_ms: 60_000,
+            own_budget_bytes: settings::RetentionSettings::default().own_budget_mib << 20,
+            // A few MiB: a small overrun costs a small trim.
+            retention_chunk_bytes: 4 << 20,
+            tail_rows: TAIL_ROWS,
+            retention_interval_ms: 10 * 60_000,
         }
     }
 }
@@ -218,13 +237,16 @@ pub struct ProfileRuntime {
     deliveries_due: Arc<Notify>,
     notifications_due: Arc<Notify>,
     pub(crate) push: Arc<dyn PushSender>,
-    /// The outbox drains.
-    background: Mutex<Vec<JoinHandle<()>>>,
+    /// The outbox drains and the retention sweep.
+    pub(crate) background: Mutex<Vec<JoinHandle<()>>>,
     agents: Mutex<HashMap<AgentId, Arc<AgentHandle>>>,
     /// One operation at a time per agent: spawn, resume, stop and delete
     /// each finish before the next starts.
     operations: Mutex<HashMap<AgentId, Arc<tokio::sync::Mutex<()>>>>,
-    me: Weak<ProfileRuntime>,
+    pub(crate) retention: watch::Sender<Retention>,
+    pub(crate) reports: PathBuf,
+    pub(crate) daemon_log: Option<PathBuf>,
+    pub(crate) me: Weak<ProfileRuntime>,
 }
 
 pub(crate) struct AgentHandle {
@@ -234,6 +256,9 @@ pub(crate) struct AgentHandle {
     /// Inputs waiting for their verdict on the current connection, by
     /// input id; dropped when the connection ends.
     replies: Mutex<HashMap<Vec<u8>, oneshot::Sender<SendInputResponse>>>,
+    /// Dumps waiting for the agent's part, by dump id; dropped when the
+    /// connection ends.
+    dumps: Mutex<HashMap<Vec<u8>, oneshot::Sender<DumpPart>>>,
     hello: watch::Sender<Option<AgentHello>>,
     /// The stop the daemon asked for, which names the exit's cause.
     stopping: Mutex<Option<StopMode>>,
@@ -258,6 +283,7 @@ impl AgentHandle {
             dir,
             ctl: tokio::sync::Mutex::new(None),
             replies: Mutex::new(HashMap::new()),
+            dumps: Mutex::new(HashMap::new()),
             hello: watch::Sender::new(None),
             stopping: Mutex::new(None),
             exiting: AtomicBool::new(false),
@@ -286,6 +312,14 @@ impl AgentHandle {
     pub(crate) fn forget_reply(&self, input_id: &[u8]) {
         self.replies.lock().unwrap().remove(input_id);
     }
+
+    pub(crate) fn expect_dump(&self, dump_id: Vec<u8>, part: oneshot::Sender<DumpPart>) {
+        self.dumps.lock().unwrap().insert(dump_id, part);
+    }
+
+    pub(crate) fn forget_dump(&self, dump_id: &[u8]) {
+        self.dumps.lock().unwrap().remove(dump_id);
+    }
 }
 
 impl Drop for ProfileRuntime {
@@ -312,6 +346,10 @@ pub struct Profile {
     pub launch: Launch,
     pub clock: Arc<dyn Clock>,
     pub push: Arc<dyn PushSender>,
+    /// Where dumps are written: the installation's reports directory.
+    pub reports: PathBuf,
+    /// The daemon's own log, which a dump includes.
+    pub daemon_log: Option<PathBuf>,
 }
 
 impl ProfileRuntime {
@@ -326,6 +364,8 @@ impl ProfileRuntime {
             launch,
             clock,
             push,
+            reports,
+            daemon_log,
         } = profile;
         Arc::new_cyclic(|me| Self {
             profile,
@@ -346,6 +386,9 @@ impl ProfileRuntime {
             store: tokio::sync::Mutex::new(store),
             agents: Mutex::new(HashMap::new()),
             operations: Mutex::new(HashMap::new()),
+            retention: watch::Sender::new(Retention::default()),
+            reports,
+            daemon_log,
             me: me.clone(),
         })
     }
@@ -385,8 +428,17 @@ impl ProfileRuntime {
         self.launch.lock().unwrap().clone()
     }
 
+    /// The profile's directory.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn agent_dir(&self, id: AgentId) -> PathBuf {
         self.dir.join(AGENTS).join(id.to_string())
+    }
+
+    pub(crate) fn clock(&self) -> &Arc<dyn Clock> {
+        &self.clock
     }
 
     pub(crate) fn clock_now(&self) -> i64 {
@@ -431,7 +483,7 @@ impl ProfileRuntime {
         }
     }
 
-    fn operation(&self, id: AgentId) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn operation(&self, id: AgentId) -> Arc<tokio::sync::Mutex<()>> {
         self.operations
             .lock()
             .unwrap()
@@ -893,9 +945,12 @@ impl ProfileRuntime {
         Ok(report)
     }
 
-    /// Starts the outbox drains: deliveries now and whenever a row may have
-    /// become deliverable, notifications as each falls due.
-    pub fn start_outboxes(&self) {
+    /// Starts the background work: the deliveries outbox now and whenever
+    /// a row may have become deliverable, notifications as each falls due,
+    /// and the retention sweep now and then on its interval.
+    pub fn start_background(&self) {
+        let retention = self.start_retention();
+        self.background.lock().unwrap().push(retention);
         let deliveries = {
             let runtime = self.me.clone();
             let due = self.deliveries_due.clone();
@@ -953,15 +1008,15 @@ impl ProfileRuntime {
             .extend([deliveries, notifications]);
     }
 
-    /// Stops the outbox drains without waiting for them.
-    pub fn abort_outboxes(&self) {
+    /// Stops the background work without waiting for it.
+    pub fn abort_background(&self) {
         for task in self.background.lock().unwrap().drain(..) {
             task.abort();
         }
     }
 
-    /// Stops the outbox drains.
-    pub async fn stop_outboxes(&self) {
+    /// Stops the background work.
+    pub async fn stop_background(&self) {
         let tasks: Vec<_> = self.background.lock().unwrap().drain(..).collect();
         for task in tasks {
             task.abort();
@@ -1151,13 +1206,22 @@ impl ProfileRuntime {
                                 let _ = waiting.send(verdict);
                             }
                         }
+                        Ok(Some(CtlFrame {
+                            of: Some(ctl_frame::Of::Dump(part)),
+                        })) => {
+                            let waiting = watched.dumps.lock().unwrap().remove(&part.dump_id);
+                            if let Some(waiting) = waiting {
+                                let _ = waiting.send(part);
+                            }
+                        }
                         Ok(Some(_)) => {}
                         Ok(None) | Err(_) => break,
                     }
                 }
-                // Inputs sent on this connection get no answer now: their
-                // senders learn the answer was lost.
+                // Inputs and dumps sent on this connection get no answer
+                // now: their senders learn the answer was lost.
                 watched.replies.lock().unwrap().clear();
+                watched.dumps.lock().unwrap().clear();
                 if let Some(mut ctl) = watched.ctl.lock().await.take() {
                     let _ = ctl.shutdown().await;
                 }

@@ -19,7 +19,9 @@ ALLOWED_LOCAL = {
     # The daemon reaches agent processes only through the directory contract,
     # never the agent crate, so the phone can host a runtime without a
     # provider in its graph.
-    "node": {"agent-dir", "journal", "settings", "store", "wire"},
+    # interpret only for the dump path's per-kind redactor: the one stated
+    # exception to "the daemon interprets nothing".
+    "node": {"agent-dir", "interpret", "journal", "settings", "store", "wire"},
     "redaction": set(),
     "ui-state": {"wire"},
     "ui-view": {"attachments", "ui-state", "wire"},

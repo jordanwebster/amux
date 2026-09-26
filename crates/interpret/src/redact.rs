@@ -98,6 +98,12 @@ pub fn redact(kind: Kind, target: RedactTarget) -> RedactTarget {
     }
 }
 
+/// Redacts free text no kind can decode, such as the daemon's log: the
+/// shared capture rules, credential prefixes and secret assignments.
+pub fn redact_text(text: &str) -> String {
+    Scrubber::default().twice(|s| s.text(text))
+}
+
 /// The per-kind redactor: `Item` and `Snapshot` bodies of this kind, the
 /// answer body its inputs carry, and the state its checkpoint holds.
 pub(crate) fn redact_kind<ItemBody: Name, SnapshotBody: Name, AnswerBody: Name, S: Checkpoint>(

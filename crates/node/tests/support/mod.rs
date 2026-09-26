@@ -124,6 +124,7 @@ impl Install {
             launch,
             clock: Arc::new(agent_dir::SystemClock),
             push: Arc::new(node::NoopSender),
+            daemon_log: None,
         }
     }
 

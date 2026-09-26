@@ -1,3 +1,23 @@
+2026-09-26 — **The daemon writes and reads blobs, diffs, assembles dumps and runs own retention.**
+PutBlob writes a person's attachment into the named agent's directory by
+temp-and-rename (a failed write, a full disk included, is an error to the
+caller and leaves no temporary file); GetBlob reads an own agent's file or a
+fetched replica file; Diff runs git in the agent's directory against the
+working tree (untracked files included, through a scratch index) or a
+branch's merge base and writes the patch, with full index lines, as the
+agent's blob. A dump writes one bundle under reports/: the manifest, the
+redacted tail of the daemon's log, and per agent the inventory row, the
+store slice as one step, the last two journal segments with every frame
+redacted, and the part the agent process redacted itself (or, with no
+process, its specs). The daemon calls the per-kind redactor on everything
+it writes, which is why node now depends on interpret. Own retention runs
+at start and then on its interval on the runtime's clock: the store's sweep
+names what it removed, and the daemon ends those agents' streams, tells the
+fleet and deletes their directories, blobs with them. The retention test
+walks the whole scenario: old exited agents removed first, a live parent's
+finished children kept, the largest live agent trimmed a chunk at a time
+down to its protected rows, and the parent resuming a kept child after.
+
 2026-09-26 — **An agent whose directory cannot be written ends its incarnation cleanly; dumps can redact whole records.**
 A failed write to the journal, the facts ring or a blob (in practice a
 full disk) no longer kills the agent with an error. The journal and the

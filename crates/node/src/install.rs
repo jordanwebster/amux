@@ -10,6 +10,8 @@
 //!     host_id             this profile's host id, written once
 //!     store.sqlite        the profile store
 //!     agents/<agent_id>/  one directory per agent, the agent's contract
+//!     replicas/<host_id>/agents/<agent_id>/blobs/
+//!                         bytes fetched for a peer's agent
 //! ```
 
 use std::fs::{self, File, OpenOptions};
@@ -24,6 +26,7 @@ pub const PROFILES: &str = "profiles";
 pub const HOST_ID: &str = "host_id";
 pub const STORE: &str = "store.sqlite";
 pub const AGENTS: &str = "agents";
+pub const REPLICAS: &str = "replicas";
 
 /// The installation's exclusive lock, held for the daemon's lifetime. The
 /// file is never removed: unlinking it would let a second opener lock a

@@ -18,7 +18,7 @@ use agent_dir::Clock;
 
 use crate::activation::{ActivationError, ActivationPipe};
 use crate::generation::{self, Generation};
-use crate::install::{InstallationLock, LockError, STORE};
+use crate::install::{InstallationLock, LockError, REPORTS, STORE};
 use crate::outbox::PushSender;
 use crate::profiles::{self, ProfileId, Registry};
 use crate::runtime::{Launch, Profile, ProfileRuntime, RegistryError, SweepReport};
@@ -31,6 +31,8 @@ pub struct StartOptions {
     pub clock: Arc<dyn Clock>,
     /// Where needs-you pushes go.
     pub push: Arc<dyn PushSender>,
+    /// The daemon's own log file, which dumps include.
+    pub daemon_log: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -78,7 +80,7 @@ impl Drop for Daemon {
     /// writing once its lock is released.
     fn drop(&mut self) {
         for runtime in self.profiles.values() {
-            runtime.abort_outboxes();
+            runtime.abort_background();
         }
     }
 }
@@ -96,6 +98,7 @@ pub async fn start(
         launch,
         clock,
         push,
+        daemon_log,
     } = options;
     let lock = InstallationLock::acquire(&data_dir)?;
     let boot_id = match boot_id {
@@ -123,6 +126,8 @@ pub async fn start(
             launch: launch.clone(),
             clock: clock.clone(),
             push: push.clone(),
+            reports: data_dir.join(REPORTS),
+            daemon_log: daemon_log.clone(),
         });
         runtimes.insert(profile, runtime);
     }
@@ -151,7 +156,7 @@ pub async fn start(
     }
     // Every own journal has been read to its end: the outboxes may run.
     for runtime in runtimes.values() {
-        runtime.start_outboxes();
+        runtime.start_background();
     }
 
     Ok(Daemon {
@@ -200,7 +205,7 @@ impl Daemon {
     pub async fn shutdown(mut self) -> io::Result<()> {
         let profiles = std::mem::take(&mut self.profiles);
         for runtime in profiles.values() {
-            runtime.stop_outboxes().await;
+            runtime.stop_background().await;
             runtime.stop_watching().await;
         }
         for runtime in profiles.values() {

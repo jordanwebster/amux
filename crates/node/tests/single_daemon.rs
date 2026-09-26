@@ -1184,3 +1184,290 @@ async fn resolve_agent_finds_one_name_or_says_why_not() {
     assert_eq!((detail.name.as_str(), candidates), ("beta", expected));
     crash(daemon, runtime);
 }
+
+// --- retention -------------------------------------------------------------
+
+/// The newest rows retention never trims, shrunk for the test.
+const K: u32 = 10;
+/// Roughly a kilobyte of text per row, so sizes read plainly.
+fn kilobyte(n: usize) -> String {
+    format!("{n:04} {}", "x".repeat(1019))
+}
+
+struct Named {
+    names: BTreeMap<Vec<u8>, String>,
+}
+
+impl Named {
+    fn of(&self, key: &store::AgentKey) -> &str {
+        self.names.get(&key.agent).map_or("?", String::as_str)
+    }
+}
+
+async fn table(runtime: &ProfileRuntime, named: &Named) -> Vec<String> {
+    let store = runtime.store().await;
+    let mut rows = store.agents().unwrap();
+    rows.sort_by_key(|row| named.of(&row.agent).to_owned());
+    let mut lines = vec![format!(
+        "  {:<9} {:<8} {:<9} {:>5} {:>9}",
+        "agent", "state", "parent", "rows", "activity"
+    )];
+    for row in rows {
+        let held = store.page(&row.agent, None, 10_000).unwrap().items.len();
+        let state = if row.lifecycle == Lifecycle::Live as i32 {
+            "live"
+        } else {
+            "exited"
+        };
+        let activity = match row.last_activity {
+            Some(at) if at < 1_000_000 => format!("t={at}"),
+            Some(_) => "recent".to_owned(),
+            None => "-".to_owned(),
+        };
+        lines.push(format!(
+            "  {:<9} {:<8} {:<9} {:>5} {:>9}",
+            named.of(&row.agent),
+            state,
+            row.parent.as_ref().map_or("-", |parent| named.of(parent)),
+            held,
+            activity
+        ));
+    }
+    lines.push(format!(
+        "  pool: {} KiB of own rows",
+        store.pool_bytes(true).unwrap() / 1024
+    ));
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn retention_sweep() {
+    use agent_dir::ManualClock;
+    use node::StartOptions;
+    use store::SweepStep;
+    use wire::{AgentParent, Envelope};
+
+    let say = |line: String| println!("{line}");
+    let install = Install::new();
+
+    // Two old agents that exited long ago, and one live agent that has run
+    // for a long time and is by far the largest.
+    let mut old = Vec::new();
+    for (name, at) in [("old-1", 1_000), ("old-2", 2_000)] {
+        let mut agent = SyntheticAgent::new(&install, name, BIG_SEGMENTS);
+        agent.register_offline(&install);
+        for n in 0..30 {
+            agent.append(&item(&format!("{name}-{n}"), &kilobyte(n)));
+        }
+        agent.append(&snapshot(Phase::Idle, &[], at));
+        old.push(agent);
+    }
+    let mut big = SyntheticAgent::new(&install, "big", BIG_SEGMENTS);
+    big.register_offline(&install);
+    for n in 0..100 {
+        big.append(&item(&format!("big-{n}"), &kilobyte(n)));
+    }
+    big.append(&snapshot(Phase::Working, &[], 500_000));
+    big.go_live();
+
+    // Real processes for the family, so the kept child can be resumed.
+    let clock = ManualClock::new(1_000_000);
+    let mut launch = install.launch(
+        "retention",
+        vec![text("done"), provider_fakes::script::Step::TurnEnd],
+    );
+    launch.tail_rows = K;
+    launch.retention_chunk_bytes = 6 * 1024;
+    launch.retention_interval_ms = 60_000;
+    let options = StartOptions {
+        clock: Arc::new(clock.clone()),
+        ..install.options("boot-1", launch.clone())
+    };
+    let daemon = node::start(options, None).await.unwrap();
+    let runtime = runtime(&daemon, &install);
+    let parent = id_of(
+        &runtime
+            .spawn(create(&install.work, "parent", None), None)
+            .await
+            .unwrap(),
+    );
+    let mut children = Vec::new();
+    for name in ["child-1", "child-2"] {
+        children.push(id_of(
+            &runtime
+                .spawn(create(&install.work, name, Some("go")), Some(parent))
+                .await
+                .unwrap(),
+        ));
+    }
+    for &child in &children {
+        until("each one-shot child to finish and exit", async || {
+            runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+        })
+        .await;
+    }
+    until("the parent to hear from both", async || {
+        runtime.store().await.deliveries().unwrap().is_empty()
+    })
+    .await;
+
+    let named = Named {
+        names: old
+            .iter()
+            .map(|agent| (agent.id.as_bytes().to_vec(), agent.name.clone()))
+            .chain([(big.id.as_bytes().to_vec(), "big".to_owned())])
+            .chain([(parent.as_bytes().to_vec(), "parent".to_owned())])
+            .chain(
+                children
+                    .iter()
+                    .zip(["child-1", "child-2"])
+                    .map(|(id, name)| (id.as_bytes().to_vec(), name.to_owned())),
+            )
+            .collect(),
+    };
+    let mut retention = runtime.retention();
+    assert_eq!(
+        retention.borrow().runs,
+        1,
+        "the sweep ran once at start, under a budget nothing exceeds"
+    );
+    say("before the sweep:".to_owned());
+    for line in table(&runtime, &named).await {
+        say(line);
+    }
+
+    // Shrink the budget and let the sweep's interval pass.
+    let budget = 8 * 1024;
+    runtime.set_launch(node::Launch {
+        own_budget_bytes: budget,
+        ..launch
+    });
+    say(format!(
+        "budget shrunk to {} KiB; chunk {} KiB; protected newest rows K = {K}; clock +60 s",
+        budget / 1024,
+        6
+    ));
+    clock.advance(60_000);
+    retention.wait_for(|run| run.runs == 2).await.unwrap();
+    let sweep = retention.borrow().last.clone().unwrap();
+    say(format!(
+        "sweep: pool {} KiB -> {} KiB",
+        sweep.pool_before / 1024,
+        sweep.pool_after / 1024
+    ));
+    for step in &sweep.steps {
+        say(match step {
+            SweepStep::Removed { agent, bytes } => format!(
+                "  removed {} whole ({} KiB): rows and directory",
+                named.of(agent),
+                bytes / 1024
+            ),
+            SweepStep::Trimmed {
+                agent,
+                rows,
+                bytes,
+                from_order,
+            } => format!(
+                "  trimmed {} by {rows} rows ({} KiB); it now starts at order {from_order}",
+                named.of(agent),
+                bytes / 1024
+            ),
+            SweepStep::Floor => {
+                "  floor: every live agent is at its protected rows; the budget is soft from here"
+                    .to_owned()
+            }
+        });
+    }
+    say("after the sweep:".to_owned());
+    for line in table(&runtime, &named).await {
+        say(line);
+    }
+
+    // Old exited agents first, least recent first; the children stay; then
+    // the largest live agent in chunks down to K; then the floor.
+    let removed: Vec<&str> = sweep
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            SweepStep::Removed { agent, .. } => Some(named.of(agent)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(removed, vec!["old-1", "old-2"]);
+    assert!(matches!(sweep.steps[0], SweepStep::Removed { .. }));
+    let trims: Vec<&str> = sweep
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            SweepStep::Trimmed { agent, .. } => Some(named.of(agent)),
+            _ => None,
+        })
+        .collect();
+    assert!(trims.len() > 1, "trimmed a chunk at a time: {trims:?}");
+    assert!(trims.iter().all(|name| *name == "big"));
+    assert_eq!(sweep.steps.last(), Some(&SweepStep::Floor));
+    for agent in &old {
+        assert!(!agent.dir.exists(), "{}'s directory is gone", agent.name);
+        assert!(runtime.agent(agent.id).await.is_err());
+    }
+    for &child in &children {
+        assert!(
+            install.agent_dir(child).exists(),
+            "a live parent's child stays"
+        );
+    }
+    let big_row = runtime
+        .store()
+        .await
+        .agent(&big.key(&install))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        runtime
+            .store()
+            .await
+            .page(&big.key(&install), None, 1_000)
+            .unwrap()
+            .items
+            .len(),
+        K as usize,
+        "never below the newest K rows"
+    );
+    assert!(big_row.exhausted && big_row.complete_from_order.is_some());
+
+    // The parent continues a kept child: its message resumes it.
+    let child = children[0];
+    runtime
+        .send_message(
+            Envelope {
+                id: b"after-retention".to_vec(),
+                to: Some(AgentParent {
+                    host_id: runtime.host().as_bytes().to_vec(),
+                    agent_id: child.as_bytes().to_vec(),
+                }),
+                text: "one more thing".into(),
+                ..Envelope::default()
+            },
+            Some(parent),
+        )
+        .await
+        .expect("the parent's message resumes its kept child");
+    let row = runtime.agent(child).await.unwrap();
+    assert_eq!(row.incarnation, 2);
+    until("the resumed child to finish again", async || {
+        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    })
+    .await;
+    say(format!(
+        "the parent sent child-1 a message: it resumed as incarnation {} and finished again",
+        row.incarnation
+    ));
+
+    // The synthetic agent ignores Stop, and a stop's deadline runs on the
+    // test's clock: it goes first, on its own.
+    big.die().await;
+    until("big's exit", async || !runtime.live().contains(&big.id)).await;
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}

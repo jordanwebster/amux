@@ -8,12 +8,15 @@ publish = false
 
 [dependencies]
 agent-dir = { workspace = true }
+# The dump path's redactor: the one place the daemon decodes a body.
+interpret = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
+sha2 = { workspace = true }
 store = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
