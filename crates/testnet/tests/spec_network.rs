@@ -699,3 +699,194 @@ async fn revoking_a_host_closes_what_it_holds_open_over_a_direct_link_and_over_t
 
     net.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration() {
+    let net = Net::start(
+        Topology::new()
+            .relay(&["ada", "bob"])
+            .host_decl(testnet::HostDecl {
+                account: Some("ada".to_owned()),
+                ..lan_host("desk", "home")
+            })
+            .host_decl(testnet::HostDecl {
+                account: Some("ada".to_owned()),
+                ..lan_host("laptop", "home")
+            })
+            // Down the street: on no local network with the others, so the
+            // relay is the only way it could find them.
+            .host_decl(testnet::HostDecl {
+                account: Some("bob".to_owned()),
+                ..lan_host("shop", "street")
+            }),
+    )
+    .await
+    .unwrap();
+    let (desk, laptop, shop) = (
+        host_id(&net, "desk"),
+        host_id(&net, "laptop"),
+        host_id(&net, "shop"),
+    );
+    let relay = net.relay().unwrap();
+
+    // Two accounts on one relay: each sees its own hosts, and the relay
+    // offers no route, and no pairing route, from one to the other.
+    let mut ada = relay.links("ada").await;
+    ada.sort();
+    let mut expected = vec![(desk, 1), (laptop, 1)];
+    expected.sort();
+    assert_eq!(ada, expected);
+    assert_eq!(relay.links("bob").await, vec![(shop, 1)]);
+    // Hosts on one account see each other through the relay before any
+    // trust, which is what lets them pair there.
+    until_via(&net, "desk", "laptop", HostVia::Relay).await;
+    never("the relay routes between accounts", async || {
+        edge(&net, "shop").via(desk).await != HostVia::Offline
+            || edge(&net, "desk").via(shop).await != HostVia::Offline
+    })
+    .await;
+    let started = start_pairing(&net, "desk", pin_mode()).await.unwrap();
+    let across = begin_pair(
+        &net,
+        "shop",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&started)),
+        Vec::new(),
+    )
+    .await
+    .expect_err("no pairing route through another account's relay");
+    assert_eq!(across.code(), tonic::Code::Unavailable);
+    println!("ada's relay links {ada:?}; bob's shop sees none of them: {across:?}");
+
+    // Pairing at an address the desk hands out is authority of its own,
+    // whatever account either host is on.
+    let pending = begin_pair(
+        &net,
+        "shop",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&started)),
+        started.addrs.clone(),
+    )
+    .await
+    .expect("pairing across accounts at the desk's address");
+    confirm_pair(&net, "shop", pending.token).await.unwrap();
+    until_via(&net, "shop", "desk", HostVia::Direct).await;
+    peer_inventory_hosts(&edge(&net, "shop"), desk)
+        .await
+        .expect("the shop calls the desk it paired with");
+
+    // A second profile on the desk's installation is a host of its own:
+    // its own id and key, its own pairing window and attempt budget.
+    let work = door(&net, "desk")
+        .await
+        .create_profile(wire::CreateProfileRequest {
+            label: Some("work".to_owned()),
+            ..wire::CreateProfileRequest::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let work_profile: node::ProfileId = work.id.parse().unwrap();
+    let work_edge = net.profile_edge("desk", work_profile).unwrap();
+    assert_ne!(work_edge.host_id(), desk);
+    assert_ne!(work_edge.public_key(), edge(&net, "desk").public_key());
+    let work_start = door(&net, "desk")
+        .await
+        .start_pairing(wire::ProfileStartPairingRequest {
+            profile_id: work.id.clone(),
+            pairing: Some(pin_mode()),
+            ..wire::ProfileStartPairingRequest::default()
+        })
+        .await
+        .expect("the work profile opens its own window beside the desk's")
+        .into_inner();
+    let desk_start = start_pairing(&net, "desk", pin_mode()).await.unwrap();
+    let wrong_for_work = begin_pair(
+        &net,
+        "laptop",
+        Some(work_edge.host_id()),
+        begin_pair_request::Secret::Pin(pin_of(&desk_start)),
+        work_start.addrs.clone(),
+    )
+    .await
+    .expect_err("the desk's PIN at the work profile");
+    assert!(is_invalid_secret(&wrong_for_work));
+    for _ in 0..4 {
+        begin_pair(
+            &net,
+            "laptop",
+            Some(work_edge.host_id()),
+            begin_pair_request::Secret::Pin(wrong_pin(&pin_of(&work_start))),
+            work_start.addrs.clone(),
+        )
+        .await
+        .expect_err("a wrong guess at the work profile");
+    }
+    assert!(
+        !work_edge.pairing_active(),
+        "five guesses closed work's window"
+    );
+    assert!(
+        edge(&net, "desk").pairing_active(),
+        "the desk's window keeps its own budget"
+    );
+    let pending = begin_pair(
+        &net,
+        "laptop",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&desk_start)),
+        desk_start.addrs.clone(),
+    )
+    .await
+    .unwrap();
+    confirm_pair(&net, "laptop", pending.token).await.unwrap();
+    until_via(&net, "laptop", "desk", HostVia::Direct).await;
+    assert!(
+        work_edge.trusted().is_empty(),
+        "the desk's pairing commits nothing to work"
+    );
+
+    // The laptop's key is pinned by the desk's profile only: dialling the
+    // work profile's listener with it gets it nowhere.
+    edge(&net, "laptop").trust(&work_edge).await.unwrap();
+    edge(&net, "laptop").dial(work_edge.host_id(), work_edge.lan_addr().unwrap());
+    never(
+        "a key one profile pinned authenticates into another",
+        async || {
+            edge(&net, "laptop").via(work_edge.host_id()).await != HostVia::Offline
+                || work_edge.via(laptop).await != HostVia::Offline
+        },
+    )
+    .await;
+    println!(
+        "work profile {}: own key, own window, the desk's peers refused",
+        work.id
+    );
+
+    // Administration is the installation's: a trusted peer's tunnel and a
+    // profile's client socket serve neither profiles nor pairing.
+    let tunnel = edge(&net, "laptop").channel(desk).await.unwrap();
+    let over_tunnel = wire::profile_service_client::ProfileServiceClient::new(tunnel)
+        .list_profiles(wire::ListProfilesRequest {})
+        .await
+        .expect_err("no profile administration over a peer tunnel");
+    assert_eq!(over_tunnel.code(), tonic::Code::Unimplemented);
+    let socket = node::profile_dir(
+        &net.host("desk").unwrap().data_dir,
+        net.host("desk").unwrap().profile,
+    )
+    .join(node::PROFILE_SOCKET);
+    let on_socket = wire::profile_service_client::ProfileServiceClient::new(
+        testnet::local_channel(&socket).await.unwrap(),
+    )
+    .start_pairing(wire::ProfileStartPairingRequest {
+        profile_id: profile(&net, "desk"),
+        pairing: Some(pin_mode()),
+        ..wire::ProfileStartPairingRequest::default()
+    })
+    .await
+    .expect_err("no pairing administration on a profile's client socket");
+    assert_eq!(on_socket.code(), tonic::Code::Unimplemented);
+
+    net.shutdown().await.unwrap();
+}

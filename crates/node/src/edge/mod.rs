@@ -501,8 +501,16 @@ impl Edge {
         wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
         crate::link::ChannelError,
     > {
-        let channel = self.connections.channel_to(host).await?;
-        Ok(wire::peer_service_client(channel))
+        Ok(wire::peer_service_client(self.channel(host).await?))
+    }
+
+    /// The channel calls to a trusted host ride, for a caller that speaks
+    /// some other service on it.
+    pub async fn channel(
+        &self,
+        host: HostId,
+    ) -> Result<tonic::transport::Channel, crate::link::ChannelError> {
+        self.connections.channel_to(host).await
     }
 
     /// A PeerService client for one of a host's agents, on a channel of its

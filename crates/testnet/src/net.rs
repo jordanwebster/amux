@@ -422,16 +422,7 @@ impl Net {
         &self,
         name: &str,
     ) -> Result<ProfileServiceClient<tonic::transport::Channel>, NetError> {
-        let path = self.host(name)?.front_door.clone();
-        let channel = tonic::transport::Endpoint::from_static("http://amux.test")
-            .connect_with_connector(tower::service_fn(move |_| {
-                let path = path.clone();
-                async move {
-                    agent_dir::local_socket::connect(&path)
-                        .await
-                        .map(hyper_util::rt::TokioIo::new)
-                }
-            }))
+        let channel = local_channel(&self.host(name)?.front_door)
             .await
             .map_err(|error| NetError::Host {
                 host: name.to_owned(),
@@ -1321,6 +1312,23 @@ impl Drop for Net {
             .arg(self.root.path())
             .status();
     }
+}
+
+/// A channel to a local socket: a front door or a profile's client socket.
+pub async fn local_channel(
+    path: &Path,
+) -> Result<tonic::transport::Channel, tonic::transport::Error> {
+    let path = path.to_owned();
+    tonic::transport::Endpoint::from_static("http://amux.test")
+        .connect_with_connector(tower::service_fn(move |_| {
+            let path = path.clone();
+            async move {
+                agent_dir::local_socket::connect(&path)
+                    .await
+                    .map(hyper_util::rt::TokioIo::new)
+            }
+        }))
+        .await
 }
 
 /// A first prompt or a message in the kind's own input arm.

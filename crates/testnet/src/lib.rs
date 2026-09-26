@@ -62,7 +62,7 @@ pub use clock::DrivenClock;
 pub use invariant::BlockViolation;
 pub use net::{
     Ack, AgentRef, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetError,
-    NetOptions, prompt, withdraw,
+    NetOptions, local_channel, prompt, withdraw,
 };
 pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 pub use relay::{CREDENTIAL_TTL, RELAY_HOST, Relay, UdpGate};
