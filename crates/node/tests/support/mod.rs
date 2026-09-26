@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod synthetic;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;

@@ -99,8 +99,15 @@ pub async fn start(
             profiles::host_id(&dir).map_err(|error| StartError::Profile { profile, error })?;
         let store = store::Sqlite::open(&dir.join(STORE), host.as_bytes().to_vec())
             .map_err(|error| StartError::Store { profile, error })?;
-        let runtime =
-            ProfileRuntime::open(profile, host, dir, store, launch.clone(), clock.clone());
+        let runtime = ProfileRuntime::open(
+            profile,
+            host,
+            generation.counter,
+            dir,
+            store,
+            launch.clone(),
+            clock.clone(),
+        );
         runtimes.insert(profile, runtime);
     }
 

@@ -1,0 +1,335 @@
+//! Agents with no process: a directory, a journal written by the synthetic
+//! writer, and, while "live", the directory's lock and a control socket
+//! that answers the daemon's dial with a Hello and sends Nudges on demand.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use agent_dir::local_socket::{LocalListener, LocalStream};
+use journal::synthetic::SyntheticWriter;
+use node::{Launch, ProfileRuntime};
+use store::{AgentKey, AgentRow, Store as _};
+use tokio::io::{AsyncWriteExt, WriteHalf};
+use tokio::task::JoinHandle;
+use uuid::Uuid;
+use wire::{
+    AgentHello, CtlFrame, InventoryEvent, Item, Nudge, Phase, QueuedInput, SessionEvent, Snapshot,
+    Step, ctl_frame, session_event,
+};
+
+use super::{Install, PATIENCE};
+
+/// What daemons in these tests start with: nothing is ever spawned.
+pub fn quiet_launch() -> Launch {
+    Launch {
+        install_path: PathBuf::from("/nonexistent/amux"),
+        ..Launch::default()
+    }
+}
+
+pub const KIND: &str = "claude_sdk";
+
+pub struct SyntheticAgent {
+    pub id: Uuid,
+    pub name: String,
+    pub dir: PathBuf,
+    pub journal: SyntheticWriter,
+    cwd: PathBuf,
+    live: Option<Live>,
+}
+
+struct Live {
+    _lock: agent_dir::Lock,
+    accept: JoinHandle<()>,
+    conn: Arc<tokio::sync::Mutex<Option<WriteHalf<LocalStream>>>>,
+    hellos: Arc<AtomicUsize>,
+}
+
+impl SyntheticAgent {
+    /// A directory and an empty journal, rotating at `segment_bytes`.
+    pub fn new(install: &Install, name: &str, segment_bytes: u64) -> Self {
+        let id = Uuid::new_v4();
+        let dir = install.agent_dir(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let journal = SyntheticWriter::open(dir.join(agent_dir::JOURNAL), segment_bytes).unwrap();
+        Self {
+            id,
+            name: name.to_owned(),
+            dir,
+            journal,
+            cwd: install.work.clone(),
+            live: None,
+        }
+    }
+
+    pub fn key(&self, install: &Install) -> AgentKey {
+        AgentKey::new(
+            host(install).as_bytes().to_vec(),
+            self.id.as_bytes().to_vec(),
+        )
+    }
+
+    pub fn row(&self, install: &Install) -> AgentRow {
+        let mut row = AgentRow::new(self.key(install), KIND, self.cwd.to_string_lossy());
+        row.name = Some(self.name.clone());
+        row.created_at = 1;
+        row
+    }
+
+    /// Writes the row with no daemon running, as a spawn before a crash
+    /// would have left it.
+    pub fn register_offline(&self, install: &Install) {
+        let mut store = store::Sqlite::open(
+            &install.profile_dir().join(node::STORE),
+            host(install).as_bytes().to_vec(),
+        )
+        .unwrap();
+        store.put_agent(&self.row(install)).unwrap();
+    }
+
+    /// Writes the row through a running daemon's store.
+    pub async fn register(&self, install: &Install, runtime: &ProfileRuntime) {
+        runtime.store().await.put_agent(&self.row(install)).unwrap();
+    }
+
+    pub fn append(&mut self, step: &Step) -> u64 {
+        self.journal.append(step).unwrap()
+    }
+
+    /// Takes the directory's lock and answers dials with a Hello, as a
+    /// running agent process does.
+    pub fn go_live(&mut self) {
+        assert!(self.live.is_none(), "already live");
+        let lock = agent_dir::lock(&self.dir)
+            .unwrap()
+            .expect("nothing else holds the lock");
+        let mut listener = LocalListener::bind(&self.dir.join(agent_dir::CTL_SOCK)).unwrap();
+        let conn = Arc::new(tokio::sync::Mutex::new(None));
+        let hellos = Arc::new(AtomicUsize::new(0));
+        let id = self.id;
+        let offset = self.journal.offset();
+        let accept = tokio::spawn({
+            let conn = conn.clone();
+            let hellos = hellos.clone();
+            async move {
+                while let Ok(stream) = listener.accept().await {
+                    let (mut reader, mut writer) = tokio::io::split(stream);
+                    let hello = CtlFrame {
+                        of: Some(ctl_frame::Of::Hello(AgentHello {
+                            agent_id: id.as_bytes().to_vec(),
+                            agent_version: "synthetic".to_owned(),
+                            journal_offset: offset,
+                        })),
+                    };
+                    if agent_dir::write_frame(&mut writer, &hello).await.is_err() {
+                        continue;
+                    }
+                    hellos.fetch_add(1, Ordering::SeqCst);
+                    *conn.lock().await = Some(writer);
+                    // Whatever the daemon sends is read and dropped.
+                    tokio::spawn(async move {
+                        while let Ok(Some(_)) = agent_dir::read_frame(&mut reader).await {}
+                    });
+                }
+            }
+        });
+        self.live = Some(Live {
+            _lock: lock,
+            accept,
+            conn,
+            hellos,
+        });
+    }
+
+    /// How many Hellos this agent has sent.
+    pub fn hellos(&self) -> usize {
+        self.live
+            .as_ref()
+            .map_or(0, |live| live.hellos.load(Ordering::SeqCst))
+    }
+
+    /// Tells the daemon the journal grew. Waits for a connection first.
+    pub async fn nudge(&self) {
+        let live = self.live.as_ref().expect("a live agent");
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            if let Some(writer) = live.conn.lock().await.as_mut() {
+                let nudge = CtlFrame {
+                    of: Some(ctl_frame::Of::Nudge(Nudge {})),
+                };
+                agent_dir::write_frame(writer, &nudge).await.unwrap();
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no daemon connected"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Closes the control connection with the process still alive: the
+    /// daemon dials again and gets a new Hello.
+    pub async fn drop_connection(&self) {
+        let live = self.live.as_ref().expect("a live agent");
+        if let Some(mut writer) = live.conn.lock().await.take() {
+            let _ = writer.shutdown().await;
+        }
+    }
+
+    /// The process dies: its connection closes and its lock is released.
+    pub async fn die(&mut self) {
+        let Some(live) = self.live.take() else { return };
+        live.accept.abort();
+        let _ = live.accept.await;
+        if let Some(mut writer) = live.conn.lock().await.take() {
+            let _ = writer.shutdown().await;
+        }
+        let _ = std::fs::remove_file(self.dir.join(agent_dir::CTL_SOCK));
+    }
+}
+
+pub fn host(install: &Install) -> Uuid {
+    node::host_id(&install.profile_dir()).unwrap()
+}
+
+// --- steps --------------------------------------------------------------
+
+pub fn item(key: &str, text: &str) -> Step {
+    Step {
+        items: vec![Item {
+            key: key.to_owned(),
+            text: text.to_owned(),
+            kind: KIND.to_owned(),
+            at_ms: 1_000,
+            producer_version: "synthetic".to_owned(),
+            ..Item::default()
+        }],
+        ..Step::default()
+    }
+}
+
+pub fn append(key: &str, text: &str) -> Step {
+    Step {
+        appends: vec![wire::Append {
+            key: key.to_owned(),
+            text: text.to_owned(),
+            ..wire::Append::default()
+        }],
+        ..Step::default()
+    }
+}
+
+/// A snapshot whose queue holds the given input ids.
+pub fn snapshot(phase: Phase, queue: &[&str], at_ms: i64) -> Step {
+    Step {
+        snapshot: Some(Snapshot {
+            kind: KIND.to_owned(),
+            phase: phase as i32,
+            queue: queue
+                .iter()
+                .map(|id| QueuedInput {
+                    input_id: id.as_bytes().to_vec(),
+                    text: format!("prompt {id}"),
+                    ..QueuedInput::default()
+                })
+                .collect(),
+            working_on: Some("the task".to_owned()),
+            at_ms,
+            ..Snapshot::default()
+        }),
+        ..Step::default()
+    }
+}
+
+// --- reading streams ----------------------------------------------------
+
+/// A short name for a session event, for logs and comparisons.
+pub fn describe(event: &SessionEvent) -> String {
+    match event.of.as_ref().expect("an event") {
+        session_event::Of::Snapshot(s) => format!(
+            "snapshot r{} {:?} queue={:?}",
+            s.revision,
+            Phase::try_from(s.phase).unwrap_or(Phase::Starting),
+            s.queue
+                .iter()
+                .map(|q| String::from_utf8_lossy(&q.input_id).into_owned())
+                .collect::<Vec<_>>()
+        ),
+        session_event::Of::Item(i) => {
+            format!("item {} o{} r{} {:?}", i.key, i.order, i.revision, i.text)
+        }
+        session_event::Of::Append(a) => {
+            format!(
+                "append {} r{} base r{} {:?}",
+                a.key, a.revision, a.base_revision, a.text
+            )
+        }
+        session_event::Of::CaughtUp(c) => format!("caught_up r{}", c.revision),
+        session_event::Of::Lagged(_) => "lagged".to_owned(),
+        session_event::Of::Reset(_) => "reset".to_owned(),
+        session_event::Of::Detached(_) => "detached".to_owned(),
+    }
+}
+
+/// Reads events until `done` holds for what was read; fails after
+/// [`PATIENCE`] or when the stream ends first.
+pub async fn read_until(
+    subscription: &mut node::Subscription,
+    seen: &mut Vec<SessionEvent>,
+    what: &str,
+    done: impl Fn(&[SessionEvent]) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    while !done(seen) {
+        let next = tokio::time::timeout_at(deadline, subscription.next())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}; saw {:#?}", log(seen)));
+        match next {
+            Some(event) => seen.push((*event).clone()),
+            None => panic!("the stream ended before {what}; saw {:#?}", log(seen)),
+        }
+    }
+}
+
+/// Reads whatever arrives within `quiet` of the last event.
+pub async fn drain(
+    subscription: &mut node::Subscription,
+    seen: &mut Vec<SessionEvent>,
+    quiet: Duration,
+) {
+    while let Ok(Some(event)) = tokio::time::timeout(quiet, subscription.next()).await {
+        seen.push((*event).clone());
+    }
+}
+
+pub fn log(events: &[SessionEvent]) -> Vec<String> {
+    events.iter().map(describe).collect()
+}
+
+pub fn caught_ups(events: &[SessionEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event.of, Some(session_event::Of::CaughtUp(_))))
+        .count()
+}
+
+pub async fn read_inventory_until(
+    subscription: &mut node::InventorySubscription,
+    seen: &mut Vec<InventoryEvent>,
+    what: &str,
+    done: impl Fn(&[InventoryEvent]) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    while !done(seen) {
+        let next = tokio::time::timeout_at(deadline, subscription.next())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}; saw {seen:#?}"));
+        match next {
+            Some(event) => seen.push((*event).clone()),
+            None => panic!("the inventory stream ended before {what}"),
+        }
+    }
+}

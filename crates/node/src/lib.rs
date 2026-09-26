@@ -12,10 +12,12 @@
 
 mod activation;
 mod daemon;
+mod fanout;
 mod generation;
 mod install;
 mod profiles;
 mod runtime;
+mod serve;
 mod spec;
 
 pub use activation::{ActivationError, ActivationPipe, GO, PREPARED};
@@ -28,9 +30,10 @@ pub use install::{
 pub use profiles::{ProfileId, Registry, create_profile, host_id, profile_dir};
 pub use runtime::{
     AGENT_LOG, AgentId, CAUSE_ABORTED, CAUSE_EXITED, CAUSE_EXITED_AWAY, CAUSE_KILLED,
-    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, Launch, ProfileRuntime, RegistryError,
-    SweepReport, locked, to_wire,
+    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, JoinHook, KEPT_SEGMENTS, Launch,
+    ProfileRuntime, RegistryError, SweepReport, locked, to_wire,
 };
+pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
 
 /// The version this daemon writes into every spec.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

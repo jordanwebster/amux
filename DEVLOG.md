@@ -1,3 +1,25 @@
+2026-09-26 — **The daemon fans committed records out to subscribers and serves the chat and fleet reads.**
+Ingest commits each batch it reads from an agent's journal in one
+transaction and only then publishes every record once, as a shared Arc,
+on the agent's bounded broadcast channel; a subscriber that falls more than
+the ring behind gets one Lagged and its stream ends, and ingest never waits
+on anyone. CaughtUp is broadcast the first time ingest reaches the end of
+the journal after each Hello (not while a frame is still half written), and
+set for an agent the daemon sees exit. Subscribe joins the channel and
+reads the Snapshot, the newest rows and the marker with the store held the
+whole time, so a commit racing a subscribe arrives exactly once and a
+marker never vouches for a Snapshot newer than the one sent. Fetch and Get
+are store reads; SubscribeInventory sends this host's entry (with the
+generation), every agent row and CaughtUp, then every row change and
+removal; ResolveAgent answers one row, not-found, or the ambiguous
+candidates as an error detail. Journal segments wholly below the cursor go
+once the store has been flushed to the drive, keeping the newest two. A new
+single-daemon suite drives synthetic journals against a real SQLite store:
+crashes, torn writes and failed commits at every step end where an uncut
+run ends, and a power cut (WAL back to its checkpoint, journal cut, new
+boot id) bumps the generation and re-ingests the same revisions, while a
+daemon crash and a clean reboot bump nothing.
+
 2026-09-26 — **The daemon is rebuilt around agent processes: registry, generation file, one startup path.**
 `crates/node` is back in the workspace, rewritten from scratch. A profile
 runtime spawns each agent as `amux agent <dir>` after writing its
