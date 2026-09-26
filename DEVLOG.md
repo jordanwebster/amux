@@ -1,3 +1,11 @@
+2026-09-26 — **The dump test now catches an unredacted input in an agent's facts ring.**
+The test sends a secret-bearing input to a running agent after it started,
+so the input reaches the provider and the agent's facts ring, and it looks
+for every planted secret in the bundle both as text and hex-encoded, the
+form the ring keeps provider input in. Before, a ring that kept inputs
+unredacted passed, because the only secrets came in the first prompt and
+the test looked for them as text alone.
+
 2026-09-26 — **An agent that stops reading its control socket no longer stalls deliveries or a stop.**
 Every write on an agent's control connection (an input, a stop, a dump
 request) now waits at most a bounded time for the connection and the write

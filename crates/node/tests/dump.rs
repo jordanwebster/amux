@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use node::{DAEMON_LOG, MANIFEST};
 use prost::Message as _;
+use store::Store as _;
 use support::*;
 use wire::{DumpRequest, Lifecycle, Phase, StopMode};
 
@@ -47,6 +48,12 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle.as_bytes())
+}
+
+/// The secret as plain text or hex-encoded, the form the facts ring keeps
+/// the bytes written to the provider in.
+fn holds(haystack: &[u8], secret: &str) -> bool {
+    contains(haystack, secret) || contains(haystack, &interpret::to_hex(secret.as_bytes()))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -99,6 +106,34 @@ async fn a_dump_bundles_the_redacted_slice_parts_journal_tails_and_log() {
         runtime.agent(stopped).await.unwrap().lifecycle,
         Lifecycle::Exited as i32
     );
+
+    // An input sent after start goes to the provider, and into the live
+    // agent's facts ring, as bytes.
+    let answer = runtime
+        .send_input(&wire::SendInputRequest {
+            agent_id: live.as_bytes().to_vec(),
+            input: Some(sdk_prompt(
+                b"later",
+                &format!("retry with {TOKEN} and {KEY}; cc {EMAIL}"),
+            )),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(answer.of, Some(wire::send_input_response::Of::Accepted(_))),
+        "{answer:?}"
+    );
+    let live_key =
+        store::AgentKey::new(runtime.host().as_bytes().to_vec(), live.as_bytes().to_vec());
+    until("the later input's reflection", async || {
+        runtime
+            .store()
+            .await
+            .item_by_input(&live_key, b"later")
+            .unwrap()
+            .is_some()
+    })
+    .await;
 
     let bundle = runtime
         .dump(DumpRequest {
@@ -184,12 +219,13 @@ async fn a_dump_bundles_the_redacted_slice_parts_journal_tails_and_log() {
     for (name, _) in &files {
         let bytes = std::fs::read(bundle.join(name)).unwrap();
         for secret in PLANTED {
-            assert!(!contains(&bytes, secret), "{name} still holds {secret}");
+            assert!(!holds(&bytes, secret), "{name} still holds {secret}");
         }
     }
     transcript.push(format!(
-        "planted {} secrets in the prompt, the model's reply, the provider's environment, \
-         the dump reason and the daemon log; none is in any file of the bundle",
+        "planted {} secrets in the prompt, a later input, the model's reply, the provider's \
+         environment, the dump reason and the daemon log; none is in any file of the bundle, \
+         as text or hex",
         PLANTED.len()
     ));
     transcript.push(format!(
