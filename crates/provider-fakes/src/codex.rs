@@ -43,7 +43,7 @@ pub fn main() -> i32 {
         .enable_all()
         .build()
         .expect("a tokio runtime");
-    runtime.block_on(async move {
+    let code = runtime.block_on(async move {
         match mode {
             Mode::Playback(process) => {
                 match crate::lines::play(
@@ -68,7 +68,11 @@ pub fn main() -> i32 {
                 Engine::new(script).run().await
             }
         }
-    })
+    });
+    // The stdin reader blocks in a thread the runtime would wait for on
+    // drop, so a script's exit would wait for the host to close stdin.
+    runtime.shutdown_background();
+    code
 }
 
 struct Engine {

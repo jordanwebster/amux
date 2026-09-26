@@ -322,5 +322,10 @@ async fn compaction_runs_as_its_own_turn_and_exit_ends_the_process() {
     host.line
         .until(|frame| frame["method"] == "item/completed")
         .await;
-    assert_eq!(host.line.close().await, 4);
+    assert_eq!(
+        host.line
+            .exited_within(std::time::Duration::from_secs(1))
+            .await,
+        4
+    );
 }

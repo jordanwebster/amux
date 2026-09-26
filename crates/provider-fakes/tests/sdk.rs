@@ -4,6 +4,7 @@
 mod support;
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use provider_fakes::Kind;
 use serde_json::{Value, json};
@@ -387,7 +388,7 @@ async fn exit_ends_the_process_with_its_code_mid_turn() {
     .await;
     host.prompt(A, "Leave", None).await;
     host.until(|frame| frame["type"] == "assistant").await;
-    assert_eq!(host.close().await, 3);
+    assert_eq!(host.0.exited_within(Duration::from_secs(1)).await, 3);
 }
 
 #[tokio::test]

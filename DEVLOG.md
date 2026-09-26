@@ -1,3 +1,8 @@
+2026-09-26 — **fake-claude-sdk and fake-codex end at a script's exit step with their input still open.**
+Their runtimes shut down in the background, so the thread blocked reading
+stdin no longer holds the process until the host closes it. The exit tests
+now wait for the exit while the host still holds stdin.
+
 2026-09-26 — **The scripted fake providers behave like the recordings, and a test holds them to it.**
 `crates/provider-fakes/tests/scripted.rs` runs each fake's script engine
 through the scenario of a recording: the recorded host input, sent where the

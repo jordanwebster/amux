@@ -127,6 +127,17 @@ impl Host {
         self.frames.iter().map(describe).collect()
     }
 
+    /// The fake's exit code, waited for while the host still holds its
+    /// input open, as a live host does.
+    pub async fn exited_within(mut self, within: Duration) -> i32 {
+        let status = tokio::time::timeout(within, self.child.wait())
+            .await
+            .expect("the fake exited in time with its input still open")
+            .unwrap();
+        drop(self.stdin.take());
+        status.code().unwrap_or(-1)
+    }
+
     pub async fn close(mut self) -> i32 {
         drop(self.stdin.take());
         while let Ok(Ok(Some(line))) = tokio::time::timeout(DEADLINE, self.stdout.next_line()).await
