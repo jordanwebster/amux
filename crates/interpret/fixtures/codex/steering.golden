@@ -35,9 +35,11 @@ snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=t
 effect write "{\"id\":\"amux-3\",\"method\":\"thread/inject_items\",\"params\":{\"items\":[{\"content\":[{\"text\":\"[message from agent lead]\\nStatus?\",\"type\":\"input_text\"}],\"role\":\"user\",\"type\":\"message\"}],\"threadId\":\"t1\"}}"
 effect reply m1 accepted
 item agent-message:6531 agent_message final input=e1 at=1800000000000 text="Status?" envelope=6531
+pending [e1]
 ## 15 input {"id":"n4","send_now":{"target":"e1"}}
 effect reply n4 rejected:not_queued
 ## 16 fact {"channel":"rpc","json":{"id":"amux-3","result":{}}}
+pending []
 ## 17 input {"id":"p2","prompt":{"text":"Then summarise."}}
 effect reply p2 queued
 snapshot WORKING queue=[p2] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-1 model=gpt-5.6-luna effort=? approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=? sign_in=? background=?

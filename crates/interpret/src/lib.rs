@@ -63,6 +63,10 @@ pub trait Interpreter {
     /// The snapshot body with every field at its explicit unknown.
     fn unknown_snapshot() -> Vec<u8>;
 
+    /// The envelope ids of agent messages accepted but not yet consumed by
+    /// the provider, in id order.
+    fn pending_messages(state: &Self::State) -> Vec<Vec<u8>>;
+
     /// Reads an item body for goldens and invariants.
     fn describe_item(body: &[u8]) -> ItemView;
 

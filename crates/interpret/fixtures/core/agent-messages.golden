@@ -15,6 +15,7 @@ snapshot WORKING queue=[] working_on="auditing the queue" at=1000 asks=[] model=
 effect inject env-1 via Stdin
 effect reply d1 queued
 item agent-message:656e762d31 agent_message final input=env-1 at=1000 text="also check withdraws"
+pending [env-1]
 ## 6 fact {"channel":"stream","json":{"delta":"Done.","id":"m1","type":"text"}}
 item m1 message open at=1000 text="Done."
 ## 7 fact {"channel":"stream","json":{"id":"m1","type":"text_done"}}
@@ -28,6 +29,7 @@ snapshot IDLE queue=[] working_on="auditing the queue" at=1000 asks=[] model=?
 ## 10 fact {"channel":"stream","json":{"type":"turn_start"}}
 snapshot WORKING queue=[] working_on="auditing the queue" at=1000 asks=[] model=?
 ## 11 fact {"channel":"stream","json":{"envelope":"env-1","type":"user"}}
+pending []
 ## 12 fact {"channel":"stream","json":{"id":"s2","input":{"working_on":null},"name":"status","server":"amux","type":"tool"}}
 item s2 tool final at=1000 text="" status TOOL_STATE_RUNNING
 snapshot WORKING queue=[] working_on=- at=1000 asks=[] model=?

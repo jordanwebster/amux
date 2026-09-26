@@ -1,0 +1,256 @@
+{
+  "about": "The drained arm, for a message injected as the turn ends: the inject is sent while the turn runs, but the turn completes before Codex acknowledges it. Nothing is left to drain it, so at the acknowledgement an empty turn is started, as for an idle inject, and the message leaves the pending set only at that turn's acknowledgement.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Count to three."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-1",
+              "text": "",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-1",
+            "startedAtMs": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-1",
+              "text": "1 2 3",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-1"
+          }
+        }
+      }
+    },
+    {
+      "tick": 1800000001000
+    },
+    {
+      "input": {
+        "id": "m1",
+        "agent_message": {
+          "envelope": "e1",
+          "from": "reviewer",
+          "text": "Also say DONE."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "pending": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE",
+        "pending": [
+          "e1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-2",
+          "result": {}
+        }
+      },
+      "expect": {
+        "pending": [
+          "e1"
+        ],
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-3",
+          "result": {
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      },
+      "expect": {
+        "pending": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-2",
+              "text": "",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-2",
+            "startedAtMs": null
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "agentMessage",
+              "id": "msg-2",
+              "text": "DONE",
+              "phase": "final_answer"
+            },
+            "turnId": "turn-2"
+          }
+        }
+      }
+    },
+    {
+      "tick": 1800000002000
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/completed",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-2",
+              "status": "completed"
+            }
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE",
+        "turn_end": {
+          "turn_id": 2,
+          "last_message_key": "msg-2"
+        }
+      }
+    }
+  ]
+}

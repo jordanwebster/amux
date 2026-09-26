@@ -92,6 +92,7 @@ snapshot STARTING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=
 ## 31 input {"agent_message":{"envelope":"e9","from":"lead","text":"Status?"},"id":"m1"}
 effect reply m1 queued
 item agent-message:6539 agent_message final input=e9 at=1800000000000 text="Status?" envelope=6539
+pending [e9]
 ## 32 fact {"channel":"rpc","json":{"id":2,"result":{"approvalPolicy":"on-request","model":"gpt-5.6-luna","reasoningEffort":null,"sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
 effect write "{\"id\":\"amux-8\",\"method\":\"thread/inject_items\",\"params\":{\"items\":[{\"content\":[{\"text\":\"[message from agent lead]\\nStatus?\",\"type\":\"input_text\"}],\"role\":\"user\",\"type\":\"message\"}],\"threadId\":\"t1\"}}"
 effect write "{\"id\":\"amux-9\",\"method\":\"turn/start\",\"params\":{\"input\":[],\"threadId\":\"t1\"}}"
@@ -99,3 +100,4 @@ item boundary:4 boundary final at=1800000000000 text="" BOUNDARY_KIND_RESUMED se
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=- model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=? sign_in=? background=?
 ## 33 fact {"channel":"rpc","json":{"id":"amux-9","result":{"turn":{"id":"turn-5"}}}}
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] thread=t1 turn=turn-5 model=gpt-5.6-luna effort=high approval=on-request sandbox=workspace-write context=? plan=? usage=? servers=? sign_in=? background=?
+pending []

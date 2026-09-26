@@ -289,9 +289,18 @@ impl State {
             Request::Inject {
                 envelope_id,
                 during_turn,
+                turn_over,
             } => {
                 if during_turn && self.consumption == InjectConsumption::DrainedMidTurn {
-                    self.shared.message_consumed(&envelope_id);
+                    if turn_over && !self.shared.is_busy() {
+                        // The turn it was sent into ended first: nothing
+                        // answers it until a turn starts.
+                        self.kick(emit, vec![envelope_id]);
+                    } else {
+                        // Still running, or a later turn took the recorded
+                        // item into its context.
+                        self.shared.message_consumed(&envelope_id);
+                    }
                 }
             }
             Request::Steer { .. } | Request::Interrupt | Request::Compact => {}
@@ -1446,6 +1455,11 @@ impl State {
             self.shared.steer_refused(input_id);
         }
         self.shared.steers_lost();
+        for request in self.requests.values_mut() {
+            if let Request::Inject { turn_over, .. } = request {
+                *turn_over = true;
+            }
+        }
         let at_ms = self.shared.now_ms();
         let duration = int(turn, "durationMs");
         if let Some(ended) = self.shared.turn_ended(emit) {

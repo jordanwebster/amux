@@ -1,3 +1,14 @@
+2026-09-26 — **A message injected into Codex as its turn ends is still answered.**
+Codex drains a message injected into a running turn, so the interpreter
+counted it consumed at the inject's acknowledgement. When the turn ended
+before that acknowledgement, nothing was left to drain the message and it
+sat in the thread unanswered, yet it had already left the pending set. Now
+the acknowledgement decides: if the turn it was sent into is still running
+(or a later turn has started) it is consumed there; otherwise it is kicked
+like an idle inject, with an empty turn that consumes it at its own
+acknowledgement. Interpreter goldens now print the pending agent-message
+set whenever it changes, and fixtures can expect it.
+
 2026-09-26 — **A person can deny any Codex command.**
 Codex sometimes offers a command approval without a decline choice (only
 accept, accept-similar and cancel), which left the person able to approve or

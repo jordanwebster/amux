@@ -183,6 +183,8 @@ struct Expect {
     queue: Option<Vec<String>>,
     /// Open ask keys in the newest snapshot, in order.
     asks: Option<Vec<String>>,
+    /// Envelope ids of agent messages still pending after this event.
+    pending: Option<Vec<String>>,
     /// working_on in the newest snapshot; null for none.
     #[serde(default, deserialize_with = "present")]
     working_on: Option<Value>,
@@ -217,6 +219,8 @@ struct Frame {
     label: String,
     step: Step,
     effects: Vec<Effect>,
+    /// The pending agent-message set after this frame.
+    pending: Vec<Vec<u8>>,
 }
 
 /// What [`run_golden`] found.
@@ -822,6 +826,7 @@ fn execute<I: Interpreter>(
         label: "initial".into(),
         step: first,
         effects: Vec::new(),
+        pending: I::pending_messages(&state),
     }];
     let round_trip = |state: &I::State| -> Result<(I::State, Step), String> {
         let bytes = encode_checkpoint(state);
@@ -837,6 +842,7 @@ fn execute<I: Interpreter>(
                 label: "resume".into(),
                 step,
                 effects: Vec::new(),
+                pending: I::pending_messages(&state),
             });
         }
         match &scripted.action {
@@ -846,6 +852,7 @@ fn execute<I: Interpreter>(
                     label: scripted.label.clone(),
                     step: stepped.step,
                     effects: stepped.effects,
+                    pending: I::pending_messages(&state),
                 });
             }
             Action::Checkpoint => {
@@ -855,6 +862,7 @@ fn execute<I: Interpreter>(
                     label: "resume".into(),
                     step,
                     effects: Vec::new(),
+                    pending: I::pending_messages(&state),
                 });
             }
         }
@@ -865,6 +873,7 @@ fn execute<I: Interpreter>(
             label: "resume".into(),
             step,
             effects: Vec::new(),
+            pending: I::pending_messages(&state),
         });
     }
     Ok(frames)
@@ -1131,6 +1140,20 @@ fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> 
                 ),
             );
         }
+        if let Some(pending) = &expect.pending {
+            fail(
+                "pending",
+                format!("{pending:?}"),
+                format!(
+                    "{:?}",
+                    frame
+                        .pending
+                        .iter()
+                        .map(|id| display_id(id))
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
         if let Some(working_on) = &expect.working_on {
             fail(
                 "working_on",
@@ -1187,13 +1210,17 @@ fn check_expectations<I: Interpreter>(frames: &[Frame], script: &[Scripted]) -> 
 
 fn render<I: Interpreter>(frames: &[Frame]) -> String {
     let mut out = String::new();
+    let mut pending: &[Vec<u8>] = &[];
     for (index, frame) in frames.iter().enumerate() {
         let step = &frame.step;
+        let pending_changed = frame.pending != pending;
+        pending = &frame.pending;
         let silent = frame.effects.is_empty()
             && step.items.is_empty()
             && step.appends.is_empty()
             && step.snapshot.is_none()
-            && step.turn_end.is_none();
+            && step.turn_end.is_none()
+            && !pending_changed;
         if silent && frame.label.starts_with(RECORDED) {
             continue;
         }
@@ -1254,6 +1281,18 @@ fn render<I: Interpreter>(frames: &[Frame]) -> String {
                         .to_string()),
                 snapshot.at_ms,
                 I::describe_snapshot(&snapshot.body).text
+            );
+        }
+        if pending_changed {
+            let _ = writeln!(
+                out,
+                "pending [{}]",
+                frame
+                    .pending
+                    .iter()
+                    .map(|id| display_id(id))
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
         }
         if let Some(end) = &frame.step.turn_end {

@@ -52,3 +52,4 @@ turn_end 2 last=-
 effect inject env-1 via Stdin
 effect reply a1 queued
 item agent-message:656e762d31 agent_message final input=env-1 at=1800000000000 text="please look at the diff" envelope=656e762d31
+pending [env-1]

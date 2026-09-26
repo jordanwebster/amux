@@ -48,7 +48,9 @@ pub enum InjectConsumption {
     ParkedUntilNextTurn,
     /// A running turn samples again with injected items in context before
     /// it ends, so a message injected mid-turn leaves the pending set at the
-    /// inject's acknowledgement and no turn is started for it.
+    /// inject's acknowledgement and no turn is started for it. An inject
+    /// acknowledged after its turn ended was recorded into an idle thread,
+    /// so it is kicked as an idle inject is.
     DrainedMidTurn,
 }
 
@@ -109,6 +111,8 @@ enum Request {
         envelope_id: Vec<u8>,
         /// A turn was running when it was sent.
         during_turn: bool,
+        /// That turn ended before the acknowledgement came.
+        turn_over: bool,
     },
 }
 
@@ -624,6 +628,7 @@ impl State {
             Request::Inject {
                 envelope_id: envelope.id.clone(),
                 during_turn,
+                turn_over: false,
             },
         );
         if !during_turn {
@@ -901,6 +906,10 @@ impl<A: Arm> Interpreter for CodexWith<A> {
         crate::redact::redact_kind::<wire::CodexItem, wire::CodexSnapshot, wire::CodexAnswer, State>(
             target,
         )
+    }
+
+    fn pending_messages(state: &Self::State) -> Vec<Vec<u8>> {
+        state.shared.pending_messages().iter().cloned().collect()
     }
 
     fn unknown_snapshot() -> Vec<u8> {

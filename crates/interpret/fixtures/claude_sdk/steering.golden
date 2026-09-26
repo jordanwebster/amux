@@ -29,6 +29,7 @@ snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model
 effect inject e1 via Stdin
 effect reply m1 queued
 item agent-message:6531 agent_message final input=e1 at=1800000000000 text="Status?" envelope=6531
+pending [e1]
 ## 11 input {"id":"n3","send_now":{"target":"e1"}}
 effect reply n3 rejected:not_queued
 ## 12 fact {"channel":"stream","json":{"message":{"content":[{"text":"Planned, with the staging config.","type":"text"}],"id":"msg-1","model":"claude-opus-5-5","role":"assistant"},"session_id":"s1","type":"assistant","uuid":"a1"}}

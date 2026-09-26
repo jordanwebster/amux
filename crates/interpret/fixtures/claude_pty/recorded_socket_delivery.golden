@@ -5,10 +5,12 @@ snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? co
 effect inject env-idle via MessagingSocket
 effect reply m-idle queued
 item agent-message:656e762d69646c65 agent_message final input=env-idle at=0 text="A2A_SOCKET_IDLE_21240" envelope=656e762d69646c65
+pending [env-idle]
 ## 3 input {"agent_message":{"envelope":"env-busy","from":"probe","text":"A2A_SOCKET_BUSY_21240"},"id":"m-busy"}
 effect inject env-busy via MessagingSocket
 effect reply m-busy queued
 item agent-message:656e762d62757379 agent_message final input=env-busy at=0 text="A2A_SOCKET_BUSY_21240" envelope=656e762d62757379
+pending [env-busy,env-idle]
 ## 4 recorded 0: fact Transcript type=custom-title
 snapshot STARTING queue=[] working_on=- at=0 asks=[] session=7567be7d-3119-43d1-9c1d-5b7f20e48820 model=? mode=? context=? tasks=? background=?
 ## 7 recorded 3: fact Transcript type=permission-mode
@@ -29,6 +31,7 @@ snapshot IDLE queue=[] working_on=- at=1787443881703 asks=[] session=7567be7d-31
 turn_end 1 last=70cca43c-1567-454d-b513-aee897603d83
 ## 28 recorded 24: fact Transcript type=user uuid=3df6809d-39e3-48ce-a73b-baf08099c9d8
 snapshot WORKING queue=[] working_on=- at=1787443882060 asks=[] session=7567be7d-3119-43d1-9c1d-5b7f20e48820 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=35808 tasks=? background=0
+pending [env-busy]
 ## 34 recorded 30: fact Transcript type=assistant uuid=2697ce1c-a9af-488f-80d8-bd2daa5f1106
 item 2697ce1c-a9af-488f-80d8-bd2daa5f1106 thinking final at=1787443886689 text=""
 snapshot WORKING queue=[] working_on=- at=1787443886689 asks=[] session=7567be7d-3119-43d1-9c1d-5b7f20e48820 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=36035 tasks=? background=0
@@ -59,3 +62,4 @@ snapshot IDLE queue=[] working_on=- at=1787443893935 asks=[] session=7567be7d-31
 turn_end 3 last=1fa304dd-838d-48a8-bc36-dec87025c783
 ## 72 recorded 68: fact Transcript type=user uuid=fab2d431-bbc0-457f-9613-04d4050d004f
 snapshot WORKING queue=[] working_on=- at=1787443893940 asks=[] session=7567be7d-3119-43d1-9c1d-5b7f20e48820 model=claude-haiku-4-5-20251001 mode=bypassPermissions context=37630 tasks=? background=0
+pending []

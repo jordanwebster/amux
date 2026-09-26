@@ -876,6 +876,10 @@ impl Interpreter for ClaudePty {
         >(target)
     }
 
+    fn pending_messages(state: &Self::State) -> Vec<Vec<u8>> {
+        state.shared.pending_messages().iter().cloned().collect()
+    }
+
     fn unknown_snapshot() -> Vec<u8> {
         unknown::claude_pty().encode_to_vec()
     }

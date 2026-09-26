@@ -68,7 +68,7 @@ goldens! {
 
 /// Each consumption arm has its own golden over the same facts, so the
 /// probe's constant can flip without losing either.
-const ARM_FIXTURES: &[&str] = &["inject_parked", "inject_drained"];
+const ARM_FIXTURES: &[&str] = &["inject_parked", "inject_drained", "inject_drained_turn_end"];
 
 #[test]
 fn the_parked_arm_kicks_an_empty_turn_and_consumes_at_its_acknowledgement() {
@@ -78,6 +78,11 @@ fn the_parked_arm_kicks_an_empty_turn_and_consumes_at_its_acknowledgement() {
 #[test]
 fn the_drained_arm_consumes_at_the_inject_acknowledgement() {
     run_golden::<CodexWith<Drained>>(&fixtures().join("inject_drained.json")).assert_ok();
+}
+
+#[test]
+fn the_drained_arm_kicks_a_message_whose_turn_ended_before_its_acknowledgement() {
+    run_golden::<CodexWith<Drained>>(&fixtures().join("inject_drained_turn_end.json")).assert_ok();
 }
 
 #[test]
