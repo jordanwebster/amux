@@ -190,6 +190,8 @@ pub struct State {
     #[serde(with = "serde_pb::bytes_vec")]
     parked: Vec<Vec<u8>>,
     works: BTreeMap<String, WorkState>,
+    /// When each amux send call started, so its completion keeps the time.
+    sent: BTreeMap<String, i64>,
     streamed: BTreeMap<String, Streamed>,
     asks: BTreeMap<String, AskMeta>,
     /// Keys emitted since the turn began, and the newest created: text is
@@ -258,6 +260,7 @@ impl State {
             held: Vec::new(),
             parked: Vec::new(),
             works: BTreeMap::new(),
+            sent: BTreeMap::new(),
             streamed: BTreeMap::new(),
             asks: BTreeMap::new(),
             created: BTreeSet::new(),
@@ -1155,7 +1158,7 @@ fn describe_item(body: &[u8]) -> ItemView {
         Some(Kind::AgentMessage(message)) => (
             "agent_message",
             true,
-            format!("envelope={}", crate::to_hex(&message.envelope_id)),
+            crate::shared::describe_agent_message(&message),
         ),
         Some(Kind::Error(error)) => (
             "error",

@@ -14,7 +14,10 @@ use super::{
     work_complete,
 };
 use crate::claude_common::{compact_json, text};
-use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
+use crate::{
+    Channel, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool, is_status_tool,
+    sent_message, status_working_on,
+};
 
 /// Notifications that carry nothing a client draws, or that another fact
 /// already covers.
@@ -1217,6 +1220,9 @@ impl State {
             }
             return;
         }
+        if kind == "mcpToolCall" && is_send_tool(text(item, "server"), text(item, "tool")) {
+            return self.sent_message(emit, id, item, at_ms, completed);
+        }
         let prior = self.works.get(id).cloned();
         let mut state = match text(item, "status") {
             "" => ToolState::Succeeded,
@@ -1401,6 +1407,59 @@ impl State {
             background.remove(id);
         }
         self.emit_work(emit, id);
+    }
+
+    /// amux's send tool, drawn as the message it sent. Started and
+    /// completed each emit the whole item on the call's key.
+    fn sent_message(
+        &mut self,
+        emit: &mut Emit,
+        id: &str,
+        item: &Value,
+        at_ms: Option<i64>,
+        completed: bool,
+    ) {
+        let arguments = compact_json(item.get("arguments").unwrap_or(&Value::Null));
+        let returned = item
+            .pointer("/result/content")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| block.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let error = match item.get("error") {
+            Some(Value::String(error)) => error.clone(),
+            Some(error @ Value::Object(_)) => text(error, "message").to_owned(),
+            _ => String::new(),
+        };
+        let failed = item.pointer("/result/isError") == Some(&Value::Bool(true));
+        let outcome = match (completed, tool_state(text(item, "status"))) {
+            (false, _) => SendOutcome::Running,
+            (true, ToolState::Succeeded) if !failed => SendOutcome::Returned(&returned),
+            (true, _) if error.is_empty() => SendOutcome::Failed(&returned),
+            (true, _) => SendOutcome::Failed(&error),
+        };
+        let (message_text, message) = sent_message(arguments.as_bytes(), outcome);
+        let at_ms = self
+            .sent
+            .entry(id.to_owned())
+            .or_insert_with(|| at_ms.unwrap_or_else(|| self.shared.now_ms()));
+        let at_ms = *at_ms;
+        self.shared.item(
+            emit,
+            ItemDraft {
+                key: id.to_owned(),
+                text: message_text,
+                body: item_body(codex_item::Kind::AgentMessage(message)),
+                at_ms: Some(at_ms),
+                complete: true,
+                ..Default::default()
+            },
+        );
     }
 
     // --- turn end and exit -----------------------------------------------

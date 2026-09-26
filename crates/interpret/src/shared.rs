@@ -28,6 +28,9 @@ pub mod reason {
 /// whose call sets working_on.
 pub const AMUX_TOOL_SERVER: &str = "amux";
 pub const STATUS_TOOL: &str = "status";
+/// amux's tool that messages another agent; its call is drawn as the
+/// message it sent, never as a tool call.
+pub const SEND_TOOL: &str = "send";
 
 /// An open ask as the shared list needs to see it. Implemented by the
 /// per-kind ask messages.
@@ -812,6 +815,101 @@ pub fn is_status_tool(server: &str, tool: &str) -> bool {
     server == AMUX_TOOL_SERVER && tool == STATUS_TOOL
 }
 
+/// Whether a tool-server call is amux's send tool.
+pub fn is_send_tool(server: &str, tool: &str) -> bool {
+    server == AMUX_TOOL_SERVER && tool == SEND_TOOL
+}
+
+/// Where a send tool call has got to.
+#[derive(Clone, Copy, Debug)]
+pub enum SendOutcome<'a> {
+    Running,
+    /// It returned this text: `{"id": "<hex envelope id>"}` when the
+    /// recipient's provider has the message.
+    Returned(&'a str),
+    /// It failed, was refused or never ran, with this text.
+    Failed(&'a str),
+}
+
+impl<'a> SendOutcome<'a> {
+    /// From a tool call's state and the text it returned.
+    pub fn of(state: wire::ToolState, text: &'a str) -> Self {
+        match state {
+            wire::ToolState::Unspecified | wire::ToolState::Pending | wire::ToolState::Running => {
+                Self::Running
+            }
+            wire::ToolState::Succeeded => Self::Returned(text),
+            _ => Self::Failed(text),
+        }
+    }
+}
+
+/// A send tool call as the agent-message item it is drawn as: the text it
+/// sent and the body naming the recipient and the send's state. The item
+/// stays on the call's own key.
+pub fn sent_message(arguments_json: &[u8], outcome: SendOutcome<'_>) -> (String, AgentMessage) {
+    let arguments: serde_json::Value =
+        serde_json::from_slice(arguments_json).unwrap_or(serde_json::Value::Null);
+    let field = |name: &str| {
+        arguments
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let mut body = AgentMessage {
+        kind: wire::EnvelopeKind::Message as i32,
+        to: field("to"),
+        context: field("context").into_bytes(),
+        send_state: wire::SendState::Sending as i32,
+        ..Default::default()
+    };
+    match outcome {
+        SendOutcome::Running => {}
+        SendOutcome::Returned(result) => {
+            let id = serde_json::from_str::<serde_json::Value>(result)
+                .ok()
+                .and_then(|result| result.get("id")?.as_str().map(serde_pb::from_hex))
+                .and_then(Result::ok);
+            match id {
+                Some(id) => {
+                    body.envelope_id = id;
+                    body.send_state = wire::SendState::Sent as i32;
+                }
+                None => {
+                    body.send_state = wire::SendState::Rejected as i32;
+                    body.rejection = result.to_owned();
+                }
+            }
+        }
+        SendOutcome::Failed(reason) => {
+            body.send_state = wire::SendState::Rejected as i32;
+            body.rejection = reason.to_owned();
+        }
+    }
+    (field("text"), body)
+}
+
+/// An agent-message body as the goldens print it; a sent one adds its
+/// recipient and how the send went.
+pub(crate) fn describe_agent_message(message: &AgentMessage) -> String {
+    let mut out = format!("envelope={}", serde_pb::to_hex(&message.envelope_id));
+    if message.send_state != wire::SendState::Unspecified as i32 {
+        out.push_str(&format!(
+            " to={:?} {}",
+            message.to,
+            message
+                .send_state()
+                .as_str_name()
+                .trim_start_matches("SEND_STATE_")
+        ));
+        if !message.rejection.is_empty() {
+            out.push_str(&format!(" rejection={:?}", message.rejection));
+        }
+    }
+    out
+}
+
 /// The kind-neutral key for an agent message's item.
 pub fn agent_message_key(envelope_id: &[u8]) -> String {
     format!("agent-message:{}", serde_pb::to_hex(envelope_id))
@@ -824,6 +922,7 @@ pub fn agent_message_body(envelope: &Envelope) -> AgentMessage {
         kind: envelope.kind,
         from: envelope.from.clone(),
         context: envelope.context.clone().unwrap_or_default(),
+        ..Default::default()
     }
 }
 

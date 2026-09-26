@@ -1,3 +1,11 @@
+2026-09-26 — **A message an agent sends with amux's send tool is drawn as that message.**
+All three interpreters recognise amux's own `send` call and emit it as an
+agent-message item on the call's key instead of a tool row: the recipient
+as the model named it, "sending" until the call returns, then "sent" with
+the envelope id the tool answered or "rejected" with its reason. The
+status call still sets working_on and draws nothing. The agent-message body
+gains `to`, `send_state` and `rejection`; the view row carries them.
+
 2026-09-26 — **The agent hosts all three providers, carries agent messages, keeps a facts ring, and replays real recordings strictly.**
 Claude in a terminal: the agent reads the version the binary reports,
 resolves the keymap for it at every start, records both on the boundary,

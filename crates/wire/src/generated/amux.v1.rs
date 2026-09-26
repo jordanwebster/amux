@@ -643,6 +643,16 @@ pub struct AgentMessage {
     pub from: ::core::option::Option<Sender>,
     #[prost(bytes = "vec", tag = "4")]
     pub context: ::prost::alloc::vec::Vec<u8>,
+    /// Set on a message this agent sent with amux's send tool: the recipient as
+    /// the model named it. Empty on a message this agent received.
+    #[prost(string, tag = "5")]
+    pub to: ::prost::alloc::string::String,
+    /// How a sent message's send went; unspecified on a received message.
+    #[prost(enumeration = "SendState", tag = "6")]
+    pub send_state: i32,
+    /// For SEND_STATE_REJECTED: why, as the send reported it.
+    #[prost(string, tag = "7")]
+    pub rejection: ::prost::alloc::string::String,
 }
 impl ::prost::Name for AgentMessage {
     const NAME: &'static str = "AgentMessage";
@@ -1811,6 +1821,40 @@ impl BoundaryKind {
             "BOUNDARY_KIND_RESTARTED" => Some(Self::Restarted),
             "BOUNDARY_KIND_EXITED" => Some(Self::Exited),
             "BOUNDARY_KIND_DAEMON_LOST" => Some(Self::DaemonLost),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SendState {
+    Unspecified = 0,
+    /// The send is in flight; envelope_id is still empty.
+    Sending = 1,
+    /// The recipient's provider has it.
+    Sent = 2,
+    Rejected = 3,
+}
+impl SendState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SEND_STATE_UNSPECIFIED",
+            Self::Sending => "SEND_STATE_SENDING",
+            Self::Sent => "SEND_STATE_SENT",
+            Self::Rejected => "SEND_STATE_REJECTED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SEND_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "SEND_STATE_SENDING" => Some(Self::Sending),
+            "SEND_STATE_SENT" => Some(Self::Sent),
+            "SEND_STATE_REJECTED" => Some(Self::Rejected),
             _ => None,
         }
     }

@@ -22,7 +22,7 @@
   row    6 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
   composer Send activity=None queue=[] outbox=[]
 ## 17 input {"agent_message":{"envelope":"env-1","from":"reviewer","text":"please look at the diff"},"id":"a1"}
-  row    7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff" }
+  row    7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff", to: "", sent: Unspecified, rejection: "" }
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 70310000-0000-4000-8000-000000000000 Prompt { text: [Text("first")], steered: false }
@@ -30,5 +30,5 @@
      4 63310000-0000-4000-8000-000000000000 Prompt { text: [Text("/clear")], steered: false }
      5 boundary:2 Boundary { kind: Cleared, cause: "" }
      6 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
-     7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff" }
+     7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff", to: "", sent: Unspecified, rejection: "" }
 == strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: None, mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

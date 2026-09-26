@@ -30,8 +30,9 @@ use crate::claude_common::{
 };
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
-    RedactTarget, Shared, SnapshotView, Stepped, agent_message_body, agent_message_key, ask_item,
-    claude_sdk_input, human, reason, serde_pb, unknown,
+    RedactTarget, SendOutcome, Shared, SnapshotView, Stepped, agent_message_body,
+    agent_message_key, ask_item, claude_sdk_input, human, is_send_tool, reason, sent_message,
+    serde_pb, unknown,
 };
 
 /// The interpreter for kind `claude_sdk`.
@@ -564,6 +565,32 @@ impl State {
         if tool.hidden {
             return;
         }
+        if is_send_tool(&tool.server, &tool.name) {
+            let (text, message) = sent_message(
+                tool.input.as_bytes(),
+                SendOutcome::of(
+                    wire::ToolState::try_from(tool.state).unwrap_or_default(),
+                    &tool.outcome_text,
+                ),
+            );
+            let body = item_body(claude_sdk_item::Kind::AgentMessage(message));
+            if body == tool.emitted {
+                return;
+            }
+            tool.emitted = body.clone();
+            let at_ms = tool.at_ms;
+            return self.shared.item(
+                emit,
+                ItemDraft {
+                    key: id.to_owned(),
+                    text,
+                    body,
+                    at_ms: Some(at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
+        }
         let body = item_body(claude_sdk_item::Kind::Tool(ToolCall {
             name: tool.name.clone(),
             input_json: tool.input.clone().into_bytes(),
@@ -889,7 +916,7 @@ fn describe_item(body: &[u8]) -> ItemView {
         Some(Kind::AgentMessage(message)) => (
             "agent_message",
             true,
-            format!("envelope={}", crate::to_hex(&message.envelope_id)),
+            crate::shared::describe_agent_message(&message),
         ),
         Some(Kind::ApiError(error)) => (
             "api_error",

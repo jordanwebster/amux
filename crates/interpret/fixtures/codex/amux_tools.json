@@ -1,0 +1,250 @@
+{
+  "about": "amux's own tools: status sets working_on and draws nothing; send is drawn as the message it sent, on the call's own key, sending until it returns, then sent with the envelope id or rejected with the reason; never a tool row for either.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 2,
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-5.6-luna",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": null
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Refactor the parser."
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-1",
+          "result": {
+            "turn": {
+              "id": "turn-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "turn/started",
+          "params": {
+            "threadId": "t1",
+            "turn": {
+              "id": "turn-1",
+              "status": "inProgress"
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "st1",
+              "server": "amux",
+              "tool": "status",
+              "status": "inProgress",
+              "arguments": {
+                "working_on": "Splitting the parser"
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": [],
+        "working_on": "Splitting the parser"
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "st1",
+              "server": "amux",
+              "tool": "status",
+              "status": "completed",
+              "arguments": {
+                "working_on": "Splitting the parser"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ok"
+                  }
+                ]
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "sn1",
+              "server": "amux",
+              "tool": "send",
+              "status": "inProgress",
+              "arguments": {
+                "to": "reviewer",
+                "text": "Please review the parser change.\nIt is on branch parser.",
+                "context": "parser"
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "sn1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "sn1",
+              "server": "amux",
+              "tool": "send",
+              "status": "completed",
+              "arguments": {
+                "to": "reviewer",
+                "text": "Please review the parser change.\nIt is on branch parser.",
+                "context": "parser"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"id\": \"0f1e2d3c4b5a69788796a5b4c3d2e1f0\"}"
+                  }
+                ]
+              },
+              "durationMs": 500
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "sn1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/started",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "sn2",
+              "server": "amux",
+              "tool": "send",
+              "status": "inProgress",
+              "arguments": {
+                "to": "ghost",
+                "text": "Are you there?"
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "sn2"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "method": "item/completed",
+          "params": {
+            "threadId": "t1",
+            "item": {
+              "type": "mcpToolCall",
+              "id": "sn2",
+              "server": "amux",
+              "tool": "send",
+              "status": "failed",
+              "arguments": {
+                "to": "ghost",
+                "text": "Are you there?"
+              },
+              "error": {
+                "message": "no agent named ghost"
+              }
+            },
+            "turnId": "turn-1"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "sn2"
+        ]
+      }
+    }
+  ]
+}

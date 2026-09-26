@@ -7,8 +7,8 @@ use std::ops::RangeInclusive;
 use serde_json::Value;
 use ui_state::{Held, ItemBody, Key, SessionState};
 use wire::{
-    Attachment, BlobRef, BoundaryKind, DecisionOutcome, EnvelopeKind, FileChangeKind, ToolCall,
-    ToolState, TurnOutcome,
+    Attachment, BlobRef, BoundaryKind, DecisionOutcome, EnvelopeKind, FileChangeKind, SendState,
+    ToolCall, ToolState, TurnOutcome,
 };
 
 use crate::ask::{QuestionView, lifted, question, question_view};
@@ -170,6 +170,11 @@ pub enum RowKind {
         from: String,
         kind: EnvelopeKind,
         text: String,
+        /// A message this agent sent: the recipient as the model named it,
+        /// and how the send went; empty and unspecified on one it received.
+        to: String,
+        sent: SendState,
+        rejection: String,
     },
     AutoReview {
         decision: String,
@@ -738,6 +743,9 @@ fn agent_message(held: &Held, m: &wire::AgentMessage) -> RowKind {
         from,
         kind: m.kind(),
         text: held.item.text.clone(),
+        to: m.to.clone(),
+        sent: m.send_state(),
+        rejection: m.rejection.clone(),
     }
 }
 

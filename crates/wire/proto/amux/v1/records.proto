@@ -337,6 +337,22 @@ message AgentMessage {
   EnvelopeKind kind = 2;
   Sender from = 3;
   bytes context = 4;
+  // Set on a message this agent sent with amux's send tool: the recipient as
+  // the model named it. Empty on a message this agent received.
+  string to = 5;
+  // How a sent message's send went; unspecified on a received message.
+  SendState send_state = 6;
+  // For SEND_STATE_REJECTED: why, as the send reported it.
+  string rejection = 7;
+}
+
+enum SendState {
+  SEND_STATE_UNSPECIFIED = 0;
+  // The send is in flight; envelope_id is still empty.
+  SEND_STATE_SENDING = 1;
+  // The recipient's provider has it.
+  SEND_STATE_SENT = 2;
+  SEND_STATE_REJECTED = 3;
 }
 
 message Turn {
