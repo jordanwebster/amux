@@ -1,3 +1,14 @@
+2026-09-26 — **The amux binary is back in the workspace with only the agent's hidden subcommands.**
+`amux agent <dir>`, `amux mcp <dir>` and `amux hooks claude` are what an
+agent's harness runs from the install path; the old CLI, daemon entry,
+front door and their tests were built on the old wire and are deleted, to
+be rebuilt on the new one. `crates/amux/tests/agent_process.rs` runs the
+real binary on the fake providers for each kind: the agent finishes its
+turn after its daemon closes ctl.sock, serves two terminals at once, is
+found caught up by a redialling daemon, resumes from a new spec as the same
+agent on the same provider session, and killed by process group leaves no
+process behind and a directory the next incarnation starts from.
+
 2026-09-26 — **pty.sock serves raw attach: files mode for terminal Claude, a Codex view per connection.**
 A client on the agent's machine connects to pty.sock and gets a `PtyHello`.
 For terminal Claude the hello says where pty/ starts and ends; the client

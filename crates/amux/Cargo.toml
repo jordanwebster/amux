@@ -6,66 +6,27 @@ license.workspace = true
 description = "Agent multiplexer - CLI binary"
 publish = false
 
-[features]
-default = ["diagnostics"]
-bundled = ["store/bundled", "ui-runtime/bundled"]
-diagnostics = []
-perf = []
-
-[lib]
-name = "amux"
-path = "src/lib.rs"
-
 [[bin]]
 name = "amux"
 path = "src/main.rs"
 
 [dependencies]
-agent-runtime = { workspace = true }
-node = { workspace = true }
-model = { workspace = true }
-settings = { workspace = true }
-wire = { workspace = true }
-client = { workspace = true }
+agent = { workspace = true }
 claude = { workspace = true }
-tui = { workspace = true }
-ui-runtime = { workspace = true }
-ui-state = { workspace = true }
-store = { workspace = true }
-redaction = { workspace = true }
-tokio = { workspace = true }
 clap = { workspace = true }
-serde_yaml = { workspace = true }
-serde = { workspace = true }
-anyhow = { workspace = true }
-base64 = "0.22"
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
-serde_json = { workspace = true }
-uuid = { workspace = true }
-reqwest = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-semver = { workspace = true }
-sha2 = { workspace = true }
-crossterm = { workspace = true }
-qrcode = { workspace = true }
-chrono = { workspace = true }
-gethostname = { workspace = true }
+tokio = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]
-bytes = { workspace = true }
-hyper-util = { workspace = true }
-node = { workspace = true }
-node-test-support = { workspace = true }
-pty-host = { workspace = true }
-testnet = { workspace = true }
+agent = { workspace = true }
+interpret = { workspace = true }
+journal = { workspace = true }
+prost = { workspace = true }
+provider-fakes = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
-tonic = { workspace = true }
-tower = { workspace = true }
-ratatui = { workspace = true }
-vt100 = "0.15"
+tokio = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
