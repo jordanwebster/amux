@@ -7,18 +7,10 @@ publish = false
 
 [features]
 default = []
-bundled = ["store/bundled", "testnet/bundled"]
-perf = [
-    "dep:agent-runtime",
-    "dep:crossterm",
-    "dep:fold",
-    "dep:portable-pty",
-    "dep:ratatui",
-    "dep:rusqlite",
-    "dep:store",
-    "dep:tui",
-    "tui/fixtures",
-]
+bundled = ["store/bundled"]
+# The release perf binary. The workloads themselves build without it, so
+# their smoke runs in the ordinary test lane.
+perf = []
 
 [lib]
 
@@ -30,51 +22,18 @@ required-features = ["perf"]
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-client = { workspace = true }
-model = { workspace = true }
 node = { workspace = true }
+provider-fakes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-tempfile = { workspace = true }
+store = { workspace = true }
 testnet = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-ui-runtime = { workspace = true }
-ui-state = { workspace = true }
-uuid = { workspace = true }
-
-agent-runtime = { workspace = true, optional = true }
-crossterm = { workspace = true, optional = true }
-fold = { workspace = true, optional = true }
-portable-pty = { workspace = true, optional = true }
-ratatui = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true }
-store = { workspace = true, optional = true }
-tui = { workspace = true, optional = true }
+wire = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]
-claude = { workspace = true }
-gethostname = { workspace = true }
-redaction = { workspace = true }
-
-[target.'cfg(unix)'.dev-dependencies]
-nix = { workspace = true }
-
-[[test]]
-name = "codex_live"
-path = "tests/codex_live.rs"
-harness = false
-
-[[test]]
-name = "claude_pty_live"
-path = "tests/claude_pty_live.rs"
-harness = false
-
-[[test]]
-name = "claude_sdk_live"
-path = "tests/claude_sdk_live.rs"
-harness = false
+tempfile = { workspace = true }

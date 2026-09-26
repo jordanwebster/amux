@@ -66,6 +66,11 @@ const HELLO_PATIENCE: Duration = Duration::from_secs(5);
 const KILL_PATIENCE: Duration = Duration::from_secs(5);
 /// Fully ingested journal segments kept below the cursor, for dumps.
 pub const KEPT_SEGMENTS: usize = 2;
+/// The most journal frames one ingest transaction commits. At tens of
+/// microseconds a frame this holds the store for a few tens of
+/// milliseconds, which is what a subscribe, an input or a spawn waits
+/// behind at worst while a backlog drains.
+pub const INGEST_BATCH: usize = 512;
 /// The tail size K: the rows a replica keeps and asks for, and the newest
 /// rows own retention never trims. About an hour of a busy agent and
 /// several screens of scroll-back.
@@ -1115,10 +1120,21 @@ impl ProfileRuntime {
             .extend([deliveries, notifications]);
     }
 
-    /// Stops the background work without waiting for it.
-    pub fn abort_background(&self) {
+    /// Stops every task of this run without waiting, as a crash would:
+    /// background work, agent watchers, sources and the edge. The agents
+    /// keep running.
+    pub fn abort_all(&self) {
         for task in self.background.lock().unwrap().drain(..) {
             task.abort();
+        }
+        for handle in self.agents.lock().unwrap().values() {
+            for task in handle.tasks.lock().unwrap().drain(..) {
+                task.abort();
+            }
+        }
+        self.sources.lock().unwrap().abort_all();
+        if let Some(edge) = self.edge.get() {
+            edge.abort();
         }
     }
 
@@ -1158,7 +1174,22 @@ impl ProfileRuntime {
     /// At the end of the journal, the first time after each Hello, it
     /// broadcasts CaughtUp. Segments that lie wholly below a cursor that
     /// has reached the drive are deleted, but for the newest few.
+    ///
+    /// A backlog is committed [`INGEST_BATCH`] frames at a time, with the
+    /// store released between batches, so a journal that ran ahead of the
+    /// daemon never holds every other reader and writer off for the whole
+    /// of its catch-up.
     pub async fn ingest(&self, id: AgentId) -> Result<Committed, RegistryError> {
+        loop {
+            let (committed, more) = self.ingest_batch(id).await?;
+            if !more {
+                return Ok(committed);
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn ingest_batch(&self, id: AgentId) -> Result<(Committed, bool), RegistryError> {
         let key = self.key(id);
         let journal_dir = self.agent_dir(id).join(agent_dir::JOURNAL);
         // Held through the broadcast: commit order is broadcast order, and
@@ -1167,7 +1198,7 @@ impl ProfileRuntime {
         let mut store = self.store.lock().await;
         let mut cursor = store.cursor(&key)?;
         let mut reader = journal::Reader::new(&journal_dir, cursor);
-        let mut batch = reader.read_to_end()?;
+        let mut batch = reader.read_up_to(INGEST_BATCH)?;
         if batch.frames.is_empty() {
             // Nothing past the cursor may mean the cursor is past the
             // journal: the store reached the drive after committing frames
@@ -1181,12 +1212,13 @@ impl ProfileRuntime {
                 store.rewind_cursor(&key, end)?;
                 cursor = end;
                 reader.seek(end);
-                batch = reader.read_to_end()?;
+                batch = reader.read_up_to(INGEST_BATCH)?;
             }
         }
         // A torn frame in the newest segment is a write still under way:
         // the journal has not ended yet, and its Nudge will come.
-        let at_end = !matches!(batch.torn, Some(journal::Torn { skipped: false, .. }));
+        let at_end =
+            !batch.more && !matches!(batch.torn, Some(journal::Torn { skipped: false, .. }));
         let committed = if batch.frames.is_empty() {
             Committed {
                 cursor,
@@ -1236,7 +1268,7 @@ impl ProfileRuntime {
                 handle.caught_up_due.store(false, Ordering::SeqCst);
             }
         }
-        Ok(committed)
+        Ok((committed, batch.more))
     }
 
     /// Deletes the segments that lie wholly below `cursor`, keeping the

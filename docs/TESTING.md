@@ -255,14 +255,10 @@ story cannot retry invisibly; a recovery story declares its retries.
   Credentials, spending and hardware are explicit capabilities that an
   ordinary push test never inherits.
 
-Live compatibility keeps the three provider entry points. A run with no
-scenario reports `not_run`; it never implies compatibility passed.
-
-```sh
-just codex-live -- SCENARIO
-just claude-pty-live -- SCENARIO
-just claude-sdk-live -- SCENARIO
-```
+Live provider behaviour is recorded by the probe crates (`claude-probe
+record`, `codex-probe record`) and the fakes are held to those recordings.
+Measured performance is `just perf`; `just perf -- --only flood` runs the
+flood workload alone.
 
 Production sign-in, StoreKit purchase and a real-cloud phone conversation
 are the by-hand QA recipes in the phone justfile. Scripted journeys prove the

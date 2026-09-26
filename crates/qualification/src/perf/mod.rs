@@ -2,23 +2,12 @@
 
 use std::io;
 
+pub mod flood;
 mod report;
-#[cfg(feature = "perf")]
-mod soak;
-#[cfg(feature = "perf")]
-mod store_workloads;
-#[cfg(feature = "perf")]
-mod workloads;
 pub use report::{
     Baselines, DESKTOP_REFERENCE_STATE, Machine, Metric, MetricRun, PerfError, Report, Sample,
     Statistic, Unit, Verdict, Workload,
 };
-#[cfg(feature = "perf")]
-pub use soak::{run_soak, soak_child};
-#[cfg(feature = "perf")]
-pub use store_workloads::run_cold_start;
-#[cfg(feature = "perf")]
-pub use workloads::{run_fast, run_summarizer};
 
 /// The platform's process-residency measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

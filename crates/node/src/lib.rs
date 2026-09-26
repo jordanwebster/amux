@@ -67,8 +67,8 @@ pub use relay::{EXITED, EXITING, RelayError};
 pub use retention::{REMOVED_BY_RETENTION, Retention};
 pub use runtime::{
     AGENT_LOG, AgentId, CAUSE_ABORTED, CAUSE_EXITED, CAUSE_EXITED_AWAY, CAUSE_KILLED,
-    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, JoinHook, KEPT_SEGMENTS, Launch, Profile,
-    ProfileRuntime, RegistryError, SweepReport, TAIL_ROWS, locked, to_wire,
+    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, INGEST_BATCH, JoinHook, KEPT_SEGMENTS,
+    Launch, Profile, ProfileRuntime, RegistryError, SweepReport, TAIL_ROWS, locked, to_wire,
 };
 pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};
 pub use sources::{NO_LONGER_LISTED, NOT_TRUSTED, SourceHook, SourcePolicy, SourceVerdict};

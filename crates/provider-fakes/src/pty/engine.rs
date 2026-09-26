@@ -623,7 +623,7 @@ impl Engine {
             if self.send_now {
                 self.run_now();
             }
-            let Some(step) = self.steps.pop_front() else {
+            let Some(step) = crate::script::next_step(&mut self.steps) else {
                 break None;
             };
             match step {
@@ -678,13 +678,14 @@ impl Engine {
                 }
                 Step::TurnEnd => break None,
                 Step::Exit { code } => break Some(code),
+                Step::Repeat { .. } => unreachable!("next_step unrolls repeats"),
             }
         };
         if exit.is_some() {
             return exit;
         }
         if let Some(cut) = self.cut {
-            while let Some(step) = self.steps.pop_front() {
+            while let Some(step) = crate::script::next_step(&mut self.steps) {
                 if step == Step::TurnEnd {
                     break;
                 }

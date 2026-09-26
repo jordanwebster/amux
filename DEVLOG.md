@@ -1,3 +1,31 @@
+2026-09-26 — **The perf lane measures a flood, and a journal backlog no longer holds the store for its whole catch-up.**
+`crates/qualification` is back in the workspace as the perf lane only: the
+shared report and baseline format, the process-memory sampler and a new
+`flood` workload. Twenty agents on one host stream a message every 20 ms
+while a second runtime with no block opens the fleet and one chat; the run
+measures time to the fleet's and the chat's CaughtUp, ingest lag, journal
+growth with the daemon killed and the drain after its restart, a replica's
+catch-up at a distance under and over K, and each agent process's memory,
+against budgets whose basis in the parameters table is written beside
+them. `just perf -- --only flood` runs it in release; a three-agent smoke
+runs in the ordinary test lane; `journeys/topologies/flood.json` serves the
+same topology to a client, and a test holds the file to the workload. The
+old workloads (fold and TUI frames, the old client store's cold start, the
+memory soak) and the live-provider harnesses drove the deleted daemon and
+client and are gone with their recipes and baselines.
+
+Running the flood unthrottled found a real stall: ingest read an agent's
+whole backlog into one transaction, so a journal that ran ahead of the
+daemon held the store for seconds (317,000 frames in one 11 s commit),
+and spawns missed their start deadline and input verdicts were lost behind
+it. Ingest now commits at most 512 frames per transaction and releases the
+store between them; CaughtUp still comes once, after the last frame. A
+crashed daemon run in the test harness now also stops its agent watchers,
+sources and edge, which a busy run otherwise kept alive. Fake scripts gain
+a `repeat` step so a flood is a few lines of script. The testnet builds its
+agents in the profile of the binary that runs it, so release measurements
+run release agents.
+
 2026-09-26 — **The inventory carries one host set, and reconciliation closes chats on agents a host no longer has.**
 SubscribeInventory now lists this host, every trusted host with its
 presence (online or offline, from whether it has a route) and the

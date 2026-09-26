@@ -117,18 +117,6 @@ offline-test:
 full-debug:
     {{bounded}} 900 cargo build --locked -p amux --bins --profile full-debug {{desktop_features}}
 
-# Run selected live Codex scenarios.
-codex-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p qualification --test codex_live --features bundled -- "$@"
-
-# Run selected live Claude PTY scenarios.
-claude-pty-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p qualification --test claude_pty_live --features bundled -- "$@"
-
-# Run selected live Claude SDK scenarios.
-claude-sdk-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p qualification --test claude_sdk_live --features bundled -- "$@"
-
 # Run one operator-run qualification workload by name.
 qualify NAME *ARGS:
     {{bounded}} 1200 cargo build --locked -p amux -p provider-fakes -p node-test-support --bins {{desktop_features}}
@@ -176,4 +164,4 @@ ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-po
 # lease and prepares the pinned device. Pass --baseline to record the current
 # release medians after every absolute budget passes.
 perf *ARGS:
-    set -e; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p amux --bin amux --features bundled,perf; {{bounded}} 1200 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != soak ] && [ "$mode" != --only ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf -- "$@"; fi
+    set -e; if [ "${1-}" = -- ]; then shift; fi; mode=${1-}; {{bounded}} 1200 cargo build --locked --release -p qualification --bin perf --features bundled,perf; {{bounded}} 1800 target/release/perf "$@"; if [ "$mode" != --only ] && command -v xcrun >/dev/null 2>&1; then {{bounded}} 3600 just ios perf -- "$@"; fi

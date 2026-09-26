@@ -675,6 +675,21 @@ impl Edge {
     }
 
     /// Closes every link, withdraws the advertisement and stops serving.
+    /// Stops serving at once, without closing links politely: what a
+    /// crash leaves behind.
+    pub(crate) fn abort(&self) {
+        self.shutdown.send_replace(true);
+        self.trust_gate.close();
+        self.quic_endpoint
+            .close(quinn::VarInt::from_u32(0), b"profile stopping");
+        if let Ok(mut cloud) = self.cloud.try_lock() {
+            cloud.take();
+        }
+        for task in std::mem::take(&mut *self.tasks.lock().unwrap()) {
+            task.abort();
+        }
+    }
+
     pub(crate) async fn stop(&self, reason: wire::LinkCloseReason) {
         if let Some(discovery) = &self.discovery {
             discovery.withdraw();

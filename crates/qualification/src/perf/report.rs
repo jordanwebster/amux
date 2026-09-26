@@ -120,7 +120,7 @@ pub struct MetricRun {
     pub ended_at: DateTime<Utc>,
 }
 
-#[cfg(any(feature = "perf", test))]
+#[cfg(test)]
 impl MetricRun {
     pub(crate) fn ceiling_only(mut self) -> Self {
         self.metric.ceiling_only = true;

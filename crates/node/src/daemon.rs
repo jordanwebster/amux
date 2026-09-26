@@ -278,7 +278,7 @@ impl Drop for Daemon {
         }
         let hosted = std::mem::take(&mut *self.installation.hosted.lock().unwrap());
         for hosted in hosted.values() {
-            hosted.runtime.abort_background();
+            hosted.runtime.abort_all();
         }
     }
 }

@@ -1659,3 +1659,57 @@ async fn retention_sweep() {
     drop(runtime);
     daemon.shutdown().await.unwrap();
 }
+
+/// A journal far ahead of the daemon is committed in batches of at most
+/// INGEST_BATCH frames, the store released between them: every frame
+/// lands once and in order, and CaughtUp comes once, after the last, never
+/// at a batch boundary.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_backlog_is_committed_in_batches_and_caught_up_once_at_its_end() {
+    let install = Install::new();
+    let mut agent = SyntheticAgent::new(&install, "backlog", BIG_SEGMENTS);
+    agent.register_offline(&install);
+    agent.append(&item("first", "row"));
+    agent.go_live();
+    let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
+    let mut subscription = runtime.subscribe(agent.id.as_bytes(), 0).await.unwrap();
+    let mut seen = Vec::new();
+    read_until(&mut subscription, &mut seen, "the opening", |seen| {
+        caught_ups(seen) == 1
+    })
+    .await;
+    seen.clear();
+    let frames = node::INGEST_BATCH * 3 + 7;
+    for n in 0..frames {
+        agent.append(&item(&format!("k{n:05}"), "row"));
+    }
+    // A new Hello makes CaughtUp due again, at the journal's end.
+    agent.drop_connection().await;
+    read_until(
+        &mut subscription,
+        &mut seen,
+        "the backlog and CaughtUp",
+        |seen| caught_ups(seen) == 1,
+    )
+    .await;
+    let keys: Vec<String> = seen
+        .iter()
+        .filter_map(|event| match &event.of {
+            Some(session_event::Of::Item(item)) => Some(item.key.clone()),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<String> = (0..frames).map(|n| format!("k{n:05}")).collect();
+    assert_eq!(keys, expected, "every frame, once, in journal order");
+    assert!(
+        matches!(
+            seen.last().and_then(|event| event.of.as_ref()),
+            Some(session_event::Of::CaughtUp(_))
+        ),
+        "CaughtUp comes after the last row, never between batches"
+    );
+    drain(&mut subscription, &mut seen, Duration::from_millis(100)).await;
+    assert_eq!(caught_ups(&seen), 1);
+    agent.die().await;
+    crash(daemon, runtime);
+}

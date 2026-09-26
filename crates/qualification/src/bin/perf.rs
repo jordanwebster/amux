@@ -2,16 +2,13 @@ use std::io::Read;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 use anyhow::{Context, Result, bail};
-use qualification::perf::{
-    Baselines, DESKTOP_REFERENCE_STATE, Machine, Report, run_cold_start, run_fast, run_soak,
-    run_summarizer, soak_child,
-};
+use qualification::perf::flood::{self, FloodOptions};
+use qualification::perf::{Baselines, DESKTOP_REFERENCE_STATE, Machine, MetricRun, Report};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Selection {
     All,
-    ColdStart,
-    Summarizer,
+    Flood,
 }
 
 fn main() -> Result<()> {
@@ -19,18 +16,8 @@ fn main() -> Result<()> {
     if arguments.as_slice() == ["--cluster-warmer"] {
         return run_cluster_warmer();
     }
-    if arguments.first().map(String::as_str) == Some("--soak-child") {
-        if arguments.len() != 3 {
-            bail!("--soak-child requires KIND CONTROL_DIRECTORY");
-        }
-        return soak_child(&arguments[1], std::path::Path::new(&arguments[2]));
-    }
     if cfg!(debug_assertions) {
         bail!("performance qualification must run with the release profile");
-    }
-    if arguments.first().map(String::as_str) == Some("soak") {
-        let recording = soak_arguments(&arguments)?;
-        return run_soak(Machine::detect()?, recording);
     }
     let mut warmer = ClusterWarmer::start()?;
     let result = run_qualification(&arguments);
@@ -50,22 +37,9 @@ fn run_qualification(arguments: &[String]) -> Result<()> {
         Baselines::read(&path, &machine, Some(DESKTOP_REFERENCE_STATE))?
     };
     let runs = match selection {
-        Selection::All => run_fast()?,
-        Selection::ColdStart => run_cold_start()?,
-        Selection::Summarizer => run_summarizer()?,
+        Selection::All | Selection::Flood => run_flood()?,
     };
-    let metric_names = runs.iter().map(|run| run.metric.name).collect::<Vec<_>>();
-    let projected = match (&recorded, selection) {
-        (Some(recorded), Selection::ColdStart | Selection::Summarizer) => {
-            Some(recorded.project(&metric_names)?)
-        }
-        _ => None,
-    };
-    let recorded = match selection {
-        Selection::All => recorded.as_ref(),
-        Selection::ColdStart | Selection::Summarizer => projected.as_ref(),
-    };
-    let report = Report::evaluate(machine, runs, recorded, baseline)?;
+    let report = Report::evaluate(machine, runs, recorded.as_ref(), baseline)?;
     report.print();
     if baseline {
         report.write_baseline(&path)?;
@@ -77,6 +51,17 @@ fn run_qualification(arguments: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_flood() -> Result<Vec<MetricRun>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("start the flood's runtime")?
+        .block_on(flood::run(&FloodOptions::full()))
+}
+
+/// Keeps one core busy for the whole run, the reference state baselines
+/// are recorded in, so a machine that idles its cores between samples
+/// measures the same as one that does not.
 struct ClusterWarmer {
     child: Option<Child>,
     pipe: Option<ChildStdin>,
@@ -144,29 +129,17 @@ fn run_cluster_warmer() -> Result<()> {
         .map_err(|_| anyhow::anyhow!("cluster warmer pipe monitor panicked"))
 }
 
-fn soak_arguments(arguments: &[String]) -> Result<bool> {
-    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
-    match arguments.as_slice() {
-        ["soak"] => Ok(false),
-        ["soak", "--baseline"] => Ok(true),
-        _ => bail!("memory soak accepts exactly `soak` or `soak --baseline`"),
-    }
-}
-
 fn qualification_arguments(arguments: &[String]) -> Result<(bool, Selection)> {
     let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
     match arguments.as_slice() {
         [] => Ok((false, Selection::All)),
         ["--baseline"] => Ok((true, Selection::All)),
-        ["--only", "cold-start"] => Ok((false, Selection::ColdStart)),
-        ["--only", "summarizer"] => Ok((false, Selection::Summarizer)),
-        ["--baseline", "--only", "summarizer"] | ["--only", "summarizer", "--baseline"] => {
-            bail!("a summarizer-only run cannot replace the complete performance baseline")
+        ["--only", "flood"] => Ok((false, Selection::Flood)),
+        ["--baseline", "--only", "flood"] | ["--only", "flood", "--baseline"] => {
+            Ok((true, Selection::Flood))
         }
         [argument] => bail!("unknown performance argument {argument:?}"),
-        _ => bail!(
-            "performance qualification accepts --baseline, --only cold-start, or --only summarizer"
-        ),
+        _ => bail!("performance qualification accepts --baseline and --only flood"),
     }
 }
 
@@ -179,29 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn accepts_summarizer_only_without_baseline_recording() {
+    fn accepts_the_flood_alone_with_or_without_recording() {
         assert_eq!(
-            qualification_arguments(&arguments(&["--only", "summarizer"])).unwrap(),
-            (false, Selection::Summarizer)
+            qualification_arguments(&arguments(&["--only", "flood"])).unwrap(),
+            (false, Selection::Flood)
         );
-        assert!(
-            qualification_arguments(&arguments(&["--only", "summarizer", "--baseline"])).is_err()
-        );
-    }
-
-    #[test]
-    fn accepts_cold_start_only_without_baseline_recording() {
         assert_eq!(
-            qualification_arguments(&arguments(&["--only", "cold-start"])).unwrap(),
-            (false, Selection::ColdStart)
+            qualification_arguments(&arguments(&["--only", "flood", "--baseline"])).unwrap(),
+            (true, Selection::Flood)
         );
-    }
-
-    #[test]
-    fn soak_accepts_only_plain_and_baseline_modes() {
-        assert!(!soak_arguments(&arguments(&["soak"])).unwrap());
-        assert!(soak_arguments(&arguments(&["soak", "--baseline"])).unwrap());
-        assert!(soak_arguments(&arguments(&["soak", "extra"])).is_err());
-        assert!(soak_arguments(&arguments(&["soak", "--baseline", "extra"])).is_err());
+        assert!(qualification_arguments(&arguments(&["--only", "summarizer"])).is_err());
     }
 }

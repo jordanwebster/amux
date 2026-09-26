@@ -77,6 +77,9 @@ pub enum Step {
     TurnEnd,
     /// Exit the provider process with this code, mid-turn or not.
     Exit { code: i32 },
+    /// Play `steps` this many times in a row, as if written out: a flood
+    /// of messages without a script the size of the flood.
+    Repeat { times: usize, steps: Vec<Step> },
 }
 
 /// A tool call. The class picks a tool of that class when no name is given:
@@ -186,17 +189,7 @@ impl Script {
 
     /// Refuse asks this provider has no way to raise.
     pub fn check(&self, provider: &'static str, raises: &[&str]) -> Result<(), ScriptError> {
-        for step in &self.steps {
-            if let Step::Ask(ask) = step
-                && !raises.contains(&ask.kind())
-            {
-                return Err(ScriptError::Unsupported {
-                    provider,
-                    ask: ask.kind(),
-                });
-            }
-        }
-        Ok(())
+        check_steps(&self.steps, provider, raises)
     }
 }
 
@@ -219,10 +212,83 @@ impl Tool {
     }
 }
 
+fn check_steps(steps: &[Step], provider: &'static str, raises: &[&str]) -> Result<(), ScriptError> {
+    for step in steps {
+        match step {
+            Step::Ask(ask) if !raises.contains(&ask.kind()) => {
+                return Err(ScriptError::Unsupported {
+                    provider,
+                    ask: ask.kind(),
+                });
+            }
+            Step::Repeat { steps, .. } => check_steps(steps, provider, raises)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The next step to play, with repeats unrolled one pass at a time so a
+/// long repeat never sits in memory written out. Never returns a
+/// [`Step::Repeat`].
+pub fn next_step(steps: &mut std::collections::VecDeque<Step>) -> Option<Step> {
+    loop {
+        match steps.pop_front()? {
+            Step::Repeat { times, steps: body } => {
+                if times == 0 || body.is_empty() {
+                    continue;
+                }
+                if times > 1 {
+                    steps.push_front(Step::Repeat {
+                        times: times - 1,
+                        steps: body.clone(),
+                    });
+                }
+                for step in body.into_iter().rev() {
+                    steps.push_front(step);
+                }
+            }
+            step => return Some(step),
+        }
+    }
+}
+
 /// Where a scripted pause stands: polled rather than watched so it works the
 /// same on every platform and filesystem.
 pub async fn wait_for(path: &Path) {
     while !path.exists() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use std::collections::VecDeque;
+
+    use super::{Step, next_step};
+
+    fn text(text: &str) -> Step {
+        Step::Text {
+            chunks: vec![text.to_owned()],
+        }
+    }
+
+    #[test]
+    fn a_repeat_plays_as_if_written_out_and_parses_from_json() {
+        let steps: Vec<Step> = serde_json::from_str(
+            r#"[{"repeat": {"times": 3, "steps": [{"text": {"chunks": ["a"]}}, {"repeat": {"times": 2, "steps": [{"text": {"chunks": ["b"]}}]}}]}}, "turn_end"]"#,
+        )
+        .unwrap();
+        let mut queue: VecDeque<Step> = steps.into();
+        let mut played = Vec::new();
+        while let Some(step) = next_step(&mut queue) {
+            played.push(step);
+        }
+        let mut expected = Vec::new();
+        for _ in 0..3 {
+            expected.extend([text("a"), text("b"), text("b")]);
+        }
+        expected.push(Step::TurnEnd);
+        assert_eq!(played, expected);
     }
 }

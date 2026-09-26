@@ -14,22 +14,28 @@ pub struct Binaries {
 
 impl Binaries {
     /// Builds `amux` and the fake providers once per process with the same
-    /// cargo that built this one, and finds them beside it. Agents run the
-    /// binary from the tree under test, never an installed one.
+    /// cargo and profile that built this one, and finds them beside it.
+    /// Agents run the binary from the tree under test, never an installed
+    /// one, and a release run measures release agents.
     pub fn built() -> &'static Binaries {
         static BUILT: OnceLock<Binaries> = OnceLock::new();
         BUILT.get_or_init(|| {
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+            let dir = target_dir();
+            let mut args = vec![
+                "build",
+                "--locked",
+                "-p",
+                "amux",
+                "-p",
+                "provider-fakes",
+                "--bins",
+            ];
+            if dir.file_name().and_then(|name| name.to_str()) == Some("release") {
+                args.push("--release");
+            }
             let status = std::process::Command::new(cargo)
-                .args([
-                    "build",
-                    "--locked",
-                    "-p",
-                    "amux",
-                    "-p",
-                    "provider-fakes",
-                    "--bins",
-                ])
+                .args(args)
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .stdout(std::process::Stdio::null())
                 .status()
@@ -38,7 +44,7 @@ impl Binaries {
                 status.success(),
                 "building amux and the fake providers failed"
             );
-            Binaries { dir: target_dir() }
+            Binaries { dir }
         })
     }
 

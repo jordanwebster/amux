@@ -317,3 +317,29 @@ fn segments_below_a_durable_cursor_are_reclaimable_except_the_kept_ones() {
     let batch = Reader::new(dir.path(), 0).read_to_end().unwrap();
     assert_eq!(batch.frames.len(), 3);
 }
+
+#[test]
+fn a_limited_read_takes_a_backlog_in_pieces_across_rotations() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = Writer::open(dir.path(), 64).unwrap();
+    for n in 0..30 {
+        writer.append(&step(&format!("k{n}"), "text")).unwrap();
+    }
+    let mut reader = Reader::new(dir.path(), 0);
+    let mut seen = Vec::new();
+    let mut reads = 0;
+    loop {
+        let batch = reader.read_up_to(7).unwrap();
+        reads += 1;
+        assert!(batch.frames.len() <= 7);
+        assert_eq!(batch.more, batch.frames.len() == 7 && seen.len() + 7 < 30);
+        seen.extend(keys(&batch));
+        if !batch.more {
+            break;
+        }
+    }
+    assert_eq!(seen, (0..30).map(|n| format!("k{n}")).collect::<Vec<_>>());
+    assert_eq!(reads, 5);
+    assert_eq!(reader.cursor(), writer.offset());
+    assert_eq!(reader.read_up_to(7).unwrap(), Batch::default());
+}

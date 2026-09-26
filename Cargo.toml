@@ -3,7 +3,7 @@ resolver = "2"
 # The wire was rewritten to its final schema; crates built on the old wire
 # (or whose tests were) are out of the members list until they are rebuilt on
 # the new one or deleted: app-embedded, app-ffi, app-runtime, client,
-# node-test-support, qualification, shot, tui, ui-runtime.
+# node-test-support, shot, tui, ui-runtime.
 members = [
     "crates/agent",
     "crates/agent-dir",
@@ -21,6 +21,7 @@ members = [
     "crates/node",
     "crates/provider-fakes",
     "crates/pty-host",
+    "crates/qualification",
     "crates/redaction",
     "crates/replay-support",
     "crates/settings",
@@ -37,7 +38,6 @@ exclude = [
     "crates/app-runtime",
     "crates/client",
     "crates/node-test-support",
-    "crates/qualification",
     "crates/shot",
     "crates/tui",
     "crates/ui-runtime",

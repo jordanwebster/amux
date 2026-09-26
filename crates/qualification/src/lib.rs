@@ -1,4 +1,4 @@
-//! Environment-dependent qualification harnesses.
+//! Environment-dependent qualification: performance workloads measured
+//! on enrolled machines against reviewed baselines.
 
-#[cfg(feature = "perf")]
 pub mod perf;

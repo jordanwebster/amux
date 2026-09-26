@@ -289,6 +289,8 @@ pub struct Batch {
     /// cursor a consumer stores once the frame is committed.
     pub frames: Vec<(u64, Step)>,
     pub torn: Option<Torn>,
+    /// The read stopped at its frame limit with more whole frames after.
+    pub more: bool,
 }
 
 /// Reads whole frames from a cursor onwards.
@@ -321,6 +323,13 @@ impl Reader {
     /// returned as a frame; in the newest segment the cursor stays at the
     /// last whole frame so a later read picks the frame up once written.
     pub fn read_to_end(&mut self) -> io::Result<Batch> {
+        self.read_up_to(usize::MAX)
+    }
+
+    /// Reads as [`Reader::read_to_end`] does, but stops after `limit`
+    /// frames and says so in [`Batch::more`], so a consumer can commit a
+    /// long backlog in pieces.
+    pub fn read_up_to(&mut self, limit: usize) -> io::Result<Batch> {
         let mut batch = Batch::default();
         loop {
             let starts = segments(&self.dir)?;
@@ -349,6 +358,10 @@ impl Reader {
             file.read_to_end(&mut bytes)?;
             let mut at = 0;
             while let Frame::Whole(step, len) = decode_frame(&bytes[at..]) {
+                if batch.frames.len() == limit {
+                    batch.more = true;
+                    return Ok(batch);
+                }
                 at += len;
                 self.cursor += len as u64;
                 batch.frames.push((self.cursor, *step));

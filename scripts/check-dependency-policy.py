@@ -66,17 +66,7 @@ SUPPORT_ALLOWED_LOCAL = {
     },
     # Qualification owns environment-dependent provider and performance
     # checks while reusing the network harness rather than shipping it.
-    "qualification": {
-        "client",
-        "fold",
-        "model",
-        "node",
-        "store",
-        "testnet",
-        "tui",
-        "ui-runtime",
-        "ui-state",
-    },
+    "qualification": {"node", "provider-fakes", "store", "testnet", "wire"},
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},
     # The fake providers speak each protocol from its recordings, not from
