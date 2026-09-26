@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use node::RelayCarrier;
 use node::harness::{Advertisement, HostVia};
+use store::Store as _;
 use support::*;
 use testnet::{Net, RELAY_HOST, Topology};
 use wire::begin_pair_request;
@@ -1277,6 +1278,425 @@ async fn a_subscriber_that_stops_reading_is_closed_while_one_beside_it_keeps_its
         "the reader saw {items} items to the end; the stalled subscriber got {} events, \
          then Lagged, then its stream {end}",
         seen.len() - 1
+    );
+
+    net.shutdown().await.unwrap();
+}
+
+/// Signs profile `profile` on `host` in with `refresh`, as a login hands
+/// the daemon its staged token.
+async fn bind(
+    net: &Net,
+    host: &str,
+    profile: &str,
+    refresh: String,
+    adopt: bool,
+) -> Result<wire::ProfileInfo, tonic::Status> {
+    door(net, host)
+        .await
+        .bind_profile(wire::BindProfileRequest {
+            profile_id: Some(profile.to_owned()),
+            cloud_url: net.relay().unwrap().url().to_owned(),
+            staged_refresh_token: refresh,
+            adopt_non_pristine: adopt,
+            ..wire::BindProfileRequest::default()
+        })
+        .await
+        .map(tonic::Response::into_inner)
+}
+
+async fn profile_info(net: &Net, host: &str, profile: &str) -> wire::ProfileInfo {
+    door(net, host)
+        .await
+        .list_profiles(wire::ListProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .profiles
+        .into_iter()
+        .find(|info| info.id == profile)
+        .expect("the profile is listed")
+}
+
+async fn create(net: &Net, host: &str, label: &str) -> (String, std::sync::Arc<node::Edge>) {
+    let info = door(net, host)
+        .await
+        .create_profile(wire::CreateProfileRequest {
+            label: Some(label.to_owned()),
+            ..wire::CreateProfileRequest::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let edge = net.profile_edge(host, info.id.parse().unwrap()).unwrap();
+    (info.id, edge)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
+    let net = Net::start(
+        Topology::new()
+            .relay(&["ada", "bob", "cara"])
+            .host_decl(lan_host("desk", "home"))
+            .host_decl(lan_host("laptop", "home"))
+            .agent(testnet::AgentDecl::new("worker", "desk").prompt("Keep going.")),
+    )
+    .await
+    .unwrap();
+    let (desk, laptop) = (host_id(&net, "desk"), host_id(&net, "laptop"));
+    let main = profile(&net, "desk");
+    let mut watch = door(&net, "desk")
+        .await
+        .watch_profiles(wire::WatchProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    pair(&net, "laptop", "desk").await;
+    until_via(&net, "laptop", "desk", HostVia::Direct).await;
+    let (work, work_edge) = create(&net, "desk", "work").await;
+    let relay_login = |account: &str| net.relay().unwrap().login(account);
+
+    // Signing in asks the person to confirm adopting what a profile
+    // already holds, and then the desk's main profile is Ada's.
+    let refused = bind(&net, "desk", &main, relay_login("ada"), false)
+        .await
+        .expect_err("a profile with agents and a paired host");
+    assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
+    net.sign_in("desk", "ada").await.unwrap();
+    bind(&net, "desk", &work, relay_login("bob"), false)
+        .await
+        .expect("an empty profile is adopted without asking");
+    until("both relay links", || async {
+        net.relay().unwrap().links("bob").await == vec![(work_edge.host_id(), 1)]
+    })
+    .await;
+    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+
+    // A login that belongs elsewhere is refused and moves nothing: another
+    // account for a bound profile, an account already on another profile,
+    // and a login the cloud does not honour.
+    for (what, target, refresh, code) in [
+        (
+            "Cara's login on Ada's profile",
+            &main,
+            relay_login("cara"),
+            tonic::Code::FailedPrecondition,
+        ),
+        (
+            "Ada's login on the work profile",
+            &work,
+            relay_login("ada"),
+            tonic::Code::AlreadyExists,
+        ),
+        (
+            "a login the cloud refuses",
+            &work,
+            "refresh-nobody".to_owned(),
+            tonic::Code::Unauthenticated,
+        ),
+    ] {
+        let status = bind(&net, "desk", target, refresh, true)
+            .await
+            .expect_err(what);
+        assert_eq!(status.code(), code, "{what}: {status:?}");
+        println!("{what}: {:?}", status.code());
+    }
+    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+    assert_eq!(
+        net.relay().unwrap().links("bob").await,
+        vec![(work_edge.host_id(), 1)]
+    );
+    assert_eq!(
+        profile_info(&net, "desk", &main).await.email,
+        "ada@example.com"
+    );
+    assert_eq!(
+        profile_info(&net, "desk", &work).await.email,
+        "bob@example.com"
+    );
+
+    // Bob's account is revoked. The work profile has to sign in again; the
+    // main profile's link to the relay does not notice.
+    net.relay().unwrap().revoke("bob");
+    door(&net, "desk")
+        .await
+        .pause_profile(operation(work.clone()))
+        .await
+        .unwrap();
+    door(&net, "desk")
+        .await
+        .resume_profile(operation(work.clone()))
+        .await
+        .unwrap();
+    until("the work profile to need a sign-in", || async {
+        profile_info(&net, "desk", &work).await.observed
+            == wire::Observed::AuthenticationRequired as i32
+    })
+    .await;
+    assert_eq!(
+        profile_info(&net, "desk", &main).await.observed,
+        wire::Observed::Connected as i32
+    );
+    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+
+    // Pausing closes the cloud link only: the laptop's direct link stays.
+    // Resuming, twice over, brings back one link.
+    door(&net, "desk")
+        .await
+        .pause_profile(operation(main.clone()))
+        .await
+        .unwrap();
+    until("Ada's relay link to close", || async {
+        net.relay().unwrap().links("ada").await.is_empty()
+    })
+    .await;
+    assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Direct);
+    for _ in 0..2 {
+        door(&net, "desk")
+            .await
+            .resume_profile(operation(main.clone()))
+            .await
+            .unwrap();
+    }
+    until("Ada's relay link to come back", || async {
+        net.relay().unwrap().links("ada").await == vec![(desk, 1)]
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+
+    // Signing out forgets the cloud and keeps everything local: the agent,
+    // the identity and the paired laptop. Signing in again finds the same
+    // host.
+    let key = edge(&net, "desk").public_key().to_vec();
+    door(&net, "desk")
+        .await
+        .logout_profile(operation(main.clone()))
+        .await
+        .unwrap();
+    until("Ada's relay link to close", || async {
+        net.relay().unwrap().links("ada").await.is_empty()
+    })
+    .await;
+    assert_eq!(
+        profile_info(&net, "desk", &main).await.intent,
+        wire::Intent::LoggedOut as i32
+    );
+    assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Direct);
+    assert!(edge(&net, "desk").is_trusted(laptop));
+    assert_eq!(edge(&net, "desk").public_key(), key.as_slice());
+    let listed = net
+        .runtime("desk")
+        .unwrap()
+        .store()
+        .await
+        .agents()
+        .unwrap()
+        .len();
+    assert_eq!(listed, 1, "the worker is still the desk's");
+    net.sign_in("desk", "ada").await.unwrap();
+    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+    assert_eq!(host_id(&net, "desk"), desk);
+    println!("signed out and in again: same host, same key, laptop still paired, worker kept");
+
+    // A profile deleted is gone for every caller: its relay link, its
+    // listener, its place in the list.
+    let (old, old_edge) = create(&net, "desk", "old").await;
+    bind(&net, "desk", &old, relay_login("cara"), false)
+        .await
+        .unwrap();
+    until("Cara's relay link", || async {
+        net.relay().unwrap().links("cara").await == vec![(old_edge.host_id(), 1)]
+    })
+    .await;
+    let old_addr = old_edge.lan_addr().unwrap();
+    let revision = profile_info(&net, "desk", &old).await.revision;
+    drop(old_edge);
+    door(&net, "desk")
+        .await
+        .delete_profile(wire::DeleteProfileRequest {
+            profile_id: old.clone(),
+            confirm_revision: revision,
+            ..wire::DeleteProfileRequest::default()
+        })
+        .await
+        .unwrap();
+    until("Cara's relay link to close", || async {
+        net.relay().unwrap().links("cara").await.is_empty()
+    })
+    .await;
+    let reached = tokio::time::timeout(
+        Duration::from_secs(1),
+        edge(&net, "laptop").unpinned_channel(old_addr),
+    )
+    .await;
+    assert!(
+        !matches!(reached, Ok(Ok(_))),
+        "the deleted profile's listener is closed"
+    );
+    assert!(net.profile_edge("desk", old.parse().unwrap()).is_err());
+    assert_eq!(
+        net.relay().unwrap().links("ada").await,
+        vec![(desk, 1)],
+        "the other profiles keep routing"
+    );
+    assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Direct);
+
+    // One watcher saw all of it, in order: every change numbered, the
+    // deletion last.
+    let mut sequence = 0;
+    let mut removed = None;
+    let mut upserts = 0;
+    let deadline = tokio::time::Instant::now() + testnet::PATIENCE;
+    while removed.is_none() {
+        let event = tokio::time::timeout_at(deadline, watch.message())
+            .await
+            .expect("the watcher to see the deletion")
+            .unwrap()
+            .unwrap();
+        assert!(event.sequence >= sequence, "in order");
+        sequence = event.sequence;
+        match event.event {
+            Some(wire::watch_profiles_response::Event::Upserted(_)) => upserts += 1,
+            Some(wire::watch_profiles_response::Event::RemovedId(id)) => removed = Some(id),
+            _ => {}
+        }
+    }
+    assert_eq!(removed.as_deref(), Some(old.as_str()));
+    println!("the watcher saw {upserts} changes in order, then the deletion");
+
+    net.shutdown().await.unwrap();
+}
+
+/// Waits until `viewer`'s own inventory describes `host` as `check` wants,
+/// and returns that row.
+async fn row_until(
+    fleet: &mut testnet::InventoryObserver,
+    host: uuid::Uuid,
+    what: &str,
+    check: impl Fn(&wire::HostEntry) -> bool,
+) -> wire::HostEntry {
+    let found = |events: &[wire::InventoryEvent]| {
+        testnet::observe::inventory_hosts(events)
+            .into_iter()
+            .find(|row| row.host_id == host.as_bytes())
+    };
+    let events = fleet
+        .observe_until(
+            |events| found(events).is_some_and(|row| check(&row)),
+            testnet::PATIENCE,
+        )
+        .await
+        .unwrap_or_else(|stuck| panic!("{what}: {stuck}"));
+    found(events).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
+    let mut net = Net::start(
+        Topology::new()
+            .relay(&["ada"])
+            .host_decl(relay_host("desk", "ada"))
+            .host("laptop")
+            .host_decl(relay_host("tablet", "ada"))
+            .link("desk", "laptop"),
+    )
+    .await
+    .unwrap();
+    let (desk, laptop, tablet) = (
+        host_id(&net, "desk"),
+        host_id(&net, "laptop"),
+        host_id(&net, "tablet"),
+    );
+    let key = edge(&net, "desk").public_key().to_vec();
+    let mut fleet = net.observe_inventory("laptop").await.unwrap();
+
+    // Signed in or not, as each host's handshake says; a host that signs
+    // in or out says so in its next handshake, with neither end
+    // restarting.
+    let row = row_until(&mut fleet, desk, "the desk, online and signed in", |row| {
+        row.presence == wire::Presence::Online as i32 && row.signed_in == Some(true)
+    })
+    .await;
+    assert_eq!(row.via, wire::HostVia::Direct as i32);
+    let mut desk_fleet = net.observe_inventory("desk").await.unwrap();
+    row_until(
+        &mut desk_fleet,
+        laptop,
+        "the laptop, never signed in",
+        |row| row.signed_in == Some(false),
+    )
+    .await;
+    door(&net, "desk")
+        .await
+        .logout_profile(operation(profile(&net, "desk")))
+        .await
+        .unwrap();
+    net.sever_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").unwrap();
+    row_until(&mut fleet, desk, "the desk signed out", |row| {
+        row.signed_in == Some(false)
+    })
+    .await;
+    net.sign_in("desk", "ada").await.unwrap();
+    net.sever_link("desk", "laptop").unwrap();
+    net.restore_link("desk", "laptop").unwrap();
+    row_until(&mut fleet, desk, "the desk signed in again", |row| {
+        row.signed_in == Some(true)
+    })
+    .await;
+    println!("the laptop saw the desk sign out and in, each at its next handshake");
+
+    // A host on the account that nobody paired is seen through the relay,
+    // and no call is made to it.
+    until("the desk to see the tablet through the relay", || async {
+        edge(&net, "desk").via(tablet).await == HostVia::Relay
+    })
+    .await;
+    peer_inventory_hosts(&edge(&net, "desk"), tablet)
+        .await
+        .expect_err("no call to a host nobody paired");
+
+    // The desk goes down: still listed, as trusted and offline, keeping
+    // the last word on its sign-in, and calls to it fail. It comes back
+    // with the identity it had, which the laptop's pinned key accepts.
+    net.stop_daemon("desk").await.unwrap();
+    let row = row_until(&mut fleet, desk, "the desk offline", |row| {
+        row.presence != wire::Presence::Online as i32
+    })
+    .await;
+    assert_eq!(row.trust, wire::Trust::Trusted as i32);
+    assert_eq!(row.signed_in, Some(true));
+    peer_inventory_hosts(&edge(&net, "laptop"), desk)
+        .await
+        .expect_err("no calls to a host that is down");
+    net.restart_daemon("desk").await.unwrap();
+    assert_eq!(host_id(&net, "desk"), desk);
+    assert_eq!(edge(&net, "desk").public_key(), key.as_slice());
+    row_until(&mut fleet, desk, "the desk back online", |row| {
+        row.presence == wire::Presence::Online as i32
+    })
+    .await;
+    peer_inventory_hosts(&edge(&net, "laptop"), desk)
+        .await
+        .expect("the laptop calls the restarted desk");
+    println!("the desk was seen down, listed offline, and up again with the same key");
+
+    // Trust is each host's own: the desk forgetting the laptop leaves the
+    // laptop's entry for the desk where it was.
+    net.untrust("desk", "laptop").await.unwrap();
+    assert!(!edge(&net, "desk").is_trusted(laptop));
+    assert!(edge(&net, "laptop").is_trusted(desk));
+    let row = row_until(
+        &mut fleet,
+        desk,
+        "the laptop still listing the desk",
+        |row| row.trust == wire::Trust::Trusted as i32,
+    )
+    .await;
+    println!(
+        "the desk forgot the laptop; the laptop still lists {}",
+        row.name
     );
 
     net.shutdown().await.unwrap();

@@ -478,6 +478,12 @@ impl Edge {
         self.connections.via_for(host).await
     }
 
+    /// Whether `host` was signed in to an account when it last said, kept
+    /// with its trust entry so a host that is away still reads as it was.
+    pub fn signed_in(&self, host: HostId) -> Option<bool> {
+        self.routing.signed_in_for(host)
+    }
+
     /// Waits until calls to `host` have a route, or the timeout passes.
     pub async fn wait_for_route(&self, host: HostId, timeout: Duration) -> bool {
         tokio::time::timeout(timeout, async {

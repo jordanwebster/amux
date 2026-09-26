@@ -70,6 +70,7 @@ impl ProfileRuntime {
                         name,
                         last_dial_error: edge.last_dial_error(host).await,
                         via: via.to_wire() as i32,
+                        signed_in: edge.signed_in(host),
                         trust: Trust::Trusted as i32,
                         presence: presence as i32,
                         ..HostEntry::default()
