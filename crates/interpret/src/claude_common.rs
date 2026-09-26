@@ -27,13 +27,7 @@ pub(crate) const EXPLORATION: &[&str] = &[
 ];
 
 /// Tools whose calls are drawn as the task list, never as rows.
-pub(crate) const TASK_TOOLS: &[&str] = &[
-    "TaskCreate",
-    "TaskUpdate",
-    "TaskGet",
-    "TaskList",
-    "TodoWrite",
-];
+pub(crate) const TASK_TOOLS: &[&str] = &["TaskCreate", "TaskUpdate", "TaskGet", "TaskList"];
 
 pub(crate) const QUESTION_TOOL: &str = "AskUserQuestion";
 pub(crate) const PLAN_TOOL: &str = "ExitPlanMode";
@@ -370,22 +364,6 @@ pub(crate) fn apply_task_tool(
             if let Some(active) = input.get("activeForm").and_then(Value::as_str) {
                 task.active_form = active.to_owned();
             }
-        }
-        "TodoWrite" => {
-            let Some(todos) = input.get("todos").and_then(Value::as_array) else {
-                return;
-            };
-            *tasks = todos
-                .iter()
-                .enumerate()
-                .map(|(index, todo)| Task {
-                    id: (index + 1).to_string(),
-                    subject: text(todo, "content").to_owned(),
-                    status: task_status(text(todo, "status"))
-                        .unwrap_or(TaskListStatus::Unspecified as i32),
-                    active_form: text(todo, "activeForm").to_owned(),
-                })
-                .collect();
         }
         _ => {}
     }

@@ -1,3 +1,20 @@
+2026-09-26 — **Interpreter goldens replay every provider recording.**
+Every terminal Claude, headless Claude and Codex recording now has an
+interpreter golden. Headless steering replays for real: the recording
+reader gives a message its recorded uuid as the interpreter's client
+uuid, and reads a message written mid-turn at default priority as a
+queued prompt sent now, so the golden shows it steered until Claude's
+replay lands. Where Claude Code 2.1.283's real traffic contradicted an
+authored fixture, the assumption is gone from both fixture and
+interpreter: terminal Claude writes no `api_error` system rows (its API
+error and sign-in rows are the recorded assistant error rows), no
+subagent rows in the parent transcript, and has no `TodoWrite` tool (the
+task list is the recorded TaskCreate/TaskUpdate flow, on both Claude
+kinds). Rows that moved from authored to recorded: terminal Claude's API
+error, sign-in problem, task list and subagent; headless Claude's task
+list and steering. Codex's authored rows match the recorded wire shapes
+and stay as they are.
+
 2026-09-26 — **The provider recording pass is complete.**
 Every chat catalogue row now has, for each of terminal Claude, headless
 Claude and Codex, either a real recording or a stated reason it cannot be

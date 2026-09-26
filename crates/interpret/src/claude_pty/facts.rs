@@ -404,10 +404,6 @@ impl State {
         {
             self.provider.session = Some(session.to_owned());
         }
-        // A subagent's own steps; its call and answer are the parent's rows.
-        if row.get("isSidechain").and_then(Value::as_bool) == Some(true) {
-            return;
-        }
         let at_ms = timestamp_ms(row);
         match text(row, "type") {
             "user" => {
@@ -844,44 +840,6 @@ impl State {
                             tokens_before: metadata.get("preTokens").and_then(Value::as_u64),
                             tokens_after: after,
                             automatic: text(metadata, "trigger") == "auto",
-                        })),
-                        at_ms,
-                        complete: true,
-                        ..Default::default()
-                    },
-                );
-            }
-            "api_error" => {
-                let error = row.get("error").unwrap_or(&Value::Null);
-                let attempt = row.get("retryAttempt").and_then(Value::as_u64).unwrap_or(0) as u32;
-                let max_attempts =
-                    row.get("maxRetries").and_then(Value::as_u64).unwrap_or(0) as u32;
-                let kind = error
-                    .pointer("/error/type")
-                    .or_else(|| error.get("type"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let message = error
-                    .pointer("/error/message")
-                    .or_else(|| error.get("message"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| text(row, "content").to_owned());
-                self.shared.item(
-                    emit,
-                    ItemDraft {
-                        key: uuid,
-                        body: item_body(Kind::ApiError(wire::ApiError {
-                            error_kind: kind.to_owned(),
-                            message,
-                            will_retry: attempt < max_attempts,
-                            attempt,
-                            max_attempts,
-                            retry_at_ms: row
-                                .get("retryInMs")
-                                .and_then(Value::as_f64)
-                                .zip(at_ms)
-                                .map(|(wait, at)| at + wait as i64),
                         })),
                         at_ms,
                         complete: true,

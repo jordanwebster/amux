@@ -1,5 +1,5 @@
 {
-  "about": "Rows the recordings lack: a refusal fallback is a model-switch row (never Unrecognized) and the model follows it, a refusal without fallback and an API retry are error rows, a local command's output is a slash row, an unknown content block is an Unrecognized row, the status tool sets working_on without a row and the task tools keep the task list.",
+  "about": "Rows the recordings lack: a refusal fallback is a model-switch row (never Unrecognized) and the model follows it, a refusal without fallback and an API retry are error rows, a local command's output is a slash row, an unknown content block is an Unrecognized row, and the status tool sets working_on without a row.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -164,58 +164,6 @@
           "m1:2"
         ],
         "working_on": "Fixing the parser"
-      }
-    },
-    {
-      "fact": {
-        "channel": "stream",
-        "json": {
-          "type": "assistant",
-          "uuid": "m2",
-          "message": {
-            "id": "m2",
-            "model": "claude-sonnet-5",
-            "role": "assistant",
-            "content": [
-              {
-                "type": "tool_use",
-                "id": "t2",
-                "name": "TodoWrite",
-                "input": {
-                  "todos": [
-                    {
-                      "content": "Parse",
-                      "status": "in_progress",
-                      "activeForm": "Parsing"
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-        }
-      },
-      "expect": {
-        "items": []
-      }
-    },
-    {
-      "fact": {
-        "channel": "stream",
-        "json": {
-          "type": "user",
-          "uuid": "u2",
-          "message": {
-            "role": "user",
-            "content": [
-              {
-                "type": "tool_result",
-                "tool_use_id": "t2",
-                "content": "ok"
-              }
-            ]
-          }
-        }
       }
     },
     {
