@@ -484,6 +484,13 @@ impl Edge {
         self.routing.signed_in_for(host)
     }
 
+    /// The route calls to `host` take now. A different value from one
+    /// read earlier means the host went away or came back in between,
+    /// however briefly.
+    pub(crate) async fn route(&self, host: HostId) -> Option<crate::routing::Route> {
+        self.connections.route_for(host).await
+    }
+
     /// Waits until calls to `host` have a route, or the timeout passes.
     pub async fn wait_for_route(&self, host: HostId, timeout: Duration) -> bool {
         tokio::time::timeout(timeout, async {

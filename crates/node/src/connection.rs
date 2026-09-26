@@ -159,13 +159,18 @@ impl ConnectionManager {
         self.state.write().await.reachability_errors.remove(&peer);
     }
 
-    pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
+    /// The route calls to `peer` take now: the one carrying traffic, or
+    /// the one routing would pick.
+    pub(crate) async fn route_for(&self, peer: HostId) -> Option<Route> {
         let route = self.state.read().await.active.get(&peer).copied();
-        let route = match route {
+        match route {
             Some(route) => Some(route),
             None => self.routing.route_to(peer).await,
-        };
-        match route {
+        }
+    }
+
+    pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
+        match self.route_for(peer).await {
             Some(Route::Via(_)) => HostVia::Relay,
             Some(Route::Direct(link)) => match self.channels.link_registry().carrier(&link).await {
                 Some(LinkCarrier::Ssh) => HostVia::Ssh,

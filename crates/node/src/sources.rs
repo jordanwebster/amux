@@ -745,27 +745,34 @@ async fn follow(runtime: Weak<ProfileRuntime>, host: HostId) {
     }
 }
 
-/// Waits out `wait`, unless the host's route goes away first: a host that
-/// comes back is followed as soon as it is seen.
+/// Waits out `wait`, unless the host's route changes first: a host that
+/// goes away, or goes and comes back on a new link between two looks, is
+/// followed as soon as it is seen. Only a host that stays on the route it
+/// had is waited on for the whole backoff.
 async fn wait_while_reachable(
     runtime: &Weak<ProfileRuntime>,
     host: HostId,
     wait: agent_dir::Sleep,
 ) {
-    let gone = async {
+    let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
+        return;
+    };
+    let route = edge.route(host).await;
+    drop(edge);
+    let moved = async {
         loop {
             tokio::time::sleep(ROUTE_POLL).await;
             let Some(edge) = runtime.upgrade().and_then(|me| me.edge()) else {
                 return;
             };
-            if edge.via(host).await == HostVia::Offline {
+            if route.is_none() || edge.route(host).await != route {
                 return;
             }
         }
     };
     tokio::select! {
         () = wait => {}
-        () = gone => {}
+        () = moved => {}
     }
 }
 
