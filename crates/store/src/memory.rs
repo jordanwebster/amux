@@ -104,6 +104,15 @@ impl Tables for Data {
             .cloned())
     }
 
+    fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError> {
+        Ok(self.items.get(agent).and_then(|items| {
+            items
+                .values()
+                .find(|item| item.input_id == input_id)
+                .cloned()
+        }))
+    }
+
     fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError> {
         let orders = self.orders.entry(agent.clone()).or_default();
         if let Some(key) = orders.get(&item.order)
@@ -196,6 +205,11 @@ impl Tables for Data {
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError> {
         self.notifications
             .retain(|(agent, _), _| agent.as_slice() != agent_id);
+        Ok(())
+    }
+
+    fn remove_notification(&mut self, agent_id: &[u8], revision: u64) -> Result<(), StoreError> {
+        self.notifications.remove(&(agent_id.to_vec(), revision));
         Ok(())
     }
 

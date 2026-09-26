@@ -19,8 +19,9 @@ use agent_dir::Clock;
 use crate::activation::{ActivationError, ActivationPipe};
 use crate::generation::{self, Generation};
 use crate::install::{InstallationLock, LockError, STORE};
+use crate::outbox::PushSender;
 use crate::profiles::{self, ProfileId, Registry};
-use crate::runtime::{Launch, ProfileRuntime, RegistryError, SweepReport};
+use crate::runtime::{Launch, Profile, ProfileRuntime, RegistryError, SweepReport};
 
 pub struct StartOptions {
     pub data_dir: PathBuf,
@@ -28,6 +29,8 @@ pub struct StartOptions {
     pub boot_id: Option<String>,
     pub launch: Launch,
     pub clock: Arc<dyn Clock>,
+    /// Where needs-you pushes go.
+    pub push: Arc<dyn PushSender>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,7 +69,18 @@ pub struct Daemon {
     sweep: BTreeMap<ProfileId, SweepReport>,
     supervisor: Option<ActivationPipe>,
     // Dropped last: the lock outlives everything that writes under it.
-    _lock: InstallationLock,
+    lock: Option<InstallationLock>,
+}
+
+impl Drop for Daemon {
+    /// A daemon dropped without a shutdown is a crash: nothing is flushed
+    /// and the installation stays dirty, but no task of this run goes on
+    /// writing once its lock is released.
+    fn drop(&mut self) {
+        for runtime in self.profiles.values() {
+            runtime.abort_outboxes();
+        }
+    }
 }
 
 /// Starts the daemon for one installation. With a pipe, writes `prepared`
@@ -81,6 +95,7 @@ pub async fn start(
         boot_id,
         launch,
         clock,
+        push,
     } = options;
     let lock = InstallationLock::acquire(&data_dir)?;
     let boot_id = match boot_id {
@@ -99,15 +114,16 @@ pub async fn start(
             profiles::host_id(&dir).map_err(|error| StartError::Profile { profile, error })?;
         let store = store::Sqlite::open(&dir.join(STORE), host.as_bytes().to_vec())
             .map_err(|error| StartError::Store { profile, error })?;
-        let runtime = ProfileRuntime::open(
+        let runtime = ProfileRuntime::open(Profile {
             profile,
             host,
-            generation.counter,
+            generation: generation.counter,
             dir,
             store,
-            launch.clone(),
-            clock.clone(),
-        );
+            launch: launch.clone(),
+            clock: clock.clone(),
+            push: push.clone(),
+        });
         runtimes.insert(profile, runtime);
     }
 
@@ -133,6 +149,10 @@ pub async fn start(
             .map_err(|error| StartError::Sweep { profile, error })?;
         sweep.insert(profile, report);
     }
+    // Every own journal has been read to its end: the outboxes may run.
+    for runtime in runtimes.values() {
+        runtime.start_outboxes();
+    }
 
     Ok(Daemon {
         data_dir,
@@ -140,7 +160,7 @@ pub async fn start(
         profiles: runtimes,
         sweep,
         supervisor,
-        _lock: lock,
+        lock: Some(lock),
     })
 }
 
@@ -177,15 +197,10 @@ impl Daemon {
     /// drive, and sets the clean flag as the very last write. Agents keep
     /// running; they wait out their grace for the next daemon. A failure
     /// before the flag leaves the installation dirty, the safe error.
-    pub async fn shutdown(self) -> io::Result<()> {
-        let Daemon {
-            data_dir,
-            generation,
-            profiles,
-            _lock: lock,
-            ..
-        } = self;
+    pub async fn shutdown(mut self) -> io::Result<()> {
+        let profiles = std::mem::take(&mut self.profiles);
         for runtime in profiles.values() {
+            runtime.stop_outboxes().await;
             runtime.stop_watching().await;
         }
         for runtime in profiles.values() {
@@ -195,8 +210,9 @@ impl Daemon {
                 .flush_to_drive()
                 .map_err(io::Error::other)?;
         }
-        generation.mark_clean(&data_dir)?;
-        drop(lock);
+        self.generation.mark_clean(&self.data_dir)?;
+        drop(profiles);
+        drop(self.lock.take());
         Ok(())
     }
 }

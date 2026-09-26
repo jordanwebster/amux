@@ -213,18 +213,17 @@ async fn cut_run(cut: Cut, at: usize) -> Held {
         Cut::TornWriteWriterDies => {
             let before = held(&runtime, &agent, &install).await;
             let frame = journal::encode_frame(&steps[at]).len();
-            agent.journal.write_partial(&steps[at], frame / 2).unwrap();
+            agent
+                .journal()
+                .write_partial(&steps[at], frame / 2)
+                .unwrap();
             runtime.ingest(agent.id).await.unwrap();
             assert_eq!(
                 held(&runtime, &agent, &install).await,
                 before,
                 "a torn frame is never read"
             );
-            agent.journal = journal::synthetic::SyntheticWriter::open(
-                agent.dir.join(agent_dir::JOURNAL),
-                BIG_SEGMENTS,
-            )
-            .unwrap();
+            agent.reopen_journal();
             at
         }
         Cut::CrashAfterWrite => {
@@ -328,7 +327,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     agent.append(&item("a", "one"));
     let frame = journal::encode_frame(&item("b", "two")).len();
     agent
-        .journal
+        .journal()
         .write_partial(&item("b", "two"), frame - 1)
         .unwrap();
     agent.go_live();
@@ -341,7 +340,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
         vec!["snapshot r0 Starting queue=[]", "item a o1 r1 \"one\""],
         "a torn frame is not read, and the journal has not ended while one is being written"
     );
-    agent.journal.finish_partial().unwrap();
+    agent.journal().finish_partial().unwrap();
     agent.nudge().await;
     read_until(
         &mut subscription,
@@ -365,7 +364,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
     agent.append(&item("a", "one"));
     let frame = journal::encode_frame(&item("b", "two")).len();
     agent
-        .journal
+        .journal()
         .write_partial(&item("b", "two"), frame / 2)
         .unwrap();
     let (daemon, runtime) = start(&install, "boot-1", quiet_launch()).await;
@@ -384,9 +383,7 @@ async fn torn_tails_are_never_read_whether_the_writer_lives_or_dies() {
         ],
         "an agent found exited is caught up once its whole frames are ingested"
     );
-    agent.journal =
-        journal::synthetic::SyntheticWriter::open(agent.dir.join(agent_dir::JOURNAL), BIG_SEGMENTS)
-            .unwrap();
+    agent.reopen_journal();
     write_and_ingest(
         &runtime,
         &mut agent,
@@ -942,9 +939,7 @@ async fn power_loss_bumps_the_generation_and_re_ingests_from_the_durable_cursor(
 
     // The agent re-derives on resume: the torn frame is dropped when its
     // journal reopens, and what it emits again takes fresh revisions.
-    agent.journal =
-        journal::synthetic::SyntheticWriter::open(agent.dir.join(agent_dir::JOURNAL), BIG_SEGMENTS)
-            .unwrap();
+    agent.reopen_journal();
     write_and_ingest(
         &runtime,
         &mut agent,

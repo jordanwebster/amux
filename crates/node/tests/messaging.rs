@@ -1,0 +1,531 @@
+//! Inputs, agent messages and the deliveries outbox: a person's input
+//! relayed with the interpreter's verdict, messages through the
+//! recipient's lane, and a parent hearing once that its child finished or
+//! failed across daemon crashes and resumes.
+//!
+//! Most agents here are synthetic (a directory, a journal and a control
+//! socket speaking the agent's protocol), so each window can be opened on
+//! purpose; the last test runs real agent processes on the fake provider.
+
+mod support;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use node::{Daemon, ProfileRuntime, RelayError};
+use store::{AgentKey, Store as _};
+use support::synthetic::*;
+use support::*;
+use wire::{
+    AgentParent, ClaudeSdkInput, Envelope, EnvelopeKind, Input, Lifecycle, PromptInput,
+    SendInputRequest, SendInputResponse, claude_sdk_input, input, send_input_response, sender,
+};
+
+const SEGMENTS: u64 = 1 << 20;
+
+async fn start(install: &Install, boot: &str) -> (Daemon, Arc<ProfileRuntime>) {
+    let daemon = install.start(boot, quiet_launch()).await;
+    let runtime = runtime(&daemon, install);
+    (daemon, runtime)
+}
+
+/// A daemon crash: dropped without shutdown. Returns once nothing of it is
+/// still running.
+async fn crash(daemon: Daemon, runtime: Arc<ProfileRuntime>) {
+    let gone = Arc::downgrade(&runtime);
+    drop(runtime);
+    drop(daemon);
+    until("the crashed daemon's tasks to end", async || {
+        gone.upgrade().is_none()
+    })
+    .await;
+}
+
+fn prompt(id: &[u8], text: &str) -> Input {
+    Input {
+        input_id: id.to_vec(),
+        of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Prompt(PromptInput {
+                text: text.to_owned(),
+                attachments: Vec::new(),
+            })),
+        })),
+    }
+}
+
+fn verdict(response: &SendInputResponse) -> String {
+    match &response.of {
+        Some(send_input_response::Of::Accepted(accepted)) if accepted.queued => "queued".into(),
+        Some(send_input_response::Of::Accepted(_)) => "accepted".into(),
+        Some(send_input_response::Of::Rejected(rejected)) => {
+            format!("rejected {}", rejected.reason)
+        }
+        None => "none".into(),
+    }
+}
+
+fn to(agent: &SyntheticAgent, install: &Install) -> Option<AgentParent> {
+    Some(AgentParent {
+        host_id: host(install).as_bytes().to_vec(),
+        agent_id: agent.id.as_bytes().to_vec(),
+    })
+}
+
+/// The agent messages an agent was handed, as (kind, text).
+fn messages(agent: &SyntheticAgent) -> Vec<(EnvelopeKind, String)> {
+    agent
+        .inputs()
+        .into_iter()
+        .filter_map(|input| match input.of {
+            Some(input::Of::AgentMessage(envelope)) => Some((
+                EnvelopeKind::try_from(envelope.kind).unwrap(),
+                envelope.text,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn deliveries(runtime: &ProfileRuntime) -> usize {
+    runtime.store().await.deliveries().unwrap().len()
+}
+
+async fn items_with_input(runtime: &ProfileRuntime, key: &AgentKey) -> Vec<wire::Item> {
+    runtime
+        .store()
+        .await
+        .page(key, None, 1_000)
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|item| !item.input_id.is_empty())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_input_returns_the_interpreters_verdict_or_answers_for_an_exited_agent() {
+    let install = Install::new();
+    let mut live = SyntheticAgent::new(&install, "live", SEGMENTS);
+    live.register_offline(&install);
+    live.go_live();
+    let gone = SyntheticAgent::new(&install, "gone", SEGMENTS);
+    gone.register_offline(&install);
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    let send = |agent: &SyntheticAgent, id: &[u8]| SendInputRequest {
+        agent_id: agent.id.as_bytes().to_vec(),
+        input: Some(prompt(id, "hello")),
+    };
+
+    let answer = runtime.send_input(&send(&live, b"i1")).await.unwrap();
+    assert_eq!(verdict(&answer), "queued");
+    live.answer_with(Answer::Reject("closed_ask".into()));
+    let answer = runtime.send_input(&send(&live, b"i2")).await.unwrap();
+    assert_eq!(
+        verdict(&answer),
+        "rejected closed_ask",
+        "the interpreter's reason, verbatim"
+    );
+    assert_eq!(live.inputs().len(), 2, "both reached the agent");
+
+    let answer = runtime.send_input(&send(&gone, b"i3")).await.unwrap();
+    assert_eq!(
+        verdict(&answer),
+        "rejected exited",
+        "the daemon answers for an exited agent"
+    );
+    assert!(gone.inputs().is_empty());
+
+    // The agent takes the input and the connection ends before its answer:
+    // the sender learns the answer was lost, never a verdict.
+    live.answer_with(Answer::AcceptSilently);
+    let pending = tokio::spawn({
+        let runtime = runtime.clone();
+        let request = send(&live, b"i4");
+        async move { runtime.send_input(&request).await }
+    });
+    until("the input to arrive", async || live.inputs().len() == 3).await;
+    live.die().await;
+    assert!(matches!(pending.await.unwrap(), Err(RelayError::Lost)));
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_is_accepted_once_its_item_commits_and_a_retry_is_deduped() {
+    let install = Install::new();
+    let sender = SyntheticAgent::new(&install, "sender", SEGMENTS);
+    sender.register_offline(&install);
+    let mut recipient = SyntheticAgent::new(&install, "recipient", SEGMENTS);
+    recipient.register_offline(&install);
+    recipient.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+
+    let envelope = Envelope {
+        id: b"envelope-1".to_vec(),
+        to: to(&recipient, &install),
+        text: "can you look at the build?".into(),
+        // Whatever the caller claims is replaced by what its socket says.
+        from: Some(wire::Sender {
+            value: Some(sender::Value::Human(wire::Human {})),
+        }),
+        ..Envelope::default()
+    };
+    let sent = runtime
+        .send_message(envelope.clone(), Some(sender.id))
+        .await
+        .unwrap();
+    assert_eq!(sent.envelope_id, b"envelope-1");
+    let accepted = runtime
+        .store()
+        .await
+        .item_by_input(&recipient.key(&install), b"envelope-1")
+        .unwrap();
+    assert!(
+        accepted.is_some(),
+        "the answer came after the acceptance item committed"
+    );
+
+    let handed = recipient.inputs();
+    let Some(input::Of::AgentMessage(handed)) = &handed[0].of else {
+        panic!("an agent message");
+    };
+    match handed.from.as_ref().and_then(|from| from.value.as_ref()) {
+        Some(sender::Value::Agent(from)) => {
+            assert_eq!(from.agent_id, sender.id.as_bytes().to_vec());
+            assert_eq!(from.name, "sender");
+        }
+        other => panic!("the sender is the calling agent, not {other:?}"),
+    }
+    assert_eq!(handed.kind, EnvelopeKind::Message as i32);
+
+    // A retry of the same envelope: the lane finds the item and answers
+    // without handing it over again.
+    runtime
+        .send_message(envelope, Some(sender.id))
+        .await
+        .unwrap();
+    assert_eq!(recipient.inputs().len(), 1, "the retry was deduped");
+    assert_eq!(
+        items_with_input(&runtime, &recipient.key(&install))
+            .await
+            .len(),
+        1
+    );
+
+    // An exited recipient, and a sender that is not its parent.
+    recipient.die().await;
+    until("the recipient's exit", async || {
+        runtime.agent(recipient.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    })
+    .await;
+    let refused = runtime
+        .send_message(
+            Envelope {
+                id: b"envelope-2".to_vec(),
+                to: to(&recipient, &install),
+                text: "still there?".into(),
+                ..Envelope::default()
+            },
+            Some(sender.id),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, RelayError::Rejected(ref reason) if reason == "exited"));
+    crash(daemon, runtime).await;
+}
+
+/// A child whose journal already holds a finished turn: its last message,
+/// then the turn end.
+fn finished_child(install: &Install, parent: &SyntheticAgent) -> SyntheticAgent {
+    let mut child = SyntheticAgent::new(install, "child", SEGMENTS);
+    child.parent = Some(parent.key(install));
+    child.register_offline(install);
+    child.append(&snapshot(wire::Phase::Working, &[], 2_000));
+    child.append(&item("last", "the tests pass"));
+    child.append(&turn_end(1, "last"));
+    child
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_finishing_while_the_daemon_is_down_reaches_its_parent_once() {
+    let install = Install::new();
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    parent.go_live();
+    let child = finished_child(&install, &parent);
+    // The child finished and exited while no daemon ran.
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the delivery", async || deliveries(&runtime).await == 0).await;
+    assert_eq!(
+        messages(&parent),
+        vec![(EnvelopeKind::Finished, "the tests pass".to_owned())],
+        "one finished message, carrying the child's last message, and no failed one"
+    );
+    let delivered = items_with_input(&runtime, &parent.key(&install)).await;
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(
+        runtime.agent(child.id).await.unwrap().lifecycle,
+        Lifecycle::Exited as i32
+    );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_crash_between_hand_off_and_delete_yields_one_item() {
+    let install = Install::new();
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    // The parent accepts, but its answer never reaches the daemon.
+    parent.answer_with(Answer::AcceptSilently);
+    parent.go_live();
+    finished_child(&install, &parent);
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the parent's acceptance item to commit", async || {
+        items_with_input(&runtime, &parent.key(&install))
+            .await
+            .len()
+            == 1
+    })
+    .await;
+    assert_eq!(deliveries(&runtime).await, 1, "the row is still there");
+    crash(daemon, runtime).await;
+
+    // On the next start the drain sends the row again; the parent's daemon
+    // finds the envelope id among the parent's items and does not hand it
+    // over a second time.
+    parent.answer_with(Answer::Accept);
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the row to be settled", async || {
+        deliveries(&runtime).await == 0
+    })
+    .await;
+    assert_eq!(parent.inputs().len(), 1, "handed to the parent once");
+    assert_eq!(
+        items_with_input(&runtime, &parent.key(&install))
+            .await
+            .len(),
+        1,
+        "one item"
+    );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_parent_receives_nothing() {
+    let install = Install::new();
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    finished_child(&install, &parent);
+    // The parent is exited when its child finishes: the row waits.
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    assert_eq!(runtime.drain_deliveries().await.kept, 1);
+    assert_eq!(
+        runtime.store().await.deliveries().unwrap()[0].parent_incarnation,
+        1
+    );
+    crash(daemon, runtime).await;
+
+    // The parent is resumed: a new incarnation, waiting for nothing.
+    parent.incarnation = 2;
+    parent.register_offline(&install);
+    parent.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the stale row to go", async || {
+        deliveries(&runtime).await == 0
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        parent.inputs().is_empty(),
+        "the resumed parent was handed nothing"
+    );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_whose_parent_row_is_missing_keeps_its_row_until_the_parent_is_known() {
+    let install = Install::new();
+    // The parent's row is not held yet: on another daemon's inventory
+    // still to arrive, say, or dropped by a rewind.
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.incarnation = 3;
+    finished_child(&install, &parent);
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    let report = runtime.drain_deliveries().await;
+    assert_eq!(report.kept, 1, "never dropped and never sent");
+    let row = runtime.store().await.deliveries().unwrap().remove(0);
+    assert_eq!(
+        row.parent_incarnation, 0,
+        "the incarnation is unknown, not guessed"
+    );
+    crash(daemon, runtime).await;
+
+    // The first daemon removed the parent's directory, which no row
+    // listed; now the parent exists here.
+    parent.reopen_journal();
+    parent.register_offline(&install);
+    parent.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the delivery", async || deliveries(&runtime).await == 0).await;
+    assert_eq!(
+        messages(&parent),
+        vec![(EnvelopeKind::Finished, "the tests pass".to_owned())],
+        "stamped with the parent's incarnation once its row was held, then delivered"
+    );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_gone_without_a_turn_end_tells_its_parent_it_failed() {
+    let install = Install::new();
+    let mut parent = SyntheticAgent::new(&install, "parent", SEGMENTS);
+    parent.register_offline(&install);
+    parent.go_live();
+    let mut crashed = SyntheticAgent::new(&install, "crashed", SEGMENTS);
+    crashed.parent = Some(parent.key(&install));
+    crashed.register_offline(&install);
+    crashed.append(&snapshot(wire::Phase::Working, &[], 2_000));
+    crashed.go_live();
+    let mut finished = SyntheticAgent::new(&install, "finished", SEGMENTS);
+    finished.parent = Some(parent.key(&install));
+    finished.register_offline(&install);
+    finished.append(&item("last", "done"));
+    finished.append(&turn_end(1, "last"));
+    finished.go_live();
+    let (daemon, runtime) = start(&install, "boot-1").await;
+    until("the finished message", async || {
+        messages(&parent).len() == 1
+    })
+    .await;
+
+    // One dies mid-turn; the other exits after its finished turn.
+    crashed.die().await;
+    finished.die().await;
+    until("both exits", async || {
+        runtime.agent(crashed.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
+            && runtime.agent(finished.id).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    })
+    .await;
+    until("the outbox to drain", async || {
+        deliveries(&runtime).await == 0
+    })
+    .await;
+    let mut heard = messages(&parent);
+    heard.sort();
+    assert_eq!(
+        heard,
+        vec![
+            (EnvelopeKind::Finished, "done".to_owned()),
+            (EnvelopeKind::Failed, node::CAUSE_EXITED.to_owned()),
+        ],
+        "one thing per event: finished once, failed only for the child that never finished"
+    );
+    crash(daemon, runtime).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parents_message_resumes_its_exited_child_and_the_child_finishes_again() {
+    let install = Install::new();
+    let daemon = install
+        .start(
+            "boot-1",
+            install.launch("oneshot", vec![text("done"), wire_turn_end()]),
+        )
+        .await;
+    let runtime = runtime(&daemon, &install);
+    let parent = id_of(
+        &runtime
+            .spawn(create(&install.work, "parent", None), None)
+            .await
+            .unwrap(),
+    );
+    let child = id_of(
+        &runtime
+            .spawn(create(&install.work, "child", Some("go")), Some(parent))
+            .await
+            .unwrap(),
+    );
+    let parent_key = AgentKey::new(
+        runtime.host().as_bytes().to_vec(),
+        parent.as_bytes().to_vec(),
+    );
+    let finished = |n: usize| {
+        let runtime = runtime.clone();
+        let parent_key = parent_key.clone();
+        async move { items_with_input(&runtime, &parent_key).await.len() >= n }
+    };
+    until("the child's first finished message", async || {
+        finished(1).await
+    })
+    .await;
+    until("the one-shot child to exit", async || {
+        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    })
+    .await;
+
+    let envelope = Envelope {
+        id: b"follow-up".to_vec(),
+        to: Some(AgentParent {
+            host_id: runtime.host().as_bytes().to_vec(),
+            agent_id: child.as_bytes().to_vec(),
+        }),
+        text: "one more thing".into(),
+        ..Envelope::default()
+    };
+    runtime
+        .send_message(envelope, Some(parent))
+        .await
+        .expect("the parent's message resumes the child");
+    let row = runtime.agent(child).await.unwrap();
+    assert_eq!(row.incarnation, 2, "a new incarnation");
+    let child_key = AgentKey::new(
+        runtime.host().as_bytes().to_vec(),
+        child.as_bytes().to_vec(),
+    );
+    assert!(
+        runtime
+            .store()
+            .await
+            .item_by_input(&child_key, b"follow-up")
+            .unwrap()
+            .is_some(),
+        "accepted once the child's item for the message committed"
+    );
+    until("the child's second finished message", async || {
+        finished(2).await
+    })
+    .await;
+    until("the child to exit again", async || {
+        runtime.agent(child).await.unwrap().lifecycle == Lifecycle::Exited as i32
+    })
+    .await;
+    until("the outbox to drain", async || {
+        deliveries(&runtime).await == 0
+    })
+    .await;
+
+    // Anyone but the parent is told the child has exited.
+    let refused = runtime
+        .send_message(
+            Envelope {
+                id: b"stranger".to_vec(),
+                to: Some(AgentParent {
+                    host_id: runtime.host().as_bytes().to_vec(),
+                    agent_id: child.as_bytes().to_vec(),
+                }),
+                text: "hello?".into(),
+                ..Envelope::default()
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, RelayError::Rejected(ref reason) if reason == "exited"));
+
+    kill_all(&runtime).await;
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}
+
+fn wire_turn_end() -> provider_fakes::script::Step {
+    provider_fakes::script::Step::TurnEnd
+}

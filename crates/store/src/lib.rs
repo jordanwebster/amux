@@ -234,6 +234,10 @@ pub struct Delivery {
     pub incarnation: u32,
     pub turn_id: u64,
     pub parent: AgentKey,
+    /// The parent's incarnation when the row was written; the receiving
+    /// daemon drops a row for any other. Zero when the parent's row was not
+    /// held then, which incarnations never are: unknown, and stamped by the
+    /// drain once the parent's row is held, never sent as it is.
     pub parent_incarnation: u32,
     /// `wire::EnvelopeKind` as an integer: finished or failed.
     pub kind: i32,
@@ -283,6 +287,8 @@ pub trait Tables {
     fn remove_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError>;
     fn agents_of_host(&self, host: &[u8]) -> Result<Vec<AgentKey>, StoreError>;
     fn item(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError>;
+    /// An item whose input id is `input_id`, if the agent holds one.
+    fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError>;
     /// Inserts or replaces by key. A second key at an order already taken
     /// is an error: one key per order.
     fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError>;
@@ -307,6 +313,7 @@ pub trait Tables {
     fn put_notification(&mut self, notification: &Notification) -> Result<(), StoreError>;
     fn notifications(&self) -> Result<Vec<Notification>, StoreError>;
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
+    fn remove_notification(&mut self, agent_id: &[u8], revision: u64) -> Result<(), StoreError>;
     fn host_generation(&self, host: &[u8]) -> Result<Option<u64>, StoreError>;
     fn set_host_generation(&mut self, host: &[u8], generation: u64) -> Result<(), StoreError>;
     fn agents(&self) -> Result<Vec<AgentRow>, StoreError>;
@@ -366,6 +373,9 @@ pub trait Store {
     ) -> Result<Page, StoreError>;
     /// One held item, in the block or not.
     fn get(&self, agent: &AgentKey, key: &str) -> Result<Option<Item>, StoreError>;
+    /// The item that carries `input_id`: for an agent message, the proof
+    /// that its recipient accepted it.
+    fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError>;
     /// The newest `n` rows of the block, oldest first.
     fn last_n(&self, agent: &AgentKey, n: u32) -> Result<Vec<Item>, StoreError>;
     /// Replica rows: the source cursor. Own rows: the ingest cursor.
@@ -377,7 +387,9 @@ pub trait Store {
     /// Creates a row or updates its registry fields: kind, name, cwd,
     /// parent, lifecycle, exit cause, creation time, producer version and
     /// incarnation, and for a replica the phase, working_on and last
-    /// activity its inventory row carries. Committed state is kept.
+    /// activity its inventory row carries. Committed state is kept, except
+    /// that an own row moving to a new incarnation is back in phase
+    /// starting: the new process has said nothing yet.
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError>;
     /// Removes an agent whole: row, items, deliveries and notifications.
     fn delete_agent(&mut self, agent: &AgentKey) -> Result<(), StoreError>;
@@ -420,6 +432,8 @@ pub trait Store {
     fn remove_delivery(&mut self, delivery: &Delivery) -> Result<(), StoreError>;
     fn notifications(&self) -> Result<Vec<Notification>, StoreError>;
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError>;
+    /// Removes one notification: the one a sender just sent.
+    fn remove_notification(&mut self, notification: &Notification) -> Result<(), StoreError>;
 }
 
 fn is_own(backend: &impl Backend, agent: &AgentKey) -> bool {
@@ -488,6 +502,13 @@ impl<B: Backend> Store for B {
         self.read(|tables| tables.item(agent, key))
     }
 
+    fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError> {
+        if input_id.is_empty() {
+            return Ok(None);
+        }
+        self.read(|tables| tables.item_by_input(agent, input_id))
+    }
+
     fn last_n(&self, agent: &AgentKey, n: u32) -> Result<Vec<Item>, StoreError> {
         let own = is_own(self, agent);
         self.read(|tables| last_n(tables, agent, own, n))
@@ -541,6 +562,9 @@ impl<B: Backend> Store for B {
                     held.exit_cause = row.exit_cause.clone();
                     held.created_at = row.created_at;
                     held.producer_version = row.producer_version.clone();
+                    if own && row.incarnation > held.incarnation {
+                        held.phase = wire::Phase::Starting as i32;
+                    }
                     held.incarnation = row.incarnation;
                     if !own {
                         held.phase = row.phase;
@@ -667,6 +691,12 @@ impl<B: Backend> Store for B {
     fn remove_notifications(&mut self, agent_id: &[u8]) -> Result<(), StoreError> {
         self.write(|tables| tables.remove_notifications(agent_id))
     }
+
+    fn remove_notification(&mut self, notification: &Notification) -> Result<(), StoreError> {
+        self.write(|tables| {
+            tables.remove_notification(&notification.agent_id, notification.revision)
+        })
+    }
 }
 
 fn last_n(
@@ -761,6 +791,7 @@ fn commit(
                     .map(|item| item.text)
                     .unwrap_or_default()
             };
+            // Zero when the parent's row is not held: unknown, see Delivery.
             let parent_incarnation = tables.agent(parent)?.map_or(0, |parent| parent.incarnation);
             tables.put_delivery(&Delivery {
                 child_id: agent.agent.clone(),

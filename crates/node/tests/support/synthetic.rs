@@ -3,8 +3,8 @@
 //! that answers the daemon's dial with a Hello and sends Nudges on demand.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use agent_dir::local_socket::{LocalListener, LocalStream};
@@ -15,8 +15,9 @@ use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
-    AgentHello, CtlFrame, InventoryEvent, Item, Nudge, Phase, QueuedInput, SessionEvent, Snapshot,
-    Step, ctl_frame, session_event,
+    Accepted, AgentHello, CtlFrame, Input, InputReply, InventoryEvent, Item, Nudge, Phase,
+    QueuedInput, Rejected, SendInputResponse, SessionEvent, Snapshot, Step, TurnEnd, ctl_frame,
+    input, send_input_response, session_event,
 };
 
 use super::{Install, PATIENCE};
@@ -31,11 +32,28 @@ pub fn quiet_launch() -> Launch {
 
 pub const KIND: &str = "claude_sdk";
 
+/// How a live synthetic agent answers an input.
+#[derive(Clone, Debug)]
+pub enum Answer {
+    /// An agent message: write its item, then reply accepted. Anything
+    /// else: reply queued.
+    Accept,
+    /// Write the agent message's item but never reply: the agent accepted
+    /// and the answer was lost on the way back.
+    AcceptSilently,
+    Reject(String),
+}
+
 pub struct SyntheticAgent {
     pub id: Uuid,
     pub name: String,
     pub dir: PathBuf,
-    pub journal: SyntheticWriter,
+    pub parent: Option<AgentKey>,
+    pub incarnation: u32,
+    journal: Arc<Mutex<SyntheticWriter>>,
+    segment_bytes: u64,
+    answer: Arc<Mutex<Answer>>,
+    inputs: Arc<Mutex<Vec<Input>>>,
     cwd: PathBuf,
     live: Option<Live>,
 }
@@ -58,10 +76,36 @@ impl SyntheticAgent {
             id,
             name: name.to_owned(),
             dir,
-            journal,
+            parent: None,
+            incarnation: 1,
+            journal: Arc::new(Mutex::new(journal)),
+            segment_bytes,
+            answer: Arc::new(Mutex::new(Answer::Accept)),
+            inputs: Arc::default(),
             cwd: install.work.clone(),
             live: None,
         }
+    }
+
+    /// The journal writer, for torn frames and cuts.
+    pub fn journal(&self) -> MutexGuard<'_, SyntheticWriter> {
+        self.journal.lock().unwrap()
+    }
+
+    /// What a restarted agent process does: reopen its journal, which
+    /// drops a torn frame at its end.
+    pub fn reopen_journal(&self) {
+        *self.journal() =
+            SyntheticWriter::open(self.dir.join(agent_dir::JOURNAL), self.segment_bytes).unwrap();
+    }
+
+    pub fn answer_with(&self, answer: Answer) {
+        *self.answer.lock().unwrap() = answer;
+    }
+
+    /// Every input the daemon relayed to this agent.
+    pub fn inputs(&self) -> Vec<Input> {
+        self.inputs.lock().unwrap().clone()
     }
 
     pub fn key(&self, install: &Install) -> AgentKey {
@@ -74,6 +118,8 @@ impl SyntheticAgent {
     pub fn row(&self, install: &Install) -> AgentRow {
         let mut row = AgentRow::new(self.key(install), KIND, self.cwd.to_string_lossy());
         row.name = Some(self.name.clone());
+        row.parent = self.parent.clone();
+        row.incarnation = self.incarnation;
         row.created_at = 1;
         row
     }
@@ -95,7 +141,7 @@ impl SyntheticAgent {
     }
 
     pub fn append(&mut self, step: &Step) -> u64 {
-        self.journal.append(step).unwrap()
+        self.journal().append(step).unwrap()
     }
 
     /// Takes the directory's lock and answers dials with a Hello, as a
@@ -109,7 +155,10 @@ impl SyntheticAgent {
         let conn = Arc::new(tokio::sync::Mutex::new(None));
         let hellos = Arc::new(AtomicUsize::new(0));
         let id = self.id;
-        let offset = self.journal.offset();
+        let offset = self.journal().offset();
+        let journal = self.journal.clone();
+        let answer = self.answer.clone();
+        let inputs = self.inputs.clone();
         let accept = tokio::spawn({
             let conn = conn.clone();
             let hellos = hellos.clone();
@@ -128,9 +177,21 @@ impl SyntheticAgent {
                     }
                     hellos.fetch_add(1, Ordering::SeqCst);
                     *conn.lock().await = Some(writer);
-                    // Whatever the daemon sends is read and dropped.
+                    let (conn, journal, answer, inputs) = (
+                        conn.clone(),
+                        journal.clone(),
+                        answer.clone(),
+                        inputs.clone(),
+                    );
                     tokio::spawn(async move {
-                        while let Ok(Some(_)) = agent_dir::read_frame(&mut reader).await {}
+                        while let Ok(Some(frame)) = agent_dir::read_frame(&mut reader).await {
+                            let Some(ctl_frame::Of::Input(input)) = frame.of else {
+                                continue;
+                            };
+                            inputs.lock().unwrap().push(input.clone());
+                            let answer = answer.lock().unwrap().clone();
+                            answer_input(&input, &answer, &journal, &conn).await;
+                        }
                     });
                 }
             }
@@ -188,6 +249,75 @@ impl SyntheticAgent {
             let _ = writer.shutdown().await;
         }
         let _ = std::fs::remove_file(self.dir.join(agent_dir::CTL_SOCK));
+    }
+}
+
+/// The interpreter's part: an accepted agent message leaves its item in
+/// the journal, carrying the envelope id, before the reply goes back.
+async fn answer_input(
+    input: &Input,
+    answer: &Answer,
+    journal: &Mutex<SyntheticWriter>,
+    conn: &tokio::sync::Mutex<Option<WriteHalf<LocalStream>>>,
+) {
+    let message = match &input.of {
+        Some(input::Of::AgentMessage(envelope)) => Some(envelope),
+        _ => None,
+    };
+    let verdict = match answer {
+        Answer::Reject(reason) => send_input_response::Of::Rejected(Rejected {
+            reason: reason.clone(),
+        }),
+        Answer::Accept | Answer::AcceptSilently => {
+            if let Some(envelope) = message {
+                let step = Step {
+                    items: vec![Item {
+                        key: format!(
+                            "message:{}",
+                            Uuid::from_slice(&envelope.id).unwrap_or_default()
+                        ),
+                        text: envelope.text.clone(),
+                        input_id: envelope.id.clone(),
+                        kind: KIND.to_owned(),
+                        at_ms: 1_000,
+                        ..Item::default()
+                    }],
+                    ..Step::default()
+                };
+                journal.lock().unwrap().append(&step).unwrap();
+            }
+            send_input_response::Of::Accepted(Accepted {
+                queued: message.is_none(),
+            })
+        }
+    };
+    let mut conn = conn.lock().await;
+    let Some(writer) = conn.as_mut() else { return };
+    if !matches!(answer, Answer::AcceptSilently) {
+        let reply = CtlFrame {
+            of: Some(ctl_frame::Of::Reply(InputReply {
+                input_id: input.input_id.clone(),
+                verdict: Some(SendInputResponse { of: Some(verdict) }),
+            })),
+        };
+        let _ = agent_dir::write_frame(writer, &reply).await;
+    }
+    if message.is_some() {
+        let nudge = CtlFrame {
+            of: Some(ctl_frame::Of::Nudge(Nudge {})),
+        };
+        let _ = agent_dir::write_frame(writer, &nudge).await;
+    }
+}
+
+/// A step that ends a turn whose last message is the item `key`.
+pub fn turn_end(turn_id: u64, key: &str) -> Step {
+    Step {
+        turn_end: Some(TurnEnd {
+            turn_id,
+            last_message_key: key.to_owned(),
+        }),
+        ..snapshot(Phase::Idle, &[], 4_000)
     }
 }
 

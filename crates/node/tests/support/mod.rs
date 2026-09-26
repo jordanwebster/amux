@@ -123,6 +123,7 @@ impl Install {
             boot_id: Some(boot_id.to_owned()),
             launch,
             clock: Arc::new(agent_dir::SystemClock),
+            push: Arc::new(node::NoopSender),
         }
     }
 

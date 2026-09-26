@@ -369,6 +369,21 @@ impl Tables for SqlTables<'_> {
             .transpose()
     }
 
+    fn item_by_input(&self, agent: &AgentKey, input_id: &[u8]) -> Result<Option<Item>, StoreError> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {ITEM_COLUMNS} FROM items \
+                     WHERE origin_host = ?1 AND agent_id = ?2 AND input_id = ?3 LIMIT 1"
+                ),
+                params![agent.host, agent.agent, input_id],
+                |row| item_row(row, agent),
+            )
+            .optional()?
+            .map(finish_item)
+            .transpose()
+    }
+
     fn put_item(&mut self, agent: &AgentKey, item: &Item) -> Result<(), StoreError> {
         self.conn.execute(
             &format!(
@@ -522,6 +537,14 @@ impl Tables for SqlTables<'_> {
         self.conn.execute(
             "DELETE FROM notifications WHERE agent_id = ?1",
             params![agent_id],
+        )?;
+        Ok(())
+    }
+
+    fn remove_notification(&mut self, agent_id: &[u8], revision: u64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM notifications WHERE agent_id = ?1 AND revision = ?2",
+            params![agent_id, revision as i64],
         )?;
         Ok(())
     }

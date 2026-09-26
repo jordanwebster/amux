@@ -104,6 +104,8 @@ conformance!(
     cut_reads_snapshot_rows_and_marker_together,
     rewind_host_drops_that_hosts_replicas_and_records_the_generation,
     absorb_refuses_own_rows,
+    item_by_input_finds_the_item_an_input_produced,
+    remove_notification_removes_only_that_one,
 );
 
 fn commit_assigns_revisions_per_record_and_orders_once_per_key<S: Store>(store: S) {
@@ -402,15 +404,90 @@ fn put_agent_keeps_committed_state<S: Store>(store: S) {
     rename.name = Some("renamed".into());
     rename.lifecycle = wire::Lifecycle::Exited as i32;
     rename.exit_cause = Some("stopped".into());
-    rename.incarnation = 2;
     store.put_agent(&rename).unwrap();
     let row = store.agent(&agent).unwrap().unwrap();
     assert_eq!(row.name.as_deref(), Some("renamed"));
     assert_eq!(row.exit_cause.as_deref(), Some("stopped"));
-    assert_eq!(row.incarnation, 2);
     assert_eq!((row.ingest_cursor, row.next_revision), (42, 3));
     assert_eq!(row.phase, Phase::Idle as i32);
     assert!(row.snapshot.is_some());
+
+    // A resume: the next incarnation has said nothing yet.
+    rename.lifecycle = wire::Lifecycle::Live as i32;
+    rename.exit_cause = None;
+    rename.incarnation = 2;
+    store.put_agent(&rename).unwrap();
+    let row = store.agent(&agent).unwrap().unwrap();
+    assert_eq!(row.incarnation, 2);
+    assert_eq!(row.phase, Phase::Starting as i32);
+    assert_eq!(
+        row.working_on.as_deref(),
+        Some("w"),
+        "working_on survives a resume"
+    );
+    assert_eq!((row.ingest_cursor, row.next_revision), (42, 3));
+    assert!(row.snapshot.is_some());
+}
+
+fn item_by_input_finds_the_item_an_input_produced<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let accepted = Item {
+        input_id: b"envelope-1".to_vec(),
+        ..item("message:1", "hello")
+    };
+    store
+        .commit(
+            &agent,
+            &[(1, items_step(&[item("m", "x"), accepted]))],
+            CLOCK,
+        )
+        .unwrap();
+    let found = store.item_by_input(&agent, b"envelope-1").unwrap().unwrap();
+    assert_eq!((found.key.as_str(), found.order), ("message:1", 2));
+    assert!(
+        store
+            .item_by_input(&agent, b"envelope-2")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store.item_by_input(&agent, b"").unwrap().is_none(),
+        "an empty input id names nothing"
+    );
+    assert!(
+        store
+            .item_by_input(&own("b"), b"envelope-1")
+            .unwrap()
+            .is_none()
+    );
+}
+
+fn remove_notification_removes_only_that_one<S: Store>(store: S) {
+    let agent = own("a");
+    let mut store = with_agent(store, &agent);
+    let snap = |phase| Step {
+        snapshot: Some(snapshot(phase, None, 9)),
+        ..Default::default()
+    };
+    store
+        .commit(&agent, &[(1, snap(Phase::NeedsYou))], CLOCK)
+        .unwrap();
+    let sent = store.notifications().unwrap().remove(0);
+    store
+        .commit(
+            &agent,
+            &[(2, snap(Phase::Working)), (3, snap(Phase::NeedsYou))],
+            CLOCK,
+        )
+        .unwrap();
+    // The first was already removed by the phase change; a later one stays.
+    store.remove_notification(&sent).unwrap();
+    let left = store.notifications().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].revision, 3);
+    store.remove_notification(&left[0]).unwrap();
+    assert!(store.notifications().unwrap().is_empty());
 }
 
 fn a_reset_replaces_the_block_and_keeps_older_rows_for_get<S: Store>(store: S) {

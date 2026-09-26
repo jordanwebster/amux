@@ -15,7 +15,9 @@ mod daemon;
 mod fanout;
 mod generation;
 mod install;
+mod outbox;
 mod profiles;
+mod relay;
 mod runtime;
 mod serve;
 mod spec;
@@ -27,10 +29,12 @@ pub use install::{
     AGENTS, GENERATION, HOST_ID, INSTALLATION_LOCK, InstallationLock, LockError, PROFILES,
     REGISTRY, REPORTS, STORE,
 };
+pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use profiles::{ProfileId, Registry, create_profile, host_id, profile_dir};
+pub use relay::{EXITED, EXITING, RelayError};
 pub use runtime::{
     AGENT_LOG, AgentId, CAUSE_ABORTED, CAUSE_EXITED, CAUSE_EXITED_AWAY, CAUSE_KILLED,
-    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, JoinHook, KEPT_SEGMENTS, Launch,
+    CAUSE_NO_DIRECTORY, CAUSE_STOPPED, CAUSE_UNSTARTED, JoinHook, KEPT_SEGMENTS, Launch, Profile,
     ProfileRuntime, RegistryError, SweepReport, locked, to_wire,
 };
 pub use serve::{InventorySubscription, MAX_PAGE, ServeError, Subscription};

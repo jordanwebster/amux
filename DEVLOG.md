@@ -1,3 +1,24 @@
+2026-09-26 — **The daemon relays inputs and agent messages and drains the deliveries and push outboxes.**
+A person's SendInput goes to the agent over its control socket and returns
+the interpreter's verdict; the daemon answers only for an exited agent, and
+an input whose answer is lost with the connection is reported lost, never
+guessed. Agent messages go through one lane per recipient: one at a time,
+deduped by envelope id against the recipient's items, and answered only
+once the item the recipient wrote on accepting has committed; a parent's
+message to its exited (or exiting) child resumes the child with the
+message as its first input, and anyone else is told it exited. The
+deliveries outbox is drained once every journal has been read after start
+and whenever a row may have become deliverable: a finished child's last
+message reaches its parent once, across a daemon crash between hand-off and
+delete; a row for a parent that has since been resumed is dropped; a row
+written while the parent's row was not held keeps an unknown incarnation
+and waits instead of being sent to be dropped; a child whose incarnation
+ends mid-turn sends "failed" with the cause. A new incarnation's row starts
+in phase starting, which is what tells a mid-turn exit from a finished one.
+Needs-you notifications are sent once due through a push sender (the no-op
+one is wired; an HTTP sender sits behind the same trait) and are removed
+unsent when the phase moves on, at exit and at delete.
+
 2026-09-26 — **The daemon fans committed records out to subscribers and serves the chat and fleet reads.**
 Ingest commits each batch it reads from an agent's journal in one
 transaction and only then publishes every record once, as a shared Arc,

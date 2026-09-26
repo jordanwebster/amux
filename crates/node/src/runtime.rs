@@ -24,21 +24,22 @@ use std::time::Duration;
 use agent_dir::Clock;
 use agent_dir::local_socket::{self, LocalListener, LocalStream};
 use store::{
-    AgentKey, AgentRow, Backend as _, CommitClock, Committed, Marker, Record, Sqlite, Store as _,
-    StoreError,
+    AgentKey, AgentRow, Backend as _, CommitClock, Committed, Delivery, Marker, Record, Sqlite,
+    Store as _, StoreError,
 };
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::sync::watch;
+use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
     Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CreateAgentRequest, CtlFrame,
-    DeleteAgentResponse, Input, Kind, Lifecycle, Stop, StopMode, WorkingOn, ctl_frame,
-    inventory_event, session_event,
+    DeleteAgentResponse, EnvelopeKind, Input, Kind, Lifecycle, Phase, SendInputResponse, Stop,
+    StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
 };
 
 use crate::fanout::Fanout;
 use crate::install::{AGENTS, private_dir};
+use crate::outbox::PushSender;
 use crate::profiles::ProfileId;
 use crate::serve::{event, inventory};
 use crate::spec;
@@ -101,6 +102,10 @@ pub struct Launch {
     pub fanout_capacity: usize,
     /// The same for inventory subscriptions.
     pub inventory_capacity: usize,
+    /// How often the deliveries outbox is tried again while rows wait.
+    pub delivery_retry_ms: i64,
+    /// How long a push that failed waits before it is tried again.
+    pub push_retry_ms: i64,
 }
 
 impl Default for Launch {
@@ -117,6 +122,8 @@ impl Default for Launch {
             notify_delay_ms: 30_000,
             fanout_capacity: 512,
             inventory_capacity: 1024,
+            delivery_retry_ms: 30_000,
+            push_retry_ms: 60_000,
         }
     }
 }
@@ -202,6 +209,17 @@ pub struct ProfileRuntime {
     /// For tests: awaited by a subscribe between joining the channel and
     /// reading the cut, with the store held.
     pub(crate) join_hook: Mutex<Option<JoinHook>>,
+    /// Each own agent's message lane: one agent message at a time.
+    pub(crate) lanes: Mutex<HashMap<AgentId, Arc<tokio::sync::Mutex<()>>>>,
+    /// Counts commits, so a message can wait for its acceptance item.
+    pub(crate) commits: watch::Sender<u64>,
+    /// Set once every own journal has been read to its end after start.
+    pub(crate) journals_read: watch::Sender<bool>,
+    deliveries_due: Arc<Notify>,
+    notifications_due: Arc<Notify>,
+    pub(crate) push: Arc<dyn PushSender>,
+    /// The outbox drains.
+    background: Mutex<Vec<JoinHandle<()>>>,
     agents: Mutex<HashMap<AgentId, Arc<AgentHandle>>>,
     /// One operation at a time per agent: spawn, resume, stop and delete
     /// each finish before the next starts.
@@ -209,10 +227,13 @@ pub struct ProfileRuntime {
     me: Weak<ProfileRuntime>,
 }
 
-struct AgentHandle {
+pub(crate) struct AgentHandle {
     dir: PathBuf,
     /// The write half of the control connection, while one is open.
-    ctl: tokio::sync::Mutex<Option<WriteHalf<LocalStream>>>,
+    pub(crate) ctl: tokio::sync::Mutex<Option<WriteHalf<LocalStream>>>,
+    /// Inputs waiting for their verdict on the current connection, by
+    /// input id; dropped when the connection ends.
+    replies: Mutex<HashMap<Vec<u8>, oneshot::Sender<SendInputResponse>>>,
     hello: watch::Sender<Option<AgentHello>>,
     /// The stop the daemon asked for, which names the exit's cause.
     stopping: Mutex<Option<StopMode>>,
@@ -227,7 +248,7 @@ struct AgentHandle {
     /// process has not taken its lock yet, so a free lock says nothing
     /// about it until it has exited.
     running: watch::Sender<bool>,
-    exited: watch::Sender<bool>,
+    pub(crate) exited: watch::Sender<bool>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -236,6 +257,7 @@ impl AgentHandle {
         Arc::new(Self {
             dir,
             ctl: tokio::sync::Mutex::new(None),
+            replies: Mutex::new(HashMap::new()),
             hello: watch::Sender::new(None),
             stopping: Mutex::new(None),
             exiting: AtomicBool::new(false),
@@ -252,6 +274,18 @@ impl AgentHandle {
             task.abort();
         }
     }
+
+    pub(crate) fn expect_reply(
+        &self,
+        input_id: Vec<u8>,
+        reply: oneshot::Sender<SendInputResponse>,
+    ) {
+        self.replies.lock().unwrap().insert(input_id, reply);
+    }
+
+    pub(crate) fn forget_reply(&self, input_id: &[u8]) {
+        self.replies.lock().unwrap().remove(input_id);
+    }
 }
 
 impl Drop for ProfileRuntime {
@@ -259,21 +293,40 @@ impl Drop for ProfileRuntime {
         for handle in self.agents.get_mut().unwrap().values() {
             handle.abort();
         }
+        for task in self.background.get_mut().unwrap().drain(..) {
+            task.abort();
+        }
     }
 }
 
+/// What a profile runtime is made of.
+pub struct Profile {
+    pub profile: ProfileId,
+    pub host: Uuid,
+    /// The installation's generation as of this run.
+    pub generation: u64,
+    /// The profile's directory.
+    pub dir: PathBuf,
+    /// The profile's store, open and migrated.
+    pub store: Sqlite,
+    pub launch: Launch,
+    pub clock: Arc<dyn Clock>,
+    pub push: Arc<dyn PushSender>,
+}
+
 impl ProfileRuntime {
-    /// Opens the profile's store, applying any migrations it lacks. Writes
-    /// nothing else.
-    pub fn open(
-        profile: ProfileId,
-        host: Uuid,
-        generation: u64,
-        dir: PathBuf,
-        store: Sqlite,
-        launch: Launch,
-        clock: Arc<dyn Clock>,
-    ) -> Arc<Self> {
+    /// A runtime over an opened profile. Writes nothing.
+    pub fn open(profile: Profile) -> Arc<Self> {
+        let Profile {
+            profile,
+            host,
+            generation,
+            dir,
+            store,
+            launch,
+            clock,
+            push,
+        } = profile;
         Arc::new_cyclic(|me| Self {
             profile,
             host,
@@ -282,6 +335,13 @@ impl ProfileRuntime {
             clock,
             fanout: Fanout::new(launch.fanout_capacity, launch.inventory_capacity),
             join_hook: Mutex::new(None),
+            lanes: Mutex::new(HashMap::new()),
+            commits: watch::Sender::new(0),
+            journals_read: watch::Sender::new(false),
+            deliveries_due: Arc::new(Notify::new()),
+            notifications_due: Arc::new(Notify::new()),
+            push,
+            background: Mutex::new(Vec::new()),
             launch: Mutex::new(launch),
             store: tokio::sync::Mutex::new(store),
             agents: Mutex::new(HashMap::new()),
@@ -329,7 +389,15 @@ impl ProfileRuntime {
         self.dir.join(AGENTS).join(id.to_string())
     }
 
-    fn key(&self, id: AgentId) -> AgentKey {
+    pub(crate) fn clock_now(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
+    pub(crate) fn handle(&self, id: AgentId) -> Option<Arc<AgentHandle>> {
+        self.agents.lock().unwrap().get(&id).cloned()
+    }
+
+    pub(crate) fn key(&self, id: AgentId) -> AgentKey {
         AgentKey::new(self.host.as_bytes().to_vec(), id.as_bytes().to_vec())
     }
 
@@ -786,6 +854,10 @@ impl ProfileRuntime {
                     report.live.push(id);
                 }
                 Look::Unanswered => {
+                    // Its journal is read now rather than at its Hello, so
+                    // every journal has been read once before messages and
+                    // deliveries run.
+                    self.ingest(id).await?;
                     let handle = AgentHandle::new(self.agent_dir(id), None);
                     self.agents.lock().unwrap().insert(id, handle.clone());
                     self.watch(id, handle, None);
@@ -817,7 +889,84 @@ impl ProfileRuntime {
         ] {
             list.sort();
         }
+        self.journals_read.send_replace(true);
         Ok(report)
+    }
+
+    /// Starts the outbox drains: deliveries now and whenever a row may have
+    /// become deliverable, notifications as each falls due.
+    pub fn start_outboxes(&self) {
+        let deliveries = {
+            let runtime = self.me.clone();
+            let due = self.deliveries_due.clone();
+            tokio::spawn(async move {
+                loop {
+                    let Some(me) = runtime.upgrade() else { return };
+                    let wake = due.notified();
+                    tokio::pin!(wake);
+                    wake.as_mut().enable();
+                    let report = me.drain_deliveries().await;
+                    let retry = (report.kept > 0).then(|| {
+                        me.clock
+                            .sleep_until(me.clock.now_ms() + me.launch().delivery_retry_ms)
+                    });
+                    drop(me);
+                    match retry {
+                        Some(retry) => {
+                            tokio::select! {
+                                () = wake => {}
+                                () = retry => {}
+                            }
+                        }
+                        None => wake.await,
+                    }
+                }
+            })
+        };
+        let notifications = {
+            let runtime = self.me.clone();
+            let due_now = self.notifications_due.clone();
+            tokio::spawn(async move {
+                loop {
+                    let Some(me) = runtime.upgrade() else { return };
+                    let wake = due_now.notified();
+                    tokio::pin!(wake);
+                    wake.as_mut().enable();
+                    let next = me.drain_notifications().await;
+                    let due = next.map(|at| me.clock.sleep_until(at));
+                    drop(me);
+                    match due {
+                        Some(due) => {
+                            tokio::select! {
+                                () = wake => {}
+                                () = due => {}
+                            }
+                        }
+                        None => wake.await,
+                    }
+                }
+            })
+        };
+        self.background
+            .lock()
+            .unwrap()
+            .extend([deliveries, notifications]);
+    }
+
+    /// Stops the outbox drains without waiting for them.
+    pub fn abort_outboxes(&self) {
+        for task in self.background.lock().unwrap().drain(..) {
+            task.abort();
+        }
+    }
+
+    /// Stops the outbox drains.
+    pub async fn stop_outboxes(&self) {
+        let tasks: Vec<_> = self.background.lock().unwrap().drain(..).collect();
+        for task in tasks {
+            task.abort();
+            let _ = task.await;
+        }
     }
 
     /// Stops every watcher and closes every control connection, so nothing
@@ -871,6 +1020,10 @@ impl ProfileRuntime {
                 notify_delay_ms: self.launch.lock().unwrap().notify_delay_ms,
             };
             let committed = store.commit(&key, &batch.frames, clock)?;
+            self.commits.send_modify(|commits| *commits += 1);
+            if batch.frames.iter().any(|(_, step)| step.turn_end.is_some()) {
+                self.deliveries_due.notify_one();
+            }
             // Only now, with the transaction committed: a subscriber never
             // sees a revision the store could not serve it.
             let mut envelope = false;
@@ -888,6 +1041,7 @@ impl ProfileRuntime {
             if envelope {
                 // Phase, working_on and last activity ride the inventory row.
                 self.publish_row(&store, &key)?;
+                self.notifications_due.notify_one();
             }
             self.reclaim(&store, &journal_dir, committed.cursor);
             committed
@@ -989,10 +1143,21 @@ impl ProfileRuntime {
                                 tracing::warn!(agent = %id, %error, "ingest failed");
                             }
                         }
+                        Ok(Some(CtlFrame {
+                            of: Some(ctl_frame::Of::Reply(reply)),
+                        })) => {
+                            let waiting = watched.replies.lock().unwrap().remove(&reply.input_id);
+                            if let (Some(waiting), Some(verdict)) = (waiting, reply.verdict) {
+                                let _ = waiting.send(verdict);
+                            }
+                        }
                         Ok(Some(_)) => {}
                         Ok(None) | Err(_) => break,
                     }
                 }
+                // Inputs sent on this connection get no answer now: their
+                // senders learn the answer was lost.
+                watched.replies.lock().unwrap().clear();
                 if let Some(mut ctl) = watched.ctl.lock().await.take() {
                     let _ = ctl.shutdown().await;
                 }
@@ -1057,12 +1222,10 @@ impl ProfileRuntime {
     async fn mark_exited(&self, id: AgentId, cause: &str) -> Result<(), StoreError> {
         let key = self.key(id);
         let mut store = self.store.lock().await;
-        let Some(mut row) = store.agent(&key)? else {
+        let Some(row) = store.agent(&key)? else {
             return Ok(());
         };
-        row.lifecycle = Lifecycle::Exited as i32;
-        row.exit_cause = Some(cause.to_owned());
-        self.put_row(&mut store, &row)?;
+        self.record_exit(&mut store, row, cause)?;
         // Everything the process wrote is committed: nothing more comes.
         self.caught_up(&mut store, &key)
     }
@@ -1070,13 +1233,11 @@ impl ProfileRuntime {
     async fn mark_exited_if_live(&self, id: AgentId, cause: &str) -> Result<(), StoreError> {
         let key = self.key(id);
         let mut store = self.store.lock().await;
-        let Some(mut row) = store.agent(&key)? else {
+        let Some(row) = store.agent(&key)? else {
             return Ok(());
         };
         if row.lifecycle != Lifecycle::Exited as i32 {
-            row.lifecycle = Lifecycle::Exited as i32;
-            row.exit_cause = Some(cause.to_owned());
-            self.put_row(&mut store, &row)?;
+            self.record_exit(&mut store, row, cause)?;
         }
         self.caught_up(&mut store, &key)
     }
@@ -1085,7 +1246,48 @@ impl ProfileRuntime {
     /// with the store still held so they see changes in store order.
     fn put_row(&self, store: &mut Sqlite, row: &AgentRow) -> Result<(), StoreError> {
         store.put_agent(row)?;
+        // A lifecycle or incarnation change can make a waiting delivery
+        // deliverable, or stale.
+        self.deliveries_due.notify_one();
         self.publish_row(store, &row.agent)
+    }
+
+    /// Marks the row exited, then settles what the process leaves: its
+    /// unsent notifications go, since no push may name an agent that is
+    /// gone, and a child whose incarnation ended without finishing its turn
+    /// tells its parent it failed. A finished turn already told it.
+    fn record_exit(
+        &self,
+        store: &mut Sqlite,
+        mut row: AgentRow,
+        cause: &str,
+    ) -> Result<(), StoreError> {
+        row.lifecycle = Lifecycle::Exited as i32;
+        row.exit_cause = Some(cause.to_owned());
+        self.put_row(store, &row)?;
+        store.remove_notifications(&row.agent.agent)?;
+        let Some(parent) = &row.parent else {
+            return Ok(());
+        };
+        // The phase as committed: a new incarnation starts in starting, and
+        // only a turn end leaves it idle.
+        let held = store.agent(&row.agent)?.unwrap_or(row.clone());
+        if held.phase == Phase::Idle as i32 {
+            return Ok(());
+        }
+        // Zero when the parent's row is not held: stamped by the drain.
+        let parent_incarnation = store.agent(parent)?.map_or(0, |parent| parent.incarnation);
+        store.put_delivery(&Delivery {
+            child_id: row.agent.agent.clone(),
+            incarnation: row.incarnation,
+            turn_id: 0,
+            parent: parent.clone(),
+            parent_incarnation,
+            kind: EnvelopeKind::Failed as i32,
+            body: cause.to_owned(),
+        })?;
+        self.deliveries_due.notify_one();
+        Ok(())
     }
 
     /// Tells inventory subscribers what the row now says.

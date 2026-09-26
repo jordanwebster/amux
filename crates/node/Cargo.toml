@@ -10,6 +10,7 @@ publish = false
 agent-dir = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
