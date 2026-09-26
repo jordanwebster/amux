@@ -1,6 +1,7 @@
 //! One Claude PTY event stream paired with its control handle.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -568,9 +569,10 @@ pub async fn spawn(
     launch: &Launch,
     keymaps: &claude::pty::keymap::KeymapSources,
     size: pty_host::PtySize,
+    env: &[(OsString, OsString)],
 ) -> Result<Session, SpawnError> {
     let version = probe_version(&launch.binary).await?;
-    spawn_with_version(launch, keymaps, size, version)
+    spawn_with_version(launch, keymaps, size, version, env)
 }
 
 /// Spawn a live session when the host has already completed its shared
@@ -580,12 +582,13 @@ pub fn spawn_with_version(
     keymaps: &claude::pty::keymap::KeymapSources,
     size: pty_host::PtySize,
     version: ClaudeVersion,
+    env: &[(OsString, OsString)],
 ) -> Result<Session, SpawnError> {
     let session = launch.session_id.simple().to_string();
     let hook_dir = std::env::temp_dir().join(format!("ac-{}", &session[..8]));
     let receiver = HookReceiver::bind_sync(&hook_dir).map_err(SpawnError::Hook)?;
     let hook_path = receiver.path.clone();
-    let process = claude::pty::spawn(launch, size, &hook_path)?;
+    let process = claude::pty::spawn(launch, size, &hook_path, env)?;
     let output = process.handle.output();
     let handle = process.handle.clone();
     let writer = writer_for_handle(handle.clone());

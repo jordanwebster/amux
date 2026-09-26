@@ -35,6 +35,8 @@ type SpecFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + '
 struct PtySpecDef {
     entry: SpecEntry,
     args: &'static [&'static str],
+    /// Added to Claude's environment for this specification only.
+    env: &'static [(&'static str, &'static str)],
     run: for<'a> fn(&'a mut PtySpecSession) -> SpecFuture<'a>,
 }
 
@@ -48,9 +50,13 @@ const fn entry(name: &'static str) -> SpecEntry {
 
 macro_rules! definition {
     ($name:ident, $args:expr, $run:ident) => {
+        definition!($name, $args, &[], $run)
+    };
+    ($name:ident, $args:expr, $env:expr, $run:ident) => {
         PtySpecDef {
             entry: entry(stringify!($name)),
             args: $args,
+            env: $env,
             run: |session| Box::pin($run(session)),
         }
     };
@@ -95,9 +101,30 @@ static DEFINITIONS: &[PtySpecDef] = &[
     ),
     definition!(image, &["--dangerously-skip-permissions"], image),
     definition!(thinking, &[], thinking),
+    // Nothing listens on the discard port, so every request fails to
+    // connect; two retries keep the recording short.
+    definition!(
+        api_error,
+        &[],
+        &[
+            ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9"),
+            ("CLAUDE_CODE_MAX_RETRIES", "2"),
+        ],
+        api_error
+    ),
+    // A key the API rejects takes precedence over the owner's own sign-in.
+    definition!(
+        sign_in_problem,
+        &[],
+        &[
+            ("ANTHROPIC_API_KEY", "sk-ant-api03-amux-spec-invalid"),
+            ("CLAUDE_CODE_MAX_RETRIES", "2"),
+        ],
+        sign_in_problem
+    ),
 ];
 
-static REGISTRY: [SpecEntry; 26] = [
+static REGISTRY: [SpecEntry; 28] = [
     entry("prompt"),
     entry("prompt_multiline"),
     entry("tools"),
@@ -124,6 +151,8 @@ static REGISTRY: [SpecEntry; 26] = [
     entry("file_changes_and_failure"),
     entry("image"),
     entry("thinking"),
+    entry("api_error"),
+    entry("sign_in_problem"),
 ];
 
 pub fn registry() -> &'static [SpecEntry] {
@@ -200,7 +229,12 @@ pub async fn run(entry: &SpecEntry, source: Source) -> Result<RunReport, SpecFai
                 .map_err(|error| failure(entry, error.to_string()))?
                 .0;
             let session_id = launch.session_id.to_string();
-            let session = crate::driver::pty::spawn(&launch, &keymaps, size)
+            let env = definition
+                .env
+                .iter()
+                .map(|(name, value)| ((*name).into(), (*value).into()))
+                .collect::<Vec<_>>();
+            let session = crate::driver::pty::spawn(&launch, &keymaps, size, &env)
                 .await
                 .map_err(|error| failure(entry, error.to_string()))?;
             (
@@ -530,6 +564,7 @@ impl PtySpecSession {
     async fn prepare_for_prompt(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut trust_answered = false;
+        let mut key_answered = false;
         loop {
             let screen = self.screen.lock().expect("screen mutex poisoned").clone();
             let composer_up = screen.contains("for agents")
@@ -551,6 +586,24 @@ impl PtySpecSession {
                     .await
                     .map_err(|error| error.to_string())?;
                 trust_answered = true;
+                continue;
+            }
+            // An API key in the environment makes Claude ask whether to use
+            // it, defaulting to no; a specification that sets one wants it
+            // used.
+            if !key_answered && screen.contains("use this API key") && !composer_up {
+                if self.capture.is_some() {
+                    tokio::time::sleep(Duration::from_millis(800)).await;
+                }
+                self.control
+                    .send_program(vec![
+                        crate::driver::pty::PtyInput::Bytes(b"\x1b[A".to_vec()),
+                        crate::driver::pty::PtyInput::Delay(300),
+                        crate::driver::pty::PtyInput::Bytes(b"\r".to_vec()),
+                    ])
+                    .await
+                    .map_err(|error| error.to_string())?;
+                key_answered = true;
                 continue;
             }
             if composer_up {
@@ -714,6 +767,22 @@ impl PtySpecSession {
     }
 }
 
+/// A failed API request as terminal Claude records it: a system row
+/// naming the error and the retry it is on.
+fn api_error_row(row: &serde_json::Value) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("system")
+        && row.get("subtype").and_then(serde_json::Value::as_str) == Some("api_error")
+}
+
+/// The assistant row Claude writes in place of an answer once retries are
+/// spent.
+fn synthetic_error_reply(row: &serde_json::Value) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("assistant")
+        && (row.get("isApiErrorMessage").and_then(serde_json::Value::as_bool) == Some(true)
+            || row.pointer("/message/model").and_then(serde_json::Value::as_str)
+                == Some("<synthetic>"))
+}
+
 fn assistant_contains(row: &serde_json::Value, marker: &str) -> bool {
     row.get("type").and_then(serde_json::Value::as_str) == Some("assistant")
         && row.to_string().contains(marker)
@@ -788,6 +857,34 @@ fn question_result_has_answers(row: &serde_json::Value, expected: &[(&str, &str)
                     answers.get(*question).and_then(serde_json::Value::as_str) == Some(*answer)
                 })
             })
+}
+
+/// An API that cannot be reached: each failed attempt is an api_error row
+/// with its retry count, then Claude writes an error in place of an answer.
+async fn api_error(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Reply exactly PTY_SPEC_API_ERROR and nothing else.".to_owned(),
+        })
+        .await?;
+    session.wait_transcript(api_error_row).await?;
+    session.wait_transcript(synthetic_error_reply).await?;
+    Ok(())
+}
+
+/// A credential the API rejects: the same retries, each naming the
+/// authentication failure, then the error in place of an answer.
+async fn sign_in_problem(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Reply exactly PTY_SPEC_SIGN_IN and nothing else.".to_owned(),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| api_error_row(row) && row.to_string().contains("401"))
+        .await?;
+    session.wait_transcript(synthetic_error_reply).await?;
+    Ok(())
 }
 
 async fn prompt(session: &mut PtySpecSession) -> Result<(), String> {
@@ -1560,6 +1657,8 @@ mod tests {
                 "file_changes_and_failure",
                 "image",
                 "thinking",
+                "api_error",
+                "sign_in_problem",
             ]
         );
         assert_eq!(DEFINITIONS.len(), registry().len());
