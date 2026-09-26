@@ -1,0 +1,420 @@
+{
+  "about": "A subagent Claude runs in the background. Its launch returns at once; the Agent row stays running across the turn's end, counts the subagent's calls from hooks carrying its agent id (none drawn as rows of their own), shows the subagent's ask on it, and completes with the task notification's result. The notification is Claude's own message to the model: it is never a prompt item, and neither a prompt awaiting its reflection nor a steered entry is taken by it.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "Ask a subagent what this project is."
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "reply p1 accepted",
+          "terminal prompt \"Ask a subagent what this project is.\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "Ask a subagent what this project is."
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "items": [
+          "u1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "toolu_agent",
+          "tool_name": "Agent",
+          "tool_input": {
+            "description": "Look around",
+            "prompt": "List the files and say what the project is."
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "toolu_agent"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PostToolUse",
+          "tool_use_id": "toolu_agent",
+          "tool_name": "Agent",
+          "tool_input": {
+            "description": "Look around",
+            "prompt": "List the files and say what the project is."
+          },
+          "duration_ms": 8,
+          "tool_response": {
+            "agentId": "ag1",
+            "isAsync": true,
+            "status": "async_launched",
+            "description": "Look around"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "toolu_agent"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "timestamp": "2027-01-15T08:00:00.030Z",
+          "toolUseResult": {
+            "agentId": "ag1",
+            "isAsync": true,
+            "status": "async_launched"
+          },
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_agent",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Async agent launched successfully."
+                  }
+                ]
+              }
+            ]
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
+          "agent_id": "ag1",
+          "agent_type": "general-purpose",
+          "tool_use_id": "toolu_sub1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "ls"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "toolu_agent"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "agent_id": "ag1",
+          "agent_type": "general-purpose",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "ls"
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PostToolUse",
+          "agent_id": "ag1",
+          "agent_type": "general-purpose",
+          "tool_use_id": "toolu_sub1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "ls"
+          },
+          "tool_response": {
+            "stdout": "README.md"
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1",
+          "timestamp": "2027-01-15T08:00:00.040Z",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "It is running in the background."
+              }
+            ]
+          },
+          "sessionId": "s1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "subtype": "turn_duration",
+          "uuid": "d1",
+          "timestamp": "2027-01-15T08:00:00.050Z",
+          "durationMs": 5,
+          "sessionId": "s1"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "Meanwhile, what time is it?"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "effects": [
+          "reply p2 accepted",
+          "terminal prompt \"Meanwhile, what time is it?\""
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "n1",
+          "timestamp": "2027-01-15T08:00:00.060Z",
+          "origin": {
+            "kind": "task-notification"
+          },
+          "promptSource": "system",
+          "turnOrigin": "task_notification",
+          "message": {
+            "role": "user",
+            "content": "<task-notification>\n<task-id>ag1</task-id>\n<tool-use-id>toolu_agent</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Look around\" finished</summary>\n<result>A command-line multiplexer for agents.</result>\n</task-notification>"
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "items": [
+          "toolu_agent"
+        ],
+        "phase": "WORKING"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a2",
+          "timestamp": "2027-01-15T08:00:00.070Z",
+          "message": {
+            "id": "m2",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The subagent says it is a command-line multiplexer for agents."
+              }
+            ]
+          },
+          "sessionId": "s1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "subtype": "turn_duration",
+          "uuid": "d2",
+          "timestamp": "2027-01-15T08:00:00.080Z",
+          "durationMs": 5,
+          "sessionId": "s1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u3",
+          "timestamp": "2027-01-15T08:00:00.090Z",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "Meanwhile, what time is it?"
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "items": [
+          "u3"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "p3",
+        "prompt": {
+          "text": "Use UTC."
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "queue": [
+          "p3"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "n3",
+        "send_now": {
+          "target": "p3"
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "queue": [
+          "p3(steered)"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "n2",
+          "timestamp": "2027-01-15T08:00:00.100Z",
+          "origin": {
+            "kind": "task-notification"
+          },
+          "promptSource": "system",
+          "turnOrigin": "task_notification",
+          "message": {
+            "role": "user",
+            "content": "<task-notification>\n<task-id>ag1</task-id>\n<tool-use-id>toolu_gone</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Look around\" finished</summary>\n<result>An answer for a call that is no longer drawn.</result>\n</task-notification>"
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "queue": [
+          "p3(steered)"
+        ],
+        "silent": true
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "attachment",
+          "uuid": "q1",
+          "timestamp": "2027-01-15T08:00:00.110Z",
+          "attachment": {
+            "type": "queued_command",
+            "prompt": "Use UTC.",
+            "commandMode": "prompt"
+          },
+          "sessionId": "s1"
+        }
+      },
+      "expect": {
+        "items": [
+          "q1"
+        ],
+        "queue": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "subtype": "turn_duration",
+          "uuid": "d3",
+          "timestamp": "2027-01-15T08:00:00.120Z",
+          "durationMs": 5,
+          "sessionId": "s1"
+        }
+      }
+    }
+  ]
+}

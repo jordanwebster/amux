@@ -19,6 +19,13 @@
 //!   new prompt, an interruption, the turn's end, a session change, the
 //!   provider exiting, or a row from a later assistant message (outcome
 //!   unknown, drawn dismissed). Nothing else closes one; a tick never does.
+//! - A subagent's calls reach the hooks socket carrying its agent id; they
+//!   are its steps, counted on the Agent row that started it, never rows of
+//!   their own. An ask a subagent raises points at that Agent row and closes
+//!   on the subagent's own result for the call. A subagent Claude runs in the
+//!   background answers the Agent call at once with launch metadata; its row
+//!   stays running, across the end of the turn that launched it, until a
+//!   user row of task-notification origin carries its result.
 
 mod facts;
 mod recording;
@@ -32,8 +39,8 @@ use serde_json::Value;
 use wire::{
     AgentSpec, Ask, Attachment, BackgroundProcesses, Boundary, BoundaryKind, ClaudeAnswer,
     ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, Step,
-    ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item, input,
-    permission_answer, plan_answer,
+    SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item,
+    input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
@@ -206,12 +213,23 @@ struct Tool {
     /// Drawn elsewhere than as a tool row: the status tool sets working_on
     /// and the task tools the task list.
     hidden: bool,
+    /// An Agent call's subagent: the steps it has taken so far.
+    subagent: Option<Subagent>,
+    /// A subagent launched in the background: the call returned, and the
+    /// task notification carries the answer.
+    awaiting_notification: bool,
     /// The body last emitted, so an unchanged revision is not re-emitted.
     /// Images the tool read, by the blobs that hold them.
     #[serde(with = "serde_pb::msgs")]
     images: Vec<Attachment>,
     #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct Subagent {
+    tool_count: u32,
+    last_tool: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -263,6 +281,9 @@ struct AskMeta {
     bound: Option<String>,
     /// Closed before its call's row landed: the decision waits for it.
     closed: Option<Decision>,
+    /// Raised inside the subagent with this agent id: never bound to a
+    /// call of the main conversation.
+    agent: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -310,6 +331,8 @@ pub struct State {
     context_tokens: Option<u64>,
     background: Option<u32>,
     messages: Vec<PendingMessage>,
+    /// Each subagent's agent id and the tool-use id of its Agent call.
+    agents: BTreeMap<String, String>,
     slash: Option<Slash>,
     /// The running turn began with a local command, not a model request.
     local_turn: bool,
@@ -339,6 +362,7 @@ impl State {
             context_tokens: None,
             background: None,
             messages: Vec::new(),
+            agents: BTreeMap::new(),
             slash: None,
             local_turn: false,
         }
@@ -402,7 +426,11 @@ impl State {
             decision: tool.decision.as_ref().map(Decision::to_wire),
             background: tool.background,
             parent_key: String::new(),
-            subagent: None,
+            subagent: tool.subagent.as_ref().map(|subagent| SubagentProgress {
+                tool_count: subagent.tool_count,
+                last_tool: subagent.last_tool.clone(),
+                finished: tool.finished,
+            }),
             server: tool.server.clone(),
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
@@ -468,6 +496,9 @@ impl State {
                 self.asks.remove(ask_key);
                 self.decide(emit, &tool_id, decision);
             }
+            None if meta.agent.is_some() => {
+                self.asks.remove(ask_key);
+            }
             None => meta.closed = Some(decision),
         }
     }
@@ -532,7 +563,9 @@ impl State {
         let candidates = self
             .asks
             .iter()
-            .filter(|(_, meta)| meta.bound.is_none() && meta.tool_name == name)
+            .filter(|(_, meta)| {
+                meta.bound.is_none() && meta.agent.is_none() && meta.tool_name == name
+            })
             .collect::<Vec<_>>();
         let oldest = |exact: bool| {
             candidates

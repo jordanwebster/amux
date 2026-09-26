@@ -1,3 +1,15 @@
+2026-09-26 — **Terminal Claude's background subagent is one Agent row with its answer.**
+A subagent Claude runs in the background used to draw as an Agent call that
+succeeded at once with launch metadata, its Read as a parent tool row, and
+its task notification as a prompt. Now the calls a subagent makes (hooks
+carrying its agent id) count on the Agent row as live progress, an ask the
+subagent raises is shown against that row, and the row stays running across
+the end of the turn that launched it until the notification closes it with
+the subagent's result. A notification is never a prompt: it takes neither a
+prompt awaiting its reflection nor a steered entry. A prompt's reflection now
+always starts a turn, since a notification's turn can run and end between
+the prompt's submission and its reflection.
+
 2026-09-26 — **Interpreter goldens replay every provider recording.**
 Every terminal Claude, headless Claude and Codex recording now has an
 interpreter golden. Headless steering replays for real: the recording

@@ -64,6 +64,7 @@ goldens! {
     answers_through_amux_become_terminal_inputs => "answers",
     semantic_inputs_become_effects => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
+    background_subagent_answers_on_its_agent_row => "subagent_notification",
     boundaries_carry_the_provider_session_and_version => "boundaries",
     rows_no_recording_shows => "rows",
     recorded_steer_send_now => "recorded_steer_send_now",

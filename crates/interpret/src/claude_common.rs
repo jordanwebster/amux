@@ -169,6 +169,15 @@ pub(crate) fn describe_tool(tool: &ToolCall) -> String {
     if tool.background {
         text.push_str(" background");
     }
+    if let Some(subagent) = &tool.subagent {
+        text.push_str(&format!(" subagent={}", subagent.tool_count));
+        if !subagent.last_tool.is_empty() {
+            text.push_str(&format!(" last={}", subagent.last_tool));
+        }
+        if subagent.finished {
+            text.push_str(" finished");
+        }
+    }
     if let Some(decision) = &tool.decision {
         text.push_str(&format!(
             " decision={}{}{}{}",

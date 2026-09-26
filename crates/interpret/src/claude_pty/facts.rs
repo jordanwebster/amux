@@ -7,11 +7,11 @@ use wire::{
     Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ToolState, Turn, TurnOutcome,
 };
 
-use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Tool, item_body};
+use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Subagent, Tool, item_body};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    question_ask, result_images, scope_choices, split_tool_name, text, timestamp_ms, tool_class,
-    without_image_bytes,
+    question_ask, result_images, same_json, scope_choices, split_tool_name, text, timestamp_ms,
+    tool_class, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
 
@@ -19,6 +19,17 @@ use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
 const REJECTED: &str = "The user doesn't want to proceed with this tool use.";
 const REJECTED_NOTE: &str = "the user said:\n";
 const INTERRUPTED: &str = "[Request interrupted by user";
+/// The tool that starts a subagent.
+const AGENT_TOOL: &str = "Agent";
+
+/// The agent id of a subagent Claude launched in the background, from the
+/// Agent call's immediate result.
+fn launched_in_background(result: &Value) -> Option<&str> {
+    if result.get("isAsync").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    result.get("agentId").and_then(Value::as_str)
+}
 
 /// The text between `<tag>` and `</tag>`, trimmed.
 fn between<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
@@ -102,7 +113,17 @@ impl State {
         if let Some(mode) = hook.get("permission_mode").and_then(Value::as_str) {
             self.provider.permission_mode = Some(mode.to_owned());
         }
-        match text(hook, "hook_event_name") {
+        let event = text(hook, "hook_event_name");
+        let agent = text(hook, "agent_id");
+        if !agent.is_empty()
+            && matches!(
+                event,
+                "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure"
+            )
+        {
+            return self.subagent_hook(emit, agent, event, hook);
+        }
+        match event {
             "SessionStart" => self.session_start(emit, hook),
             "SessionEnd" => self.close_all_unknown(emit),
             "UserPromptSubmit" => self.shared.provider_started(),
@@ -166,6 +187,80 @@ impl State {
         self.boundary(emit, kind, String::new());
     }
 
+    /// A call inside a subagent: a step on its Agent row, and an ask it
+    /// raises or answers.
+    fn subagent_hook(&mut self, emit: &mut Emit, agent: &str, event: &str, hook: &Value) {
+        let row = self.agent_row(agent);
+        let name = text(hook, "tool_name");
+        match event {
+            "PermissionRequest" => self.permission_request(hook),
+            "PreToolUse" => {
+                if let Some(subagent) = row
+                    .as_ref()
+                    .and_then(|id| self.tools.get_mut(id))
+                    .and_then(|tool| tool.subagent.as_mut())
+                {
+                    subagent.tool_count += 1;
+                    subagent.last_tool = split_tool_name(name).1;
+                }
+            }
+            _ => {
+                let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
+                let answered = self
+                    .asks
+                    .iter()
+                    .filter(|(_, meta)| meta.agent.as_deref() == Some(agent))
+                    .filter(|(_, meta)| meta.tool_name == name)
+                    .min_by_key(|(_, meta)| (!same_json(&meta.input, &input), meta.seq))
+                    .map(|(key, _)| key.clone());
+                if let Some(key) = answered
+                    && self.shared.asks().get(&key).is_some()
+                {
+                    self.close(emit, &key, Decision::elsewhere(DecisionOutcome::Allowed));
+                }
+            }
+        }
+        if let Some(id) = row {
+            self.emit_tool(emit, &id);
+        }
+    }
+
+    /// The Agent call a subagent belongs to. A background subagent is known
+    /// by the id its launch returned; a foreground one's calls come while its
+    /// Agent call runs, so the newest running Agent call not yet claimed.
+    fn agent_row(&mut self, agent: &str) -> Option<String> {
+        if let Some(id) = self.agents.get(agent) {
+            return self.tools.contains_key(id).then(|| id.clone());
+        }
+        let claimed = self.agents.values().cloned().collect::<Vec<_>>();
+        let id = self
+            .tools
+            .iter()
+            .filter(|(id, tool)| tool.subagent.is_some() && !tool.finished && !claimed.contains(id))
+            .max_by_key(|(_, tool)| tool.seq)
+            .map(|(id, _)| id.clone())?;
+        self.agents.insert(agent.to_owned(), id.clone());
+        Some(id)
+    }
+
+    /// The Agent call returned before its subagent finished: the row stays
+    /// running until the task notification.
+    fn agent_launched(&mut self, id: &str, result: &Value) -> bool {
+        let Some(agent) = launched_in_background(result) else {
+            return false;
+        };
+        let Some(tool) = self.tools.get_mut(id) else {
+            return false;
+        };
+        if tool.subagent.is_none() {
+            return false;
+        }
+        tool.awaiting_notification = true;
+        tool.background = true;
+        self.agents.insert(agent.to_owned(), id.to_owned());
+        true
+    }
+
     fn permission_request(&mut self, hook: &Value) {
         let name = text(hook, "tool_name");
         let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
@@ -190,7 +285,15 @@ impl State {
         let seq = self.next_seq();
         self.next_ask += 1;
         let key = format!("ask:{}", self.next_ask);
-        let bound = self.tool_for_ask(name, &input);
+        let agent = Some(text(hook, "agent_id").to_owned()).filter(|agent| !agent.is_empty());
+        let (bound, item_key) = match &agent {
+            // Shown on the subagent's Agent row, which takes no decision.
+            Some(agent) => (None, self.agent_row(agent)),
+            None => {
+                let bound = self.tool_for_ask(name, &input);
+                (bound.clone(), bound)
+            }
+        };
         self.asks.insert(
             key.clone(),
             AskMeta {
@@ -198,13 +301,14 @@ impl State {
                 tool_name: name.to_owned(),
                 input: input.to_string(),
                 shape,
-                bound: bound.clone(),
+                bound,
                 closed: None,
+                agent,
             },
         );
         self.shared.open_ask(Ask {
             key,
-            item_key: bound.unwrap_or_default(),
+            item_key: item_key.unwrap_or_default(),
             body: Some(body),
             opened_at_ms: self.shared.now_ms(),
         });
@@ -225,6 +329,11 @@ impl State {
             self.bind(emit, &ask, &id);
         }
         let response = hook.get("tool_response").cloned().unwrap_or(Value::Null);
+        if self.agent_launched(&id, &response) {
+            self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
+            self.emit_tool(emit, &id);
+            return;
+        }
         if let Some(tool) = self.tools.get_mut(&id) {
             if !tool.finished {
                 tool.finished = true;
@@ -280,6 +389,7 @@ impl State {
             }
             let seq = self.next_seq();
             let class = tool_class(&server, &tool_name);
+            let subagent = (server.is_empty() && tool_name == AGENT_TOOL).then(Subagent::default);
             self.tools.insert(
                 id.to_owned(),
                 Tool {
@@ -301,6 +411,8 @@ impl State {
                     message_id: None,
                     finished: false,
                     hidden,
+                    subagent,
+                    awaiting_notification: false,
                     images: Vec::new(),
                     emitted: Vec::new(),
                 },
@@ -323,6 +435,11 @@ impl State {
             .unwrap_or(false);
         let rejected = is_error && output.starts_with(REJECTED);
         let result = row.get("toolUseResult").cloned().unwrap_or(Value::Null);
+        // The launch metadata of a background subagent is for the model.
+        if self.agent_launched(&id, &result) {
+            self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
+            return self.emit_tool(emit, &id);
+        }
         let Some(tool) = self.tools.get_mut(&id) else {
             return;
         };
@@ -459,6 +576,12 @@ impl State {
         if row.get("isMeta").and_then(Value::as_bool) == Some(true) {
             return;
         }
+        // Claude's own message to the model, never a person's prompt.
+        if row.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
+            || text(row, "promptSource") == "system"
+        {
+            return self.task_notification(emit, &whole, at_ms);
+        }
         if let Value::Array(blocks) = content {
             let mut results = false;
             for block in blocks {
@@ -557,14 +680,15 @@ impl State {
     /// too, as a turn of its own after that turn ended: an ordinary prompt.
     fn prompt_row(&mut self, emit: &mut Emit, key: String, text: String, at_ms: Option<i64>) {
         self.close_all_unknown(emit);
+        // The submission began a turn, but another may have run and ended
+        // since: a background task's notification answered first.
+        self.shared.turn_started();
         let input_id = match self.shared.reflect_prompt() {
             Some(input_id) => input_id,
-            None => {
-                self.shared.turn_started();
-                self.steered_entry(&text)
-                    .map(|entry| entry.input_id)
-                    .unwrap_or_default()
-            }
+            None => self
+                .steered_entry(&text)
+                .map(|entry| entry.input_id)
+                .unwrap_or_default(),
         };
         self.local_turn = false;
         self.shared.item(
@@ -631,14 +755,50 @@ impl State {
         }
     }
 
+    /// A background task reported to the model. For a subagent it names the
+    /// Agent call that launched it and carries its answer; the model answers
+    /// the notification in a turn of its own.
+    fn task_notification(&mut self, emit: &mut Emit, text: &str, at_ms: Option<i64>) {
+        self.close_all_unknown(emit);
+        self.local_turn = false;
+        self.shared.turn_started();
+        let Some(id) = between(text, "tool-use-id") else {
+            return;
+        };
+        let Some(tool) = self.tools.get_mut(id) else {
+            return;
+        };
+        if !tool.awaiting_notification || tool.finished {
+            return;
+        }
+        let result = text
+            .find("<result>")
+            .and_then(|start| {
+                let body = &text[start + "<result>".len()..];
+                body.rfind("</result>").map(|end| body[..end].trim())
+            })
+            .unwrap_or_default();
+        tool.finished = true;
+        tool.state = match between(text, "status") {
+            Some("completed") => ToolState::Succeeded,
+            Some("failed") => ToolState::Failed,
+            _ => ToolState::Cancelled,
+        } as i32;
+        tool.outcome_text = result.to_owned();
+        tool.ended_at_ms = at_ms.or(Some(self.shared.now_ms()));
+        let id = id.to_owned();
+        self.emit_tool(emit, &id);
+    }
+
     fn interrupted(&mut self, emit: &mut Emit, key: String, at_ms: Option<i64>) {
         self.close_all_unknown(emit);
         // Claude hands prompts still in its own queue back to its composer.
         self.shared.steers_lost();
+        // A subagent in the background outlives the interrupted turn.
         let running = self
             .tools
             .iter()
-            .filter(|(_, tool)| !tool.finished)
+            .filter(|(_, tool)| !tool.finished && !tool.awaiting_notification)
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         for id in running {
@@ -689,8 +849,12 @@ impl State {
                 ..Default::default()
             },
         );
-        // A finished turn's calls and asks cannot change any more.
-        self.tools.clear();
+        // A finished turn's calls and asks cannot change any more, but for
+        // subagents still running in the background.
+        self.tools
+            .retain(|_, tool| tool.awaiting_notification && !tool.finished);
+        let tools = &self.tools;
+        self.agents.retain(|_, id| tools.contains_key(id));
         let open = self.open_ask_keys();
         self.asks.retain(|key, _| open.contains(key));
     }
