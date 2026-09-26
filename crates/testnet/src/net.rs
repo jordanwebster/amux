@@ -18,17 +18,19 @@ use std::time::Duration;
 use agent_dir::Clock;
 use node::harness::{HostVia, ScriptedDiscovery, scripted_discovery};
 use node::{
-    Daemon, Edge, EdgeOptions, LanOptions, Launch, LoopbackLink, ProfileId, ProfileRuntime,
+    ClientApi, Daemon, Edge, EdgeOptions, LanOptions, Launch, LoopbackLink, ProfileId,
+    ProfileRuntime,
 };
 use provider_fakes::script::{SCRIPT_ENV, Script, Step};
 use serde::{Deserialize, Serialize};
 use store::AgentKey;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use wire::client_service_server::ClientService as _;
 use wire::{
     AgentParent, ClaudeCreateConfig, ClaudePtyInput, ClaudeSdkInput, CodexCreateConfig, CodexInput,
-    CreateAgentRequest, Input, PromptInput, StopMode, WithdrawQueued, claude_pty_input,
-    claude_sdk_input, codex_input, create_agent_request, input,
+    CreateAgentRequest, DeleteAgentRequest, DeleteAgentResponse, Input, PromptInput, StopMode,
+    WithdrawQueued, claude_pty_input, claude_sdk_input, codex_input, create_agent_request, input,
 };
 
 use crate::binaries::Binaries;
@@ -150,6 +152,8 @@ pub enum NetError {
     Registry(#[from] node::RegistryError),
     #[error(transparent)]
     Serve(#[from] node::ServeError),
+    #[error("refused: {}", .0.message())]
+    Refused(Box<tonic::Status>),
     #[error(transparent)]
     Stuck(#[from] Stuck),
     #[error(transparent)]
@@ -416,6 +420,7 @@ impl Net {
                 }
                 _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
             }),
+            host_name: None,
         };
         let runtime = self.runtime(&decl.host)?;
         runtime.set_launch(self.launch(&host, Some((decl.kind, &script))));
@@ -496,10 +501,153 @@ impl Net {
 
     /// Deletes the agent on its own host.
     pub async fn delete(&mut self, name: &str) -> Result<Ack, NetError> {
+        let answer = self.delete_family(name).await?;
+        Ok(self.ack(format!(
+            "{name} deleted with {} children; {} children unreachable",
+            answer.removed_children.len(),
+            answer.unreachable_children.len()
+        )))
+    }
+
+    /// Deletes the agent on its own host, as a person does there, and
+    /// answers what the cascade reached and what it could not. The net
+    /// forgets every agent the cascade removed.
+    pub async fn delete_family(&mut self, name: &str) -> Result<DeleteAgentResponse, NetError> {
         let agent = self.agent(name)?.clone();
-        self.runtime(&agent.host)?.delete(agent.id).await?;
+        let answer = self
+            .client(&agent.host)?
+            .delete_agent(tonic::Request::new(DeleteAgentRequest {
+                agent_id: agent.id.as_bytes().to_vec(),
+            }))
+            .await
+            .map_err(|status| NetError::Refused(Box::new(status)))?
+            .into_inner();
         self.agents.remove(name);
-        Ok(self.ack(format!("{name} deleted")))
+        for child in &answer.removed_children {
+            self.agents
+                .retain(|_, known| known.id.as_bytes() != child.agent_id.as_slice());
+        }
+        Ok(answer)
+    }
+
+    /// The client service a person reaches on `host`: the same calls a
+    /// phone or terminal makes there, forwarded to another host where the
+    /// agent lives there.
+    pub fn client(&self, host: &str) -> Result<ClientApi, NetError> {
+        Ok(ClientApi::new(&self.runtime(host)?, None))
+    }
+
+    /// The client service as `name`'s tools socket serves it: every call
+    /// is made as that agent, which its host checks and forwards.
+    pub fn tools(&self, name: &str) -> Result<ClientApi, NetError> {
+        let agent = self.agent(name)?;
+        Ok(ClientApi::new(&self.runtime(&agent.host)?, Some(agent.id)))
+    }
+
+    /// `parent` spawns `decl` through its tools socket, naming
+    /// `decl.host` as the host: the parent's host resolves the name among
+    /// the hosts it trusts and forwards the create there, where the child
+    /// plays its script in that host's work directory.
+    pub async fn spawn_child(
+        &mut self,
+        parent: &str,
+        decl: AgentDecl,
+    ) -> Result<wire::Agent, NetError> {
+        if self.agents.contains_key(&decl.name) {
+            return Err(NetError::AgentExists(decl.name));
+        }
+        let host = self.host(&decl.host)?.clone();
+        let script = self.write_script(&decl.name, decl.script.clone().unwrap_or_default())?;
+        let id = Uuid::new_v4();
+        let request = CreateAgentRequest {
+            agent_id: id.as_bytes().to_vec(),
+            host_name: Some(decl.host.clone()),
+            name: Some(decl.name.clone()),
+            initial_prompt: decl
+                .prompt
+                .as_deref()
+                .map(|text| prompt(decl.kind, b"testnet-first", text)),
+            cwd: host.work.to_string_lossy().into_owned(),
+            kind: decl.kind.wire() as i32,
+            config: Some(match decl.kind {
+                FakeKind::Codex => {
+                    create_agent_request::Config::Codex(CodexCreateConfig::default())
+                }
+                _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
+            }),
+            ..CreateAgentRequest::default()
+        };
+        let tools = self.tools(parent)?;
+        let target = self.runtime(&decl.host)?;
+        target.set_launch(self.launch(&host, Some((decl.kind, &script))));
+        let spawned = tools.create_agent(tonic::Request::new(request)).await;
+        target.set_launch(self.launch(&host, None));
+        let agent = spawned
+            .map_err(|status| NetError::Refused(Box::new(status)))?
+            .into_inner();
+        self.agents.insert(
+            decl.name.clone(),
+            AgentRef {
+                name: decl.name,
+                host: host.name.clone(),
+                host_id: host.host_id,
+                id,
+                kind: decl.kind,
+            },
+        );
+        Ok(agent)
+    }
+
+    /// The next process to start on `name`'s host, whoever starts it,
+    /// plays `script` as `name`: for a resume the host makes on its own,
+    /// such as a parent's message to its exited child.
+    pub fn next_start(&self, name: &str, script: Script) -> Result<Ack, NetError> {
+        let agent = self.agent(name)?.clone();
+        let host = self.host(&agent.host)?.clone();
+        let path = self.write_script(name, script)?;
+        self.runtime(&agent.host)?
+            .set_launch(self.launch(&host, Some((agent.kind, &path))));
+        Ok(self.ack(format!("{name}'s next start plays its new script")))
+    }
+
+    /// Stops `name`'s process where it stands, as a machine too busy to
+    /// schedule it would: it keeps its lock and its connection and answers
+    /// nothing until thawed.
+    pub fn freeze(&self, name: &str) -> Result<Ack, NetError> {
+        self.signal(name, "-STOP")?;
+        Ok(self.ack(format!("{name} frozen")))
+    }
+
+    /// Lets a frozen process run again.
+    pub fn thaw(&self, name: &str) -> Result<Ack, NetError> {
+        self.signal(name, "-CONT")?;
+        Ok(self.ack(format!("{name} thawed")))
+    }
+
+    fn signal(&self, name: &str, signal: &str) -> Result<(), NetError> {
+        let dir = self.agent_dir(name)?;
+        #[cfg(unix)]
+        {
+            // `amux agent <dir>`: the directory is on its command line.
+            let status = std::process::Command::new("pkill")
+                .arg(signal)
+                .arg("-f")
+                .arg(format!("agent {}", dir.display()))
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(NetError::Host {
+                    host: self.agent(name)?.host.clone(),
+                    error: format!("no process of {name} to signal"),
+                })
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (dir, signal);
+            Err(NetError::Unsupported("signalling agent processes"))
+        }
     }
 
     fn write_script(&self, name: &str, mut script: Script) -> Result<PathBuf, NetError> {
@@ -577,7 +725,17 @@ impl Net {
     // --- hosts -------------------------------------------------------------
 
     fn create_host(&mut self, decl: &HostDecl) -> Result<(), NetError> {
-        let dir = self.root.path().join(&decl.name);
+        // Names that differ only in case share a directory on a
+        // case-insensitive filesystem.
+        let twins = self
+            .hosts
+            .keys()
+            .filter(|name| name.eq_ignore_ascii_case(&decl.name))
+            .count();
+        let dir = match twins {
+            0 => self.root.path().join(&decl.name),
+            n => self.root.path().join(format!("{}-{n}", decl.name)),
+        };
         let data_dir = dir.join("data");
         let work = dir.join("work");
         std::fs::create_dir_all(&work)?;

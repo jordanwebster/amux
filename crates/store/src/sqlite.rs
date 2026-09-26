@@ -187,7 +187,7 @@ struct SqlTables<'a> {
 const AGENT_COLUMNS: &str = "origin_host, agent_id, kind, name, cwd, parent, parent_host, \
     lifecycle, exit_cause, phase, working_on, last_activity, snapshot, snapshot_revision, \
     ingest_cursor, next_revision, source_cursor, complete_from_order, exhausted, created_at, \
-    producer_version, incarnation";
+    producer_version, incarnation, turn_open";
 
 /// `crate::item_bytes`, in SQL: byte lengths, not character counts.
 const ITEM_BYTES: &str = "(length(CAST(key AS BLOB)) + length(CAST(text AS BLOB)) + length(body) \
@@ -223,6 +223,7 @@ fn agent_row(row: &Row<'_>) -> rusqlite::Result<(AgentRow, Option<Vec<u8>>)> {
             created_at: row.get(19)?,
             producer_version: row.get(20)?,
             incarnation: row.get(21)?,
+            turn_open: row.get::<_, i64>(22)? != 0,
         },
         snapshot,
     ))
@@ -287,7 +288,7 @@ impl Tables for SqlTables<'_> {
     }
 
     fn put_agent(&mut self, row: &AgentRow) -> Result<(), StoreError> {
-        let placeholders = (1..=22)
+        let placeholders = (1..=23)
             .map(|n| format!("?{n}"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -318,6 +319,7 @@ impl Tables for SqlTables<'_> {
                 row.created_at,
                 row.producer_version,
                 row.incarnation,
+                i64::from(row.turn_open),
             ],
         )?;
         Ok(())

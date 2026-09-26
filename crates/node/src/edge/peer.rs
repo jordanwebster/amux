@@ -37,7 +37,7 @@ pub(super) fn serve(
             .map(|io| (Ok::<_, std::io::Error>(io), incoming))
     });
     let service = PeerApi {
-        client: ClientApi::weak(runtime.clone(), None),
+        client: ClientApi::for_peer(runtime.clone()),
         runtime,
     };
     tokio::spawn(async move {
@@ -135,11 +135,24 @@ impl PeerService for PeerApi {
         self.client.send_input(request).await
     }
 
+    /// A host creates agents here for its own agents, or for the person:
+    /// the parent it names, if any, must be one of its own.
     async fn create_agent(
         &self,
         request: Request<CreateAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        caller(&request)?;
+        let host = caller(&request)?;
+        let foreign_parent = request
+            .get_ref()
+            .parent
+            .as_ref()
+            .is_some_and(|parent| parent.host_id != host.as_bytes());
+        if foreign_parent {
+            return Err(status(crate::grpc::wire_error(
+                wire::ErrorCode::PermissionDenied,
+                "a host creates children only for its own agents",
+            )));
+        }
         self.client.create_agent(request).await
     }
 

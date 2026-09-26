@@ -45,6 +45,11 @@ pub struct Envelope {
     pub kind: i32,
     #[prost(string, tag = "6")]
     pub text: ::prost::alloc::string::String,
+    /// The recipient's incarnation the message is for, when only that one
+    /// may have it: a child's finished or failed message to its parent. The
+    /// recipient's daemon drops it for any other incarnation.
+    #[prost(uint32, optional, tag = "7")]
+    pub incarnation: ::core::option::Option<u32>,
 }
 impl ::prost::Name for Envelope {
     const NAME: &'static str = "Envelope";
@@ -3993,6 +3998,24 @@ impl ::prost::Name for AmbiguousAgentName {
         "/amux.v1.AmbiguousAgentName".into()
     }
 }
+/// A spawn named a host that more than one trusted host answers to.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AmbiguousHostName {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub candidates: ::prost::alloc::vec::Vec<HostEntry>,
+}
+impl ::prost::Name for AmbiguousHostName {
+    const NAME: &'static str = "AmbiguousHostName";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.AmbiguousHostName".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.AmbiguousHostName".into()
+    }
+}
 /// Host-to-host control envelope exchanged on the link's control stream.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
@@ -4808,6 +4831,11 @@ pub struct CreateAgentRequest {
     /// Which interpreter: the config arm names only the provider.
     #[prost(enumeration = "Kind", tag = "7")]
     pub kind: i32,
+    /// The host as a person names it, resolved against this host and the
+    /// trusted ones: exact first, then ignoring case. host_id wins when both
+    /// are set; neither means this host.
+    #[prost(string, optional, tag = "8")]
+    pub host_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(oneof = "create_agent_request::Config", tags = "10, 11")]
     pub config: ::core::option::Option<create_agent_request::Config>,
 }

@@ -91,6 +91,7 @@ conformance!(
     appends_extend_text_and_carry_their_base,
     snapshots_copy_their_envelope_onto_the_row,
     a_turn_end_with_a_parent_inserts_a_delivery,
+    a_turn_is_open_from_an_incarnations_start_until_it_ends,
     turning_to_needs_you_inserts_one_notification_and_leaving_removes_it,
     commit_writes_the_cursor_and_serves_pages_newest_first,
     commit_refuses_replica_rows_and_unknown_agents,
@@ -317,6 +318,59 @@ fn snapshots_copy_their_envelope_onto_the_row<S: Store>(store: S) {
     assert_eq!(row.last_activity, Some(777));
     assert_eq!(row.snapshot_revision, 2);
     assert_eq!(row.snapshot.as_ref(), Some(snap));
+}
+
+/// Whether the incarnation has a turn it has not ended: from its start
+/// until its first turn end, again from each later turn's start, and after
+/// a step that ends one turn and starts the next. What the snapshot's phase
+/// says at exit does not matter.
+fn a_turn_is_open_from_an_incarnations_start_until_it_ends<S: Store>(store: S) {
+    let agent = own("child");
+    let mut store = with_agent(store, &agent);
+    let open = |store: &S| store.agent(&agent).unwrap().unwrap().turn_open;
+    assert!(open(&store), "a new incarnation owes a turn end");
+    let ended = |phase: Phase| Step {
+        turn_end: Some(TurnEnd {
+            turn_id: 1,
+            last_message_key: String::new(),
+        }),
+        ..phase_step(phase)
+    };
+    store
+        .commit(&agent, &[(1, phase_step(Phase::Working))], CLOCK)
+        .unwrap();
+    assert!(open(&store));
+    store
+        .commit(&agent, &[(2, ended(Phase::Idle))], CLOCK)
+        .unwrap();
+    assert!(!open(&store), "the turn ended");
+    store
+        .commit(&agent, &[(3, phase_step(Phase::Starting))], CLOCK)
+        .unwrap();
+    assert!(!open(&store), "a provider's exit opens no turn");
+    store
+        .commit(&agent, &[(4, phase_step(Phase::NeedsYou))], CLOCK)
+        .unwrap();
+    assert!(open(&store), "a later turn asks");
+    store
+        .commit(&agent, &[(5, ended(Phase::Working))], CLOCK)
+        .unwrap();
+    assert!(open(&store), "one turn ended and the next began");
+    store
+        .commit(&agent, &[(6, ended(Phase::Idle))], CLOCK)
+        .unwrap();
+    let mut row = store.agent(&agent).unwrap().unwrap();
+    assert!(!row.turn_open);
+    row.incarnation += 1;
+    store.put_agent(&row).unwrap();
+    assert!(open(&store), "a resumed incarnation owes one again");
+}
+
+fn phase_step(phase: Phase) -> Step {
+    Step {
+        snapshot: Some(snapshot(phase, None, 1)),
+        ..Default::default()
+    }
 }
 
 fn a_turn_end_with_a_parent_inserts_a_delivery<S: Store>(store: S) {

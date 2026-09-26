@@ -410,6 +410,9 @@ impl ProfileRuntime {
         sources.next_session += 1;
         let session = sources.next_session;
         sources.ready.insert(host_bytes, session);
+        drop(sources);
+        // Deliveries to a parent on that host may have waited for it.
+        self.deliveries_due.notify_one();
         Ok(session)
     }
 

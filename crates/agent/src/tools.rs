@@ -314,6 +314,7 @@ impl Server {
             }),
             kind: EnvelopeKind::Message as i32,
             text,
+            incarnation: None,
         };
         let sent = self
             .daemon_once(format!("the message to {to}"), |mut client| {
@@ -347,12 +348,10 @@ impl Server {
         };
         let prompt = required(arguments, "prompt")?;
         let name = optional(arguments, "name");
-        let host = match optional(arguments, "host") {
-            Some(host) => Some(self.resolve_host(&host).await?),
-            None => None,
-        };
+        // The daemon resolves the name against the hosts it trusts.
+        let host = optional(arguments, "host");
         let cwd = optional(arguments, "cwd").unwrap_or_else(|| match host {
-            // A path on this host means nothing on another.
+            // A path on this host means nothing on another: that host picks.
             Some(_) => String::new(),
             None => self.cwd.clone(),
         });
@@ -362,7 +361,7 @@ impl Server {
         };
         let request = CreateAgentRequest {
             agent_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-            host_id: host,
+            host_id: None,
             name,
             parent: None,
             initial_prompt: Some(Input {
@@ -375,6 +374,7 @@ impl Server {
                 Kind::Codex => create_agent_request::Config::Codex(CodexCreateConfig::default()),
                 _ => create_agent_request::Config::Claude(ClaudeCreateConfig::default()),
             }),
+            host_name: host,
         };
         let agent = self
             .daemon_once("the new agent".to_owned(), |mut client| {
@@ -427,48 +427,6 @@ impl Server {
         })
         .await
         .map_err(|status| refused(&status, name))
-    }
-
-    /// A host by the name the person used for it, among trusted hosts.
-    async fn resolve_host(&self, name: &str) -> Result<Vec<u8>, Refusal> {
-        let (hosts, _) = self.inventory().await?;
-        let trusted = hosts
-            .iter()
-            .filter(|host| host.trust() == Trust::Trusted)
-            .collect::<Vec<_>>();
-        let mut matching = trusted
-            .iter()
-            .filter(|host| host.name == name)
-            .collect::<Vec<_>>();
-        if matching.is_empty() {
-            matching = trusted
-                .iter()
-                .filter(|host| host.name.eq_ignore_ascii_case(name))
-                .collect();
-        }
-        match matching.as_slice() {
-            [host] => Ok(host.host_id.clone()),
-            [] => {
-                let names = trusted
-                    .iter()
-                    .map(|host| host.name.as_str())
-                    .collect::<Vec<_>>();
-                Err(format!(
-                    "no trusted host named {name}; trusted hosts: {}",
-                    names.join(", ")
-                )
-                .into())
-            }
-            several => Err(format!(
-                "{name} names several hosts: {}",
-                several
-                    .iter()
-                    .map(|host| format!("{} ({})", host.name, interpret::to_hex(&host.host_id)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into()),
-        }
     }
 
     /// The inventory read to CaughtUp: every host entry and agent row.

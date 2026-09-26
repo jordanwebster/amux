@@ -53,6 +53,8 @@ pub enum RelayError {
     Stale,
     #[error("resuming the agent: {0}")]
     Resume(Box<RegistryError>),
+    #[error(transparent)]
+    Forwarded(#[from] crate::forward::ForwardError),
     #[error("{0}")]
     Forbidden(&'static str),
     #[error("the store: {0}")]
@@ -67,7 +69,12 @@ impl RelayError {
             Self::OtherHost => ErrorCode::Unimplemented,
             Self::Unavailable => ErrorCode::Unavailable,
             Self::Lost => ErrorCode::Aborted,
-            Self::Rejected(_) | Self::Stale => ErrorCode::FailedPrecondition,
+            Self::Rejected(_) => ErrorCode::FailedPrecondition,
+            // The incarnation the message was for no longer exists, which
+            // tells a sending host to drop its outbox row as surely as a
+            // deleted recipient does.
+            Self::Stale => ErrorCode::NotFound,
+            Self::Forwarded(error) => return error.to_wire(),
             Self::Resume(_) | Self::Store(_) => ErrorCode::Internal,
             Self::Forbidden(_) => ErrorCode::PermissionDenied,
         };
@@ -87,6 +94,8 @@ enum From {
     Agent(AgentId),
     /// A paired host's agent.
     Peer(AgentSender),
+    /// The person, through a paired host.
+    PeerPerson,
 }
 
 pub(crate) fn rejected(reason: &str) -> SendInputResponse {
@@ -220,23 +229,26 @@ impl ProfileRuntime {
             .await
     }
 
-    /// A message a paired host sends on behalf of one of its agents. The
-    /// sender it names must be that host's own agent: a host speaks only for
-    /// its own agents.
+    /// A message a paired host sends on behalf of one of its agents, or of
+    /// the person. An agent sender it names must be that host's own agent:
+    /// a host speaks only for its own agents.
     pub async fn send_peer_message(
         &self,
         envelope: Envelope,
         host: crate::HostId,
     ) -> Result<SendMessageResponse, RelayError> {
-        let sender = match envelope.from.clone().and_then(|from| from.value) {
-            Some(sender::Value::Agent(sender)) if sender.host_id == host.as_bytes() => sender,
+        let from = match envelope.from.clone().and_then(|from| from.value) {
+            Some(sender::Value::Agent(sender)) if sender.host_id == host.as_bytes() => {
+                From::Peer(sender)
+            }
+            Some(sender::Value::Human(_)) => From::PeerPerson,
             _ => {
                 return Err(RelayError::Forbidden(
                     "a host sends messages only from its own agents",
                 ));
             }
         };
-        self.send_message_from(envelope, From::Peer(sender)).await
+        self.send_message_from(envelope, from).await
     }
 
     async fn send_message_from(
@@ -245,22 +257,21 @@ impl ProfileRuntime {
         caller: From,
     ) -> Result<SendMessageResponse, RelayError> {
         let to = envelope.to.clone().ok_or(RelayError::NoAgent)?;
-        if to.host_id != self.host().as_bytes() {
-            // Forwarding over the peer link is not built yet.
-            return Err(RelayError::OtherHost);
-        }
-        let id = self.own_agent(&to.agent_id).await?;
         if envelope.id.is_empty() {
             envelope.id = Uuid::new_v4().as_bytes().to_vec();
         }
         if envelope.kind == EnvelopeKind::Unspecified as i32 {
             envelope.kind = EnvelopeKind::Message as i32;
         }
+        if to.host_id != self.host().as_bytes() {
+            return self.forward_message(envelope, caller, &to.host_id).await;
+        }
+        let id = self.own_agent(&to.agent_id).await?;
         let (from, is_parent) = {
             let store = self.store.lock().await;
             let recipient = store.agent(&self.key(id))?.ok_or(RelayError::NoAgent)?;
             match caller {
-                From::Person => (
+                From::Person | From::PeerPerson => (
                     Sender {
                         value: Some(sender::Value::Human(Human {})),
                     },
@@ -285,8 +296,36 @@ impl ProfileRuntime {
         };
         envelope.from = Some(from);
         let envelope_id = envelope.id.clone();
-        self.deliver(id, envelope, is_parent, None).await?;
+        let incarnation = envelope.incarnation;
+        self.deliver(id, envelope, is_parent, incarnation).await?;
         Ok(SendMessageResponse { envelope_id })
+    }
+
+    /// A message for another host's agent: the sender is set here, from
+    /// who called, and the recipient's own daemon does the rest. A message
+    /// that arrived from a peer is not passed on.
+    async fn forward_message(
+        &self,
+        mut envelope: Envelope,
+        caller: From,
+        host: &[u8],
+    ) -> Result<SendMessageResponse, RelayError> {
+        let host = Uuid::from_slice(host).map_err(|_| RelayError::NoAgent)?;
+        envelope.from = Some(match caller {
+            From::Person => Sender {
+                value: Some(sender::Value::Human(Human {})),
+            },
+            From::Agent(caller) => {
+                let row = self.store.lock().await.agent(&self.key(caller))?;
+                self.agent_sender(caller, row.as_ref())
+            }
+            From::Peer(_) | From::PeerPerson => return Err(RelayError::OtherHost),
+        });
+        Ok(self
+            .on_peer(host, |mut client| async move {
+                client.send_message(envelope).await
+            })
+            .await?)
     }
 
     pub(crate) fn agent_sender(&self, id: AgentId, row: Option<&store::AgentRow>) -> Sender {

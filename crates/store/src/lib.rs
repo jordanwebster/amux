@@ -81,6 +81,11 @@ pub struct AgentRow {
     pub created_at: i64,
     pub producer_version: String,
     pub incarnation: u32,
+    /// Own rows: the incarnation has a turn it has not ended, from its
+    /// start until its first turn end and again whenever a later turn
+    /// starts. An incarnation that exits with one open tells its parent it
+    /// failed; one that ended its turn already told it it finished.
+    pub turn_open: bool,
 }
 
 impl AgentRow {
@@ -107,6 +112,7 @@ impl AgentRow {
             created_at: 0,
             producer_version: String::new(),
             incarnation: 1,
+            turn_open: true,
         }
     }
 }
@@ -597,6 +603,7 @@ impl<B: Backend> Store for B {
                     held.producer_version = row.producer_version.clone();
                     if own && row.incarnation > held.incarnation {
                         held.phase = wire::Phase::Starting as i32;
+                        held.turn_open = true;
                     }
                     held.incarnation = row.incarnation;
                     if !own {
@@ -846,6 +853,17 @@ fn commit(
                 kind: wire::EnvelopeKind::Finished as i32,
                 body,
             })?;
+        }
+        // A step that ends one turn may start the next; the snapshot says
+        // where the step leaves the agent.
+        if step.turn_end.is_some() {
+            row.turn_open = false;
+        }
+        if let Some(snapshot) = &step.snapshot
+            && (snapshot.phase == wire::Phase::Working as i32
+                || snapshot.phase == wire::Phase::NeedsYou as i32)
+        {
+            row.turn_open = true;
         }
         row.ingest_cursor = *offset;
     }

@@ -22,8 +22,9 @@ use std::pin::Pin;
 
 use store::{Delivery, Notification, Store as _};
 use uuid::Uuid;
-use wire::{AgentParent, Envelope, Lifecycle};
+use wire::{AgentParent, Envelope, ErrorCode, Lifecycle};
 
+use crate::forward::ForwardError;
 use crate::relay::{RelayError, delivery_envelope_id};
 use crate::runtime::ProfileRuntime;
 
@@ -171,12 +172,13 @@ impl ProfileRuntime {
         report
     }
 
+    /// Hands one row to its parent: through the parent's lane here, or to
+    /// the parent's own daemon over the peer link, which makes the same
+    /// incarnation and envelope id checks where the parent lives. The
+    /// parent's row here, own or replica, answers the questions this host
+    /// can answer first: whether the parent is still the incarnation the
+    /// row is for, and whether it is live to receive it.
     async fn deliver_row(&self, mut row: Delivery) -> Result<Outcome, RelayError> {
-        if row.parent.host != self.host().as_bytes() {
-            // Delivery across hosts rides the peer link, which is not built
-            // yet; the row waits.
-            return Ok(Outcome::Kept);
-        }
         let Ok(parent_id) = Uuid::from_slice(&row.parent.agent) else {
             return Ok(Outcome::Kept);
         };
@@ -226,11 +228,15 @@ impl ProfileRuntime {
             }),
             kind: row.kind,
             text: row.body.clone(),
+            incarnation: Some(row.parent_incarnation),
         };
-        match self
-            .deliver(parent_id, envelope, false, Some(row.parent_incarnation))
-            .await
-        {
+        let sent = if row.parent.host == self.host().as_bytes() {
+            self.deliver(parent_id, envelope, false, Some(row.parent_incarnation))
+                .await
+        } else {
+            self.deliver_remote(&row.parent.host, envelope).await
+        };
+        match sent {
             Ok(()) => {
                 self.store.lock().await.remove_delivery(&row)?;
                 Ok(Outcome::Delivered)
@@ -244,6 +250,29 @@ impl ProfileRuntime {
                 Ok(Outcome::Kept)
             }
             Err(error) => Err(error),
+        }
+    }
+
+    /// A delivery to a parent on another host, sent to that host's daemon
+    /// as a message from the child. Its answers read as the lane's would:
+    /// not found means the incarnation or the parent is gone, a refusal
+    /// keeps the row, and no answer means the host is away.
+    async fn deliver_remote(&self, host: &[u8], envelope: Envelope) -> Result<(), RelayError> {
+        let host = Uuid::from_slice(host).map_err(|_| RelayError::NoAgent)?;
+        let sent = self
+            .on_peer(host, |mut client| async move {
+                client.send_message(envelope).await
+            })
+            .await;
+        match sent {
+            Ok(_) => Ok(()),
+            Err(ForwardError::Unreachable(_)) => Err(RelayError::Unavailable),
+            Err(error) => match error.code() {
+                ErrorCode::NotFound => Err(RelayError::Stale),
+                ErrorCode::FailedPrecondition => Err(RelayError::Rejected(error.to_string())),
+                ErrorCode::Aborted | ErrorCode::Unavailable => Err(RelayError::Lost),
+                _ => Err(error.into()),
+            },
         }
     }
 

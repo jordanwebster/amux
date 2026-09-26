@@ -1,3 +1,39 @@
+2026-09-26 — **Families cross hosts.**
+A spawn names its host as the person does: `CreateAgentRequest.host_name`
+is resolved by the daemon among this host and the trusted ones, exactly
+and then ignoring case; no match is NOT_FOUND listing the hosts, two are
+ambiguous with an `AmbiguousHostName` detail. The MCP spawn tool passes the
+name through instead of resolving it itself. A create for another host is
+forwarded to that host's daemon with the parent as host and id; a host
+refuses a create naming a parent that is not its own agent, and an empty
+cwd there means the home directory. The client service forwards a
+person's or an agent's call on another host's agent (send input, stop,
+resume, rename, delete, send message) to the owner, one hop only: calls
+that arrived from a peer are answered for own agents alone. Stop is
+lineage-checked against the replica row where the caller is known; an
+input to an unreachable host is answered `host_unreachable`.
+
+A cascade delete forwards to each child's host and reports a child it
+cannot reach as unreachable, left listed under its host as an orphan. The
+deliveries outbox now reaches a parent on another host: the envelope
+carries the parent's incarnation (`Envelope.incarnation`), the parent's
+daemon drops a mismatch (answered NOT_FOUND, which drops the row) and
+dedupes a retry by envelope id; a host coming back wakes the drain. A
+message from a peer may come from the person as well as from that host's
+own agents.
+
+Testing the story found a one-shot child telling its parent both
+"finished" and "failed": the provider's exit leaves the snapshot phase
+starting, which the exit rule read as a turn never finished. Agent rows
+now carry `turn_open` (a second migration), set at each incarnation's
+start and each turn's start and cleared at its end, and the exit rule
+reads that. `crates/testnet/tests/spec_families.rs` covers resolution,
+forwarding, lineage, cascade and orphans, waiting and stale rows,
+duplicate sends and the cross-host family journey; the net gains
+`spawn_child`, `tools`, `client`, `delete_family`, `next_start`, `freeze`
+and `thaw`, and hosts whose names differ only in case get their own
+directories.
+
 2026-09-26 — **The flood states what full rate is, and prices ingest per frame.**
 The flood's pace is full rate defined as the fastest a real provider
 streams: the busiest second in any claude-specs or codex-specs recording

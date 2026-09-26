@@ -33,7 +33,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 use wire::{
     Agent, AgentHello, AgentParent, AgentRemoved, CaughtUp, CreateAgentRequest, CtlFrame,
-    DeleteAgentResponse, DumpPart, EnvelopeKind, ErrorCode, Input, Kind, Lifecycle, Phase,
+    DeleteAgentResponse, DumpPart, EnvelopeKind, ErrorCode, Input, Kind, Lifecycle,
     SendInputResponse, Stop, StopMode, WorkingOn, ctl_frame, inventory_event, session_event,
 };
 
@@ -44,7 +44,7 @@ use crate::outbox::PushSender;
 use crate::profiles::ProfileId;
 use crate::retention::Retention;
 use crate::serve::{event, inventory};
-use crate::spec;
+use crate::{HostId, spec};
 
 pub type AgentId = Uuid;
 
@@ -191,6 +191,10 @@ pub enum RegistryError {
     BadCwd(String),
     #[error("spawning on another host goes through that host's daemon")]
     OtherHost,
+    #[error(transparent)]
+    HostName(#[from] crate::forward::HostNameError),
+    #[error(transparent)]
+    Forwarded(#[from] crate::forward::ForwardError),
     #[error("agent {0} did not start within the start deadline")]
     StartTimeout(AgentId),
     #[error("agent {0} did not stop within the stop deadline")]
@@ -215,6 +219,8 @@ impl RegistryError {
             Self::OtherHost => ErrorCode::Unimplemented,
             Self::StartTimeout(_) | Self::StopTimeout(_) => ErrorCode::Aborted,
             Self::Store(_) | Self::Io(_) => ErrorCode::Internal,
+            Self::HostName(error) => return error.to_wire(),
+            Self::Forwarded(error) => return error.to_wire(),
         };
         crate::grpc::wire_error(code, self.to_string())
     }
@@ -280,7 +286,7 @@ pub struct ProfileRuntime {
     ingested_frames: AtomicU64,
     /// Set once every own journal has been read to its end after start.
     pub(crate) journals_read: watch::Sender<bool>,
-    deliveries_due: Arc<Notify>,
+    pub(crate) deliveries_due: Arc<Notify>,
     notifications_due: Arc<Notify>,
     pub(crate) push: Arc<dyn PushSender>,
     /// The outbox drains and the retention sweep.
@@ -644,17 +650,22 @@ impl ProfileRuntime {
             16 => Uuid::from_slice(&request.agent_id).expect("sixteen bytes"),
             n => return Err(RegistryError::BadId(n)),
         };
-        if request
-            .host_id
-            .as_ref()
-            .is_some_and(|host| host.as_slice() != self.host.as_bytes())
-        {
+        if self.target_host(&request)? != self.host {
             return Err(RegistryError::OtherHost);
         }
         let kind = Kind::try_from(request.kind).unwrap_or(Kind::Unspecified);
         let Some(kind_name) = spec::kind_name(kind) else {
             return Err(RegistryError::UnknownKind(request.kind));
         };
+        let mut request = request;
+        if request.cwd.is_empty() {
+            // A spawn from another host names no path here unless it knows
+            // one: the child starts in the home directory of the user this
+            // daemon runs as.
+            request.cwd = home_dir()
+                .map(|home| home.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
         if request.cwd.is_empty() || !Path::new(&request.cwd).is_dir() {
             return Err(RegistryError::BadCwd(request.cwd));
         }
@@ -708,6 +719,45 @@ impl ProfileRuntime {
         );
         spec::write(&dir, &spec)?;
         self.start_process(id, &dir, &launch).await
+    }
+
+    /// The host a create request is for: its id, else its name resolved
+    /// against this host and the trusted ones, else this host.
+    pub fn target_host(&self, request: &CreateAgentRequest) -> Result<HostId, RegistryError> {
+        if let Some(host) = &request.host_id {
+            return Uuid::from_slice(host).map_err(|_| RegistryError::BadId(host.len()));
+        }
+        match request.host_name.as_deref() {
+            Some(name) if !name.is_empty() => Ok(self.resolve_host(name)?),
+            _ => Ok(self.host),
+        }
+    }
+
+    /// Creates an agent on another host, forwarding the request to that
+    /// host's daemon. `caller`, the agent whose tools socket the request
+    /// came in on, becomes the parent, named by this host and its id.
+    pub async fn spawn_on(
+        &self,
+        host: HostId,
+        mut request: CreateAgentRequest,
+        caller: Option<AgentId>,
+    ) -> Result<Agent, RegistryError> {
+        if let Some(caller) = caller {
+            request.parent = Some(AgentParent {
+                host_id: self.host.as_bytes().to_vec(),
+                agent_id: caller.as_bytes().to_vec(),
+            });
+        }
+        request.host_id = Some(host.as_bytes().to_vec());
+        request.host_name = None;
+        if request.agent_id.is_empty() {
+            request.agent_id = Uuid::new_v4().as_bytes().to_vec();
+        }
+        Ok(self
+            .on_peer(host, |mut client| async move {
+                client.create_agent(request).await
+            })
+            .await?)
     }
 
     /// Starts the agent's next incarnation: waits for a dying process to
@@ -907,7 +957,7 @@ impl ProfileRuntime {
         for child in children {
             let wire = to_wire(&child);
             if child.agent.host != self.host.as_bytes() {
-                response.unreachable_children.push(wire);
+                self.delete_remote_child(child, response).await;
                 continue;
             }
             let Ok(child_id) = Uuid::from_slice(&child.agent.agent) else {
@@ -1500,10 +1550,10 @@ impl ProfileRuntime {
         let Some(parent) = &row.parent else {
             return Ok(());
         };
-        // The phase as committed: a new incarnation starts in starting, and
-        // only a turn end leaves it idle.
+        // As committed: the phase at exit says nothing here, since a
+        // provider's exit leaves it starting whether or not the turn ended.
         let held = store.agent(&row.agent)?.unwrap_or(row.clone());
-        if held.phase == Phase::Idle as i32 {
+        if !held.turn_open {
             return Ok(());
         }
         // Zero when the parent's row is not held: stamped by the drain.
@@ -1687,6 +1737,13 @@ pub const AGENT_LOG: &str = "agent.log";
 /// Waits on a child this daemon started, so it never lingers as a zombie.
 async fn reap(mut child: tokio::process::Child) {
     let _ = child.wait().await;
+}
+
+/// The home directory of the user this daemon runs as.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
 }
 
 #[cfg(unix)]

@@ -171,6 +171,7 @@ pub fn create(cwd: &Path, name: &str, prompt: Option<&str>) -> CreateAgentReques
         config: Some(create_agent_request::Config::Claude(
             ClaudeCreateConfig::default(),
         )),
+        host_name: None,
     }
 }
 

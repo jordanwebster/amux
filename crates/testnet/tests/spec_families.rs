@@ -1,0 +1,892 @@
+//! Families across hosts: an agent on one host spawns a child on another
+//! by the host's name, the parent's host forwards the create there, and
+//! every host's fleet groups the family from the replica rows it holds.
+//! Stop and send are checked against the parent edge wherever the child
+//! lives; a cascade delete reaches the children it can and leaves the rest
+//! listed under their own hosts; and the deliveries outbox carries a
+//! child's finished and failed messages over the peer link, exactly once,
+//! to the incarnation that was waiting for them.
+
+#![cfg(unix)]
+
+use std::time::Duration;
+
+use prost::Message as _;
+use provider_fakes::script::{Ask, Question, Script, Step};
+use store::{AgentKey, AgentRow, Store as _};
+use testnet::observe::{self, eventually};
+use testnet::{AgentDecl, Net, PATIENCE, Topology};
+use tonic::{Code, Request};
+use ui_state::{Attention, FleetMsg, FleetState};
+use uuid::Uuid;
+use wire::client_service_server::ClientService as _;
+use wire::{
+    AgentParent, AgentSender, AmbiguousHostName, ClaudeCreateConfig, ClaudeSdkInput,
+    CreateAgentRequest, Envelope, EnvelopeKind, InventoryEvent, Kind, Lifecycle, Phase, Sender,
+    claude_sdk_input, create_agent_request, input, sender,
+};
+
+fn text(text: &str) -> Step {
+    Step::Text {
+        chunks: vec![text.to_owned()],
+    }
+}
+
+fn says(label: &str) -> Vec<Step> {
+    vec![text(label), Step::TurnEnd]
+}
+
+/// The lead: one turn that plans, then idle, taking what its children
+/// send it as turns of their own.
+fn lead() -> AgentDecl {
+    AgentDecl::new("lead", "desk")
+        .prompt("Plan the release survey.")
+        .steps(says("I will have a helper on the server run the suite."))
+}
+
+fn child(name: &str, host: &str, steps: Vec<Step>) -> AgentDecl {
+    AgentDecl::new(name, host)
+        .prompt("Run the test suite and report.")
+        .steps(steps)
+}
+
+/// A turn that waits on gate `name` in the net's gate directory.
+fn waits(name: &str) -> Step {
+    Step::WaitFor { path: name.into() }
+}
+
+fn question() -> Step {
+    Step::Ask(Ask::Question {
+        questions: vec![Question {
+            question: "Which suite should I run?".into(),
+            header: "Suite".into(),
+            options: vec!["unit".into(), "full".into()],
+            multi_select: false,
+        }],
+    })
+}
+
+fn envelope(id: &[u8], to: &AgentParent, text: &str) -> Envelope {
+    Envelope {
+        id: id.to_vec(),
+        to: Some(to.clone()),
+        text: text.into(),
+        ..Envelope::default()
+    }
+}
+
+fn interrupt() -> wire::Input {
+    wire::Input {
+        input_id: Uuid::new_v4().as_bytes().to_vec(),
+        of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Interrupt(wire::Interrupt {})),
+        })),
+    }
+}
+
+/// `agent`'s row as `host` holds it: its own row there, or a replica.
+async fn row(net: &Net, host: &str, agent: &str) -> Option<AgentRow> {
+    let key = net.agent(agent).unwrap().key();
+    net.runtime(host)
+        .unwrap()
+        .store()
+        .await
+        .agent(&key)
+        .unwrap()
+}
+
+/// What `agent`'s own host holds for it that came in as an input other
+/// than its first prompt: the agent messages it accepted.
+async fn received(net: &Net, agent: &str) -> Vec<wire::Item> {
+    let at = net.agent(agent).unwrap().clone();
+    net.runtime(&at.host)
+        .unwrap()
+        .store()
+        .await
+        .page(&at.key(), None, 1_000)
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|item| !item.input_id.is_empty() && item.input_id != b"testnet-first")
+        .collect()
+}
+
+async fn with_input(net: &Net, agent: &str, input_id: &[u8]) -> usize {
+    received(net, agent)
+        .await
+        .iter()
+        .filter(|item| item.input_id == input_id)
+        .count()
+}
+
+async fn outbox(net: &Net, host: &str) -> usize {
+    net.runtime(host)
+        .unwrap()
+        .store()
+        .await
+        .deliveries()
+        .unwrap()
+        .len()
+}
+
+async fn lifecycle(net: &Net, host: &str, agent: &str) -> Option<Lifecycle> {
+    row(net, host, agent)
+        .await
+        .and_then(|row| Lifecycle::try_from(row.lifecycle).ok())
+}
+
+/// The key of the ask a headless Claude `agent` holds open, from the
+/// snapshot its own host holds.
+async fn open_ask(net: &Net, agent: &str) -> String {
+    let at = net.agent(agent).unwrap().clone();
+    let cut = net
+        .runtime(&at.host)
+        .unwrap()
+        .store()
+        .await
+        .cut(&at.key(), 0)
+        .unwrap();
+    let snapshot = cut.snapshot.expect("a snapshot");
+    let body = wire::ClaudeSdkSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    body.asks.first().expect("an open ask").key.clone()
+}
+
+fn fleet(events: &[InventoryEvent]) -> FleetState {
+    let mut fleet = FleetState::new();
+    for event in events {
+        fleet.update(FleetMsg::Event(Box::new(event.clone())));
+    }
+    fleet
+}
+
+fn short(net: &Net, host_id: &[u8]) -> String {
+    net.host_names()
+        .into_iter()
+        .find(|name| net.host(name).unwrap().host_id.as_bytes() == host_id)
+        .unwrap_or_else(|| observe::short(host_id))
+}
+
+fn wire_error(status: &tonic::Status) -> wire::Error {
+    wire::Error::decode(status.details()).expect("a wire error in the status")
+}
+
+fn three_hosts() -> Topology {
+    Topology::new()
+        .host("desk")
+        .host("server")
+        .host("phone")
+        .link("desk", "server")
+        .link("desk", "phone")
+        .link("server", "phone")
+}
+
+/// A spawn names its host as the person does: resolved among this host
+/// and the trusted ones, exactly and then ignoring case. No match is
+/// NOT_FOUND naming the hosts there are; two are ambiguous, with both as
+/// candidates. A match elsewhere forwards the create to that host with the
+/// parent as host and id, and a directory there; the parent's host and a
+/// third host list the child under its own host in the parent's family.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
+    let mut net = Net::start(
+        Topology::new()
+            .host("desk")
+            .host("box")
+            .host("BOX")
+            .link("desk", "box")
+            .link("desk", "BOX")
+            .link("box", "BOX")
+            .agent(lead()),
+    )
+    .await
+    .unwrap();
+    let tools = net.tools("lead").unwrap();
+    let request = |host: &str| CreateAgentRequest {
+        host_name: Some(host.to_owned()),
+        kind: Kind::ClaudeSdk as i32,
+        config: Some(create_agent_request::Config::Claude(
+            ClaudeCreateConfig::default(),
+        )),
+        ..CreateAgentRequest::default()
+    };
+
+    let refused = tools
+        .create_agent(Request::new(request("attic")))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::NotFound);
+    let error = wire_error(&refused);
+    for name in ["desk", "box", "BOX"] {
+        assert!(error.message.contains(name), "{}", error.message);
+    }
+    println!("spawn on \"attic\": NOT_FOUND ({})", error.message);
+
+    let refused = tools
+        .create_agent(Request::new(request("Box")))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::FailedPrecondition);
+    let error = wire_error(&refused);
+    let detail = error
+        .details
+        .iter()
+        .find(|detail| detail.r#type == "amux.v1.AmbiguousHostName")
+        .expect("the candidates ride the error");
+    let ambiguous = AmbiguousHostName::decode(detail.value.as_slice()).unwrap();
+    let mut candidates: Vec<&str> = ambiguous
+        .candidates
+        .iter()
+        .map(|host| host.name.as_str())
+        .collect();
+    candidates.sort_unstable();
+    assert_eq!(candidates, ["BOX", "box"]);
+    println!("spawn on \"Box\": ambiguous between {candidates:?}");
+
+    let spawned = net
+        .spawn_child("lead", child("helper", "box", says("Suite green.")))
+        .await
+        .unwrap();
+    let box_id = net.host("box").unwrap().host_id;
+    assert_eq!(spawned.host_id, box_id.as_bytes());
+    let parent = net.agent("lead").unwrap().parent();
+    assert_eq!(
+        spawned.parent.as_ref(),
+        Some(&parent),
+        "parent is host and id"
+    );
+    let own = row(&net, "box", "helper")
+        .await
+        .expect("the child lives on box");
+    assert_eq!(
+        own.cwd,
+        net.host("box").unwrap().work.to_string_lossy(),
+        "a directory on the child's host"
+    );
+    println!(
+        "spawn on \"box\": forwarded; helper lives on box with parent lead@desk in {}",
+        own.cwd
+    );
+
+    // The fleet groups the family from replica rows of both hosts, on the
+    // parent's host and on a host that is neither.
+    let helper = net.agent("helper").unwrap().id;
+    let lead_id = net.agent("lead").unwrap().id;
+    for host in ["desk", "BOX"] {
+        let mut inventory = net.observe_inventory(host).await.unwrap();
+        let events = inventory
+            .observe_until(
+                |events| {
+                    let fleet = fleet(events);
+                    fleet
+                        .find(helper.as_bytes())
+                        .is_some_and(|child| fleet.parent(&ui_state::AgentKey::of(child)).is_some())
+                },
+                PATIENCE,
+            )
+            .await
+            .unwrap();
+        let fleet = fleet(events);
+        let lead = fleet.find(lead_id.as_bytes()).unwrap();
+        let family: Vec<String> = fleet
+            .family(&ui_state::AgentKey::of(lead))
+            .iter()
+            .map(|agent| {
+                format!(
+                    "{}@{}",
+                    agent.name.clone().unwrap_or_default(),
+                    short(&net, &agent.host_id)
+                )
+            })
+            .collect();
+        assert_eq!(family, ["lead@desk", "helper@box"]);
+        println!("{host}'s fleet: family {family:?}");
+    }
+
+    // A host creates children only for its own agents.
+    let desk = net.edge("desk").unwrap();
+    let mut peer = desk.peer(box_id).await.unwrap();
+    let forged = peer
+        .create_agent(CreateAgentRequest {
+            parent: Some(AgentParent {
+                host_id: net.host("BOX").unwrap().host_id.as_bytes().to_vec(),
+                agent_id: Uuid::new_v4().as_bytes().to_vec(),
+            }),
+            cwd: net.host("box").unwrap().work.to_string_lossy().into_owned(),
+            ..request("box")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(forged.code(), Code::PermissionDenied);
+    println!("desk asking box for a child of BOX's agent: PERMISSION_DENIED");
+    net.shutdown().await.unwrap();
+}
+
+/// Stop is an interrupt only a parent may send its own child, and a send
+/// to an exited child resumes it only from its parent; both hold with the
+/// child on another host, checked where the caller is known and carried
+/// out where the child lives.
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_and_send_are_lineage_checked_across_hosts() {
+    let mut net = Net::start(
+        three_hosts()
+            .agent(lead())
+            .agent(AgentDecl::new("other", "desk").steps(says("idle"))),
+    )
+    .await
+    .unwrap();
+    net.spawn_child(
+        "lead",
+        child("helper", "server", vec![waits("never"), Step::TurnEnd]),
+    )
+    .await
+    .unwrap();
+    let helper = net.agent("helper").unwrap().clone();
+    eventually("desk to hold helper's replica", PATIENCE, || {
+        let net = &net;
+        async move { row(net, "desk", "helper").await.is_some() }
+    })
+    .await
+    .unwrap();
+
+    let stop = |caller: &str| {
+        let tools = net.tools(caller).unwrap();
+        let request = wire::SendInputRequest {
+            agent_id: helper.id.as_bytes().to_vec(),
+            input: Some(interrupt()),
+        };
+        async move { tools.send_input(Request::new(request)).await }
+    };
+    let refused = stop("other").await.unwrap_err();
+    assert_eq!(refused.code(), Code::PermissionDenied);
+    println!("other stops helper: PERMISSION_DENIED (not its child)");
+    let verdict = stop("lead").await.unwrap().into_inner();
+    assert!(
+        matches!(verdict.of, Some(wire::send_input_response::Of::Accepted(_))),
+        "{verdict:?}"
+    );
+    println!("lead stops helper: accepted on server");
+    eventually("the interrupted one-shot child to exit", PATIENCE, || {
+        let net = &net;
+        async move { lifecycle(net, "server", "helper").await == Some(Lifecycle::Exited) }
+    })
+    .await
+    .unwrap();
+
+    let to = helper.parent();
+    let refused = net
+        .tools("other")
+        .unwrap()
+        .send_message(Request::new(envelope(b"from-other", &to, "Still there?")))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::FailedPrecondition);
+    assert!(
+        refused.message().contains("exited"),
+        "{}",
+        refused.message()
+    );
+    println!("other sends to exited helper: {}", refused.message());
+
+    net.next_start(
+        "helper",
+        Script {
+            steps: says("Picked it back up."),
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    net.tools("lead")
+        .unwrap()
+        .send_message(Request::new(envelope(b"from-lead", &to, "Run it again.")))
+        .await
+        .expect("the parent's send resumes its child");
+    let resumed = row(&net, "server", "helper").await.unwrap();
+    assert_eq!(resumed.incarnation, 2);
+    assert_eq!(with_input(&net, "helper", b"from-lead").await, 1);
+    assert_eq!(with_input(&net, "helper", b"from-other").await, 0);
+    println!("lead sends to exited helper: resumed as incarnation 2 with the message");
+    net.shutdown().await.unwrap();
+}
+
+/// Deleting a parent deletes its children on hosts it can reach, through
+/// each child's own host, and leaves a child on an unreachable host where
+/// it is: listed under that host with its parent edge pointing at nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cascade_delete_reaches_a_reachable_child_and_orphans_an_unreachable_one() {
+    let mut net = Net::start(
+        Topology::new()
+            .host("desk")
+            .host("server")
+            .host("laptop")
+            .link("desk", "server")
+            .link("desk", "laptop")
+            .agent(lead()),
+    )
+    .await
+    .unwrap();
+    net.spawn_child(
+        "lead",
+        child("helper", "server", vec![waits("never"), Step::TurnEnd]),
+    )
+    .await
+    .unwrap();
+    net.spawn_child(
+        "lead",
+        child("scout", "laptop", vec![waits("never"), Step::TurnEnd]),
+    )
+    .await
+    .unwrap();
+    let helper = net.agent("helper").unwrap().clone();
+    let scout = net.agent("scout").unwrap().clone();
+    eventually("desk to hold both children", PATIENCE, || {
+        let net = &net;
+        async move {
+            row(net, "desk", "helper").await.is_some() && row(net, "desk", "scout").await.is_some()
+        }
+    })
+    .await
+    .unwrap();
+
+    net.sever_link("desk", "laptop").unwrap();
+    net.wait_link("desk", "laptop", false).await.unwrap();
+    let answer = net.delete_family("lead").await.unwrap();
+    let names = |agents: &[wire::Agent]| -> Vec<String> {
+        agents
+            .iter()
+            .map(|agent| agent.name.clone().unwrap_or_default())
+            .collect()
+    };
+    assert_eq!(names(&answer.removed_children), ["helper"]);
+    assert_eq!(names(&answer.unreachable_children), ["scout"]);
+    println!(
+        "delete lead: removed {:?}, unreachable {:?}",
+        names(&answer.removed_children),
+        names(&answer.unreachable_children)
+    );
+    let on_server = net
+        .runtime("server")
+        .unwrap()
+        .store()
+        .await
+        .agent(&helper.key())
+        .unwrap();
+    assert!(on_server.is_none(), "helper is gone from its own host");
+    assert_eq!(
+        lifecycle(&net, "laptop", "scout").await,
+        Some(Lifecycle::Live),
+        "scout runs on, untouched"
+    );
+
+    net.restore_link("desk", "laptop").unwrap();
+    net.wait_link("desk", "laptop", true).await.unwrap();
+    let mut inventory = net.observe_inventory("desk").await.unwrap();
+    let laptop = net.host("laptop").unwrap().host_id;
+    let events = inventory
+        .observe_until(
+            |events| {
+                let fleet = fleet(events);
+                fleet.caught_up()
+                    && fleet.find(helper.id.as_bytes()).is_none()
+                    && fleet.find(scout.id.as_bytes()).is_some()
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    let fleet = fleet(events);
+    let orphan = fleet.find(scout.id.as_bytes()).unwrap();
+    assert_eq!(
+        orphan.host_id,
+        laptop.as_bytes(),
+        "listed under its own host"
+    );
+    assert!(
+        fleet.parent(&ui_state::AgentKey::of(orphan)).is_none(),
+        "its parent edge points at nothing"
+    );
+    assert!(
+        fleet
+            .roots()
+            .any(|root| root.agent_id == scout.id.as_bytes()),
+        "an orphan heads its own family"
+    );
+    println!("desk's fleet after the link returns: scout listed under laptop as an orphan");
+    net.shutdown().await.unwrap();
+}
+
+/// A child's finished message waits in its host's outbox while its parent's
+/// host is away, and arrives once when it returns. A row for a parent
+/// incarnation that has since ended is dropped instead; and the parent's
+/// own daemon drops a message for any incarnation but the current one.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_away_parents_rows_wait_and_a_stale_incarnation_is_dropped() {
+    let mut net = Net::start(
+        Topology::new()
+            .host("desk")
+            .host("server")
+            .link("desk", "server")
+            .agent(lead()),
+    )
+    .await
+    .unwrap();
+    net.spawn_child(
+        "lead",
+        child(
+            "helper",
+            "server",
+            vec![waits("finish"), text("Suite green."), Step::TurnEnd],
+        ),
+    )
+    .await
+    .unwrap();
+    net.sever_link("desk", "server").unwrap();
+    net.wait_link("desk", "server", false).await.unwrap();
+    net.open_gate("finish").unwrap();
+    eventually("helper's finished row", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 1 }
+    })
+    .await
+    .unwrap();
+    net.advance(Duration::from_secs(120)).unwrap();
+    observe::holds_for(
+        "the row to wait for its parent",
+        Duration::from_secs(1),
+        || {
+            let net = &net;
+            async move { outbox(net, "server").await == 1 }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(received(&net, "lead").await.is_empty());
+    println!("desk away: helper's finished message waits on server");
+    net.restore_link("desk", "server").unwrap();
+    eventually("the row to be delivered", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 0 }
+    })
+    .await
+    .unwrap();
+    let got = received(&net, "lead").await;
+    assert_eq!(got.len(), 1, "one finished message: {got:?}");
+    println!("desk back: lead received {:?}", got[0].text);
+
+    // A second child finishes while the parent's host is away, and the
+    // parent is resumed there meanwhile: the row is for an incarnation
+    // that is not waiting for anything.
+    net.spawn_child(
+        "lead",
+        child(
+            "second",
+            "server",
+            vec![waits("second"), text("Done too."), Step::TurnEnd],
+        ),
+    )
+    .await
+    .unwrap();
+    net.sever_link("desk", "server").unwrap();
+    net.wait_link("desk", "server", false).await.unwrap();
+    net.open_gate("second").unwrap();
+    eventually("second's finished row", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 1 }
+    })
+    .await
+    .unwrap();
+    let lead = net.agent("lead").unwrap().id;
+    net.runtime("desk")
+        .unwrap()
+        .stop(lead, wire::StopMode::Graceful)
+        .await
+        .unwrap();
+    net.resume("lead", None).await.unwrap();
+    net.restore_link("desk", "server").unwrap();
+    eventually("the stale row to be dropped", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 0 }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        received(&net, "lead").await.len(),
+        1,
+        "the resumed lead receives nothing"
+    );
+    println!("lead resumed while desk was away: second's row dropped as stale");
+
+    // The parent's daemon makes the same check itself.
+    let server = net.host("server").unwrap().host_id;
+    let desk = net.host("desk").unwrap().host_id;
+    let helper = net.agent("helper").unwrap().clone();
+    let from = Sender {
+        value: Some(sender::Value::Agent(AgentSender {
+            agent_id: helper.id.as_bytes().to_vec(),
+            host_id: server.as_bytes().to_vec(),
+            name: "helper".into(),
+            kind: "claude_sdk".into(),
+        })),
+    };
+    let current = row(&net, "desk", "lead").await.unwrap().incarnation;
+    let stale = Envelope {
+        from: Some(from),
+        kind: EnvelopeKind::Finished as i32,
+        incarnation: Some(current - 1),
+        ..envelope(b"stale", &net.agent("lead").unwrap().parent(), "late news")
+    };
+    let mut peer = net.edge("server").unwrap().peer(desk).await.unwrap();
+    let refused = peer.send_message(stale).await.unwrap_err();
+    assert_eq!(refused.code(), Code::NotFound);
+    assert_eq!(with_input(&net, "lead", b"stale").await, 0);
+    println!(
+        "a message for lead's incarnation {} reaching desk: dropped ({})",
+        current - 1,
+        refused.message()
+    );
+    net.shutdown().await.unwrap();
+}
+
+/// The same message sent twice at once, across hosts, reaches its
+/// recipient once: the recipient's lane takes one at a time and the second
+/// finds the first's item.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_duplicate_sends_across_hosts_yield_one_item() {
+    let net = Net::start(
+        three_hosts()
+            .agent(lead())
+            .agent(AgentDecl::new("reviewer", "server").steps(says("Reviewing."))),
+    )
+    .await
+    .unwrap();
+    eventually("desk to hold reviewer's replica", PATIENCE, || {
+        let net = &net;
+        async move { row(net, "desk", "reviewer").await.is_some() }
+    })
+    .await
+    .unwrap();
+    let to = net.agent("reviewer").unwrap().parent();
+    let message = envelope(b"twice", &to, "Please review the survey.");
+    let tools = net.tools("lead").unwrap();
+    let (first, second) = tokio::join!(
+        tools.send_message(Request::new(message.clone())),
+        tools.send_message(Request::new(message)),
+    );
+    first.expect("the first send");
+    second.expect("the duplicate is answered as sent");
+    assert_eq!(with_input(&net, "reviewer", b"twice").await, 1);
+    println!("two concurrent sends of one envelope to reviewer on server: one item");
+    net.shutdown().await.unwrap();
+}
+
+/// The accepted story, end to end: lead on desk spawns helper on server
+/// by name; helper's question is flagged on the family from the phone and
+/// answered in helper's own chat; helper's one finished message reaches
+/// lead once although the link drops while desk is taking it; lead's send
+/// resumes the exited helper; deleting lead removes helper from server.
+#[tokio::test(flavor = "multi_thread")]
+async fn cross_host_family_journey() {
+    let mut net = Net::start(three_hosts().agent(lead())).await.unwrap();
+    let mut story = Vec::new();
+    let mut say = |line: String| {
+        println!("{line}");
+        story.push(line);
+    };
+
+    // Spawn by name.
+    let spawned = net
+        .spawn_child(
+            "lead",
+            child(
+                "helper",
+                "server",
+                vec![
+                    question(),
+                    text("Ran the unit suite: 214 passed."),
+                    Step::TurnEnd,
+                ],
+            ),
+        )
+        .await
+        .unwrap();
+    let helper = net.agent("helper").unwrap().clone();
+    let lead = net.agent("lead").unwrap().clone();
+    let parent = spawned.parent.clone().unwrap();
+    assert_eq!(parent, lead.parent());
+    say(format!(
+        "1. lead@desk spawns helper on \"server\": forwarded; helper@{}, parent lead@{}",
+        short(&net, &spawned.host_id),
+        short(&net, &parent.host_id)
+    ));
+
+    // The ask, flagged on the family from the phone.
+    let mut phone = net.observe_inventory("phone").await.unwrap();
+    let events = phone
+        .observe_until(
+            |events| {
+                let fleet = fleet(events);
+                let Some(lead) = fleet.find(lead.id.as_bytes()) else {
+                    return false;
+                };
+                fleet.family_attention(&ui_state::AgentKey::of(lead)) == Some(Attention::NeedsYou)
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    let seen = fleet(events);
+    let child_card = seen.find(helper.id.as_bytes()).unwrap();
+    assert_eq!(child_card.phase(), Phase::NeedsYou);
+    assert_eq!(child_card.host_id, helper.host_id.as_bytes());
+    let family: Vec<String> = seen
+        .family(&ui_state::AgentKey::of(
+            seen.find(lead.id.as_bytes()).unwrap(),
+        ))
+        .iter()
+        .map(|agent| {
+            format!(
+                "{}@{} {:?}",
+                agent.name.clone().unwrap_or_default(),
+                short(&net, &agent.host_id),
+                agent.phase()
+            )
+        })
+        .collect();
+    say(format!(
+        "2. phone's fleet: family {family:?}, flagged {:?} on the family",
+        Attention::NeedsYou
+    ));
+
+    // Answered in the child's own chat, from the phone. The lead is busy
+    // when the finished message comes: its process is frozen.
+    net.freeze("lead").unwrap();
+    let ask = open_ask(&net, "helper").await;
+    let answer = interpret::claude_sdk_input(
+        Uuid::new_v4().as_bytes().to_vec(),
+        &interpret::FixtureInput::Answer {
+            ask,
+            answer: serde_json::json!({ "selected": [0] }),
+        },
+    )
+    .unwrap();
+    let verdict = net
+        .client("phone")
+        .unwrap()
+        .send_input(Request::new(wire::SendInputRequest {
+            agent_id: helper.id.as_bytes().to_vec(),
+            input: Some(answer),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        matches!(verdict.of, Some(wire::send_input_response::Of::Accepted(_))),
+        "{verdict:?}"
+    );
+    say("3. phone answers \"unit\" in helper's chat: forwarded to server, accepted".into());
+
+    // One finished message under a link fault.
+    eventually("helper's finished row", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 1 }
+    })
+    .await
+    .unwrap();
+    // Time for server's hand-off to reach desk, which waits on the frozen
+    // lead for its verdict.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Both of server's links, or desk would reach it through the phone.
+    net.sever_link("desk", "server").unwrap();
+    net.sever_link("server", "phone").unwrap();
+    net.wait_link("desk", "server", false).await.unwrap();
+    net.thaw("lead").unwrap();
+    eventually("lead to take the first hand-off", PATIENCE, || {
+        let net = &net;
+        async move { received(net, "lead").await.len() == 1 }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        outbox(&net, "server").await,
+        1,
+        "server never heard the answer"
+    );
+    say("4. helper finishes; server hands the message to desk; server's links drop before desk answers; lead has it, server still holds the row".into());
+    net.restore_link("desk", "server").unwrap();
+    net.restore_link("server", "phone").unwrap();
+    eventually("server's retry to settle the row", PATIENCE, || {
+        let net = &net;
+        async move { outbox(net, "server").await == 0 }
+    })
+    .await
+    .unwrap();
+    let got = received(&net, "lead").await;
+    assert_eq!(got.len(), 1, "one finished message: {got:?}");
+    say(format!(
+        "5. link back: server retries, desk finds the envelope id already accepted; lead holds one finished message: {:?}",
+        got[0].text
+    ));
+
+    // Resume by send.
+    eventually("the one-shot helper to exit", PATIENCE, || {
+        let net = &net;
+        async move { lifecycle(net, "server", "helper").await == Some(Lifecycle::Exited) }
+    })
+    .await
+    .unwrap();
+    net.next_start(
+        "helper",
+        Script {
+            steps: says("Added the flaky test to the report."),
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    net.tools("lead")
+        .unwrap()
+        .send_message(Request::new(envelope(
+            b"follow-up",
+            &helper.parent(),
+            "Add the flaky test to the report.",
+        )))
+        .await
+        .expect("lead's send resumes helper");
+    assert_eq!(row(&net, "server", "helper").await.unwrap().incarnation, 2);
+    eventually("helper's second finished message", PATIENCE, || {
+        let net = &net;
+        async move { received(net, "lead").await.len() == 2 }
+    })
+    .await
+    .unwrap();
+    say("6. helper exits; lead sends a follow-up: server resumes helper (incarnation 2) with it; lead hears finished again".into());
+
+    // Cascade delete.
+    let answer = net.delete_family("lead").await.unwrap();
+    assert_eq!(answer.removed_children.len(), 1);
+    assert!(answer.unreachable_children.is_empty());
+    assert!(
+        net.runtime("server")
+            .unwrap()
+            .store()
+            .await
+            .agent(&AgentKey::new(
+                helper.host_id.as_bytes().to_vec(),
+                helper.id.as_bytes().to_vec()
+            ))
+            .unwrap()
+            .is_none()
+    );
+    phone
+        .observe_until(
+            |events| {
+                let fleet = fleet(events);
+                fleet.find(lead.id.as_bytes()).is_none()
+                    && fleet.find(helper.id.as_bytes()).is_none()
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    say("7. delete lead on desk: helper deleted on server; the phone's fleet lists neither".into());
+    assert_eq!(story.len(), 7);
+    net.shutdown().await.unwrap();
+}

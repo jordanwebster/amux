@@ -16,7 +16,10 @@ const CLOCK: CommitClock = CommitClock {
 
 /// The hash of every migration ever shipped. A shipped migration is never
 /// edited; append a new one and its hash here instead.
-const SHIPPED: &[&str] = &["c12ecbd4ad0f378ef242319c0f137863c19e1dc5ef5a7310deeb951276b15a04"];
+const SHIPPED: &[&str] = &[
+    "c12ecbd4ad0f378ef242319c0f137863c19e1dc5ef5a7310deeb951276b15a04",
+    "e7e1f74cead2bc6888769d611d8b6b898af1854422011a20ab6e021460b60a11",
+];
 
 fn step(keys: &[&str]) -> Step {
     Step {

@@ -27,7 +27,8 @@ use wire::{
     StopAgentRequest, StopMode, SubscribeRequest, subscribe_request,
 };
 
-use crate::runtime::{AgentId, ProfileRuntime, RegistryError};
+use crate::forward::{ForwardError, Owner};
+use crate::runtime::{AgentId, ProfileRuntime};
 
 /// A wire error as a gRPC status: the coarse code for generic clients, and
 /// the whole error, details included, in the status details for ours.
@@ -67,18 +68,50 @@ pub(crate) fn wire_error(code: ErrorCode, message: impl Into<String>) -> wire::E
 pub struct ClientApi {
     runtime: Weak<ProfileRuntime>,
     caller: Option<AgentId>,
+    /// Whether a call on another host's agent is made on that host's
+    /// daemon. Off for calls that arrived from a peer: forwarding goes one
+    /// hop, so no two hosts can pass a call back and forth.
+    forwards: bool,
 }
 
 impl ClientApi {
     pub fn new(runtime: &Arc<ProfileRuntime>, caller: Option<AgentId>) -> Self {
-        Self {
-            runtime: Arc::downgrade(runtime),
-            caller,
-        }
+        Self::weak(Arc::downgrade(runtime), caller)
     }
 
     pub(crate) fn weak(runtime: Weak<ProfileRuntime>, caller: Option<AgentId>) -> Self {
-        Self { runtime, caller }
+        Self {
+            runtime,
+            caller,
+            forwards: true,
+        }
+    }
+
+    /// The service as a paired host's calls reach it: as a person's, and
+    /// answered only for this host's own agents.
+    pub(crate) fn for_peer(runtime: Weak<ProfileRuntime>) -> Self {
+        Self {
+            runtime,
+            caller: None,
+            forwards: false,
+        }
+    }
+
+    /// The host to forward a call on `agent_id` to, when it is another
+    /// host's agent and this service forwards; `None` answers it here.
+    async fn forward_to(
+        &self,
+        runtime: &ProfileRuntime,
+        agent_id: &[u8],
+    ) -> Result<Option<crate::HostId>, Status> {
+        if !self.forwards {
+            return Ok(None);
+        }
+        match runtime.owner(agent_id).await {
+            Ok(Owner::Peer(host)) => Ok(Some(host)),
+            Ok(Owner::Here | Owner::Unknown) => Ok(None),
+            Err(error) => Err(status(wire_error(ErrorCode::Internal, error.to_string()))),
+        }
     }
 
     fn runtime(&self) -> Result<Arc<ProfileRuntime>, Status> {
@@ -108,15 +141,17 @@ impl ClientApi {
         let Some(caller) = self.caller else {
             return Ok(());
         };
-        let target = match runtime.agent(agent_id(target)?).await {
-            Ok(target) => Some(target),
-            Err(RegistryError::NotFound(_)) => None,
-            Err(error) => return Err(status(error.to_wire())),
-        };
+        agent_id(target)?;
+        // The child may live on another host: its replica row carries the
+        // same parent edge.
+        let target = runtime
+            .row_by_id(target)
+            .await
+            .map_err(|error| status(wire_error(ErrorCode::Internal, error.to_string())))?;
         let own_child = target
             .and_then(|target| target.parent)
             .is_some_and(|parent| {
-                parent.host_id == runtime.host().as_bytes() && parent.agent_id == caller.as_bytes()
+                parent.host == runtime.host().as_bytes() && parent.agent == caller.as_bytes()
             });
         if own_child {
             return Ok(());
@@ -126,6 +161,26 @@ impl ClientApi {
             "an agent sends input only to its own children",
         )))
     }
+}
+
+/// The verdict for an input to an agent whose host cannot be reached.
+pub const HOST_UNREACHABLE: &str = "host_unreachable";
+
+/// One call made on another host's daemon, answered with its answer.
+async fn forwarded<T, F, Fut>(
+    runtime: &ProfileRuntime,
+    host: crate::HostId,
+    call: F,
+) -> Result<Response<T>, Status>
+where
+    F: FnOnce(wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<T>, Status>>,
+{
+    runtime
+        .on_peer(host, call)
+        .await
+        .map(Response::new)
+        .map_err(|error| status(error.to_wire()))
 }
 
 fn agent_id(bytes: &[u8]) -> Result<AgentId, Status> {
@@ -224,6 +279,20 @@ impl ClientService for ClientApi {
         let request = request.into_inner();
         let runtime = self.runtime()?;
         self.lineage(&runtime, &request.agent_id).await?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            let forwarded = runtime
+                .on_peer(host, |mut client| async move {
+                    client.send_input(request).await
+                })
+                .await;
+            return match forwarded {
+                Ok(verdict) => Ok(Response::new(verdict)),
+                Err(ForwardError::Unreachable(_)) => {
+                    Ok(Response::new(crate::relay::rejected(HOST_UNREACHABLE)))
+                }
+                Err(error) => Err(status(error.to_wire())),
+            };
+        }
         runtime
             .send_input(&request)
             .await
@@ -235,9 +304,17 @@ impl ClientService for ClientApi {
         &self,
         request: Request<CreateAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        self.runtime()?
-            .spawn(request.into_inner(), self.caller)
-            .await
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        let host = runtime
+            .target_host(&request)
+            .map_err(|error| status(error.to_wire()))?;
+        let spawned = if host == runtime.host() || !self.forwards {
+            runtime.spawn(request, self.caller).await
+        } else {
+            runtime.spawn_on(host, request, self.caller).await
+        };
+        spawned
             .map(Response::new)
             .map_err(|error| status(error.to_wire()))
     }
@@ -248,7 +325,14 @@ impl ClientService for ClientApi {
     ) -> Result<Response<Agent>, Status> {
         self.people_only("rename an agent")?;
         let request = request.into_inner();
-        self.runtime()?
+        let runtime = self.runtime()?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.rename_agent(request).await
+            })
+            .await;
+        }
+        runtime
             .rename(agent_id(&request.agent_id)?, &request.name)
             .await
             .map(Response::new)
@@ -262,7 +346,14 @@ impl ClientService for ClientApi {
         self.people_only("stop an agent")?;
         let request = request.into_inner();
         let mode = StopMode::try_from(request.mode).unwrap_or(StopMode::Graceful);
-        self.runtime()?
+        let runtime = self.runtime()?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.stop_agent(request).await
+            })
+            .await;
+        }
+        runtime
             .stop(agent_id(&request.agent_id)?, mode)
             .await
             .map(|_| Response::new(Empty {}))
@@ -275,7 +366,14 @@ impl ClientService for ClientApi {
     ) -> Result<Response<Agent>, Status> {
         self.people_only("resume an agent")?;
         let request = request.into_inner();
-        self.runtime()?
+        let runtime = self.runtime()?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.resume_agent(request).await
+            })
+            .await;
+        }
+        runtime
             .resume(agent_id(&request.agent_id)?, request.initial_prompt)
             .await
             .map(Response::new)
@@ -288,7 +386,14 @@ impl ClientService for ClientApi {
     ) -> Result<Response<DeleteAgentResponse>, Status> {
         self.people_only("delete an agent")?;
         let request = request.into_inner();
-        self.runtime()?
+        let runtime = self.runtime()?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.delete_agent(request).await
+            })
+            .await;
+        }
+        runtime
             .delete(agent_id(&request.agent_id)?)
             .await
             .map(Response::new)

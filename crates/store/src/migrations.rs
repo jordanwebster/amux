@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 pub const SCHEMA_STAMP: u32 = 1;
 
 /// Every migration ever shipped, in order. Append only.
-pub const MIGRATIONS: &[&str] = &[r#"
+pub const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE agents (
   origin_host   BLOB NOT NULL,
   agent_id      BLOB NOT NULL,
@@ -79,7 +80,11 @@ CREATE TABLE items (
 CREATE UNIQUE INDEX items_by_order ON items (origin_host, agent_id, "order");
 CREATE INDEX items_by_revision ON items (origin_host, agent_id, revision);
 CREATE INDEX items_by_input ON items (origin_host, agent_id, input_id) WHERE input_id IS NOT NULL;
-"#];
+"#,
+    r#"
+ALTER TABLE agents ADD COLUMN turn_open INTEGER NOT NULL DEFAULT 0;
+"#,
+];
 
 /// The hex SHA-256 of a migration's text, as recorded when it is applied.
 pub fn migration_hash(text: &str) -> String {

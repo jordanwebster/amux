@@ -170,7 +170,16 @@ impl ClientService for Fleet {
         let request = request.into_inner();
         self.record(Call::Create(Box::new(request.clone())));
         self.severed().await?;
-        let host = request.host_id.clone().unwrap_or(HERE.to_vec());
+        // The daemon resolves a host name against the hosts it trusts.
+        let host = match request.host_name.as_deref() {
+            Some(name) if name.eq_ignore_ascii_case("studio") => STUDIO.to_vec(),
+            Some(name) => {
+                return Err(Status::not_found(format!(
+                    "no trusted host is named {name}; trusted hosts: laptop, Studio"
+                )));
+            }
+            None => request.host_id.clone().unwrap_or(HERE.to_vec()),
+        };
         let name = request.name.clone().unwrap_or_else(|| "quiet-otter".into());
         Ok(Response::new(row(&request.agent_id, &host, &name)))
     }
@@ -687,10 +696,15 @@ async fn spawn_places_the_child_by_host_name_defaulting_to_the_parents_host() {
     )
     .await;
     let calls = fleet.calls();
-    let [_, Call::Inventory, Call::Create(there)] = calls.as_slice() else {
-        panic!("inventory then create, got {calls:?}");
+    let [_, Call::Create(there)] = calls.as_slice() else {
+        panic!("a second create, got {calls:?}");
     };
-    assert_eq!(there.host_id.as_deref(), Some(STUDIO.as_slice()));
+    assert_eq!(
+        there.host_name.as_deref(),
+        Some("studio"),
+        "the daemon resolves the name"
+    );
+    assert_eq!(there.host_id, None);
     assert_eq!(there.cwd, "", "a path here means nothing there");
     assert_eq!(there.kind(), Kind::ClaudeSdk);
 
@@ -700,14 +714,18 @@ async fn spawn_places_the_child_by_host_name_defaulting_to_the_parents_host() {
             json!({ "kind": "codex", "prompt": "x", "host": "stranger" })
         )
         .await,
-        "no trusted host named stranger; trusted hosts: laptop, Studio"
+        "no trusted host is named stranger; trusted hosts: laptop, Studio"
     );
     assert_eq!(
         mcp.refused("spawn", json!({ "kind": "gemini", "prompt": "x" }))
             .await,
         "no agent kind \"gemini\"; use claude_pty, claude_sdk or codex"
     );
-    assert_eq!(fleet.calls().len(), 4, "nothing was created for either");
+    assert_eq!(
+        fleet.calls().len(),
+        3,
+        "the daemon refused the stranger and the unknown kind never reached it"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

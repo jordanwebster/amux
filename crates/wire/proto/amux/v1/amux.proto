@@ -63,6 +63,12 @@ message AmbiguousAgentName {
   repeated Agent candidates = 2;
 }
 
+// A spawn named a host that more than one trusted host answers to.
+message AmbiguousHostName {
+  string name = 1;
+  repeated HostEntry candidates = 2;
+}
+
 enum ErrorCode {
   ERROR_CODE_UNSPECIFIED = 0;
   ERROR_CODE_CANCELLED = 1;
@@ -500,6 +506,10 @@ message CreateAgentRequest {
   string cwd = 6;
   // Which interpreter: the config arm names only the provider.
   Kind kind = 7;
+  // The host as a person names it, resolved against this host and the
+  // trusted ones: exact first, then ignoring case. host_id wins when both
+  // are set; neither means this host.
+  optional string host_name = 8;
   oneof config {
     ClaudeCreateConfig claude = 10;
     CodexCreateConfig codex = 11;

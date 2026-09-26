@@ -568,6 +568,7 @@ fn input_of<I: Interpreter>(body: &Value) -> Result<Input, String> {
                 to: None,
                 kind: EnvelopeKind::Message as i32,
                 text: text.clone(),
+                incarnation: None,
             })),
         }),
         FixtureInput::Raw { hex } => {

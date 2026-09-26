@@ -3103,8 +3103,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "interpret",
  "journal",
  "node",
+ "prost",
  "provider-fakes",
  "serde",
  "serde_json",
@@ -3116,6 +3118,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "ui-state",
  "uuid",
  "wire",
 ]

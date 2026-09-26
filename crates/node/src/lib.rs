@@ -21,6 +21,7 @@ mod dispatcher;
 mod dump;
 mod edge;
 mod fanout;
+mod forward;
 mod front_door;
 mod generation;
 mod grpc;
@@ -53,6 +54,7 @@ pub use edge::{
     FREE_TIER_REFRESH_INTERVAL, JwtCloudLinkAuthenticator, LINK_SOCKET, LanOptions, LoopbackLink,
     Observed, RelayCarrier, RelayIdentity, mdns_discovery,
 };
+pub use forward::{ForwardError, HostNameError, Owner};
 pub use generation::{Generation, boot_id};
 pub use grpc::{ClientApi, status};
 pub use install::{
