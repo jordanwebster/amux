@@ -16,6 +16,7 @@ pub mod claude_pty;
 pub mod claude_sdk;
 pub mod codex;
 mod golden;
+pub mod redact;
 mod serde_pb;
 mod shared;
 pub mod unknown;
@@ -27,6 +28,7 @@ pub use golden::{
     EndRules, FixtureInput, GoldenReport, UPDATE_GOLDENS_ENV, check_invariants, claude_pty_input,
     claude_sdk_input, codex_input, run_golden,
 };
+pub use redact::redact;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 pub use serde_pb::{from_hex, to_hex};
@@ -54,8 +56,8 @@ pub trait Interpreter {
     fn step(state: &mut Self::State, event: Event) -> Stepped;
 
     /// Removes secrets from a body, a facts-ring entry or a checkpoint while
-    /// keeping its structure; the daemon calls it on a store slice at dump
-    /// time and the agent process on its own dump part.
+    /// keeping its structure; the daemon calls it (through [`redact()`]) on a
+    /// store slice at dump time and the agent process on its own dump part.
     fn redact(target: RedactTarget) -> RedactTarget;
 
     /// The snapshot body with every field at its explicit unknown.
@@ -188,9 +190,15 @@ pub enum Carrier {
 /// What [`Interpreter::redact`] works on.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RedactTarget {
+    /// An `Item.body` of the kind.
     ItemBody(Vec<u8>),
+    /// A `Snapshot.body` of the kind.
     SnapshotBody(Vec<u8>),
+    /// A facts-ring entry that is a provider fact.
     Fact(Fact),
+    /// A facts-ring entry that is an input: an encoded `wire::Input`.
+    Input(Vec<u8>),
+    /// An encoded checkpoint of the kind's state.
     Checkpoint(Vec<u8>),
 }
 

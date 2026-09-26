@@ -97,7 +97,7 @@ struct Tool {
     ended_at_ms: Option<i64>,
     parent_key: String,
     hidden: bool,
-    #[serde(with = "serde_pb::bytes")]
+    #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
 
@@ -700,7 +700,12 @@ impl Interpreter for ClaudeSdk {
     }
 
     fn redact(target: RedactTarget) -> RedactTarget {
-        target
+        crate::redact::redact_kind::<
+            wire::ClaudeSdkItem,
+            wire::ClaudeSdkSnapshot,
+            wire::ClaudeAnswer,
+            State,
+        >(target)
     }
 
     fn unknown_snapshot() -> Vec<u8> {

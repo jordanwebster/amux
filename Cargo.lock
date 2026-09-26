@@ -787,6 +787,7 @@ dependencies = [
  "chrono",
  "prost",
  "prost-types",
+ "redaction",
  "serde",
  "serde_json",
  "wire",

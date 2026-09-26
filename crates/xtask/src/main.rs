@@ -52,6 +52,10 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("PROTOC", protoc);
     }
 
+    // Type names let code that walks an encoded message by its descriptor,
+    // such as the dump redactor, find the descriptor of a generated type.
+    let mut config = tonic_prost_build::Config::new();
+    config.enable_type_names();
     tonic_prost_build::configure()
         // Keep generated clients, but omit tonic's transport convenience
         // constructors. Otherwise `RoutingService.Connect` collides with the
@@ -59,7 +63,8 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
         .build_transport(false)
         .file_descriptor_set_path(out_dir.join("amux.v1.bin"))
         .out_dir(&out_dir)
-        .compile_protos(
+        .compile_with_config(
+            config,
             &xtask::proto_check::PROTO_FILES
                 .iter()
                 .map(|file| proto_dir.join(file))

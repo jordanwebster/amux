@@ -902,7 +902,9 @@ impl<A: Arm> Interpreter for CodexWith<A> {
     }
 
     fn redact(target: RedactTarget) -> RedactTarget {
-        target
+        crate::redact::redact_kind::<wire::CodexItem, wire::CodexSnapshot, wire::CodexAnswer, State>(
+            target,
+        )
     }
 
     fn unknown_snapshot() -> Vec<u8> {

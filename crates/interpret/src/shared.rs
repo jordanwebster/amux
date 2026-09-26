@@ -31,7 +31,7 @@ pub const STATUS_TOOL: &str = "status";
 
 /// An open ask as the shared list needs to see it. Implemented by the
 /// per-kind ask messages.
-pub trait OpenAsk: prost::Message + Default + Clone + PartialEq {
+pub trait OpenAsk: prost::Message + prost::Name + Default + Clone + PartialEq {
     fn key(&self) -> &str;
     fn item_key(&self) -> &str;
 }

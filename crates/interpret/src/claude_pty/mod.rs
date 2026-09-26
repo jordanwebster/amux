@@ -207,7 +207,7 @@ struct Tool {
     /// and the task tools the task list.
     hidden: bool,
     /// The body last emitted, so an unchanged revision is not re-emitted.
-    #[serde(with = "serde_pb::bytes")]
+    #[serde(with = "serde_pb::item_body")]
     emitted: Vec<u8>,
 }
 
@@ -815,7 +815,12 @@ impl Interpreter for ClaudePty {
     }
 
     fn redact(target: RedactTarget) -> RedactTarget {
-        target
+        crate::redact::redact_kind::<
+            wire::ClaudePtyItem,
+            wire::ClaudePtySnapshot,
+            wire::ClaudeAnswer,
+            State,
+        >(target)
     }
 
     fn unknown_snapshot() -> Vec<u8> {

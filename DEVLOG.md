@@ -1,3 +1,19 @@
+2026-09-26 — **Dump redaction per kind.**
+`interpret::redact(kind, target)` removes secrets from what a dump carries
+for an agent — item bodies, snapshot bodies, facts-ring entries (provider
+facts and inputs) and checkpoints — while each keeps its structure: a body
+still decodes on the same arm, a fact keeps its JSON shape, a checkpoint
+still decodes as the interpreter's state and resumes. Protobuf values are
+walked by the wire descriptor, so a new string field is redacted without
+anyone remembering to; the generated types now carry their type names for
+that. A checkpoint is written again with every protobuf value inside it
+walked the same way. On top of the shared capture rules the redactor blanks
+environment maps, secret-named assignments in text (`DB_PASSWORD=…`,
+`"api_key": "…"`), tokens with well-known prefixes, and replaces session and
+thread ids everywhere in the target with a stable per-id placeholder. The
+redaction test plants secrets in a session of each kind and prints what
+every target reads as afterwards.
+
 2026-09-26 — **The Codex interpreter.**
 `interpret::codex` turns what the Codex app server writes into chat items
 and snapshots: commands with exit code, duration, streamed output and
