@@ -131,7 +131,7 @@ async fn run_probe(out: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 async fn live_attempt(
     entry: SpecEntry,
 ) -> Result<codex_specs::specs::RunReport, Box<dyn std::error::Error>> {
-    let scratch = isolated_home()?;
+    let scratch = isolated_home(!codex_specs::specs::SIGNED_OUT.contains(&entry.name))?;
     execute(
         &entry,
         SpecSource::Live {
@@ -144,7 +144,7 @@ async fn live_attempt(
 }
 
 async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let scratch = isolated_home()?;
+    let scratch = isolated_home(!codex_specs::specs::SIGNED_OUT.contains(&entry.name))?;
     let codex_home = scratch.path().join("codex-home");
     let report = execute(
         &entry,
@@ -211,22 +211,30 @@ async fn record_one(entry: SpecEntry, root: &Path) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-fn isolated_home() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+/// A scratch Codex home and project. The project holds the files the
+/// specifications name; the home carries the owner's credentials unless the
+/// specification is about being signed out.
+fn isolated_home(signed_in: bool) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let scratch = tempfile::Builder::new().prefix("codex-spec-").tempdir()?;
     let codex_home = scratch.path().join("codex-home");
     let project = scratch.path().join("project");
     std::fs::create_dir_all(&codex_home)?;
     std::fs::create_dir_all(&project)?;
+    std::fs::write(project.join("config.txt"), "VALUE=1\n")?;
+    std::fs::write(project.join("old.txt"), "old\n")?;
+    std::fs::write(project.join("square.png"), SQUARE_PNG)?;
 
     let source_auth = owner_codex_home().join("auth.json");
-    if !source_auth.is_file() {
+    if signed_in && !source_auth.is_file() {
         return Err(format!(
             "Codex authentication is unavailable at {}; run `codex login` first",
             source_auth.display()
         )
         .into());
     }
-    std::fs::copy(&source_auth, codex_home.join("auth.json"))?;
+    if signed_in {
+        std::fs::copy(&source_auth, codex_home.join("auth.json"))?;
+    }
     std::fs::write(codex_home.join(".personality_migration"), "v1\n")?;
     std::fs::write(codex_home.join(".sandbox_migration"), "v1\n")?;
     std::fs::write(
@@ -242,13 +250,18 @@ fn isolated_home() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&codex_home, std::fs::Permissions::from_mode(0o700))?;
-        std::fs::set_permissions(
-            codex_home.join("auth.json"),
-            std::fs::Permissions::from_mode(0o600),
-        )?;
+        if signed_in {
+            std::fs::set_permissions(
+                codex_home.join("auth.json"),
+                std::fs::Permissions::from_mode(0o600),
+            )?;
+        }
     }
     Ok(scratch)
 }
+
+/// The seed image the image specification asks Codex to look at.
+const SQUARE_PNG: &[u8] = include_bytes!("../../../assets/square.png");
 
 fn write_events(path: &Path, events: &[replay_support::IoEvent]) -> io::Result<()> {
     let mut output = String::new();

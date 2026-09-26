@@ -16,6 +16,13 @@ const ALLOWED_MODELS: &[&str] = &[CAPTURE_MODEL];
 const EVENT_TIMEOUT: Duration = Duration::from_secs(300);
 const LIVE_IO_FILE: &str = "spec.io.jsonl";
 
+#[path = "rows.rs"]
+mod rows;
+
+/// Specifications that run with no signed-in account; capture gives them a
+/// Codex home without credentials.
+pub const SIGNED_OUT: &[&str] = &["signed_out"];
+
 const REGISTRY: &[SpecEntry] = &[
     entry("initialize_and_start"),
     entry("turn_round_trip"),
@@ -28,6 +35,15 @@ const REGISTRY: &[SpecEntry] = &[
     entry("inject_busy"),
     entry("two_assistant_messages"),
     entry("inject_drain"),
+    entry("reasoning_summary"),
+    entry("exploring"),
+    entry("failing_command"),
+    entry("file_changes"),
+    entry("image"),
+    entry("compaction"),
+    entry("plan_mode"),
+    entry("turn_error"),
+    entry("signed_out"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -232,6 +248,15 @@ async fn run_scenario(
         "inject_busy" => inject_busy(codex, model, project).await,
         "two_assistant_messages" => two_assistant_messages(codex, model, project).await,
         "inject_drain" => inject_drain(codex, model, project).await,
+        "reasoning_summary" => rows::reasoning_summary(codex, model, project).await,
+        "exploring" => rows::exploring(codex, model, project).await,
+        "failing_command" => rows::failing_command(codex, model, project).await,
+        "file_changes" => rows::file_changes(codex, model, project).await,
+        "image" => rows::image(codex, model, project).await,
+        "compaction" => rows::compaction(codex, model, project).await,
+        "plan_mode" => rows::plan_mode(codex, model, project).await,
+        "turn_error" => rows::turn_error(codex, model, project).await,
+        "signed_out" => rows::signed_out(codex, model, project).await,
         other => Err(format!("unknown registered specification {other}")),
     }
 }
@@ -706,7 +731,7 @@ mod tests {
 
     #[test]
     fn registry_names_the_provider_side_of_the_c_suite() {
-        assert_eq!(registry().len(), 11);
+        assert_eq!(registry().len(), 20);
         assert_eq!(registry()[0].name, "initialize_and_start");
         assert_eq!(registry()[9].name, "two_assistant_messages");
         assert!(

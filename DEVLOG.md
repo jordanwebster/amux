@@ -1,3 +1,17 @@
+2026-09-26 — **Codex and Claude recordings for the rows that had none.**
+Nine Codex specifications, captured against codex-cli 0.157.0, cover
+reasoning summaries, commands Codex classifies as reads, listings and
+searches, a failing command, file changes added, modified and deleted
+through apply_patch, an image attached to the message and one viewed on
+disk, compaction on request (a new `Thread::compact`), plan mode asking its
+question through request-user-input and delivering a plan item, a turn
+against a model the account cannot use, and a signed-out account. The
+capture model never calls the plan tool, even asked by name, so Codex's
+task list stays authored. Two more Claude SDK specifications record a
+declined tool-server form, and Claude Code refusing a server's link-form
+elicitation outright (`-32602`, the caller never sees it), which is why the
+link form cannot be recorded for headless Claude.
+
 2026-09-26 — **More headless Claude recordings.**
 Seven SDK specifications, captured against Claude Code 2.1.283, fill rows
 the corpus lacked. `tools/question_every_shape` asks four questions in one

@@ -307,6 +307,7 @@ impl Sessions {
             elicitation_content: setup.elicitation_content,
             dialog_result: setup.dialog_result,
             dialog_requests: Vec::new(),
+            elicitation_requests: Vec::new(),
             exit: None,
         })
     }
@@ -331,6 +332,7 @@ pub struct SpecSession {
     elicitation_content: Option<serde_json::Value>,
     dialog_result: Option<serde_json::Value>,
     dialog_requests: Vec<crate::driver::sdk::UserDialogRequest>,
+    elicitation_requests: Vec<crate::driver::sdk::ElicitationRequest>,
     exit: Option<ProcessExit>,
 }
 
@@ -617,8 +619,17 @@ impl SpecSession {
                         .await
                         .expect("the hook request is answered through Control");
                 }
-                SdkEvent::Elicitation { id, request: _ } => {
+                SdkEvent::Elicitation { id, request } => {
+                    self.elicitation_requests.push(request);
                     let result = match self.elicitation_content.clone() {
+                        // A link form is accepted without content: the person
+                        // went to the page.
+                        Some(serde_json::Value::Null) => {
+                            crate::driver::sdk::ElicitationResult::Accept {
+                                content: None,
+                                extensions: Default::default(),
+                            }
+                        }
                         Some(content) => crate::driver::sdk::ElicitationResult::Accept {
                             content: Some(content),
                             extensions: Default::default(),
@@ -1010,6 +1021,8 @@ static DEFINITIONS: &[&SpecDef] = &[
     &questions::DISMISSED,
     &tools::IN_PROCESS_MCP,
     &tools::ELICITATION_ACCEPTED,
+    &tools::ELICITATION_DECLINED,
+    &tools::ELICITATION_LINK,
     &tools::DIALOG_REQUESTED,
     &tools::HOOK_LIFECYCLE,
     &configured::CONFIGURED_TURN,
@@ -1056,6 +1069,8 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("tools/question_dismissed", "question_dismissed"),
     entry("tools/in_process_mcp", "in_process_mcp"),
     entry("tools/elicitation_accepted", "elicitation_accepted"),
+    entry("tools/elicitation_declined", "elicitation_declined"),
+    entry("tools/elicitation_link_refused", "elicitation_link_refused"),
     entry("tools/hook_lifecycle", "hook_lifecycle"),
     entry("options/configured_turn", "configured_turn"),
     entry("options/every_hook_event", "every_hook_event"),

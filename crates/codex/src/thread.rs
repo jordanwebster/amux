@@ -110,6 +110,18 @@ impl Thread {
         Ok(start.turn.id)
     }
 
+    /// Ask the app-server to compact the thread's history now. Progress
+    /// arrives on the event stream as a context-compaction item.
+    pub async fn compact(&self) -> Result<(), Error> {
+        self.inner
+            .server
+            .request_unit(
+                "thread/compact/start",
+                serde_json::json!({ "threadId": self.inner.thread_id }),
+            )
+            .await
+    }
+
     /// Append raw Responses API items to the thread's model-visible history.
     pub async fn inject_items(&self, items: Vec<serde_json::Value>) -> Result<(), Error> {
         self.inner

@@ -380,16 +380,22 @@ pub(super) static ELICITATION_ACCEPTED: SpecDef = SpecDef {
 };
 
 fn elicited_setup() -> SessionSetup {
+    let mut setup = elicitation_setup(CONFIRMED);
+    setup.accept_elicitation(serde_json::json!({"confirmed": CONFIRMED}));
+    setup
+}
+
+/// A session whose only tool server asks for confirmation of `word`.
+fn elicitation_setup(word: &str) -> SessionSetup {
     let mut setup = SessionSetup::new(
         HAIKU,
         format!(
-            "Call the mcp__external__{TOOL} tool with word set to {CONFIRMED}, then reply with \
+            "Call the mcp__external__{TOOL} tool with word set to {word}, then reply with \
              exactly what it returned."
         ),
     );
     setup.options.permission_mode = Some(PermissionMode::Default);
     setup.allow_permissions();
-    setup.accept_elicitation(serde_json::json!({"confirmed": CONFIRMED}));
     let mut server = external_server();
     if let McpServerConfig::Stdio(config) = &mut server {
         config.always_load = Some(true);
@@ -466,5 +472,61 @@ async fn dialog_requested(session: &mut SpecSession) {
         session.dialog_requests()[0].dialog_kind == "refusal_fallback_prompt",
         "the request names the refusal fallback dialog kind: {:?}",
         session.dialog_requests()
+    );
+}
+
+pub(super) static ELICITATION_DECLINED: SpecDef = SpecDef {
+    name: "tools/elicitation_declined",
+    fixture: "elicitation_declined",
+    setup: || elicitation_setup(CONFIRMED),
+    run: |session| Box::pin(elicitation_declined(session)),
+};
+
+/// A person who declines a server's form sends no content; the server hears
+/// the decline and says so in the tool's result.
+async fn elicitation_declined(session: &mut SpecSession) {
+    let turn = session.turn().await;
+    expect!(
+        session.elicitation_requests.len() == 1,
+        "the server asked once: {:?}",
+        session.elicitation_requests
+    );
+    expect!(
+        turn.tool_results()
+            .iter()
+            .any(|result| result.contains("elicitation decline")),
+        "the decline reached the server: {:?}",
+        turn.tool_results()
+    );
+}
+
+pub(super) static ELICITATION_LINK: SpecDef = SpecDef {
+    name: "tools/elicitation_link_refused",
+    fixture: "elicitation_link_refused",
+    setup: || {
+        let mut setup = elicitation_setup("LINK");
+        setup.accept_elicitation(serde_json::Value::Null);
+        setup
+    },
+    run: |session| Box::pin(elicitation_link_refused(session)),
+};
+
+/// A server may ask to send the person to a page instead of a form. Claude
+/// Code does not offer that kind of elicitation to its servers: it refuses
+/// the request itself, the SDK caller never sees it, and the server's tool
+/// reports the refusal.
+async fn elicitation_link_refused(session: &mut SpecSession) {
+    let turn = session.turn().await;
+    expect!(
+        session.elicitation_requests.is_empty(),
+        "no link request reaches the caller: {:?}",
+        session.elicitation_requests
+    );
+    expect!(
+        turn.tool_results().iter().any(|result| {
+            result.contains("-32602") && result.contains("does not support URL-mode elicitation")
+        }),
+        "the server hears Claude refuse the link form: {:?}",
+        turn.tool_results()
     );
 }

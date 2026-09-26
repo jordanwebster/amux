@@ -1042,18 +1042,30 @@ fn elicit(
     id: i64,
     word: &str,
 ) -> String {
+    // The word LINK asks for the link form of elicitation: the person is
+    // sent to a page instead of filling in fields.
+    let params = if word == "LINK" {
+        serde_json::json!({
+            "mode": "url",
+            "message": "Open the page to confirm.",
+            "url": "https://example.com/confirm",
+            "elicitationId": "spec-link",
+        })
+    } else {
+        serde_json::json!({
+            "message": format!("Confirm the word {word}."),
+            "requestedSchema": {
+                "type": "object",
+                "properties": {"confirmed": {"type": "string"}},
+                "required": ["confirmed"],
+            },
+        })
+    };
     respond(
         stdout,
         serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "elicitation/create",
-            "params": {
-                "message": format!("Confirm the word {word}."),
-                "requestedSchema": {
-                    "type": "object",
-                    "properties": {"confirmed": {"type": "string"}},
-                    "required": ["confirmed"],
-                },
-            },
+            "params": params,
         }),
     );
     while let Some(Ok(line)) = lines.next() {
@@ -1072,7 +1084,8 @@ fn elicit(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(word)
                 .to_owned(),
-            other => format!("elicitation {}", other.unwrap_or("unanswered")),
+            Some(other) => format!("elicitation {other}"),
+            None => format!("elicitation failed: {}", message["error"]),
         };
     }
     "elicitation abandoned".to_owned()
