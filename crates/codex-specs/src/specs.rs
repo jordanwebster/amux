@@ -59,6 +59,7 @@ const REGISTRY: &[SpecEntry] = &[
     entry("access_grant"),
     entry("automatic_review"),
     entry("approval_scopes"),
+    entry("turn_retries"),
 ];
 
 const fn entry(name: &'static str) -> SpecEntry {
@@ -272,6 +273,7 @@ async fn run_scenario(
         "plan_mode" => rows::plan_mode(codex, model, project).await,
         "turn_error" => rows::turn_error(codex, model, project).await,
         "signed_out" => rows::signed_out(codex, model, project).await,
+        "turn_retries" => rows::turn_retries(codex, model, project).await,
         "web_search" => rows::web_search(codex, model, project).await,
         "file_moved" => rows::file_moved(codex, model, project).await,
         "subagent" => rows::subagent(codex, model, project).await,
@@ -754,7 +756,7 @@ mod tests {
 
     #[test]
     fn registry_names_the_provider_side_of_the_c_suite() {
-        assert_eq!(registry().len(), 28);
+        assert_eq!(registry().len(), 29);
         assert_eq!(registry()[0].name, "initialize_and_start");
         assert_eq!(registry()[9].name, "two_assistant_messages");
         assert!(

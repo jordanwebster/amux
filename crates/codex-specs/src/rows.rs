@@ -387,6 +387,64 @@ pub(super) async fn turn_error(
     Ok(report(&thread))
 }
 
+/// A provider that cannot be reached makes Codex retry: each attempt arrives
+/// as an error that says it will retry, then the turn fails.
+pub(super) async fn turn_retries(
+    codex: &Codex,
+    model: &str,
+    project: &Path,
+) -> Result<ScenarioReport, String> {
+    let mut config = thread_config(model, project);
+    config.approval_policy = Some(ApprovalPolicy::Never);
+    config.model_provider = Some("unreachable".to_string());
+    config.config = Some(
+        [
+            (
+                "features.unbounded_connection_retries".to_owned(),
+                serde_json::json!(false),
+            ),
+            (
+                "model_providers.unreachable".to_owned(),
+                serde_json::json!({
+                    "name": "unreachable",
+                    "base_url": "http://127.0.0.1:9/v1",
+                    "wire_api": "responses",
+                    "request_max_retries": 2,
+                    "stream_max_retries": 2,
+                }),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let thread = codex.start_thread(config).await.map_err(stringify)?;
+    let mut events = thread.events().await.map_err(stringify)?;
+    thread
+        .start_turn("Reply with exactly CODEX_SPEC_UNREACHABLE.")
+        .await
+        .map_err(stringify)?;
+    let seen = collect_turn(&mut events).await?;
+    let retries = seen
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                TurnEvent::Error {
+                    will_retry: true,
+                    ..
+                }
+            )
+        })
+        .count();
+    if retries == 0 {
+        return Err(format!("no error said it would retry: {seen:?}"));
+    }
+    if final_status(&seen) != Some(TurnStatus::Failed) {
+        return Err(format!("the turn ended {:?}", final_status(&seen)));
+    }
+    Ok(report(&thread))
+}
+
 /// Without credentials the account reads as signed out and a turn fails.
 pub(super) async fn signed_out(
     codex: &Codex,
