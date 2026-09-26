@@ -1,3 +1,19 @@
+2026-09-26 — **The agent's harness runs amux's tool server, which finds its daemon by its own directory.**
+`agent::serve_tools(dir)` is what `amux mcp <dir>` will run: MCP over
+stdio with seven tools. agents, hosts, send, spawn and stop dial the daemon
+at `<dir>/tools.sock`, so the daemon knows the caller from the socket and no
+request names an id; a call retries for five seconds over a restart, then
+answers "amux daemon isn't running". status answers ok (the interpreter
+takes working_on from the call itself) and attach hashes the file into
+`<dir>/blobs/` and answers the element, neither touching the daemon. spawn
+resolves a host by its trusted name and otherwise leaves placement to the
+daemon the call reached, the parent's own. Every provider launch names the
+server at the install path: `--mcp-config` plus an allow rule for Claude,
+`--config mcp_servers.amux.*` for Codex. The fake providers now start a
+configured tool server and send it a scripted `mcp__<server>__<tool>` call,
+so tests run the whole path from the provider's call to the drawn item
+against a stand-in daemon.
+
 2026-09-26 — **A message an agent sends with amux's send tool is drawn as that message.**
 All three interpreters recognise amux's own `send` call and emit it as an
 agent-message item on the call's key instead of a tool row: the recipient

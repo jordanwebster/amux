@@ -22,6 +22,7 @@ pub mod local_socket;
 mod provider;
 mod ring;
 mod terminal;
+mod tools;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -33,7 +34,10 @@ use interpret::codex::Codex;
 
 pub use crate::clock::{Clock, ManualClock, SystemClock};
 pub use crate::ctl::{read_frame, write_frame};
-pub use crate::dir::{CTL_SOCK, HOOKS_SOCK, JOURNAL, LOCK, PRIVATE, PTY, PTY_SOCK};
+pub use crate::dir::{BLOBS, CTL_SOCK, HOOKS_SOCK, JOURNAL, LOCK, PRIVATE, PTY, PTY_SOCK};
+pub use crate::tools::{
+    NOT_RUNNING, RETRY_WINDOW, TOOLS_SOCK, ToolsConfig, ToolsError, serve_tools, serve_tools_on,
+};
 
 /// The version this agent reports in its Hello and stamps on what it writes.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

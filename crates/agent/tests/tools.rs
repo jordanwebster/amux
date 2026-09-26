@@ -1,0 +1,914 @@
+//! amux's tool server against a stand-in daemon on the agent's tools.sock:
+//! the seven tools as the model calls them, the retry over an update
+//! window, and the whole path from a provider's call through the harness's
+//! launch of `<install path> mcp <dir>` to the item the interpreter draws.
+
+mod support;
+
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use agent::local_socket::{LocalListener, LocalStream};
+use agent::{NOT_RUNNING, TOOLS_SOCK, ToolsConfig};
+use prost::{Message as _, Name as _};
+use provider_fakes::{Step, Tool, ToolClass};
+use serde_json::{Value, json};
+use support::*;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tonic::{Request, Response, Status};
+use wire::client_service_server::ClientService;
+use wire::{
+    Agent as Row, AgentParent, AgentSpec, AmbiguousAgentName, CreateAgentRequest, Empty, Envelope,
+    HostEntry, InventoryEvent, Kind, Lifecycle, Phase, Presence, SendInputRequest,
+    SendInputResponse, SendMessageResponse, StopMode, Trust, WorkingOn, input, inventory_event,
+    send_input_response,
+};
+
+const ME: [u8; 16] = [0xa1; 16];
+const REVIEWER: [u8; 16] = [0xb2; 16];
+const CHILD: [u8; 16] = [0xc3; 16];
+const HERE: [u8; 16] = [0x01; 16];
+const STUDIO: [u8; 16] = [0x02; 16];
+
+// --- the stand-in daemon ---------------------------------------------------
+
+/// What the tool server asked the daemon, in order.
+#[derive(Clone, Debug)]
+enum Call {
+    Inventory,
+    Resolve(String),
+    Send(Envelope),
+    Create(Box<CreateAgentRequest>),
+    Input(SendInputRequest),
+}
+
+#[derive(Clone, Default)]
+struct Fleet {
+    hosts: Vec<HostEntry>,
+    agents: Vec<Row>,
+    /// Names the daemon finds several agents by.
+    ambiguous: Vec<String>,
+    /// The reason SendMessage refuses with, if it does.
+    refuse_send: Option<Status>,
+    /// The reason SendInput rejects with, if it does.
+    reject_input: Option<String>,
+    calls: Arc<Mutex<Vec<Call>>>,
+}
+
+impl Fleet {
+    fn record(&self, call: Call) {
+        self.calls.lock().unwrap().push(call);
+    }
+
+    fn calls(&self) -> Vec<Call> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+type Events = Pin<Box<dyn futures_util::Stream<Item = Result<InventoryEvent, Status>> + Send>>;
+type Sessions =
+    Pin<Box<dyn futures_util::Stream<Item = Result<wire::SessionEvent, Status>> + Send>>;
+
+#[tonic::async_trait]
+impl ClientService for Fleet {
+    type SubscribeInventoryStream = Events;
+    type SubscribeStream = Sessions;
+
+    async fn subscribe_inventory(&self, _: Request<Empty>) -> Result<Response<Events>, Status> {
+        self.record(Call::Inventory);
+        let mut events = self
+            .hosts
+            .iter()
+            .cloned()
+            .map(inventory_event::Of::Host)
+            .chain(self.agents.iter().cloned().map(inventory_event::Of::Agent))
+            .map(|of| Ok(InventoryEvent { of: Some(of) }))
+            .collect::<Vec<_>>();
+        events.push(Ok(InventoryEvent {
+            of: Some(inventory_event::Of::CaughtUp(Default::default())),
+        }));
+        // A subscription stays open after CaughtUp, as the daemon's does.
+        let events = futures_util::StreamExt::chain(
+            futures_util::stream::iter(events),
+            futures_util::stream::pending(),
+        );
+        Ok(Response::new(Box::pin(events)))
+    }
+
+    async fn resolve_agent(
+        &self,
+        request: Request<wire::ResolveAgentRequest>,
+    ) -> Result<Response<Row>, Status> {
+        let name = request.into_inner().name;
+        self.record(Call::Resolve(name.clone()));
+        if self.ambiguous.contains(&name) {
+            let detail = AmbiguousAgentName {
+                name: name.clone(),
+                candidates: vec![row(&REVIEWER, &HERE, &name), row(&CHILD, &STUDIO, &name)],
+            };
+            let error = wire::Error {
+                code: wire::ErrorCode::FailedPrecondition as i32,
+                message: format!("{name} is ambiguous"),
+                details: vec![wire::ErrorDetail {
+                    r#type: AmbiguousAgentName::full_name(),
+                    value: detail.encode_to_vec(),
+                }],
+            };
+            return Err(Status::with_details(
+                tonic::Code::FailedPrecondition,
+                format!("{name} is ambiguous"),
+                error.encode_to_vec().into(),
+            ));
+        }
+        self.agents
+            .iter()
+            .find(|agent| agent.name.as_deref() == Some(name.as_str()))
+            .cloned()
+            .map(Response::new)
+            .ok_or_else(|| Status::not_found(format!("{name} not found")))
+    }
+
+    async fn send_message(
+        &self,
+        request: Request<Envelope>,
+    ) -> Result<Response<SendMessageResponse>, Status> {
+        let envelope = request.into_inner();
+        self.record(Call::Send(envelope.clone()));
+        if let Some(status) = &self.refuse_send {
+            return Err(status.clone());
+        }
+        Ok(Response::new(SendMessageResponse {
+            envelope_id: envelope.id,
+        }))
+    }
+
+    async fn create_agent(
+        &self,
+        request: Request<CreateAgentRequest>,
+    ) -> Result<Response<Row>, Status> {
+        let request = request.into_inner();
+        self.record(Call::Create(Box::new(request.clone())));
+        let host = request.host_id.clone().unwrap_or(HERE.to_vec());
+        let name = request.name.clone().unwrap_or_else(|| "quiet-otter".into());
+        Ok(Response::new(row(&request.agent_id, &host, &name)))
+    }
+
+    async fn send_input(
+        &self,
+        request: Request<SendInputRequest>,
+    ) -> Result<Response<SendInputResponse>, Status> {
+        self.record(Call::Input(request.into_inner()));
+        Ok(Response::new(SendInputResponse {
+            of: Some(match &self.reject_input {
+                Some(reason) => send_input_response::Of::Rejected(wire::Rejected {
+                    reason: reason.clone(),
+                }),
+                None => send_input_response::Of::Accepted(wire::Accepted { queued: false }),
+            }),
+        }))
+    }
+
+    async fn subscribe(
+        &self,
+        _: Request<wire::SubscribeRequest>,
+    ) -> Result<Response<Sessions>, Status> {
+        Err(Status::unimplemented("subscribe"))
+    }
+    async fn fetch(
+        &self,
+        _: Request<wire::FetchRequest>,
+    ) -> Result<Response<wire::FetchResponse>, Status> {
+        Err(Status::unimplemented("fetch"))
+    }
+    async fn get(&self, _: Request<wire::GetRequest>) -> Result<Response<wire::Item>, Status> {
+        Err(Status::unimplemented("get"))
+    }
+    async fn rename_agent(
+        &self,
+        _: Request<wire::RenameAgentRequest>,
+    ) -> Result<Response<Row>, Status> {
+        Err(Status::unimplemented("rename"))
+    }
+    async fn stop_agent(
+        &self,
+        _: Request<wire::StopAgentRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        Err(Status::unimplemented("stop"))
+    }
+    async fn resume_agent(
+        &self,
+        _: Request<wire::ResumeAgentRequest>,
+    ) -> Result<Response<Row>, Status> {
+        Err(Status::unimplemented("resume"))
+    }
+    async fn delete_agent(
+        &self,
+        _: Request<wire::DeleteAgentRequest>,
+    ) -> Result<Response<wire::DeleteAgentResponse>, Status> {
+        Err(Status::unimplemented("delete"))
+    }
+    async fn put_blob(
+        &self,
+        _: Request<wire::PutBlobRequest>,
+    ) -> Result<Response<wire::BlobRef>, Status> {
+        Err(Status::unimplemented("put_blob"))
+    }
+    async fn get_blob(
+        &self,
+        _: Request<wire::GetBlobRequest>,
+    ) -> Result<Response<wire::GetBlobResponse>, Status> {
+        Err(Status::unimplemented("get_blob"))
+    }
+    async fn diff(&self, _: Request<wire::DiffRequest>) -> Result<Response<wire::Diff>, Status> {
+        Err(Status::unimplemented("diff"))
+    }
+    async fn list_repositories(
+        &self,
+        _: Request<wire::ListRepositoriesRequest>,
+    ) -> Result<Response<wire::ListRepositoriesResponse>, Status> {
+        Err(Status::unimplemented("list_repositories"))
+    }
+    async fn dump(
+        &self,
+        _: Request<wire::DumpRequest>,
+    ) -> Result<Response<wire::DumpResponse>, Status> {
+        Err(Status::unimplemented("dump"))
+    }
+}
+
+/// A connection the stand-in daemon accepted.
+struct Conn(LocalStream);
+
+impl tonic::transport::server::Connected for Conn {
+    type ConnectInfo = ();
+    fn connect_info(&self) {}
+}
+
+impl AsyncRead for Conn {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Conn {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+/// The daemon listening on `<dir>/tools.sock` until dropped.
+struct Daemon {
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Daemon {
+    fn listen(dir: &Path, fleet: Fleet) -> Self {
+        let listener = LocalListener::bind(&dir.join(TOOLS_SOCK)).expect("tools.sock binds");
+        let incoming = futures_util::stream::unfold(listener, |mut listener| async move {
+            let accepted = listener.accept().await.map(Conn);
+            Some((accepted, listener))
+        });
+        let task = tokio::spawn(async move {
+            let _ = tonic::transport::Server::builder()
+                .add_service(wire::client_service_server(fleet))
+                .serve_with_incoming(incoming)
+                .await;
+        });
+        Self { task }
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+fn row(id: &[u8], host: &[u8], name: &str) -> Row {
+    Row {
+        agent_id: id.to_vec(),
+        host_id: host.to_vec(),
+        kind: Kind::ClaudeSdk as i32,
+        name: Some(name.to_owned()),
+        lifecycle: Lifecycle::Live as i32,
+        phase: Phase::Idle as i32,
+        ..Default::default()
+    }
+}
+
+fn host(id: &[u8], name: &str, trust: Trust, presence: Presence) -> HostEntry {
+    HostEntry {
+        host_id: id.to_vec(),
+        name: name.to_owned(),
+        trust: trust as i32,
+        presence: presence as i32,
+        ..Default::default()
+    }
+}
+
+/// Me on this host with a child, a reviewer on the studio, and a candidate
+/// host nobody paired.
+fn fleet() -> Fleet {
+    let mut me = row(&ME, &HERE, "lead");
+    me.kind = Kind::ClaudePty as i32;
+    me.phase = Phase::Working as i32;
+    me.working_on = Some(WorkingOn {
+        text: "Splitting the parser".into(),
+        updated_at_ms: 1,
+    });
+    let mut reviewer = row(&REVIEWER, &STUDIO, "reviewer");
+    reviewer.kind = Kind::Codex as i32;
+    let mut child = row(&CHILD, &HERE, "helper");
+    child.parent = Some(AgentParent {
+        host_id: HERE.to_vec(),
+        agent_id: ME.to_vec(),
+    });
+    child.lifecycle = Lifecycle::Exited as i32;
+    child.exit_cause = Some("finished".into());
+    Fleet {
+        hosts: vec![
+            host(&HERE, "laptop", Trust::Trusted, Presence::Online),
+            host(&STUDIO, "Studio", Trust::Trusted, Presence::Away),
+            host(&[0x03; 16], "stranger", Trust::Candidate, Presence::Online),
+        ],
+        agents: vec![me, reviewer, child],
+        ..Default::default()
+    }
+}
+
+// --- the tool server, driven as a harness drives it ------------------------
+
+/// An agent directory with a spec, and the tool server serving it.
+struct Mcp {
+    _root: tempfile::TempDir,
+    dir: PathBuf,
+    cwd: PathBuf,
+    to_server: tokio::io::DuplexStream,
+    from_server: tokio::io::Lines<BufReader<tokio::io::DuplexStream>>,
+    next_id: u64,
+}
+
+impl Mcp {
+    async fn start(retry_window: Duration) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("agents").join(interpret::to_hex(&ME));
+        let cwd = root.path().join("work");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let spec = AgentSpec {
+            agent_id: ME.to_vec(),
+            kind: "claude_pty".into(),
+            cwd: cwd.display().to_string(),
+            incarnation: 1,
+            ..Default::default()
+        };
+        std::fs::write(dir.join("spec.1"), spec.encode_to_vec()).unwrap();
+        let (to_server, server_in) = tokio::io::duplex(1 << 20);
+        let (server_out, from_server) = tokio::io::duplex(1 << 20);
+        tokio::spawn(agent::serve_tools_on(
+            dir.clone(),
+            server_in,
+            server_out,
+            ToolsConfig { retry_window },
+        ));
+        let mut mcp = Self {
+            _root: root,
+            dir,
+            cwd,
+            to_server,
+            from_server: BufReader::new(from_server).lines(),
+            next_id: 0,
+        };
+        let init = mcp
+            .request(
+                "initialize",
+                json!({ "protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": { "name": "test", "version": "1" } }),
+            )
+            .await;
+        assert_eq!(init["result"]["serverInfo"]["name"], "amux");
+        mcp.write(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+            .await;
+        mcp
+    }
+
+    async fn write(&mut self, message: Value) {
+        let mut line = message.to_string();
+        line.push('\n');
+        self.to_server.write_all(line.as_bytes()).await.unwrap();
+    }
+
+    async fn request(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        let id = self.next_id;
+        self.write(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
+            .await;
+        let line = tokio::time::timeout(Duration::from_secs(20), self.from_server.next_line())
+            .await
+            .expect("the tool server answers")
+            .unwrap()
+            .expect("the tool server is still serving");
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["id"], json!(id), "responses come in order");
+        response
+    }
+
+    /// A tool call's text, and whether the server marked it an error.
+    async fn call(&mut self, tool: &str, arguments: Value) -> (String, bool) {
+        let response = self
+            .request(
+                "tools/call",
+                json!({ "name": tool, "arguments": arguments }),
+            )
+            .await;
+        let result = &response["result"];
+        (
+            result["content"][0]["text"].as_str().unwrap().to_owned(),
+            result["isError"] == json!(true),
+        )
+    }
+
+    async fn ok(&mut self, tool: &str, arguments: Value) -> Value {
+        let (text, error) = self.call(tool, arguments).await;
+        assert!(!error, "{tool} failed: {text}");
+        serde_json::from_str(&text).unwrap_or(Value::String(text))
+    }
+
+    async fn refused(&mut self, tool: &str, arguments: Value) -> String {
+        let (text, error) = self.call(tool, arguments).await;
+        assert!(error, "{tool} succeeded: {text}");
+        text
+    }
+}
+
+const WINDOW: Duration = Duration::from_secs(3);
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_server_lists_the_seven_tools() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let listed = mcp.request("tools/list", json!({})).await;
+    let names = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "agents", "hosts", "send", "spawn", "stop", "status", "attach"
+        ]
+    );
+    let unknown = mcp
+        .request("tools/call", json!({ "name": "delete", "arguments": {} }))
+        .await;
+    assert!(
+        unknown["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("delete")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_lists_the_fleet_read_to_caught_up_and_marks_you() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let fleet = fleet();
+    let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+    let listed = mcp.ok("agents", json!({})).await;
+    assert_eq!(
+        listed,
+        json!({ "agents": [
+            { "name": "lead", "id": interpret::to_hex(&ME), "kind": "claude_pty", "host": "laptop",
+              "live": true, "phase": "working", "working_on": "Splitting the parser", "you": true },
+            { "name": "reviewer", "id": interpret::to_hex(&REVIEWER), "kind": "codex",
+              "host": "Studio", "live": true, "phase": "idle" },
+            { "name": "helper", "id": interpret::to_hex(&CHILD), "kind": "claude_sdk",
+              "host": "laptop", "live": false, "phase": "idle", "exit_cause": "finished",
+              "parent": "lead" },
+        ]})
+    );
+    assert!(matches!(fleet.calls().as_slice(), [Call::Inventory]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hosts_lists_trusted_hosts_and_this_one() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let _daemon = Daemon::listen(&mcp.dir, fleet());
+    let listed = mcp.ok("hosts", json!({})).await;
+    assert_eq!(
+        listed,
+        json!({ "hosts": [
+            { "name": "laptop", "presence": "online", "this_host": true },
+            { "name": "Studio", "presence": "away" },
+        ]})
+    );
+}
+
+/// The envelope carries no sender: the daemon fills it from the socket the
+/// call arrived on. The answer is the id the interpreter reads.
+#[tokio::test(flavor = "multi_thread")]
+async fn send_resolves_the_recipient_and_answers_the_envelope_id() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let fleet = fleet();
+    let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+    let sent = mcp
+        .ok(
+            "send",
+            json!({ "to": "reviewer", "text": "Please review.", "context": "parser" }),
+        )
+        .await;
+    let calls = fleet.calls();
+    let [Call::Resolve(name), Call::Send(envelope)] = calls.as_slice() else {
+        panic!("resolve then send, got {calls:?}");
+    };
+    assert_eq!(name, "reviewer");
+    assert_eq!(sent, json!({ "id": interpret::to_hex(&envelope.id) }));
+    assert_eq!(envelope.text, "Please review.");
+    assert_eq!(envelope.context.as_deref(), Some(b"parser".as_slice()));
+    assert_eq!(envelope.kind(), wire::EnvelopeKind::Message);
+    assert_eq!(envelope.from, None);
+    assert_eq!(
+        envelope.to,
+        Some(AgentParent {
+            host_id: STUDIO.to_vec(),
+            agent_id: REVIEWER.to_vec(),
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_says_plainly_when_the_name_or_the_delivery_fails() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let mut fleet = fleet();
+    fleet.ambiguous = vec!["twin".into()];
+    fleet.refuse_send = Some(Status::failed_precondition("reviewer has exited"));
+    let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+    assert_eq!(
+        mcp.refused("send", json!({ "to": "ghost", "text": "hi" }))
+            .await,
+        "no agent named ghost"
+    );
+    assert_eq!(
+        mcp.refused("send", json!({ "to": "twin", "text": "hi" }))
+            .await,
+        format!(
+            "twin names several agents: twin ({}), twin ({})",
+            interpret::to_hex(&REVIEWER),
+            interpret::to_hex(&CHILD)
+        )
+    );
+    assert_eq!(
+        mcp.refused("send", json!({ "to": "reviewer", "text": "hi" }))
+            .await,
+        "reviewer has exited"
+    );
+    assert_eq!(
+        mcp.refused("send", json!({ "to": "reviewer" })).await,
+        "text is required"
+    );
+}
+
+/// With no host named the child is created on the daemon the call reached,
+/// which is the parent's own, in the parent's directory; a named host is
+/// looked up among the trusted ones and the directory is left to it.
+#[tokio::test(flavor = "multi_thread")]
+async fn spawn_places_the_child_by_host_name_defaulting_to_the_parents_host() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let fleet = fleet();
+    let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+
+    let spawned = mcp
+        .ok(
+            "spawn",
+            json!({ "kind": "codex", "prompt": "Write the tests.", "name": "tester" }),
+        )
+        .await;
+    let calls = fleet.calls();
+    let [Call::Create(here)] = calls.as_slice() else {
+        panic!("one create, got {calls:?}");
+    };
+    assert_eq!(
+        spawned,
+        json!({ "name": "tester", "id": interpret::to_hex(&here.agent_id) })
+    );
+    assert_eq!(
+        here.host_id, None,
+        "the daemon that took the call places it"
+    );
+    assert_eq!(
+        here.parent, None,
+        "the daemon sets the parent from the caller"
+    );
+    assert_eq!(here.cwd, mcp.cwd.display().to_string());
+    assert_eq!(here.kind(), Kind::Codex);
+    let prompt = here.initial_prompt.clone().unwrap();
+    assert!(matches!(
+        prompt.of,
+        Some(input::Of::Codex(wire::CodexInput {
+            of: Some(wire::codex_input::Of::Prompt(ref p)),
+        })) if p.text == "Write the tests."
+    ));
+    assert!(matches!(
+        here.config,
+        Some(wire::create_agent_request::Config::Codex(_))
+    ));
+
+    mcp.ok(
+        "spawn",
+        json!({ "kind": "claude_sdk", "prompt": "Review it.", "host": "studio" }),
+    )
+    .await;
+    let calls = fleet.calls();
+    let [_, Call::Inventory, Call::Create(there)] = calls.as_slice() else {
+        panic!("inventory then create, got {calls:?}");
+    };
+    assert_eq!(there.host_id.as_deref(), Some(STUDIO.as_slice()));
+    assert_eq!(there.cwd, "", "a path here means nothing there");
+    assert_eq!(there.kind(), Kind::ClaudeSdk);
+
+    assert_eq!(
+        mcp.refused(
+            "spawn",
+            json!({ "kind": "codex", "prompt": "x", "host": "stranger" })
+        )
+        .await,
+        "no trusted host named stranger; trusted hosts: laptop, Studio"
+    );
+    assert_eq!(
+        mcp.refused("spawn", json!({ "kind": "gemini", "prompt": "x" }))
+            .await,
+        "no agent kind \"gemini\"; use claude_pty, claude_sdk or codex"
+    );
+    assert_eq!(fleet.calls().len(), 4, "nothing was created for either");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stop_interrupts_the_named_child_its_own_kinds_way() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let fleet = fleet();
+    let _daemon = Daemon::listen(&mcp.dir, fleet.clone());
+    assert_eq!(mcp.ok("stop", json!({ "name": "helper" })).await, json!({}));
+    let calls = fleet.calls();
+    let [Call::Resolve(_), Call::Input(request)] = calls.as_slice() else {
+        panic!("resolve then input, got {calls:?}");
+    };
+    assert_eq!(request.agent_id, CHILD.to_vec());
+    assert!(matches!(
+        request.input.as_ref().and_then(|input| input.of.as_ref()),
+        Some(input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(wire::claude_sdk_input::Of::Interrupt(_)),
+        }))
+    ));
+
+    let mut fleet = fleet.clone();
+    fleet.reject_input = Some("not your child".into());
+    fleet.calls = Default::default();
+    let mcp_dir = mcp.dir.clone();
+    drop(_daemon);
+    let _daemon = Daemon::listen(&mcp_dir, fleet);
+    assert_eq!(
+        mcp.refused("stop", json!({ "name": "reviewer" })).await,
+        "reviewer did not stop: not your child"
+    );
+}
+
+/// status and attach never dial: here no daemon exists at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn status_answers_ok_without_the_daemon() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        mcp.ok("status", json!({ "working_on": "Splitting the parser" }))
+            .await,
+        json!("ok")
+    );
+    assert_eq!(
+        mcp.ok("status", json!({ "working_on": null })).await,
+        json!("ok")
+    );
+    assert!(started.elapsed() < WINDOW, "no daemon was waited for");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attach_stores_the_file_by_its_hash_and_answers_the_element() {
+    use sha2::Digest as _;
+
+    let mut mcp = Mcp::start(WINDOW).await;
+    let bytes = b"\x89PNG\r\n\x1a\nnot really a picture";
+    std::fs::write(mcp.cwd.join("chart.png"), bytes).unwrap();
+    let hash = sha2::Sha256::digest(bytes).to_vec();
+    let started = tokio::time::Instant::now();
+
+    let (element, error) = mcp.call("attach", json!({ "path": "chart.png" })).await;
+    assert!(!error, "{element}");
+    assert!(started.elapsed() < WINDOW, "no daemon was waited for");
+    let stored = mcp.dir.join(agent::BLOBS).join(interpret::to_hex(&hash));
+    assert_eq!(std::fs::read(&stored).unwrap(), bytes);
+    let expected = wire::Attachment {
+        of: Some(wire::attachment::Of::Image(wire::BlobRef {
+            hash: hash.clone(),
+            name: "chart.png".into(),
+            mime: "image/png".into(),
+            size: bytes.len() as u64,
+        })),
+    };
+    assert_eq!(element, attachments::element(&expected, Some(&stored)));
+    let parsed = attachments::parse(&element);
+    assert_eq!(parsed.positioned.attachments, vec![expected]);
+
+    let (named, _) = mcp
+        .call(
+            "attach",
+            json!({ "path": mcp.cwd.join("chart.png"), "name": "Q3 chart" }),
+        )
+        .await;
+    assert!(named.contains("name=\"Q3 chart\""), "{named}");
+    let missing = mcp.refused("attach", json!({ "path": "nope.txt" })).await;
+    assert!(missing.starts_with("reading "), "{missing}");
+}
+
+/// A daemon that comes up inside the window is reached; with none the call
+/// says so once the window has passed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fleet_call_retries_over_an_update_and_reports_a_missing_daemon() {
+    let mut mcp = Mcp::start(WINDOW).await;
+    let dir = mcp.dir.clone();
+    let fleet = fleet();
+    let restarted = tokio::spawn({
+        let fleet = fleet.clone();
+        async move {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            Daemon::listen(&dir, fleet)
+        }
+    });
+    let listed = mcp.ok("hosts", json!({})).await;
+    assert_eq!(listed["hosts"].as_array().unwrap().len(), 2);
+    drop(restarted.await.unwrap());
+
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        mcp.refused("agents", json!({})).await,
+        NOT_RUNNING,
+        "no daemon listens any more"
+    );
+    let waited = started.elapsed();
+    assert!(
+        waited >= WINDOW - Duration::from_millis(600) && waited < WINDOW * 2,
+        "retried for the window: {waited:?}"
+    );
+}
+
+// --- the whole path, per kind ----------------------------------------------
+
+/// The provider calls status and send through the server its launch names
+/// at the install path; the server dials this agent's tools.sock; the
+/// interpreter draws the send as the message it sent, with the envelope id
+/// the daemon took, and the status as working_on, and neither as a tool row.
+async fn the_harness_runs_the_tool_server_from_the_install_path(kind: &'static str) {
+    let tool = |name: &str, input: Value| {
+        Step::Tool(Tool {
+            name: Some(format!("mcp__amux__{name}")),
+            class: ToolClass::Consequential,
+            input: Some(input),
+            outcome: Default::default(),
+        })
+    };
+    let agent = Agent::start(Setup {
+        kind,
+        steps: vec![
+            tool("status", json!({ "working_on": "Reviewing the parser" })),
+            tool(
+                "send",
+                json!({ "to": "reviewer", "text": "Ready for review." }),
+            ),
+            tool("send", json!({ "to": "ghost", "text": "Anyone?" })),
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let fleet = fleet();
+    let _tools = Daemon::listen(&agent.dir, fleet.clone());
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "go").await, Verdict::Accepted);
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+
+    let log = agent.log();
+    assert_eq!(log.working_on().as_deref(), Some("Reviewing the parser"));
+    let sent = fleet
+        .calls()
+        .into_iter()
+        .find_map(|call| match call {
+            Call::Send(envelope) => Some(envelope),
+            _ => None,
+        })
+        .expect("the daemon took a message");
+    assert_eq!(sent.text, "Ready for review.");
+    let messages = log
+        .full_items()
+        .into_values()
+        .filter_map(|item| drawn(kind, &item).map(|drawn| (item, drawn)))
+        .collect::<Vec<_>>();
+    let summary = messages
+        .iter()
+        .map(|(item, drawn)| match drawn {
+            Drawn::Message(message) => format!(
+                "message to {} {:?} {} {} {}",
+                message.to,
+                message.send_state(),
+                item.text,
+                if message.envelope_id == sent.id {
+                    "with the envelope id"
+                } else {
+                    "without it"
+                },
+                message.rejection
+            ),
+            Drawn::Tool(name) => format!("tool row {name}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [
+            "message to reviewer Sent Ready for review. with the envelope id ",
+            "message to ghost Rejected Anyone? without it no agent named ghost",
+        ],
+        "{kind}"
+    );
+    daemon.stop(StopMode::Graceful).await;
+    agent.exit().await;
+}
+
+enum Drawn {
+    Message(wire::AgentMessage),
+    Tool(String),
+}
+
+/// An item that is a sent agent message or any tool row.
+fn drawn(kind: &str, item: &wire::Item) -> Option<Drawn> {
+    use wire::{claude_pty_item, claude_sdk_item, codex_item, work};
+    let body = item.body.as_slice();
+    match kind {
+        "claude_pty" => match wire::ClaudePtyItem::decode(body).ok()?.kind? {
+            claude_pty_item::Kind::AgentMessage(message) => Some(Drawn::Message(message)),
+            claude_pty_item::Kind::Tool(tool) => Some(Drawn::Tool(tool.name)),
+            _ => None,
+        },
+        "claude_sdk" => match wire::ClaudeSdkItem::decode(body).ok()?.kind? {
+            claude_sdk_item::Kind::AgentMessage(message) => Some(Drawn::Message(message)),
+            claude_sdk_item::Kind::Tool(tool) => Some(Drawn::Tool(tool.name)),
+            _ => None,
+        },
+        _ => match wire::CodexItem::decode(body).ok()?.kind? {
+            codex_item::Kind::AgentMessage(message) => Some(Drawn::Message(message)),
+            codex_item::Kind::Work(work) => match work.of? {
+                work::Of::Mcp(call) => Some(Drawn::Tool(call.tool)),
+                _ => None,
+            },
+            _ => None,
+        },
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_claude_runs_amuxs_tools_through_the_install_path() {
+    the_harness_runs_the_tool_server_from_the_install_path("claude_sdk").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_runs_amuxs_tools_through_the_install_path() {
+    the_harness_runs_the_tool_server_from_the_install_path("codex").await;
+}
+
+#[test]
+fn terminal_claude_runs_amuxs_tools_through_the_install_path() {
+    terminal_test(the_harness_runs_the_tool_server_from_the_install_path(
+        "claude_pty",
+    ));
+}

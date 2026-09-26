@@ -20,6 +20,7 @@ pub mod claude;
 pub mod codex;
 pub mod conformance;
 pub mod lines;
+pub mod mcp;
 pub mod playback;
 pub mod pty;
 pub mod script;

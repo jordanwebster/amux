@@ -123,7 +123,7 @@ impl Provider {
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
         let (session, resume) = provider_session(spec, dir)?;
-        let (args, settings) = claude_launch(spec, false)?;
+        let (args, settings) = claude_launch(spec, dir, false)?;
         let mut command = tokio::process::Command::new(&spec.provider_command);
         command
             .args(&args)
@@ -221,8 +221,19 @@ impl Provider {
             .map(|thread| thread.trim().to_owned())
             .filter(|thread| !thread.is_empty() && spec.incarnation > 1);
         let mut command = tokio::process::Command::new(&spec.provider_command);
+        command.args(&spec.provider_args);
+        // amux's tool server, as configuration overrides in Codex's TOML;
+        // a JSON string or array of strings is the same TOML value.
+        if let Some((server, args)) = tool_server(spec, dir) {
+            let key = format!("mcp_servers.{}", interpret::AMUX_TOOL_SERVER);
+            command.args([
+                "--config".to_owned(),
+                format!("{key}.command={}", serde_json::json!(server)),
+                "--config".to_owned(),
+                format!("{key}.args={}", serde_json::json!(args)),
+            ]);
+        }
         command
-            .args(&spec.provider_args)
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())
@@ -359,7 +370,7 @@ impl Provider {
             }))
             .await;
         let private = dir.join(dir::PRIVATE);
-        let (mut args, settings) = claude_launch(spec, true)?;
+        let (mut args, settings) = claude_launch(spec, dir, true)?;
         args.extend([
             if resume { "--resume" } else { "--session-id" }.to_owned(),
             session.clone(),
@@ -827,15 +838,28 @@ fn closed() -> io::Error {
     io::Error::new(io::ErrorKind::BrokenPipe, "the provider's input is closed")
 }
 
-/// Claude's launch arguments from the spec, less any `--settings`, and the
-/// one settings value the agent passes instead: the user's settings with
-/// the agent's merged over them. Every Claude accepts messages from other
-/// sessions at once, so a bypass-permissions agent does not hold an agent
-/// message behind an approval nobody is there to give; terminal Claude
-/// also reports its hook events to the agent through the hook binary at the
-/// install path.
-fn claude_launch(spec: &AgentSpec, hooks: bool) -> io::Result<(Vec<String>, String)> {
+/// Claude's launch arguments from the spec, less any `--settings`, plus
+/// amux's tool server, and the one settings value the agent passes
+/// instead: the user's settings with the agent's merged over them. Every
+/// Claude accepts messages from other sessions at once, so a
+/// bypass-permissions agent does not hold an agent message behind an
+/// approval nobody is there to give, and runs amux's own tools without
+/// asking; terminal Claude also reports its hook events to the agent
+/// through the hook binary at the install path.
+fn claude_launch(spec: &AgentSpec, dir: &Path, hooks: bool) -> io::Result<(Vec<String>, String)> {
     let mut args = spec.provider_args.clone();
+    let tools = tool_server(spec, dir);
+    if let Some((command, server_args)) = &tools {
+        args.extend([
+            "--mcp-config".to_owned(),
+            serde_json::json!({
+                "mcpServers": {
+                    interpret::AMUX_TOOL_SERVER: { "command": command, "args": server_args },
+                },
+            })
+            .to_string(),
+        ]);
+    }
     let sources = claude::launch::take_settings_args(&mut args).map_err(io::Error::other)?;
     let user = claude::launch::load_user_settings(Path::new(&spec.cwd), &sources)
         .map_err(io::Error::other)?;
@@ -855,10 +879,27 @@ fn claude_launch(spec: &AgentSpec, hooks: bool) -> io::Result<(Vec<String>, Stri
             config.hooks
         },
         accept_cross_session: true,
+        permissions_allow: tools
+            .iter()
+            .map(|_| format!("mcp__{}__*", interpret::AMUX_TOOL_SERVER))
+            .collect(),
         ..Default::default()
     };
     let settings = claude::launch::merged_settings(user, &managed).into_value();
     Ok((args, settings.to_string()))
+}
+
+/// amux's tool server as the harness launches it: the install path's
+/// `mcp` subcommand on this agent's directory, which is how it finds the
+/// socket that identifies it. None without an install path.
+fn tool_server(spec: &AgentSpec, dir: &Path) -> Option<(String, Vec<String>)> {
+    let install_path = spec.config.as_ref()?.install_path.clone();
+    (!install_path.is_empty()).then(|| {
+        (
+            install_path,
+            vec!["mcp".to_owned(), dir.display().to_string()],
+        )
+    })
 }
 
 /// The path a Unix socket in the agent directory is bound and dialled at,

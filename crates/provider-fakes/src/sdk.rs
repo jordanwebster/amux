@@ -97,6 +97,8 @@ struct Engine {
     eof: bool,
     steps: VecDeque<Step>,
     args: Args,
+    /// The tool servers the launch configured.
+    servers: crate::mcp::ToolServers,
     session: String,
     model: String,
     mode: String,
@@ -155,6 +157,7 @@ impl Engine {
             input,
             eof: false,
             steps: script.steps.into(),
+            servers: crate::mcp::ToolServers::from_claude(&args.mcp_config),
             args,
             session,
             model,
@@ -445,8 +448,8 @@ impl Engine {
                 Step::Tool(tool) => {
                     calls += 1;
                     let (id, input) = self.tool_use(&request, &message, &tool).await;
-                    let output = tool.outcome.output.clone();
-                    self.tool_result(&id, &tool, &input, Ok(output)).await;
+                    let outcome = self.outcome(&tool, &input).await;
+                    self.tool_result(&id, &tool, &input, outcome).await;
                     self.fold().await;
                 }
                 Step::Ask(ask) => {
@@ -620,6 +623,18 @@ impl Engine {
         frame["wire_tool_inputs"] = json!({ id.clone(): input.clone() });
         self.send(frame).await;
         (id, input)
+    }
+
+    /// What a call returns: a configured tool server's answer, or the
+    /// script's output.
+    async fn outcome(&mut self, tool: &Tool, input: &Value) -> Result<String, String> {
+        let (name, _) = claude_tool(tool, &self.cwd);
+        if let Some((server, tool_name)) = crate::mcp::ToolServers::split(&name)
+            && let Some(answer) = self.servers.call(server, tool_name, input).await
+        {
+            return answer;
+        }
+        Ok(tool.outcome.output.clone())
     }
 
     /// The tool's result row: its output, or the refusal or failure text.

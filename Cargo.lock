@@ -14,6 +14,8 @@ version = "0.1.0"
 dependencies = [
  "attachments",
  "claude",
+ "futures-util",
+ "hyper-util",
  "interpret",
  "journal",
  "libc",
@@ -22,9 +24,12 @@ dependencies = [
  "pty-host",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tonic",
+ "tower",
  "uuid",
  "wire",
 ]

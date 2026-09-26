@@ -17,6 +17,8 @@ pub struct Args {
     pub permission_mode: Option<String>,
     pub replay_user_messages: bool,
     pub include_partial_messages: bool,
+    /// Every `--mcp-config` value, read from its file when it is a path.
+    pub mcp_config: Vec<Value>,
 }
 
 impl Args {
@@ -46,6 +48,16 @@ impl Args {
                         if let Ok(settings) = settings {
                             parsed.settings.push(settings);
                         }
+                    }
+                }
+                "--mcp-config" => {
+                    if let Some(source) = value() {
+                        let config = serde_json::from_str(&source).ok().or_else(|| {
+                            std::fs::read(&source)
+                                .ok()
+                                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                        });
+                        parsed.mcp_config.extend(config);
                     }
                 }
                 "--session-id" => parsed.session_id = value(),

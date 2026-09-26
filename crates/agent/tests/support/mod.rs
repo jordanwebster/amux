@@ -41,7 +41,8 @@ pub fn agent_release() -> PathBuf {
 /// slow to go away after its input closes.
 const HOLD_SCRIPT: &str = r#""$0" "$@"; while [ ! -e "$AMUX_TEST_HOLD" ]; do sleep 0.02; done"#;
 
-/// The fake provider binaries, built once per test run.
+/// The fake provider binaries and the install path's stand-in, built once
+/// per test run.
 pub fn fakes() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
@@ -55,6 +56,10 @@ pub fn fakes() -> &'static Path {
                 "-p",
                 "claude",
                 "--bins",
+                "-p",
+                "agent",
+                "--example",
+                "amux_stand_in",
             ])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()
@@ -67,6 +72,17 @@ pub fn fakes() -> &'static Path {
             .expect("a target directory")
             .to_owned()
     })
+}
+
+/// The stand-in for the amux binary at the install path: `hooks claude`
+/// and `mcp <dir>`, as the harness launches them.
+pub fn install_path() -> String {
+    fakes()
+        .join("examples")
+        .join(format!("amux_stand_in{}", std::env::consts::EXE_SUFFIX))
+        .to_str()
+        .unwrap()
+        .to_owned()
 }
 
 pub struct Setup {
@@ -220,8 +236,8 @@ impl Agent {
                 grace_ms: GRACE as u32,
                 drain_ms: DRAIN as u32,
                 facts_ring_bytes: setup.ring_bytes,
-                // The hook binary, as the installation would run it.
-                install_path: fakes().join("claude-hook").to_str().unwrap().to_owned(),
+                // What the harness runs for hooks and the tool server.
+                install_path: install_path(),
                 ..Default::default()
             }),
             daemon_version: "test".into(),
@@ -703,6 +719,11 @@ impl Log {
             .iter()
             .rev()
             .find_map(|step| step.snapshot.as_ref())
+    }
+
+    /// What the newest snapshot says the agent is working on.
+    pub fn working_on(&self) -> Option<String> {
+        self.snapshot()?.working_on.clone()
     }
 
     pub fn phase(&self) -> Option<Phase> {

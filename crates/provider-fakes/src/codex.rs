@@ -85,6 +85,8 @@ struct Engine {
     next_request: u64,
     next_item: u64,
     last_message: Option<Value>,
+    /// The tool servers the launch configured.
+    servers: crate::mcp::ToolServers,
 }
 
 impl Engine {
@@ -120,6 +122,9 @@ impl Engine {
             next_request: 0,
             next_item: 0,
             last_message: None,
+            servers: crate::mcp::ToolServers::from_codex(
+                &std::env::args().skip(1).collect::<Vec<_>>(),
+            ),
         }
     }
 
@@ -586,6 +591,15 @@ impl Engine {
     /// `approval` the call waits for the host's decision first.
     async fn tool(&mut self, turn: &str, tool: &Tool, approval: Option<()>) {
         let thread = self.thread_id();
+        if let Some((server, name)) = tool
+            .name
+            .as_deref()
+            .and_then(crate::mcp::ToolServers::split)
+            && self.servers.configures(server)
+        {
+            let (server, name) = (server.to_owned(), name.to_owned());
+            return self.server_tool(turn, &server, &name, tool).await;
+        }
         if tool.name.as_deref() == Some("apply_patch") {
             let id = self.item_id("patch_");
             let changes = tool.input.clone().unwrap_or_else(|| {
@@ -788,6 +802,48 @@ impl Engine {
             }
             Ask::Plan { .. } => unreachable!("refused when the script loaded"),
         }
+    }
+
+    /// A call to a tool server the launch configured, answered by it.
+    async fn server_tool(&mut self, turn: &str, server: &str, name: &str, tool: &Tool) {
+        let arguments = tool.input.clone().unwrap_or_else(|| json!({}));
+        let mut item = json!({
+            "appContext": null,
+            "arguments": arguments,
+            "durationMs": null,
+            "error": null,
+            "id": self.item_id("exec-"),
+            "mcpAppUi": null,
+            "pluginId": null,
+            "readOnlyHint": null,
+            "result": null,
+            "server": server,
+            "status": "inProgress",
+            "tool": name,
+            "type": "mcpToolCall",
+        });
+        self.item(turn, "item/started", &item).await;
+        let answer = self
+            .servers
+            .call(server, name, &arguments)
+            .await
+            .unwrap_or_else(|| Ok(tool.outcome.output.clone()));
+        item["durationMs"] = json!(0);
+        match answer {
+            Ok(text) => {
+                item["result"] = json!({
+                    "_meta": null,
+                    "content": [{ "text": text, "type": "text" }],
+                    "structuredContent": null,
+                });
+                item["status"] = json!("completed");
+            }
+            Err(error) => {
+                item["error"] = json!({ "message": error });
+                item["status"] = json!("failed");
+            }
+        }
+        self.item(turn, "item/completed", &item).await;
     }
 
     /// A tool-server call that asks the host through its server.

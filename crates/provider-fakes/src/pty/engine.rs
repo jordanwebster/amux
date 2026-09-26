@@ -269,6 +269,8 @@ struct Engine {
     closed: bool,
     steps: VecDeque<Step>,
     args: Args,
+    /// The tool servers the launch configured.
+    servers: crate::mcp::ToolServers,
     messaging: Option<Messaging>,
     session: String,
     model: String,
@@ -315,6 +317,7 @@ impl Engine {
                 .permission_mode
                 .clone()
                 .unwrap_or_else(|| "default".into()),
+            servers: crate::mcp::ToolServers::from_claude(&args.mcp_config),
             args,
             messaging,
             session,
@@ -601,7 +604,8 @@ impl Engine {
                 }
                 Step::Tool(tool) => {
                     let (id, name, input) = self.tool_use(&request, &message, &tool);
-                    self.finish_tool(&id, &name, &input, &tool, Ok(tool.outcome.output.clone()));
+                    let outcome = self.outcome(&name, &tool, &input).await;
+                    self.finish_tool(&id, &name, &input, &tool, outcome);
                     self.fold();
                 }
                 Step::Ask(ask) => {
@@ -738,6 +742,17 @@ impl Engine {
     }
 
     /// The call's result row, and its PostToolUse hook when it ran.
+    /// What a call returns: a configured tool server's answer, or the
+    /// script's output.
+    async fn outcome(&mut self, name: &str, tool: &Tool, input: &Value) -> Result<String, String> {
+        if let Some((server, tool_name)) = crate::mcp::ToolServers::split(name)
+            && let Some(answer) = self.servers.call(server, tool_name, input).await
+        {
+            return answer;
+        }
+        Ok(tool.outcome.output.clone())
+    }
+
     fn finish_tool(
         &mut self,
         id: &str,

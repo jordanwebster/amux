@@ -9,14 +9,18 @@ publish = false
 [dependencies]
 attachments = { workspace = true }
 claude = { workspace = true, features = ["pty"] }
+hyper-util = { workspace = true }
 interpret = { workspace = true }
 journal = { workspace = true }
 prost = { workspace = true }
 serde = { workspace = true }
 pty-host = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }
 
@@ -24,5 +28,6 @@ wire = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+futures-util = { workspace = true }
 provider-fakes = { workspace = true }
 tempfile = { workspace = true }
