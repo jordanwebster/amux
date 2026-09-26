@@ -1,0 +1,27 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The agent process: hosts one provider, runs its interpreter and writes its journal"
+publish = false
+
+[dependencies]
+attachments = { workspace = true }
+claude = { workspace = true }
+interpret = { workspace = true }
+journal = { workspace = true }
+prost = { workspace = true }
+pty-host = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+provider-fakes = { workspace = true }
+tempfile = { workspace = true }

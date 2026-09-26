@@ -6,6 +6,7 @@ resolver = "2"
 # app-runtime, client, node, node-test-support, qualification, shot, testnet,
 # tui, ui-runtime.
 members = [
+    "crates/agent",
     "crates/artifacts",
     "crates/attachments",
     "crates/claude",
@@ -51,6 +52,7 @@ license = "FSL-1.1-ALv2"
 
 [workspace.dependencies]
 # Internal
+agent = { path = "crates/agent" }
 agent-runtime = { path = "crates/agent-runtime" }
 app-embedded = { path = "crates/app-embedded" }
 app-ffi = { path = "crates/app-ffi" }

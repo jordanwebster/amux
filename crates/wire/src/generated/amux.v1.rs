@@ -3509,10 +3509,12 @@ pub struct EffectiveConfig {
     /// Hook policy: which provider hooks the agent process installs.
     #[prost(string, repeated, tag = "1")]
     pub hooks: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// How long a graceful stop waits for the provider before aborting.
+    /// How long the agent waits for a daemon after ctl.sock closes (or before
+    /// one first dials in) before it drains.
     #[prost(uint32, tag = "2")]
     pub grace_ms: u32,
-    /// How long the agent keeps writing its journal with no daemon.
+    /// How long a draining agent with no daemon keeps an ask open before it
+    /// exits orphaned.
     #[prost(uint32, tag = "3")]
     pub drain_ms: u32,
     #[prost(uint64, tag = "4")]

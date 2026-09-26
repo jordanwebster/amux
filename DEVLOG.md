@@ -1,3 +1,28 @@
+2026-09-26 — **The agent process hosts one provider and decides its own lifecycle.**
+New crate `agent`: `agent::run(dir, clock)` (the future `amux agent <dir>`)
+takes the directory's lock, reads the newest `spec.<n>`, listens on
+`ctl.sock` (and `pty.sock` and `private/hooks.sock` for Claude in a
+terminal), starts the provider child in its own process group and runs the
+kind's interpreter, journaling every step and writing raw terminal bytes to
+`pty/` segments. A daemon that dials in gets a Hello, a Nudge whenever the
+journal grows, and the interpreter's verdict on every input. With no daemon
+connected a grace timer runs; a redial cancels it; when it runs out the
+agent writes a daemon-lost boundary, finishes its turn and exits, and an
+ask nobody can answer exits "orphaned while waiting for you" at the drain
+deadline. Stop graceful finishes the turn, abort cancels it the provider's
+way (closing an open ask), kill ends the process group at once and writes
+nothing; a draining agent answers rejected{draining}. A child agent is
+one-shot: its queued follow-ups run first, then it exits and answers late
+input rejected{exiting}. The child's exit ends the agent without waiting
+for a terminal reader a straggler can hold open. Sockets go through a small
+local-socket layer: Unix sockets (reached through a short per-user link when
+the path is too long for `sockaddr_un`) and Windows named pipes. Headless
+Claude now counts as ready once it answers `initialize`, since it writes its
+init only after the first message. Lifecycle tests run the real agent
+against the fake providers on a hand-driven clock. Claude in a terminal
+still needs its keymap, hooks and transcript wiring, and Codex its app
+server; those come next.
+
 2026-09-26 — **Journey scripts move to the fake providers' format; testnet's scripted providers are gone.**
 The six scripts under journeys/scripts are rewritten as provider-fakes
 scripts (linear steps: text, pauses, a permission ask, turn ends), and a

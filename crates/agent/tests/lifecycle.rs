@@ -1,0 +1,311 @@
+//! The agent process's lifecycle, run against the scripted fake providers
+//! with real sockets, files and child processes, and a clock the test moves
+//! by hand: every deadline fires exactly when the test says so.
+
+mod support;
+
+use std::time::Duration;
+
+use agent::ExitCause;
+use provider_fakes::{Ask, Outcome, Step, Tool, ToolClass};
+use support::*;
+use wire::{Phase, StopMode};
+
+fn text(chunk: &str) -> Step {
+    Step::Text {
+        chunks: vec![chunk.to_owned()],
+    }
+}
+
+fn permission() -> Step {
+    Step::Ask(Ask::Permission(Tool {
+        name: None,
+        class: ToolClass::Consequential,
+        input: None,
+        outcome: Outcome::default(),
+    }))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_no_daemon_the_agent_runs_its_first_prompt_then_drains_after_the_grace() {
+    let agent = Agent::start(Setup {
+        initial_prompt: Some("go"),
+        steps: vec![text("done"), Step::TurnEnd],
+        ..Setup::sdk()
+    })
+    .await;
+    agent
+        .wait("the first turn ends", |log| log.turn_ends() == 1)
+        .await;
+    assert!(!agent.finished(), "a live agent waits out the grace");
+
+    agent.clock.armed(T0 + GRACE).await;
+    agent.clock.set(T0 + GRACE);
+    assert_eq!(agent.exit().await, ExitCause::DaemonLost);
+
+    let log = agent.log();
+    assert_eq!(
+        log.boundaries(),
+        vec![
+            "STARTED".to_owned(),
+            "DAEMON_LOST".to_owned(),
+            "EXITED daemon lost".to_owned()
+        ]
+    );
+    agent.assert_released();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_orphan_finishes_its_turn_before_it_exits() {
+    let agent = Agent::start(Setup {
+        steps: vec![
+            text("working"),
+            Step::WaitFor {
+                path: agent_release(),
+            },
+            text("done"),
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "start").await, Verdict::Accepted);
+    agent
+        .wait("the turn is under way", |log| log.has_text("working"))
+        .await;
+    drop(daemon);
+
+    agent.clock.armed(T0 + GRACE).await;
+    agent.clock.set(T0 + GRACE);
+    agent
+        .wait("the daemon-lost boundary", |log| {
+            log.boundaries().contains(&"DAEMON_LOST".to_owned())
+        })
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!agent.finished(), "an orphan lives as long as its turn");
+    assert_eq!(agent.log().turn_ends(), 0);
+
+    agent.release();
+    assert_eq!(agent.exit().await, ExitCause::DaemonLost);
+    let log = agent.log();
+    assert!(log.has_text("done"), "the turn ran to its end");
+    assert_eq!(
+        log.sequence(),
+        vec![
+            "boundary STARTED".to_owned(),
+            "boundary DAEMON_LOST".to_owned(),
+            "turn end".to_owned(),
+            "boundary EXITED daemon lost".to_owned()
+        ]
+    );
+    agent.assert_released();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_dialling_back_in_cancels_the_grace() {
+    let agent = Agent::start(Setup::sdk()).await;
+    let daemon = agent.dial().await;
+    drop(daemon);
+    agent.clock.armed(T0 + GRACE).await;
+
+    let mut daemon = agent.dial().await;
+    agent
+        .until("the grace is no longer armed", || {
+            agent.clock.sleeping().is_empty()
+        })
+        .await;
+    agent.clock.set(T0 + GRACE + 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!agent.finished());
+    // Headless Claude reports its start with the first prompt; there has
+    // been none, so any boundary here would be the drain's.
+    assert_eq!(agent.log().boundaries(), Vec::<String>::new());
+
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ask_nobody_can_answer_exits_at_the_drain_deadline() {
+    let agent = Agent::start(Setup {
+        steps: vec![permission(), text("never"), Step::TurnEnd],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "clean up").await, Verdict::Accepted);
+    agent
+        .wait("the ask is open", |log| {
+            log.phase() == Some(Phase::NeedsYou)
+        })
+        .await;
+    drop(daemon);
+
+    agent.clock.armed(T0 + GRACE).await;
+    agent.clock.set(T0 + GRACE);
+    agent.clock.armed(T0 + GRACE + DRAIN).await;
+    assert!(!agent.finished(), "the ask gets the drain deadline");
+    agent.clock.set(T0 + GRACE + DRAIN);
+    assert_eq!(agent.exit().await, ExitCause::Orphaned);
+
+    let log = agent.log();
+    assert_eq!(
+        log.boundaries().last().map(String::as_str),
+        Some("EXITED orphaned while waiting for you")
+    );
+    assert_eq!(log.open_asks(), 0, "the final snapshot closes the ask");
+    assert!(!log.has_text("never"));
+    agent.assert_released();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn abort_cancels_the_turn_under_an_open_ask_and_exits() {
+    let agent = Agent::start(Setup {
+        steps: vec![permission(), text("never"), Step::TurnEnd],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "clean up").await, Verdict::Accepted);
+    agent
+        .wait("the ask is open", |log| {
+            log.phase() == Some(Phase::NeedsYou)
+        })
+        .await;
+
+    daemon.stop(StopMode::Abort).await;
+    assert_eq!(agent.exit().await, ExitCause::Aborted);
+    let log = agent.log();
+    assert_eq!(
+        log.turn_ends(),
+        1,
+        "the provider ended the turn its own way"
+    );
+    assert_eq!(
+        log.boundaries().last().map(String::as_str),
+        Some("EXITED aborted")
+    );
+    assert_eq!(log.open_asks(), 0);
+    assert!(!log.has_text("never"));
+    agent.assert_released();
+}
+
+// Process groups and the tools that observe them are POSIX.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn kill_ends_the_process_group_at_once_and_writes_nothing() {
+    let marker = format!("kill-{}", uuid::Uuid::new_v4().simple());
+    let agent = Agent::start(Setup {
+        provider_args: vec!["--model".into(), marker.clone()],
+        steps: vec![
+            text("busy"),
+            Step::WaitFor {
+                path: agent_release(),
+            },
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", "work").await, Verdict::Accepted);
+    agent
+        .wait("the turn is under way", |log| log.has_text("busy"))
+        .await;
+    assert!(running(&marker), "the provider is running");
+
+    daemon.stop(StopMode::Kill).await;
+    assert_eq!(agent.exit().await, ExitCause::Killed);
+    agent
+        .until("the provider is gone", || !running(&marker))
+        .await;
+    assert_eq!(agent.log().boundaries(), vec!["STARTED".to_owned()]);
+    agent.assert_released();
+}
+
+// The provider held past its exit is a POSIX shell wrapper.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_one_shot_child_runs_its_queued_follow_up_then_exits_and_refuses_late_input() {
+    let agent = Agent::start(Setup {
+        parent: true,
+        initial_prompt: Some("first"),
+        hold: true,
+        steps: vec![
+            text("one"),
+            Step::WaitFor {
+                path: agent_release(),
+            },
+            Step::TurnEnd,
+            text("two"),
+            Step::TurnEnd,
+        ],
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent
+        .wait("the first turn is under way", |log| log.has_text("one"))
+        .await;
+    assert_eq!(daemon.prompt(b"p2", "second").await, Verdict::Queued);
+
+    agent.release();
+    agent
+        .wait("the one-shot exit", |log| {
+            log.boundaries().last().map(String::as_str) == Some("EXITED finished")
+        })
+        .await;
+    let log = agent.log();
+    assert_eq!(log.turn_ends(), 2, "the queued follow-up ran first");
+    assert!(log.has_text("two"));
+    assert!(!agent.finished(), "the provider is still shutting down");
+
+    assert_eq!(
+        daemon.prompt(b"p3", "too late").await,
+        Verdict::Rejected("exiting".into())
+    );
+    agent.unhold();
+    assert_eq!(agent.exit().await, ExitCause::Finished);
+    agent.assert_released();
+}
+
+// The straggler is started by a POSIX shell.
+#[cfg(unix)]
+#[test]
+fn the_agent_exits_on_its_child_exit_while_a_straggler_holds_the_terminal() {
+    let straggler = format!("sleep 29.{}", std::process::id());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let outcome = runtime.block_on(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            command: Some("/bin/sh".into()),
+            provider_args: vec!["-c".into(), format!("{straggler} & printf started; exit 3")],
+            ..Setup::sdk()
+        })
+        .await;
+        let cause = agent.exit().await;
+        (cause, agent)
+    });
+    // The terminal reader is still blocked on the straggler; leave it.
+    runtime.shutdown_background();
+    let (cause, agent) = outcome;
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", &straggler])
+        .status();
+    assert_eq!(cause, ExitCause::ProviderExited(Some(3)));
+    assert!(agent.terminal_bytes().contains("started"));
+    assert_eq!(
+        agent.log().boundaries().last().map(String::as_str),
+        Some("EXITED exit code 3")
+    );
+    agent.assert_released();
+}

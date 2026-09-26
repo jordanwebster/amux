@@ -1,0 +1,482 @@
+//! A harness for agent process tests: an agent directory with a spec that
+//! runs a fake provider, the agent on a hand-driven clock, a stand-in daemon
+//! on ctl.sock, and a reader of what the agent journaled.
+
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+use agent::local_socket::{self, LocalStream};
+use agent::{AgentError, ExitCause, ManualClock};
+use prost::Message as _;
+use provider_fakes::{SCRIPT_ENV, Script, Step};
+use tokio::io::{ReadHalf, WriteHalf};
+use tokio::task::JoinHandle;
+use wire::{
+    AgentHello, AgentParent, AgentSpec, ClaudePtyItem, ClaudeSdkInput, ClaudeSdkItem,
+    ClaudeSdkSnapshot, CtlFrame, EffectiveConfig, Input, Phase, PromptInput, Stop, StopMode,
+    claude_pty_item, claude_sdk_input, claude_sdk_item, ctl_frame, input, send_input_response,
+};
+
+/// When every agent in these tests starts.
+pub const T0: i64 = 1_800_000_000_000;
+pub const GRACE: i64 = 60_000;
+pub const DRAIN: i64 = 120_000;
+
+/// How long any one wait in a test may take before it is a hang.
+const PATIENCE: Duration = Duration::from_secs(30);
+
+/// Stands for the agent's release file in a script: a `wait_for` on it
+/// holds the turn until the test calls [`Agent::release`].
+const RELEASE: &str = "@release";
+
+pub fn agent_release() -> PathBuf {
+    PathBuf::from(RELEASE)
+}
+
+/// Runs the fake, then stays until the hold file exists: a provider that is
+/// slow to go away after its input closes.
+const HOLD_SCRIPT: &str = r#""$0" "$@"; while [ ! -e "$AMUX_TEST_HOLD" ]; do sleep 0.02; done"#;
+
+/// The fake provider binaries, built once per test run.
+pub fn fakes() -> &'static Path {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = std::process::Command::new(cargo)
+            .args(["build", "--locked", "-p", "provider-fakes", "--bins"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "building the fake providers failed");
+        // target/<profile>/deps/<this test> -> target/<profile>
+        let exe = std::env::current_exe().expect("the test binary's path");
+        exe.parent()
+            .and_then(Path::parent)
+            .expect("a target directory")
+            .to_owned()
+    })
+}
+
+pub struct Setup {
+    pub kind: &'static str,
+    /// The provider command; the kind's fake when None.
+    pub command: Option<String>,
+    pub provider_args: Vec<String>,
+    pub steps: Vec<Step>,
+    pub initial_prompt: Option<&'static str>,
+    /// Whether the agent has a parent, which makes it one-shot.
+    pub parent: bool,
+    /// Keep the provider's process alive after the fake exits, until
+    /// [`Agent::unhold`].
+    pub hold: bool,
+}
+
+impl Setup {
+    pub fn sdk() -> Self {
+        Self {
+            kind: "claude_sdk",
+            command: None,
+            provider_args: Vec::new(),
+            steps: Vec::new(),
+            initial_prompt: None,
+            parent: false,
+            hold: false,
+        }
+    }
+}
+
+pub struct Agent {
+    _root: tempfile::TempDir,
+    pub dir: PathBuf,
+    pub clock: ManualClock,
+    release: PathBuf,
+    hold: PathBuf,
+    task: Mutex<Option<JoinHandle<Result<ExitCause, AgentError>>>>,
+    reader: Mutex<(journal::Reader, Log)>,
+}
+
+impl Agent {
+    pub async fn start(setup: Setup) -> Self {
+        let root = tempfile::tempdir().expect("a temp dir");
+        let dir = root.path().join("agents").join("a1");
+        let work = root.path().join("work");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        let release = root.path().join("release");
+        let hold = root.path().join("hold");
+
+        let script = Script {
+            steps: setup.steps,
+            ..Script::default()
+        };
+        let script = serde_json::to_string(&script)
+            .unwrap()
+            .replace(RELEASE, release.to_str().unwrap());
+        let script_path = root.path().join("script.json");
+        std::fs::write(&script_path, script).unwrap();
+
+        let fake = fakes().join(match setup.kind {
+            "claude_pty" => "fake-claude-pty",
+            "codex" => "fake-codex",
+            _ => "fake-claude-sdk",
+        });
+        let (command, mut provider_args) = match (setup.command, setup.hold) {
+            (Some(command), _) => (command, Vec::new()),
+            (None, true) => (
+                "/bin/sh".to_owned(),
+                vec![
+                    "-c".to_owned(),
+                    HOLD_SCRIPT.to_owned(),
+                    fake.to_str().unwrap().to_owned(),
+                ],
+            ),
+            (None, false) => (fake.to_str().unwrap().to_owned(), Vec::new()),
+        };
+        provider_args.extend(setup.provider_args);
+        let spec = AgentSpec {
+            agent_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
+            profile_id: vec![9; 16],
+            kind: setup.kind.to_owned(),
+            cwd: work.to_str().unwrap().to_owned(),
+            name: "test".into(),
+            parent: setup.parent.then(|| AgentParent {
+                host_id: vec![1; 16],
+                agent_id: vec![2; 16],
+            }),
+            provider_args,
+            provider_env: [
+                (
+                    SCRIPT_ENV.to_owned(),
+                    script_path.to_str().unwrap().to_owned(),
+                ),
+                (
+                    "AMUX_TEST_HOLD".to_owned(),
+                    hold.to_str().unwrap().to_owned(),
+                ),
+            ]
+            .into(),
+            provider_command: command,
+            config: Some(EffectiveConfig {
+                grace_ms: GRACE as u32,
+                drain_ms: DRAIN as u32,
+                ..Default::default()
+            }),
+            daemon_version: "test".into(),
+            created_at_ms: T0,
+            incarnation: 1,
+            initial_prompt: setup.initial_prompt.map(|text| prompt(b"p0", text)),
+            ..Default::default()
+        };
+        std::fs::write(dir.join("spec.1"), spec.encode_to_vec()).unwrap();
+
+        let clock = ManualClock::new(T0);
+        let task = tokio::spawn(agent::run(dir.clone(), clock.clone()));
+        let reader = journal::Reader::new(dir.join(agent::JOURNAL), 0);
+        Self {
+            _root: root,
+            dir,
+            clock,
+            release,
+            hold,
+            task: Mutex::new(Some(task)),
+            reader: Mutex::new((reader, Log::default())),
+        }
+    }
+
+    /// Dials ctl.sock as the daemon does and reads the Hello.
+    pub async fn dial(&self) -> Daemon {
+        let path = self.dir.join(agent::CTL_SOCK);
+        let stream = tokio::time::timeout(PATIENCE, async {
+            loop {
+                if let Ok(stream) = local_socket::connect(&path).await {
+                    return stream;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("ctl.sock accepts a connection");
+        let (mut reader, writer) = tokio::io::split(stream);
+        let hello = match next_frame(&mut reader).await.of {
+            Some(ctl_frame::Of::Hello(hello)) => hello,
+            other => panic!("the first frame is a Hello, not {other:?}"),
+        };
+        Daemon {
+            reader,
+            writer,
+            hello,
+        }
+    }
+
+    /// Waits until the provider takes input, so a prompt runs at once rather
+    /// than queueing.
+    pub async fn ready(&self) {
+        self.wait("the provider to take input", |log| {
+            log.phase() == Some(Phase::Idle)
+        })
+        .await;
+    }
+
+    /// Waits until what the agent journaled satisfies `done`.
+    pub async fn wait(&self, what: &str, done: impl Fn(&Log) -> bool) {
+        let waited = tokio::time::timeout(PATIENCE, async {
+            loop {
+                if done(&self.log()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            waited.is_ok(),
+            "timed out waiting for {what}; journal: {:#?}",
+            self.log().sequence()
+        );
+    }
+
+    pub async fn until(&self, what: &str, done: impl Fn() -> bool) {
+        let waited = tokio::time::timeout(PATIENCE, async {
+            while !done() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "timed out waiting until {what}");
+    }
+
+    /// Everything journaled so far.
+    pub fn log(&self) -> Log {
+        let mut reader = self.reader.lock().unwrap();
+        let (journal, log) = &mut *reader;
+        if let Ok(batch) = journal.read_to_end() {
+            log.steps
+                .extend(batch.frames.into_iter().map(|(_, step)| step));
+        }
+        log.clone()
+    }
+
+    pub fn finished(&self) -> bool {
+        self.task
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(JoinHandle::is_finished)
+    }
+
+    /// The agent's exit cause, once it exits.
+    pub async fn exit(&self) -> ExitCause {
+        let task = self.task.lock().unwrap().take().expect("the agent runs");
+        tokio::time::timeout(PATIENCE, task)
+            .await
+            .expect("the agent exits")
+            .expect("the agent task does not panic")
+            .expect("the agent runs without error")
+    }
+
+    /// Lets a turn waiting on the release file go on.
+    pub fn release(&self) {
+        std::fs::write(&self.release, b"").unwrap();
+    }
+
+    /// Lets a held provider process go.
+    pub fn unhold(&self) {
+        std::fs::write(&self.hold, b"").unwrap();
+    }
+
+    /// The directory is free for the next incarnation: the lock is released
+    /// and the control socket is gone.
+    pub fn assert_released(&self) {
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .open(self.dir.join(agent::LOCK))
+            .unwrap();
+        assert!(lock.try_lock().is_ok(), "the agent released its lock");
+        assert!(
+            !self.dir.join(agent::CTL_SOCK).exists(),
+            "the agent removed ctl.sock"
+        );
+    }
+
+    /// Everything the provider wrote to its terminal.
+    pub fn terminal_bytes(&self) -> String {
+        let pty = self.dir.join(agent::PTY);
+        let mut bytes = Vec::new();
+        for start in journal::segments(&pty).unwrap() {
+            bytes.extend(std::fs::read(journal::segment_path(&pty, start)).unwrap());
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// Whether a process whose command line contains `marker` is running.
+pub fn running(marker: &str) -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-f", marker])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+pub fn prompt(id: &[u8], text: &str) -> Input {
+    Input {
+        input_id: id.to_vec(),
+        of: Some(input::Of::ClaudeSdk(ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Prompt(PromptInput {
+                text: text.to_owned(),
+                ..Default::default()
+            })),
+        })),
+    }
+}
+
+async fn next_frame(reader: &mut ReadHalf<LocalStream>) -> CtlFrame {
+    tokio::time::timeout(PATIENCE, agent::read_frame(reader))
+        .await
+        .expect("a frame arrives")
+        .expect("the frame reads")
+        .expect("the agent has not closed ctl.sock")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Accepted,
+    Queued,
+    Rejected(String),
+}
+
+/// A stand-in daemon on ctl.sock.
+pub struct Daemon {
+    reader: ReadHalf<LocalStream>,
+    writer: WriteHalf<LocalStream>,
+    pub hello: AgentHello,
+}
+
+impl Daemon {
+    async fn send(&mut self, of: ctl_frame::Of) {
+        agent::write_frame(&mut self.writer, &CtlFrame { of: Some(of) })
+            .await
+            .expect("ctl.sock takes the frame");
+    }
+
+    /// Sends a prompt and returns the agent's verdict on it.
+    pub async fn prompt(&mut self, id: &[u8], text: &str) -> Verdict {
+        self.send(ctl_frame::Of::Input(prompt(id, text))).await;
+        loop {
+            if let Some(ctl_frame::Of::Reply(reply)) = next_frame(&mut self.reader).await.of
+                && reply.input_id == id
+            {
+                return match reply.verdict.and_then(|verdict| verdict.of) {
+                    Some(send_input_response::Of::Accepted(accepted)) if accepted.queued => {
+                        Verdict::Queued
+                    }
+                    Some(send_input_response::Of::Accepted(_)) => Verdict::Accepted,
+                    Some(send_input_response::Of::Rejected(rejected)) => {
+                        Verdict::Rejected(rejected.reason)
+                    }
+                    None => panic!("a reply without a verdict"),
+                };
+            }
+        }
+    }
+
+    pub async fn stop(&mut self, mode: StopMode) {
+        self.send(ctl_frame::Of::Stop(Stop { mode: mode as i32 }))
+            .await;
+    }
+}
+
+/// What the agent journaled, read the way the goldens read it.
+#[derive(Clone, Debug, Default)]
+pub struct Log {
+    pub steps: Vec<wire::Step>,
+}
+
+impl Log {
+    pub fn turn_ends(&self) -> usize {
+        self.steps
+            .iter()
+            .filter(|step| step.turn_end.is_some())
+            .count()
+    }
+
+    /// Boundaries in order, as `KIND` or `KIND cause`.
+    pub fn boundaries(&self) -> Vec<String> {
+        self.sequence()
+            .into_iter()
+            .filter_map(|entry| entry.strip_prefix("boundary ").map(str::to_owned))
+            .collect()
+    }
+
+    /// Boundaries and turn ends, in the order they were journaled.
+    pub fn sequence(&self) -> Vec<String> {
+        let mut sequence = Vec::new();
+        for step in &self.steps {
+            for item in &step.items {
+                if let Some(boundary) = boundary(item) {
+                    sequence.push(format!("boundary {boundary}"));
+                }
+            }
+            if step.turn_end.is_some() {
+                sequence.push("turn end".to_owned());
+            }
+        }
+        sequence
+    }
+
+    pub fn has_text(&self, text: &str) -> bool {
+        self.steps.iter().any(|step| {
+            step.items.iter().any(|item| item.text.contains(text))
+                || step.appends.iter().any(|append| append.text.contains(text))
+        })
+    }
+
+    fn snapshot(&self) -> Option<&wire::Snapshot> {
+        self.steps
+            .iter()
+            .rev()
+            .find_map(|step| step.snapshot.as_ref())
+    }
+
+    pub fn phase(&self) -> Option<Phase> {
+        self.snapshot().map(wire::Snapshot::phase)
+    }
+
+    pub fn open_asks(&self) -> usize {
+        let snapshot = self.snapshot().expect("a snapshot");
+        match snapshot.kind.as_str() {
+            "claude_sdk" => ClaudeSdkSnapshot::decode(snapshot.body.as_slice())
+                .unwrap()
+                .asks
+                .len(),
+            other => panic!("no snapshot reader for {other}"),
+        }
+    }
+}
+
+fn boundary(item: &wire::Item) -> Option<String> {
+    let boundary = match item.kind.as_str() {
+        "claude_sdk" => match ClaudeSdkItem::decode(item.body.as_slice()).ok()?.kind? {
+            claude_sdk_item::Kind::Boundary(boundary) => boundary,
+            _ => return None,
+        },
+        "claude_pty" => match ClaudePtyItem::decode(item.body.as_slice()).ok()?.kind? {
+            claude_pty_item::Kind::Boundary(boundary) => boundary,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let kind = boundary
+        .kind()
+        .as_str_name()
+        .trim_start_matches("BOUNDARY_KIND_")
+        .to_owned();
+    Some(if boundary.cause.is_empty() {
+        kind
+    } else {
+        format!("{kind} {}", boundary.cause)
+    })
+}
