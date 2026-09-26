@@ -67,9 +67,19 @@ pub async fn front_door(config: &InstallationConfig) -> Result<Channel> {
              daemon belongs to the service manager that runs it; waiting for it to start \
              (`amux server start` starts one by hand)."
         ),
-        Switch::On => eprintln!(
-            "No amux daemon is answering on {path}; waiting for amux supervise to start it."
-        ),
+        // The install has a supervisor: start it when none runs, and it
+        // starts the daemon. Never the daemon itself, which would run
+        // beside the supervisor.
+        Switch::On => {
+            if crate::server::running_supervisor(&config.root)?.is_none() {
+                crate::server::spawn_supervisor(config, None)?;
+                eprintln!("Starting amux supervise; waiting for its daemon on {path}.");
+            } else {
+                eprintln!(
+                    "No amux daemon is answering on {path}; waiting for amux supervise to start it."
+                );
+            }
+        }
     }
     let deadline = Instant::now() + WAIT_FOR_DAEMON;
     loop {

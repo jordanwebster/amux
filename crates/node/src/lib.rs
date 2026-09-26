@@ -62,7 +62,7 @@ pub use generation::{Generation, boot_id};
 pub use grpc::{ClientApi, status};
 pub use install::{
     AGENTS, GENERATION, HOST_ID, INSTALLATION_LOCK, InstallationLock, LockError, PROFILES,
-    REGISTRY, REPLICAS, REPORTS, STORE,
+    REGISTRY, REPLICAS, REPORTS, STORE, write_durably,
 };
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use profiles::{

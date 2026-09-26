@@ -6,6 +6,7 @@
 mod connect;
 mod profiles;
 mod server;
+mod setup;
 mod supervise;
 mod verbs;
 
@@ -91,7 +92,25 @@ enum Command {
         #[command(subcommand)]
         command: ProfileCommand,
     },
-    /// Start or stop the daemon.
+    /// Set up this install: whether amux starts at login.
+    Init {
+        /// Start amux at login, or not; asked when omitted.
+        #[arg(long, value_enum)]
+        login_item: Option<YesNo>,
+        /// Write the login item and print how it would be registered,
+        /// without registering it.
+        #[arg(long, hide = true)]
+        dry_run: bool,
+    },
+    /// Ask the supervisor to install the channel's release now, even one
+    /// that was rolled back here.
+    Update,
+    /// Change a setting.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// Start or stop amux.
     Server {
         #[command(subcommand)]
         command: ServerCommand,
@@ -130,10 +149,30 @@ enum ProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum ServerCommand {
-    /// Start the daemon, detached from this terminal.
+    /// Start amux, detached from this terminal: the supervisor where the
+    /// install has one, the daemon otherwise.
     Start,
-    /// Stop the daemon cleanly; its agents keep running.
+    /// Stop amux cleanly: the supervisor first where one runs. Agents keep
+    /// running.
     Stop,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    /// Which releases the supervisor follows.
+    Channel { channel: CliChannel },
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum CliChannel {
+    Stable,
+    Preview,
+}
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum YesNo {
+    Yes,
+    No,
 }
 
 #[derive(Debug, Subcommand)]
@@ -192,9 +231,34 @@ fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) 
         if let Command::Mcp { dir } = command {
             return agent::serve_tools(dir).await.map_err(anyhow::Error::from);
         }
+        if let Command::Config {
+            command: ConfigCommand::Channel { channel },
+        } = command
+        {
+            return setup::set_channel(
+                config_path.as_deref(),
+                match channel {
+                    CliChannel::Stable => settings::Channel::Stable,
+                    CliChannel::Preview => settings::Channel::Preview,
+                },
+            );
+        }
         let config = connect::load_config(config_path.as_deref())?;
         let profile = profile.as_deref();
         match command {
+            Command::Init {
+                login_item,
+                dry_run,
+            } => {
+                setup::init(
+                    &config,
+                    config_path.as_deref(),
+                    login_item.map(|answer| matches!(answer, YesNo::Yes)),
+                    dry_run,
+                )
+                .await
+            }
+            Command::Update => setup::update(&config).await,
             Command::Server {
                 command: ServerCommand::Start,
             } => server::start(&config, config_path.as_deref()).await,

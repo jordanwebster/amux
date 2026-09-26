@@ -1,0 +1,293 @@
+//! The verbs that set an install up rather than talk to its agents:
+//! `amux init` (whether amux starts at login), `amux update` and
+//! `amux config channel`.
+
+use std::io::{BufRead as _, IsTerminal as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context as _, Result, bail};
+use node::supervisor::login::LoginItem;
+use node::supervisor::{Request, ask};
+use settings::{Channel, InstallationConfig, Switch};
+use wire::GetInfoRequest;
+
+use crate::connect;
+use crate::server::running_supervisor;
+use crate::supervise::SUPERVISOR_LOG;
+
+/// How long `amux update` waits for the check, which may download a build.
+const CHECK_PATIENCE: Duration = Duration::from_secs(20 * 60);
+/// How long it then waits for the new build to answer.
+const RESTART_PATIENCE: Duration = Duration::from_secs(180);
+
+/// `amux init`: asks once whether amux starts at login and, on yes, adds
+/// the login item that runs `amux supervise`.
+pub async fn init(
+    config: &InstallationConfig,
+    config_path: Option<&Path>,
+    login_item: Option<bool>,
+    dry_run: bool,
+) -> Result<()> {
+    if config.supervisor == Switch::Off {
+        println!(
+            "This install has no supervisor: the service manager that runs `amux daemon` \
+             starts it at boot, so there is no login item to add."
+        );
+        return Ok(());
+    }
+    let wanted = match login_item {
+        Some(wanted) => wanted,
+        None if std::io::stdin().is_terminal() => ask_yes("Start amux at login? [Y/n] ")?,
+        None => {
+            println!(
+                "Not asking about a login item without a terminal; \
+                 `amux init --login-item yes` adds one."
+            );
+            return Ok(());
+        }
+    };
+    if !wanted {
+        println!(
+            "No login item: `amux server start` starts amux, and so does any amux command \
+             that finds it stopped."
+        );
+        return Ok(());
+    }
+    let binary = std::env::current_exe().context("finding the amux binary")?;
+    let path = std::env::var("PATH").unwrap_or_default();
+    let log = config.root.join(SUPERVISOR_LOG);
+    let item = LoginItem {
+        binary: &binary,
+        config: config_path,
+        path: &path,
+        log: &log,
+    };
+    let (file, text, commands) = login_item_for_this_platform(&item, config)?;
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
+    if dry_run {
+        println!("Wrote {}. Would run:", file.display());
+        for command in &commands {
+            println!("  {}", command.join(" "));
+        }
+        return Ok(());
+    }
+    // The login item's supervisor must own the install: stop one started by
+    // hand first. Agents keep running and the new daemon picks them up.
+    if running_supervisor(&config.root)?.is_some() {
+        crate::server::stop(config).await?;
+    }
+    for command in &commands {
+        register(command)?;
+    }
+    println!(
+        "Added a login item ({}): amux starts at login and comes back if it crashes; \
+         `amux server stop` stops it until the next login.",
+        file.display()
+    );
+    Ok(())
+}
+
+fn ask_yes(question: &str) -> Result<bool> {
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(!matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "n" | "no"
+    ))
+}
+
+/// Runs one registration command; the first word of a failure's command
+/// line is how a person would run it again.
+fn register(command: &[String]) -> Result<()> {
+    let status = Command::new(&command[0])
+        .args(&command[1..])
+        .status()
+        .with_context(|| format!("running {}", command.join(" ")))?;
+    // Unloading a job that was never loaded fails harmlessly.
+    if !status.success() && !command.iter().any(|word| word == "bootout") {
+        bail!("{} failed ({status})", command.join(" "));
+    }
+    Ok(())
+}
+
+type LoginFile = (PathBuf, Vec<u8>, Vec<Vec<String>>);
+
+#[cfg(target_os = "macos")]
+fn login_item_for_this_platform(
+    item: &LoginItem,
+    _config: &InstallationConfig,
+) -> Result<LoginFile> {
+    use node::supervisor::login::LAUNCH_AGENT_LABEL;
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    let file = PathBuf::from(home)
+        .join("Library/LaunchAgents")
+        .join(format!("{LAUNCH_AGENT_LABEL}.plist"));
+    // SAFETY: getuid cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let file_arg = file.display().to_string();
+    Ok((
+        file,
+        item.launch_agent().into_bytes(),
+        vec![
+            words(&[
+                "launchctl",
+                "bootout",
+                &format!("gui/{uid}/{LAUNCH_AGENT_LABEL}"),
+            ]),
+            words(&["launchctl", "bootstrap", &format!("gui/{uid}"), &file_arg]),
+        ],
+    ))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn login_item_for_this_platform(
+    item: &LoginItem,
+    _config: &InstallationConfig,
+) -> Result<LoginFile> {
+    use node::supervisor::login::SYSTEMD_UNIT;
+    let config_home = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".config"),
+    };
+    let file = config_home.join("systemd/user").join(SYSTEMD_UNIT);
+    Ok((
+        file,
+        item.systemd_unit().into_bytes(),
+        vec![
+            words(&["systemctl", "--user", "daemon-reload"]),
+            words(&["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT]),
+        ],
+    ))
+}
+
+#[cfg(windows)]
+fn login_item_for_this_platform(
+    item: &LoginItem,
+    config: &InstallationConfig,
+) -> Result<LoginFile> {
+    use node::supervisor::login::WINDOWS_TASK;
+    let file = config.root.join("amux-task.xml");
+    // Task Scheduler reads its XML as UTF-16 with a byte-order mark.
+    let mut bytes = vec![0xff, 0xfe];
+    for unit in item.windows_task().encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    let file_arg = file.display().to_string();
+    Ok((
+        file,
+        bytes,
+        vec![
+            words(&[
+                "schtasks",
+                "/Create",
+                "/F",
+                "/TN",
+                WINDOWS_TASK,
+                "/XML",
+                &file_arg,
+            ]),
+            words(&["schtasks", "/Run", "/TN", WINDOWS_TASK]),
+        ],
+    ))
+}
+
+fn words(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_owned()).collect()
+}
+
+/// `amux update`: asks the supervisor to check the channel now, ignoring a
+/// rolled-back build, and waits for a build it installs to answer.
+pub async fn update(config: &InstallationConfig) -> Result<()> {
+    if config.supervisor == Switch::Off {
+        println!(
+            "This install has no supervisor, so updates are deploys: install the new build \
+             the way this host's amux was installed."
+        );
+        return Ok(());
+    }
+    if running_supervisor(&config.root)?.is_none() {
+        bail!("amux supervise is not running; `amux server start` starts it");
+    }
+    let answer = ask(&config.root, Request::Check, CHECK_PATIENCE)
+        .await
+        .context("asking amux supervise to check for a release")?;
+    let Some(version) = answer.strip_prefix("installing ") else {
+        println!("{}", sentence(&answer));
+        return Ok(());
+    };
+    println!("Installing amux {version}.");
+    let deadline = Instant::now() + RESTART_PATIENCE;
+    while Instant::now() < deadline {
+        if let Some(door) = connect::front_door_now(config).await
+            && let Ok(info) = connect::installation(door)
+                .get_info(GetInfoRequest {})
+                .await
+            && info.get_ref().version == version
+        {
+            println!("amux {version} is running.");
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    println!(
+        "amux {version} has not come up yet. If it never does, the supervisor puts the \
+         previous build back after three tries; its log is {}.",
+        config.root.join(SUPERVISOR_LOG).display()
+    );
+    Ok(())
+}
+
+/// The supervisor's answer as a sentence.
+fn sentence(answer: &str) -> String {
+    let mut chars = answer.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+/// `amux config channel`: which releases the supervisor follows. It reads
+/// the config before every check, so the change needs no restart.
+pub fn set_channel(config_path: Option<&Path>, channel: Channel) -> Result<()> {
+    let path = config_path
+        .map(Path::to_owned)
+        .unwrap_or_else(InstallationConfig::default_path);
+    let mut value = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_yaml::from_str::<serde_yaml::Value>(&text)
+            .with_context(|| format!("reading {}", path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_yaml::Value::Null,
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    if value.is_null() {
+        value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+    let name = match channel {
+        Channel::Stable => "stable",
+        Channel::Preview => "preview",
+    };
+    value
+        .as_mapping_mut()
+        .with_context(|| format!("{} is not a mapping of settings", path.display()))?
+        .insert("channel".into(), name.into());
+    let text = serde_yaml::to_string(&value)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    node::write_durably(&path, text.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))?;
+    InstallationConfig::from_file(&path)
+        .with_context(|| format!("reading back {}", path.display()))?;
+    println!(
+        "Channel: {name}. The supervisor follows it from its next check; `amux update` checks now."
+    );
+    Ok(())
+}

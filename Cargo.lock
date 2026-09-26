@@ -72,6 +72,7 @@ dependencies = [
  "prost",
  "provider-fakes",
  "serde_json",
+ "serde_yaml",
  "settings",
  "store",
  "tempfile",

@@ -22,6 +22,7 @@ claude = { workspace = true }
 clap = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
+serde_yaml = { workspace = true }
 settings = { workspace = true }
 store = { workspace = true }
 tokio = { workspace = true }

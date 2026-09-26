@@ -5,11 +5,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use node::supervisor::{Inherited, Params, SuperviseOptions, UpdateSource};
+use node::supervisor::{Inherited, Params, SuperviseOptions, UpdatePolicy, UpdateSource};
 use settings::{InstallationConfig, Switch, Updates};
 
 /// The supervisor's log file under the data dir.
-const SUPERVISOR_LOG: &str = "supervisor.log";
+pub const SUPERVISOR_LOG: &str = "supervisor.log";
+
+/// What the config says the supervisor may install. A build without a
+/// release key installs nothing.
+fn policy(config: &InstallationConfig) -> Result<UpdatePolicy> {
+    let auto = config.updates()? == Updates::Auto;
+    let source = node::release::release_key().map(|key| UpdateSource {
+        manifest_url: config.manifest_url(),
+        key,
+    });
+    Ok(UpdatePolicy { auto, source })
+}
 
 pub fn run(
     config: &InstallationConfig,
@@ -25,21 +36,24 @@ pub fn run(
         .map(|state| Inherited::parse(state).context("--inherit is not a handed-over state"))
         .transpose()?;
     crate::server::log_to(&config.root.join(SUPERVISOR_LOG))?;
-    let updates = match config.updates()? {
-        Updates::Manual => None,
-        Updates::Auto => match node::release::release_key() {
-            Some(key) => Some(UpdateSource {
-                manifest_url: config.manifest_url(),
-                key,
-            }),
-            None => {
-                tracing::warn!(
-                    "this build trusts no release key: it restarts the daemon but installs nothing"
-                );
-                None
+    let started = policy(config)?;
+    if started.source.is_none() {
+        tracing::warn!(
+            "this build trusts no release key: it restarts the daemon but installs nothing"
+        );
+    }
+    // The config is read again before every check, so `amux config
+    // channel` takes effect without a restart.
+    let reread = config_path.map(Path::to_owned);
+    let updates = Arc::new(move || {
+        match crate::connect::load_config(reread.as_deref()).and_then(|config| policy(&config)) {
+            Ok(policy) => policy,
+            Err(error) => {
+                tracing::warn!(%error, "reading the config for an update check");
+                started.clone()
             }
-        },
-    };
+        }
+    });
     let mut args: Vec<OsString> = Vec::new();
     if let Some(path) = config_path {
         args.push("--config".into());
@@ -54,13 +68,14 @@ pub fn run(
             .context("this build's version is not semver")?,
         target: node::release::TARGET.to_owned(),
         updates,
+        keep_awake: config.keep_awake == Switch::On,
         clock: Arc::new(agent_dir::SystemClock),
         params: Params::default(),
         inherited,
     };
     tracing::info!(
         version = node::version(),
-        channel = %config.manifest_url(),
+        manifest = %config.manifest_url(),
         "supervising"
     );
     tokio::runtime::Builder::new_multi_thread()

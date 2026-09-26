@@ -1,3 +1,26 @@
+2026-09-27 — **Stop goes to the owner; login items, keep-awake and `amux update`.**
+Launch ownership now follows whether the install has a supervisor.
+`amux server start` starts `amux supervise` where it has one and the daemon
+where it does not, and a client that finds no daemon starts the supervisor
+only where there is one, so nothing launches a daemon beside a supervisor.
+`amux server stop` signals the pid in the supervisor's lock file (the
+control socket on Windows), which stops its daemon and exits, or shuts the
+daemon down directly without one. Under `keep_awake: on` the supervisor
+holds macOS's PreventSystemSleep (honoured on AC) and
+PreventUserIdleSystemSleep assertions for its lifetime
+(SetThreadExecutionState on Windows, none on Linux): that keeps a machine
+awake plugged in with the lid open; a closed lid is unmeasured. `amux init`
+offers a login item that runs `amux supervise` and restarts it on failure
+only: a LaunchAgent with AbandonProcessGroup and KeepAlive on unsuccessful
+exit, a systemd user unit with KillMode=process and Restart=on-failure, or
+a Windows logon task; each carries the PATH init ran with, since login
+items start with a bare environment and agents find their providers by it.
+`amux update` asks the supervisor, over `<data_dir>/supervisor.sock`, to
+check now ignoring a rolled-back build and waits for the new build to
+answer; without a supervisor it says updates are deploys. `amux config
+channel stable|preview` sets the channel, which the supervisor reads before
+every check. The generated units are goldens.
+
 2026-09-27 — **`amux supervise` restarts the daemon and installs releases.**
 Under a desktop install the daemon now runs as the child of `amux
 supervise`, joined by one pipe: the daemon writes `prepared` once it has

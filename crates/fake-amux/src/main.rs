@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use node::supervisor::{Inherited, Params, SuperviseOptions, UpdateSource};
+use node::supervisor::{Inherited, Params, SuperviseOptions, UpdatePolicy, UpdateSource};
 
 pub const DIR_ENV: &str = "FAKE_AMUX_DIR";
 pub const MANIFEST_ENV: &str = "FAKE_AMUX_MANIFEST";
@@ -173,12 +173,16 @@ fn supervise(inherited: Option<Inherited>) {
     } else {
         "supervise"
     });
-    let updates = std::env::var(MANIFEST_ENV)
+    let source = std::env::var(MANIFEST_ENV)
         .ok()
         .map(|manifest_url| UpdateSource {
             manifest_url,
             key: node::release::release_key().expect("debug builds trust the test key"),
         });
+    let updates = Arc::new(move || UpdatePolicy {
+        auto: source.is_some(),
+        source: source.clone(),
+    });
     let options = SuperviseOptions {
         binary: std::env::current_exe().expect("the binary's path"),
         args: Vec::new(),
@@ -186,6 +190,7 @@ fn supervise(inherited: Option<Inherited>) {
         running: node::version().parse().expect("a semver stamp"),
         target: node::release::TARGET.to_owned(),
         updates,
+        keep_awake: false,
         clock: Arc::new(agent_dir::SystemClock),
         params: Params {
             check_interval: Duration::from_millis(300),

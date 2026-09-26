@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use node::{Launch, NoopSender, StartOptions};
-use settings::InstallationConfig;
+use settings::{InstallationConfig, Switch};
 use tracing_subscriber::EnvFilter;
 use wire::{GetInfoRequest, InstallationShutdownRequest};
 
 use crate::connect;
+use crate::supervise::SUPERVISOR_LOG;
 
 /// The daemon log's path when the environment names none.
 const DAEMON_LOG: &str = "daemon.log";
@@ -24,6 +25,9 @@ const DAEMON_LOG: &str = "daemon.log";
 const LOG_ENV: &str = "AMUX_LOG";
 /// How long `amux server start` and `stop` wait on the daemon.
 const PATIENCE: Duration = Duration::from_secs(30);
+/// How long `amux server stop` waits on a supervisor, which gives its
+/// daemon the stop deadline before a kill.
+const SUPERVISOR_PATIENCE: Duration = Duration::from_secs(45);
 
 pub(crate) fn daemon_log(config: &InstallationConfig) -> PathBuf {
     std::env::var_os(LOG_ENV)
@@ -162,29 +166,46 @@ async fn terminated() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-/// Starts a daemon detached from this terminal, unless one answers
-/// already, and returns once its front door answers.
+/// Starts amux, detached from this terminal, unless a daemon answers
+/// already, and returns once its front door answers. An install with a
+/// supervisor starts `amux supervise`, which starts the daemon; nothing
+/// ever launches a daemon beside a supervisor.
 pub async fn start(config: &InstallationConfig, config_path: Option<&Path>) -> Result<()> {
     if connect::front_door_now(config).await.is_some() {
         println!("The amux daemon is already running.");
         return Ok(());
     }
-    std::fs::create_dir_all(&config.root)
-        .with_context(|| format!("creating {}", config.root.display()))?;
-    let startup = config.root.join("daemon-startup.log");
-    let stderr =
-        File::create(&startup).with_context(|| format!("creating {}", startup.display()))?;
-    let mut command = std::process::Command::new(std::env::current_exe()?);
-    command
-        .arg("daemon")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(stderr);
-    if let Some(path) = config_path {
-        command.arg("--config").arg(path);
-    }
-    detach(&mut command);
-    let mut child = command.spawn().context("starting amux daemon")?;
+    let (mut child, said) = if config.supervisor == Switch::On {
+        if running_supervisor(&config.root)?.is_some() {
+            println!("amux supervise is running; waiting for its daemon.");
+            (None, config.root.join(SUPERVISOR_LOG))
+        } else {
+            (
+                Some(spawn_supervisor(config, config_path)?),
+                config.root.join(SUPERVISOR_LOG),
+            )
+        }
+    } else {
+        std::fs::create_dir_all(&config.root)
+            .with_context(|| format!("creating {}", config.root.display()))?;
+        let startup = config.root.join("daemon-startup.log");
+        let stderr =
+            File::create(&startup).with_context(|| format!("creating {}", startup.display()))?;
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        if let Some(path) = config_path {
+            command.arg("--config").arg(path);
+        }
+        command
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(stderr);
+        detach(&mut command);
+        (
+            Some(command.spawn().context("starting amux daemon")?),
+            startup,
+        )
+    };
     let deadline = Instant::now() + PATIENCE;
     loop {
         if let Some(door) = connect::front_door_now(config).await
@@ -193,25 +214,55 @@ pub async fn start(config: &InstallationConfig, config_path: Option<&Path>) -> R
                 .await
                 .is_ok()
         {
-            println!("Started the amux daemon.");
+            println!("Started amux.");
             return Ok(());
         }
-        if let Some(status) = child.try_wait()? {
-            let said = std::fs::read_to_string(&startup).unwrap_or_default();
+        if let Some(child) = child.as_mut()
+            && let Some(status) = child.try_wait()?
+        {
+            let said = std::fs::read_to_string(&said).unwrap_or_default();
             bail!(
-                "amux daemon exited ({status}) before it answered:\n{}",
+                "amux exited ({status}) before it answered:\n{}",
                 said.trim_end()
             );
         }
         if Instant::now() >= deadline {
             bail!(
-                "amux daemon did not answer within {}s; its log is {}",
+                "amux did not answer within {}s; its logs are {} and {}",
                 PATIENCE.as_secs(),
+                said.display(),
                 daemon_log(config).display()
             );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Starts `amux supervise` detached from this terminal. Its early errors
+/// go to the supervisor's log, where its own logging goes too.
+pub(crate) fn spawn_supervisor(
+    config: &InstallationConfig,
+    config_path: Option<&Path>,
+) -> Result<std::process::Child> {
+    std::fs::create_dir_all(&config.root)
+        .with_context(|| format!("creating {}", config.root.display()))?;
+    let log = config.root.join(SUPERVISOR_LOG);
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+        .with_context(|| format!("opening {}", log.display()))?;
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    if let Some(path) = config_path.or(config.path.as_deref()) {
+        command.arg("--config").arg(path);
+    }
+    command
+        .arg("supervise")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr);
+    detach(&mut command);
+    command.spawn().context("starting amux supervise")
 }
 
 /// Its own session, so the daemon outlives the terminal that started it.
@@ -237,9 +288,26 @@ fn detach(command: &mut std::process::Command) {
     command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 }
 
-/// Asks the daemon to shut down cleanly and waits until it has. Its
-/// agents keep running and wait out their grace for the next daemon.
+/// Stops amux: its owner first. A running supervisor is stopped, which
+/// stops its daemon, or the daemon would come straight back; without one
+/// the daemon is asked to shut down. Agents keep running and wait out
+/// their grace for the next daemon.
 pub async fn stop(config: &InstallationConfig) -> Result<()> {
+    if let Some(pid) = running_supervisor(&config.root)? {
+        stop_supervisor(config, &pid).await?;
+        let deadline = Instant::now() + SUPERVISOR_PATIENCE;
+        while running_supervisor(&config.root)?.is_some() || installation_locked(&config.root)? {
+            if Instant::now() >= deadline {
+                bail!(
+                    "amux supervise (pid {pid}) did not stop within {}s",
+                    SUPERVISOR_PATIENCE.as_secs()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        println!("Stopped amux supervise and its daemon.");
+        return Ok(());
+    }
     let Some(door) = connect::front_door_now(config).await else {
         println!("The amux daemon is not running.");
         return Ok(());
@@ -264,10 +332,52 @@ pub async fn stop(config: &InstallationConfig) -> Result<()> {
     Ok(())
 }
 
+/// Signals the pid the supervisor's lock file holds.
+#[cfg(unix)]
+async fn stop_supervisor(_config: &InstallationConfig, pid: &str) -> Result<()> {
+    let pid: libc::pid_t = pid
+        .parse()
+        .with_context(|| format!("the supervisor's lock holds {pid:?}, not a pid"))?;
+    // SAFETY: a signal to the process holding the supervisor's lock.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } == -1 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("signalling amux supervise (pid {pid})"));
+    }
+    Ok(())
+}
+
+/// Windows has no signals: the supervisor's control socket.
+#[cfg(not(unix))]
+async fn stop_supervisor(config: &InstallationConfig, _pid: &str) -> Result<()> {
+    node::supervisor::ask(&config.root, node::supervisor::Request::Stop, PATIENCE)
+        .await
+        .context("asking amux supervise to stop")?;
+    Ok(())
+}
+
+/// The pid of the supervisor holding the installation's supervisor lock,
+/// if one is running.
+pub(crate) fn running_supervisor(root: &Path) -> Result<Option<String>> {
+    let path = root.join(node::supervisor::SUPERVISOR_LOCK);
+    if !lock_held(&path)? {
+        return Ok(None);
+    }
+    Ok(Some(
+        std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    ))
+}
+
 /// Whether a daemon holds the installation lock under `root`.
 fn installation_locked(root: &Path) -> Result<bool> {
-    let path = root.join(node::INSTALLATION_LOCK);
-    let file = match OpenOptions::new().write(true).open(&path) {
+    lock_held(&root.join(node::INSTALLATION_LOCK))
+}
+
+/// Whether some process holds the lock on the file at `path`.
+fn lock_held(path: &Path) -> Result<bool> {
+    let file = match OpenOptions::new().write(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).with_context(|| format!("opening {}", path.display())),

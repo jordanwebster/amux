@@ -36,7 +36,10 @@
 //! to prev by rename, and its own update is a spawn-then-exit.
 
 mod child;
+mod control;
 mod files;
+mod keep_awake;
+pub mod login;
 
 use std::ffi::OsString;
 use std::fs::File;
@@ -48,7 +51,10 @@ use std::time::Duration;
 use agent_dir::Clock;
 use child::Child;
 pub use child::Inherited;
+use control::Asked;
+pub use control::{Request, SUPERVISOR_SOCKET, ask};
 pub use files::{FileId, Files, SUPERVISOR_LOCK};
+pub use keep_awake::{KeepAwake, REASON as KEEP_AWAKE_REASON};
 use semver::Version;
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
@@ -56,7 +62,7 @@ use tokio::task::JoinHandle;
 
 use crate::install::{private_dir, sync_dir};
 use crate::profiles::{self, Registry};
-use crate::release::{self, Choice, Manifest};
+use crate::release::{self, Choice, Manifest, Skip};
 
 /// The supervisor's timings and thresholds; the defaults are the
 /// parameters table's starting points.
@@ -90,7 +96,20 @@ impl Default for Params {
     }
 }
 
-/// Where releases come from, under `updates: auto`.
+/// What the supervisor may install, read again before every check so a
+/// changed channel takes effect without a restart.
+#[derive(Clone, Debug)]
+pub struct UpdatePolicy {
+    /// Whether the hourly tick installs releases (`updates: auto`); without
+    /// it only `amux update` does.
+    pub auto: bool,
+    /// None when this build trusts no release key: nothing can be installed.
+    pub source: Option<UpdateSource>,
+}
+
+pub type UpdatesFn = Arc<dyn Fn() -> UpdatePolicy + Send + Sync>;
+
+/// Where releases come from.
 #[derive(Clone, Debug)]
 pub struct UpdateSource {
     /// The channel's manifest.
@@ -112,8 +131,9 @@ pub struct SuperviseOptions {
     /// This binary's version.
     pub running: Version,
     pub target: String,
-    /// None under `updates: manual`: restarts only.
-    pub updates: Option<UpdateSource>,
+    pub updates: UpdatesFn,
+    /// Whether to hold the machine's sleep assertion (`keep_awake`).
+    pub keep_awake: bool,
     pub clock: Arc<dyn Clock>,
     pub params: Params,
     /// What the supervisor that exec'd this one handed over.
@@ -150,10 +170,12 @@ pub async fn supervise(options: SuperviseOptions) -> Result<(), SuperviseError> 
         running,
         target,
         updates,
+        keep_awake,
         clock,
         params,
         inherited,
     } = options;
+    let _awake = keep_awake.then(KeepAwake::hold);
     let lock = match inherited.and_then(|inherited| inherited.lock) {
         Some(fd) => SupervisorLock::inherit(fd, &data_dir)?,
         None => SupervisorLock::acquire(&data_dir, inherited.is_some())?,
@@ -198,7 +220,7 @@ struct Supervisor {
     data_dir: PathBuf,
     running: Version,
     target: String,
-    updates: Option<UpdateSource>,
+    updates: UpdatesFn,
     clock: Arc<dyn Clock>,
     params: Params,
     /// The version of the binary at the path, when known: the one to
@@ -217,7 +239,22 @@ enum Event {
     Prepared,
     StartDeadline,
     CheckDue,
-    Checked(Option<Version>),
+    Checked(Checked),
+    Asked(Asked),
+}
+
+/// How a check ended.
+enum Checked {
+    /// Verified and staged beside the binary: install it.
+    Staged(Version),
+    /// Nothing to install, and why, for `amux update`.
+    Nothing(String),
+}
+
+/// A check in flight and who is waiting for its answer.
+struct Checking {
+    task: JoinHandle<Checked>,
+    answers: Vec<tokio::sync::oneshot::Sender<String>>,
 }
 
 impl Supervisor {
@@ -247,16 +284,37 @@ impl Supervisor {
 
     async fn run(mut self, mut child: Option<Child>) -> Result<(), SuperviseError> {
         let mut terminate = std::pin::pin!(terminated());
+        let mut asked = control::serve(&self.data_dir);
         let mut next_check = self.after(self.params.check_interval);
         let mut restart_at: Option<i64> = None;
-        let mut checking: Option<JoinHandle<Option<Version>>> = None;
+        let mut checking: Option<Checking> = None;
+        // `amux update` callers waiting for a check that ignores the
+        // rejected build.
+        let mut waiting: Vec<tokio::sync::oneshot::Sender<String>> = Vec::new();
         loop {
             let Some(running) = child.as_mut() else {
-                if let Some(at) = restart_at.take() {
-                    tokio::select! {
-                        () = self.clock.sleep_until(at) => {}
-                        () = &mut terminate => return Ok(()),
+                if let Some(at) = restart_at {
+                    let stop = tokio::select! {
+                        () = self.clock.sleep_until(at) => {
+                            restart_at = None;
+                            false
+                        }
+                        () = &mut terminate => true,
+                        Some(Asked { request, answer }) = asked.recv() => match request {
+                            Request::Check => {
+                                let _ = answer.send("the daemon is restarting; try again shortly".into());
+                                false
+                            }
+                            Request::Stop => {
+                                let _ = answer.send("stopping".into());
+                                true
+                            }
+                        },
+                    };
+                    if stop {
+                        return Ok(());
                     }
+                    continue;
                 }
                 match Child::spawn(&self.binary, &self.args, self.clock.now_ms()) {
                     Ok(spawned) => {
@@ -265,40 +323,62 @@ impl Supervisor {
                     }
                     Err(error) => {
                         tracing::warn!(%error, "could not start the daemon");
-                        self.failed_start()?;
-                        let delay = self.backoff.next(Duration::ZERO);
-                        restart_at = Some(self.after(delay));
+                        restart_at = self.failed_start()?;
                     }
                 }
                 continue;
             };
-            let may_check = self.updates.is_some()
-                && running.activated()
-                && checking.is_none()
-                && !self.files.prev_exists();
-            let start_deadline = running.started_ms + millis(self.params.start_deadline);
             let activated = running.activated();
+            let settled = activated && !self.files.prev_exists();
+            if settled && checking.is_none() && !waiting.is_empty() {
+                checking = Some(self.check(true, std::mem::take(&mut waiting)));
+            }
+            let start_deadline = running.started_ms + millis(self.params.start_deadline);
             let exited = running.exited();
             let event = tokio::select! {
                 () = &mut terminate => Event::Terminate,
                 code = exited => Event::Exited(code),
                 () = running.prepared(), if !activated => Event::Prepared,
                 () = self.clock.sleep_until(start_deadline), if !activated => Event::StartDeadline,
-                () = self.clock.sleep_until(next_check), if may_check => Event::CheckDue,
-                checked = async { checking.as_mut().expect("checking").await }, if checking.is_some() => {
-                    Event::Checked(checked.unwrap_or(None))
+                () = self.clock.sleep_until(next_check), if settled && checking.is_none() => Event::CheckDue,
+                checked = async { (&mut checking.as_mut().expect("checking").task).await }, if checking.is_some() => {
+                    Event::Checked(checked.unwrap_or_else(|error| {
+                        Checked::Nothing(format!("the check failed: {error}"))
+                    }))
                 }
+                Some(asked) = asked.recv() => Event::Asked(asked),
             };
-            if matches!(event, Event::Checked(_)) {
-                checking = None;
-            }
             match event {
                 Event::Terminate => {
+                    tracing::info!("signalled to stop: stopping the daemon");
+                    if let Some(mut running) = child.take() {
+                        self.stop(&mut running).await;
+                    }
+                    return Ok(());
+                }
+                Event::Asked(Asked {
+                    request: Request::Stop,
+                    answer,
+                }) => {
+                    let _ = answer.send("stopping".into());
                     tracing::info!("asked to stop: stopping the daemon");
                     if let Some(mut running) = child.take() {
                         self.stop(&mut running).await;
                     }
                     return Ok(());
+                }
+                Event::Asked(Asked {
+                    request: Request::Check,
+                    answer,
+                }) => {
+                    if self.files.prev_exists() {
+                        let _ = answer
+                            .send("an update is being activated; try again once it is".into());
+                    } else if !activated {
+                        let _ = answer.send("the daemon is starting; try again shortly".into());
+                    } else {
+                        waiting.push(answer);
+                    }
                 }
                 Event::Exited(code) => {
                     let running = child.take().expect("a child");
@@ -336,13 +416,27 @@ impl Supervisor {
                 }
                 Event::CheckDue => {
                     next_check = self.after(self.params.check_interval);
-                    checking = Some(self.check());
+                    if (self.updates)().auto {
+                        checking = Some(self.check(false, Vec::new()));
+                    }
                 }
-                Event::Checked(None) => {}
-                Event::Checked(Some(version)) => {
-                    let mut running = child.take().expect("a child");
-                    self.swap(&mut running, version).await?;
-                    restart_at = None;
+                Event::Checked(checked) => {
+                    let answers = checking
+                        .take()
+                        .map(|checking| checking.answers)
+                        .unwrap_or_default();
+                    let answer = match &checked {
+                        Checked::Staged(version) => format!("installing {version}"),
+                        Checked::Nothing(why) => why.clone(),
+                    };
+                    for waiting in answers {
+                        let _ = waiting.send(answer.clone());
+                    }
+                    if let Checked::Staged(version) = checked {
+                        let mut running = child.take().expect("a child");
+                        self.swap(&mut running, version).await?;
+                        restart_at = None;
+                    }
                 }
             }
         }
@@ -462,24 +556,34 @@ impl Supervisor {
     }
 
     /// Fetches the manifest and, when it names a build to install, stages
-    /// and verifies it. Resolves to its version once it is staged.
-    fn check(&self) -> JoinHandle<Option<Version>> {
-        let source = self.updates.clone().expect("checked under updates: auto");
+    /// and verifies it. `amux update` ignores the rejected build.
+    fn check(
+        &self,
+        ignore_rejected: bool,
+        answers: Vec<tokio::sync::oneshot::Sender<String>>,
+    ) -> Checking {
+        let policy = (self.updates)();
         let target = self.target.clone();
         let running = self.running.clone();
-        let rejected = self.files.rejected();
+        let rejected = (!ignore_rejected).then(|| self.files.rejected()).flatten();
         let host = rollout_host(&self.data_dir);
         let staged = self.files.staged.clone();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
+            let Some(source) = policy.source else {
+                return Checked::Nothing(
+                    "this build trusts no release key, so it installs nothing".into(),
+                );
+            };
             match fetch(&source, &target, &running, rejected.as_ref(), host, &staged).await {
-                Ok(staged) => staged,
+                Ok(checked) => checked,
                 Err(error) => {
                     tracing::warn!(%error, "the update check failed");
                     let _ = std::fs::remove_file(&staged);
-                    None
+                    Checked::Nothing(format!("the check failed: {error}"))
                 }
             }
-        })
+        });
+        Checking { task, answers }
     }
 
     async fn swap(&mut self, child: &mut Child, version: Version) -> Result<(), SuperviseError> {
@@ -524,7 +628,7 @@ async fn fetch(
     rejected: Option<&Version>,
     host: Option<uuid::Uuid>,
     staged: &Path,
-) -> Result<Option<Version>, CheckError> {
+) -> Result<Checked, CheckError> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(15 * 60))
@@ -551,7 +655,7 @@ async fn fetch(
             Choice::Install { release, version } => (release, version),
             Choice::Skip(skip) => {
                 tracing::debug!(?skip, "nothing to install");
-                return Ok(None);
+                return Ok(Checked::Nothing(skipped(skip, target, running)));
             }
         };
     let mut response = client
@@ -577,7 +681,7 @@ async fn fetch(
         &source.key,
     )?;
     files::make_executable(staged).map_err(CheckError::Stage)?;
-    Ok(Some(version))
+    Ok(Checked::Staged(version))
 }
 
 /// The host id that places this installation in a rollout: its first
@@ -706,5 +810,24 @@ fn sync_parent(path: &Path) -> io::Result<()> {
     match path.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => sync_dir(dir),
         _ => sync_dir(Path::new(".")),
+    }
+}
+
+/// Why nothing was installed, as `amux update` says it.
+fn skipped(skip: Skip, target: &str, running: &Version) -> String {
+    match skip {
+        Skip::NoBuildForTarget => format!("the channel has no build for {target}"),
+        Skip::UnreadableVersion(version) => {
+            format!("the channel names {version:?}, which is not a version")
+        }
+        Skip::NotNewer(version) => {
+            format!("up to date: {running} is running and the channel names {version}")
+        }
+        Skip::Rejected(version) => {
+            format!("{version} was rolled back here; `amux update` tries it again")
+        }
+        Skip::OutsideRollout => {
+            "the channel's release is rolling out and has not reached this host yet".into()
+        }
     }
 }
