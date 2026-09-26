@@ -1,3 +1,17 @@
+2026-09-26 — **A host back between two looks is followed at once.**
+The replication case whose stream dies after its Snapshot failed about
+four runs in ten, with or without the worktree's `AMUX_CONFIG` exported.
+The follower of a host's inventory, after its stream ended, waited out a
+backoff on the policy clock and cut the wait short only if one of its
+looks at the route, every 25 ms, found the host offline. When a link was
+severed and restored within one look, as the test's brief outages were,
+the follower never saw the gap and slept on a clock nothing advanced: no
+source opened again and the replica stayed detached. The wait now ends
+on any change of route since it began, a host with no route at the start
+included; only a host that stays on the link it had waits the whole
+backoff. `a_link_back_before_the_follower_looks_is_followed_without_its_backoff`
+blinks a link three times and fails every run against the old wait.
+
 2026-09-26 — **The network edge across daemons.**
 A topology can declare a relay and the accounts its cloud knows
 (`Topology::relay`, `RelayDecl`, `HostDecl.account`). The net runs the

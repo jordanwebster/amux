@@ -5,9 +5,10 @@
 //! block ending at the origin's newest row. These cases hold that under a
 //! first tail, live records, a delta after a break, a Reset beyond the cap,
 //! a stream that dies right after its Snapshot while a page lands a newer
-//! revision of an old row, pages from the origin, trimming after a Reset,
-//! the source policy and a rewound origin; and they hold the markers in
-//! sequence with the rows they cover.
+//! revision of an old row, a link back before the follower looks, pages
+//! from the origin, trimming after a Reset, the source policy and a
+//! rewound origin; and they hold the markers in sequence with the rows
+//! they cover.
 
 #![cfg(unix)]
 
@@ -500,6 +501,30 @@ async fn a_stream_dying_after_its_snapshot_replays_after_the_cursor_while_a_page
         origin_rows(&net, "worker").await.len(),
         "the page and the delta together hold the origin's whole history"
     );
+    net.shutdown().await.unwrap();
+}
+
+/// A host that goes away and comes back between two of the follower's
+/// looks at its route is followed again at once: the backoff runs on the
+/// policy clock, which nothing here advances, so a follower that missed the
+/// gap would wait on it forever.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_back_before_the_follower_looks_is_followed_without_its_backoff() {
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("worker", "desk")
+            .steps(turns(3, 2))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(6, |_, _| {}))
+        .await
+        .unwrap();
+    wait_origin_says(&net, "worker", "t0-1").await;
+    wait_current(&net, "laptop", "worker").await;
+    for _ in 0..3 {
+        sever(&mut net).await;
+        restore(&mut net).await;
+        wait_current(&net, "laptop", "worker").await;
+    }
     net.shutdown().await.unwrap();
 }
 
