@@ -1,3 +1,25 @@
+2026-09-26 — **The testnet is rebuilt on the new daemon: topologies, faults, observations and the served door.**
+`crates/testnet` was written against the old runtime and is replaced whole.
+A `Topology` (Rust builder or JSON) declares hosts, the in-process links
+between them and the agents each runs on which fake provider; `Net` starts
+one production daemon per host in the test process, each on its own
+temporary installation with its front door, trusts and links the declared
+pairs, and spawns real `amux agent` processes on the scripted fakes. Every
+daemon's policy timers run on one driven clock. Verbs sever and restore a
+link, kill (agents keep running), stop and restart a daemon, and lose power
+back to a checkpoint: the store without its WAL, journals cut at a byte, the
+host up under a new boot id and a new generation. Observers record Subscribe
+and SubscribeInventory streams as a client sees them and fail on a stuck
+predicate at the deadline, or at once when the stream ends; the polling
+waiters fail on a check that never answers, which the old stability waiter
+took for a pass. `assert_block_invariant` checks a host's rows for an agent
+against its origin. `testnet serve <topology.json>` publishes one readiness
+line once the net is ready and answers JSON control lines whose verbs map
+one to one onto harness capabilities; a test drives it with the real `amux`
+binary. The old harness's whole scenarios, provider scripting and specs of
+the old system are gone with it, and node's whole-network edge tests moved
+here as `tests/spec_edge.rs`.
+
 2026-09-26 — **A test pairs, links, refreshes and unpairs whole daemons in one process.**
 `crates/node/tests/edge.rs` starts daemons with their LAN listeners on
 loopback and a scripted discovery bus: one pairs with another through both

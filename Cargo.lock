@@ -3073,6 +3073,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "testnet"
+version = "0.1.0"
+dependencies = [
+ "agent-dir",
+ "anyhow",
+ "bytes",
+ "chrono",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "journal",
+ "node",
+ "provider-fakes",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tonic",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wire",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,52 +1,47 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+//! Policy time that moves only when a specification says so.
 
-use node::Clock;
-use tokio::sync::watch;
-use tokio::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Policy time advanced explicitly by a specification.
+use agent_dir::{Clock, ManualClock, Sleep};
+
+/// The clock every daemon in a driven net runs its policy timers on:
+/// retention, the outboxes' retries and notification delays, credential
+/// refresh on the edges, reply and start deadlines. It starts at the wall
+/// time the net was built, so credentials and certificates minted against
+/// it look current, and then moves only on [`DrivenClock::advance`].
 ///
-/// Sleepers observe every advance through a watch channel. A sleeper that is
-/// first polled after its deadline was crossed still completes immediately by
-/// reading the shared current instant before it waits.
+/// Transports stay on real time: a QUIC idle timer or a socket read is not
+/// policy, and the harness's own waits bound real work.
 #[derive(Clone)]
 pub struct DrivenClock {
-    state: Arc<Mutex<State>>,
-    changed: watch::Sender<u64>,
-}
-
-struct State {
-    now: Instant,
-    system_now: SystemTime,
+    inner: ManualClock,
 }
 
 impl DrivenClock {
     pub fn new() -> Self {
-        let (changed, _) = watch::channel(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as i64);
         Self {
-            state: Arc::new(Mutex::new(State {
-                now: Instant::now(),
-                system_now: SystemTime::now(),
-            })),
-            changed,
+            inner: ManualClock::new(now),
         }
     }
 
-    /// Moves policy time forward and wakes every sleeper whose deadline may
-    /// now have passed.
-    pub fn advance(&self, duration: Duration) {
-        {
-            let mut state = self.state.lock().expect("driven clock poisoned");
-            state.now += duration;
-            state.system_now = state
-                .system_now
-                .checked_add(duration)
-                .expect("driven system time overflow");
-        }
-        self.changed.send_modify(|generation| *generation += 1);
+    /// Moves policy time forward; every sleeper whose deadline is crossed
+    /// wakes.
+    pub fn advance(&self, by: Duration) {
+        self.inner.advance(by.as_millis() as i64);
+    }
+
+    /// The deadlines someone is waiting for, soonest first.
+    pub fn sleeping(&self) -> Vec<i64> {
+        self.inner.sleeping()
+    }
+
+    /// Resolves once something sleeps until exactly `at_ms`, so a test can
+    /// move past a deadline knowing it was armed.
+    pub async fn armed(&self, at_ms: i64) {
+        self.inner.armed(at_ms).await;
     }
 }
 
@@ -57,54 +52,11 @@ impl Default for DrivenClock {
 }
 
 impl Clock for DrivenClock {
-    fn now(&self) -> Instant {
-        self.state.lock().expect("driven clock poisoned").now
+    fn now_ms(&self) -> i64 {
+        self.inner.now_ms()
     }
 
-    fn system_now(&self) -> SystemTime {
-        self.state.lock().expect("driven clock poisoned").system_now
-    }
-
-    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-        let state = self.state.clone();
-        let mut changed = self.changed.subscribe();
-        Box::pin(async move {
-            loop {
-                if state.lock().expect("driven clock poisoned").now >= deadline {
-                    return;
-                }
-                if changed.changed().await.is_err() {
-                    std::future::pending::<()>().await;
-                }
-            }
-        })
-    }
-}
-
-impl node_test_support::IdentityClock for DrivenClock {
-    fn system_now(&self) -> SystemTime {
-        <Self as Clock>::system_now(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn advance_wakes_every_deadline_crossed_and_moves_wall_time_together() {
-        let clock = DrivenClock::new();
-        let start = clock.now();
-        let wall = clock.system_now();
-        let first = tokio::spawn(clock.sleep_until(start + Duration::from_secs(2)));
-        let second = tokio::spawn(clock.sleep_until(start + Duration::from_secs(3)));
-
-        clock.advance(Duration::from_secs(2));
-        first.await.expect("first sleeper");
-        assert!(!second.is_finished());
-        assert_eq!(clock.system_now(), wall + Duration::from_secs(2));
-
-        clock.advance(Duration::from_secs(1));
-        second.await.expect("second sleeper");
+    fn sleep_until(&self, at_ms: i64) -> Sleep {
+        self.inner.sleep_until(at_ms)
     }
 }

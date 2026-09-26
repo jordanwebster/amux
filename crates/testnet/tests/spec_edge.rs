@@ -1,17 +1,17 @@
-//! The network edge between whole daemons in one process: pairing through
-//! the front door over the LAN listener on loopback, authenticated links in
-//! both directions, a cloud link whose credential the runtime's clock
-//! refreshes, a stranger refused, unpairing, and discovery scoped to one
-//! network. Nothing here touches a real LAN, mDNS or relay: the listeners
-//! bind 127.0.0.1, discovery is a scripted bus, and the cloud and relay are
-//! in-process stand-ins.
+//! The network edge between whole daemons: pairing through the front door
+//! over the LAN listener on loopback, authenticated links in both
+//! directions, a cloud link whose credential the policy clock refreshes, a
+//! stranger refused, unpairing, and discovery scoped to one network.
+//! Nothing here touches a real LAN, mDNS or relay: the listeners bind
+//! 127.0.0.1, discovery is the net's scripted bus, and the cloud and relay
+//! are in-process stand-ins.
 
-mod support;
+#![cfg(unix)]
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -21,15 +21,9 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use node::harness::{
-    AuthenticatedLinkUser, HostVia, LinkTokenAuthenticator, ScriptedDiscovery, Tier,
-    scripted_discovery,
-};
-use node::{
-    CloudLinkServer, CloudOptions, Daemon, Edge, EdgeOptions, LanOptions, RelayIdentity,
-    StartOptions,
-};
-use support::{Install, PATIENCE};
+use node::harness::{AuthenticatedLinkUser, HostVia, LinkTokenAuthenticator, Tier};
+use node::{CloudLinkServer, CloudOptions, Edge, RelayIdentity};
+use testnet::{ClockMode, DrivenClock, HostDecl, Net, NetOptions, PATIENCE, Topology};
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 use wire::profile_service_client::ProfileServiceClient;
@@ -44,84 +38,41 @@ use wire::{
 /// The discovery scope the paired hosts share.
 const SCOPE: &str = "edge-test";
 
-/// A daemon serving its front door and a LAN listener on loopback.
-struct Host {
-    install: Install,
-    daemon: Daemon,
-    front_door: PathBuf,
+/// A host listening for direct links on loopback and on the net's
+/// discovery bus.
+fn lan_host(name: &str, scope: &str) -> HostDecl {
+    HostDecl {
+        name: name.to_owned(),
+        lan: true,
+        discovery: true,
+        scope: Some(scope.to_owned()),
+    }
 }
 
-impl Host {
-    async fn start(name: &str, scope: &str, bus: &ScriptedDiscovery, cloud: CloudOptions) -> Self {
-        Self::start_with_clock(name, scope, bus, cloud, Arc::new(agent_dir::SystemClock)).await
-    }
+fn edge(net: &Net, host: &str) -> Arc<Edge> {
+    net.edge(host).expect("the edge runs")
+}
 
-    async fn start_with_clock(
-        name: &str,
-        scope: &str,
-        bus: &ScriptedDiscovery,
-        cloud: CloudOptions,
-        clock: Arc<dyn agent_dir::Clock>,
-    ) -> Self {
-        let install = Install::new();
-        let front_door = install.path("door.sock");
-        let options = StartOptions {
-            front_door: Some(front_door.clone()),
-            clock,
-            edge: EdgeOptions {
-                host_name: name.to_owned(),
-                kinds: vec![wire::Kind::ClaudeSdk],
-                lan: Some(LanOptions {
-                    bind: SocketAddr::from(([127, 0, 0, 1], 0)),
-                }),
-                discovery: Some(scripted_discovery(bus)),
-                discovery_scope: scope.to_owned(),
-                dial: true,
-                link_socket: false,
-                cloud,
-            },
-            ..install.options("boot-1", node::Launch::default())
-        };
-        let daemon = node::start(options, None).await.expect("the daemon starts");
-        Self {
-            install,
-            daemon,
-            front_door,
-        }
-    }
+fn id(net: &Net, host: &str) -> String {
+    net.host(host).unwrap().profile.to_string()
+}
 
-    fn edge(&self) -> Arc<Edge> {
-        self.daemon
-            .profile(self.install.profile)
-            .expect("the profile runs")
-            .edge()
-            .expect("the edge runs")
-    }
+async fn door(net: &Net, host: &str) -> ProfileServiceClient<Channel> {
+    ProfileServiceClient::new(channel(&net.host(host).unwrap().front_door).await)
+}
 
-    fn id(&self) -> String {
-        self.install.profile.to_string()
-    }
-
-    async fn door(&self) -> ProfileServiceClient<Channel> {
-        ProfileServiceClient::new(channel(&self.front_door).await)
-    }
-
-    async fn info(&self) -> ProfileInfo {
-        self.door()
-            .await
-            .list_profiles(ListProfilesRequest {})
-            .await
-            .unwrap()
-            .into_inner()
-            .profiles
-            .into_iter()
-            .find(|profile| profile.id == self.id())
-            .expect("the profile is listed")
-    }
-
-    async fn shutdown(self) {
-        self.daemon.shutdown().await.unwrap();
-    }
+async fn info(net: &Net, host: &str) -> ProfileInfo {
+    let profile = id(net, host);
+    door(net, host)
+        .await
+        .list_profiles(ListProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .profiles
+        .into_iter()
+        .find(|listed| listed.id == profile)
+        .expect("the profile is listed")
 }
 
 async fn channel(path: &Path) -> Channel {
@@ -187,12 +138,11 @@ async fn peer_inventory_hosts(from: &Edge, to: Uuid) -> Vec<Vec<u8>> {
 
 /// Pairs `initiator` with `responder` through both front doors, with a PIN,
 /// over the responder's LAN listener.
-async fn pair(initiator: &Host, responder: &Host) -> wire::PeerEntry {
-    let started = responder
-        .door()
+async fn pair(net: &Net, initiator: &str, responder: &str) -> wire::PeerEntry {
+    let started = door(net, responder)
         .await
         .start_pairing(ProfileStartPairingRequest {
-            profile_id: responder.id(),
+            profile_id: id(net, responder),
             pairing: Some(StartPairingRequest {
                 mode: start_pairing_request::Mode::Pin as i32,
                 ..StartPairingRequest::default()
@@ -207,16 +157,15 @@ async fn pair(initiator: &Host, responder: &Host) -> wire::PeerEntry {
     };
     assert_eq!(
         started.addrs,
-        vec![responder.edge().lan_addr().unwrap().to_string()],
+        vec![edge(net, responder).lan_addr().unwrap().to_string()],
         "the invitation names the LAN listener"
     );
-    let pending = initiator
-        .door()
+    let pending = door(net, initiator)
         .await
         .begin_pair(ProfileBeginPairRequest {
-            profile_id: initiator.id(),
+            profile_id: id(net, initiator),
             pairing: Some(BeginPairRequest {
-                host_id: responder.edge().host_id().as_bytes().to_vec(),
+                host_id: edge(net, responder).host_id().as_bytes().to_vec(),
                 secret: Some(begin_pair_request::Secret::Pin(pin)),
                 addrs: started.addrs,
             }),
@@ -227,15 +176,14 @@ async fn pair(initiator: &Host, responder: &Host) -> wire::PeerEntry {
         .into_inner();
     assert_eq!(
         pending.peer.as_ref().unwrap().pubkey,
-        responder.edge().public_key(),
+        edge(net, responder).public_key(),
         "the pending pairing names the responder's key"
     );
     assert_eq!(pending.via, wire::PeerVia::Direct as i32);
-    initiator
-        .door()
+    door(net, initiator)
         .await
         .confirm_pair(ProfilePendingPairRequest {
-            profile_id: initiator.id(),
+            profile_id: id(net, initiator),
             pairing: Some(PendingPairRequest {
                 token: pending.token,
             }),
@@ -250,26 +198,29 @@ async fn pair(initiator: &Host, responder: &Host) -> wire::PeerEntry {
 
 #[tokio::test]
 async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
-    let bus = ScriptedDiscovery::new();
-    let desk = Host::start("desk", SCOPE, &bus, CloudOptions::default()).await;
-    let laptop = Host::start("laptop", SCOPE, &bus, CloudOptions::default()).await;
-    let stranger = Host::start("stranger", "elsewhere", &bus, CloudOptions::default()).await;
+    let net = Net::start(
+        Topology::new()
+            .host_decl(lan_host("desk", SCOPE))
+            .host_decl(lan_host("laptop", SCOPE))
+            .host_decl(lan_host("stranger", "elsewhere")),
+    )
+    .await
+    .unwrap();
     let (desk_id, laptop_id, stranger_id) = (
-        desk.edge().host_id(),
-        laptop.edge().host_id(),
-        stranger.edge().host_id(),
+        edge(&net, "desk").host_id(),
+        edge(&net, "laptop").host_id(),
+        edge(&net, "stranger").host_id(),
     );
 
     // Discovery lists only the machines in this network's scope.
     until("the laptop in the desk's candidates", || async {
-        desk.edge()
+        edge(&net, "desk")
             .candidates()
             .iter()
             .any(|advert| advert.host_id == laptop_id)
     })
     .await;
-    let desk_candidates = desk
-        .edge()
+    let desk_candidates = edge(&net, "desk")
         .candidates()
         .into_iter()
         .map(|advert| (advert.name, advert.scope))
@@ -279,25 +230,24 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         vec![("laptop".to_owned(), SCOPE.to_owned())]
     );
     assert!(
-        stranger.edge().candidates().is_empty(),
+        edge(&net, "stranger").candidates().is_empty(),
         "a host in another scope lists none of these"
     );
     println!("desk candidates: {desk_candidates:?}; stranger candidates: []");
 
     // The device identity the front door reports is the one pairing pins.
-    let identity = desk
-        .door()
+    let identity = door(&net, "desk")
         .await
         .get_device_identity(ProfileRequest {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
         })
         .await
         .unwrap()
         .into_inner();
     assert_eq!(identity.host_id, desk_id.as_bytes());
-    assert_eq!(identity.pubkey, desk.edge().public_key());
+    assert_eq!(identity.pubkey, edge(&net, "desk").public_key());
 
-    let peer = pair(&laptop, &desk).await;
+    let peer = pair(&net, "laptop", "desk").await;
     assert_eq!(peer.host_id, desk_id.as_bytes());
     assert_eq!(peer.name, "desk");
     println!(
@@ -308,19 +258,18 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
 
     // Both sides now trust each other, and the laptop dialled the desk.
     until("the desk to trust the laptop", || async {
-        desk.edge().is_trusted(laptop_id)
+        edge(&net, "desk").is_trusted(laptop_id)
     })
     .await;
     until("a direct link both ways", || async {
-        desk.edge().via(laptop_id).await == HostVia::Direct
-            && laptop.edge().via(desk_id).await == HostVia::Direct
+        edge(&net, "desk").via(laptop_id).await == HostVia::Direct
+            && edge(&net, "laptop").via(desk_id).await == HostVia::Direct
     })
     .await;
-    let desk_peers = desk
-        .door()
+    let desk_peers = door(&net, "desk")
         .await
         .list_peers(ProfileRequest {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
         })
         .await
         .unwrap()
@@ -336,8 +285,8 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
 
     // Authenticated calls run in both directions, each answered by the
     // other host's own runtime.
-    let from_laptop = peer_inventory_hosts(&laptop.edge(), desk_id).await;
-    let from_desk = peer_inventory_hosts(&desk.edge(), laptop_id).await;
+    let from_laptop = peer_inventory_hosts(&edge(&net, "laptop"), desk_id).await;
+    let from_desk = peer_inventory_hosts(&edge(&net, "desk"), laptop_id).await;
     assert!(from_laptop.contains(&desk_id.as_bytes().to_vec()));
     assert!(from_desk.contains(&laptop_id.as_bytes().to_vec()));
     println!("PeerService answered laptop -> desk and desk -> laptop");
@@ -360,8 +309,7 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         text: "hello".to_owned(),
         ..wire::Envelope::default()
     };
-    let refused = laptop
-        .edge()
+    let refused = edge(&net, "laptop")
         .peer(desk_id)
         .await
         .unwrap()
@@ -373,15 +321,16 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
     // A stranger that trusts the desk but that the desk never paired with
     // is refused: its pinned dial never becomes a link, and on the desk's
     // listener, without a trusted key, there is no PeerService to reach.
-    stranger.edge().trust(&desk.edge()).await.unwrap();
-    stranger
-        .edge()
-        .dial(desk_id, desk.edge().lan_addr().unwrap());
+    edge(&net, "stranger")
+        .trust(&edge(&net, "desk"))
+        .await
+        .unwrap();
+    edge(&net, "stranger").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
     tokio::time::sleep(Duration::from_secs(1)).await;
-    assert_eq!(desk.edge().via(stranger_id).await, HostVia::Offline);
-    assert_eq!(stranger.edge().via(desk_id).await, HostVia::Offline);
-    let desk_addr = desk.edge().lan_addr().unwrap();
-    let outside_pairing = match stranger.edge().unpinned_channel(desk_addr).await {
+    assert_eq!(edge(&net, "desk").via(stranger_id).await, HostVia::Offline);
+    assert_eq!(edge(&net, "stranger").via(desk_id).await, HostVia::Offline);
+    let desk_addr = edge(&net, "desk").lan_addr().unwrap();
+    let outside_pairing = match edge(&net, "stranger").unpinned_channel(desk_addr).await {
         Ok(channel) => wire::peer_service_client(channel)
             .subscribe_inventory(Empty {})
             .await
@@ -392,10 +341,10 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
     };
     // In pairing mode a stranger's stream reaches the pairing service, and
     // only that.
-    desk.door()
+    door(&net, "desk")
         .await
         .start_pairing(ProfileStartPairingRequest {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
             pairing: Some(StartPairingRequest {
                 mode: start_pairing_request::Mode::Qr as i32,
                 ..StartPairingRequest::default()
@@ -405,8 +354,7 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .await
         .unwrap();
     let in_pairing = wire::peer_service_client(
-        stranger
-            .edge()
+        edge(&net, "stranger")
             .unpinned_channel(desk_addr)
             .await
             .expect("pairing mode admits an unpinned stream"),
@@ -417,10 +365,10 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
     .expect_err("pairing mode serves only pairing")
     .code();
     assert_eq!(in_pairing, tonic::Code::Unimplemented);
-    desk.door()
+    door(&net, "desk")
         .await
         .cancel_pairing(wire::ProfileOperation {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
             ..wire::ProfileOperation::default()
         })
         .await
@@ -429,15 +377,14 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         "stranger refused: pinned dial never links; unpinned PeerService call {outside_pairing:?}, \
          in pairing mode {in_pairing:?}"
     );
-    assert!(!desk.edge().is_trusted(stranger_id));
+    assert!(!edge(&net, "desk").is_trusted(stranger_id));
 
     // Unpairing removes the laptop's key, closes its link, and a redial
     // with the now unknown key is refused.
-    let removed = desk
-        .door()
+    let removed = door(&net, "desk")
         .await
         .unpair(ProfileUnpairRequest {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
             peer: host_ref(laptop_id),
             reason: "retired".to_owned(),
             ..ProfileUnpairRequest::default()
@@ -449,77 +396,66 @@ async fn paired_hosts_link_both_ways_refuse_strangers_and_unpair() {
         .unwrap();
     assert_eq!(removed.name, "laptop");
     until("the link to close both ways", || async {
-        desk.edge().via(laptop_id).await == HostVia::Offline
-            && laptop.edge().via(desk_id).await == HostVia::Offline
+        edge(&net, "desk").via(laptop_id).await == HostVia::Offline
+            && edge(&net, "laptop").via(desk_id).await == HostVia::Offline
     })
     .await;
-    let gone = desk
-        .door()
+    let gone = door(&net, "desk")
         .await
         .get_peer(ProfileGetPeerRequest {
-            profile_id: desk.id(),
+            profile_id: id(&net, "desk"),
             peer: host_ref(laptop_id),
         })
         .await
         .expect_err("an unpaired host is no peer");
     assert_eq!(gone.code(), tonic::Code::NotFound);
-    laptop.edge().dial(desk_id, desk.edge().lan_addr().unwrap());
+    edge(&net, "laptop").dial(desk_id, edge(&net, "desk").lan_addr().unwrap());
     tokio::time::sleep(Duration::from_secs(1)).await;
-    assert_eq!(desk.edge().via(laptop_id).await, HostVia::Offline);
+    assert_eq!(edge(&net, "desk").via(laptop_id).await, HostVia::Offline);
     println!("desk unpaired the laptop; its redial is refused");
 
-    for host in [desk, laptop, stranger] {
-        host.shutdown().await;
-    }
+    net.shutdown().await.unwrap();
 }
 
 #[tokio::test]
 async fn trusted_edges_link_in_process_until_the_link_is_severed() {
-    // Apart on the network, so nothing redials once the link is cut: two
-    // hosts that find each other would link again directly.
-    let one = Host::start(
-        "one",
-        SCOPE,
-        &ScriptedDiscovery::new(),
-        CloudOptions::default(),
-    )
-    .await;
-    let two = Host::start(
-        "two",
-        SCOPE,
-        &ScriptedDiscovery::new(),
-        CloudOptions::default(),
-    )
-    .await;
-    let (one_id, two_id) = (one.edge().host_id(), two.edge().host_id());
+    // Off the network, so nothing redials once the link is cut: two hosts
+    // that find each other would link again directly.
+    let net = Net::start(Topology::new().host("one").host("two"))
+        .await
+        .unwrap();
+    let (one_id, two_id) = (edge(&net, "one").host_id(), edge(&net, "two").host_id());
 
     assert!(
-        one.edge().link_in_process(&two.edge()).is_err(),
+        edge(&net, "one")
+            .link_in_process(&edge(&net, "two"))
+            .is_err(),
         "hosts that do not trust each other are not linked"
     );
-    one.edge().trust(&two.edge()).await.unwrap();
-    two.edge().trust(&one.edge()).await.unwrap();
-    let link = one.edge().link_in_process(&two.edge()).unwrap();
+    edge(&net, "one").trust(&edge(&net, "two")).await.unwrap();
+    edge(&net, "two").trust(&edge(&net, "one")).await.unwrap();
+    let link = edge(&net, "one")
+        .link_in_process(&edge(&net, "two"))
+        .unwrap();
     until("the in-process link", || async {
-        one.edge().via(two_id).await == HostVia::Direct
-            && two.edge().via(one_id).await == HostVia::Direct
+        edge(&net, "one").via(two_id).await == HostVia::Direct
+            && edge(&net, "two").via(one_id).await == HostVia::Direct
     })
     .await;
     assert!(
-        peer_inventory_hosts(&two.edge(), one_id)
+        peer_inventory_hosts(&edge(&net, "two"), one_id)
             .await
             .contains(&one_id.as_bytes().to_vec())
     );
 
     link.sever();
     until("the severed link to leave both hosts", || async {
-        one.edge().via(two_id).await == HostVia::Offline
-            && two.edge().via(one_id).await == HostVia::Offline
+        edge(&net, "one").via(two_id).await == HostVia::Offline
+            && edge(&net, "two").via(one_id).await == HostVia::Offline
     })
     .await;
 
-    one.shutdown().await;
-    two.shutdown().await;
+    net.shutdown().await.unwrap();
 }
 
 /// Relay credentials the fake cloud minted: the account, when each
@@ -534,17 +470,13 @@ struct FakeCloud {
     relay: SocketAddr,
     tier: Mutex<&'static str>,
     connects: Mutex<u32>,
-    clock: Arc<agent_dir::ManualClock>,
+    clock: DrivenClock,
     tokens: Minted,
     user: Uuid,
 }
 
 impl FakeCloud {
-    async fn start(
-        relay: SocketAddr,
-        clock: Arc<agent_dir::ManualClock>,
-        tokens: Minted,
-    ) -> Arc<Self> {
+    async fn start(relay: SocketAddr, clock: DrivenClock, tokens: Minted) -> Arc<Self> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let cloud = Arc::new(Self {
             url: format!("http://{}", listener.local_addr().unwrap()),
@@ -663,11 +595,7 @@ impl LinkTokenAuthenticator for RegisteredTokens {
 
 #[tokio::test]
 async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock() {
-    let start_ms = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    let clock = Arc::new(agent_dir::ManualClock::new(start_ms));
+    let clock = DrivenClock::new();
     let tokens = Arc::new(Mutex::new(HashMap::new()));
     let authenticator = Arc::new(RegisteredTokens {
         tokens: tokens.clone(),
@@ -677,35 +605,37 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         host_id: Uuid::new_v4(),
         name: "relay".to_owned(),
         authenticator: authenticator.clone(),
-        clock: clock.clone(),
+        clock: Arc::new(clock.clone()),
     });
     let relay_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let relay_addr = relay_listener.local_addr().unwrap();
     let _relay = relay.serve_on_tcp_listener(relay_listener);
     let cloud = FakeCloud::start(relay_addr, clock.clone(), tokens).await;
 
-    let bus = ScriptedDiscovery::new();
-    let host = Host::start_with_clock(
-        "desk",
-        SCOPE,
-        &bus,
-        CloudOptions {
-            relay_tcp: Some(relay_addr),
-            free_refresh_interval: Some(Duration::from_secs(60)),
-            credentials: None,
+    let net = Net::start_with(
+        Topology::new().host_decl(lan_host("desk", SCOPE)),
+        NetOptions {
+            clock: ClockMode::Driven,
+            driven: Some(clock.clone()),
+            edge: Some(Arc::new(move |_, edge| {
+                edge.cloud = CloudOptions {
+                    relay_tcp: Some(relay_addr),
+                    free_refresh_interval: Some(Duration::from_secs(60)),
+                    credentials: None,
+                };
+            })),
         },
-        clock.clone(),
     )
-    .await;
-    let host_id = host.edge().host_id();
-    let unbound = host.info().await;
+    .await
+    .unwrap();
+    let host_id = edge(&net, "desk").host_id();
+    let unbound = info(&net, "desk").await;
     assert_eq!(unbound.intent, wire::Intent::Unbound as i32);
 
-    let bound = host
-        .door()
+    let bound = door(&net, "desk")
         .await
         .bind_profile(BindProfileRequest {
-            profile_id: Some(host.id()),
+            profile_id: Some(id(&net, "desk")),
             cloud_url: cloud.url.clone(),
             staged_refresh_token: "refresh-staged".to_owned(),
             ..BindProfileRequest::default()
@@ -718,7 +648,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     assert_eq!(bound.account_name, "Ada");
 
     until("the cloud link to connect", || async {
-        let info = host.info().await;
+        let info = info(&net, "desk").await;
         info.observed == wire::Observed::Connected as i32 && info.tier == wire::Tier::Free as i32
     })
     .await;
@@ -731,9 +661,9 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     *cloud.tier.lock().unwrap() = "pro";
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(*cloud.connects.lock().unwrap(), 1);
-    clock.advance(60_000);
+    clock.advance(Duration::from_secs(60));
     until("the refreshed credential to carry the new tier", || async {
-        host.info().await.tier == wire::Tier::Pro as i32
+        info(&net, "desk").await.tier == wire::Tier::Pro as i32
     })
     .await;
     assert_eq!(*cloud.connects.lock().unwrap(), 2);
@@ -753,7 +683,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     // On Pro the link refreshes five minutes before its credential expires.
     // Past the first credential's expiry on the relay's clock, the link
     // lives on a refreshed one.
-    clock.advance(550_000);
+    clock.advance(Duration::from_secs(550));
     until("the Pro credential's refresh before expiry", || async {
         authenticator
             .seen
@@ -764,16 +694,18 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(relay.user_has_link_to(cloud.user, host_id).await);
-    assert_eq!(host.info().await.observed, wire::Observed::Connected as i32);
+    assert_eq!(
+        info(&net, "desk").await.observed,
+        wire::Observed::Connected as i32
+    );
     println!("clock +610s: relay-1 expired, the link lives on relay-3");
 
     // Pausing drops the link and keeps the credential; resuming brings it
     // back; signing out forgets the credential and keeps the binding.
-    let paused = host
-        .door()
+    let paused = door(&net, "desk")
         .await
         .pause_profile(wire::ProfileOperation {
-            profile_id: host.id(),
+            profile_id: id(&net, "desk"),
             ..wire::ProfileOperation::default()
         })
         .await
@@ -784,10 +716,10 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         !relay.user_has_link_to(cloud.user, host_id).await
     })
     .await;
-    host.door()
+    door(&net, "desk")
         .await
         .resume_profile(wire::ProfileOperation {
-            profile_id: host.id(),
+            profile_id: id(&net, "desk"),
             ..wire::ProfileOperation::default()
         })
         .await
@@ -796,11 +728,10 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         relay.user_has_link_to(cloud.user, host_id).await
     })
     .await;
-    let signed_out = host
-        .door()
+    let signed_out = door(&net, "desk")
         .await
         .logout_profile(wire::ProfileOperation {
-            profile_id: host.id(),
+            profile_id: id(&net, "desk"),
             ..wire::ProfileOperation::default()
         })
         .await
@@ -814,5 +745,5 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     .await;
     println!("paused, resumed and signed out");
 
-    host.shutdown().await;
+    net.shutdown().await.unwrap();
 }
