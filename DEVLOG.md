@@ -1,3 +1,20 @@
+2026-09-26 — **Terminal Claude 2.1.283 takes its first prompt.**
+The agent typed the first prompt the moment bracketed paste came on.
+Claude 2.1.283 turns it on as its very first output, queries the
+terminal, then turns it off and on again while it resets its input, and
+drops keys typed before that; the prompt was lost and the agent sat in
+working. Readiness is now the first text drawn with bracketed paste on,
+which holds on 2.1.251 (paste on once, first screen later) and 2.1.283;
+the SessionStart hook is no signal because 2.1.251 runs it only after the
+first prompt. The fake terminal Claude now starts the way 2.1.283 does,
+so the old rule fails the agent's provider tests. Two live scenarios that
+could never pass are fixed too: the permission menu with two suggestions
+(2.1.283 shows them as one "always allow" entry) now takes allow-once and
+deny while a scoped choice there is still refused, the terminal
+interrupt runs its recording's long Bash command instead of the counting
+prompt, and a recording that stops before its turn ends is judged as far
+as it goes. `just live -- claude_pty all` passes on 2.1.283.
+
 2026-09-26 — **A credential refresh no longer undoes a sign-out or a pause.**
 A refresh copied the account record, waited on the token exchange, then
 wrote the rotated refresh token over the stale copy; a sign-out or pause

@@ -15,6 +15,8 @@ use support::{corpus, script_file};
 
 const DEADLINE: Duration = Duration::from_secs(20);
 const SESSION: &str = "5e55e55e-0000-4000-8000-0000000000aa";
+/// The fake terminal's first screen.
+const SCREEN: &[u8] = b"Claude Code (scripted)";
 
 struct Terminal {
     handle: pty_host::PtyHandle,
@@ -103,8 +105,9 @@ impl Terminal {
         }
     }
 
-    /// Start and wait for the terminal to take input: Claude turns on
-    /// bracketed paste then. Its session starts only with the first prompt.
+    /// Start and wait for the terminal to take input: from its first screen,
+    /// after it resets its input. Its session starts only with the first
+    /// prompt.
     async fn started(script: Value) -> Self {
         let terminal = Self::start(script);
         let mut output = terminal.handle.output();
@@ -112,14 +115,14 @@ impl Terminal {
         let live = tokio::time::timeout(DEADLINE, async {
             while let Some(bytes) = output.recv().await {
                 seen.extend_from_slice(&bytes);
-                if seen.windows(8).any(|window| window == b"\x1b[?2004h") {
+                if seen.windows(SCREEN.len()).any(|window| window == SCREEN) {
                     return true;
                 }
             }
             false
         })
         .await;
-        assert_eq!(live.ok(), Some(true), "bracketed paste is turned on");
+        assert_eq!(live.ok(), Some(true), "the first screen is drawn");
         // Nothing reads the screen; drain it so the fake never blocks on it.
         tokio::spawn(async move { while output.recv().await.is_some() {} });
         terminal

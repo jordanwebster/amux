@@ -28,6 +28,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const SYNC: Duration = Duration::from_secs(10);
 /// How long a finished session may take to end.
 const END: Duration = Duration::from_secs(20);
+/// The fake terminal's first screen.
+const SCREEN: &[u8] = b"Claude Code (scripted)";
 /// Stands for a file the driver creates when the recording's gated frame is
 /// due, releasing a held call.
 const GATE: &str = "$GATE";
@@ -414,13 +416,13 @@ async fn terminal(scenario: &Scenario) -> Result<(), String> {
     .unwrap();
     let handle = spawned.handle;
     let mut output = handle.output();
-    // Keys count once the terminal takes input: Claude turns on bracketed
-    // paste then.
+    // Keys count once the terminal takes input: from its first screen, after
+    // it resets its input.
     let mut seen = Vec::new();
     let live = tokio::time::timeout(END, async {
         while let Some(bytes) = output.recv().await {
             seen.extend_from_slice(&bytes);
-            if seen.windows(8).any(|window| window == b"\x1b[?2004h") {
+            if seen.windows(SCREEN.len()).any(|window| window == SCREEN) {
                 return;
             }
         }

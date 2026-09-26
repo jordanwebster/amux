@@ -19,6 +19,7 @@ mod dir;
 mod dump;
 mod host;
 mod provider;
+mod ready;
 mod ring;
 mod terminal;
 mod tools;

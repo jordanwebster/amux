@@ -56,8 +56,16 @@ pub struct MenuLayout {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShapeSet {
+    /// Suggestion counts whose whole permission menu is verified: one
+    /// scoped entry per suggestion between allow-once and deny.
     #[serde(default)]
     pub permission_suggestions: Vec<usize>,
+    /// Suggestion counts whose allow-once and deny entries are verified but
+    /// whose scoped entries are not. Claude 2.1.283 shows two suggestions as
+    /// one scoped entry, so a scope chosen by suggestion has no key of its
+    /// own there.
+    #[serde(default)]
+    pub permission_once_or_deny_suggestions: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -933,16 +941,25 @@ fn validate_environment(
                 ) => (*suggestions, answer),
                 _ => return mismatch("permission program requires a non-plan permission answer"),
             };
-            let verified = keymap
-                .verified_shapes
-                .get(&ProgramName::PermissionMenu)
-                .is_some_and(|shapes| shapes.permission_suggestions.contains(&suggestions));
-            if !verified {
+            let shapes = keymap.verified_shapes.get(&ProgramName::PermissionMenu);
+            let whole =
+                shapes.is_some_and(|shapes| shapes.permission_suggestions.contains(&suggestions));
+            let once_or_deny = shapes.is_some_and(|shapes| {
+                shapes
+                    .permission_once_or_deny_suggestions
+                    .contains(&suggestions)
+            });
+            let scoped = matches!(answer, PermissionAnswer::AllowScoped { .. });
+            if !whole && !(once_or_deny && !scoped) {
                 return Err(InputError::UnverifiedShape {
                     program,
-                    reason: format!(
-                        "permission menu with {suggestions} suggestions is not verified"
-                    ),
+                    reason: if once_or_deny {
+                        format!(
+                            "a scoped allowance on a permission menu with {suggestions} suggestions is not verified"
+                        )
+                    } else {
+                        format!("permission menu with {suggestions} suggestions is not verified")
+                    },
                 });
             }
             if let PermissionAnswer::AllowScoped { suggestion } = answer
@@ -1399,6 +1416,11 @@ mod format {
         assert_eq!(
             keymap.verified_shapes[&ProgramName::PermissionMenu].permission_suggestions,
             [1]
+        );
+        assert_eq!(
+            keymap.verified_shapes[&ProgramName::PermissionMenu]
+                .permission_once_or_deny_suggestions,
+            [2]
         );
         assert_eq!(keymap.programs.len(), PROGRAM_TABLE.len());
         assert_eq!(
@@ -2167,13 +2189,57 @@ mod resolve {
         ));
     }
 
+    fn permission_menu(
+        suggestions: usize,
+        answer: PermissionAnswer,
+    ) -> Result<Vec<KeyStep>, InputError> {
+        let keymap = load_str(BAKED, "baked.toml", KeymapSource::Baked).unwrap();
+        let resolved = resolve(&KeymapSources::default(), &version("2.1.283")).unwrap();
+        let ask = AskKind::Permission {
+            tool_name: "Bash".to_owned(),
+            suggestions,
+            is_plan: false,
+        };
+        let answer = AskAnswer::Permission(answer);
+        encode(
+            &keymap,
+            &resolved,
+            ProgramName::PermissionMenu,
+            &Environment {
+                ask: Some(&ask),
+                answer: Some(&answer),
+                prompt: None,
+            },
+        )
+    }
+
+    /// Claude 2.1.283 shows two suggestions as one scoped entry: allow-once
+    /// and deny keep their keys, a scope chosen by suggestion has none.
+    #[test]
+    fn two_suggestions_take_allow_once_and_deny_but_no_scope() {
+        assert_eq!(
+            permission_menu(2, PermissionAnswer::AllowOnce).unwrap(),
+            [KeyStep::Write(b"1".to_vec())]
+        );
+        assert_eq!(
+            permission_menu(2, PermissionAnswer::Deny { feedback: None }).unwrap(),
+            [KeyStep::Write(b"3".to_vec())]
+        );
+        let error = permission_menu(2, PermissionAnswer::AllowScoped { suggestion: 0 })
+            .expect_err("a scope on a folded menu must be refused");
+        assert_eq!(
+            error.to_string(),
+            "unverified keymap shape for PermissionMenu: a scoped allowance on a permission menu with 2 suggestions is not verified"
+        );
+    }
+
     #[test]
     fn permission_shape_refusal_names_hook_suggestion_count() {
         let keymap = load_str(BAKED, "baked.toml", KeymapSource::Baked).unwrap();
         let resolved = resolve(&KeymapSources::default(), &version("2.1.240")).unwrap();
         let ask = AskKind::Permission {
             tool_name: "Bash".to_owned(),
-            suggestions: 2,
+            suggestions: 3,
             is_plan: false,
         };
         let answer = AskAnswer::Permission(PermissionAnswer::AllowOnce);
@@ -2195,7 +2261,7 @@ mod resolve {
         .expect_err("unverified hook shape must be refused");
         assert_eq!(
             error.to_string(),
-            "unverified keymap shape for PermissionMenu: permission menu with 2 suggestions is not verified"
+            "unverified keymap shape for PermissionMenu: permission menu with 3 suggestions is not verified"
         );
     }
 }

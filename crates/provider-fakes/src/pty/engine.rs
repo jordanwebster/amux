@@ -39,6 +39,12 @@ fn peer_element(text: &str) -> String {
 }
 
 const BRACKETED_PASTE_ON: &[u8] = b"\x1b[?2004h";
+const BRACKETED_PASTE_OFF: &[u8] = b"\x1b[?2004l";
+/// XTVERSION, the kitty keyboard flags and DA1, as Claude asks them.
+const TERMINAL_QUERIES: &[u8] = b"\x1b[>0q\x1b[?u\x1b[c";
+/// How long the fake takes between its first output and its input reset;
+/// Claude 2.1.283 takes about 300 ms.
+const INPUT_RESET: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Set, the fake behaves as a Claude without a messaging socket.
 pub const NO_MESSAGING_ENV: &str = "AMUX_FAKE_NO_MESSAGING";
@@ -372,14 +378,33 @@ impl Engine {
     }
 
     async fn run(mut self) -> i32 {
-        // Input is live once bracketed paste is on, as Claude's TUI turns it
-        // on when it starts reading keys.
+        // Claude 2.1.283 turns bracketed paste on as its first output, queries
+        // the terminal, then resets its input (paste off and on again) and
+        // draws; keys typed before the reset are lost. Input is live from the
+        // first screen.
         {
             let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(BRACKETED_PASTE_ON);
+            let _ = stdout.write_all(TERMINAL_QUERIES);
+            let _ = stdout.flush();
+        }
+        tokio::time::sleep(INPUT_RESET).await;
+        let mut kept = Vec::new();
+        while let Ok(input) = self.input.try_recv() {
+            if !matches!(input, In::Key(_)) {
+                kept.push(input);
+            }
+        }
+        {
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(BRACKETED_PASTE_OFF);
             let _ = stdout.write_all(BRACKETED_PASTE_ON);
             let _ = stdout.flush();
         }
         self.screen("Claude Code (scripted)");
+        for input in kept {
+            self.handle(input);
+        }
         loop {
             if !self.busy
                 && let Some(next) = self.queue.pop_front()

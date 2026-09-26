@@ -66,6 +66,9 @@ request_changes = 3
 
 [verified_shapes.permission_menu]
 permission_suggestions = [1]
+# 2.1.283, live: two suggestions (a directory and a mode) show as one
+# "Yes, and always allow" entry between Yes (1) and No (3).
+permission_once_or_deny_suggestions = [2]
 
 [programs.prompt]
 stability = "stable"

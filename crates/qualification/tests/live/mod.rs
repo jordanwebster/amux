@@ -547,6 +547,11 @@ impl Install {
                 "--strict-mcp-config",
             ]);
         }
+        // Terminal Claude's interrupt recording cancels a running Bash
+        // command it was allowed to run without asking.
+        if self.kind == Kind::ClaudePty && scenario == Scenario::Interrupt {
+            args.extend(["--allowedTools", "Bash"]);
+        }
         let output = self.amux(&args).await?;
         created_id(&output).ok_or_else(|| format!("amux create said {output:?}"))
     }
@@ -878,11 +883,16 @@ impl Install {
         if let Some(why) = follow.signed_out() {
             return Ok(Verdict::Unavailable(why));
         }
-        self.send(
-            Scenario::Interrupt,
-            "Count from 1 to 1000, one number per line, in plain text.",
-        )
-        .await?;
+        // Each kind's prompt is its recording's: the terminal recording
+        // interrupts a long command, the others a long reply.
+        let prompt = match self.kind {
+            Kind::ClaudePty => {
+                "Use Bash to run exactly: python3 -c 'import select; select.select([], [], [], \
+                 30)'; printf SHOULD_NOT_FINISH. Do not do anything else."
+            }
+            _ => "Count from 1 to 1000, one number per line, in plain text.",
+        };
+        self.send(Scenario::Interrupt, prompt).await?;
         // The turn is under way once the provider has said anything of its
         // own: an interrupt before that races the prompt, not the turn.
         follow
@@ -1177,8 +1187,20 @@ struct Shape {
     asks: Vec<String>,
 }
 
+/// The live shape matches the recording's. A recording that stops before
+/// its turn ends (terminal Claude's permission recording ends at the tool
+/// result) judges the live run only as far as it goes; the scenario checks
+/// how the live turn ended itself.
 fn judge(recorded: &Shape, live: &Shape) -> Result<(), String> {
     if recorded == live {
+        return Ok(());
+    }
+    let unfinished = !recorded.items.iter().any(|item| item.starts_with("turn "));
+    if unfinished
+        && live.items.starts_with(&recorded.items)
+        && live.phases.starts_with(&recorded.phases)
+        && live.asks == recorded.asks
+    {
         return Ok(());
     }
     Err(format!(
