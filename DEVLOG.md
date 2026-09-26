@@ -1,3 +1,23 @@
+2026-09-26 — **More real Claude terminal recordings.**
+Eight new PTY recordings against Claude Code 2.1.282 cover what the corpus
+lacked: one AskUserQuestion call with four questions (two, three and four
+options, a multi-select, a single-select whose options carry previews, and a
+typed Other answer), a question the person cancels, a subagent, a background
+shell read back later, the task tools, a file overwrite with a move, a
+delete and a failing command, an image read, and a turn that thought first.
+The last one shows that Claude still writes thinking blocks with a
+signature and empty text, so the terminal chat can only show a duration.
+
+Questions whose options carry previews use a side-by-side form where a
+digit moves the cursor instead of choosing, so the question facts now say
+whether a question has previews and the keymap presses Enter after the digit
+for those. Newer Claude Code versions also write the machine owner's own
+context into the transcript (their instruction files, account email and
+organisation, the full system prompt, plugin output); the recorder replaces
+those attachment payloads before anything is written, keeping the row and
+its type. The keymap's recorder path pointed at a file that moved to the
+`claude` crate and is fixed.
+
 2026-09-26 — **The Claude SDK interpreter.**
 `interpret::claude_sdk` reads headless Claude's stream-JSON: events and
 control requests on stdout, and the process's exit. Every user message it

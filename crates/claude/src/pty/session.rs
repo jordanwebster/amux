@@ -250,6 +250,10 @@ pub enum AskKind {
 pub struct QuestionFact {
     pub options: usize,
     pub multi_select: bool,
+    /// Options carry previews, which switches the form to a side-by-side
+    /// layout where a digit moves the cursor instead of choosing.
+    #[serde(default)]
+    pub previews: bool,
 }
 
 /// Semantic input accepted by a Claude PTY session.
@@ -1150,6 +1154,17 @@ fn question_facts(input: &Value) -> Option<Vec<QuestionFact>> {
                     .or_else(|| question.get("multi_select"))
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                previews: question
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .is_some_and(|options| {
+                        options.iter().any(|option| {
+                            option
+                                .get("preview")
+                                .and_then(Value::as_str)
+                                .is_some_and(|preview| !preview.is_empty())
+                        })
+                    }),
             })
             .collect(),
     )
@@ -1520,10 +1535,12 @@ mod tests {
                             QuestionFact {
                                 options: 2,
                                 multi_select: false,
+                                previews: false,
                             },
                             QuestionFact {
                                 options: 3,
                                 multi_select: true,
+                                previews: false,
                             },
                         ],
                     }
@@ -1545,7 +1562,8 @@ mod tests {
                     AskKind::Question {
                         questions: vec![QuestionFact {
                             options: 2,
-                            multi_select: true
+                            multi_select: true,
+                            previews: false,
                         }],
                     }
                 );

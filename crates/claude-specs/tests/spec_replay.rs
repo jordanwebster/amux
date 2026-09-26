@@ -145,6 +145,14 @@ mod pty_replays {
         mode_cycle,
         compact_relink,
         clear_relink,
+        question_every_shape,
+        question_cancelled,
+        subagent,
+        background_shell,
+        task_list,
+        file_changes_and_failure,
+        image,
+        thinking,
     );
 
     #[tokio::test(start_paused = true)]

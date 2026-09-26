@@ -208,6 +208,7 @@ string_enum!(Cond {
     IsFirst,
     LastQuestionMulti,
     SingleQuestionSingleSelect,
+    HasPreviews,
 });
 
 string_enum!(RowSource {
@@ -1281,6 +1282,7 @@ impl Interpreter<'_, '_> {
             }),
             Cond::HasOther => Ok(self.question_answer()?.other.is_some()),
             Cond::MultiSelect => Ok(self.question_fact()?.multi_select),
+            Cond::HasPreviews => Ok(self.question_fact()?.previews),
             Cond::IsFirst => Ok(self.question == Some(0)),
             Cond::LastQuestionMulti => match self.env.ask {
                 Some(AskKind::Question { questions }) => Ok(questions
@@ -1525,6 +1527,7 @@ mod interpret {
                 .map(|(options, multi_select)| QuestionFact {
                     options: *options,
                     multi_select: *multi_select,
+                    previews: false,
                 })
                 .collect(),
         }

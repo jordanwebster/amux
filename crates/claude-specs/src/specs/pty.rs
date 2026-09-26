@@ -27,6 +27,7 @@ const SONNET_FALLBACK_SPECS: &[&str] = &[
     "plan_auto",
     "plan_request_changes",
     "question_mixed",
+    "question_every_shape",
 ];
 
 type SpecFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
@@ -78,9 +79,25 @@ static DEFINITIONS: &[PtySpecDef] = &[
     definition!(mode_cycle, &[], mode_cycle),
     definition!(compact_relink, &[], compact_relink),
     definition!(clear_relink, &[], clear_relink),
+    definition!(question_every_shape, &[], question_every_shape),
+    definition!(question_cancelled, &[], question_cancelled),
+    definition!(subagent, &["--dangerously-skip-permissions"], subagent),
+    definition!(
+        background_shell,
+        &["--dangerously-skip-permissions"],
+        background_shell
+    ),
+    definition!(task_list, &["--dangerously-skip-permissions"], task_list),
+    definition!(
+        file_changes_and_failure,
+        &["--dangerously-skip-permissions"],
+        file_changes_and_failure
+    ),
+    definition!(image, &["--dangerously-skip-permissions"], image),
+    definition!(thinking, &[], thinking),
 ];
 
-static REGISTRY: [SpecEntry; 18] = [
+static REGISTRY: [SpecEntry; 26] = [
     entry("prompt"),
     entry("prompt_multiline"),
     entry("tools"),
@@ -99,6 +116,14 @@ static REGISTRY: [SpecEntry; 18] = [
     entry("mode_cycle"),
     entry("compact_relink"),
     entry("clear_relink"),
+    entry("question_every_shape"),
+    entry("question_cancelled"),
+    entry("subagent"),
+    entry("background_shell"),
+    entry("task_list"),
+    entry("file_changes_and_failure"),
+    entry("image"),
+    entry("thinking"),
 ];
 
 pub fn registry() -> &'static [SpecEntry] {
@@ -110,7 +135,7 @@ pub fn fixtures_root() -> PathBuf {
 }
 
 pub fn baked_keymap_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("keymaps/claude-2.1.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../claude/keymaps/claude-2.1.toml")
 }
 
 /// Apply the launch arguments owned by a PTY specification.
@@ -1248,6 +1273,255 @@ async fn clear_relink(session: &mut PtySpecSession) -> Result<(), String> {
     session.wait_relink(RelinkReason::Clear).await
 }
 
+fn tool_names_in(row: &serde_json::Value) -> Vec<String> {
+    if row.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+        return Vec::new();
+    }
+    row.pointer("/message/content")
+        .and_then(serde_json::Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| {
+                    block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use")
+                })
+                .filter_map(|block| block.get("name").and_then(serde_json::Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Collect transcript rows until the turn has stopped and `done` holds for
+/// what was seen. The Stop hook and the last transcript rows travel on
+/// separate streams, so either may arrive first.
+async fn collect_turn(
+    session: &mut PtySpecSession,
+    done: impl Fn(&[serde_json::Value]) -> bool,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut rows = Vec::new();
+    let mut stopped = false;
+    loop {
+        match session.next().await? {
+            PtyEvent::Transcript { row, .. } => rows.push(row.into_value()),
+            PtyEvent::Hook(claude::hooks::HookPayload::Stop { .. }) => stopped = true,
+            PtyEvent::Exited(status) => {
+                return Err(format!("Claude exited mid-turn: {status:?}"));
+            }
+            _ => {}
+        }
+        if stopped && done(&rows) {
+            return Ok(rows);
+        }
+    }
+}
+
+fn used_tools(rows: &[serde_json::Value], expected: &[&str]) -> bool {
+    let seen = rows.iter().flat_map(tool_names_in).collect::<Vec<_>>();
+    expected
+        .iter()
+        .all(|name| seen.iter().any(|tool| tool == name))
+}
+
+async fn question_every_shape(session: &mut PtySpecSession) -> Result<(), String> {
+    const COLOR: &str = "Which color do you prefer?";
+    const TOOLS: &str = "Which tools do you need?";
+    const LAYOUT: &str = "Which layout should the page use?";
+    const SNACK: &str = "Which snack do you want?";
+    const OTHER: &str = "Dried mango";
+    let ask = question_ask(
+        session,
+        "Use exactly one AskUserQuestion call containing exactly four questions, in this order. \
+         1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. \
+         2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. \
+         3: header Layout, question 'Which layout should the page use?', single-select, four options Sidebar, Topbar, Grid and Stack; give every one of these four options a preview holding a small ASCII sketch of that layout. \
+         4: header Snack, question 'Which snack do you want?', single-select, options Apple, Pretzel and Popcorn. \
+         Add nothing else. After I answer, repeat all four answers.",
+    )
+    .await?;
+    let shape = match &ask.kind {
+        AskKind::Question { questions } => questions
+            .iter()
+            .map(|question| (question.options, question.multi_select))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    if shape != [(2, false), (3, true), (4, false), (3, false)] {
+        return Err(format!("four-question ask had unexpected shape: {shape:?}"));
+    }
+    session
+        .send(Intent::Answer {
+            ask_id: ask.id,
+            answer: AskAnswer::Question(QuestionResponse {
+                answers: vec![
+                    QuestionAnswer {
+                        selected: vec![1],
+                        other: None,
+                    },
+                    QuestionAnswer {
+                        selected: vec![0, 2],
+                        other: None,
+                    },
+                    QuestionAnswer {
+                        selected: vec![2],
+                        other: None,
+                    },
+                    QuestionAnswer {
+                        selected: Vec::new(),
+                        other: Some(OTHER.to_owned()),
+                    },
+                ],
+            }),
+        })
+        .await?;
+    let row = session
+        .wait_transcript(|row| {
+            question_result_has_answers(row, &[(COLOR, "Blue"), (LAYOUT, "Grid"), (SNACK, OTHER)])
+        })
+        .await?;
+    let tools = row
+        .pointer("/toolUseResult/answers")
+        .and_then(|answers| answers.get(TOOLS))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !(tools.contains("Hammer") && tools.contains("Drill") && !tools.contains("Saw")) {
+        return Err(format!("multi-select answer was {tools:?}"));
+    }
+    let previews = row
+        .pointer("/toolUseResult/questions/2/options")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |options| {
+            options
+                .iter()
+                .filter(|option| {
+                    option
+                        .get("preview")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|preview| !preview.is_empty())
+                })
+                .count()
+        });
+    if previews != 4 {
+        return Err(format!(
+            "layout question carried {previews} previews, not 4"
+        ));
+    }
+    Ok(())
+}
+
+async fn question_cancelled(session: &mut PtySpecSession) -> Result<(), String> {
+    question_ask(
+        session,
+        "Use AskUserQuestion to ask one single-select question with header Color and options Red and Blue. If I decline to answer, reply exactly QUESTION_DECLINED.",
+    )
+    .await?;
+    session.send(Intent::Interrupt).await?;
+    session
+        .wait_transcript(|row| {
+            row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+                && row.to_string().contains("tool_result")
+        })
+        .await?;
+    Ok(())
+}
+
+async fn subagent(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Use the Agent tool to start one general-purpose subagent with this task: read config.txt with the Read tool and report its single line. Wait for it, then tell me what it reported."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        used_tools(rows, &["Agent"]) && rows.iter().any(|row| assistant_contains(row, "VALUE=1"))
+    })
+    .await?;
+    Ok(())
+}
+
+async fn background_shell(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        rows.iter()
+            .any(|row| row.pointer("/toolUseResult/backgroundTaskId").is_some())
+            && rows.iter().any(|row| assistant_contains(row, "tick 3"))
+    })
+    .await?;
+    Ok(())
+}
+
+async fn task_list(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Track this work with your task tools: create three tasks named Draft, Review and Publish. Then mark Draft in progress, then mark Draft completed. Do nothing else, then stop."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        used_tools(rows, &["TaskCreate", "TaskUpdate"])
+    })
+    .await?;
+    Ok(())
+}
+
+async fn file_changes_and_failure(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Do these in order, one tool call each. 1: use Write to overwrite README.md with the single line REPLACED. 2: use Bash to run exactly: mv config.txt moved.txt. 3: use Bash to run exactly: rm moved.txt. 4: use Bash to run exactly: ls missing-file.txt. The last one fails; that is expected. Then stop."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        used_tools(rows, &["Write", "Bash"])
+            && rows.iter().any(|row| {
+                row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+                    && row.to_string().contains("\"is_error\":true")
+                    && row.to_string().contains("missing-file.txt")
+            })
+    })
+    .await?;
+    Ok(())
+}
+
+async fn image(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Use the Read tool on square.png and tell me its main color in one word."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        used_tools(rows, &["Read"])
+            && rows
+                .iter()
+                .any(|row| row.to_string().contains("\"type\":\"image\""))
+    })
+    .await?;
+    Ok(())
+}
+
+async fn thinking(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Think hard about this before answering: which is larger, 17 squared or 2 to the power 8? Answer with just the larger number."
+                .to_owned(),
+        })
+        .await?;
+    collect_turn(session, |rows| {
+        rows.iter().any(|row| assistant_contains(row, "289"))
+            && rows
+                .iter()
+                .any(|row| row.to_string().contains("\"type\":\"thinking\""))
+    })
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1278,6 +1552,14 @@ mod tests {
                 "mode_cycle",
                 "compact_relink",
                 "clear_relink",
+                "question_every_shape",
+                "question_cancelled",
+                "subagent",
+                "background_shell",
+                "task_list",
+                "file_changes_and_failure",
+                "image",
+                "thinking",
             ]
         );
         assert_eq!(DEFINITIONS.len(), registry().len());
@@ -1291,7 +1573,8 @@ mod tests {
                 "plan_approve",
                 "plan_auto",
                 "plan_request_changes",
-                "question_mixed"
+                "question_mixed",
+                "question_every_shape"
             ]
         );
         assert!(
