@@ -1,87 +1,63 @@
 //! fake-claude-sdk as a host sees it: every frame it composes has a recorded
 //! shape, and it echoes, queues, folds and cancels the way Claude does.
 
-use std::path::Path;
+mod support;
+
 use std::process::Stdio;
-use std::sync::OnceLock;
-use std::time::Duration;
 
-use provider_fakes::shape::{Classifier, Corpus};
-use provider_fakes::{Kind, Script};
+use provider_fakes::Kind;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use support::Host as Line;
 
-const DEADLINE: Duration = Duration::from_secs(20);
+/// A cancel answer is shown by the probe of Claude 2.1.282
+/// (notes/rearchitect/probes/sdk-side-channel.md), not by any recording yet.
+const EXEMPT: &[&str] = &["control_response/cancel_async_message/success"];
 
-fn corpus() -> &'static Corpus {
-    static CORPUS: OnceLock<Corpus> = OnceLock::new();
-    CORPUS.get_or_init(|| {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/sdk");
-        Corpus::load(Kind::ClaudeSdk, &[&root]).unwrap()
-    })
+struct Host(Line);
+
+impl std::ops::Deref for Host {
+    type Target = Line;
+    fn deref(&self) -> &Line {
+        &self.0
+    }
 }
 
-struct Host {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    stdout: Lines<BufReader<ChildStdout>>,
-    classifier: Classifier,
-    frames: Vec<Value>,
-    /// Holds the script until the fake exits.
-    _dir: tempfile::TempDir,
+impl std::ops::DerefMut for Host {
+    fn deref_mut(&mut self) -> &mut Line {
+        &mut self.0
+    }
 }
 
 impl Host {
     async fn start(script: Value) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let script: Script = serde_json::from_value(script).unwrap();
-        let path = dir.path().join("script.json");
-        std::fs::write(&path, serde_json::to_vec(&script).unwrap()).unwrap();
-        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_fake-claude-sdk"))
-            .args([
-                "--print",
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--session-id",
-                "5e55e55e-0000-4000-8000-000000000001",
-                "--replay-user-messages",
-                "--include-partial-messages",
-                "--messaging-socket-path",
-                "/tmp/fake-claude-sdk.sock",
-            ])
-            .env(provider_fakes::SCRIPT_ENV, &path)
-            .current_dir(dir.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let stdin = child.stdin.take();
-        let stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-        let mut host = Self {
-            child,
-            stdin,
-            stdout,
-            classifier: Classifier::default(),
-            frames: Vec::new(),
-            _dir: dir,
-        };
+        let mut host = Host(
+            Line::spawn(
+                Kind::ClaudeSdk,
+                env!("CARGO_BIN_EXE_fake-claude-sdk"),
+                &[
+                    "--print",
+                    "--input-format",
+                    "stream-json",
+                    "--output-format",
+                    "stream-json",
+                    "--verbose",
+                    "--session-id",
+                    "5e55e55e-0000-4000-8000-000000000001",
+                    "--replay-user-messages",
+                    "--include-partial-messages",
+                    "--messaging-socket-path",
+                    "/tmp/fake-claude-sdk.sock",
+                ],
+                script,
+                EXEMPT,
+            )
+            .await,
+        );
         host.send(json!({"type":"control_request","request_id":"req_0","request":{"subtype":"initialize"}}))
             .await;
         host.until(|frame| frame["type"] == "control_response")
             .await;
         host
-    }
-
-    async fn send(&mut self, frame: Value) {
-        self.classifier.host(Kind::ClaudeSdk, &frame);
-        let mut line = serde_json::to_vec(&frame).unwrap();
-        line.push(b'\n');
-        self.stdin.as_mut().unwrap().write_all(&line).await.unwrap();
     }
 
     async fn prompt(&mut self, uuid: &str, text: &str, priority: Option<&str>) {
@@ -98,53 +74,12 @@ impl Host {
         self.send(frame).await;
     }
 
-    async fn next(&mut self) -> Value {
-        let line = tokio::time::timeout(DEADLINE, self.stdout.next_line())
-            .await
-            .expect("the fake wrote nothing in time")
-            .unwrap()
-            .expect("the fake closed stdout");
-        let frame: Value = serde_json::from_str(&line).unwrap();
-        let group = self.classifier.provider(Kind::ClaudeSdk, &frame);
-        if let Err(drift) = corpus().check(Kind::ClaudeSdk, &group, &frame) {
-            // A cancel answer is shown by the probe of 2.1.282, not by any
-            // recording yet.
-            if group != "control_response/cancel_async_message/success" {
-                panic!("{drift}");
-            }
-        }
-        self.frames.push(frame.clone());
-        frame
-    }
-
-    /// Read until a frame matches, returning it.
-    async fn until(&mut self, matches: impl Fn(&Value) -> bool) -> Value {
-        loop {
-            let frame = self.next().await;
-            if matches(&frame) {
-                return frame;
-            }
-        }
-    }
-
-    /// A compact trace of the frames read so far, for order assertions.
     fn trace(&self) -> Vec<String> {
-        self.frames.iter().map(describe).collect()
+        self.0.trace(describe)
     }
 
-    async fn close(mut self) -> i32 {
-        drop(self.stdin.take());
-        while let Ok(Ok(Some(line))) = tokio::time::timeout(DEADLINE, self.stdout.next_line()).await
-        {
-            let frame: Value = serde_json::from_str(&line).unwrap();
-            self.frames.push(frame);
-        }
-        tokio::time::timeout(DEADLINE, self.child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .code()
-            .unwrap_or(-1)
+    async fn close(self) -> i32 {
+        self.0.close().await
     }
 }
 

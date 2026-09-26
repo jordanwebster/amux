@@ -39,17 +39,22 @@ fn opaque(kind: Kind) -> &'static [&'static str] {
             "snapshot",
         ],
         Kind::Codex => &[
-            "result",
-            "params.item",
+            "params.item.commandActions",
+            "params.item.changes",
+            "params.item.arguments",
+            "params.item.result",
+            "params.item.content",
+            "params.commandActions",
+            "params.availableDecisions",
             "params.turn.items",
             "params.thread.turns",
+            "result.thread.turns",
             "params.tokenUsage",
             "params.rateLimits",
-            "params.commandActions",
-            "params.changes",
-            "params.questions",
             "params.requestedSchema",
             "params.permissions",
+            "params._meta",
+            "result.permissions",
         ],
     }
 }
@@ -58,6 +63,11 @@ fn opaque(kind: Kind) -> &'static [&'static str] {
 pub fn signature(kind: Kind, value: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     walk(opaque(kind), value, String::new(), &mut out);
+    if kind == Kind::Codex && value.get("method").is_none() {
+        // A response echoes the id the host chose, of whatever type.
+        out.retain(|entry| !entry.starts_with("id:"));
+        out.insert("id:echoed".into());
+    }
     out
 }
 

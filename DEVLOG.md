@@ -1,3 +1,18 @@
+2026-09-26 — **fake-codex plays authored scripts as the Codex app server.**
+The fake answers the handshake, starts and resumes threads, and runs a
+turn per `turn/start` with items reported as started, streamed and
+completed the way codex-cli 0.157.0 reports them: reasoning with its
+summary, agent messages by delta, commands of the read or unknown kind
+with their output and exit code, file changes. Asks are server requests
+that hold the turn: command and file-change approvals (a declined call
+completes as declined), questions, access grants, and tool-server forms
+and links. `thread/inject_items` is acknowledged at once and reports
+nothing; the running turn drains it, an idle thread keeps it for the next
+turn. `turn/steer` reflects its input as a user message in the running
+turn; `turn/interrupt` ends it as interrupted; compaction runs as its own
+turn. Frames are shape-checked against the Codex corpus like the headless
+Claude fake's.
+
 2026-09-26 — **fake-claude-sdk plays authored scripts the way headless Claude runs a session.**
 A script is the model's side of a session — streamed text, thinking, tool
 calls by class with their outcome, asks, pauses on a file, turn ends, an
