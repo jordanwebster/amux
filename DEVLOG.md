@@ -1,3 +1,11 @@
+2026-09-26 — **Headless Claude's cancelled form is recorded.**
+A new SDK specification has the tool server ask for a form and the caller
+answer Cancel rather than Decline. Claude 2.1.283 passes the cancel through
+unchanged, so the server hears `cancel`, distinct from the decline the
+existing recording shows. The spec harness now holds the elicitation answer
+as the SDK's own result type, so a specification can accept, decline or
+cancel.
+
 2026-09-26 — **Terminal Claude's API error and sign-in problem are recorded.**
 Two PTY specifications give terminal Claude an environment of its own: one
 points it at a port nothing listens on, one hands it an API key the API

@@ -500,6 +500,35 @@ async fn elicitation_declined(session: &mut SpecSession) {
     );
 }
 
+pub(super) static ELICITATION_CANCELLED: SpecDef = SpecDef {
+    name: "tools/elicitation_cancelled",
+    fixture: "elicitation_cancelled",
+    setup: || {
+        let mut setup = elicitation_setup(CONFIRMED);
+        setup.cancel_elicitation();
+        setup
+    },
+    run: |session| Box::pin(elicitation_cancelled(session)),
+};
+
+/// A person who dismisses a server's form without choosing sends a cancel,
+/// which the server hears as distinct from a decline.
+async fn elicitation_cancelled(session: &mut SpecSession) {
+    let turn = session.turn().await;
+    expect!(
+        session.elicitation_requests.len() == 1,
+        "the server asked once: {:?}",
+        session.elicitation_requests
+    );
+    expect!(
+        turn.tool_results()
+            .iter()
+            .any(|result| result.contains("elicitation cancel")),
+        "the cancel reached the server: {:?}",
+        turn.tool_results()
+    );
+}
+
 pub(super) static ELICITATION_LINK: SpecDef = SpecDef {
     name: "tools/elicitation_link_refused",
     fixture: "elicitation_link_refused",

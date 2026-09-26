@@ -45,6 +45,7 @@ mod sdk_replays {
         tools_in_process_mcp => "tools/in_process_mcp",
         tools_elicitation_accepted => "tools/elicitation_accepted",
         tools_elicitation_declined => "tools/elicitation_declined",
+        tools_elicitation_cancelled => "tools/elicitation_cancelled",
         tools_elicitation_link_refused => "tools/elicitation_link_refused",
         tools_hook_lifecycle => "tools/hook_lifecycle",
         options_configured_turn => "options/configured_turn",

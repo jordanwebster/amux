@@ -81,7 +81,7 @@ pub struct SessionSetup {
     questions: Option<QuestionReply>,
     plan_reviews: VecDeque<PlanReview>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
-    elicitation_content: Option<serde_json::Value>,
+    elicitation_answer: Option<crate::driver::sdk::ElicitationResult>,
     dialog_result: Option<serde_json::Value>,
     defer_prompt: bool,
     /// The id the opening prompt carries on stdin, when a specification is
@@ -120,7 +120,7 @@ impl SessionSetup {
             questions: None,
             plan_reviews: VecDeque::new(),
             hook_log: None,
-            elicitation_content: None,
+            elicitation_answer: None,
             dialog_result: None,
             defer_prompt: false,
             prompt_uuid: None,
@@ -169,8 +169,22 @@ impl SessionSetup {
         self.hook_log = Some(log.unwrap_or_default());
     }
 
+    /// Accept a server's form with `content`; `Null` accepts a link form,
+    /// which carries no content because the person went to the page.
     pub(crate) fn accept_elicitation(&mut self, content: serde_json::Value) {
-        self.elicitation_content = Some(content);
+        let content = (!content.is_null()).then_some(content);
+        self.elicitation_answer = Some(crate::driver::sdk::ElicitationResult::Accept {
+            content,
+            extensions: Default::default(),
+        });
+    }
+
+    /// Dismiss a server's form without answering it, as opposed to the
+    /// default, which declines it.
+    pub(crate) fn cancel_elicitation(&mut self) {
+        self.elicitation_answer = Some(crate::driver::sdk::ElicitationResult::Cancel {
+            extensions: Default::default(),
+        });
     }
 
     pub(crate) fn complete_dialog(&mut self, result: serde_json::Value) {
@@ -322,7 +336,7 @@ impl Sessions {
             plan_reviews: setup.plan_reviews,
             permission_requests: Vec::new(),
             hook_log: setup.hook_log,
-            elicitation_content: setup.elicitation_content,
+            elicitation_answer: setup.elicitation_answer,
             dialog_result: setup.dialog_result,
             dialog_requests: Vec::new(),
             elicitation_requests: Vec::new(),
@@ -347,7 +361,7 @@ pub struct SpecSession {
     plan_reviews: VecDeque<PlanReview>,
     permission_requests: Vec<(String, serde_json::Value)>,
     hook_log: Option<Arc<std::sync::Mutex<Vec<String>>>>,
-    elicitation_content: Option<serde_json::Value>,
+    elicitation_answer: Option<crate::driver::sdk::ElicitationResult>,
     dialog_result: Option<serde_json::Value>,
     dialog_requests: Vec<crate::driver::sdk::UserDialogRequest>,
     elicitation_requests: Vec<crate::driver::sdk::ElicitationRequest>,
@@ -645,23 +659,11 @@ impl SpecSession {
                 }
                 SdkEvent::Elicitation { id, request } => {
                     self.elicitation_requests.push(request);
-                    let result = match self.elicitation_content.clone() {
-                        // A link form is accepted without content: the person
-                        // went to the page.
-                        Some(serde_json::Value::Null) => {
-                            crate::driver::sdk::ElicitationResult::Accept {
-                                content: None,
-                                extensions: Default::default(),
-                            }
-                        }
-                        Some(content) => crate::driver::sdk::ElicitationResult::Accept {
-                            content: Some(content),
+                    let result = self.elicitation_answer.clone().unwrap_or(
+                        crate::driver::sdk::ElicitationResult::Decline {
                             extensions: Default::default(),
                         },
-                        None => crate::driver::sdk::ElicitationResult::Decline {
-                            extensions: Default::default(),
-                        },
-                    };
+                    );
                     self.control()
                         .answer_elicitation(id, result)
                         .await
@@ -1047,6 +1049,7 @@ static DEFINITIONS: &[&SpecDef] = &[
     &tools::IN_PROCESS_MCP,
     &tools::ELICITATION_ACCEPTED,
     &tools::ELICITATION_DECLINED,
+    &tools::ELICITATION_CANCELLED,
     &tools::ELICITATION_LINK,
     &tools::DIALOG_REQUESTED,
     &tools::HOOK_LIFECYCLE,
@@ -1098,6 +1101,7 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("tools/in_process_mcp", "in_process_mcp"),
     entry("tools/elicitation_accepted", "elicitation_accepted"),
     entry("tools/elicitation_declined", "elicitation_declined"),
+    entry("tools/elicitation_cancelled", "elicitation_cancelled"),
     entry("tools/elicitation_link_refused", "elicitation_link_refused"),
     entry("tools/hook_lifecycle", "hook_lifecycle"),
     entry("options/configured_turn", "configured_turn"),
