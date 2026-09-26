@@ -1,0 +1,134 @@
+{
+  "about": "Usage limits, tool-server health and sign-in are strip fields: a blocked limit, a failed server, a failed sign-in and background task counts reach the snapshot; context usage fills the meter with its breakdown and the window.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "init",
+          "uuid": "init-s1",
+          "session_id": "s1",
+          "claude_code_version": "2.1.282",
+          "model": "claude-opus-5-5",
+          "permissionMode": "default",
+          "mcp_servers": [
+            {
+              "name": "github",
+              "status": "connected"
+            },
+            {
+              "name": "db",
+              "status": "failed"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "rate_limit_event",
+          "uuid": "rl",
+          "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": 1800003600,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 1.0,
+                "resetsAt": 1800003600
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "auth_status",
+          "uuid": "au",
+          "isAuthenticating": false,
+          "output": [],
+          "error": "OAuth token expired"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "uuid": "bg",
+          "tasks": [
+            {
+              "id": "b1"
+            },
+            {
+              "id": "b2"
+            },
+            {
+              "id": "b3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_response",
+          "response": {
+            "subtype": "success",
+            "request_id": "agent-1",
+            "response": {
+              "totalTokens": 41000,
+              "maxTokens": 200000,
+              "categories": [
+                {
+                  "name": "System prompt",
+                  "tokens": 6000
+                },
+                {
+                  "name": "Messages",
+                  "tokens": 35000
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_response",
+          "response": {
+            "subtype": "success",
+            "request_id": "agent-2",
+            "response": {
+              "mcpServers": [
+                {
+                  "name": "github",
+                  "status": "connected"
+                },
+                {
+                  "name": "db",
+                  "status": "connected"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

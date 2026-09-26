@@ -1,0 +1,10 @@
+{
+  "about": "Plan verdicts are asks: approved with auto-accept, approved, and sent back with a note; a Bash call denied without stopping, with its reason and description kept.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/plan_reviewed/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

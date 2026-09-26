@@ -1,0 +1,10 @@
+{
+  "about": "A permission ask with its scope choices, answered allow.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/permission_callback/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

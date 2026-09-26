@@ -91,7 +91,8 @@ pub enum FixtureInput {
     /// `{"approve_plan": {}}`, `{"send_back": {"note": "…"}}`,
     /// `{"selected": [0, [1, 2], "typed"], "note": "…"}` (one entry per
     /// question: an index, indices, or a typed answer),
-    /// `{"form": {"action": "accept", "content": {…}}}`; for Codex
+    /// `{"form": {"action": "accept", "content": {…}}}`,
+    /// `{"link": {"action": "decline"}}`; for Codex
     /// `{"decision": "approve"}` answers an approval and anything else is a
     /// CodexAnswer.
     Answer {
@@ -107,6 +108,18 @@ pub enum FixtureInput {
     },
     Key {
         name: String,
+    },
+    /// Change the model; null restores the launch model.
+    Model {
+        #[serde(default)]
+        model: Option<String>,
+    },
+    Mode {
+        mode: String,
+    },
+    Effort {
+        #[serde(default)]
+        effort: Option<String>,
     },
     /// An encoded Input, hex, for arms the vocabulary above does not name.
     Raw {
@@ -546,6 +559,13 @@ fn claude_answer(kind: &str, ask: &str, answer: &Value) -> Option<AnswerInput> {
         })
     } else if let Some(selected) = answer.get("selected").and_then(Value::as_array) {
         claude_answer::Of::Question(question_answer(selected, text(answer, "note")))
+    } else if let Some(link) = answer.get("link") {
+        claude_answer::Of::Link(wire::LinkAnswer {
+            action: wire::FormAction::from_str_name(&format!(
+                "FORM_ACTION_{}",
+                text(link, "action").to_uppercase()
+            ))? as i32,
+        })
     } else if let Some(form) = answer.get("form") {
         claude_answer::Of::Form(wire::FormAnswer {
             action: wire::FormAction::from_str_name(&format!(
@@ -586,7 +606,11 @@ pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::Key { name } => Of::Key(Key {
             key: KeyName::from_str_name(&format!("KEY_NAME_{}", name.to_uppercase()))? as i32,
         }),
-        FixtureInput::AgentMessage { .. } | FixtureInput::Raw { .. } => return None,
+        FixtureInput::AgentMessage { .. }
+        | FixtureInput::Raw { .. }
+        | FixtureInput::Model { .. }
+        | FixtureInput::Mode { .. }
+        | FixtureInput::Effort { .. } => return None,
     };
     Some(Input {
         input_id,
@@ -605,6 +629,13 @@ pub fn claude_sdk_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::Answer { ask, answer } => {
             Of::Answer(claude_answer("claude_sdk", ask, answer)?)
         }
+        FixtureInput::Model { model } => Of::Model(wire::SetModel {
+            model: model.clone(),
+        }),
+        FixtureInput::Mode { mode } => Of::Mode(wire::SetPermissionMode { mode: mode.clone() }),
+        FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
+            effort: effort.clone(),
+        }),
         FixtureInput::Key { .. } | FixtureInput::AgentMessage { .. } | FixtureInput::Raw { .. } => {
             return None;
         }
@@ -639,6 +670,9 @@ pub fn codex_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input> {
             }
         }
         FixtureInput::Clear {}
+        | FixtureInput::Model { .. }
+        | FixtureInput::Mode { .. }
+        | FixtureInput::Effort { .. }
         | FixtureInput::Key { .. }
         | FixtureInput::AgentMessage { .. }
         | FixtureInput::Raw { .. } => return None,
@@ -1188,6 +1222,19 @@ fn render_effect(effect: &Effect) -> String {
         Effect::Exit { cause } => format!("exit {}", Value::String(cause.clone())),
         Effect::Terminal(input) => format!("terminal {input}"),
         Effect::FollowTranscript { path } => format!("follow {}", Value::String(path.clone())),
+        Effect::UserMessage {
+            uuid,
+            text,
+            attachments,
+        } => format!(
+            "user {uuid} {}{}",
+            Value::String(text.clone()),
+            if attachments.is_empty() {
+                String::new()
+            } else {
+                format!(" attachments={}", attachments.len())
+            }
+        ),
     }
 }
 

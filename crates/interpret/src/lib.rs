@@ -13,6 +13,7 @@
 
 mod claude_common;
 pub mod claude_pty;
+pub mod claude_sdk;
 mod golden;
 mod serde_pb;
 mod shared;
@@ -154,6 +155,14 @@ pub enum Effect {
     /// Claude in a terminal: a semantic input the agent process types into
     /// the PTY through the keymap it resolved for the running Claude.
     Terminal(claude_pty::TerminalInput),
+    /// Headless Claude: a user message on stdin carrying `uuid`, which
+    /// Claude echoes on everything it reports about the message. The agent
+    /// process encodes the attachments as content blocks.
+    UserMessage {
+        uuid: String,
+        text: String,
+        attachments: Vec<wire::Attachment>,
+    },
     /// Claude in a terminal: a session started on this transcript file;
     /// the agent process tails it from now on.
     FollowTranscript { path: String },

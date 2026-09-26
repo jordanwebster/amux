@@ -1,0 +1,10 @@
+{
+  "about": "Model and permission-mode changes sent as control requests reach the snapshot.",
+  "spec": {
+    "created_at_ms": 0
+  },
+  "recording": {
+    "path": "../../../claude-specs/fixtures/sdk/controls/io.jsonl",
+    "format": "claude_sdk_io"
+  }
+}

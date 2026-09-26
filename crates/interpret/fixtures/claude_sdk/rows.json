@@ -1,0 +1,267 @@
+{
+  "about": "Rows the recordings lack: a refusal fallback is a model-switch row (never Unrecognized) and the model follows it, a refusal without fallback and an API retry are error rows, a local command's output is a slash row, an unknown content block is an Unrecognized row, the status tool sets working_on without a row and the task tools keep the task list.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "init",
+          "uuid": "init-s1",
+          "session_id": "s1",
+          "claude_code_version": "2.1.282",
+          "model": "claude-opus-5-5",
+          "permissionMode": "default"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "/cost"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "local_command_output",
+          "uuid": "lc",
+          "content": "Total cost: $0.12"
+        }
+      },
+      "expect": {
+        "items": [
+          "lc"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "result",
+          "subtype": "success",
+          "uuid": "r0",
+          "duration_ms": 1000,
+          "total_cost_usd": 0.01,
+          "is_error": false
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "go"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "model_refusal_fallback",
+          "uuid": "mr",
+          "trigger": "refusal",
+          "direction": "down",
+          "original_model": "claude-opus-5-5",
+          "fallback_model": "claude-sonnet-5",
+          "request_id": null,
+          "api_refusal_explanation": "The request was declined by the safety system",
+          "content": "Switched model"
+        }
+      },
+      "expect": {
+        "items": [
+          "mr"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "model_refusal_no_fallback",
+          "uuid": "mn",
+          "original_model": "claude-sonnet-5",
+          "request_id": null,
+          "content": "Declined"
+        }
+      },
+      "expect": {
+        "items": [
+          "mn"
+        ]
+      }
+    },
+    {
+      "tick": 1800000001000
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "api_retry",
+          "uuid": "ar",
+          "attempt": 2,
+          "max_retries": 10,
+          "retry_delay_ms": 4000,
+          "error_status": 529,
+          "error": "server_error"
+        }
+      },
+      "expect": {
+        "items": [
+          "ar"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m1",
+          "message": {
+            "id": "m1",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "On it."
+              },
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "mcp__amux__status",
+                "input": {
+                  "working_on": "Fixing the parser"
+                }
+              },
+              {
+                "type": "server_tool_use",
+                "id": "s1",
+                "name": "web_search"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "m1:0",
+          "m1:2"
+        ],
+        "working_on": "Fixing the parser"
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m2",
+          "message": {
+            "id": "m2",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "TodoWrite",
+                "input": {
+                  "todos": [
+                    {
+                      "content": "Parse",
+                      "status": "in_progress",
+                      "activeForm": "Parsing"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t2",
+                "content": "ok"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "e3",
+          "message": {
+            "id": "m3",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "API Error: 529 overloaded"
+              }
+            ]
+          },
+          "error": "server_error"
+        }
+      },
+      "expect": {
+        "items": [
+          "e3"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "result",
+          "subtype": "success",
+          "uuid": "r1",
+          "duration_ms": 1000,
+          "total_cost_usd": 0.25,
+          "is_error": false
+        }
+      },
+      "expect": {
+        "turn_end": {
+          "turn_id": 2,
+          "last_message_key": "m1:0"
+        }
+      }
+    }
+  ]
+}

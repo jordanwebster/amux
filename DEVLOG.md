@@ -1,3 +1,38 @@
+2026-09-26 — **The Claude SDK interpreter.**
+`interpret::claude_sdk` reads headless Claude's stream-JSON: events and
+control requests on stdout, and the process's exit. Every user message it
+hands to Claude carries a uuid made from its input or envelope id; Claude
+echoes that uuid on the message's replay, its lifecycle frames and its
+transcript row, so reflections are matched by id rather than arrival
+order, which the SDK probe showed would be wrong because messages written
+during a turn fold into it. A test named `probe_decided_sdk_correlation`
+pins that choice. A person's prompt waits in the queue until Claude is idle
+and is written as a `UserMessage` effect (the agent process encodes
+attachments); an agent message is handed over at once and leaves the
+pending set when Claude takes it.
+
+Text and thinking stream as appends onto keys made from the message id and
+the block's index; the whole-message events and the stream deltas, split
+anywhere, end in the same items (tested). Permission requests become asks
+that keep every scope choice, the reason and the description; allow sends
+the chosen scope back, deny goes with or without stopping; questions, plan
+verdicts, tool-server forms and link requests are asks with their own
+answers, and the decision lands on the call's row. Turns end on `result`
+with the cost and Claude's duration; turn limits and budgets end them
+failed with an error row. A refusal fallback is a model-switch row and
+moves the model; API retries are error rows with the retry time. Usage
+limits, tool-server health, sign-in, background tasks and the context meter
+(with the window from the result and the breakdown from a context-usage
+response) are snapshot fields; subagents are task rows. Control requests
+amux never registers for (hook callbacks, in-process tool servers) are
+answered with an error rather than left hanging. Effort cannot change after
+launch and is refused.
+
+The Claude helpers both interpreters share (tool vocabulary, question and
+scope shapes, the task list, golden renderings) moved into one module. The
+terminal interpreter also reads the peer-message wording Claude 2.1.282
+uses for socket deliveries.
+
 2026-09-26 — **The Claude terminal interpreter.**
 `interpret::claude_pty` reads Claude-in-a-terminal's facts: transcript
 rows, hook payloads from the hooks socket, a launch fact the agent process
