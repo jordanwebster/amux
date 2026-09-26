@@ -52,6 +52,8 @@ mod sdk_replays {
         results_max_turns => "results/max_turns",
         results_max_budget => "results/max_budget",
         results_interrupted => "results/interrupted",
+        probes_client_id => "probes/client_id",
+        probes_side_channel => "probes/side_channel",
     );
 
     #[test]
@@ -352,6 +354,7 @@ fn sdk_corpus_is_inventoried_current_and_unorphaned() {
                         Version::new(2, 1, 251),
                         Version::new(2, 1, 260),
                         Version::new(2, 1, 261),
+                        Version::new(2, 1, 283),
                     ]
                     .contains(&recording.manifest.recorded.version),
                     "{} was captured against an unreviewed Claude version {}",

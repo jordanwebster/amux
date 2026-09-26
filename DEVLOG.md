@@ -1,3 +1,16 @@
+2026-09-26 — **Specifications for how a message reaches headless Claude.**
+Two recorded specifications, captured against Claude Code 2.1.283, pin what
+the SDK probe found. `probes/client_id`: a stdin message's `uuid` comes back
+on its reflection (with `--replay-user-messages`) and on its
+`command_lifecycle` frames, queued, started, completed. `probes/side_channel`:
+headless Claude honours `--messaging-socket-path`, hands the socket and its
+token to hooks, and runs a message posted there as a peer message whose id
+Claude picks. The recording posts from a SessionStart hook, so the whole
+exchange is in Claude's own output and replays without a socket. Claude
+refuses a socket whose directory other users can reach, so live capture
+makes that directory private; the recording also shows a posted message
+held and then released before it runs, even outside bypass mode.
+
 2026-09-26 — **The provider crates carry transport only.**
 `claude` keeps what starting and talking to Claude needs: launch arguments
 and settings, starting it under a PTY with hooks pointed at a socket, the

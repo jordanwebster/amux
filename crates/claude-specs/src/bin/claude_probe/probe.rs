@@ -21,6 +21,12 @@ pub(super) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("__pty-hook") {
         return forward_pty_hook();
     }
+    if std::env::current_exe()?
+        .file_stem()
+        .is_some_and(|name| name == claude_specs::specs::channels::PEER_MESSAGE_HELPER)
+    {
+        return post_peer_message().await;
+    }
     if std::env::var_os("CLAUDE_SPEC_MCP_SERVER").is_some()
         || std::env::current_exe()?
             .file_stem()
@@ -943,11 +949,31 @@ fn append_json(path: &Path, value: &serde_json::Value) -> io::Result<()> {
 }
 
 fn install_mcp_helper(dir: &Path) -> io::Result<()> {
-    let destination = dir.join("spec-mcp-server");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(std::env::current_exe()?, destination)?;
-    #[cfg(not(unix))]
-    std::fs::copy(std::env::current_exe()?, destination)?;
+    for name in [
+        "spec-mcp-server",
+        claude_specs::specs::channels::PEER_MESSAGE_HELPER,
+    ] {
+        let destination = dir.join(name);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(std::env::current_exe()?, destination)?;
+        #[cfg(not(unix))]
+        std::fs::copy(std::env::current_exe()?, destination)?;
+    }
+    Ok(())
+}
+
+/// Run as a Claude hook: post the first argument through the messaging
+/// socket Claude handed the hook, as another program would.
+async fn post_peer_message() -> Result<(), Box<dyn std::error::Error>> {
+    let text = std::env::args()
+        .nth(1)
+        .ok_or("usage: spec-peer-message <text>")?;
+    let socket = std::env::var_os("CLAUDE_CODE_MESSAGING_SOCKET")
+        .ok_or("the hook has no CLAUDE_CODE_MESSAGING_SOCKET")?;
+    let token = std::env::var("CLAUDE_CODE_MESSAGING_TOKEN")?;
+    let mut messaging =
+        claude::messaging::MessagingSocket::connect(Path::new(&socket), &token).await?;
+    messaging.send(&text).await?;
     Ok(())
 }
 

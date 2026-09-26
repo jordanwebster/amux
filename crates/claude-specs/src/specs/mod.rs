@@ -32,6 +32,7 @@ use crate::driver::sdk::{
 };
 
 pub mod agents;
+pub mod channels;
 pub mod commands;
 pub mod configured;
 pub mod control;
@@ -76,6 +77,9 @@ pub struct SessionSetup {
     elicitation_content: Option<serde_json::Value>,
     dialog_result: Option<serde_json::Value>,
     defer_prompt: bool,
+    /// The id the opening prompt carries on stdin, when a specification is
+    /// about that id.
+    prompt_uuid: Option<String>,
 }
 
 #[derive(Clone)]
@@ -98,6 +102,7 @@ impl SessionSetup {
             elicitation_content: None,
             dialog_result: None,
             defer_prompt: false,
+            prompt_uuid: None,
         }
     }
 
@@ -217,20 +222,18 @@ impl Sessions {
                     .await?
             }
         };
+        let mut prompt = crate::driver::sdk::UserMessage::text(setup.prompt);
+        if let Some(uuid) = setup.prompt_uuid {
+            prompt = prompt.with_uuid(uuid);
+        }
         if setup.defer_prompt {
             let control = session.control.clone();
-            let prompt = setup.prompt;
             tokio::spawn(async move {
                 tokio::task::yield_now().await;
-                control
-                    .prompt(crate::driver::sdk::UserMessage::text(prompt))
-                    .await
+                control.prompt(prompt).await
             });
         } else {
-            session
-                .control
-                .prompt(crate::driver::sdk::UserMessage::text(setup.prompt))
-                .await?;
+            session.control.prompt(prompt).await?;
         }
         self.opened
             .lock()
@@ -932,6 +935,8 @@ static DEFINITIONS: &[&SpecDef] = &[
     &results::MAX_TURNS,
     &results::MAX_BUDGET,
     &results::INTERRUPTED,
+    &channels::CLIENT_ID,
+    &channels::SIDE_CHANNEL,
 ];
 
 const fn entry(name: &'static str, recording: &'static str) -> SpecEntry {
@@ -968,6 +973,8 @@ static SDK_REGISTRY: &[SpecEntry] = &[
     entry("results/max_turns", "max_turns"),
     entry("results/max_budget", "max_budget"),
     entry("results/interrupted", "interrupted"),
+    entry("probes/client_id", "client_id"),
+    entry("probes/side_channel", "side_channel"),
 ];
 
 /// The donor's executable SDK specifications in stable reading order.
@@ -1042,6 +1049,9 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
                 options.cli_path = Some(binary.clone());
                 options.cwd = Some(cwd.clone());
                 options.env = environment.clone();
+                if let Some(Some(socket)) = options.extra_args.get("messaging-socket-path") {
+                    private_socket_directory(std::path::Path::new(socket));
+                }
                 let sandbox = serde_json::json!({"enabled": false});
                 if let Some(crate::driver::sdk::SettingsConfig::Inline(
                     serde_json::Value::Object(settings),
@@ -1128,6 +1138,21 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
         model,
         session_ids: ledger.opened(),
     })
+}
+
+/// Claude refuses a messaging socket whose directory another user could
+/// reach, so a live session gets a fresh directory only its owner can open.
+fn private_socket_directory(socket: &std::path::Path) {
+    let Some(directory) = socket.parent() else {
+        return;
+    };
+    std::fs::create_dir_all(directory).expect("create the messaging socket directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+            .expect("make the messaging socket directory private");
+    }
 }
 
 fn failure(spec: &SpecEntry, claim: impl ToString) -> SpecFailure {
