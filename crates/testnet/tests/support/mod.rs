@@ -217,3 +217,45 @@ pub async fn pair(net: &Net, initiator: &str, responder: &str) -> wire::PeerEntr
         .await
         .expect("the person confirms the peer")
 }
+
+/// Opens `agent`'s session on `host` from `from` over the link, the way a
+/// peer's source does, and reads it to its CaughtUp.
+pub async fn open_session(
+    from: &Edge,
+    host: Uuid,
+    agent: Uuid,
+) -> Result<tonic::Streaming<wire::SessionEvent>, tonic::Status> {
+    let mut client = from
+        .session_peer(host, agent)
+        .await
+        .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
+    let mut events = client
+        .subscribe(wire::SubscribeRequest {
+            agent_id: agent.as_bytes().to_vec(),
+            from: Some(wire::subscribe_request::From::Tail(10)),
+        })
+        .await?
+        .into_inner();
+    loop {
+        let event = events
+            .message()
+            .await?
+            .ok_or_else(|| tonic::Status::aborted("the session ended before CaughtUp"))?;
+        if matches!(event.of, Some(wire::session_event::Of::CaughtUp(_))) {
+            return Ok(events);
+        }
+    }
+}
+
+/// Waits for a stream to end, with an error or cleanly, and says how.
+pub async fn ended<T>(stream: &mut tonic::Streaming<T>, what: &str) -> String {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        match tokio::time::timeout_at(deadline, stream.message()).await {
+            Err(_) => panic!("timed out waiting for {what} to end"),
+            Ok(Ok(Some(_))) => continue,
+            Ok(Ok(None)) => return "ended".to_owned(),
+            Ok(Err(status)) => return format!("{:?}", status.code()),
+        }
+    }
+}

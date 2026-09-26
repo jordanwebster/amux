@@ -201,12 +201,17 @@ impl ConnectionManager {
     /// Used when a peer is unpaired: the trust is gone and nothing of the old
     /// connection survives, but the peer stays reachable for pairing, the way
     /// any other machine on the account is before it is ever paired.
+    ///
+    /// Closing ends with the host admitted again: its key has already left
+    /// the trust store, so nothing of it gets back in unless it is paired
+    /// again, and then its new streams must not be closed as they arrive.
     pub(crate) async fn close_host_access(&self, peer: HostId) {
         self.routing.remove_direct_links(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
         self.channels.link_registry().close_host(peer).await;
         self.remove_host_runtime_state(peer).await;
+        self.trusted_connections.finish_host_replacement(peer);
     }
 
     pub(crate) async fn finish_host_replacement(&self, peer: HostId) {

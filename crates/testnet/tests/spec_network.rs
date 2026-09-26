@@ -575,3 +575,127 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
 
     net.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_a_host_closes_what_it_holds_open_over_a_direct_link_and_over_the_relay() {
+    // The phone reaches the desk directly, with the relay beside it as a
+    // fallback; the tablet reaches it through the relay alone.
+    let mut net = Net::start_with(
+        Topology::new()
+            .relay(&["ada"])
+            .host_decl(testnet::HostDecl {
+                account: Some("ada".to_owned()),
+                ..lan_host("desk", "home")
+            })
+            .host_decl(testnet::HostDecl {
+                account: Some("ada".to_owned()),
+                ..lan_host("phone", "home")
+            })
+            .host_decl(testnet::HostDecl {
+                name: "tablet".to_owned(),
+                account: Some("ada".to_owned()),
+                ..testnet::HostDecl::default()
+            })
+            .agent(
+                testnet::AgentDecl::new("worker", "desk")
+                    .prompt("Watch the build.")
+                    .steps(vec![
+                        provider_fakes::script::Step::Text {
+                            chunks: vec!["Watching.".to_owned()],
+                        },
+                        provider_fakes::script::Step::TurnEnd,
+                    ]),
+            ),
+        testnet::NetOptions::default(),
+    )
+    .await
+    .unwrap();
+    let desk = host_id(&net, "desk");
+    let worker = net.agent("worker").unwrap().id;
+    pair(&net, "phone", "desk").await;
+    net.trust("desk", "tablet").await.unwrap();
+    net.trust("tablet", "desk").await.unwrap();
+    until_via(&net, "phone", "desk", HostVia::Direct).await;
+    until_via(&net, "tablet", "desk", HostVia::Relay).await;
+
+    // Each holds the worker's session and the desk's inventory open.
+    let mut held = Vec::new();
+    for host in ["phone", "tablet"] {
+        let session = open_session(&edge(&net, host), desk, worker)
+            .await
+            .unwrap_or_else(|status| panic!("{host} opens the worker's session: {status:?}"));
+        let inventory = edge(&net, host)
+            .peer(desk)
+            .await
+            .unwrap()
+            .subscribe_inventory(wire::Empty {})
+            .await
+            .unwrap()
+            .into_inner();
+        held.push((host, session, inventory));
+    }
+
+    // Revoking closes every stream the revoked host holds, at once, and
+    // neither route lets it back in: the desk no longer holds its key. The
+    // relay may still say the host is online, as it says of any host on the
+    // account; saying so grants nothing.
+    for (host, mut session, mut inventory) in held {
+        let id = host_id(&net, host);
+        net.untrust("desk", host).await.unwrap();
+        let session_end = ended(&mut session, &format!("{host}'s session")).await;
+        let inventory_end = ended(&mut inventory, &format!("{host}'s inventory")).await;
+        let refused = open_session(&edge(&net, host), desk, worker)
+            .await
+            .expect_err("a revoked host opens nothing");
+        let unasked = peer_inventory_hosts(&edge(&net, "desk"), id)
+            .await
+            .expect_err("the desk calls no host it forgot");
+        println!(
+            "{host} revoked: session {session_end}, inventory {inventory_end}; reopening: {:?}; \
+             the desk calling it: {:?}; the desk sees it {:?}",
+            refused.code(),
+            unasked.code(),
+            edge(&net, "desk").via(id).await,
+        );
+    }
+    never("a revoked host gets a call through", async || {
+        peer_inventory_hosts(&edge(&net, "phone"), desk)
+            .await
+            .is_ok()
+            || peer_inventory_hosts(&edge(&net, "tablet"), desk)
+                .await
+                .is_ok()
+    })
+    .await;
+
+    // The relay's word that the tablet is online is what lets it pair
+    // again, by the code the desk shows, with neither side reconnecting:
+    // the exchange runs inside a tunnel the relay pipes and cannot read,
+    // with a QR secret as well as a PIN.
+    let links_before = net.relay().unwrap().links("ada").await;
+    let started = start_pairing(&net, "desk", qr_mode()).await.unwrap();
+    let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = started.secret else {
+        panic!("a QR window hands out a secret");
+    };
+    let pending = begin_pair(
+        &net,
+        "tablet",
+        Some(desk),
+        begin_pair_request::Secret::QrSecret(secret),
+        Vec::new(),
+    )
+    .await
+    .expect("pairing through the relay");
+    assert_eq!(pending.via, wire::PeerVia::Relay as i32);
+    confirm_pair(&net, "tablet", pending.token).await.unwrap();
+    until("the tablet's calls to go through again", || async {
+        peer_inventory_hosts(&edge(&net, "tablet"), desk)
+            .await
+            .is_ok()
+    })
+    .await;
+    assert_eq!(net.relay().unwrap().links("ada").await, links_before);
+    println!("the tablet paired again through the relay with a QR secret, on the same links");
+
+    net.shutdown().await.unwrap();
+}

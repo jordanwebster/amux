@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
@@ -71,8 +72,19 @@ struct ChannelSecurity {
     trust_store: SharedTrustStore,
 }
 
+/// A calls channel kept for reuse, and whether the one connection under it
+/// has ended. A channel over a link stream cannot reconnect, so once its
+/// connection is gone it is dropped and the next call opens a new stream,
+/// even where the route it rode is still up: the far host may have closed
+/// the stream on its own, as it does to a host it stops trusting.
+#[derive(Clone)]
+struct Cached {
+    channel: Channel,
+    ended: Arc<AtomicBool>,
+}
+
 pub struct ChannelPool {
-    by_key: RwLock<HashMap<ChannelKey, Channel>>,
+    by_key: RwLock<HashMap<ChannelKey, Cached>>,
     lifetimes: RwLock<HashMap<ChannelKey, Vec<Weak<CancellationToken>>>>,
     links: Arc<LinkRegistry>,
     security: Option<ChannelSecurity>,
@@ -148,22 +160,45 @@ impl ChannelPool {
         } else {
             None
         };
-        if let Some(channel) = cached {
-            if self.route_is_live(key.route).await {
-                return Ok(channel);
+        if let Some(cached) = cached {
+            if !self.route_is_live(key.route).await {
+                return Err(ChannelError::LinkUnavailable {
+                    host_id: route_link_peer(key.route),
+                });
             }
-            return Err(ChannelError::LinkUnavailable {
-                host_id: route_link_peer(key.route),
-            });
+            if !cached.ended.load(Ordering::SeqCst) {
+                return Ok(cached.channel);
+            }
+            // Forget the ended channel, unless another call already put a
+            // fresh one in its place.
+            let mut by_key = self
+                .by_key
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if by_key
+                .get(&key)
+                .is_some_and(|current| Arc::ptr_eq(&current.ended, &cached.ended))
+            {
+                by_key.remove(&key);
+            }
         }
 
         let stream = self.open_stream(key.peer, key.route).await?;
-        let channel = self.secure_channel(key, stream).await?;
+        let ended = Arc::new(AtomicBool::new(false));
+        let channel = self
+            .secure_channel(key, Watched::new(stream, ended.clone()))
+            .await?;
         if key.class == ChannelClass::Calls {
             self.by_key
                 .write()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(key, channel.clone());
+                .insert(
+                    key,
+                    Cached {
+                        channel: channel.clone(),
+                        ended,
+                    },
+                );
         }
         Ok(channel)
     }
@@ -228,7 +263,7 @@ impl ChannelPool {
     async fn secure_channel(
         &self,
         key: ChannelKey,
-        stream: ByteStream,
+        stream: Watched<ByteStream>,
     ) -> Result<Channel, ChannelError> {
         let security = self
             .security
@@ -301,6 +336,71 @@ impl ChannelPool {
             Route::Direct(link) => self.links.native_carrier(&link).await.is_some(),
             Route::Via(relay) => self.links.native_carrier_to_peer(relay).await.is_some(),
         }
+    }
+}
+
+/// A stream that says when it has ended: at end of file, at an error, or
+/// when the connection over it lets it go.
+struct Watched<T> {
+    inner: T,
+    ended: Arc<AtomicBool>,
+}
+
+impl<T> Watched<T> {
+    fn new(inner: T, ended: Arc<AtomicBool>) -> Self {
+        Self { inner, ended }
+    }
+
+    fn end_on<R>(&self, result: &Poll<io::Result<R>>) {
+        if matches!(result, Poll::Ready(Err(_))) {
+            self.ended.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl<T> Drop for Watched<T> {
+    fn drop(&mut self) {
+        self.ended.store(true, Ordering::SeqCst);
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for Watched<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let (before, room) = (buf.filled().len(), buf.remaining() > 0);
+        let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if room && matches!(result, Poll::Ready(Ok(()))) && buf.filled().len() == before {
+            self.ended.store(true, Ordering::SeqCst);
+        }
+        self.end_on(&result);
+        result
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for Watched<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let result = Pin::new(&mut self.inner).poll_write(cx, buf);
+        self.end_on(&result);
+        result
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let result = Pin::new(&mut self.inner).poll_flush(cx);
+        self.end_on(&result);
+        result
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let result = Pin::new(&mut self.inner).poll_shutdown(cx);
+        self.end_on(&result);
+        result
     }
 }
 
