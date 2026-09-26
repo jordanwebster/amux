@@ -1,5 +1,6 @@
-//! One value declaring a net: hosts, the links between them, and the agents
-//! each host runs on which fake provider. The Rust builder and the JSON
+//! One value declaring a net: hosts, the links between them, the relay and
+//! the accounts signed in to it, and the agents each host runs on which
+//! fake provider. The Rust builder and the JSON
 //! loader both construct it, and [`Topology::validate`] catches unknown and
 //! duplicate names before anything starts.
 
@@ -21,6 +22,36 @@ pub struct Topology {
     pub links: Vec<LinkDecl>,
     #[serde(default)]
     pub agents: Vec<AgentDecl>,
+    /// A relay every host can reach, and the accounts its cloud knows.
+    #[serde(default)]
+    pub relay: Option<RelayDecl>,
+}
+
+/// One relay, with the cloud that signs accounts in to it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayDecl {
+    #[serde(default)]
+    pub accounts: Vec<AccountDecl>,
+}
+
+/// An account the cloud knows, and what it has bought.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountDecl {
+    pub name: String,
+    #[serde(default)]
+    pub tier: TierDecl,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierDecl {
+    /// Relayed tunnels between the account's hosts.
+    #[default]
+    Pro,
+    /// The account's hosts are listed; the relay opens no tunnels.
+    Free,
 }
 
 /// One installation with one profile: a daemon the net starts in process,
@@ -39,6 +70,9 @@ pub struct HostDecl {
     /// This host's discovery scope, where it differs from the net's.
     #[serde(default)]
     pub scope: Option<String>,
+    /// The relay account this host's profile signs in to at start.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 /// Two hosts that trust each other, linked in process over a loopback
@@ -137,6 +171,12 @@ pub enum TopologyError {
     AgentUnknownHost { agent: String, host: String },
     #[error("agent {agent:?} names parent {parent:?}, which is not declared before it")]
     UnknownParent { agent: String, parent: String },
+    #[error("host {host:?} signs in to {account:?}, but the topology declares no relay")]
+    NoRelay { host: String, account: String },
+    #[error("host {host:?} signs in to unknown account {account:?}")]
+    UnknownAccount { host: String, account: String },
+    #[error("account {0:?} is declared twice")]
+    DuplicateAccount(String),
     #[error("agent {0:?} has both an inline script and a script file")]
     TwoScripts(String),
     #[error("agent {agent:?}'s script {path}: {error}")]
@@ -201,6 +241,20 @@ impl Topology {
         self
     }
 
+    /// Declares the relay, with these accounts on the Pro tier.
+    pub fn relay(mut self, accounts: &[&str]) -> Self {
+        self.relay = Some(RelayDecl {
+            accounts: accounts
+                .iter()
+                .map(|name| AccountDecl {
+                    name: (*name).to_owned(),
+                    tier: TierDecl::Pro,
+                })
+                .collect(),
+        });
+        self
+    }
+
     pub fn link(mut self, a: &str, b: &str) -> Self {
         self.links.push(LinkDecl {
             a: a.to_owned(),
@@ -230,6 +284,28 @@ impl Topology {
             }
             if !hosts.insert(host.name.as_str()) {
                 return Err(TopologyError::DuplicateHost(host.name.clone()));
+            }
+        }
+        let mut accounts = BTreeSet::new();
+        for account in self.relay.iter().flat_map(|relay| &relay.accounts) {
+            if !accounts.insert(account.name.as_str()) {
+                return Err(TopologyError::DuplicateAccount(account.name.clone()));
+            }
+        }
+        for host in &self.hosts {
+            if let Some(account) = &host.account {
+                if self.relay.is_none() {
+                    return Err(TopologyError::NoRelay {
+                        host: host.name.clone(),
+                        account: account.clone(),
+                    });
+                }
+                if !accounts.contains(account.as_str()) {
+                    return Err(TopologyError::UnknownAccount {
+                        host: host.name.clone(),
+                        account: account.clone(),
+                    });
+                }
             }
         }
         let mut links = BTreeSet::new();

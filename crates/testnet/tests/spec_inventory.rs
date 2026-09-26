@@ -177,7 +177,7 @@ async fn discovery_candidates_appear_only_from_the_same_scope() {
         name: name.to_owned(),
         lan: true,
         discovery: true,
-        scope: None,
+        ..HostDecl::default()
     };
     let topology = Topology::new()
         .scope("run-a")

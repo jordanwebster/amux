@@ -148,12 +148,23 @@ pub struct CloudOptions {
     /// Dial the relay's TCP carrier here, in plaintext, instead of the host
     /// and port the cloud names.
     pub relay_tcp: Option<SocketAddr>,
+    /// Dial the relay's QUIC carrier here, trusting these roots, instead of
+    /// the host and port the cloud names and the public roots.
+    pub relay_quic: Option<RelayQuic>,
     /// How often a free account's link asks the cloud what the account
     /// buys; a purchase reaches the link within one interval.
     pub free_refresh_interval: Option<Duration>,
     /// A credential the embedder supplies instead of the profile's account
     /// file, for a host that owns its own sign-in.
     pub credentials: Option<Arc<dyn CredentialProvider>>,
+}
+
+/// Where a test's relay answers QUIC, and the client configuration that
+/// trusts its certificate.
+#[derive(Clone)]
+pub struct RelayQuic {
+    pub addr: SocketAddr,
+    pub client: quinn::ClientConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -533,6 +544,12 @@ impl Edge {
         self.reachability.rebind_quic(socket)
     }
 
+    /// Whether this profile remembers that UDP to `relay` was eaten, and so
+    /// dials that relay over TCP only until the memory expires.
+    pub fn remembers_udp_blocked(&self, relay: &str) -> bool {
+        self.udp_blocked.holds(relay)
+    }
+
     /// What the cloud link is doing.
     pub fn observed(&self) -> Observed {
         self.status.current()
@@ -590,6 +607,7 @@ impl Edge {
                 self.quic_endpoint.clone(),
                 self.udp_blocked.clone(),
                 self.cloud_options.relay_tcp,
+                self.cloud_options.relay_quic.clone(),
                 self.cloud_options.free_refresh_interval,
                 self.clock.clone(),
             ),

@@ -46,6 +46,7 @@ fn lan_host(name: &str, scope: &str) -> HostDecl {
         lan: true,
         discovery: true,
         scope: Some(scope.to_owned()),
+        ..HostDecl::default()
     }
 }
 
@@ -621,7 +622,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
                 edge.cloud = CloudOptions {
                     relay_tcp: Some(relay_addr),
                     free_refresh_interval: Some(Duration::from_secs(60)),
-                    credentials: None,
+                    ..CloudOptions::default()
                 };
             })),
             ..NetOptions::default()

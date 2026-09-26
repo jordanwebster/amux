@@ -1,3 +1,18 @@
+2026-09-26 — **A relay in the testnet.**
+A topology can declare a relay and the accounts its cloud knows
+(`Topology::relay`, `RelayDecl`, `HostDecl.account`). The net runs the
+production relay server on loopback, QUIC and its TCP fallback, beside a
+stand-in cloud answering the token, userinfo and connect calls, with relay
+credentials timed by the net's policy clock. Each host reaches the relay's
+QUIC carrier through its own UDP gate, so `Net::block_udp` takes UDP away
+from one host. New verbs: `sign_in` (a front-door bind as a person's login
+does), `trust`, `front_door`, `profile_runtime`/`profile_edge`. The edge
+takes a relay QUIC address and trust roots from `CloudOptions.relay_quic`
+and says whether it remembers a UDP-blocked relay. `tests/spec_network.rs`
+starts with two hosts on one account, one over QUIC and one falling back to
+TCP, calling each other through the relay, and the blocked-UDP memory
+holding TCP until it expires.
+
 2026-09-26 — **Families cross hosts.**
 A spawn names its host as the person does: `CreateAgentRequest.host_name`
 is resolved by the daemon among this host and the trusted ones, exactly

@@ -13,11 +13,18 @@ path = "src/bin/testnet.rs"
 [dependencies]
 agent-dir = { workspace = true }
 anyhow = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
 hyper-util = { workspace = true }
 journal = { workspace = true, features = ["synthetic"] }
 node = { workspace = true }
 provider-fakes = { workspace = true }
+quinn = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 store = { workspace = true }
@@ -32,10 +39,6 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
-bytes = { workspace = true }
-chrono = { workspace = true }
-http-body-util = { workspace = true }
-hyper = { workspace = true }
 interpret = { workspace = true }
 prost = { workspace = true }
 ui-state = { workspace = true }

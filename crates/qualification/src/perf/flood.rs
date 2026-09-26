@@ -141,8 +141,7 @@ pub fn topology(options: &FloodOptions) -> Topology {
         .host_decl(HostDecl {
             name: ORIGIN.to_owned(),
             lan: true,
-            discovery: false,
-            scope: None,
+            ..HostDecl::default()
         })
         .host(VIEWER)
         .link(ORIGIN, VIEWER);
@@ -290,8 +289,7 @@ async fn start(k: u32) -> Result<Net> {
             .host_decl(HostDecl {
                 name: ORIGIN.to_owned(),
                 lan: true,
-                discovery: false,
-                scope: None,
+                ..HostDecl::default()
             })
             .host(VIEWER)
             .link(ORIGIN, VIEWER),

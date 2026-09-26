@@ -27,6 +27,7 @@ use store::AgentKey;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use wire::client_service_server::ClientService as _;
+use wire::profile_service_client::ProfileServiceClient;
 use wire::{
     AgentParent, ClaudeCreateConfig, ClaudePtyInput, ClaudeSdkInput, CodexCreateConfig, CodexInput,
     CreateAgentRequest, DeleteAgentRequest, DeleteAgentResponse, Input, PromptInput, StopMode,
@@ -37,6 +38,7 @@ use crate::binaries::Binaries;
 use crate::clock::DrivenClock;
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
+use crate::relay::{Relay, UdpGate};
 use crate::topology::{AgentDecl, FakeKind, HostDecl, Topology, TopologyError, link_key};
 
 /// Lets a caller adjust a host's edge beyond what the topology declares,
@@ -162,6 +164,8 @@ pub enum NetError {
     Io(#[from] std::io::Error),
     #[error("{0} is not supported on this platform")]
     Unsupported(&'static str),
+    #[error("the topology declares no relay")]
+    NoRelay,
 }
 
 struct Host {
@@ -199,6 +203,9 @@ pub struct Net {
     hosts: BTreeMap<String, Host>,
     links: BTreeMap<(String, String), Link>,
     agents: BTreeMap<String, AgentRef>,
+    relay: Option<Relay>,
+    /// Each host's way to the relay's QUIC carrier, kept across restarts.
+    udp: BTreeMap<String, UdpGate>,
 }
 
 impl Net {
@@ -236,10 +243,20 @@ impl Net {
             hosts: BTreeMap::new(),
             links: BTreeMap::new(),
             agents: BTreeMap::new(),
+            relay: None,
+            udp: BTreeMap::new(),
         };
+        if let Some(relay) = &topology.relay {
+            net.relay = Some(Relay::start(relay, net.clock.clone()).await?);
+        }
         for decl in &topology.hosts {
             net.create_host(decl)?;
             net.start_host(&decl.name).await?;
+        }
+        for decl in &topology.hosts {
+            if let Some(account) = &decl.account {
+                net.sign_in(&decl.name, account).await?;
+            }
         }
         for link in &topology.links {
             let a = net.edge(&link.a)?;
@@ -288,6 +305,11 @@ impl Net {
     pub fn open_gate(&self, name: &str) -> Result<Ack, NetError> {
         std::fs::write(self.gates().join(name), b"")?;
         Ok(self.ack(format!("gate {name} open")))
+    }
+
+    /// The relay the topology declares.
+    pub fn relay(&self) -> Result<&Relay, NetError> {
+        self.relay.as_ref().ok_or(NetError::NoRelay)
     }
 
     pub fn binaries(&self) -> &Binaries {
@@ -352,6 +374,64 @@ impl Net {
             host: name.to_owned(),
             error: "its edge is not running".to_owned(),
         })
+    }
+
+    /// Another profile the host's installation serves, such as one
+    /// [`Net::create_profile`] made.
+    pub fn profile_runtime(
+        &self,
+        name: &str,
+        profile: ProfileId,
+    ) -> Result<Arc<ProfileRuntime>, NetError> {
+        let host = self
+            .hosts
+            .get(name)
+            .ok_or_else(|| NetError::NoHost(name.to_owned()))?;
+        let daemon = host
+            .daemon
+            .as_ref()
+            .ok_or_else(|| NetError::Down(name.to_owned()))?;
+        daemon
+            .lock()
+            .unwrap()
+            .profile(profile)
+            .ok_or_else(|| NetError::Host {
+                host: name.to_owned(),
+                error: format!("no profile {profile}"),
+            })
+    }
+
+    pub fn profile_edge(&self, name: &str, profile: ProfileId) -> Result<Arc<Edge>, NetError> {
+        self.profile_runtime(name, profile)?
+            .edge()
+            .ok_or_else(|| NetError::Host {
+                host: name.to_owned(),
+                error: format!("profile {profile}'s edge is not running"),
+            })
+    }
+
+    /// The installation's front door on `name`: profiles, pairing, peers
+    /// and accounts, as a person's client calls them.
+    pub async fn front_door(
+        &self,
+        name: &str,
+    ) -> Result<ProfileServiceClient<tonic::transport::Channel>, NetError> {
+        let path = self.host(name)?.front_door.clone();
+        let channel = tonic::transport::Endpoint::from_static("http://amux.test")
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    agent_dir::local_socket::connect(&path)
+                        .await
+                        .map(hyper_util::rt::TokioIo::new)
+                }
+            }))
+            .await
+            .map_err(|error| NetError::Host {
+                host: name.to_owned(),
+                error: error.to_string(),
+            })?;
+        Ok(ProfileServiceClient::new(channel))
     }
 
     pub fn agent(&self, name: &str) -> Result<&AgentRef, NetError> {
@@ -776,6 +856,12 @@ impl Net {
     }
 
     async fn start_host(&mut self, name: &str) -> Result<(), NetError> {
+        if let Some(relay) = &self.relay
+            && !self.udp.contains_key(name)
+        {
+            let gate = relay.gate().await?;
+            self.udp.insert(name.to_owned(), gate);
+        }
         let host = self
             .hosts
             .get(name)
@@ -803,6 +889,9 @@ impl Net {
             link_socket: false,
             cloud: node::CloudOptions::default(),
         };
+        if let Some(relay) = &self.relay {
+            edge.cloud = relay.cloud_options(&self.udp[name]);
+        }
         if let Some(hook) = &self.edge_hook {
             hook(name, &mut edge);
         }
@@ -832,6 +921,61 @@ impl Net {
         host.runtime = Arc::downgrade(&runtime);
         host.daemon = Some(std::sync::Mutex::new(daemon));
         Ok(())
+    }
+
+    /// Makes `a` trust `b` as pairing would, without linking them: they
+    /// meet over whatever route they find.
+    pub async fn trust(&mut self, a: &str, b: &str) -> Result<Ack, NetError> {
+        let far = self.edge(b)?;
+        self.edge(a)?
+            .trust(&far)
+            .await
+            .map_err(|error| NetError::Host {
+                host: a.to_owned(),
+                error: error.message().to_owned(),
+            })?;
+        Ok(self.ack(format!("{a} trusts {b}")))
+    }
+
+    /// Signs the host's profile in to `account` on the net's relay, through
+    /// the front door as a person's login does, adopting the agents and
+    /// peers it holds, and returns once its relay link is up.
+    pub async fn sign_in(&self, host: &str, account: &str) -> Result<Ack, NetError> {
+        let relay = self.relay()?;
+        let profile = self.host(host)?.profile;
+        self.front_door(host)
+            .await?
+            .bind_profile(wire::BindProfileRequest {
+                profile_id: Some(profile.to_string()),
+                cloud_url: relay.url().to_owned(),
+                staged_refresh_token: relay.login(account),
+                // The person confirms adopting whatever the profile holds.
+                adopt_non_pristine: true,
+                ..wire::BindProfileRequest::default()
+            })
+            .await
+            .map_err(|status| NetError::Refused(Box::new(status)))?;
+        let edge = self.edge(host)?;
+        observe::eventually(&format!("{host}'s relay link"), PATIENCE, || {
+            let connected = matches!(edge.observed(), node::Observed::Connected { .. });
+            async move { connected }
+        })
+        .await?;
+        Ok(self.ack(format!("{host} signed in to {account}")))
+    }
+
+    /// Takes UDP away from the host's way to the relay, or gives it back:
+    /// datagrams through its gate are dropped both ways while blocked.
+    pub fn block_udp(&self, host: &str, blocked: bool) -> Result<Ack, NetError> {
+        let gate = self
+            .udp
+            .get(host)
+            .ok_or_else(|| NetError::NoHost(host.to_owned()))?;
+        gate.block(blocked);
+        Ok(self.ack(format!(
+            "UDP to the relay {} for {host}",
+            if blocked { "blocked" } else { "open" }
+        )))
     }
 
     /// Makes `a` forget `b`, as unpairing does: `b`'s key leaves `a`'s

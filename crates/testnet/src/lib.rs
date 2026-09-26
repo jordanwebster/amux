@@ -54,6 +54,7 @@ pub mod door;
 mod invariant;
 mod net;
 pub mod observe;
+mod relay;
 mod topology;
 
 pub use binaries::Binaries;
@@ -64,4 +65,8 @@ pub use net::{
     NetOptions, prompt, withdraw,
 };
 pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
-pub use topology::{AgentDecl, FakeKind, HostDecl, LinkDecl, Topology, TopologyError};
+pub use relay::{CREDENTIAL_TTL, RELAY_HOST, Relay, UdpGate};
+pub use topology::{
+    AccountDecl, AgentDecl, FakeKind, HostDecl, LinkDecl, RelayDecl, TierDecl, Topology,
+    TopologyError,
+};

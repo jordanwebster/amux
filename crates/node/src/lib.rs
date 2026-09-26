@@ -52,7 +52,7 @@ pub use dump::{DAEMON_LOG, DUMP_LOG_BYTES, DUMP_ROWS, DUMP_SEGMENTS, DumpError, 
 pub use edge::{
     ACCOUNT_FILE, CloudLinkServer, CloudOptions, DiscoveryFactory, Edge, EdgeError, EdgeOptions,
     FREE_TIER_REFRESH_INTERVAL, JwtCloudLinkAuthenticator, LINK_SOCKET, LanOptions, LoopbackLink,
-    Observed, RelayCarrier, RelayIdentity, mdns_discovery,
+    Observed, RelayCarrier, RelayIdentity, RelayQuic, UDP_BLOCKED_MEMORY, mdns_discovery,
 };
 pub use forward::{ForwardError, HostNameError, Owner};
 pub use generation::{Generation, boot_id};

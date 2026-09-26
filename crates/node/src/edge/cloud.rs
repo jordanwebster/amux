@@ -52,6 +52,7 @@ pub struct CloudTransport {
     quic_endpoint: quinn::Endpoint,
     udp_blocked: Arc<UdpBlockedMemory>,
     tcp_override: Option<std::net::SocketAddr>,
+    quic_override: Option<super::RelayQuic>,
     free_refresh_interval: Option<Duration>,
     clock: Arc<dyn Clock>,
 }
@@ -61,6 +62,7 @@ impl CloudTransport {
         quic_endpoint: quinn::Endpoint,
         udp_blocked: Arc<UdpBlockedMemory>,
         tcp_override: Option<std::net::SocketAddr>,
+        quic_override: Option<super::RelayQuic>,
         free_refresh_interval: Option<Duration>,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -68,6 +70,7 @@ impl CloudTransport {
             quic_endpoint,
             udp_blocked,
             tcp_override,
+            quic_override,
             free_refresh_interval,
             clock,
         }
@@ -428,15 +431,27 @@ async fn run_cloud_connection_with_details(
     let quic_endpoint = ctx.transport.quic_endpoint.clone();
     let quic_host = details.host.clone();
     let quic_port = details.port;
+    let quic_override = ctx.transport.quic_override.clone();
     let quic = async move {
         #[cfg(debug_assertions)]
         if std::env::var_os("AMUX_TEST_RELAY_UDP_BLOCKED").is_some() {
             return Err("relay UDP blocked by test fixture".to_string());
         }
-        QuicCarrier::connect_relay(&quic_endpoint, &quic_host, quic_port)
-            .await
-            .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
-            .map_err(|error| error.to_string())
+        match quic_override {
+            Some(relay) => {
+                QuicCarrier::connect_relay_candidates_with_config(
+                    &quic_endpoint,
+                    [relay.addr],
+                    &quic_host,
+                    quic_port,
+                    relay.client,
+                )
+                .await
+            }
+            None => QuicCarrier::connect_relay(&quic_endpoint, &quic_host, quic_port).await,
+        }
+        .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
+        .map_err(|error| error.to_string())
     };
     let tcp_host = details.host.clone();
     let tcp_port = details.port;
