@@ -154,7 +154,7 @@ impl Relay {
     }
 
     /// The refresh token a person signing in as `account` hands the daemon.
-    pub fn login(&self, account: &str) -> String {
+    pub fn login(account: &str) -> String {
         format!("refresh-{account}")
     }
 

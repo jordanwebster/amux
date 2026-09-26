@@ -3,27 +3,19 @@
 //! directions, a cloud link whose credential the policy clock refreshes, a
 //! stranger refused, unpairing, and discovery scoped to one network.
 //! Nothing here touches a real LAN, mDNS or relay: the listeners bind
-//! 127.0.0.1, discovery is the net's scripted bus, and the cloud and relay
-//! are in-process stand-ins.
+//! 127.0.0.1, discovery is the net's scripted bus, and the relay is the
+//! topology's, beside a stand-in cloud.
 
 #![cfg(unix)]
 
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
+use std::time::Duration;
 
-use agent_dir::Clock as _;
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
-use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use node::harness::{AuthenticatedLinkUser, HostVia, LinkTokenAuthenticator, Tier};
-use node::{CloudLinkServer, CloudOptions, Edge, RelayIdentity};
-use testnet::{ClockMode, DrivenClock, HostDecl, Net, NetOptions, PATIENCE, Topology};
+use node::Edge;
+use node::harness::{HostVia, Tier};
+use testnet::{ClockMode, HostDecl, Net, NetOptions, PATIENCE, Relay, TierDecl, Topology};
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 use wire::profile_service_client::ProfileServiceClient;
@@ -459,177 +451,25 @@ async fn trusted_edges_link_in_process_until_the_link_is_severed() {
     net.shutdown().await.unwrap();
 }
 
-/// Relay credentials the fake cloud minted: the account, when each
-/// expires on the driven clock, and the tier it carries.
-type Minted = Arc<Mutex<HashMap<String, (Uuid, i64, Tier)>>>;
-
-/// Stands in for the cloud: the OAuth token endpoint, userinfo, and the
-/// connect call that hands out relay credentials, whose tier the test
-/// changes.
-struct FakeCloud {
-    url: String,
-    relay: SocketAddr,
-    tier: Mutex<&'static str>,
-    connects: Mutex<u32>,
-    clock: DrivenClock,
-    tokens: Minted,
-    user: Uuid,
-}
-
-impl FakeCloud {
-    async fn start(relay: SocketAddr, clock: DrivenClock, tokens: Minted) -> Arc<Self> {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let cloud = Arc::new(Self {
-            url: format!("http://{}", listener.local_addr().unwrap()),
-            relay,
-            tier: Mutex::new("free"),
-            connects: Mutex::new(0),
-            clock,
-            tokens,
-            user: Uuid::new_v4(),
-        });
-        let serving = cloud.clone();
-        tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let cloud = serving.clone();
-                tokio::spawn(async move {
-                    let service = service_fn(move |request| {
-                        let cloud = cloud.clone();
-                        async move { Ok::<_, Infallible>(cloud.answer(request).await) }
-                    });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), service)
-                        .await;
-                });
-            }
-        });
-        cloud
-    }
-
-    async fn answer(&self, request: hyper::Request<Incoming>) -> hyper::Response<Full<Bytes>> {
-        let path = request.uri().path().to_owned();
-        let _ = request.into_body().collect().await;
-        let body = match path.as_str() {
-            "/connect/token" => serde_json::json!({
-                "access_token": "access",
-                "token_type": "bearer",
-                "expires_in": 3600,
-                "refresh_token": "refresh-rotated",
-            }),
-            "/connect/userinfo" => serde_json::json!({
-                "sub": "ada",
-                "name": "Ada",
-                "email": "ada@example.com",
-            }),
-            "/api/connect" => {
-                let count = {
-                    let mut connects = self.connects.lock().unwrap();
-                    *connects += 1;
-                    *connects
-                };
-                let tier = *self.tier.lock().unwrap();
-                let token = format!("relay-{count}");
-                // Each relay credential lives ten minutes on the clock the
-                // test drives.
-                let expires_ms = self.clock.now_ms() + 600_000;
-                self.tokens.lock().unwrap().insert(
-                    token.clone(),
-                    (
-                        self.user,
-                        expires_ms,
-                        if tier == "pro" { Tier::Pro } else { Tier::Free },
-                    ),
-                );
-                let expires_at =
-                    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(expires_ms).unwrap();
-                serde_json::json!({
-                    "host": "127.0.0.1",
-                    "port": self.relay.port(),
-                    "token": token,
-                    "expires_at": expires_at.to_rfc3339(),
-                    "tier": tier,
-                })
-            }
-            _ => {
-                return hyper::Response::builder()
-                    .status(404)
-                    .body(Full::new(Bytes::new()))
-                    .unwrap();
-            }
-        };
-        hyper::Response::builder()
-            .header("content-type", "application/json")
-            .body(Full::new(Bytes::from(body.to_string())))
-            .unwrap()
-    }
-}
-
-/// The relay's check of a connection token: the ones the fake cloud minted,
-/// each until its expiry.
-struct RegisteredTokens {
-    tokens: Minted,
-    seen: Mutex<Vec<String>>,
-}
-
-#[tonic::async_trait]
-impl LinkTokenAuthenticator for RegisteredTokens {
-    async fn authenticate_token(
-        &self,
-        token: &str,
-    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
-        self.seen.lock().unwrap().push(token.to_owned());
-        let (user_id, expires_ms, tier) = *self
-            .tokens
-            .lock()
-            .unwrap()
-            .get(token)
-            .ok_or_else(|| tonic::Status::unauthenticated("unknown token"))?;
-        Ok(AuthenticatedLinkUser {
-            user_id,
-            client_id: "cli".to_owned(),
-            expires_at: SystemTime::UNIX_EPOCH + Duration::from_millis(expires_ms as u64),
-            tier,
-        })
-    }
-}
-
 #[tokio::test]
 async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock() {
-    let clock = DrivenClock::new();
-    let tokens = Arc::new(Mutex::new(HashMap::new()));
-    let authenticator = Arc::new(RegisteredTokens {
-        tokens: tokens.clone(),
-        seen: Mutex::new(Vec::new()),
-    });
-    let relay = CloudLinkServer::new(RelayIdentity {
-        host_id: Uuid::new_v4(),
-        name: "relay".to_owned(),
-        authenticator: authenticator.clone(),
-        clock: Arc::new(clock.clone()),
-    });
-    let relay_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let relay_addr = relay_listener.local_addr().unwrap();
-    let _relay = relay.serve_on_tcp_listener(relay_listener);
-    let cloud = FakeCloud::start(relay_addr, clock.clone(), tokens).await;
-
+    let mut topology = Topology::new()
+        .relay(&["ada"])
+        .host_decl(lan_host("desk", SCOPE));
+    topology.relay.as_mut().unwrap().accounts[0].tier = TierDecl::Free;
     let net = Net::start_with(
-        Topology::new().host_decl(lan_host("desk", SCOPE)),
+        topology,
         NetOptions {
             clock: ClockMode::Driven,
-            driven: Some(clock.clone()),
-            edge: Some(Arc::new(move |_, edge| {
-                edge.cloud = CloudOptions {
-                    relay_tcp: Some(relay_addr),
-                    free_refresh_interval: Some(Duration::from_secs(60)),
-                    ..CloudOptions::default()
-                };
+            edge: Some(Arc::new(|_, edge| {
+                edge.cloud.free_refresh_interval = Some(Duration::from_secs(60));
             })),
             ..NetOptions::default()
         },
     )
     .await
     .unwrap();
+    let relay = net.relay().unwrap();
     let host_id = edge(&net, "desk").host_id();
     let unbound = info(&net, "desk").await;
     assert_eq!(unbound.intent, wire::Intent::Unbound as i32);
@@ -638,8 +478,8 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .await
         .bind_profile(BindProfileRequest {
             profile_id: Some(id(&net, "desk")),
-            cloud_url: cloud.url.clone(),
-            staged_refresh_token: "refresh-staged".to_owned(),
+            cloud_url: relay.url().to_owned(),
+            staged_refresh_token: Relay::login("ada"),
             ..BindProfileRequest::default()
         })
         .await
@@ -647,37 +487,37 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .into_inner();
     assert_eq!(bound.intent, wire::Intent::Bound as i32);
     assert_eq!(bound.email, "ada@example.com");
-    assert_eq!(bound.account_name, "Ada");
+    assert_eq!(bound.account_name, "ada");
 
     until("the cloud link to connect", || async {
         let info = info(&net, "desk").await;
         info.observed == wire::Observed::Connected as i32 && info.tier == wire::Tier::Free as i32
     })
     .await;
-    assert!(relay.user_has_link_to(cloud.user, host_id).await);
-    assert_eq!(*cloud.connects.lock().unwrap(), 1);
+    assert_eq!(relay.links("ada").await, vec![(host_id, 1)]);
+    assert_eq!(relay.connects().len(), 1);
     println!("bound as Ada; connected to the relay on the free tier");
 
     // The account buys Pro. Nothing happens until the runtime's clock
     // reaches the free tier's refresh interval.
-    *cloud.tier.lock().unwrap() = "pro";
+    relay.set_tier("ada", Tier::Pro);
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(*cloud.connects.lock().unwrap(), 1);
-    clock.advance(Duration::from_secs(60));
+    assert_eq!(relay.connects().len(), 1);
+    net.advance(Duration::from_secs(60)).unwrap();
     until("the refreshed credential to carry the new tier", || async {
         info(&net, "desk").await.tier == wire::Tier::Pro as i32
     })
     .await;
-    assert_eq!(*cloud.connects.lock().unwrap(), 2);
+    assert_eq!(relay.connects().len(), 2);
     assert_eq!(
-        authenticator.seen.lock().unwrap().as_slice(),
-        ["relay-1", "relay-2"],
+        relay.presented().as_slice(),
+        ["relay-ada-1", "relay-ada-2"],
         "the relay saw the first credential in Hello and the second in Reauth"
     );
-    println!("clock +60s: Reauth with relay-2, tier Pro");
+    println!("clock +60s: Reauth with relay-ada-2, tier Pro");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
-        *cloud.connects.lock().unwrap(),
+        relay.connects().len(),
         2,
         "a fresh Pro credential is not refreshed again at once"
     );
@@ -685,22 +525,18 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     // On Pro the link refreshes five minutes before its credential expires.
     // Past the first credential's expiry on the relay's clock, the link
     // lives on a refreshed one.
-    clock.advance(Duration::from_secs(550));
+    net.advance(Duration::from_secs(550)).unwrap();
     until("the Pro credential's refresh before expiry", || async {
-        authenticator
-            .seen
-            .lock()
-            .unwrap()
-            .contains(&"relay-3".to_owned())
+        relay.presented().contains(&"relay-ada-3".to_owned())
     })
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(relay.user_has_link_to(cloud.user, host_id).await);
+    assert_eq!(relay.links("ada").await, vec![(host_id, 1)]);
     assert_eq!(
         info(&net, "desk").await.observed,
         wire::Observed::Connected as i32
     );
-    println!("clock +610s: relay-1 expired, the link lives on relay-3");
+    println!("clock +610s: relay-ada-1 expired, the link lives on relay-ada-3");
 
     // Pausing drops the link and keeps the credential; resuming brings it
     // back; signing out forgets the credential and keeps the binding.
@@ -715,7 +551,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .into_inner();
     assert_eq!(paused.intent, wire::Intent::Paused as i32);
     until("the relay link to go with the pause", || async {
-        !relay.user_has_link_to(cloud.user, host_id).await
+        relay.links("ada").await.is_empty()
     })
     .await;
     door(&net, "desk")
@@ -727,7 +563,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
         .await
         .unwrap();
     until("the relay link to come back", || async {
-        relay.user_has_link_to(cloud.user, host_id).await
+        !relay.links("ada").await.is_empty()
     })
     .await;
     let signed_out = door(&net, "desk")
@@ -742,7 +578,7 @@ async fn a_signed_in_profile_refreshes_its_relay_credential_on_the_runtime_clock
     assert_eq!(signed_out.intent, wire::Intent::LoggedOut as i32);
     assert_eq!(signed_out.email, "ada@example.com");
     until("the relay link to go with the sign-out", || async {
-        !relay.user_has_link_to(cloud.user, host_id).await
+        relay.links("ada").await.is_empty()
     })
     .await;
     println!("paused, resumed and signed out");

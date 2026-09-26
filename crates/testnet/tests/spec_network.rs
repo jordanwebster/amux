@@ -130,6 +130,11 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
             .host_decl(lan_host("desk", "home"))
             .host_decl(lan_host("shed", "home"))
             .host_decl(lan_host("attic", "home"))
+            .host_decl(testnet::HostDecl {
+                name: "porch".to_owned(),
+                lan: true,
+                ..testnet::HostDecl::default()
+            })
             .host_decl(lan_host("laptop", "home"))
             .host_decl(lan_host("intruder", "home")),
     )
@@ -247,6 +252,7 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     )
     .await
     .expect_err("a consumed PIN pairs nothing");
+    assert!(is_invalid_secret(&late), "{late:?}");
     assert!(!edge(&net, "desk").is_trusted(host_id(&net, "intruder")));
     println!("the PIN paired the laptop once; the intruder's late try: {late:?}");
 
@@ -276,6 +282,7 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     )
     .await
     .expect_err("the right PIN after the cap");
+    assert!(is_invalid_secret(&closed), "{closed:?}");
     assert!(edge(&net, "shed").trusted().is_empty());
     println!("five wrong guesses closed the window; the right PIN then: {closed:?}");
 
@@ -295,7 +302,7 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
         !edge(&net, "attic").pairing_active()
     })
     .await;
-    begin_pair(
+    let expired = begin_pair(
         &net,
         "intruder",
         Some(attic),
@@ -304,6 +311,7 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     )
     .await
     .expect_err("an expired PIN");
+    assert!(is_invalid_secret(&expired), "{expired:?}");
     let started = start_pairing(&net, "attic", pin_mode())
         .await
         .expect("a new window after expiry");
@@ -325,6 +333,32 @@ async fn a_pairing_window_is_one_shot_attempt_capped_and_expires() {
     }
     assert!(edge(&net, "attic").trusted().is_empty());
     println!("the window expired after its second; self-pairing refused by id and by key");
+
+    // A QR code carries the responder's addresses, so it pairs with no
+    // discovery and no account; an address that answers nothing, a stale
+    // interface say, gets one short try before the next.
+    let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let started = start_pairing(&net, "porch", qr_mode()).await.unwrap();
+    let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = started.secret else {
+        panic!("a QR window hands out a secret");
+    };
+    let mut addrs = vec![silent.local_addr().unwrap().to_string()];
+    addrs.extend(started.addrs.clone());
+    let begun = tokio::time::Instant::now();
+    let pending = begin_pair(
+        &net,
+        "laptop",
+        Some(host_id(&net, "porch")),
+        begin_pair_request::Secret::QrSecret(secret),
+        addrs,
+    )
+    .await
+    .expect("the QR pairs past the silent address");
+    let took = begun.elapsed();
+    assert!(took < Duration::from_secs(4), "{took:?}");
+    assert_eq!(pending.via, wire::PeerVia::Direct as i32);
+    confirm_pair(&net, "laptop", pending.token).await.unwrap();
+    println!("a QR code paired over its second address after {took:?} on the silent first");
 
     net.shutdown().await.unwrap();
 }
@@ -757,6 +791,35 @@ async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration(
     .await
     .expect_err("no pairing route through another account's relay");
     assert_eq!(across.code(), tonic::Code::Unavailable);
+    start_pairing(&net, "desk", qr_mode())
+        .await
+        .expect_err("the desk's PIN window is still open");
+    door(&net, "desk")
+        .await
+        .cancel_pairing(operation(profile(&net, "desk")))
+        .await
+        .unwrap();
+    let qr = start_pairing(&net, "desk", qr_mode()).await.unwrap();
+    let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = qr.secret else {
+        panic!("a QR window hands out a secret");
+    };
+    let across_qr = begin_pair(
+        &net,
+        "shop",
+        Some(desk),
+        begin_pair_request::Secret::QrSecret(secret),
+        Vec::new(),
+    )
+    .await
+    .expect_err("no pairing route for a QR secret either");
+    assert_eq!(across_qr.code(), across.code());
+    assert_eq!(across_qr.message(), across.message());
+    door(&net, "desk")
+        .await
+        .cancel_pairing(operation(profile(&net, "desk")))
+        .await
+        .unwrap();
+    let started = start_pairing(&net, "desk", pin_mode()).await.unwrap();
     println!("ada's relay links {ada:?}; bob's shop sees none of them: {across:?}");
 
     // Pairing at an address the desk hands out is authority of its own,
@@ -889,6 +952,33 @@ async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration(
     .expect_err("no pairing administration on a profile's client socket");
     assert_eq!(on_socket.code(), tonic::Code::Unimplemented);
 
+    // Each profile's socket is its own client surface: two clients, one on
+    // each, each list their own profile's host as this one.
+    let work_socket = node::profile_dir(&net.host("desk").unwrap().data_dir, work_profile)
+        .join(node::PROFILE_SOCKET);
+    for (socket, own) in [(&socket, desk), (&work_socket, work_edge.host_id())] {
+        let mut client = wire::client_service_client::ClientServiceClient::new(
+            testnet::local_channel(socket).await.unwrap(),
+        );
+        let mut events = client
+            .subscribe_inventory(wire::Empty {})
+            .await
+            .unwrap()
+            .into_inner();
+        let first = loop {
+            match events.message().await.unwrap().unwrap().of {
+                Some(wire::inventory_event::Of::Host(host)) if host.host_id == own.as_bytes() => {
+                    break host;
+                }
+                Some(wire::inventory_event::Of::CaughtUp(_)) => {
+                    panic!("a profile's socket lists its own host");
+                }
+                _ => {}
+            }
+        };
+        assert_eq!(first.trust, wire::Trust::Trusted as i32);
+    }
+
     net.shutdown().await.unwrap();
 }
 
@@ -903,12 +993,35 @@ fn relay_host(name: &str, account: &str) -> testnet::HostDecl {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pro() {
+    // The desk listens on the local network; the phone is on the relay
+    // alone; the tablet, in the desk's room, listens for nothing, as a
+    // phone app does.
     let mut topology = Topology::new()
         .relay(&["ada"])
-        .host_decl(relay_host("desk", "ada"))
-        .host_decl(relay_host("phone", "ada"));
+        .host_decl(testnet::HostDecl {
+            account: Some("ada".to_owned()),
+            ..lan_host("desk", "home")
+        })
+        .host_decl(relay_host("phone", "ada"))
+        .host_decl(testnet::HostDecl {
+            account: Some("ada".to_owned()),
+            ..lan_host("tablet", "home")
+        });
     topology.relay.as_mut().unwrap().accounts[0].tier = testnet::TierDecl::Free;
-    let mut net = Net::start(topology).await.unwrap();
+    let mut net = Net::start_with(
+        topology,
+        testnet::NetOptions {
+            edge: Some(std::sync::Arc::new(|host, edge| {
+                if host == "tablet" {
+                    edge.lan = None;
+                    edge.dial = true;
+                }
+            })),
+            ..testnet::NetOptions::default()
+        },
+    )
+    .await
+    .unwrap();
     net.trust("desk", "phone").await.unwrap();
     net.trust("phone", "desk").await.unwrap();
     let (desk, phone) = (host_id(&net, "desk"), host_id(&net, "phone"));
@@ -938,6 +1051,34 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
         pairing.code()
     );
 
+    // The tablet sees the desk through the relay and on the local network
+    // at once. Pairing takes the local network, the only way it can
+    // succeed on a free account, and a client already watching is told
+    // the desk is now directly linked.
+    let mut fleet = net.observe_inventory("tablet").await.unwrap();
+    let pending = begin_pair(
+        &net,
+        "tablet",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&started)),
+        Vec::new(),
+    )
+    .await
+    .expect("pairing on the local network on a free account");
+    assert_eq!(pending.via, wire::PeerVia::Direct as i32);
+    confirm_pair(&net, "tablet", pending.token).await.unwrap();
+    row_until(
+        &mut fleet,
+        desk,
+        "the tablet's client told of the direct link",
+        |row| row.via == wire::HostVia::Direct as i32 && row.trust == wire::Trust::Trusted as i32,
+    )
+    .await;
+    peer_inventory_hosts(&edge(&net, "tablet"), desk)
+        .await
+        .expect("a direct link needs no tier");
+    println!("the tablet paired directly on the free account; its client saw the desk go direct");
+
     // The account buys Pro. The desk, where the purchase happened, asks at
     // once and reauthenticates on its live link; the phone has not asked
     // yet, and a Pro host still opens nothing toward a free one.
@@ -956,14 +1097,20 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
         .await
         .expect_err("a Pro link opens nothing toward a free one");
 
-    // The phone asks on its free refresh interval, on the policy clock,
-    // and from then on the two call each other, on the same links.
+    // The others ask on their free refresh interval, on the policy clock,
+    // and from then on the phone and the desk call each other, on the same
+    // links.
     net.advance(node::FREE_TIER_REFRESH_INTERVAL).unwrap();
-    until("the phone's link to carry Pro", || async {
+    until("the others' links to carry Pro", || async {
         tier(&net, "phone") == Some(node::Tier::Pro)
+            && tier(&net, "tablet") == Some(node::Tier::Pro)
     })
     .await;
-    assert_eq!(net.relay().unwrap().connects().len(), connects + 2);
+    assert_eq!(
+        net.relay().unwrap().connects().len(),
+        connects + 3,
+        "each host asked once"
+    );
     peer_inventory_hosts(&edge(&net, "phone"), desk)
         .await
         .expect("the phone calls the desk on Pro");
@@ -972,7 +1119,7 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
         .expect("the desk calls the phone on Pro");
     let mut links = net.relay().unwrap().links("ada").await;
     links.sort();
-    let mut expected = vec![(desk, 1), (phone, 1)];
+    let mut expected = vec![(desk, 1), (phone, 1), (host_id(&net, "tablet"), 1)];
     expected.sort();
     assert_eq!(links, expected, "Pro arrived on the links already up");
     println!("Pro: the desk at once, the phone after its interval, on the same links");
@@ -991,12 +1138,12 @@ async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pr
     let presented = net.relay().unwrap().presented().len();
     net.advance(testnet::CREDENTIAL_TTL - Duration::from_secs(4 * 60))
         .unwrap();
-    until("both links to present fresh credentials", || async {
-        net.relay().unwrap().presented().len() >= presented + 2
+    until("every link to present a fresh credential", || async {
+        net.relay().unwrap().presented().len() >= presented + 3
     })
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(net.relay().unwrap().links("ada").await.len(), 2);
+    assert_eq!(net.relay().unwrap().links("ada").await.len(), 3);
     let spawned = net
         .spawn(testnet::AgentDecl::new("scout", "desk").prompt("Look around."))
         .await
@@ -1334,7 +1481,7 @@ async fn create(net: &Net, host: &str, label: &str) -> (String, std::sync::Arc<n
 
 #[tokio::test(flavor = "multi_thread")]
 async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
-    let net = Net::start(
+    let mut net = Net::start(
         Topology::new()
             .relay(&["ada", "bob", "cara"])
             .host_decl(lan_host("desk", "home"))
@@ -1345,16 +1492,10 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
     .unwrap();
     let (desk, laptop) = (host_id(&net, "desk"), host_id(&net, "laptop"));
     let main = profile(&net, "desk");
-    let mut watch = door(&net, "desk")
-        .await
-        .watch_profiles(wire::WatchProfilesRequest {})
-        .await
-        .unwrap()
-        .into_inner();
     pair(&net, "laptop", "desk").await;
     until_via(&net, "laptop", "desk", HostVia::Direct).await;
     let (work, work_edge) = create(&net, "desk", "work").await;
-    let relay_login = |account: &str| net.relay().unwrap().login(account);
+    let relay_login = testnet::Relay::login;
 
     // Signing in asks the person to confirm adopting what a profile
     // already holds, and then the desk's main profile is Ada's.
@@ -1494,10 +1635,69 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
         .unwrap()
         .len();
     assert_eq!(listed, 1, "the worker is still the desk's");
-    net.sign_in("desk", "ada").await.unwrap();
-    assert_eq!(net.relay().unwrap().links("ada").await, vec![(desk, 1)]);
+    // The signed-out profile keeps its place for the account, across a
+    // restart: a login naming no profile lands on it again.
+    net.stop_daemon("desk").await.unwrap();
+    net.restart_daemon("desk").await.unwrap();
+    // A watcher from here on sees everything that follows, in order.
+    let mut watch = door(&net, "desk")
+        .await
+        .watch_profiles(wire::WatchProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let again = door(&net, "desk")
+        .await
+        .bind_profile(wire::BindProfileRequest {
+            profile_id: None,
+            cloud_url: net.relay().unwrap().url().to_owned(),
+            staged_refresh_token: relay_login("ada"),
+            ..wire::BindProfileRequest::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(again.id, main);
+    until("Ada's relay link after the restart", || async {
+        net.relay().unwrap().links("ada").await == vec![(desk, 1)]
+    })
+    .await;
     assert_eq!(host_id(&net, "desk"), desk);
+    until("the laptop linked again", || async {
+        edge(&net, "desk").via(laptop).await == HostVia::Direct
+    })
+    .await;
     println!("signed out and in again: same host, same key, laptop still paired, worker kept");
+
+    // Two logins for one account at once land on one profile, with one
+    // link.
+    net.relay().unwrap().add_account("dan", node::Tier::Pro);
+    let login = |door: wire::profile_service_client::ProfileServiceClient<_>| {
+        let mut door = door;
+        let request = wire::BindProfileRequest {
+            profile_id: None,
+            cloud_url: net.relay().unwrap().url().to_owned(),
+            staged_refresh_token: relay_login("dan"),
+            ..wire::BindProfileRequest::default()
+        };
+        async move {
+            door.bind_profile(request)
+                .await
+                .map(tonic::Response::into_inner)
+        }
+    };
+    let (first, second) = tokio::join!(
+        login(door(&net, "desk").await),
+        login(door(&net, "desk").await)
+    );
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_eq!(first.id, second.id, "one profile for one account");
+    until("Dan's one relay link", || async {
+        net.relay().unwrap().links("dan").await.len() == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(net.relay().unwrap().links("dan").await.len(), 1);
 
     // A profile deleted is gone for every caller: its relay link, its
     // listener, its place in the list.
@@ -1542,7 +1742,7 @@ async fn accounts_sign_in_out_pause_and_go_one_profile_at_a_time() {
     );
     assert_eq!(edge(&net, "desk").via(laptop).await, HostVia::Direct);
 
-    // One watcher saw all of it, in order: every change numbered, the
+    // The watcher saw all of it, in order: every change numbered, the
     // deletion last.
     let mut sequence = 0;
     let mut removed = None;
@@ -1657,6 +1857,32 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
         .await
         .expect_err("no call to a host nobody paired");
 
+    // That sight is what lets the two pair by a PIN through the relay; and
+    // once the tablet goes away, the desk sees it go.
+    let started = start_pairing(&net, "desk", pin_mode()).await.unwrap();
+    let pending = begin_pair(
+        &net,
+        "tablet",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&started)),
+        Vec::new(),
+    )
+    .await
+    .expect("a PIN pairing through the relay");
+    assert_eq!(pending.via, wire::PeerVia::Relay as i32);
+    confirm_pair(&net, "tablet", pending.token).await.unwrap();
+    until("the tablet's calls to go through", || async {
+        peer_inventory_hosts(&edge(&net, "tablet"), desk)
+            .await
+            .is_ok()
+    })
+    .await;
+    net.stop_daemon("tablet").await.unwrap();
+    until("the desk to see the tablet go", || async {
+        edge(&net, "desk").via(tablet).await == HostVia::Offline
+    })
+    .await;
+
     // The desk goes down: still listed, as trusted and offline, keeping
     // the last word on its sign-in, and calls to it fail. It comes back
     // with the identity it had, which the laptop's pinned key accepts.
@@ -1673,6 +1899,23 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
     net.restart_daemon("desk").await.unwrap();
     assert_eq!(host_id(&net, "desk"), desk);
     assert_eq!(edge(&net, "desk").public_key(), key.as_slice());
+    // What the desk says of itself is what the laptop pinned, and asking
+    // opens no pairing window.
+    let identity = door(&net, "desk")
+        .await
+        .get_device_identity(wire::ProfileRequest {
+            profile_id: profile(&net, "desk"),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let pinned = edge(&net, "laptop")
+        .trusted()
+        .into_iter()
+        .find(|(host, ..)| *host == desk)
+        .unwrap();
+    assert_eq!(identity.pubkey, pinned.2);
+    assert!(!edge(&net, "desk").pairing_active());
     row_until(&mut fleet, desk, "the desk back online", |row| {
         row.presence == wire::Presence::Online as i32
     })

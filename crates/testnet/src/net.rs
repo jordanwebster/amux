@@ -946,7 +946,7 @@ impl Net {
             .bind_profile(wire::BindProfileRequest {
                 profile_id: Some(profile.to_string()),
                 cloud_url: relay.url().to_owned(),
-                staged_refresh_token: relay.login(account),
+                staged_refresh_token: Relay::login(account),
                 // The person confirms adopting whatever the profile holds.
                 adopt_non_pristine: true,
                 ..wire::BindProfileRequest::default()
