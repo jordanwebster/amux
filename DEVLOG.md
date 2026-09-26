@@ -1,3 +1,27 @@
+2026-09-26 — **The agent hosts all three providers, carries agent messages, keeps a facts ring, and replays real recordings strictly.**
+Claude in a terminal: the agent reads the version the binary reports,
+resolves the keymap for it at every start, records both on the boundary,
+and types semantic inputs through it. It counts Claude ready when the
+terminal turns on bracketed paste: every recording shows SessionStart only
+after the first prompt, so waiting for it would never have typed one. One
+merged `--settings` carries the hook binary (at the install path) and
+`crossSessionInbound: accept`, which every Claude launch now sets so a
+bypass-permissions agent does not hold agent messages behind an approval.
+Agent messages go on terminal Claude's messaging socket (credentials arrive
+through the hook binary), pasted as Claude wraps them when there is no
+socket; on headless Claude's stdin; as Codex injected items. Every event
+the interpreter sees goes to a facts ring in `private/facts/`, rotated by
+size with a checkpoint at each segment's start; a later incarnation
+rebuilds its state from it (`Interpreter::reincarnate`), so item keys carry
+on, a killed incarnation gets its missing final boundary, and open items
+are re-emitted in full. On a provider's exit the agent reads the
+transcript rows no poll has reached yet before recording the exit.
+Replay tests play six real recordings through the fakes (tests/replay/),
+which check every byte the agent writes, including the end of input:
+initialization, interleaving, control replies and transport loss for all
+three providers. A prompt row landing after the permission hook no longer
+closes the ask it did not end.
+
 2026-09-26 — **The agent process hosts Codex.**
 One `codex app-server` per agent over stdio: the agent does the handshake
 (initialize, initialized, thread/start) and records the thread id in

@@ -33,8 +33,9 @@ impl<W: AsyncWrite + Unpin> Out<W> {
 
 /// Play one recorded stdio process: write each recorded output line, and
 /// require each recorded input line from the host, byte for byte. After the
-/// last event the host must close stdin without writing more.
-pub async fn play<R, W>(process: &Process, input: R, output: W) -> Result<(), String>
+/// last event the host must close stdin without writing more; a recorded
+/// exit instead ends the process there with its code, returned.
+pub async fn play<R, W>(process: &Process, input: R, output: W) -> Result<Option<i32>, String>
 where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -60,6 +61,7 @@ where
                     ));
                 }
             }
+            Channel::Exit => return Ok(Some(crate::playback::exit_code(event))),
             Channel::Transcript | Channel::Hook => {
                 return Err(format!(
                     "event {index}: a stdio process has no {:?}",
@@ -69,7 +71,7 @@ where
         }
     }
     match input.next_line().await {
-        Ok(None) => Ok(()),
+        Ok(None) => Ok(None),
         Ok(Some(line)) => Err(format!("host wrote past the recording's end: {line}")),
         Err(error) => Err(format!("reading past the end: {error}")),
     }

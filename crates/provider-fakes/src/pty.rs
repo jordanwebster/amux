@@ -33,7 +33,7 @@ pub fn main() -> i32 {
         .expect("a tokio runtime");
     match mode {
         Mode::Playback(process) => match play(&process, &Args::parse(&args)) {
-            Ok(()) => 0,
+            Ok(code) => code.unwrap_or(0),
             Err(error) => {
                 eprintln!("fake-claude-pty: {error}");
                 DRIFT_EXIT
@@ -99,7 +99,9 @@ pub fn raw_mode() {
     }
 }
 
-fn play(process: &Process, args: &Args) -> Result<(), String> {
+/// Plays a recorded terminal session; a recorded exit ends it there with
+/// its code, returned.
+fn play(process: &Process, args: &Args) -> Result<Option<i32>, String> {
     raw_mode();
     let config = playback::claude_config_dir();
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
@@ -137,6 +139,7 @@ fn play(process: &Process, args: &Args) -> Result<(), String> {
                 )
                 .map_err(|error| format!("event {index}: transcript: {error}"))?;
             }
+            Channel::Exit => return Ok(Some(playback::exit_code(event))),
             Channel::Hook => {
                 if let Some(named) = playback::row_session(&event.bytes) {
                     session = named;
@@ -150,7 +153,7 @@ fn play(process: &Process, args: &Args) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 mod engine;

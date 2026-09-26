@@ -209,6 +209,9 @@ async fn terminal(binary: &Path, recording: &Path, process: &Process) -> Result<
                 }
             }
             Channel::Transcript | Channel::Hook => {}
+            Channel::Exit => {
+                return Err(format!("event {index}: corpora end with EOF, not an exit"));
+            }
         }
     }
     let status = exit.wait().await;

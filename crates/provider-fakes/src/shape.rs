@@ -287,6 +287,7 @@ impl Corpus {
                 };
                 match event.channel {
                     Channel::Input => classifier.host(kind, &frame),
+                    Channel::Exit => {}
                     Channel::Output | Channel::Transcript | Channel::Hook => {
                         let group = classifier.provider(kind, &frame);
                         let signature = signature(kind, &frame);

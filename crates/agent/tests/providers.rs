@@ -268,3 +268,207 @@ async fn headless_claude_takes_an_agent_message_on_stdin() {
 async fn codex_takes_an_agent_message_as_injected_items() {
     a_message_mid_turn_is_consumed_before_a_one_shot_child_exits("codex", false).await;
 }
+
+// Strict replay: each fake plays a real recording from the claude-specs or
+// codex-specs corpus (tests/replay/, its host lines rewritten to what the
+// agent writes) and checks every byte the agent writes against it. An
+// unexpected write, a missing one, or a write after the recording's end is
+// reported in the provider's log and fails the test; a stdio provider
+// reaching its end waits for the agent to close its input, which is the
+// acknowledged end of file. Each test also checks the agent read the whole
+// recording: the last thing the provider said is in the journal.
+
+/// Answers the ask the snapshot holds open with `answer`, in the kind's
+/// fixture answer syntax.
+async fn answer(agent: &Agent, daemon: &mut Daemon, id: &[u8], answer: serde_json::Value) {
+    agent
+        .wait("an ask opens", |log| {
+            log.phase() == Some(wire::Phase::NeedsYou)
+        })
+        .await;
+    let ask = agent.log().ask_keys().remove(0);
+    let input = interpret::FixtureInput::Answer { ask, answer };
+    let input = match agent.kind() {
+        "claude_pty" => interpret::claude_pty_input(id.to_vec(), &input),
+        "codex" => interpret::codex_input(id.to_vec(), &input),
+        _ => interpret::claude_sdk_input(id.to_vec(), &input),
+    }
+    .expect("an answer input");
+    assert_eq!(daemon.input(input).await, Verdict::Accepted);
+}
+
+fn assert_no_drift(agent: &Agent) {
+    assert_eq!(
+        agent.provider_log(),
+        "",
+        "the agent wrote what the recording has"
+    );
+}
+
+const SDK_SESSION: &str = "d7ec31b2-733c-4a1c-8f61-38a6b6d96b2b";
+const SDK_PROMPT: &str = "Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer.";
+
+/// Headless Claude: the initialize exchange, a turn whose thinking, tool
+/// call and permission request interleave, the answer as a control reply,
+/// the turn's result, and the end of input when the agent stops.
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_claude_replays_initialization_a_control_reply_and_the_end_of_input() {
+    let agent = Agent::start(Setup {
+        replay: Some("sdk_question"),
+        session: Some(SDK_SESSION),
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", SDK_PROMPT).await, Verdict::Accepted);
+    answer(
+        &agent,
+        &mut daemon,
+        b"a1",
+        serde_json::json!({"selected": [1]}),
+    )
+    .await;
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    assert!(agent.log().has_text("You selected **Blue**."));
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+    assert_no_drift(&agent);
+}
+
+/// Headless Claude dies while its question is open: the agent records the
+/// exit, closes the ask and ends.
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_claude_replays_transport_loss_mid_turn() {
+    let agent = Agent::start(Setup {
+        replay: Some("sdk_lost"),
+        session: Some(SDK_SESSION),
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", SDK_PROMPT).await, Verdict::Accepted);
+    assert_eq!(agent.exit().await, ExitCause::ProviderExited(Some(1)));
+    let log = agent.log();
+    assert_eq!(
+        log.boundaries().last().map(String::as_str),
+        Some("EXITED exit code 1")
+    );
+    assert!(log.ask_keys().is_empty(), "the open ask is closed");
+    assert_no_drift(&agent);
+}
+
+const CODEX_PROMPT: &str =
+    "Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.";
+
+/// Codex: the handshake, a turn whose deltas and items interleave, the
+/// approval as the answer to the server's request, the turn's completion,
+/// and the end of input when the agent stops.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_replays_the_handshake_an_approval_and_the_end_of_input() {
+    let agent = Agent::start(Setup {
+        kind: "codex",
+        replay: Some("codex_approval"),
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", CODEX_PROMPT).await, Verdict::Accepted);
+    answer(
+        &agent,
+        &mut daemon,
+        b"a1",
+        serde_json::json!({"decision": "approve"}),
+    )
+    .await;
+    agent
+        .wait("the turn ends", |log| log.turn_ends() == 1)
+        .await;
+    assert!(agent.log().has_text("DONE"));
+    daemon.stop(StopMode::Graceful).await;
+    assert_eq!(agent.exit().await, ExitCause::Stopped);
+    assert_no_drift(&agent);
+}
+
+/// The Codex app server dies while its approval is open.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_replays_transport_loss_mid_turn() {
+    let agent = Agent::start(Setup {
+        kind: "codex",
+        replay: Some("codex_lost"),
+        ..Setup::sdk()
+    })
+    .await;
+    let mut daemon = agent.dial().await;
+    agent.ready().await;
+    assert_eq!(daemon.prompt(b"p1", CODEX_PROMPT).await, Verdict::Accepted);
+    assert_eq!(agent.exit().await, ExitCause::ProviderExited(Some(1)));
+    let log = agent.log();
+    assert_eq!(
+        log.boundaries().last().map(String::as_str),
+        Some("EXITED exit code 1")
+    );
+    assert!(log.ask_keys().is_empty(), "the open ask is closed");
+    assert_no_drift(&agent);
+}
+
+const PTY_PROMPT: &str = "Use the Bash tool to run exactly: printf denied > denied.txt. Then stop.";
+
+/// Terminal Claude: input goes live, the prompt is typed through the
+/// keymap, the session starts, the permission menu is answered with a
+/// denial and its feedback, the turn ends, and the session runs to the end
+/// of the recording.
+#[test]
+fn terminal_claude_replays_a_prompt_a_denial_with_feedback_and_its_end() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            replay: Some("pty_deny"),
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", PTY_PROMPT).await, Verdict::Accepted);
+        answer(
+            &agent,
+            &mut daemon,
+            b"a1",
+            serde_json::json!({"deny": {"note": "Use a read-only command instead"}}),
+        )
+        .await;
+        assert_eq!(agent.exit().await, ExitCause::ProviderExited(Some(0)));
+        let log = agent.log();
+        assert!(log.turn_ends() >= 1, "{:#?}", log.sequence());
+        assert!(log.has_text("Use a read-only command instead"));
+        assert_no_drift(&agent);
+    });
+}
+
+/// Terminal Claude dies while its permission menu is open.
+#[test]
+fn terminal_claude_replays_transport_loss_mid_turn() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            replay: Some("pty_lost"),
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", PTY_PROMPT).await, Verdict::Accepted);
+        assert_eq!(agent.exit().await, ExitCause::ProviderExited(Some(1)));
+        let log = agent.log();
+        assert_eq!(
+            log.boundaries().last().map(String::as_str),
+            Some("EXITED exit code 1")
+        );
+        assert!(log.ask_keys().is_empty(), "the open ask is closed");
+        assert_no_drift(&agent);
+    });
+}

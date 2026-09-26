@@ -23,6 +23,11 @@ pub enum Channel {
     Transcript,
     /// A payload the provider handed a hook command on stdin.
     Hook,
+    /// The provider process ended here with the exit code in the bytes,
+    /// as when a provider dies mid-turn. Host-side fixtures write it as
+    /// `{"dir":"exit","line":"<code>"}`; recorded corpora end with the
+    /// host closing the provider's input instead.
+    Exit,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +123,10 @@ pub fn load(dir: &Path) -> Result<Vec<Process>, LoadError> {
             .ok_or_else(|| malformed("no line".into()))?;
         let transport = transport_of(&value);
         let (channel, process) = match transport.as_str() {
+            _ if dir == "exit" => (
+                Channel::Exit,
+                if transport == "stdio" { "stdio" } else { "pty" },
+            ),
             // A terminal recording's transports are channels of one process.
             "pty" => (
                 if dir == "stdin" {
@@ -142,7 +151,12 @@ pub fn load(dir: &Path) -> Result<Vec<Process>, LoadError> {
             Some(hex) => decode_hex(hex).ok_or_else(|| malformed("bad hex".into()))?,
             None => recorded.as_bytes().to_vec(),
         };
-        let bytes = if channel == Channel::Transcript {
+        let bytes = if channel == Channel::Exit {
+            if recorded.trim().parse::<i32>().is_err() {
+                return Err(malformed("an exit code that is not a number".into()));
+            }
+            bytes
+        } else if channel == Channel::Transcript {
             let row = transcript_row(recorded).ok_or_else(|| malformed("bad row".into()))?;
             let kind = serde_json::from_str::<Value>(row)
                 .ok()
@@ -166,6 +180,14 @@ pub fn load(dir: &Path) -> Result<Vec<Process>, LoadError> {
     }
     processes.retain(|process| !process.events.is_empty());
     Ok(processes)
+}
+
+/// The exit code an exit event carries.
+pub fn exit_code(event: &Event) -> i32 {
+    String::from_utf8_lossy(&event.bytes)
+        .trim()
+        .parse()
+        .unwrap_or(1)
 }
 
 /// The recorded process with this transport id.

@@ -52,7 +52,7 @@ pub fn main() -> i32 {
                 )
                 .await
                 {
-                    Ok(()) => 0,
+                    Ok(code) => code.unwrap_or(0),
                     Err(error) => {
                         eprintln!("fake-claude-sdk: {error}");
                         DRIFT_EXIT

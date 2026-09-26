@@ -677,7 +677,13 @@ impl State {
     /// A prompt sent into a turn that had no tool boundary left lands here
     /// too, as a turn of its own after that turn ended: an ordinary prompt.
     fn prompt_row(&mut self, emit: &mut Emit, key: String, text: String, at_ms: Option<i64>) {
-        self.close_all_unknown(emit);
+        // A prompt amux submitted went in with no ask open, so its
+        // reflection proves nothing about an ask open now: the row can land
+        // after the hook that opened one, since rows are read by polling.
+        // Any other prompt means the call under the ask is over.
+        if self.shared.awaiting_reflection().is_empty() {
+            self.close_all_unknown(emit);
+        }
         // The submission began a turn, but another may have run and ended
         // since: a background task's notification answered first.
         self.shared.turn_started();

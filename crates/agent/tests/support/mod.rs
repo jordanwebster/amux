@@ -85,6 +85,11 @@ pub struct Setup {
     pub ring_bytes: u64,
     /// Terminal Claude without a messaging socket.
     pub socketless: bool,
+    /// Play this recording from tests/replay/ instead of a script: the fake
+    /// checks every byte the agent writes against it.
+    pub replay: Option<&'static str>,
+    /// The provider's own session id, as if an earlier start had made it.
+    pub session: Option<&'static str>,
 }
 
 impl Setup {
@@ -99,6 +104,8 @@ impl Setup {
             hold: false,
             ring_bytes: 0,
             socketless: false,
+            replay: None,
+            session: None,
         }
     }
 }
@@ -168,6 +175,28 @@ impl Agent {
             ),
         ]
         .into();
+        if let Some(name) = setup.replay {
+            let played = root.path().join("replay");
+            std::fs::create_dir_all(&played).unwrap();
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/replay")
+                .join(name)
+                .join("io.jsonl");
+            let text = std::fs::read_to_string(&fixture).unwrap();
+            std::fs::write(played.join("io.jsonl"), localize(&text, &work)).unwrap();
+            provider_env.insert(
+                provider_fakes::PLAYBACK_ENV.to_owned(),
+                played.to_str().unwrap().to_owned(),
+            );
+        }
+        if let Some(session) = setup.session {
+            let private = dir.join(agent::PRIVATE);
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(&private).unwrap();
+            std::fs::write(private.join("provider-session"), session).unwrap();
+        }
         if setup.socketless {
             provider_env.insert(
                 provider_fakes::pty::NO_MESSAGING_ENV.to_owned(),
@@ -297,8 +326,7 @@ impl Agent {
             waited.is_ok(),
             "timed out waiting for {what}; journal: {:#?}\nprovider log:\n{}\nterminal:\n{:?}",
             self.log().sequence(),
-            std::fs::read_to_string(self.dir.join(agent::PRIVATE).join("provider.log"))
-                .unwrap_or_default(),
+            self.provider_log(),
             self.terminal_bytes(),
         );
     }
@@ -386,6 +414,17 @@ impl Agent {
     }
 
     /// Everything the provider wrote to its terminal.
+    pub fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    /// The provider's stderr: where a playing fake reports the first byte
+    /// the agent wrote that the recording does not have.
+    pub fn provider_log(&self) -> String {
+        std::fs::read_to_string(self.dir.join(agent::PRIVATE).join("provider.log"))
+            .unwrap_or_default()
+    }
+
     pub fn terminal_bytes(&self) -> String {
         let pty = self.dir.join(agent::PTY);
         let mut bytes = Vec::new();
@@ -394,6 +433,23 @@ impl Agent {
         }
         String::from_utf8_lossy(&bytes).into_owned()
     }
+}
+
+/// A replay fixture with its placeholders filled for this run: `{{cwd}}`
+/// the agent's working directory, `{{version}}` the agent's version, and
+/// `{{uuid:<input id>}}` the uuid headless Claude's message for that input
+/// carries.
+fn localize(text: &str, work: &Path) -> String {
+    let mut text = text
+        .replace("{{cwd}}", work.to_str().unwrap())
+        .replace("{{version}}", agent::VERSION);
+    while let Some(start) = text.find("{{uuid:") {
+        let end = start + text[start..].find("}}").expect("a closed placeholder");
+        let id = &text[start + "{{uuid:".len()..end];
+        let uuid = interpret::claude_sdk::client_uuid(id.as_bytes());
+        text.replace_range(start..end + 2, &uuid);
+    }
+    text
 }
 
 /// Runs a test that hosts a terminal. Its runtime is shut down without
@@ -635,6 +691,33 @@ impl Log {
 
     pub fn phase(&self) -> Option<Phase> {
         self.snapshot().map(wire::Snapshot::phase)
+    }
+
+    /// The keys of the asks the newest snapshot holds open.
+    pub fn ask_keys(&self) -> Vec<String> {
+        let Some(snapshot) = self.snapshot() else {
+            return Vec::new();
+        };
+        let keys = |asks: Vec<wire::Ask>| asks.into_iter().map(|ask| ask.key).collect();
+        match snapshot.kind.as_str() {
+            "claude_sdk" => keys(
+                ClaudeSdkSnapshot::decode(snapshot.body.as_slice())
+                    .unwrap()
+                    .asks,
+            ),
+            "claude_pty" => keys(
+                wire::ClaudePtySnapshot::decode(snapshot.body.as_slice())
+                    .unwrap()
+                    .asks,
+            ),
+            "codex" => wire::CodexSnapshot::decode(snapshot.body.as_slice())
+                .unwrap()
+                .asks
+                .into_iter()
+                .map(|ask| ask.key)
+                .collect(),
+            other => panic!("no snapshot reader for {other}"),
+        }
     }
 
     pub fn open_asks(&self) -> usize {

@@ -1,0 +1,120 @@
+{
+  "about": "Rows are read by polling and hooks arrive at once, so the row reflecting the prompt that opened a turn can land after the hook that opened an ask in that turn. That row proves nothing about the ask, which stays open for its answer; a prompt typed in the terminal afterwards does close it.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "ready"
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "clean up"
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PermissionRequest",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rm -rf build"
+          },
+          "permission_suggestions": []
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "clean up"
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "ask:1"
+        ]
+      },
+      "note": "the late reflection of amux's own prompt leaves the ask open"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "timestamp": "2027-01-15T08:00:05.000Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "never mind"
+          }
+        }
+      },
+      "expect": {
+        "asks": []
+      },
+      "note": "a prompt typed in the terminal means the call is over"
+    }
+  ]
+}

@@ -98,7 +98,7 @@ pub struct Provider {
     session: String,
     dir: PathBuf,
     events: mpsc::Sender<ProviderEvent>,
-    followers: Vec<tokio::task::JoinHandle<()>>,
+    followers: Vec<Follower>,
 }
 
 impl Provider {
@@ -588,41 +588,63 @@ impl Provider {
     /// Reads a transcript's rows as they are written. A transcript an
     /// earlier incarnation followed is read on from where it stopped, so a
     /// resumed session's old rows are not read twice; any other from its
-    /// start. The position is kept in private/ after every read.
+    /// start. The position is kept in private/ after every row.
     fn follow(&mut self, path: PathBuf) {
+        let cursor = Cursor {
+            file: self.dir.join(dir::PRIVATE).join(dir::TRANSCRIPT_CURSOR),
+            offset: Arc::new(std::sync::Mutex::new(saved_cursor(
+                &self.dir.join(dir::PRIVATE).join(dir::TRANSCRIPT_CURSOR),
+                &path,
+            ))),
+            path,
+        };
         let events = self.events.clone();
-        let cursor_path = self.dir.join(dir::PRIVATE).join(dir::TRANSCRIPT_CURSOR);
-        self.followers.push(tokio::spawn(async move {
-            let mut offset = saved_cursor(&cursor_path, &path);
+        let reading = cursor.clone();
+        let task = tokio::spawn(async move {
             loop {
-                if let Ok(bytes) = tokio::fs::read(&path).await
-                    && bytes.len() > offset
-                {
-                    // Only whole rows: a row still being written waits for
-                    // the next read.
-                    let Some(end) = bytes[offset..].iter().rposition(|byte| *byte == b'\n') else {
-                        tokio::time::sleep(TRANSCRIPT_POLL).await;
+                for row in reading.new_rows() {
+                    let length = row.len() + 1;
+                    if row.is_empty() {
+                        reading.advance(length);
                         continue;
-                    };
-                    let whole = &bytes[offset..offset + end + 1];
-                    for row in whole.split(|byte| *byte == b'\n') {
-                        if row.is_empty() {
-                            continue;
-                        }
-                        let fact = Fact {
-                            channel: Channel::Transcript,
-                            payload: row.to_vec(),
-                        };
-                        if events.send(ProviderEvent::Fact(fact)).await.is_err() {
-                            return;
-                        }
                     }
-                    offset += end + 1;
-                    let _ = std::fs::write(&cursor_path, format!("{offset}\n{}", path.display()));
+                    let fact = Fact {
+                        channel: Channel::Transcript,
+                        payload: row,
+                    };
+                    // Sending is where an abort lands; the row counts as read
+                    // only once it is sent.
+                    if events.send(ProviderEvent::Fact(fact)).await.is_err() {
+                        return;
+                    }
+                    reading.advance(length);
                 }
                 tokio::time::sleep(TRANSCRIPT_POLL).await;
             }
-        }));
+        });
+        self.followers.push(Follower { cursor, task });
+    }
+
+    /// Stops following and returns the rows the followers had not read:
+    /// the provider has exited, so its transcripts are complete, and rows
+    /// it wrote just before exiting must not be lost to the poll interval.
+    pub async fn finish_transcripts(&mut self) -> Vec<Fact> {
+        let mut rows = Vec::new();
+        for follower in std::mem::take(&mut self.followers) {
+            follower.task.abort();
+            let _ = follower.task.await;
+            for row in follower.cursor.new_rows() {
+                follower.cursor.advance(row.len() + 1);
+                if row.is_empty() {
+                    continue;
+                }
+                rows.push(Fact {
+                    channel: Channel::Transcript,
+                    payload: row,
+                });
+            }
+        }
+        rows
     }
 
     /// Asks the provider to finish: end of input for a plain child, a
@@ -672,7 +694,7 @@ impl Provider {
 impl Drop for Provider {
     fn drop(&mut self) {
         for follower in &self.followers {
-            follower.abort();
+            follower.task.abort();
         }
     }
 }
@@ -739,6 +761,49 @@ impl Ready {
         let keep = self.tail.len().saturating_sub(Self::SEQUENCE.len() - 1);
         self.tail.drain(..keep);
         false
+    }
+}
+
+/// A followed transcript and the task reading it.
+struct Follower {
+    cursor: Cursor,
+    task: tokio::task::JoinHandle<()>,
+}
+
+/// How far a transcript has been read, kept in private/ as it moves.
+#[derive(Clone)]
+struct Cursor {
+    path: PathBuf,
+    file: PathBuf,
+    offset: Arc<std::sync::Mutex<usize>>,
+}
+
+impl Cursor {
+    /// The whole rows written past the cursor; a row still being written
+    /// waits for the next read.
+    fn new_rows(&self) -> Vec<Vec<u8>> {
+        let offset = *self.offset.lock().expect("cursor lock");
+        let Ok(bytes) = std::fs::read(&self.path) else {
+            return Vec::new();
+        };
+        let Some(unread) = bytes.get(offset..) else {
+            return Vec::new();
+        };
+        let Some(end) = unread.iter().rposition(|byte| *byte == b'\n') else {
+            return Vec::new();
+        };
+        unread[..end]
+            .split(|byte| *byte == b'\n')
+            .map(<[u8]>::to_vec)
+            .collect()
+    }
+
+    /// Moves past one row and its newline; an empty row is skipped the
+    /// same way, and never sent.
+    fn advance(&self, length: usize) {
+        let mut offset = self.offset.lock().expect("cursor lock");
+        *offset += length;
+        let _ = std::fs::write(&self.file, format!("{offset}\n{}", self.path.display()));
     }
 }
 

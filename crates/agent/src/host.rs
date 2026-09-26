@@ -250,8 +250,13 @@ impl<I: Interpreter> Host<I> {
             tokio::select! {
                 event = channels.provider.recv() => {
                     // The host holds a sender, so the channel never closes.
-                    if let Some(event) = event {
-                        self.on_provider(event).await?;
+                    match event {
+                        Some(ProviderEvent::Exited(code)) => {
+                            self.last_words(&mut channels.provider).await?;
+                            self.on_provider(ProviderEvent::Exited(code)).await?;
+                        }
+                        Some(event) => self.on_provider(event).await?,
+                        None => {}
                     }
                 }
                 Some(stream) = channels.connections.recv() => {
@@ -301,6 +306,29 @@ impl<I: Interpreter> Host<I> {
                 self.feed(Event::ProviderExit { code }).await?;
                 self.done = Some(ExitCause::ProviderExited(code));
             }
+        }
+        Ok(())
+    }
+
+    /// Before a provider's exit is recorded, everything it said first:
+    /// what is already queued, then the transcript rows no follower has
+    /// read yet, since it may have written its last rows just before it
+    /// exited.
+    async fn last_words(
+        &mut self,
+        events: &mut mpsc::Receiver<ProviderEvent>,
+    ) -> Result<(), AgentError> {
+        let rows = match &mut self.provider {
+            Some(provider) => provider.finish_transcripts().await,
+            None => Vec::new(),
+        };
+        while let Ok(event) = events.try_recv() {
+            if !matches!(event, ProviderEvent::Exited(_)) {
+                self.on_provider(event).await?;
+            }
+        }
+        for row in rows {
+            self.on_provider(ProviderEvent::Fact(row)).await?;
         }
         Ok(())
     }
