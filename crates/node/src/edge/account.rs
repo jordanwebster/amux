@@ -394,7 +394,9 @@ mod tests {
             let release = Arc::new(Notify::new());
             let released = release.clone();
             tokio::spawn(async move {
-                for n in 2.. {
+                let mut n = 1;
+                loop {
+                    n += 1;
                     let (mut socket, _) = listener.accept().await.unwrap();
                     read_request(&mut socket).await;
                     arrive.send(()).unwrap();
