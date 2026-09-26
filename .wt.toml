@@ -5,7 +5,7 @@ bin = ["target/debug"]
 commands = ["amux"]
 
 [env]
-AMUX_CONFIG = "{{root()}}/.wt/amux/profile.yaml"
+AMUX_CONFIG = "{{root()}}/.wt/amux/installation.yaml"
 AMUX_LOG = "{{root()}}/.wt/amux/amux.log"
 AMUX_INVARIANT_FATAL = "1"
 
@@ -16,11 +16,13 @@ host_name: {{name_short()}}
 root: {{root()}}/.wt/amux
 front_door_socket: {{root()}}/.wt/amux/amux.sock
 keymaps_dir: {{root()}}/.wt/amux/keymaps
-prevent_idle_sleep: false
+keep_awake: off
+discovery:
+  scope: {{name()}}
 """
 
 [hooks]
-after_new = "scripts/py scripts/worktree-profile.py {{root()}}/.wt/amux {{name()}} && just build"
+after_new = "just build"
 warm = "just warm"
 
 # This checkout's daemon. A resource: `wt remove` stops it.

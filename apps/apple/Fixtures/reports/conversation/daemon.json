@@ -81,7 +81,6 @@
     "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3AF39037-EC54-482B-93C1-77669BA126E2/Library/Application Support/amux/installation/profiles/b5735170-cf51-48d4-b642-7a1ddb0bdfd3/state/state.yaml",
     "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3AF39037-EC54-482B-93C1-77669BA126E2/Library/Application Support/amux/installation/profiles/b5735170-cf51-48d4-b642-7a1ddb0bdfd3/data",
     "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3AF39037-EC54-482B-93C1-77669BA126E2/Library/Application Support/amux/installation/profiles/b5735170-cf51-48d4-b642-7a1ddb0bdfd3/data/reports",
-    "prevent_idle_sleep": false,
     "repository_roots": [],
     "keybinds": {
       "leader": "ctrl+a"

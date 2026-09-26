@@ -105,7 +105,6 @@ def write(path, value):
 write(root / "installation.yaml", {
     "root": str(root), "front_door_socket": str(root / "amux.sock"),
     "host_name": sys.argv[2], "keymaps_dir": str(root / "keymaps"),
-    "prevent_idle_sleep": False,
     "ui": {"default_open_mode": "raw", "color": "ansi"},
 })
 write(root / "registry.yaml", {"profiles": [{

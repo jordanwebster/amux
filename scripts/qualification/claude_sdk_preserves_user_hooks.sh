@@ -102,7 +102,6 @@ socket_path: '$scratch/amux.sock'
 state_path: '$scratch/state.yaml'
 data_dir: '$scratch/data'
 enable_cloud_mode: false
-prevent_idle_sleep: false
 claude:
   driver: sdk
 ui:

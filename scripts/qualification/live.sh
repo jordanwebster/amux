@@ -71,7 +71,6 @@ socket_path: '$scratch/$1.sock'
 state_path: '$scratch/$1-state.yaml'
 data_dir: '$scratch/$1-data'
 enable_cloud_mode: false
-prevent_idle_sleep: false
 ui:
   color: ansi
 EOF

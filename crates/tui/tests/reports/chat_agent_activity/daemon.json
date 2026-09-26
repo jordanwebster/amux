@@ -8,7 +8,6 @@
     "keybinds": {
       "leader": "ctrl+a"
     },
-    "prevent_idle_sleep": false,
     "socket_path": "<MACHINE_PATH>",
     "state_path": "<MACHINE_PATH>",
     "ui": {

@@ -117,7 +117,6 @@ data_dir: '$scratch/relay-data'
 tcp_port: $relay_port
 udp_port: $relay_port
 cloud_url: '$CLOUD_URL'
-prevent_idle_sleep: false
 EOF
 
 profile_config() {
@@ -136,7 +135,6 @@ host_name: '$label'
 root: '$root'
 front_door_socket: '$root/amux.sock'
 keymaps_dir: '$root/keymaps'
-prevent_idle_sleep: false
 EOF
   cat > "$root/registry.yaml" <<EOF
 profiles:

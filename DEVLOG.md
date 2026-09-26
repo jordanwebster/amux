@@ -1,3 +1,15 @@
+2026-09-26 — **wt starts a worktree daemon on the rebuilt binary.**
+`.wt.toml` points `AMUX_CONFIG` at the installation file wt renders, and
+that file now carries only keys the settings parser accepts: keep-awake off
+(a worktree daemon never holds the machine awake) and the discovery scope
+set to the worktree's name, so worktree daemons never show up as
+candidates on a real machine. The after-new hook no longer runs
+`scripts/worktree-profile.py`, which is deleted: the daemon creates its own
+default profile on first start. `wt with daemon -- amux profiles` starts the
+daemon and answers through the front door. The retired `prevent_idle_sleep`
+key is gone from every fixture, script and excluded crate that still wrote
+it; only the settings parser's rejection of it remains.
+
 2026-09-26 — **The perf lane measures a flood, and a journal backlog no longer holds the store for its whole catch-up.**
 `crates/qualification` is back in the workspace as the perf lane only: the
 shared report and baseline format, the process-memory sampler and a new

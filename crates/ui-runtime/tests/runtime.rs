@@ -73,7 +73,6 @@ async fn installation_client() -> (node::Installation, node::Client, PathBuf, te
         settings: node::InstallationSettings {
             repository_roots: Vec::new(),
             host_name: "ui-test".into(),
-            prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
             ui: Default::default(),
             keymaps_dir: PathBuf::new(),
@@ -889,7 +888,6 @@ async fn socketed_installation() -> (node::Installation, tempfile::TempDir) {
         settings: node::InstallationSettings {
             repository_roots: Vec::new(),
             host_name: "ui-switcher-test".into(),
-            prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
             ui: Default::default(),
             keymaps_dir: PathBuf::new(),

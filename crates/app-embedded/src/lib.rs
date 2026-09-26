@@ -136,7 +136,6 @@ impl StartConfig {
         InstallationSettings {
             repository_roots: Vec::new(),
             host_name: self.device_name.clone(),
-            prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
             ui: Default::default(),
             keymaps_dir: self.data_dir.join("keymaps"),
