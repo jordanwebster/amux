@@ -794,6 +794,7 @@ async fn the_harness_runs_the_tool_server_from_the_install_path(kind: &'static s
             class: ToolClass::Consequential,
             input: Some(input),
             outcome: Default::default(),
+            wait_for: None,
         })
     };
     let agent = Agent::start(Setup {

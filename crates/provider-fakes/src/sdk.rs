@@ -111,8 +111,10 @@ struct Engine {
     folding: Vec<Queued>,
     /// Whether a turn is running.
     busy: bool,
-    /// Command uuids the running turn completes when it ends.
-    running: Vec<String>,
+    /// The command uuid that started the running turn.
+    running: Option<String>,
+    /// Command uuids folded into the running turn.
+    absorbed: Vec<String>,
     cut: Option<Cut>,
     answers: BTreeMap<String, Value>,
     turns: u32,
@@ -167,7 +169,8 @@ impl Engine {
             queue: VecDeque::new(),
             folding: Vec::new(),
             busy: false,
-            running: Vec::new(),
+            running: None,
+            absorbed: Vec::new(),
             cut: None,
             answers: BTreeMap::new(),
             turns: 0,
@@ -418,13 +421,14 @@ impl Engine {
         self.busy = true;
         self.turns += 1;
         self.cut = None;
-        self.running.clear();
+        self.running = None;
+        self.absorbed.clear();
         self.last_text.clear();
         let request = self.ids.next("req_fake");
         let message = self.ids.next("msg_fake");
         if let Some(uuid) = first.uuid.clone() {
             self.lifecycle(&uuid, "started").await;
-            self.running.push(uuid);
+            self.running = Some(uuid);
         }
         let init = self.init_frame();
         self.send(init).await;
@@ -448,6 +452,7 @@ impl Engine {
                 Step::Tool(tool) => {
                     calls += 1;
                     let (id, input) = self.tool_use(&request, &message, &tool).await;
+                    self.run_tool(&tool).await;
                     let outcome = self.outcome(&tool, &input).await;
                     self.tool_result(&id, &tool, &input, outcome).await;
                     self.fold().await;
@@ -477,13 +482,42 @@ impl Engine {
         if let Some(code) = exit {
             return Some(code);
         }
-        match self.cut {
-            None => self.succeed(calls).await,
-            Some(cut) => self.abort(cut, calls).await,
-        }
-        let running = std::mem::take(&mut self.running);
-        for command in running {
-            self.lifecycle(&command, "completed").await;
+        // Commands folded into a finished turn complete before its result,
+        // the one that started it after; a preempted turn's are cancelled.
+        let absorbed = std::mem::take(&mut self.absorbed);
+        let commands = match self.cut {
+            None => {
+                for command in &absorbed {
+                    self.lifecycle(command, "completed").await;
+                }
+                self.succeed(calls).await;
+                self.running
+                    .take()
+                    .into_iter()
+                    .map(|c| (c, "completed"))
+                    .collect()
+            }
+            Some(Cut::Preempted) => {
+                self.preempted(calls).await;
+                self.running
+                    .take()
+                    .into_iter()
+                    .chain(absorbed)
+                    .map(|c| (c, "cancelled"))
+                    .collect()
+            }
+            Some(Cut::Interrupted) => {
+                self.interrupted(calls).await;
+                self.running
+                    .take()
+                    .into_iter()
+                    .chain(absorbed)
+                    .map(|c| (c, "completed"))
+                    .collect::<Vec<_>>()
+            }
+        };
+        for (command, state) in commands {
+            self.lifecycle(&command, state).await;
         }
         // Messages waiting to fold when the turn ended run as the next turn.
         let folding = std::mem::take(&mut self.folding);
@@ -521,8 +555,17 @@ impl Engine {
         for queued in folding {
             if let Some(uuid) = queued.uuid {
                 self.lifecycle(&uuid, "started").await;
-                self.running.push(uuid);
+                self.absorbed.push(uuid);
             }
+        }
+    }
+
+    /// A call held until its file exists keeps taking the host's frames
+    /// while it runs; an interrupt stops waiting for it.
+    async fn run_tool(&mut self, tool: &Tool) {
+        let Some(path) = &tool.wait_for else { return };
+        while !path.exists() && self.cut != Some(Cut::Interrupted) {
+            self.pump().await;
         }
     }
 
@@ -859,6 +902,7 @@ impl Engine {
             class: crate::ToolClass::Consequential,
             input: Some(input.clone()),
             outcome: Default::default(),
+            wait_for: None,
         };
         self.tool_use(request, message, &tool).await.0
     }
@@ -890,21 +934,53 @@ impl Engine {
         self.send(frame).await;
     }
 
-    /// Cut the turn short the way Claude does: the interruption marker, then
-    /// an error result. The rest of this turn's steps are dropped.
-    async fn abort(&mut self, cut: Cut, calls: u32) {
+    /// Drop the rest of a cut turn's steps.
+    fn skip_turn(&mut self) {
         while let Some(step) = self.steps.pop_front() {
             if step == Step::TurnEnd {
                 break;
             }
         }
-        let marker = match cut {
-            Cut::Interrupted => "[Request interrupted by user]",
-            Cut::Preempted => "[Request interrupted by user for tool use]",
-        };
+    }
+
+    /// A `now` message ends the running turn once its call returns, as
+    /// Claude does: a successful result whose terminal reason says the turn
+    /// was cut, with no interruption marker.
+    async fn preempted(&mut self, calls: u32) {
+        self.skip_turn();
+        let frame = json!({
+            "type": "result",
+            "subtype": "success",
+            "api_error_status": null,
+            "duration_api_ms": 1,
+            "duration_ms": 1,
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "fast_mode_state": "off",
+            "is_error": false,
+            "modelUsage": {},
+            "result_index": 0,
+            "subagent_stats": subagent_stats(),
+            "num_turns": calls + 1,
+            "permission_denials": [],
+            "queued_turn_count": 0,
+            "result": self.last_text,
+            "session_id": self.session,
+            "stop_reason": "tool_use",
+            "terminal_reason": if calls > 0 { "aborted_tools" } else { "aborted_streaming" },
+            "total_cost_usd": 0.0,
+            "usage": turn_usage(),
+            "uuid": uuid(),
+        });
+        self.send(frame).await;
+    }
+
+    /// An interrupt cuts the turn short the way Claude does: the
+    /// interruption marker, then an error result.
+    async fn interrupted(&mut self, calls: u32) {
+        self.skip_turn();
         let frame = json!({
             "type": "user",
-            "message": { "role": "user", "content": [{ "type": "text", "text": marker }] },
+            "message": { "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user]" }] },
             "parent_tool_use_id": null,
             "session_id": self.session,
             "timestamp": timestamp(),

@@ -23,6 +23,7 @@ fn permission() -> Step {
         class: ToolClass::Consequential,
         input: None,
         outcome: Outcome::default(),
+        wait_for: None,
     }))
 }
 

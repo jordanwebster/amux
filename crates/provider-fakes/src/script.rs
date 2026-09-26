@@ -73,6 +73,10 @@ pub struct Tool {
     pub input: Option<Value>,
     #[serde(default)]
     pub outcome: Outcome,
+    /// The call runs until this file exists, as a long command does, so a
+    /// test can write to the provider while a tool is running.
+    #[serde(default)]
+    pub wait_for: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

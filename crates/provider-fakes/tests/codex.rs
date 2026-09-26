@@ -258,6 +258,9 @@ async fn every_ask_blocks_the_turn_until_the_host_answers() {
         json!({"decision": "acceptForSession"}),
         json!({"answers": {"q0": {"answers": ["Blue"]}}}),
         json!({"permissions": {"fileSystem": null, "network": {"enabled": true}}, "scope": "turn"}),
+        // A server's ask comes after Codex's own ask to allow the call.
+        json!({"action": "accept", "content": {}}),
+        json!({"action": "accept", "content": {}}),
         json!({"action": "accept", "content": {}}),
         json!({"action": "cancel"}),
     ];
@@ -283,6 +286,8 @@ async fn every_ask_blocks_the_turn_until_the_host_answers() {
             "item/fileChange/requestApproval",
             "item/tool/requestUserInput",
             "item/permissions/requestApproval",
+            "mcpServer/elicitation/request",
+            "mcpServer/elicitation/request",
             "mcpServer/elicitation/request",
             "mcpServer/elicitation/request",
         ]

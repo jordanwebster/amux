@@ -172,10 +172,8 @@ async fn a_default_message_mid_turn_folds_at_the_next_tool_result_and_later_wait
     host.until(|frame| frame["state"] == "queued" && frame["command_uuid"] == C)
         .await;
     std::fs::write(&gate, "").unwrap();
-    host.until(|frame| frame["type"] == "result").await;
-    host.until(|frame| frame["state"] == "completed" && frame["command_uuid"] == B)
+    host.until(|frame| frame["state"] == "completed" && frame["command_uuid"] == A)
         .await;
-    host.until(|frame| frame["type"] == "result").await;
     host.until(|frame| frame["state"] == "completed" && frame["command_uuid"] == C)
         .await;
     let trace = host.trace();
@@ -198,9 +196,11 @@ async fn a_default_message_mid_turn_folds_at_the_next_tool_result_and_later_wait
             "stream content_block_delta",
             "assistant text",
             "stream content_block_stop",
+            // A folded command completes before the turn's result, the one
+            // that started the turn after it, as steer_folded records.
+            "lifecycle bbbbbbbb completed",
             "result success",
             "lifecycle aaaaaaaa completed",
-            "lifecycle bbbbbbbb completed",
             "lifecycle cccccccc started",
             "system init",
             "replay cccccccc",
@@ -279,11 +279,28 @@ async fn interrupt_and_now_cut_the_running_turn_short() {
     host.until(|frame| frame["isReplay"] == true && frame["uuid"] == B)
         .await;
     host.prompt(C, "Now instead", Some("now")).await;
+    // A preempted turn ends successfully with a terminal reason saying it
+    // was cut, without an interruption marker, and its command is
+    // cancelled, as steer_preempted records.
     let cut = host.until(|frame| frame["type"] == "result").await;
-    assert_eq!(cut["subtype"], "error_during_execution");
+    assert_eq!(cut["subtype"], "success");
+    assert_eq!(cut["is_error"], false);
+    assert_eq!(cut["terminal_reason"], "aborted_streaming");
     let next = host.until(|frame| frame["type"] == "result").await;
     assert_eq!(next["result"], "preempted");
-    assert!(!host.trace().iter().any(|line| line.contains("never")));
+    let trace = host.trace();
+    assert!(!trace.iter().any(|line| line.contains("never")));
+    assert!(trace.contains(&"lifecycle bbbbbbbb cancelled".to_owned()));
+    let markers = host
+        .frames
+        .iter()
+        .filter(|frame| {
+            frame["message"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("[Request"))
+        })
+        .count();
+    assert_eq!(markers, 1, "only the interrupt writes a marker");
     assert_eq!(host.close().await, 0);
 }
 

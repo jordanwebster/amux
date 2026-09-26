@@ -1,3 +1,22 @@
+2026-09-26 — **The scripted fake providers behave like the recordings, and a test holds them to it.**
+`crates/provider-fakes/tests/scripted.rs` runs each fake's script engine
+through the scenario of a recording: the recorded host input, sent where the
+recording sent it, and a script standing in for the model. The ordered frame
+kinds must match the recording (stdio in full; a terminal recording's rows
+and hooks as prefixes, since the recorder stops once it has seen what it
+waited for). Making them match changed the fakes: headless Claude's `now`
+ends the running turn once its call returns with a successful result whose
+terminal reason is `aborted_tools`, no interruption marker, and its command
+cancelled, and a folded command completes before the turn's result;
+terminal Claude's Ctrl+X Ctrl+S moves the running call to the background
+and the message joins the turn (dequeue row, background note, user row), a
+fold writes the queue's remove row, and a turn the user cuts short runs no
+Stop hook (a deny still writes its duration row); Codex reports
+`waitingOnApproval` / `waitingOnUserInput` around every request, asks to
+allow a tool-server call before the server's own form or link, reports a
+collaboration mode's settings, and proposes a plan as a `plan` item. A
+scripted call can hold with `wait_for` so a test can write while it runs.
+
 2026-09-26 — **The amux binary is back in the workspace with only the agent's hidden subcommands.**
 `amux agent <dir>`, `amux mcp <dir>` and `amux hooks claude` are what an
 agent's harness runs from the install path; the old CLI, daemon entry,

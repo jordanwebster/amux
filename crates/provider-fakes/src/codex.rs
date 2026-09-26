@@ -22,7 +22,7 @@ use crate::script::{Ask, Question, Script, Step, Tool};
 use crate::{DRIFT_EXIT, Mode};
 
 /// The asks Codex can raise.
-pub const RAISES: &[&str] = &["permission", "question", "form", "link", "grant"];
+pub const RAISES: &[&str] = &["permission", "question", "plan", "form", "link", "grant"];
 
 /// The Codex version the fake reports: the newest the corpus shows.
 pub const VERSION: &str = "0.157.0";
@@ -452,6 +452,12 @@ impl Engine {
         self.turn = Some(turn.clone());
         self.interrupted = false;
         self.last_message = None;
+        if let Some(mode) = params
+            .get("collaborationMode")
+            .filter(|mode| !mode.is_null())
+        {
+            self.settings(mode).await;
+        }
         let started = self.turn_value(&turn, "inProgress", vec![]);
         let mut response = started.clone();
         response["startedAt"] = Value::Null;
@@ -524,6 +530,43 @@ impl Engine {
         .await;
         self.turn = None;
         None
+    }
+
+    /// A turn that names a collaboration mode changes the thread's settings
+    /// first, and Codex reports the settings it now runs with.
+    async fn settings(&mut self, mode: &Value) {
+        let mut mode = mode.clone();
+        if mode["settings"]["developer_instructions"].is_null() {
+            mode["settings"]["developer_instructions"] = json!("# Plan Mode (scripted)\n");
+        }
+        let thread = self.thread_id();
+        let settings = json!({
+            "activePermissionProfile": null,
+            "approvalPolicy": "never",
+            "approvalsReviewer": "user",
+            "collaborationMode": mode,
+            "cwd": self.cwd,
+            "disabledPluginIds": [],
+            "effort": null,
+            "model": self.model,
+            "modelProvider": "openai",
+            "multiAgentMode": "explicitRequestOnly",
+            "personality": null,
+            "sandboxPolicy": {
+                "excludeSlashTmp": false,
+                "excludeTmpdirEnvVar": false,
+                "networkAccess": false,
+                "type": "workspaceWrite",
+                "writableRoots": [],
+            },
+            "serviceTier": null,
+            "summary": null,
+        });
+        self.notify(
+            "thread/settings/updated",
+            json!({ "threadId": thread, "threadSettings": settings }),
+        )
+        .await;
     }
 
     /// Reasoning with its summary streamed as one part.
@@ -620,8 +663,10 @@ impl Engine {
                 "type": "fileChange",
             });
             self.item(turn, "item/started", &item).await;
+            self.run_tool(tool).await;
             let mut declined = false;
             if approval.is_some() {
+                self.status(Some(&["waitingOnApproval"])).await;
                 let answer = self
                     .request(
                         "item/fileChange/requestApproval",
@@ -636,6 +681,7 @@ impl Engine {
                     )
                     .await;
                 let Some(answer) = answer else { return };
+                self.status(Some(&[])).await;
                 declined = !accepted(&answer);
             }
             item["status"] = json!(if declined {
@@ -680,9 +726,12 @@ impl Engine {
             "status": "inProgress",
             "type": "commandExecution",
         });
-        self.item(turn, "item/started", &item).await;
+        // Codex reports the wait for a command's approval before the call.
         if approval.is_some() {
             self.status(Some(&["waitingOnApproval"])).await;
+        }
+        self.item(turn, "item/started", &item).await;
+        if approval.is_some() {
             let answer = self
                 .request(
                     "item/commandExecution/requestApproval",
@@ -703,13 +752,15 @@ impl Engine {
                 )
                 .await;
             let Some(answer) = answer else { return };
-            self.status(Some(&[])).await;
             if !accepted(&answer) {
                 item["status"] = json!("declined");
                 self.item(turn, "item/completed", &item).await;
+                self.status(Some(&[])).await;
                 return;
             }
+            self.status(Some(&[])).await;
         }
+        self.run_tool(tool).await;
         let output = tool.outcome.output.clone();
         if !output.is_empty() {
             self.notify(
@@ -735,7 +786,8 @@ impl Engine {
             Ask::Permission(tool) => self.tool(turn, &tool, Some(())).await,
             Ask::Question { questions } => {
                 let item = self.item_id("call_");
-                let _ = self
+                self.status(Some(&["waitingOnUserInput"])).await;
+                let answer = self
                     .request(
                         "item/tool/requestUserInput",
                         json!({
@@ -748,6 +800,9 @@ impl Engine {
                         }),
                     )
                     .await;
+                if answer.is_some() {
+                    self.status(Some(&[])).await;
+                }
             }
             Ask::Grant { reason, paths } => {
                 let item = self.item_id("exec-");
@@ -755,7 +810,8 @@ impl Engine {
                     "fileSystem": if paths.is_empty() { Value::Null } else { json!({ "write": paths }) },
                     "network": if paths.is_empty() { json!({ "enabled": true }) } else { Value::Null },
                 });
-                let _ = self
+                self.status(Some(&["waitingOnApproval"])).await;
+                let answer = self
                     .request(
                         "item/permissions/requestApproval",
                         json!({
@@ -770,6 +826,9 @@ impl Engine {
                         }),
                     )
                     .await;
+                if answer.is_some() {
+                    self.status(Some(&[])).await;
+                }
             }
             Ask::Form {
                 server,
@@ -804,7 +863,20 @@ impl Engine {
                 });
                 self.elicit(turn, &server, params).await;
             }
-            Ask::Plan { .. } => unreachable!("refused when the script loaded"),
+            // Codex proposes a plan as an item and ends the turn; the host
+            // approves it by starting the next turn out of plan mode.
+            Ask::Plan { markdown } => {
+                let id = format!("{turn}-plan");
+                let mut item = json!({ "id": id, "text": "", "type": "plan" });
+                self.item(turn, "item/started", &item).await;
+                self.notify(
+                    "item/plan/delta",
+                    json!({ "delta": markdown, "itemId": id, "threadId": thread, "turnId": turn }),
+                )
+                .await;
+                item["text"] = json!(markdown);
+                self.item(turn, "item/completed", &item).await;
+            }
         }
     }
 
@@ -827,6 +899,7 @@ impl Engine {
             "type": "mcpToolCall",
         });
         self.item(turn, "item/started", &item).await;
+        self.run_tool(tool).await;
         let answer = self
             .servers
             .call(server, name, &arguments)
@@ -850,6 +923,15 @@ impl Engine {
         self.item(turn, "item/completed", &item).await;
     }
 
+    /// A call held until its file exists keeps taking the host's frames
+    /// while it runs; an interrupt stops waiting for it.
+    async fn run_tool(&mut self, tool: &Tool) {
+        let Some(path) = &tool.wait_for else { return };
+        while !path.exists() && !self.interrupted {
+            self.pump().await;
+        }
+    }
+
     /// A tool-server call that asks the host through its server.
     async fn elicit(&mut self, turn: &str, server: &str, params: Value) {
         let mut item = json!({
@@ -868,8 +950,41 @@ impl Engine {
             "type": "mcpToolCall",
         });
         self.item(turn, "item/started", &item).await;
+        // Codex asks to allow the call before the server's own ask reaches
+        // the host, both as elicitations.
+        let thread = self.thread_id();
+        let approval = json!({
+            "_meta": {
+                "codex_approval_kind": "mcp_tool_call",
+                "persist": ["session", "always"],
+                "tool_description": "Ask the operator.",
+                "tool_params": {},
+                "tool_params_display": [],
+            },
+            "message": format!("Allow the {server} MCP server to run tool \"ask\"?"),
+            "mode": "form",
+            "requestedSchema": { "properties": {}, "type": "object" },
+            "serverName": server,
+            "threadId": thread,
+            "turnId": turn,
+        });
+        self.status(Some(&["waitingOnApproval"])).await;
+        let allowed = self
+            .request("mcpServer/elicitation/request", approval)
+            .await;
+        let Some(allowed) = allowed else { return };
+        self.status(Some(&[])).await;
+        if allowed["result"]["action"] != "accept" {
+            item["durationMs"] = json!(0);
+            item["error"] = json!({ "message": "user rejected MCP tool call" });
+            item["status"] = json!("failed");
+            self.item(turn, "item/completed", &item).await;
+            return;
+        }
+        self.status(Some(&["waitingOnApproval"])).await;
         let answer = self.request("mcpServer/elicitation/request", params).await;
         let Some(answer) = answer else { return };
+        self.status(Some(&[])).await;
         let action = answer["result"]["action"].as_str().unwrap_or("cancel");
         let mut said = format!("elicitation {action}");
         if let Some(content) = answer["result"].get("content") {

@@ -66,6 +66,7 @@ async fn a_restart_from_the_checkpoint_re_emits_open_items_and_carries_keys_on()
                 class: provider_fakes::ToolClass::Consequential,
                 input: None,
                 outcome: provider_fakes::Outcome::default(),
+                wait_for: None,
             })),
             Step::TurnEnd,
         ],

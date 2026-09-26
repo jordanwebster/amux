@@ -164,6 +164,22 @@ impl Terminal {
         }
     }
 
+    /// Wait for a row the predicate matches.
+    async fn row(&self, matches: impl Fn(&Value) -> bool) -> Value {
+        let started = Instant::now();
+        loop {
+            if let Some(row) = self.rows().into_iter().find(|row| matches(row)) {
+                return row;
+            }
+            assert!(
+                started.elapsed() < DEADLINE,
+                "no such row: {:?}",
+                self.rows()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     async fn hook(&self, event: &str) -> Value {
         self.hooks_of(event, 1).await.remove(0)
     }
@@ -295,7 +311,8 @@ async fn menus_answer_by_digit_and_a_deny_ends_the_turn() {
     terminal.keys(b"2").await;
     terminal.hooks_of("PermissionRequest", 4).await;
     terminal.keys(b"3").await;
-    terminal.hook("Stop").await;
+    // A deny ends the turn with its duration row and no Stop hook.
+    terminal.row(|row| row["subtype"] == "turn_duration").await;
     let rows = contents(&terminal.rows());
     assert_eq!(
         rows,
@@ -319,7 +336,8 @@ async fn menus_answer_by_digit_and_a_deny_ends_the_turn() {
     });
     assert!(feedback.is_some());
     terminal.prompt("Next").await;
-    terminal.hooks_of("Stop", 2).await;
+    terminal.hook("Stop").await;
+    assert_eq!(terminal.hooks_of("Stop", 1).await.len(), 1);
     assert!(contents(&terminal.rows()).contains(&"assistant text next turn".to_owned()));
     terminal.check_shapes();
     assert_eq!(terminal.exit_code().await, 0);
@@ -399,10 +417,12 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
     terminal.prompt("Wait forever").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     terminal.keys(b"\x1b").await;
-    terminal.hooks_of("Stop", 2).await;
-    assert!(
-        contents(&terminal.rows()).contains(&"user text [Request interrupted by user]".to_owned())
-    );
+    terminal
+        .row(|row| row["message"]["content"][0]["text"] == "[Request interrupted by user]")
+        .await;
+    // Claude runs no Stop hook for a turn the user interrupted.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(terminal.hooks_of("Stop", 1).await.len(), 1);
     terminal.check_shapes();
     assert_eq!(terminal.exit_code().await, 0);
 }

@@ -9,8 +9,10 @@
 //! transcript and payloads handed to the hook commands `--settings` names
 //! (only the hook events the corpus records). A prompt submitted while a
 //! turn runs is queued and folded into that turn at its next tool
-//! boundary; Ctrl+X Ctrl+S sends it now, cutting the turn short. A message
-//! written to the messaging socket runs like a prompt from a peer.
+//! boundary; Ctrl+X Ctrl+S sends it now: the running call moves to the
+//! background and the message joins the turn at once. A turn the user cuts
+//! short runs no Stop hook. A message written to the messaging socket runs
+//! like a prompt from a peer.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -277,9 +279,21 @@ struct Queued {
 /// Why a turn stopped before its steps did.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Cut {
+    /// Escape between calls; the turn ends with the interruption row.
     Interrupted,
+    /// Escape while a call ran; the call's rejection and the tool-use
+    /// interruption row are already written.
+    InterruptedCall,
+    /// A denied permission; its rows are already written.
     Denied,
-    SentNow,
+}
+
+/// How a held call ended.
+enum Held {
+    Ran,
+    /// Ctrl+X Ctrl+S moved it to the background.
+    Backgrounded,
+    Interrupted,
 }
 
 struct Engine {
@@ -300,6 +314,8 @@ struct Engine {
     queue: VecDeque<Queued>,
     busy: bool,
     cut: Option<Cut>,
+    /// Ctrl+X Ctrl+S asked for the first queued prompt to run now.
+    send_now: bool,
     /// The last row written, for `parentUuid`.
     parent: Option<String>,
     prompt_id: String,
@@ -346,6 +362,7 @@ impl Engine {
             queue: VecDeque::new(),
             busy: false,
             cut: None,
+            send_now: false,
             parent: None,
             prompt_id: uuid(),
             last_text: String::new(),
@@ -464,7 +481,7 @@ impl Engine {
                 }
                 Key::SendNow => {
                     if self.busy && !self.queue.is_empty() {
-                        self.cut = Some(Cut::SentNow);
+                        self.send_now = true;
                     }
                 }
                 Key::Tab | Key::Down | Key::Up => {}
@@ -563,7 +580,7 @@ impl Engine {
         }
     }
 
-    fn user_row(&mut self, queued: &Queued) {
+    fn user_row(&mut self, queued: &Queued, source: &str) {
         let content = if queued.peer {
             format!("{PEER_PREAMBLE}{}{PEER_NOTE}", queued.text)
         } else {
@@ -580,7 +597,7 @@ impl Engine {
             "origin": origin,
             "permissionMode": self.mode,
             "promptId": self.prompt_id,
-            "promptSource": if queued.peer { "peer" } else { "typed" },
+            "promptSource": if queued.peer { "peer" } else { source },
             "turnOrigin": if queued.peer { "peer" } else { "human" },
         }));
         self.row(row);
@@ -590,16 +607,20 @@ impl Engine {
         let started = std::time::Instant::now();
         self.busy = true;
         self.cut = None;
+        self.send_now = false;
         self.prompt_id = uuid();
         self.last_text.clear();
         self.screen(&format!("> {}", first.text));
-        self.user_row(&first);
+        self.user_row(&first, "typed");
         let request = self.ids.next("req_fake");
         let message = self.ids.next("msg_fake");
         let exit = loop {
             self.drain();
             if self.cut.is_some() {
                 break None;
+            }
+            if self.send_now {
+                self.run_now();
             }
             let Some(step) = self.steps.pop_front() else {
                 break None;
@@ -622,9 +643,19 @@ impl Engine {
                 }
                 Step::Tool(tool) => {
                     let (id, name, input) = self.tool_use(&request, &message, &tool);
-                    let outcome = self.outcome(&name, &tool, &input).await;
-                    self.finish_tool(&id, &name, &input, &tool, outcome);
-                    self.fold();
+                    match self.hold(&tool).await {
+                        Held::Ran => {
+                            let outcome = self.outcome(&name, &tool, &input).await;
+                            self.finish_tool(&id, &name, &input, &tool, outcome);
+                            self.fold();
+                        }
+                        Held::Backgrounded => self.background(&id),
+                        Held::Interrupted => {
+                            self.abandon(&id, &name, &input, &tool);
+                            self.interruption_row("[Request interrupted by user for tool use]");
+                            self.cut = Some(Cut::InterruptedCall);
+                        }
+                    }
                 }
                 Step::Ask(ask) => {
                     self.ask(&request, &message, ask).await;
@@ -657,26 +688,23 @@ impl Engine {
                     break;
                 }
             }
-            if cut != Cut::Denied {
-                let row = self.envelope(json!({
-                    "type": "user",
-                    "message": { "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user]" }] },
-                    "promptId": self.prompt_id,
-                    "session_id": self.session,
-                }));
-                self.row(row);
+            if cut == Cut::Interrupted {
+                self.interruption_row("[Request interrupted by user]");
             }
         }
-        self.hook(json!({
-            "hook_event_name": "Stop",
-            "background_tasks": [],
-            "last_assistant_message": self.last_text,
-            "session_crons": [],
-            "stop_hook_active": false,
-        }));
-        // A turn that ran to its end is closed by its duration row; an
-        // interrupted one by the interruption row above.
+        // Claude runs no Stop hook for a turn the user cut short.
         if self.cut.is_none() {
+            self.hook(json!({
+                "hook_event_name": "Stop",
+                "background_tasks": [],
+                "last_assistant_message": self.last_text,
+                "session_crons": [],
+                "stop_hook_active": false,
+            }));
+        }
+        // A turn that ran to its end, or a deny ended, is closed by its
+        // duration row; an interrupted one by its interruption row.
+        if matches!(self.cut, None | Some(Cut::Denied)) {
             let row = self.envelope(json!({
                 "type": "system",
                 "subtype": "turn_duration",
@@ -824,11 +852,27 @@ impl Engine {
     fn fold(&mut self) {
         self.drain();
         while let Some(queued) = self.queue.pop_front() {
+            let row = json!({
+                "type": "queue-operation",
+                "operation": "remove",
+                "content": queued.text,
+                "reason": "absorbed_mid_turn",
+                "sessionId": self.session,
+                "timestamp": timestamp(),
+            });
+            self.row(row);
+            let origin = if queued.peer {
+                json!({ "kind": "peer" })
+            } else {
+                json!({ "kind": "human" })
+            };
             let row = self.envelope(json!({
                 "type": "attachment",
                 "attachment": {
                     "type": "queued_command",
                     "commandMode": "prompt",
+                    "humanTurn": !queued.peer,
+                    "origin": origin,
                     "prompt": queued.text,
                     "source_uuid": uuid(),
                     "timestamp": timestamp(),
@@ -837,6 +881,85 @@ impl Engine {
                 "session_id": self.session,
             }));
             self.row(row);
+        }
+    }
+
+    fn interruption_row(&mut self, text: &str) {
+        let row = self.envelope(json!({
+            "type": "user",
+            "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+            "promptId": self.prompt_id,
+            "session_id": self.session,
+        }));
+        self.row(row);
+    }
+
+    /// Run a call held until its file exists, taking keys meanwhile.
+    async fn hold(&mut self, tool: &Tool) -> Held {
+        let Some(path) = &tool.wait_for else {
+            return Held::Ran;
+        };
+        loop {
+            if self.cut == Some(Cut::Interrupted) {
+                return Held::Interrupted;
+            }
+            if self.send_now {
+                return Held::Backgrounded;
+            }
+            if path.exists() || self.closed {
+                return Held::Ran;
+            }
+            self.pump().await;
+        }
+    }
+
+    /// Ctrl+X Ctrl+S while a call runs: Claude moves the call to the
+    /// background, answers it with a note saying so, and the queued prompt
+    /// joins the running turn. No PostToolUse hook runs for the call.
+    fn background(&mut self, id: &str) {
+        let task = self.ids.next("bg");
+        let output = format!("{}/.tasks/{task}.output", self.cwd);
+        self.dequeue();
+        self.result_row(
+            id,
+            json!(format!(
+                "Command was moved to the background (ID: {task}) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: {output} You will be notified when it completes. To check interim output, use Read on that file path."
+            )),
+            false,
+            json!({
+                "backgroundTaskId": task,
+                "backgroundedToDeliverMessage": true,
+                "interrupted": false,
+                "isImage": false,
+                "noOutputExpected": false,
+                "stderr": "",
+                "stdout": "",
+            }),
+        );
+        self.join_now();
+    }
+
+    /// Ctrl+X Ctrl+S between calls: the queued prompt joins the running
+    /// turn at once.
+    fn run_now(&mut self) {
+        self.dequeue();
+        self.join_now();
+    }
+
+    fn dequeue(&mut self) {
+        let row = json!({
+            "type": "queue-operation",
+            "operation": "dequeue",
+            "sessionId": self.session,
+            "timestamp": timestamp(),
+        });
+        self.row(row);
+    }
+
+    fn join_now(&mut self) {
+        self.send_now = false;
+        if let Some(queued) = self.queue.pop_front() {
+            self.user_row(&queued, "queued");
         }
     }
 
@@ -902,13 +1025,7 @@ impl Engine {
                     self.finish_tool(&id, &name, &input, &tool, Err(refusal));
                     // Terminal Claude ends the turn on a deny.
                     self.cut = Some(Cut::Denied);
-                    let row = self.envelope(json!({
-                        "type": "user",
-                        "message": { "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user for tool use]" }] },
-                        "promptId": self.prompt_id,
-                        "session_id": self.session,
-                    }));
-                    self.row(row);
+                    self.interruption_row("[Request interrupted by user for tool use]");
                     return;
                 }
                 self.finish_tool(&id, &name, &input, &tool, Ok(tool.outcome.output.clone()));
@@ -1068,6 +1185,7 @@ fn named(name: &str, input: Value) -> Tool {
         class: ToolClass::Consequential,
         input: Some(input),
         outcome: Default::default(),
+        wait_for: None,
     }
 }
 
