@@ -259,3 +259,11 @@ pub async fn ended<T>(stream: &mut tonic::Streaming<T>, what: &str) -> String {
         }
     }
 }
+
+/// The tier the host's relay link carries, once it is connected.
+pub fn tier(net: &Net, host: &str) -> Option<node::Tier> {
+    match edge(net, host).observed() {
+        Observed::Connected { tier, .. } => Some(tier),
+        _ => None,
+    }
+}

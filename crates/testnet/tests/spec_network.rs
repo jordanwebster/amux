@@ -890,3 +890,394 @@ async fn profiles_and_accounts_share_no_keys_windows_presence_or_administration(
 
     net.shutdown().await.unwrap();
 }
+
+/// A host on the relay alone: no listener, no discovery.
+fn relay_host(name: &str, account: &str) -> testnet::HostDecl {
+    testnet::HostDecl {
+        name: name.to_owned(),
+        account: Some(account.to_owned()),
+        ..testnet::HostDecl::default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_free_link_lists_its_hosts_and_opens_nothing_until_a_refresh_brings_pro() {
+    let mut topology = Topology::new()
+        .relay(&["ada"])
+        .host_decl(relay_host("desk", "ada"))
+        .host_decl(relay_host("phone", "ada"));
+    topology.relay.as_mut().unwrap().accounts[0].tier = testnet::TierDecl::Free;
+    let mut net = Net::start(topology).await.unwrap();
+    net.trust("desk", "phone").await.unwrap();
+    net.trust("phone", "desk").await.unwrap();
+    let (desk, phone) = (host_id(&net, "desk"), host_id(&net, "phone"));
+    assert_eq!(tier(&net, "desk"), Some(node::Tier::Free));
+
+    // On a free account the relay lists the account's hosts and opens no
+    // tunnel between them, for calls or for pairing; the refused pairing
+    // leaves the responder's window open, as the secret never reached it.
+    until_via(&net, "desk", "phone", HostVia::Relay).await;
+    let call = peer_inventory_hosts(&edge(&net, "phone"), desk)
+        .await
+        .expect_err("no tunnel on a free account");
+    let started = start_pairing(&net, "desk", pin_mode()).await.unwrap();
+    let pairing = begin_pair(
+        &net,
+        "phone",
+        Some(desk),
+        begin_pair_request::Secret::Pin(pin_of(&started)),
+        Vec::new(),
+    )
+    .await
+    .expect_err("no pairing tunnel on a free account");
+    assert!(edge(&net, "desk").pairing_active());
+    println!(
+        "free: listed via the relay; call {:?}; pairing {:?}",
+        call.code(),
+        pairing.code()
+    );
+
+    // The account buys Pro. The desk, where the purchase happened, asks at
+    // once and reauthenticates on its live link; the phone has not asked
+    // yet, and a Pro host still opens nothing toward a free one.
+    net.relay().unwrap().set_tier("ada", node::Tier::Pro);
+    let connects = net.relay().unwrap().connects().len();
+    assert_eq!(
+        edge(&net, "desk").refresh_entitlement().await.unwrap(),
+        node::Tier::Pro
+    );
+    until("the desk's link to carry Pro", || async {
+        tier(&net, "desk") == Some(node::Tier::Pro)
+    })
+    .await;
+    assert_eq!(tier(&net, "phone"), Some(node::Tier::Free));
+    peer_inventory_hosts(&edge(&net, "desk"), phone)
+        .await
+        .expect_err("a Pro link opens nothing toward a free one");
+
+    // The phone asks on its free refresh interval, on the policy clock,
+    // and from then on the two call each other, on the same links.
+    net.advance(node::FREE_TIER_REFRESH_INTERVAL).unwrap();
+    until("the phone's link to carry Pro", || async {
+        tier(&net, "phone") == Some(node::Tier::Pro)
+    })
+    .await;
+    assert_eq!(net.relay().unwrap().connects().len(), connects + 2);
+    peer_inventory_hosts(&edge(&net, "phone"), desk)
+        .await
+        .expect("the phone calls the desk on Pro");
+    peer_inventory_hosts(&edge(&net, "desk"), phone)
+        .await
+        .expect("the desk calls the phone on Pro");
+    let mut links = net.relay().unwrap().links("ada").await;
+    links.sort();
+    let mut expected = vec![(desk, 1), (phone, 1)];
+    expected.sort();
+    assert_eq!(links, expected, "Pro arrived on the links already up");
+    println!("Pro: the desk at once, the phone after its interval, on the same links");
+
+    // A credential refresh under a live link keeps what the link carries:
+    // the phone's inventory of the desk, held open, sees a new agent after
+    // the desk's link has reauthenticated on a fresh credential.
+    let mut held = edge(&net, "phone")
+        .peer(desk)
+        .await
+        .unwrap()
+        .subscribe_inventory(wire::Empty {})
+        .await
+        .unwrap()
+        .into_inner();
+    let presented = net.relay().unwrap().presented().len();
+    net.advance(testnet::CREDENTIAL_TTL - Duration::from_secs(4 * 60))
+        .unwrap();
+    until("both links to present fresh credentials", || async {
+        net.relay().unwrap().presented().len() >= presented + 2
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(net.relay().unwrap().links("ada").await.len(), 2);
+    let spawned = net
+        .spawn(testnet::AgentDecl::new("scout", "desk").prompt("Look around."))
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + testnet::PATIENCE;
+    loop {
+        let event = tokio::time::timeout_at(deadline, held.message())
+            .await
+            .expect("the held inventory to show the new agent")
+            .expect("the held inventory is still open")
+            .expect("the held inventory is still open");
+        if let Some(wire::inventory_event::Of::Agent(agent)) = event.of
+            && agent.agent_id == spawned.agent_id
+        {
+            break;
+        }
+    }
+    println!(
+        "credentials refreshed on the live links ({} presented); the held inventory kept streaming",
+        net.relay().unwrap().presented().len()
+    );
+
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_peer_requests_and_handshake_floods_are_refused_and_the_link_carries_on() {
+    let net = Net::start(
+        Topology::new()
+            .host_decl(lan_host("desk", "home"))
+            .host_decl(lan_host("laptop", "home"))
+            .host_decl(lan_host("stranger", "elsewhere"))
+            .agent(testnet::AgentDecl::new("worker", "desk").prompt("Hold on.")),
+    )
+    .await
+    .unwrap();
+    let desk = host_id(&net, "desk");
+    pair(&net, "laptop", "desk").await;
+    until_via(&net, "laptop", "desk", HostVia::Direct).await;
+    let worker = net.agent("worker").unwrap().id.as_bytes().to_vec();
+    let mut peer = edge(&net, "laptop").peer(desk).await.unwrap();
+
+    // Each call names something that cannot be, or leaves out what it
+    // needs; each is answered as the caller's mistake, never as a fault of
+    // the desk's, and none of them costs the link.
+    let short = vec![1, 2, 3];
+    let unknown = uuid::Uuid::new_v4().as_bytes().to_vec();
+    let mut answers = Vec::new();
+    answers.push((
+        "Subscribe with a three-byte agent id",
+        peer.subscribe(wire::SubscribeRequest {
+            agent_id: short.clone(),
+            from: Some(wire::subscribe_request::From::Tail(5)),
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "Subscribe to an agent the desk never had",
+        peer.subscribe(wire::SubscribeRequest {
+            agent_id: unknown.clone(),
+            from: Some(wire::subscribe_request::From::Tail(5)),
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "Fetch with a three-byte agent id",
+        peer.fetch(wire::FetchRequest {
+            agent_id: short.clone(),
+            before_order: None,
+            limit: 10,
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "Get with an empty key",
+        peer.get(wire::GetRequest {
+            agent_id: worker.clone(),
+            key: String::new(),
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "SendInput with no input",
+        peer.send_input(wire::SendInputRequest {
+            agent_id: worker.clone(),
+            input: None,
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "CreateAgent with no configuration",
+        peer.create_agent(wire::CreateAgentRequest::default())
+            .await
+            .map(|_| ()),
+    ));
+    answers.push((
+        "SendMessage with no sender or recipient",
+        peer.send_message(wire::Envelope::default())
+            .await
+            .map(|_| ()),
+    ));
+    answers.push((
+        "GetBlob with a malformed hash",
+        peer.get_blob(wire::GetBlobRequest {
+            agent_id: worker.clone(),
+            hash: vec![0; 3],
+        })
+        .await
+        .map(|_| ()),
+    ));
+    answers.push((
+        "StopAgent with a three-byte agent id",
+        peer.stop_agent(wire::StopAgentRequest {
+            agent_id: short.clone(),
+            mode: wire::StopMode::Kill as i32,
+        })
+        .await
+        .map(|_| ()),
+    ));
+    for (what, answer) in &answers {
+        let status = answer.as_ref().expect_err(&format!("{what} is refused"));
+        assert!(
+            matches!(
+                status.code(),
+                tonic::Code::InvalidArgument
+                    | tonic::Code::NotFound
+                    | tonic::Code::PermissionDenied
+                    | tonic::Code::FailedPrecondition
+            ),
+            "{what}: {status:?}"
+        );
+        println!("{what}: {:?}", status.code());
+    }
+    assert!(
+        peer_inventory_hosts(&edge(&net, "laptop"), desk)
+            .await
+            .unwrap()
+            .contains(&desk.as_bytes().to_vec()),
+        "the link carries on"
+    );
+
+    // A stranger opening handshake after handshake at the desk's listener
+    // is cut off after ten a minute, before the desk spends anything on
+    // them, while the laptop's link stays up.
+    let desk_addr = edge(&net, "desk").lan_addr().unwrap();
+    let mut answered = 0;
+    let mut ignored = 0;
+    for _ in 0..12 {
+        match tokio::time::timeout(
+            Duration::from_secs(1),
+            edge(&net, "stranger").unpinned_channel(desk_addr),
+        )
+        .await
+        {
+            Ok(Ok(_)) | Ok(Err(_)) if ignored == 0 => answered += 1,
+            _ => ignored += 1,
+        }
+    }
+    assert!(ignored >= 2, "{answered} answered, {ignored} ignored");
+    assert_eq!(edge(&net, "laptop").via(desk).await, HostVia::Direct);
+    peer_inventory_hosts(&edge(&net, "laptop"), desk)
+        .await
+        .expect("the laptop's link is untouched by the flood");
+    println!(
+        "a flood of 12 handshakes: {answered} answered, {ignored} ignored; the link carries on"
+    );
+
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subscriber_that_stops_reading_is_closed_while_one_beside_it_keeps_its_stream() {
+    use provider_fakes::script::Step;
+
+    // A small fan-out ring on the desk, and an agent that, once let go,
+    // says six hundred things of eight kilobytes each, a couple of
+    // milliseconds apart: easy going for a reader that reads, and far more
+    // than the ring and every buffer between the desk and one that stopped.
+    let net = Net::start_with(
+        Topology::new()
+            .host_decl(lan_host("desk", "home"))
+            .host_decl(lan_host("laptop", "home"))
+            .agent(
+                testnet::AgentDecl::new("chatty", "desk")
+                    .prompt("Report everything.")
+                    .steps(vec![
+                        Step::WaitFor { path: "go".into() },
+                        Step::Repeat {
+                            times: 600,
+                            steps: vec![
+                                Step::Text {
+                                    chunks: vec!["x".repeat(8 * 1024)],
+                                },
+                                Step::Pause { ms: 2 },
+                            ],
+                        },
+                        Step::Text {
+                            chunks: vec!["done".to_owned()],
+                        },
+                        Step::TurnEnd,
+                    ]),
+            ),
+        testnet::NetOptions {
+            launch: Some(std::sync::Arc::new(|host, launch| {
+                if host == "desk" {
+                    launch.fanout_capacity = 64;
+                }
+            })),
+            ..testnet::NetOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let desk = host_id(&net, "desk");
+    pair(&net, "laptop", "desk").await;
+    until_via(&net, "laptop", "desk", HostVia::Direct).await;
+    let chatty = net.agent("chatty").unwrap().id;
+
+    // Two subscriptions from the laptop, each on a stream of its own over
+    // the direct link: one reads everything, the other reads nothing.
+    let mut stalled = open_session(&edge(&net, "laptop"), desk, chatty)
+        .await
+        .unwrap();
+    let mut reading = open_session(&edge(&net, "laptop"), desk, chatty)
+        .await
+        .unwrap();
+    let reader = tokio::spawn(async move {
+        let mut items = 0_usize;
+        loop {
+            let event = reading
+                .message()
+                .await
+                .map_err(|status| format!("the reader's stream failed: {status:?}"))?
+                .ok_or("the reader's stream ended")?;
+            match event.of {
+                Some(wire::session_event::Of::Lagged(_)) => {
+                    return Err("the reader was told it lagged".to_owned());
+                }
+                Some(wire::session_event::Of::Item(item)) => {
+                    items += 1;
+                    if item.text == "done" {
+                        return Ok(items);
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    net.open_gate("go").unwrap();
+    let items = tokio::time::timeout(Duration::from_secs(120), reader)
+        .await
+        .expect("the reader keeps up to the end")
+        .unwrap()
+        .expect("the reader's stream carries everything");
+
+    // The subscriber that stopped reading was told it lagged, and its
+    // stream ended there: the desk never waited on it.
+    let mut seen = Vec::new();
+    let deadline = tokio::time::Instant::now() + testnet::PATIENCE;
+    let end = loop {
+        match tokio::time::timeout_at(deadline, stalled.message()).await {
+            Err(_) => panic!("the stalled stream never ended"),
+            Ok(Ok(Some(event))) => seen.push(event),
+            Ok(Ok(None)) => break "ended".to_owned(),
+            Ok(Err(status)) => break format!("{:?}", status.code()),
+        }
+    };
+    let lagged = seen
+        .iter()
+        .position(|event| matches!(event.of, Some(wire::session_event::Of::Lagged(_))))
+        .expect("the stalled subscriber is told it lagged");
+    assert_eq!(lagged, seen.len() - 1, "nothing follows Lagged");
+    println!(
+        "the reader saw {items} items to the end; the stalled subscriber got {} events, \
+         then Lagged, then its stream {end}",
+        seen.len() - 1
+    );
+
+    net.shutdown().await.unwrap();
+}
