@@ -267,3 +267,21 @@ pub fn tier(net: &Net, host: &str) -> Option<node::Tier> {
         _ => None,
     }
 }
+
+/// Reads a session until an item with `text` arrives, failing on Lagged,
+/// on the stream's end, or after the patience.
+pub async fn until_item(stream: &mut tonic::Streaming<wire::SessionEvent>, text: &str) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        let event = tokio::time::timeout_at(deadline, stream.message())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {text:?}"))
+            .unwrap_or_else(|status| panic!("the session failed waiting for {text:?}: {status:?}"))
+            .unwrap_or_else(|| panic!("the session ended waiting for {text:?}"));
+        match event.of {
+            Some(wire::session_event::Of::Item(item)) if item.text == text => return,
+            Some(wire::session_event::Of::Lagged(_)) => panic!("lagged waiting for {text:?}"),
+            _ => {}
+        }
+    }
+}

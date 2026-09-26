@@ -92,6 +92,34 @@ pub struct ChannelPool {
     bulk_response_holds: std::sync::Mutex<HashMap<HostId, PendingBulkResponseHold>>,
 }
 
+/// A bulk transfer held after its first data arrives, so a test can show
+/// what else moves while one is in flight. Dropping it releases the hold.
+pub struct BulkResponseHold {
+    entered: oneshot::Receiver<()>,
+    release: Option<oneshot::Sender<()>>,
+}
+
+impl BulkResponseHold {
+    /// Resolves once the held transfer's first data has arrived.
+    pub async fn entered(&mut self) -> Result<(), oneshot::error::RecvError> {
+        (&mut self.entered).await
+    }
+
+    pub fn release(mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+impl Drop for BulkResponseHold {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
 struct PendingBulkResponseHold {
     entered: Option<oneshot::Sender<()>>,
     release: oneshot::Receiver<()>,
@@ -143,6 +171,29 @@ impl ChannelPool {
             }),
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
             bulk_response_holds: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Holds the next bulk channel opened to `peer` after the first data
+    /// frame of its response.
+    pub fn hold_next_bulk_response(&self, peer: HostId) -> BulkResponseHold {
+        let (entered_tx, entered) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let previous = self
+            .bulk_response_holds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                peer,
+                PendingBulkResponseHold {
+                    entered: Some(entered_tx),
+                    release: release_rx,
+                },
+            );
+        assert!(previous.is_none(), "a bulk response hold is already armed");
+        BulkResponseHold {
+            entered,
+            release: Some(release),
         }
     }
 

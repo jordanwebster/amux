@@ -1701,3 +1701,131 @@ async fn a_host_is_seen_going_and_coming_with_its_identity_and_its_sign_in() {
 
     net.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_direct_link_keeps_its_session_through_a_rebind_a_held_transfer_and_a_poor_network() {
+    use provider_fakes::script::Step;
+    use wire::client_service_server::ClientService as _;
+
+    let say = |text: &str| Step::Text {
+        chunks: vec![text.to_owned()],
+    };
+    let wait = |gate: &str| Step::WaitFor { path: gate.into() };
+    let listening = |name: &str| testnet::HostDecl {
+        name: name.to_owned(),
+        lan: true,
+        ..testnet::HostDecl::default()
+    };
+    let mut net = Net::start(
+        Topology::new()
+            .host_decl(listening("desk"))
+            .host_decl(listening("laptop"))
+            .agent(
+                testnet::AgentDecl::new("worker", "desk")
+                    .prompt("Keep me posted.")
+                    .steps(vec![
+                        wait("one"),
+                        say("after the rebind"),
+                        wait("two"),
+                        say("beside a held transfer"),
+                        wait("three"),
+                        say("through a poor network"),
+                        Step::TurnEnd,
+                    ]),
+            ),
+    )
+    .await
+    .unwrap();
+    let desk = host_id(&net, "desk");
+    let worker = net.agent("worker").unwrap().id;
+
+    // The laptop reaches the desk's listener through a stretch of network
+    // the test controls.
+    let gate = testnet::UdpGate::start(edge(&net, "desk").lan_addr().unwrap())
+        .await
+        .unwrap();
+    net.trust("desk", "laptop").await.unwrap();
+    net.trust("laptop", "desk").await.unwrap();
+    edge(&net, "laptop").dial(desk, gate.addr());
+    until_via(&net, "laptop", "desk", HostVia::Direct).await;
+    let mut session = open_session(&edge(&net, "laptop"), desk, worker)
+        .await
+        .unwrap();
+
+    // The laptop's network changes under it: its socket moves, the QUIC
+    // connection migrates with it, and the open session carries on.
+    let moved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let moved_to = moved.local_addr().unwrap();
+    edge(&net, "laptop").rebind_lan(moved).unwrap();
+    net.open_gate("one").unwrap();
+    until_item(&mut session, "after the rebind").await;
+    assert_eq!(edge(&net, "laptop").via(desk).await, HostVia::Direct);
+    println!("the laptop moved to {moved_to}; the session carried on");
+
+    // A blob fetch held mid-transfer does not hold up the session beside
+    // it, and when it goes on it brings exactly the bytes that were stored.
+    let bytes: Vec<u8> = (0..3 * 1024 * 1024_u32).map(|n| (n % 251) as u8).collect();
+    let stored = net
+        .client("desk")
+        .unwrap()
+        .put_blob(tonic::Request::new(wire::PutBlobRequest {
+            agent_id: worker.as_bytes().to_vec(),
+            name: "build.log".to_owned(),
+            mime: "text/plain".to_owned(),
+            bytes: bytes.clone(),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut hold = edge(&net, "laptop").hold_next_bulk_response(desk);
+    let fetch = tokio::spawn({
+        let laptop = edge(&net, "laptop");
+        let hash = stored.hash.clone();
+        async move {
+            laptop
+                .bulk_peer(desk)
+                .await
+                .unwrap()
+                .get_blob(wire::GetBlobRequest {
+                    agent_id: worker.as_bytes().to_vec(),
+                    hash,
+                })
+                .await
+                .map(tonic::Response::into_inner)
+        }
+    });
+    tokio::time::timeout(testnet::PATIENCE, hold.entered())
+        .await
+        .expect("the transfer's first data arrives")
+        .unwrap();
+    net.open_gate("two").unwrap();
+    until_item(&mut session, "beside a held transfer").await;
+    assert!(!fetch.is_finished(), "the transfer is still held");
+    hold.release();
+    let fetched = tokio::time::timeout(testnet::PATIENCE, fetch)
+        .await
+        .expect("the released transfer finishes")
+        .unwrap()
+        .expect("the blob arrives");
+    assert_eq!(fetched.blob.unwrap().hash, stored.hash);
+    assert!(fetched.bytes == bytes, "the bytes are the ones stored");
+    println!(
+        "a {} byte transfer held mid-flight; the session went on beside it; the bytes match",
+        bytes.len()
+    );
+
+    // Five datagrams in a hundred lost each way, and a hundred
+    // milliseconds each way: the link and its session carry on.
+    gate.set_faults(testnet::Faults {
+        loss_percent: 5,
+        delay: Duration::from_millis(100),
+    });
+    net.open_gate("three").unwrap();
+    until_item(&mut session, "through a poor network").await;
+    peer_inventory_hosts(&edge(&net, "laptop"), desk)
+        .await
+        .expect("calls go through a poor network");
+    println!("five percent loss and 200 ms round trips: the session and calls carry on");
+
+    net.shutdown().await.unwrap();
+}

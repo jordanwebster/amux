@@ -36,9 +36,10 @@ use wire::{
 
 use crate::binaries::Binaries;
 use crate::clock::DrivenClock;
+use crate::gate::UdpGate;
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
-use crate::relay::{Relay, UdpGate};
+use crate::relay::Relay;
 use crate::topology::{AgentDecl, FakeKind, HostDecl, Topology, TopologyError, link_key};
 
 /// Lets a caller adjust a host's edge beyond what the topology declares,

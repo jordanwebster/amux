@@ -12,7 +12,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -27,10 +26,10 @@ use node::harness::{
     relay_quic_server_config_from_der,
 };
 use node::{CloudLinkServer, CloudOptions, RelayIdentity, RelayQuic};
-use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::gate::UdpGate;
 use crate::topology::{RelayDecl, TierDecl};
 
 /// The name the relay's certificate is issued to, and the host the cloud
@@ -419,95 +418,4 @@ fn quic_configs() -> (quinn::ServerConfig, quinn::ClientConfig) {
     let client =
         relay_quic_client_config_with_roots(roots).expect("the relay's QUIC client configuration");
     (server, client)
-}
-
-/// A UDP forwarder in front of one address: each sender gets its own
-/// upstream socket, so the far end sees one peer per sender. Blocked, it
-/// drops every datagram both ways, as a network that eats UDP does.
-pub struct UdpGate {
-    addr: SocketAddr,
-    blocked: Arc<AtomicBool>,
-    task: JoinHandle<()>,
-}
-
-impl UdpGate {
-    pub async fn start(upstream: SocketAddr) -> std::io::Result<Self> {
-        let front = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-        let addr = front.local_addr()?;
-        let blocked = Arc::new(AtomicBool::new(false));
-        let task = tokio::spawn({
-            let blocked = blocked.clone();
-            async move {
-                let mut senders: HashMap<SocketAddr, (Arc<UdpSocket>, Returning)> = HashMap::new();
-                let mut buf = vec![0; 65_536];
-                loop {
-                    let Ok((n, from)) = front.recv_from(&mut buf).await else {
-                        return;
-                    };
-                    if blocked.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    let back = match senders.get(&from) {
-                        Some((back, _)) => back.clone(),
-                        None => {
-                            let Ok(back) = UdpSocket::bind("127.0.0.1:0").await else {
-                                continue;
-                            };
-                            if back.connect(upstream).await.is_err() {
-                                continue;
-                            }
-                            let back = Arc::new(back);
-                            let returning = tokio::spawn({
-                                let (back, front, blocked) =
-                                    (back.clone(), front.clone(), blocked.clone());
-                                async move {
-                                    let mut buf = vec![0; 65_536];
-                                    while let Ok(n) = back.recv(&mut buf).await {
-                                        if !blocked.load(Ordering::SeqCst) {
-                                            let _ = front.send_to(&buf[..n], from).await;
-                                        }
-                                    }
-                                }
-                            });
-                            senders.insert(from, (back.clone(), Returning(returning)));
-                            back
-                        }
-                    };
-                    let _ = back.send(&buf[..n]).await;
-                }
-            }
-        });
-        Ok(Self {
-            addr,
-            blocked,
-            task,
-        })
-    }
-
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
-    }
-
-    pub fn block(&self, blocked: bool) {
-        self.blocked.store(blocked, Ordering::SeqCst);
-    }
-
-    pub fn is_blocked(&self) -> bool {
-        self.blocked.load(Ordering::SeqCst)
-    }
-}
-
-/// The task carrying one sender's replies back, stopped with the gate.
-struct Returning(JoinHandle<()>);
-
-impl Drop for Returning {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-impl Drop for UdpGate {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }

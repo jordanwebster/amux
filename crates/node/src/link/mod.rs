@@ -9,7 +9,7 @@ pub use carrier::{
     ByteStream, CarrierKind, ControlSink, ControlSource, LinkCarrier, OpenError, read_message,
     write_message,
 };
-pub use channels::{ChannelClass, ChannelError, ChannelPool};
+pub use channels::{BulkResponseHold, ChannelClass, ChannelError, ChannelPool};
 pub(crate) use channels::{ChannelKey, serve_inbound_streams};
 pub use mux::{MuxCarrier, MuxRole};
 pub(crate) use piper::Piper;

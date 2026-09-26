@@ -546,6 +546,13 @@ impl Edge {
         Ok(wire::peer_service_client(channel))
     }
 
+    /// Holds the next bulk transfer from `host` once its first data has
+    /// arrived, until the returned hold is released or dropped.
+    #[doc(hidden)]
+    pub fn hold_next_bulk_response(&self, host: HostId) -> crate::link::BulkResponseHold {
+        self.channels.hold_next_bulk_response(host)
+    }
+
     /// Why the last dial to a host failed, until a route to it comes up.
     pub async fn last_dial_error(&self, host: HostId) -> Option<String> {
         self.connections.stored_reachability_error(host).await
