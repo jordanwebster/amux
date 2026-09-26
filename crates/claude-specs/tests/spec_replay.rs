@@ -167,6 +167,8 @@ mod pty_replays {
         file_changes_and_failure,
         image,
         thinking,
+        steer_queued,
+        steer_send_now,
     );
 
     #[tokio::test(start_paused = true)]

@@ -1,3 +1,13 @@
+2026-09-26 — **Terminal Claude steering is specified.**
+Two PTY probe specifications record a prompt typed while terminal Claude
+runs a tool. Pressed Enter alone, it goes into Claude's own queue (an
+enqueue row in the transcript) and joins the running turn at the next tool
+boundary as a `queued_command` attachment, not a user row. Followed by
+ctrl+x ctrl+s ("send queued messages now"), the running tool is moved to
+the background, its result saying it was moved to deliver a message, and
+the prompt is delivered at once; in this recording, taken with the chord
+pressed immediately, it arrived as a dequeued user row opening a new turn.
+
 2026-09-26 — **Headless Claude steering is specified.**
 Two probe specifications in claude-specs record what happens to a stdin
 message sent while a headless turn runs a tool. With Claude's default

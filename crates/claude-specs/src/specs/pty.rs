@@ -122,9 +122,19 @@ static DEFINITIONS: &[PtySpecDef] = &[
         ],
         sign_in_problem
     ),
+    definition!(
+        steer_queued,
+        &["--dangerously-skip-permissions"],
+        steer_queued
+    ),
+    definition!(
+        steer_send_now,
+        &["--dangerously-skip-permissions"],
+        steer_send_now
+    ),
 ];
 
-static REGISTRY: [SpecEntry; 28] = [
+static REGISTRY: [SpecEntry; 30] = [
     entry("prompt"),
     entry("prompt_multiline"),
     entry("tools"),
@@ -153,6 +163,8 @@ static REGISTRY: [SpecEntry; 28] = [
     entry("thinking"),
     entry("api_error"),
     entry("sign_in_problem"),
+    entry("steer_queued"),
+    entry("steer_send_now"),
 ];
 
 pub fn registry() -> &'static [SpecEntry] {
@@ -889,6 +901,106 @@ async fn sign_in_problem(session: &mut PtySpecSession) -> Result<(), String> {
         .wait_transcript(|row| api_error_row(row) && row.to_string().contains("401"))
         .await?;
     session.wait_transcript(synthetic_error_reply).await?;
+    Ok(())
+}
+
+/// Claude's record of a prompt that joined a running turn: an attachment
+/// row carrying the prompt, not a user row of its own.
+fn queued_command_row(row: &serde_json::Value, marker: &str) -> bool {
+    row.get("type").and_then(serde_json::Value::as_str) == Some("attachment")
+        && row["attachment"]["type"] == "queued_command"
+        && row["attachment"]["prompt"]
+            .as_str()
+            .is_some_and(|prompt| prompt.contains(marker))
+}
+
+/// A prompt typed while a tool runs goes into Claude's own queue (an
+/// enqueue row in the transcript) and joins the running turn at the next
+/// tool boundary, recorded as a queued_command attachment.
+async fn steer_queued(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly PTY_STEER_QUEUED plus any extra words the user asked for.".to_owned(),
+        })
+        .await?;
+    session
+        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::PreToolUse { tool_name, .. } if tool_name == "Bash"))
+        .await?;
+    session
+        .send(Intent::Prompt {
+            text: "Also append the word BANANA.".to_owned(),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| {
+            row["type"] == "queue-operation"
+                && row["operation"] == "enqueue"
+                && row["content"] == "Also append the word BANANA."
+        })
+        .await?;
+    session
+        .wait_transcript(|row| queued_command_row(row, "BANANA"))
+        .await?;
+    session
+        .wait_transcript(|row| assistant_contains(row, "BANANA"))
+        .await?;
+    Ok(())
+}
+
+/// ctrl+x ctrl+s ("send queued messages now") while a tool runs moves the
+/// tool to the background instead of waiting for it, so the queued prompt
+/// reaches the running turn at once. The moved tool's result says so; its
+/// PostToolUse hook does not always fire.
+async fn steer_send_now(session: &mut PtySpecSession) -> Result<(), String> {
+    session
+        .send(Intent::Prompt {
+            text: "I am testing how follow-up messages reach you while a command runs. Use Bash, not in the background, to run exactly: python3 -c 'import time; time.sleep(30)'; echo S1. Then reply with the word PTY_STEER_NOW, and also follow any follow-up message I send while the command runs.".to_owned(),
+        })
+        .await?;
+    let started = session
+        .wait_hook(|hook| matches!(hook, claude::hooks::HookPayload::PreToolUse { tool_name, .. } if tool_name == "Bash"))
+        .await?;
+    // A command the model backgrounds itself leaves nothing for the chord
+    // to move; the capture is then about something else.
+    if let claude::hooks::HookPayload::PreToolUse { tool_input, .. } = &started
+        && tool_input["run_in_background"] == true
+    {
+        return Err("the model ran the command in the background itself".to_owned());
+    }
+    session
+        .send(Intent::Prompt {
+            text: "Also append the word DURIAN.".to_owned(),
+        })
+        .await?;
+    session
+        .wait_transcript(|row| {
+            row["type"] == "queue-operation"
+                && row["operation"] == "enqueue"
+                && row["content"] == "Also append the word DURIAN."
+        })
+        .await?;
+    session
+        .control
+        .send_program(vec![
+            crate::driver::pty::PtyInput::Bytes(vec![0x18]),
+            crate::driver::pty::PtyInput::Delay(200),
+            crate::driver::pty::PtyInput::Bytes(vec![0x13]),
+        ])
+        .await
+        .map_err(|error| error.to_string())?;
+    session
+        .wait_transcript(|row| row["toolUseResult"]["backgroundedToDeliverMessage"] == true)
+        .await?;
+    // The prompt then reaches the running turn either folded (a
+    // queued_command attachment) or dequeued as a user row; which one
+    // depends on timing Claude does not expose.
+    session
+        .wait_transcript(|row| {
+            queued_command_row(row, "DURIAN")
+                || (row["type"] == "user"
+                    && row["message"]["content"] == "Also append the word DURIAN.")
+        })
+        .await?;
     Ok(())
 }
 
@@ -1664,6 +1776,8 @@ mod tests {
                 "thinking",
                 "api_error",
                 "sign_in_problem",
+                "steer_queued",
+                "steer_send_now",
             ]
         );
         assert_eq!(DEFINITIONS.len(), registry().len());
