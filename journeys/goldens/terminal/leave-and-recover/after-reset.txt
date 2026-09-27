@@ -1,4 +1,4 @@
-  keeper · claude sdk @ desk               claude-fake-1 · default · exited · exited while the daemon was away
+  keeper · claude sdk @ desk                      claude-fake-1 · default · exited · while the daemon was away
 
 
 

@@ -20,7 +20,7 @@
 
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-▌ ▸ Running deploy --check                                                                             running
+▌ ▸ Wants to run deploy --check
 
 
   ● Wants to run a command
