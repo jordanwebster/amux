@@ -1,3 +1,13 @@
+2026-09-27 — **Whole-frame terminal goldens from served hosts.**
+`crates/tui/tests/frames.rs` starts a desk and a laptop on testnet with a
+Claude terminal, a Codex and a headless Claude agent on the desk, observes
+them from the laptop's client service, and draws the fleet (at 110 and 60
+columns, once every agent is idle) and a chat with its header and strip.
+It then rewinds the desk under the laptop's replica and draws the chat
+twice: with the Reset pending, the second turn's rows still on screen and
+the host shown away, and after the CaughtUp swap to the rebuilt
+transcript.
+
 2026-09-27 — **Terminal goldens for the chat vocabulary.**
 `tui::vocabulary` draws each piece of the chat vocabulary from authored view
 values: every row kind (with its states and an opened body where rows
