@@ -22,6 +22,8 @@ struct ComposerBox: View {
     let attach: (AttachChoice) -> Void
     /// Dictation's two acts: `.dictate` and `.dictationSettings`.
     let dictate: (ChatAction) -> Void
+    /// Opens the settings card, from the model chip or the plus menu.
+    let openSettings: () -> Void
     var focused: FocusState<Bool>.Binding
 
     var body: some View {
@@ -46,6 +48,11 @@ struct ComposerBox: View {
                     }
                     Button { attach(.file) } label: {
                         Label(String(localized: "File"), systemImage: "doc")
+                    }
+                    if let settings = model.settings, !settings.modes.isEmpty || settings.cycleMode {
+                        Button(action: openSettings) {
+                            Label(ChatWords.permissionsItem(settings), systemImage: "hand.raised")
+                        }
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -79,12 +86,8 @@ struct ComposerBox: View {
                     .identified("chat.clear", label: "Clear")
                     .reclaimingThumbTarget(x: 10, y: 10)
                 }
-                if let strip = model.strip, let chip = ChatWords.model(strip) {
-                    Text(chip)
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .lineLimit(1)
-                        .identified("chat.model", label: chip)
+                if let strip = model.strip, let chip = ChatWords.chip(strip, model.settings) {
+                    modelChip(chip)
                 }
                 Spacer(minLength: 4)
                 primary
@@ -94,6 +97,39 @@ struct ComposerBox: View {
         .padding(.vertical, 11)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .onDisappear { if model.dictation.active { model.dictation.stop() } }
+    }
+
+    /// The model on one line, the effort and mode under it, so a long model
+    /// id never pushes the mode out of sight. The mode that stops asking
+    /// reads in red. A tap opens the settings card.
+    private func modelChip(_ chip: (model: String, detail: String)) -> some View {
+        let warn = model.settings?.modes.first { $0.current }?.stopsAsking == true
+        let label = [chip.model, chip.detail].filter { !$0.isEmpty }.joined(separator: " · ")
+        return Button(action: openSettings) {
+            HStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !chip.model.isEmpty {
+                        Text(chip.model)
+                            .foregroundStyle(design.inkMuted.color)
+                    }
+                    if !chip.detail.isEmpty {
+                        Text(chip.detail)
+                            .foregroundStyle(warn ? design.removed.color : design.inkFaint.color)
+                    }
+                }
+                .designFont(.monoSmall, design)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .layoutPriority(1)
+        .disabled(model.settings == nil)
+        .identified("chat.model", label: label)
     }
 
     private var dictationLabel: String {

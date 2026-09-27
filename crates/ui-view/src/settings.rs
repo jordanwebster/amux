@@ -7,7 +7,7 @@
 //! choices are the provider's closed set, so they are held here.
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ui_state::SessionState;
 use wire::Kind;
 
@@ -115,7 +115,7 @@ pub struct ModeChoice {
 }
 
 /// What a mode input sets.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ModeValue {
     /// Claude's permission mode.
     Claude(String),
@@ -126,6 +126,16 @@ pub enum ModeValue {
         approval_policy: String,
         sandbox: String,
     },
+}
+
+/// A person's pick on the settings view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SettingChange {
+    Model(String),
+    Effort(String),
+    Mode(ModeValue),
+    /// The next mode in the agent's own cycle.
+    CycleMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -258,6 +268,61 @@ pub fn settings(state: &SessionState) -> SettingsView {
         mode_refusal,
         change_by_typing: (kind == Kind::ClaudePty).then(|| CLAUDE_PTY_TYPING.to_owned()),
     }
+}
+
+/// The input a pick sends, in the kind's arm; None where the view offers
+/// no such pick (it says why instead). The id is the sender's to fill.
+pub fn setting_input(kind: Kind, change: &SettingChange) -> Option<wire::Input> {
+    use wire::{
+        ClaudePtyInput, ClaudeSdkInput, CodexInput, KeyName, SetApproval, SetEffort, SetModel,
+        SetPermissionMode, claude_pty_input, claude_sdk_input, codex_input, input,
+    };
+    let model = |model: &String| SetModel {
+        model: Some(model.clone()),
+    };
+    let of = match (kind, change) {
+        (Kind::ClaudePty, SettingChange::CycleMode) => input::Of::ClaudePty(ClaudePtyInput {
+            of: Some(claude_pty_input::Of::Key(wire::Key {
+                key: KeyName::CyclePermissionMode.into(),
+            })),
+        }),
+        (Kind::ClaudeSdk, SettingChange::Model(name)) => input::Of::ClaudeSdk(ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Model(model(name))),
+        }),
+        (Kind::ClaudeSdk, SettingChange::Mode(ModeValue::Claude(mode))) => {
+            input::Of::ClaudeSdk(ClaudeSdkInput {
+                of: Some(claude_sdk_input::Of::Mode(SetPermissionMode {
+                    mode: mode.clone(),
+                })),
+            })
+        }
+        (Kind::Codex, SettingChange::Model(name)) => input::Of::Codex(CodexInput {
+            of: Some(codex_input::Of::Model(model(name))),
+        }),
+        (Kind::Codex, SettingChange::Effort(effort)) => input::Of::Codex(CodexInput {
+            of: Some(codex_input::Of::Effort(SetEffort {
+                effort: Some(effort.clone()),
+            })),
+        }),
+        (
+            Kind::Codex,
+            SettingChange::Mode(ModeValue::Codex {
+                approval_policy,
+                sandbox,
+                ..
+            }),
+        ) => input::Of::Codex(CodexInput {
+            of: Some(codex_input::Of::Approval(SetApproval {
+                approval_policy: approval_policy.clone(),
+                sandbox: sandbox.clone(),
+            })),
+        }),
+        _ => return None,
+    };
+    Some(wire::Input {
+        input_id: Vec::new(),
+        of: Some(of),
+    })
 }
 
 /// The kind's mode set with the reported mode marked; a reported mode

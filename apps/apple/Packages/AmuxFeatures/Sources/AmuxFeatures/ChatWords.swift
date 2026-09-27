@@ -393,10 +393,75 @@ public enum ChatWords {
         return parts
     }
 
-    /// "opus · high · plan": the model chip.
-    public static func model(_ strip: Strip) -> String? {
-        let parts = [strip.model, strip.effort, strip.mode].compactMap { $0 }.filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    // MARK: - Settings
+
+    /// The model chip's two lines: the model, then the effort and the mode
+    /// by the name the settings card gives it. Nil when nothing is reported.
+    public static func chip(_ strip: Strip, _ settings: SettingsView?) -> (model: String, detail: String)? {
+        let current = settings?.modes.first { $0.current }
+        let mode = current.map { self.mode($0.value) } ?? strip.mode
+        let detail = [strip.effort, mode].compactMap { $0 }.filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        let model = strip.model ?? ""
+        if model.isEmpty && detail.isEmpty { return nil }
+        return (model, detail)
+    }
+
+    /// A permission mode by the name a person reads.
+    public static func mode(_ value: ModeValue) -> String {
+        switch value {
+        case .claude(let mode):
+            switch mode {
+            case "default": String(localized: "Default")
+            case "acceptEdits": String(localized: "Accept edits")
+            case "plan": String(localized: "Plan")
+            case "auto": String(localized: "Auto")
+            case "bypassPermissions": String(localized: "Bypass permissions")
+            default: mode
+            }
+        case .codex(let approval, let sandbox, let preset):
+            switch preset {
+            case "read-only"?: String(localized: "Read only")
+            case "auto"?: String(localized: "Auto")
+            case "full-access"?: String(localized: "Full access")
+            default: "\(approval) · \(sandbox)"
+            }
+        }
+    }
+
+    /// What the agent does under a mode without asking first.
+    public static func modeDetail(_ value: ModeValue) -> String {
+        switch value {
+        case .claude(let mode):
+            switch mode {
+            case "default": String(localized: "Asks before edits and commands")
+            case "acceptEdits": String(localized: "Edits files without asking, asks before commands")
+            case "plan": String(localized: "Plans without changing anything")
+            case "auto": String(localized: "Decides for itself when to ask")
+            case "bypassPermissions": String(localized: "Never asks")
+            default: String(localized: "Reported by the agent")
+            }
+        case .codex(_, _, let preset):
+            switch preset {
+            case "read-only"?: String(localized: "Reads files, asks before any change")
+            case "auto"?: String(localized: "Works in its folder, asks to go further")
+            case "full-access"?: String(localized: "Never asks, with full access")
+            default: String(localized: "Reported by the agent")
+            }
+        }
+    }
+
+    /// The permissions card's heading, by the agent's kind.
+    public static func permissionsHeading(_ kind: Kind?) -> String {
+        kind == .codex ? String(localized: "CODEX PERMISSIONS") : String(localized: "CLAUDE PERMISSIONS")
+    }
+
+    /// The plus menu's permissions row: the current mode after the name.
+    public static func permissionsItem(_ settings: SettingsView) -> String {
+        guard let current = settings.modes.first(where: { $0.current }) else {
+            return String(localized: "Permissions")
+        }
+        return String(localized: "Permissions · \(mode(current.value))")
     }
 
     public static func signIn(_ view: SignInView) -> String {

@@ -1333,6 +1333,18 @@
         }
       }
     },
+    "Accept edits": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept edits"
+          }
+        }
+      }
+    },
     "Accept edits without asking": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -1473,6 +1485,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Agent"
+          }
+        }
+      }
+    },
+    "Agent settings": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent settings"
           }
         }
       }
@@ -1837,6 +1861,18 @@
         }
       }
     },
+    "Asks before edits and commands": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asks before edits and commands"
+          }
+        }
+      }
+    },
     "Asks: %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift.",
       "extractionState": "manual",
@@ -2037,6 +2073,42 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bypass Permissions"
+          }
+        }
+      }
+    },
+    "Bypass permissions": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bypass permissions"
+          }
+        }
+      }
+    },
+    "CLAUDE PERMISSIONS": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLAUDE PERMISSIONS"
+          }
+        }
+      }
+    },
+    "CODEX PERMISSIONS": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CODEX PERMISSIONS"
           }
         }
       }
@@ -2473,6 +2545,18 @@
         }
       }
     },
+    "Cycle": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cycle"
+          }
+        }
+      }
+    },
     "Dark": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift.",
       "extractionState": "manual",
@@ -2481,6 +2565,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Dark"
+          }
+        }
+      }
+    },
+    "Decides for itself when to ask": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decides for itself when to ask"
           }
         }
       }
@@ -2505,6 +2601,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Declined"
+          }
+        }
+      }
+    },
+    "Default": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default"
+          }
+        }
+      }
+    },
+    "Default %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default %@"
           }
         }
       }
@@ -2749,6 +2869,18 @@
         }
       }
     },
+    "EFFORT": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EFFORT"
+          }
+        }
+      }
+    },
     "Edit": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatComposer.swift.",
       "extractionState": "manual",
@@ -2781,6 +2913,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Editing"
+          }
+        }
+      }
+    },
+    "Edits files without asking, asks before commands": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edits files without asking, asks before commands"
           }
         }
       }
@@ -3057,6 +3201,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Full Access"
+          }
+        }
+      }
+    },
+    "Full access": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full access"
           }
         }
       }
@@ -3505,6 +3661,18 @@
         }
       }
     },
+    "MODEL": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MODEL"
+          }
+        }
+      }
+    },
     "Manage your subscription in the App Store.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
       "extractionState": "manual",
@@ -3717,6 +3885,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Network access"
+          }
+        }
+      }
+    },
+    "Never asks": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never asks"
+          }
+        }
+      }
+    },
+    "Never asks, with full access": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Never asks, with full access"
           }
         }
       }
@@ -4417,6 +4609,18 @@
         }
       }
     },
+    "Permissions · %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permissions · %@"
+          }
+        }
+      }
+    },
     "Photo": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Attach.swift.",
       "extractionState": "manual",
@@ -4497,6 +4701,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Plan sent back"
+          }
+        }
+      }
+    },
+    "Plans without changing anything": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plans without changing anything"
           }
         }
       }
@@ -4717,6 +4933,18 @@
         }
       }
     },
+    "Read only": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read only"
+          }
+        }
+      }
+    },
     "Read the plan": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -4749,6 +4977,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Reading this host’s projects…"
+          }
+        }
+      }
+    },
+    "Reads files, asks before any change": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads files, asks before any change"
           }
         }
       }
@@ -4953,6 +5193,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Report a Problem"
+          }
+        }
+      }
+    },
+    "Reported by the agent": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reported by the agent"
           }
         }
       }
@@ -7513,6 +7765,18 @@
         }
       }
     },
+    "Works in its folder, asks to go further": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Works in its folder, asks to go further"
+          }
+        }
+      }
+    },
     "Write to": {
       "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift.",
       "extractionState": "manual",
@@ -8337,6 +8601,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "chat.row.%@"
+          }
+        }
+      }
+    },
+    "chat.settings.effort.%@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SettingsCard.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "chat.settings.effort.%@"
           }
         }
       }

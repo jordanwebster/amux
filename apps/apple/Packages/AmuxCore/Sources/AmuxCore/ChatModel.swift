@@ -11,6 +11,7 @@ public protocol ChatSource: AnyObject, Sendable {
     func rows(for keys: [String], options: RowOptions?) -> [Row]
     func askCard() -> AskCard?
     func strip() -> Strip?
+    func settings() -> SettingsView?
     func frame() -> ChatFrame?
     func takeChanges() -> ChatChanges
     func send(_ draft: Draft) async -> Result<SendOutcome, RuntimeFailure>
@@ -22,6 +23,7 @@ public protocol ChatSource: AnyObject, Sendable {
     func resend(_ input: [UInt8]) async -> SendOutcome?
     func discard(_ input: [UInt8])
     func interrupt() async -> ActOutcome?
+    func change(_ setting: SettingChange) async -> ActOutcome?
     func resume(with draft: Draft) async -> ActOutcome?
     func pageOlder(_ rows: UInt32) async -> PageOutcome?
     func putBlob(_ data: Data, name: String, mime: String) async -> Result<BlobRef, RuntimeFailure>
@@ -87,6 +89,8 @@ public final class ChatModel {
     public private(set) var frame: ChatFrame?
     public private(set) var ask: AskCard?
     public private(set) var strip: Strip?
+    /// What the agent offers to change, the current values marked.
+    public private(set) var settings: SettingsView?
     /// Rows the reader opened: a run's members, a subagent's steps, or a
     /// row's detail.
     public private(set) var expanded: Set<String> = []
@@ -244,6 +248,7 @@ public final class ChatModel {
         frame = source.frame()
         ask = source.askCard()
         strip = source.strip()
+        settings = source.settings()
         if Self.changesMayHaveMoved(from: before, to: frame) { refreshChanges() }
     }
 
@@ -493,6 +498,13 @@ public final class ChatModel {
     /// agent stays.
     public func interrupt() {
         act({ await $0.interrupt() })
+    }
+
+    /// Sends a pick from the settings card. Nothing changes here until the
+    /// agent reports the new value, which moves the current mark and the
+    /// strip together.
+    public func change(_ setting: SettingChange) {
+        act({ await $0.change(setting) })
     }
 
     // MARK: - Answering

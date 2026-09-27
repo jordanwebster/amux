@@ -33,7 +33,7 @@ use model::{AgentKey, Key};
 use node::SourcePolicy;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ui_view::Pick;
+use ui_view::{Pick, SettingChange};
 
 // The tests drive real agent processes, which run on Unix.
 #[cfg(all(test, unix))]
@@ -1056,6 +1056,17 @@ pub unsafe extern "C" fn amux_session_strip(chat: *const AmuxChat) -> *mut c_cha
     unsafe { read(chat, Chat::strip) }
 }
 
+/// The `SettingsView`: what the agent offers to change, the current values
+/// marked, and why a setting cannot change from here.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_settings(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::settings) }
+}
+
 /// The `ChatFrame`: phase, composer, activity, queue and outbox.
 ///
 /// # Safety
@@ -1205,6 +1216,31 @@ pub unsafe extern "C" fn amux_session_answer_questions(
             match picks {
                 Some(picks) => chat.answer_questions(&ask_key, &picks, &note).await,
                 None => ActOutcome::Rejected("the picks are not a list of Pick".into()),
+            }
+        })
+    }
+}
+
+/// Sends a pick from the settings view, a `SettingChange` as JSON. The
+/// callback gets an `ActOutcome`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `change` is a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_change_setting(
+    chat: *const AmuxChat,
+    change: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let change: Option<SettingChange> = unsafe { parse(change) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            match change {
+                Some(change) => chat.change_setting(&change).await,
+                None => ActOutcome::Rejected("the change is not a SettingChange".into()),
             }
         })
     }

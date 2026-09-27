@@ -44,7 +44,8 @@ the runtime.
 ## Reads and changes
 
 Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
-`amux_session_ask_card`, `amux_session_strip`, `amux_session_frame`,
+`amux_session_ask_card`, `amux_session_strip`, `amux_session_settings`,
+`amux_session_frame`,
 `amux_fleet_rows`, `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
 `amux_runtime_source_policy_listed`.
 
@@ -67,7 +68,8 @@ does the work in the wake.
 Acts that wait on the agent take a callback, called once on a worker thread
 with a JSON result the callback borrows until it returns:
 `amux_session_send`, `amux_session_answer` (by choice index),
-`amux_session_answer_questions`, `amux_session_withdraw`,
+`amux_session_answer_questions`, `amux_session_change_setting` (a pick from
+the settings view), `amux_session_withdraw`,
 `amux_session_send_now`, `amux_session_resend`, `amux_session_interrupt`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,
 `amux_session_put_blob`, `amux_runtime_begin_pair` (a PIN or a pairing

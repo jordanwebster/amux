@@ -22,6 +22,7 @@ private final class Session: OpenChat, @unchecked Sendable {
     func rows(for keys: [String], options: RowOptions?) -> [Row] { [] }
     func askCard() -> AskCard? { nil }
     func strip() -> Strip? { nil }
+    func settings() -> SettingsView? { nil }
     func frame() -> ChatFrame? {
         ChatFrame(
             agent: agent, name: "a", kind: .claudeSdk, phase: .needsYou,
@@ -38,6 +39,7 @@ private final class Session: OpenChat, @unchecked Sendable {
     func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
     func discard(_ input: [UInt8]) {}
     func interrupt() async -> ActOutcome? { nil }
+    func change(_ setting: SettingChange) async -> ActOutcome? { nil }
     func resume(with draft: Draft) async -> ActOutcome? { nil }
     func pageOlder(_ rows: UInt32) async -> PageOutcome? { nil }
     func putBlob(_ data: Data, name: String, mime: String) async -> Result<BlobRef, RuntimeFailure> {

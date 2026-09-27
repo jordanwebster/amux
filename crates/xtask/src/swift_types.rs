@@ -48,6 +48,8 @@ pub fn definitions() -> Map<String, Value> {
         ui_view::FamilyHeader,
         ui_view::Away,
         ui_view::ReviewDoc,
+        ui_view::SettingsView,
+        ui_view::SettingChange,
         ui_view::Segment,
         app_runtime::values::StartConfig,
         app_runtime::values::ChatChanges,

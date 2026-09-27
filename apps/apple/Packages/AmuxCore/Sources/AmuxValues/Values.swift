@@ -1353,6 +1353,29 @@ public enum ChoiceOutcome: Codable, Hashable, Sendable {
     }
 }
 
+public struct CommandView: Codable, Hashable, Sendable {
+    public var name: String
+    public var description: String
+    public var argumentHint: String
+    /// A plugin's namespace or the provider's scope word; empty when the
+    /// provider does not say.
+    public var source: String
+
+    public init(name: String, description: String, argumentHint: String, source: String) {
+        self.name = name
+        self.description = description
+        self.argumentHint = argumentHint
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case description
+        case argumentHint = "argument_hint"
+        case source
+    }
+}
+
 /// What the composer offers.
 public enum Composer: Codable, Hashable, Sendable {
     case send
@@ -1673,6 +1696,28 @@ public enum DraftAttachment: Codable, Hashable, Sendable {
             try _fields.encode(diff, forKey: .diff)
             try _fields.encode(comments, forKey: .comments)
         }
+    }
+}
+
+public struct EffortChoice: Codable, Hashable, Sendable {
+    public var value: String
+    public var current: Bool
+    /// What the model runs at when none is chosen.
+    public var `default`: Bool
+    public var reported: Bool
+
+    public init(value: String, current: Bool, `default`: Bool, reported: Bool) {
+        self.value = value
+        self.current = current
+        self.`default` = `default`
+        self.reported = reported
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case current
+        case `default` = "default"
+        case reported
     }
 }
 
@@ -2144,6 +2189,116 @@ public enum LineKind: String, Codable, Hashable, Sendable, CaseIterable {
     case context = "Context"
     case added = "Added"
     case removed = "Removed"
+}
+
+public struct ModeChoice: Codable, Hashable, Sendable {
+    public var value: ModeValue
+    public var current: Bool
+    public var reported: Bool
+    /// Under this mode the agent acts without asking first.
+    public var stopsAsking: Bool
+
+    public init(value: ModeValue, current: Bool, reported: Bool, stopsAsking: Bool) {
+        self.value = value
+        self.current = current
+        self.reported = reported
+        self.stopsAsking = stopsAsking
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case current
+        case reported
+        case stopsAsking = "stops_asking"
+    }
+}
+
+/// What a mode input sets.
+public enum ModeValue: Codable, Hashable, Sendable {
+    /// Claude's permission mode.
+    case claude(String)
+    /// Codex's approval policy and sandbox; `preset` names the preset the
+    /// pair is, None for a reported pair outside the presets.
+    case codex(approvalPolicy: String, sandbox: String, preset: String?)
+
+    private enum Tag: String, CodingKey {
+        case claude = "Claude"
+        case codex = "Codex"
+    }
+
+    private enum CodexKeys: String, CodingKey {
+        case approvalPolicy = "approval_policy"
+        case sandbox
+        case preset
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a ModeValue names exactly one variant"))
+        }
+        switch _tag {
+        case .claude:
+            self = .claude(try _container.decode(String.self, forKey: .claude))
+        case .codex:
+            let _fields = try _container.nestedContainer(
+                keyedBy: CodexKeys.self, forKey: .codex)
+            self = .codex(
+                approvalPolicy: try _fields.decode(String.self, forKey: .approvalPolicy),
+                sandbox: try _fields.decode(String.self, forKey: .sandbox),
+                preset: try _fields.decodeIfPresent(String.self, forKey: .preset))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .claude(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .claude)
+        case .codex(let approvalPolicy, let sandbox, let preset):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: CodexKeys.self, forKey: .codex)
+            try _fields.encode(approvalPolicy, forKey: .approvalPolicy)
+            try _fields.encode(sandbox, forKey: .sandbox)
+            try _fields.encodeIfPresent(preset, forKey: .preset)
+        }
+    }
+}
+
+public struct ModelChoice: Codable, Hashable, Sendable {
+    /// What a model input names.
+    public var value: String
+    public var displayName: String
+    public var description: String
+    /// The efforts it takes, in the provider's order.
+    public var efforts: [String]
+    public var current: Bool
+    /// The agent reports it but the provider does not offer it.
+    public var reported: Bool
+    public var defaultEffort: String?
+
+    public init(value: String, displayName: String, description: String, efforts: [String], current: Bool, reported: Bool, defaultEffort: String?) {
+        self.value = value
+        self.displayName = displayName
+        self.description = description
+        self.efforts = efforts
+        self.current = current
+        self.reported = reported
+        self.defaultEffort = defaultEffort
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case displayName = "display_name"
+        case description
+        case efforts
+        case current
+        case reported
+        case defaultEffort = "default_effort"
+    }
 }
 
 /// An agent to start on a host.
@@ -3442,6 +3597,113 @@ public struct ServerView: Codable, Hashable, Sendable {
         case name
         case error
         case needsAuth = "needs_auth"
+    }
+}
+
+/// A person's pick on the settings view.
+public enum SettingChange: Codable, Hashable, Sendable {
+    case model(String)
+    case effort(String)
+    case mode(ModeValue)
+    /// The next mode in the agent's own cycle.
+    case cycleMode
+
+    private enum Tag: String, CodingKey {
+        case model = "Model"
+        case effort = "Effort"
+        case mode = "Mode"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "CycleMode": self = .cycleMode
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no SettingChange is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a SettingChange names exactly one variant"))
+        }
+        switch _tag {
+        case .model:
+            self = .model(try _container.decode(String.self, forKey: .model))
+        case .effort:
+            self = .effort(try _container.decode(String.self, forKey: .effort))
+        case .mode:
+            self = .mode(try _container.decode(ModeValue.self, forKey: .mode))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .model(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .model)
+        case .effort(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .effort)
+        case .mode(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .mode)
+        case .cycleMode:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("CycleMode")
+        }
+    }
+}
+
+public struct SettingsView: Codable, Hashable, Sendable {
+    /// The offered models, then a reported model the provider does not
+    /// list.
+    public var models: [ModelChoice]
+    /// The current model's efforts, then a reported effort outside them.
+    public var efforts: [EffortChoice]
+    /// The modes to pick from; for a kind that only cycles, the current
+    /// mode alone.
+    public var modes: [ModeChoice]
+    /// The mode changes by cycling to the next (the cycle key), never by a
+    /// pick: offered beside the current mode.
+    public var cycleMode: Bool
+    public var commands: [CommandView]
+    /// How a person changes the model and effort of a kind that offers no
+    /// pick: by typing the agent's own command in the composer.
+    public var changeByTyping: String?
+    public var effortRefusal: String?
+    public var modeRefusal: String?
+    /// Why the model cannot change from here, when it cannot.
+    public var modelRefusal: String?
+
+    public init(models: [ModelChoice], efforts: [EffortChoice], modes: [ModeChoice], cycleMode: Bool, commands: [CommandView], changeByTyping: String?, effortRefusal: String?, modeRefusal: String?, modelRefusal: String?) {
+        self.models = models
+        self.efforts = efforts
+        self.modes = modes
+        self.cycleMode = cycleMode
+        self.commands = commands
+        self.changeByTyping = changeByTyping
+        self.effortRefusal = effortRefusal
+        self.modeRefusal = modeRefusal
+        self.modelRefusal = modelRefusal
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case models
+        case efforts
+        case modes
+        case cycleMode = "cycle_mode"
+        case commands
+        case changeByTyping = "change_by_typing"
+        case effortRefusal = "effort_refusal"
+        case modeRefusal = "mode_refusal"
+        case modelRefusal = "model_refusal"
     }
 }
 

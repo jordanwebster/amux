@@ -88,6 +88,12 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
+    public func settings() -> SettingsView? {
+        call(nil) { live in
+            Bridge.read(SettingsView.self, amux_session_settings(live))
+        }
+    }
+
     public func frame() -> ChatFrame? {
         call(nil) { live in
             Bridge.read(ChatFrame.self, amux_session_frame(live))
@@ -181,6 +187,13 @@ public final class Chat: ChatSource, @unchecked Sendable {
     public func interrupt() async -> ActOutcome? {
         await value(ActOutcome.self) { live, callback, context in
             amux_session_interrupt(live, callback, context)
+        }
+    }
+
+    /// Sends a pick from the settings view in the agent's kind.
+    public func change(_ setting: SettingChange) async -> ActOutcome? {
+        await value(ActOutcome.self) { live, callback, context in
+            Bridge.json(setting).withCString { amux_session_change_setting(live, $0, callback, context) }
         }
     }
 

@@ -10,10 +10,13 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     private var current: ChatFrame
     private var card: AskCard?
     private var facts: Strip
+    private var offered: SettingsView?
     private var images: [[UInt8]: Data]
     private var pending = ChatChanges(keys: [], reloaded: false, session: false)
     /// What was sent, in order, for a test to read back.
     public private(set) var sent: [Draft] = []
+    /// The settings picks sent, in order.
+    public private(set) var changed: [SettingChange] = []
     /// What asking for older rows comes to.
     public var paged: PageOutcome = .arrived(0)
     /// What asking for the working-tree diff comes to; nil answers that the
@@ -22,12 +25,13 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
 
     public init(
         rows: [Row], frame: ChatFrame, card: AskCard? = nil, strip: Strip = ScriptedChat.strip(),
-        images: [[UInt8]: Data] = [:]
+        settings: SettingsView? = nil, images: [[UInt8]: Data] = [:]
     ) {
         ordered = rows
         current = frame
         self.card = card
         facts = strip
+        offered = settings
         self.images = images
     }
 
@@ -91,11 +95,15 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
         }
     }
 
-    public func show(frame: ChatFrame? = nil, card: AskCard?? = nil, strip: Strip? = nil) {
+    public func show(
+        frame: ChatFrame? = nil, card: AskCard?? = nil, strip: Strip? = nil,
+        settings: SettingsView? = nil
+    ) {
         lock.withLock {
             if let frame { current = frame }
             if let card { self.card = card }
             if let strip { facts = strip }
+            if let settings { offered = settings }
             pending.session = true
         }
     }
@@ -127,6 +135,7 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
 
     public func askCard() -> AskCard? { lock.withLock { card } }
     public func strip() -> Strip? { lock.withLock { facts } }
+    public func settings() -> SettingsView? { lock.withLock { offered } }
     public func frame() -> ChatFrame? { lock.withLock { current } }
 
     public func takeChanges() -> ChatChanges {
@@ -149,6 +158,11 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public func resend(_ input: [UInt8]) async -> SendOutcome? { nil }
     public func discard(_ input: [UInt8]) {}
     public func interrupt() async -> ActOutcome? { .done }
+
+    public func change(_ setting: SettingChange) async -> ActOutcome? {
+        lock.withLock { changed.append(setting) }
+        return .done
+    }
     public func resume(with draft: Draft) async -> ActOutcome? { .done }
     public func pageOlder(_ rows: UInt32) async -> PageOutcome? { lock.withLock { paged } }
 

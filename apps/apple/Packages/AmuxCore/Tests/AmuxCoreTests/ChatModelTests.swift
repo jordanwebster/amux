@@ -16,6 +16,9 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     var resumed: [Draft] = []
     var withdrawn: [[UInt8]] = []
     var interrupts = 0
+    var facts: Strip?
+    var offered: SettingsView?
+    var changed: [SettingChange] = []
     /// The working-tree diff the machine answers with, and how often it was
     /// asked for.
     var working: FrozenReview?
@@ -44,7 +47,8 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     }
 
     func askCard() -> AskCard? { card }
-    func strip() -> Strip? { nil }
+    func strip() -> Strip? { facts }
+    func settings() -> SettingsView? { offered }
     func frame() -> ChatFrame? { current }
 
     func takeChanges() -> ChatChanges {
@@ -72,6 +76,11 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
 
     func interrupt() async -> ActOutcome? {
         interrupts += 1
+        return .done
+    }
+
+    func change(_ setting: SettingChange) async -> ActOutcome? {
+        changed.append(setting)
         return .done
     }
 
@@ -266,6 +275,39 @@ final class ChatModelTests: XCTestCase {
         await settle()
         XCTAssertEqual(source.withdrawn, [[7]])
         XCTAssertEqual(model.draft, "Then run the Windows check.")
+    }
+
+    func testAPickIsSentAndTheCurrentValueMovesOnlyWhenTheAgentReportsIt() async {
+        func offer(current: String) -> SettingsView {
+            let models = ["opus", "sonnet"].map { value in
+                ModelChoice(
+                    value: value, displayName: value, description: "", efforts: [],
+                    current: value == current, reported: false, defaultEffort: nil)
+            }
+            return SettingsView(
+                models: models, efforts: [], modes: [], cycleMode: false, commands: [],
+                changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
+        }
+        func strip(model: String) -> Strip {
+            Strip(
+                failedServers: [], background: nil, context: nil, effort: nil, mode: nil,
+                model: model, signIn: nil, tasks: nil, usage: nil, workingOn: nil)
+        }
+        let source = FakeChat(rows: [], frame: frame())
+        source.offered = offer(current: "opus")
+        source.facts = strip(model: "opus")
+        let model = ChatModel(source: source)
+        model.change(.model("sonnet"))
+        await settle()
+        XCTAssertEqual(source.changed, [.model("sonnet")])
+        XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "opus", "not before the agent says so")
+        XCTAssertEqual(model.strip?.model, "opus")
+        source.offered = offer(current: "sonnet")
+        source.facts = strip(model: "sonnet")
+        source.pending.session = true
+        model.woke()
+        XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "sonnet")
+        XCTAssertEqual(model.strip?.model, "sonnet")
     }
 
     func testAnEmptyChatSaysItIsLoadingOnlyAfterAMoment() async throws {

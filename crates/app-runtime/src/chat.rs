@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use ui_runtime::{InputError, PageError, Session};
 use ui_state::{InputOutcome, InputState, Key, SessionState};
-use ui_view::{AskCard, ChatOptions, Pick, Row, Strip};
+use ui_view::{AskCard, ChatOptions, Pick, Row, SettingChange, SettingsView, Strip};
 use wire::{BlobRef, send_input_response};
 
 use crate::coalesce::{Coalescer, WakeFn};
@@ -120,6 +120,11 @@ impl Chat {
         ui_view::session_strip(&self.session.state())
     }
 
+    /// What the agent offers to change, with the current values marked.
+    pub fn settings(&self) -> SettingsView {
+        ui_view::settings(&self.session.state())
+    }
+
     pub fn frame(&self) -> ChatFrame {
         let ended = self.session.ended().map(|error| error.to_string());
         let state = self.session.state();
@@ -207,6 +212,16 @@ impl Chat {
         match input {
             Some(input) => acted(self.session.answer(input).await),
             None => ActOutcome::Rejected("this agent does not take that answer".into()),
+        }
+    }
+
+    /// Sends a pick from the settings view; the strip shows the new value
+    /// once the agent reports it.
+    pub async fn change_setting(&self, change: &SettingChange) -> ActOutcome {
+        let kind = self.session.state().kind();
+        match ui_view::setting_input(kind, change) {
+            Some(input) => acted(self.session.answer(input).await),
+            None => ActOutcome::Rejected("this agent does not take that change".into()),
         }
     }
 

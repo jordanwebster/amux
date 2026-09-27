@@ -37,5 +37,6 @@ pub use rows::{
 };
 pub use segments::{AttachmentView, Segment, segments};
 pub use settings::{
-    CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingsView, settings,
+    CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingChange, SettingsView,
+    setting_input, settings,
 };

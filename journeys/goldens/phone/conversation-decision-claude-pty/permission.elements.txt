@@ -20,7 +20,6 @@ home.row.<decision-sdk>.detail.volatile | <volatile>
 chat |  | decision-pty | 0,62,402,778
 chat.row.boundary | Started |  | 18,132,366,16
 chat.row.prompt | Check the deployment once. |  | 18,160,366,40
-chat.row.command | Wants to run, deploy --check |  | 18,211,366,20
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
 chat.title | decision-pty | decision-pty | 51,72,156,38
@@ -57,7 +56,6 @@ you.help.caption |  |  | 18,599,354,31
  | More |  | 344,69,44,44
  | Started |  | 18,132,366,16
  | Check the deployment once. |  | 145,160,239,40
- | Wants to run, deploy --check |  | 18,211,366,20
  | Wants to run a command |  | 46,604,189,20
  | More |  | 345,599,41,30
  | deploy --check |  | 28,636,118,18

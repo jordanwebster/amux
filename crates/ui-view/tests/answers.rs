@@ -2,7 +2,8 @@
 //! accepts. Each kind's fixtures are driven through their interpreter and
 //! committed into a session; wherever a card is open, every choice (and a
 //! question card's picks) goes through `answer_input` to a copy of the
-//! interpreter at that point, which must accept it and close the ask.
+//! interpreter at that point, which must accept it and close the ask. Every
+//! pick the settings view offers is likewise an input the interpreter takes.
 
 mod support;
 
@@ -15,7 +16,10 @@ use interpret::codex::Codex;
 use interpret::{Checkpoint, Effect, Event, Interpreter, decode_checkpoint, encode_checkpoint};
 use support::Committer;
 use ui_state::{InputOutcome, Msg, SessionState};
-use ui_view::{Answer, AskBody, AskCard, CardState, Pick, answer_input, ask_card, question_answer};
+use ui_view::{
+    Answer, AskBody, AskCard, CardState, Pick, SettingChange, answer_input, ask_card,
+    question_answer, setting_input, settings,
+};
 use wire::{Kind, SessionEvent, send_input_response, session_event};
 
 fn fixtures(kind: &str) -> PathBuf {
@@ -261,5 +265,96 @@ fn codex_cards_answer_the_interpreter() {
             "access", "command", "edit", "form", "link", "question", "tool"
         ]),
         "card bodies answered"
+    );
+}
+
+/// Every pick the settings view offers once a fixture has played, sent as
+/// `setting_input` makes it, to a copy of the interpreter: each must be
+/// accepted. A setting the view refuses has no input at all.
+fn pick_all<I>(kind: Kind, dir: &str) -> BTreeSet<&'static str>
+where
+    I: Interpreter,
+    I::State: Clone,
+{
+    let mut names: Vec<PathBuf> = std::fs::read_dir(fixtures(dir))
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "json").then_some(path)
+        })
+        .collect();
+    names.sort();
+    let mut failures = Vec::new();
+    let mut picked = BTreeSet::new();
+    for path in &names {
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let script = interpret::fixture_script::<I>(path).unwrap();
+        let mut driven = Driven::start::<I>(kind, &script.spec, &script.producer);
+        for (_, event) in script.events {
+            driven.step::<I>(event);
+        }
+        let view = settings(&driven.session);
+        let mut picks: Vec<(&'static str, SettingChange, bool)> = Vec::new();
+        for model in view.models.iter().filter(|model| !model.current) {
+            let change = SettingChange::Model(model.value.clone());
+            picks.push(("model", change, view.model_refusal.is_none()));
+        }
+        for effort in view.efforts.iter().filter(|effort| !effort.current) {
+            let change = SettingChange::Effort(effort.value.clone());
+            picks.push(("effort", change, view.effort_refusal.is_none()));
+        }
+        for mode in view.modes.iter().filter(|mode| !mode.current) {
+            let change = SettingChange::Mode(mode.value.clone());
+            picks.push(("mode", change, view.mode_refusal.is_none()));
+        }
+        if view.cycle_mode {
+            picks.push(("cycle", SettingChange::CycleMode, true));
+        }
+        for (setting, change, offered) in picks {
+            let at = format!("{dir}/{name}: {change:?}");
+            let input = setting_input(kind, &change);
+            let Some(mut input) = input.filter(|_| offered) else {
+                if offered {
+                    failures.push(format!("{at}: offered but no input"));
+                } else if setting_input(kind, &change).is_some() {
+                    failures.push(format!("{at}: refused but has an input"));
+                }
+                continue;
+            };
+            input.input_id = format!("pick {change:?}").into_bytes();
+            let mut fork = driven.clone();
+            let replies = fork.step::<I>(Some(Event::Input(input.clone())));
+            let verdict = replies
+                .iter()
+                .find(|(id, _)| *id == input.input_id)
+                .and_then(|(_, verdict)| verdict.of.clone());
+            match verdict {
+                Some(send_input_response::Of::Accepted(_)) => {
+                    picked.insert(setting);
+                }
+                other => failures.push(format!("{at}: not accepted: {other:?}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    picked
+}
+
+#[test]
+fn settings_picks_reach_the_interpreter() {
+    assert_eq!(
+        pick_all::<ClaudePty>(Kind::ClaudePty, "claude_pty"),
+        BTreeSet::from(["cycle"]),
+        "terminal Claude's picks"
+    );
+    assert_eq!(
+        pick_all::<ClaudeSdk>(Kind::ClaudeSdk, "claude_sdk"),
+        BTreeSet::from(["mode", "model"]),
+        "headless Claude's picks"
+    );
+    assert_eq!(
+        pick_all::<Codex>(Kind::Codex, "codex"),
+        BTreeSet::from(["effort", "mode", "model"]),
+        "Codex's picks"
     );
 }

@@ -1,3 +1,23 @@
+2026-09-27 — **The phone changes an agent's model, effort and permission mode.**
+The composer's model chip is now a button: it reads the model on one line
+and the effort and mode under it (so a long model id no longer hides the
+mode, and the mode that stops asking reads in red), and a tap opens a
+settings card built from the shared settings view. The card lists the models
+the provider offered, the current model's efforts as tap stops, and Claude's
+five modes or Codex's three presets, the current values marked; a pick sends
+the kind's own input and the mark and the chip move only when the agent
+reports the new value. Where the view carries a refusal (headless Claude's
+effort, which it takes only at launch) the card says so instead. Terminal
+Claude's card shows the reported model and effort, the sentence to type
+`/model` or `/effort` in the composer, and its mode with a Cycle action that
+sends the mode-cycle key. The plus menu gains a Permissions row naming the
+current mode. The bridge gains `amux_session_settings` and
+`amux_session_change_setting`; ui-view builds each pick's input and a test
+sends every offered pick from every interpreter fixture to its interpreter,
+which accepts each one. The phone journeys' goldens are re-recorded for the
+new chip, and the terminal Claude permission golden now matches its call row
+landing only at the decision.
+
 2026-09-27 — **The app runtime's paging test waits for the first turn to end.**
 It took the chat's full key list as soon as "turn one" showed, so under load
 the turn's end row could land after the list was taken and then be paged in,

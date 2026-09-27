@@ -33,7 +33,7 @@ chat.more | More |  | 344,69,44,44
 chat.field | Message decision-sdk |  | 26,755,350,20
 chat.attach | Attach |  | 26,783,37,36
 chat.dictate | Dictate | idle | 55,781,33,40
-chat.model | claude-fake-1 · default |  | 83,792,180,17
+chat.model | claude-fake-1 · Default |  | 83,784,114,34
 chat.send | Send |  | 342,784,34,34 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
@@ -66,7 +66,7 @@ you.help.caption |  |  | 18,599,354,31
  | Worked <t> · $0.00 |  | 45,295,130,16
  | Attach |  | 26,783,37,36
  | Dictate |  | 55,781,33,40
- | claude-fake-1 · default |  | 83,792,180,17
+ | claude-fake-1, Default |  | 83,784,114,34
  | Send |  | 342,784,34,34 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16

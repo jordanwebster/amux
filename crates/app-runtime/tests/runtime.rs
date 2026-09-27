@@ -14,7 +14,7 @@ use model::{AgentKey, InputState};
 use provider_fakes::script::{Ask, Question, Step, Tool, ToolClass};
 use testnet::{AgentDecl, FakeKind, Net, Topology};
 use tokio::sync::mpsc;
-use ui_view::{AskBody, ChoiceOutcome, Pick, RowKind};
+use ui_view::{AskBody, ChoiceOutcome, ModeValue, Pick, RowKind, SettingChange};
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
@@ -380,5 +380,51 @@ async fn the_fleet_wakes_the_host_when_an_agent_moves() {
     })
     .await
     .expect("the card turns to needs-you");
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_settings_pick_reaches_the_agent_and_the_strip_shows_it() {
+    let net = Net::start(topology()).await.unwrap();
+    let (runtime, mut host) = open(&net).await;
+    let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
+    until(&mut host, &chat, "the first turn", |chat| {
+        chat.frame().caught_up && says(chat, "turn one")
+    })
+    .await;
+    let view = chat.settings();
+    assert!(
+        view.models
+            .iter()
+            .any(|model| model.current && !model.reported),
+        "the offered model is marked current: {view:?}"
+    );
+    assert!(
+        view.effort_refusal.is_some(),
+        "headless Claude refuses effort"
+    );
+    let plan = view
+        .modes
+        .iter()
+        .find(|mode| mode.value == ModeValue::Claude("plan".into()))
+        .expect("plan is offered");
+    assert!(!plan.current);
+    let pick = SettingChange::Mode(plan.value.clone());
+    assert_eq!(chat.change_setting(&pick).await, ActOutcome::Done);
+    until(&mut host, &chat, "the plan mode", |chat| {
+        chat.strip().mode.as_deref() == Some("plan")
+    })
+    .await;
+    assert!(
+        chat.settings()
+            .modes
+            .iter()
+            .any(|mode| mode.current && SettingChange::Mode(mode.value.clone()) == pick)
+    );
+    assert!(matches!(
+        chat.change_setting(&SettingChange::Effort("high".into()))
+            .await,
+        ActOutcome::Rejected(_)
+    ));
     net.shutdown().await.unwrap();
 }

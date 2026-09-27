@@ -65,6 +65,8 @@ public enum ChatAction: Equatable, Sendable {
 public enum ChatOverlay: String, Equatable, Sendable {
     case rename
     case delete
+    /// The model, effort and permission mode.
+    case settings
 }
 
 /// One agent's chat.
@@ -410,6 +412,14 @@ public struct ChatStanding: View {
                     showing = nil
                     actions(.delete)
                 }
+            case .settings?:
+                if let settings = model.settings {
+                    SettingsCard(
+                        view: settings, kind: model.frame?.kind, change: model.change,
+                        close: { showing = nil })
+                } else {
+                    composerStack
+                }
             case nil:
                 if let ask = model.ask, ask.state != .dismissed {
                     AskCardView(card: ask, act: answer)
@@ -440,7 +450,10 @@ public struct ChatStanding: View {
                 activitySubject: activitySubject, attach: { choice in
                     focused = false
                     actions(.attach(choice))
-                }, dictate: { actions($0) }, focused: $focused)
+                }, dictate: { actions($0) }, openSettings: {
+                    focused = false
+                    showing = .settings
+                }, focused: $focused)
         }
     }
 

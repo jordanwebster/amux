@@ -306,13 +306,16 @@ enum ComponentCatalog {
     private static func composer(
         _ id: String, height: CGFloat = 260, rows: [Row] = [], frame: ChatFrame,
         strip: Strip = ScriptedChat.strip(model: "opus 4.6", effort: "high"), draft: String = "",
+        settings: SettingsView? = nil, showing: ChatOverlay? = nil,
         subject: ChatSubject = CatalogFixtures.subject, setUp: @escaping @MainActor (ChatModel) -> Void = { _ in }
     ) -> ComponentExample {
         ComponentExample(
             id: "composer.\(id)", family: .composer, canvas: CGSize(width: 390, height: height)
         ) {
-            CatalogChat(source: ScriptedChat(rows: rows, frame: frame, strip: strip, images: CatalogFixtures.images)) { model in
-                ChatStanding(model: model, subject: subject)
+            CatalogChat(source: ScriptedChat(
+                rows: rows, frame: frame, strip: strip, settings: settings, images: CatalogFixtures.images
+            )) { model in
+                ChatStanding(model: model, subject: subject, showing: .constant(showing))
                     .onAppear {
                         model.draft = draft
                         setUp(model)
@@ -402,6 +405,20 @@ enum ComponentCatalog {
                 failedServers: [ServerView(name: "github", error: "exited", needsAuth: false)])),
             composer("sign-in", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 signIn: SignInView(state: .expired, account: "ada@example.com", message: "Run claude login on Studio."))),
+            // The settings card once per provider kind, from the settings
+            // view each kind's interpreter state gives.
+            composer("settings-claude-sdk", height: 640, frame: ScriptedChat.frame(kind: .claudeSdk),
+                     strip: ScriptedChat.strip(model: "claude-opus-5-5", effort: "low", mode: "plan"),
+                     settings: F.claudeSdkSettings(), showing: .settings),
+            composer("settings-codex", height: 640, frame: ScriptedChat.frame(kind: .codex),
+                     strip: ScriptedChat.strip(model: "gpt-6-astra", effort: "medium", mode: "on-request"),
+                     settings: F.settingsCodex, showing: .settings),
+            composer("settings-claude-pty", height: 420, frame: ScriptedChat.frame(kind: .claudePty),
+                     strip: ScriptedChat.strip(model: "claude-sonnet-5", effort: "high", mode: "acceptEdits"),
+                     settings: F.settingsClaudePty, showing: .settings),
+            composer("chip-stops-asking", height: 160, frame: ScriptedChat.frame(kind: .claudeSdk),
+                     strip: ScriptedChat.strip(model: "claude-opus-5-5", effort: "low", mode: "bypassPermissions"),
+                     settings: F.claudeSdkSettings(mode: "bypassPermissions")),
             composer("usage-blocked", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 usage: UsageView(blocked: true, windows: [UsageWindowView(name: "weekly", usedPercent: 100, resetsAtMs: nil)], credits: "Resets Monday"))),
         ]
@@ -467,6 +484,12 @@ enum ComponentCatalog {
             }),
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
+            chat("settings", chat: {
+                ScriptedChat(
+                    rows: F.conversation, frame: ScriptedChat.frame(kind: .claudePty),
+                    strip: ScriptedChat.strip(model: "claude-sonnet-5", effort: "high", mode: "acceptEdits"),
+                    settings: F.settingsClaudePty)
+            }, showing: .settings),
         ]
     }()
 }
@@ -540,6 +563,58 @@ private struct CatalogChat<Content: View>: View {
 /// The catalogue's invented chat.
 @MainActor
 enum CatalogFixtures {
+    // MARK: - Settings
+
+    private static let claudeModes = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+
+    static func claudeSdkSettings(mode: String = "plan") -> SettingsView {
+        let efforts = ["low", "medium", "high", "xhigh", "max"]
+        return SettingsView(
+            models: [
+                ModelChoice(value: "default", displayName: "Default (recommended)", description: "Opus 5.5 · Most capable for complex work", efforts: efforts, current: true, reported: false, defaultEffort: "high"),
+                ModelChoice(value: "sonnet", displayName: "Sonnet", description: "Sonnet 5 · Best for everyday tasks", efforts: efforts, current: false, reported: false, defaultEffort: "high"),
+                ModelChoice(value: "haiku", displayName: "Haiku", description: "Haiku 4.5 · Fastest for quick answers", efforts: [], current: false, reported: false, defaultEffort: nil),
+            ],
+            efforts: [EffortChoice(value: "low", current: true, default: false, reported: false)],
+            modes: claudeModes.map {
+                ModeChoice(value: .claude($0), current: $0 == mode, reported: false, stopsAsking: $0 == "bypassPermissions")
+            },
+            cycleMode: false, commands: [], changeByTyping: nil,
+            effortRefusal: "Claude takes its effort when the agent starts and keeps it until it restarts.",
+            modeRefusal: nil, modelRefusal: nil)
+    }
+
+    static let settingsCodex: SettingsView = {
+        let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
+        let presets: [(String, String, String)] = [
+            ("read-only", "on-request", "read-only"),
+            ("auto", "on-request", "workspace-write"),
+            ("full-access", "never", "danger-full-access"),
+        ]
+        return SettingsView(
+            models: [
+                ModelChoice(value: "gpt-6-astra", displayName: "GPT-6-Astra", description: "Frontier agentic coding model.", efforts: efforts, current: true, reported: false, defaultEffort: "medium"),
+                ModelChoice(value: "gpt-6-sol", displayName: "GPT-6-Sol", description: "Smaller, faster and cheaper.", efforts: efforts, current: false, reported: false, defaultEffort: "medium"),
+            ],
+            efforts: efforts.map { EffortChoice(value: $0, current: $0 == "medium", default: $0 == "medium", reported: false) },
+            modes: presets.map { preset, approval, sandbox in
+                ModeChoice(
+                    value: .codex(approvalPolicy: approval, sandbox: sandbox, preset: preset),
+                    current: preset == "auto", reported: false, stopsAsking: approval == "never")
+            },
+            cycleMode: false, commands: [], changeByTyping: nil, effortRefusal: nil, modeRefusal: nil,
+            modelRefusal: nil)
+    }()
+
+    static let settingsClaudePty = SettingsView(
+        models: [ModelChoice(value: "claude-sonnet-5", displayName: "", description: "", efforts: [], current: true, reported: true, defaultEffort: nil)],
+        efforts: [EffortChoice(value: "high", current: true, default: false, reported: true)],
+        modes: [ModeChoice(value: .claude("acceptEdits"), current: true, reported: false, stopsAsking: false)],
+        cycleMode: true, commands: [],
+        changeByTyping: "To change the model or effort, type /model <name> or /effort <level> in the composer.",
+        effortRefusal: nil, modeRefusal: "Terminal Claude changes mode only by cycling through its modes.",
+        modelRefusal: nil)
+
     static let photoData: Data = {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80))
         return renderer.jpegData(withCompressionQuality: 0.9) { context in
