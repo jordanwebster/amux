@@ -9,6 +9,7 @@
 pub mod ask;
 pub mod composer;
 pub mod layout;
+pub mod review;
 pub mod rows;
 
 use std::collections::HashSet;
@@ -30,6 +31,7 @@ use self::composer::{
     COMPOSER_LINES, TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
 };
 use self::layout::{Anchor, Frame, Laid};
+use self::review::{ReviewAction, ReviewPage};
 use crate::clipboard::ClipboardContent;
 use crate::editor::{Edit, Editor};
 use crate::text::{self, push, push_right};
@@ -106,6 +108,9 @@ pub struct ChatView {
     /// The selected tray row while the tray has the keys.
     pub tray: Option<usize>,
     pub reader: Option<Reader>,
+    /// The review page, kept behind its draft token while the chat shows.
+    pub review: Option<ReviewPage>,
+    pub review_open: bool,
     /// Whether the agent's own interface can be attached from here.
     pub attach: bool,
     epoch: u64,
@@ -130,6 +135,8 @@ impl ChatView {
             ask: AskUi::default(),
             tray: None,
             reader: None,
+            review: None,
+            review_open: false,
             attach,
             epoch: 0,
             opened_at_ms: now_ms,
@@ -167,6 +174,9 @@ impl ChatView {
 
     /// Whether a text field has the keys and holds something, for Ctrl+C.
     pub fn field_text(&self, state: &SessionState) -> bool {
+        if self.review_open {
+            return self.review.as_ref().is_some_and(ReviewPage::editing);
+        }
         if self.ask.editing() {
             return true;
         }
@@ -175,6 +185,9 @@ impl ChatView {
 
     /// Ctrl+C on a field with text: clears it as a kill.
     pub fn kill_field(&mut self) -> bool {
+        if self.review_open {
+            return self.review.as_mut().is_some_and(ReviewPage::kill_field);
+        }
         self.ask.kill_field() || self.editor.kill_all()
     }
 
@@ -186,6 +199,16 @@ impl ChatView {
     /// One key. Ctrl+C and the leader are the app's and never reach here.
     pub fn key(&mut self, state: &SessionState, key: KeyEvent, theme: Theme) -> Vec<ChatEffect> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.review_open
+            && let Some(page) = &mut self.review
+        {
+            match page.key(key) {
+                ReviewAction::None => {}
+                ReviewAction::Close => self.review_open = false,
+                ReviewAction::Comments => self.sync_review_token(),
+            }
+            return vec![];
+        }
         if let Some(reader) = &mut self.reader {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => self.reader = None,
@@ -420,6 +443,16 @@ impl ChatView {
     }
 
     pub fn mouse(&mut self, state: &SessionState, event: MouseEvent, theme: Theme) {
+        if self.review_open
+            && let Some(page) = &mut self.review
+        {
+            match event.kind {
+                MouseEventKind::ScrollUp => page.scroll_by(-WHEEL_LINES),
+                MouseEventKind::ScrollDown => page.scroll_by(WHEEL_LINES),
+                _ => {}
+            }
+            return;
+        }
         match event.kind {
             MouseEventKind::ScrollUp => self.scroll(state, -WHEEL_LINES, theme),
             MouseEventKind::ScrollDown => self.scroll(state, WHEEL_LINES, theme),
@@ -563,6 +596,39 @@ impl ChatView {
         self.editor.insert_attachment(Attachment { of: Some(of) });
     }
 
+    /// `<leader> r` with a review already in the draft: back to its page.
+    /// False when there is none, and a fresh diff is wanted.
+    pub fn resume_review(&mut self) -> bool {
+        let held = self
+            .review
+            .as_ref()
+            .is_some_and(|page| self.editor.find_attachment(|a| page.owns(a)).is_some());
+        self.review_open = held;
+        held
+    }
+
+    /// A frozen diff and its patch: the review page opens over the chat.
+    pub fn open_review(&mut self, diff: wire::Diff, patch: String) {
+        self.review = Some(ReviewPage::new(diff, patch));
+        self.review_open = true;
+    }
+
+    /// Keeps the draft's Review token in step with the page: the first
+    /// comment inserts it at the cursor, later ones update it where it
+    /// sits, and the last deletion takes it out.
+    fn sync_review_token(&mut self) {
+        let Some(page) = &self.review else {
+            return;
+        };
+        let held = self.editor.find_attachment(|a| page.owns(a));
+        match (held, page.comments().is_empty()) {
+            (Some(index), false) => self.editor.replace_attachment(index, page.attachment()),
+            (Some(index), true) => self.editor.remove_attachment(index),
+            (None, false) => self.editor.insert_attachment(page.attachment()),
+            (None, true) => {}
+        }
+    }
+
     /// A page was asked for; another waits until the window grows.
     pub fn page_sent(&mut self, state: &SessionState) {
         self.page_asked = state.oldest_order();
@@ -590,6 +656,12 @@ impl ChatView {
             self.page_asked = None;
         }
         let width = usize::from(area.width);
+        if self.review_open
+            && let Some(page) = &mut self.review
+        {
+            page.draw(paint, area, footer, theme);
+            return None;
+        }
         if let Some(reader) = &mut self.reader {
             draw_reader(paint, area, reader, theme);
             return None;

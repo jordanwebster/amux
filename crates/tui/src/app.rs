@@ -13,11 +13,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
 use ui_runtime::{Fleet, InputError, Session, inputs};
-use ui_state::{AgentKey, InputOutcome, PhaseView};
+use ui_state::{AgentKey, Composer, InputOutcome, PhaseView};
 use ui_view::family_header;
 use wire::{
-    Agent, Attachment, CreateAgentRequest, DeleteAgentRequest, RenameAgentRequest,
-    SendInputResponse, StopAgentRequest, StopMode, send_input_response,
+    Agent, Attachment, CreateAgentRequest, DeleteAgentRequest, Diff, DiffBase, DiffRequest,
+    GetBlobRequest, RenameAgentRequest, SendInputResponse, StopAgentRequest, StopMode, diff_base,
+    send_input_response,
 };
 
 use crate::chat::layout::PAGE;
@@ -79,6 +80,12 @@ pub enum AppEvent {
         blob: wire::BlobRef,
     },
     Created(Agent),
+    /// A working-tree diff frozen for this agent's review page.
+    Review {
+        agent_id: Vec<u8>,
+        diff: Diff,
+        patch: String,
+    },
 }
 
 /// What the loop does after a key.
@@ -317,6 +324,19 @@ impl App {
                     chat.view.attach_blob(blob);
                 }
             }
+            AppEvent::Review {
+                agent_id,
+                diff,
+                patch,
+            } => {
+                if let Some(chat) = self
+                    .chat
+                    .as_mut()
+                    .filter(|chat| chat.view.agent_id == agent_id)
+                {
+                    chat.view.open_review(diff, patch);
+                }
+            }
             AppEvent::Created(agent) => {
                 let key = ui_state::agent_key(&agent);
                 self.fleet_view.select(key.clone());
@@ -441,6 +461,39 @@ impl App {
             KeyCode::Char('n') => {
                 drop(state);
                 self.next_in_family();
+            }
+            KeyCode::Char('r') => {
+                if chat.view.resume_review() {
+                    return Flow::Continue;
+                }
+                let writable = matches!(state.composer(), Composer::Send | Composer::Resume);
+                let agent_id = chat.view.agent_id.clone();
+                drop(state);
+                if !writable {
+                    self.notice("review waits until the chat is current", Tone::Warn);
+                    return Flow::Continue;
+                }
+                let client = self.client.clone();
+                self.notice("reading the working tree…", Tone::Info);
+                self.spawn(async move {
+                    Some(
+                        match working_tree_review(client.as_ref(), &agent_id).await {
+                            Ok((_, patch)) if patch.trim().is_empty() => AppEvent::Notice(
+                                "no changes in the working tree".into(),
+                                Tone::Info,
+                            ),
+                            Ok((diff, patch)) => AppEvent::Review {
+                                agent_id,
+                                diff,
+                                patch,
+                            },
+                            Err(error) => AppEvent::Notice(
+                                format!("could not read the working tree: {error}"),
+                                Tone::Warn,
+                            ),
+                        },
+                    )
+                });
             }
             KeyCode::Char('t') if self.config.attach => {
                 let agent = chat.agent.clone();
@@ -757,7 +810,7 @@ impl App {
         if self.leader_pending {
             let mut line = Line::from(Span::raw("  "));
             let words = if self.chat.is_some() {
-                "s fleet · d leave to the shell · k/j focus · o open · y copy · n next in family"
+                "s fleet · d leave to the shell · k/j focus · o open · y copy · r review · n next in family"
             } else {
                 "leader: nothing here"
             };
@@ -807,6 +860,35 @@ impl App {
             self.chat_effect(ChatEffect::Page(n));
         }
     }
+}
+
+/// Asks the agent's host for its working-tree diff and fetches the patch
+/// the diff names.
+pub(crate) async fn working_tree_review(
+    client: &dyn Client,
+    agent_id: &[u8],
+) -> Result<(Diff, String), client::RpcError> {
+    let diff = client
+        .diff(DiffRequest {
+            agent_id: agent_id.to_vec(),
+            base: Some(DiffBase {
+                base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
+            }),
+        })
+        .await?;
+    let patch = match &diff.patch {
+        Some(blob) => {
+            let fetched = client
+                .get_blob(GetBlobRequest {
+                    agent_id: agent_id.to_vec(),
+                    hash: blob.hash.clone(),
+                })
+                .await?;
+            String::from_utf8_lossy(&fetched.bytes).into_owned()
+        }
+        None => String::new(),
+    };
+    Ok((diff, patch))
 }
 
 fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
@@ -859,6 +941,10 @@ fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {
         ),
         ("o", format!("{leader} o  open the focused row or run")),
         ("y", format!("{leader} y  copy the focused row")),
+        (
+            "r",
+            format!("{leader} r  review the working tree; comments go in the draft"),
+        ),
         ("n", format!("{leader} n  next agent in this family")),
         ("", String::new()),
         ("ctrl+c", "clear the field; twice on nothing quits".into()),

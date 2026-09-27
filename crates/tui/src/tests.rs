@@ -1026,3 +1026,298 @@ fn an_answered_question_row_reads_the_question_and_what_was_picked() {
         }
     }
 }
+
+// --- the review page -------------------------------------------------------
+
+const PATCH: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,3 +10,4 @@ fn main() {
+ let a = 1;
+-let b = 2;
++let b = 3;
++let c = 4;
+diff --git a/notes.md b/notes.md
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/notes.md
+@@ -0,0 +1 @@
++hello
+";
+
+fn working_tree_diff() -> wire::Diff {
+    wire::Diff {
+        patch: Some(wire::BlobRef {
+            hash: vec![9; 32],
+            name: "working-tree.diff".into(),
+            mime: "text/x-diff".into(),
+            size: PATCH.len() as u64,
+        }),
+        base: Some(wire::DiffBase {
+            base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+        }),
+        head: "3f2a1c9e0000".into(),
+        merge_base: None,
+    }
+}
+
+fn review_screen(view: &mut ChatView, state: &SessionState) -> (String, ratatui::buffer::Buffer) {
+    let (buffer, _) = draw(view, state, 0, W, H, theme());
+    (text(&buffer), buffer)
+}
+
+fn review_token(view: &ChatView) -> Option<wire::Review> {
+    view.editor.attachments().iter().find_map(|a| match &a.of {
+        Some(wire::attachment::Of::Review(review)) => Some(review.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_review_page_lists_files_and_styles_hunks() {
+    let state = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.open_review(working_tree_diff(), PATCH.into());
+    let (screen, buffer) = review_screen(&mut view, &state);
+    assert!(
+        screen.contains("Review · working tree at 3f2a1c9"),
+        "{screen}"
+    );
+    assert!(screen.contains("2 files · +3 −1"), "{screen}");
+    assert!(screen.contains("M  src/lib.rs  +2 −1"), "{screen}");
+    assert!(screen.contains("A  notes.md    +1 −0"), "{screen}");
+    assert!(screen.contains("@@ -10,3 +10,4 @@ fn main() {"), "{screen}");
+    // The page opens on the first changed line.
+    assert!(screen.contains("▌  11     - let b = 2;"), "{screen}");
+    assert!(screen.contains("       11 + let b = 3;"), "{screen}");
+
+    // Added and removed lines carry the diff tints across the row.
+    let row_of = |needle: &str| {
+        screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle}: {screen}")) as u16
+    };
+    let added = row_of("+ let b = 3;");
+    let removed = row_of("- let b = 2;");
+    let context = row_of("let a = 1;");
+    assert_eq!(buffer[(W - 1, added)].bg, theme().diff_added().bg.unwrap());
+    assert_eq!(
+        buffer[(W - 1, removed)].bg,
+        theme().diff_removed().bg.unwrap()
+    );
+    assert_ne!(
+        buffer[(W - 1, context)].bg,
+        theme().diff_added().bg.unwrap()
+    );
+}
+
+#[test]
+fn the_first_saved_comment_puts_a_review_token_in_the_draft_at_the_cursor() {
+    let state = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    typed(&mut view, &state, "look at this ");
+    view.open_review(working_tree_diff(), PATCH.into());
+
+    // Down to the first added line and comment on it.
+    view.key(&state, key(KeyCode::Char('j')), theme());
+    view.key(&state, key(KeyCode::Char('c')), theme());
+    typed(&mut view, &state, "why three?");
+    assert!(review_token(&view).is_none(), "nothing until it is saved");
+    view.key(&state, key(KeyCode::Enter), theme());
+    let (screen, _) = review_screen(&mut view, &state);
+    assert!(screen.contains("│ why three?"), "{screen}");
+    assert!(screen.contains("src/lib.rs  +2 −1 · 1 comment"), "{screen}");
+
+    let review = review_token(&view).expect("the token is in the draft");
+    assert_eq!(review.diff, Some(working_tree_diff()));
+    assert_eq!(
+        review.comments,
+        vec![wire::ReviewComment {
+            path: "src/lib.rs".into(),
+            line: 11,
+            old_line: 0,
+            text: "why three?".into(),
+        }]
+    );
+    assert_eq!(
+        view.editor.text(),
+        format!("look at this {}", attachments::PLACEHOLDER)
+    );
+
+    // A comment on the removed line lands on its old-side number, and the
+    // same token updates where it sits.
+    view.key(&state, key(KeyCode::Char('k')), theme());
+    view.key(&state, key(KeyCode::Char('c')), theme());
+    typed(&mut view, &state, "was two");
+    view.key(&state, key(KeyCode::Enter), theme());
+    assert_eq!(view.editor.attachments().len(), 1);
+    let review = review_token(&view).unwrap();
+    assert_eq!(review.comments.len(), 2);
+    assert_eq!(
+        (review.comments[1].line, review.comments[1].old_line),
+        (0, 11)
+    );
+
+    // q returns to the chat with the draft kept and the token drawn.
+    view.key(&state, key(KeyCode::Char('q')), theme());
+    assert!(!view.review_open);
+    let (screen, _) = review_screen(&mut view, &state);
+    assert!(
+        screen.contains("look at this [review · 2 comments]"),
+        "{screen}"
+    );
+    // <leader> r goes back to the same page while its token is held.
+    assert!(view.resume_review());
+    let (screen, _) = review_screen(&mut view, &state);
+    assert!(screen.contains("│ was two"), "{screen}");
+}
+
+#[test]
+fn deleting_comments_and_the_token_drops_the_draft_review() {
+    let state = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.open_review(working_tree_diff(), PATCH.into());
+    view.key(&state, key(KeyCode::Char('c')), theme());
+    typed(&mut view, &state, "one");
+    view.key(&state, key(KeyCode::Enter), theme());
+    // Enter on a commented line edits its comment.
+    view.key(&state, key(KeyCode::Enter), theme());
+    typed(&mut view, &state, " more");
+    view.key(&state, key(KeyCode::Enter), theme());
+    assert_eq!(review_token(&view).unwrap().comments[0].text, "one more");
+    // d deletes it, and with no comments left the token goes too.
+    view.key(&state, key(KeyCode::Char('d')), theme());
+    assert!(review_token(&view).is_none());
+    assert!(view.editor.is_empty());
+    view.key(&state, key(KeyCode::Esc), theme());
+    assert!(!view.resume_review(), "no token: a fresh diff is wanted");
+
+    // A token backspaced out of the draft drops the review the same way.
+    view.open_review(working_tree_diff(), PATCH.into());
+    view.key(&state, key(KeyCode::Char('c')), theme());
+    typed(&mut view, &state, "two");
+    view.key(&state, key(KeyCode::Enter), theme());
+    view.key(&state, key(KeyCode::Char('q')), theme());
+    view.key(&state, key(KeyCode::Backspace), theme());
+    assert!(view.editor.is_empty());
+    assert!(!view.resume_review());
+}
+
+/// Answers Diff with a patch reference and GetBlob with its bytes, and
+/// records what it was asked.
+#[derive(Default)]
+struct DiffHost {
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl client::Client for DiffHost {
+    async fn diff(&self, request: wire::DiffRequest) -> Result<wire::Diff, client::RpcError> {
+        assert!(matches!(
+            request.base.and_then(|base| base.base),
+            Some(wire::diff_base::Base::WorkingTree(_))
+        ));
+        self.asked.lock().unwrap().push("diff".into());
+        Ok(working_tree_diff())
+    }
+    async fn get_blob(
+        &self,
+        request: wire::GetBlobRequest,
+    ) -> Result<wire::GetBlobResponse, client::RpcError> {
+        assert_eq!(request.hash, vec![9; 32]);
+        self.asked.lock().unwrap().push("get_blob".into());
+        Ok(wire::GetBlobResponse {
+            blob: working_tree_diff().patch,
+            bytes: PATCH.as_bytes().to_vec(),
+        })
+    }
+    async fn subscribe_inventory(
+        &self,
+    ) -> Result<client::EventStream<wire::InventoryEvent>, client::RpcError> {
+        unimplemented!()
+    }
+    async fn resolve_agent(
+        &self,
+        _: wire::ResolveAgentRequest,
+    ) -> Result<wire::Agent, client::RpcError> {
+        unimplemented!()
+    }
+    async fn subscribe(
+        &self,
+        _: wire::SubscribeRequest,
+    ) -> Result<client::EventStream<SessionEvent>, client::RpcError> {
+        unimplemented!()
+    }
+    async fn fetch(&self, _: wire::FetchRequest) -> Result<wire::FetchResponse, client::RpcError> {
+        unimplemented!()
+    }
+    async fn get(&self, _: wire::GetRequest) -> Result<Item, client::RpcError> {
+        unimplemented!()
+    }
+    async fn send_input(
+        &self,
+        _: wire::SendInputRequest,
+    ) -> Result<wire::SendInputResponse, client::RpcError> {
+        unimplemented!()
+    }
+    async fn create_agent(
+        &self,
+        _: wire::CreateAgentRequest,
+    ) -> Result<wire::Agent, client::RpcError> {
+        unimplemented!()
+    }
+    async fn rename_agent(
+        &self,
+        _: wire::RenameAgentRequest,
+    ) -> Result<wire::Agent, client::RpcError> {
+        unimplemented!()
+    }
+    async fn stop_agent(&self, _: wire::StopAgentRequest) -> Result<(), client::RpcError> {
+        unimplemented!()
+    }
+    async fn resume_agent(
+        &self,
+        _: wire::ResumeAgentRequest,
+    ) -> Result<wire::Agent, client::RpcError> {
+        unimplemented!()
+    }
+    async fn delete_agent(
+        &self,
+        _: wire::DeleteAgentRequest,
+    ) -> Result<wire::DeleteAgentResponse, client::RpcError> {
+        unimplemented!()
+    }
+    async fn send_message(
+        &self,
+        _: wire::Envelope,
+    ) -> Result<wire::SendMessageResponse, client::RpcError> {
+        unimplemented!()
+    }
+    async fn put_blob(&self, _: wire::PutBlobRequest) -> Result<wire::BlobRef, client::RpcError> {
+        unimplemented!()
+    }
+    async fn list_repositories(
+        &self,
+        _: wire::ListRepositoriesRequest,
+    ) -> Result<wire::ListRepositoriesResponse, client::RpcError> {
+        unimplemented!()
+    }
+    async fn dump(&self, _: wire::DumpRequest) -> Result<wire::DumpResponse, client::RpcError> {
+        unimplemented!()
+    }
+}
+
+#[tokio::test]
+async fn a_review_asks_for_the_working_tree_diff_then_its_patch() {
+    let host = DiffHost::default();
+    let (diff, patch) = crate::app::working_tree_review(&host, b"agent")
+        .await
+        .unwrap();
+    assert_eq!(*host.asked.lock().unwrap(), ["diff", "get_blob"]);
+    assert_eq!(diff, working_tree_diff());
+    assert_eq!(patch, PATCH);
+}

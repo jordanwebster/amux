@@ -106,6 +106,32 @@ impl Editor {
         self.cursor += PLACEHOLDER.len_utf8();
     }
 
+    /// The index of the first attachment `matches` accepts.
+    pub fn find_attachment(&self, matches: impl Fn(&Attachment) -> bool) -> Option<usize> {
+        self.attachments.iter().position(matches)
+    }
+
+    /// Swaps the attachment at `index` in place; its token stays put.
+    pub fn replace_attachment(&mut self, index: usize, attachment: Attachment) {
+        if let Some(slot) = self.attachments.get_mut(index) {
+            *slot = attachment;
+        }
+    }
+
+    /// Removes the attachment at `index` with its token, keeping the cursor
+    /// on the same text.
+    pub fn remove_attachment(&mut self, index: usize) {
+        let Some((at, _)) = self.text.match_indices(PLACEHOLDER).nth(index) else {
+            return;
+        };
+        let len = PLACEHOLDER.len_utf8();
+        self.text.replace_range(at..at + len, "");
+        self.attachments.remove(index);
+        if self.cursor > at {
+            self.cursor -= len;
+        }
+    }
+
     /// A bracketed or clipboard paste: long text becomes one token.
     pub fn paste(&mut self, text: &str) {
         let lines = text.lines().count();

@@ -1,3 +1,16 @@
+2026-09-27 — **The terminal review page is back.**
+From a chat that can send or resume, `<leader> r` asks the agent's host for
+its working-tree diff (untracked files included), fetches the patch blob
+and opens a full-screen page over `ui_view::review_doc`: a title with the
+head commit and totals, a file list with status, counts and comments, then
+every hunk with added and removed lines tinted across the row. j/k move a
+line, J/K a hunk, ]/[ a file; c comments on the line (or the file, on its
+header), Enter edits the line's newest comment, d deletes it. The first
+saved comment inserts one Review token into the draft at the cursor, later
+ones update it in place, and the last deletion takes it out. q or Esc
+returns to the chat with the draft kept; `<leader> r` goes back to the same
+page while its token is in the draft and reads a fresh diff otherwise.
+
 2026-09-27 — **A question tool row says what was answered.**
 A Claude AskUserQuestion call's row now carries each question's picked
 options and typed answer, read in `ui-view` from the result both Claude
