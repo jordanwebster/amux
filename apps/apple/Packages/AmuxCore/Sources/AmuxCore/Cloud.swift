@@ -16,7 +16,7 @@ public protocol CloudService: Sendable {
     /// runtime to bind the account's profile with. From then on the profile
     /// alone spends it: a refresh token may be good for one use, so two
     /// holders would sign each other out.
-    func takeRefreshToken(_ id: AccountId) async -> String?
+    func handOver(_ id: AccountId) async -> Handover?
     /// Lets go of what this phone holds for an account. The account on
     /// amux.sh is untouched.
     func forgetSession(_ id: AccountId) async throws
@@ -35,6 +35,20 @@ public protocol CloudService: Sendable {
     func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError)
     func requestDeletion(_ id: AccountId, confirmedEmail: String) async throws(CloudError) -> DeletionOutcome
     func uploadReport(_ id: AccountId, bundle: ReportBundle) async throws(CloudError) -> ReportReceipt
+}
+
+/// What a sign-in leaves for the runtime: the service that issued the
+/// refresh token, the client it was issued to, and the token itself.
+public struct Handover: Sendable, Equatable {
+    public var cloud: URL
+    public var client: String
+    public var refreshToken: String
+
+    public init(cloud: URL, client: String, refreshToken: String) {
+        self.cloud = cloud
+        self.client = client
+        self.refreshToken = refreshToken
+    }
 }
 
 /// Which account a sign-in is for.

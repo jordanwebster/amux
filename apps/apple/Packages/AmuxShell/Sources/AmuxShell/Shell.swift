@@ -65,7 +65,8 @@ public enum ShellAction: Equatable, Sendable {
     case cancelDeletion
     /// Light, dark, or whatever the phone is set to.
     case wear(Appearance?)
-
+    /// Write this phone's diagnostic dump and offer it to share.
+    case exportDump
 }
 
 /// Leaves the app for a page somewhere else: a billing portal, the App Store's
@@ -110,10 +111,6 @@ public struct Shell: View {
     /// Freezes the screen and opens a report on it, from Help. The app owns
     /// the capture; the shell only knows where the row that asks for it is.
     private let report: @MainActor () -> Void
-    /// Where a build with the reporting tools in it keeps what a conversation
-    /// has open and where it is being read, and where a replay puts them back.
-    /// Nothing in the shipping app supplies one.
-    private let recording: ConversationRecording?
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
@@ -126,7 +123,6 @@ public struct Shell: View {
         removal: RemovalStore = RemovalStore(),
         appearance: Appearance? = nil,
         report: @escaping @MainActor () -> Void = {},
-        recording: ConversationRecording? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.appearance = appearance
@@ -138,7 +134,6 @@ public struct Shell: View {
         self.signIn = signIn
         self.paywall = paywall
         self.report = report
-        self.recording = recording
         self.actions = actions
     }
 
@@ -200,11 +195,7 @@ public struct Shell: View {
     private func page(_ route: Route) -> some View {
         switch route {
         case .conversation(let agent):
-            ConversationPage(
-                agent: agent, router: router, stores: stores, recording: recording,
-                actions: actions)
-        case .changes(let agent):
-            ChangesPage(agent: agent, router: router, stores: stores)
+            ChatPage(agent: agent, router: router, stores: stores)
         case .newAgent:
             NewAgentPage(router: router, stores: stores)
         case .pairByCode(let host):
@@ -258,273 +249,82 @@ private struct ShellTabBar: View {
     }
 }
 
-/// One agent's conversation, and everything it asks of the app around it.
-private struct ConversationPage: View {
-    let agent: AgentId
+/// An agent's chat, open for as long as the page is: opening it starts the
+/// agent's stream on this phone and leaving by any route stops it.
+///
+/// It says whose chat it is and what the agent is doing; the rows, the asks
+/// and the composer are drawn by the chat screen built on the same session.
+private struct ChatPage: View {
+    let agent: AgentKey
     let router: Router
     let stores: StoreBundle
-    /// Where a report of this conversation is recorded, and where a replay of
-    /// one left what it is to be put back showing. Nothing in the shipping app.
-    let recording: ConversationRecording?
-    /// What leaves this page and the shell entirely — buying the relay tunnel
-    /// to the machine this conversation runs on, which is nothing a
-    /// conversation or a router can do.
-    let actions: @MainActor (ShellAction) -> Void
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var dictation = SpeechDictation()
-    /// The system's own pickers, asked for from the plus. They are presented
-    /// here rather than from the conversation because they are the system's
-    /// screens: a conversation that could raise one could not be photographed
-    /// or replayed away from a device.
-    @State private var pickingPhoto = false
-    @State private var pickingFile = false
-    @State private var picked: PhotosPickerItem?
-    init(
-        agent: AgentId, router: Router, stores: StoreBundle,
-        recording: ConversationRecording?,
-        actions: @escaping @MainActor (ShellAction) -> Void
-    ) {
-        self.agent = agent
-        self.router = router
-        self.stores = stores
-        self.recording = recording
-        self.actions = actions
-    }
+    @Environment(\.design) private var design
+    @State private var open = OpenChat()
 
     var body: some View {
-        let model = stores.conversation(agent)
-        Conversation(
-            model: model,
-            subject: ConversationSubject(agent: agent, in: stores.fleet, retaining: model),
-            showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
-            resting: recording?.reading[agent],
-            opening: recording.map { recording in
-                { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
-            },
-            reading: recording.map { recording in
-                { @MainActor @Sendable in recording.read?(agent, $0) }
-            },
-            naming: { stores.fleet.name(of: $0) },
-        ) { action in
-            switch action {
-            // The same place the edge swipe goes: the page this one was
-            // pushed from, which is the Agents list for any conversation
-            // not reached from its parent.
-            case .back: router.pop()
-            case .openChanges: router.open(.changes(agent))
-            // The overflow opens over the conversation, which is the
-            // conversation's own doing; nothing is pushed.
-            case .overflow: break
-            // Asking again means asking this phone's own link to the
-            // relay, not the machine: nothing on the far side of a
-            // connection that is down can be asked anything. It shortens
-            // the wait the connection is already in and nothing more, so
-            // pressing it repeatedly is one attempt.
-            case .retry: stores.retryNow()
-            // Not a retry. The machine is answering the relay perfectly
-            // well and the relay will not carry anything to it on this
-            // account, so what is offered is the subscription and the
-            // page that sells it is the one every other offer opens.
-            case .subscribe: actions(.subscribe)
-            // Answering is the one thing on this screen that leaves the
-            // phone. The panel spells the command, because only it knows
-            // which ask this is and which layer raised it; the bundle
-            // sends it and keeps the operation, so the host's reply
-            // belongs to this conversation.
-            case .answer(let panel, let decision):
-                stores.answer(panel, decision, of: agent)
-            // A child is pushed on top of its parent rather than replacing
-            // it, so answering the child and coming back finds the parent
-            // where it was left — the page underneath is never torn down.
-            case .openChild(let child):
-                stores.fleet.opened(child)
-                router.open(.conversation(child))
-            // Writing to an agent is the other thing on this screen that
-            // leaves the phone. The bundle decides whether the layer will
-            // take the message now or has to hold it, because the bundle
-            // has the gate; the screen only says that the person pressed.
-            case .send:
-                dictation.stop()
-                stores.send(to: agent)
-            case .interrupt: stores.interrupt(agent)
-            // Taking the held message back is a write too: the host is
-            // holding it and only the host can stop holding it. The
-            // bundle puts the text in the field before it dispatches, so
-            // a refusal leaves the paragraph in front of whoever wrote it.
-            case .unqueue: stores.unqueue(agent)
-            // Opening the plus is the conversation's own state; the two
-            // tiles inside it are the system's screens, raised from here.
-            // Permissions is neither: it opens as a card in the
-            // conversation, which the conversation has already done.
-            case .attaching(.photo): pickingPhoto = true
-            case .attaching(.file): pickingFile = true
-            case .attach, .attaching(.permissions): break
-            case .dictate: dictation.toggle(stores.conversation(agent))
-            case .dictationSettings:
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            // Picking a command is a change to the draft the conversation
-            // already made, and the draft is what a send carries: there is
-            // nothing here to do about it that sending will not do.
-            case .picking: break
-            // How this agent runs is the layer's to decide and the host's
-            // to keep. The bundle spells each change in the provider's own
-            // vocabulary — Claude has a mode, Codex has a pair of axes —
-            // and refuses one the layer said it would refuse, which is the
-            // same sentence the sheet is already printing.
-            case .setting(let change):
-                switch change {
-                case .model(let model): stores.setModel(model, of: agent)
-                case .effort(let effort): stores.setEffort(effort, of: agent)
-                case .permission(let choice): stores.setPermission(choice, of: agent)
-                }
-            // Opening the sheet is the conversation's own state; there is
-            // nothing outside it that has to know.
-            case .openSettings: break
-            // Copying is the one thing on this screen that goes to the
-            // system rather than to a host. The address travels with the
-            // choice, so what lands on the clipboard is the string the row
-            // showed and not a second spelling made here.
-            case .overflowing(let choice):
-                switch choice {
-                case .copyAddress(let address): copy(address)
-                case .rename, .delete: break
-                }
-            case .renamed(let name): stores.rename(name, of: agent)
-            // Asking is not the same as it having happened. The write goes
-            // out and the screen stays; leaving is what the confirmation
-            // below does, when the host says the agent is gone.
-            case .deleteAgent: stores.delete(agent)
+        ZStack {
+            Ground()
+            VStack(alignment: .leading, spacing: 14) {
+                BackLink("Agents", identifier: "chat.back") { router.pop() }
+                Text(open.frame?.name ?? stores.fleet.name(of: agent))
+                    .designFont(.screenTitle, design)
+                    .foregroundStyle(design.ink.color)
+                    .identified("chat.title", value: open.frame?.name ?? "")
+                Explain(open.failure ?? open.phase)
+                    .identified("chat.phase", value: open.failure ?? open.phase)
+                Spacer()
             }
+            .padding(.horizontal, design.metrics.gutter)
+            .padding(.top, 10)
         }
-        // Replacing one conversation route with another keeps the same
-        // destination type. Key its ephemeral overlay and scroll state to
-        // the agent so a long transcript never inherits the position and
-        // geometry callbacks of the conversation it replaced. Drafts and
-        // transcript data live in their per-agent stores and survive.
-        .id(agent)
-        // A conversation has no bar. The feed runs to the top of the display
-        // and the way out is the back chevron on its own chrome.
         .toolbar(.hidden, for: .navigationBar)
-        .onDisappear { dictation.stop() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background { dictation.stop() }
-        }
-        .onChange(of: stores.conversation(agent).gate) { _, gate in
-            if ComposerState(gate: gate, tail: nil, elapsed: nil) == nil { dictation.stop() }
-        }
-        // A deleted agent has no conversation to be in. Leaving is driven by
-        // the host's confirmation rather than by the press, so a deletion the
-        // host refused leaves the person where they were, reading why.
-        .onChange(of: stores.conversation(agent).deleted) { _, gone in
-            if gone {
-                router.pop()
-                stores.closeConversation(agent)
-            }
-        }
-        .photosPicker(isPresented: $pickingPhoto, selection: $picked, matching: .images)
-        .onChange(of: picked) { _, item in
-            guard let item else { return }
-            picked = nil
-            Task { await store(item) }
-        }
-        // Everything, because what an agent is being shown is not this app's
-        // business to narrow: a person attaching a font file to ask about a
-        // font file is doing something ordinary.
-        .fileImporter(isPresented: $pickingFile, allowedContentTypes: [.item]) { result in
-            guard case .success(let url) = result else { return }
-            store(url)
-        }
-    }
-
-    /// Reads a picked photograph and sends its bytes.
-    ///
-    /// The library gives no filename — a picker that never asked for access to
-    /// the whole library cannot know one — so the name is made from the type
-    /// that came back, which is the honest thing to call it.
-    private func store(_ item: PhotosPickerItem) async {
-        guard let bytes = try? await item.loadTransferable(type: Data.self) else { return }
-        let type = item.supportedContentTypes.first ?? .image
-        stores.attach(
-            PickedAttachment(
-                agent: agent, kind: .image,
-                name: "photo.\(type.preferredFilenameExtension ?? "img")",
-                mime: type.preferredMIMEType ?? "application/octet-stream"),
-            bytes: bytes)
-    }
-
-    /// Reads a picked file and sends its bytes.
-    ///
-    /// A file chosen outside this app's own container is reached only inside
-    /// a security scope, and the scope is given back whether or not the read
-    /// worked — an unbalanced one leaks the grant for as long as the app runs.
-    private func store(_ url: URL) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let bytes = try? Data(contentsOf: url) else { return }
-        let type = UTType(filenameExtension: url.pathExtension)
-        stores.attach(
-            PickedAttachment(
-                agent: agent, kind: .file, name: url.lastPathComponent,
-                mime: type?.preferredMIMEType ?? "application/octet-stream"),
-            bytes: bytes)
+        .onAppear { open.open(agent, in: stores) }
+        .onDisappear { open.close(in: stores) }
     }
 }
 
-/// The changes one turn made, and the review being written about them.
-///
-/// The page owns no state of its own: the review store holds what is folded,
-/// what a finger has hold of and everything said so far, so leaving to check
-/// something in the conversation and coming back finds the review as it was.
-private struct ChangesPage: View {
-    let agent: AgentId
-    let router: Router
-    let stores: StoreBundle
+/// The chat a page holds open, and what its frame says.
+@MainActor
+@Observable
+private final class OpenChat {
+    private(set) var frame: ChatFrame?
+    private(set) var failure: String?
+    @ObservationIgnored private var chat: Chat?
 
-    var body: some View {
-        Group {
-            if let review = stores.review(agent) {
-                DiffPage(model: review, subject: name) { action in
-                    switch action {
-                    case .back: router.pop()
-                    case .select(let range): review.select(range)
-                    case .comment(let range, let text): review.comment(range, text)
-                    case .cancelComment: review.cancel()
-                    case .toggleFile(let path): review.toggle(file: path)
-                    // Where the page has already gone within itself. Nothing
-                    // to apply: the wheel and the file list scroll, and a
-                    // scroll is not somewhere the app has been taken.
-                    case .scrubTo: break
-                    // Attaching hands the review to the conversation it came
-                    // from and goes back there. What is said about the patch
-                    // as a whole is written beside the token as ordinary
-                    // prose, so the page is done once the token exists.
-                    case .attachReview:
-                        if let token = review.token {
-                            stores.conversation(agent).draft.attach(token)
-                            router.pop()
-                        }
-                    }
-                }
-            } else {
-                // The changes have not arrived, or this agent offered none.
-                // Said plainly rather than drawn as an empty patch.
-                UnbuiltPage(route: .changes(agent))
-            }
+    var phase: String {
+        switch frame?.phase {
+        case .starting?: "Starting"
+        case .idle?: "Idle"
+        case .working?: "Working"
+        case .needsYou?: "Needs you"
+        case .exited(let cause)?: ["Exited", cause].compactMap { $0 }.joined(separator: " · ")
+        case nil: "Opening"
         }
-        .toolbar(.hidden, for: .navigationBar)
     }
 
-    private var name: String {
-        stores.fleet.rows.first { $0.id == agent }?.name ?? agent.description
+    func open(_ agent: AgentKey, in stores: StoreBundle) {
+        guard chat == nil else { return }
+        do {
+            chat = try stores.openChat(agent) { [weak self] in self?.woke() }
+            frame = chat?.frame()
+        } catch {
+            failure = error.description
+        }
+    }
+
+    private func woke() {
+        guard let chat else { return }
+        let changes = chat.takeChanges()
+        if changes.session || changes.reloaded || !changes.keys.isEmpty { frame = chat.frame() }
+    }
+
+    func close(in stores: StoreBundle) {
+        guard let chat else { return }
+        stores.closeChat(chat)
+        self.chat = nil
     }
 }
 
-/// The Agents tab's root, and the title menu that switches account.
-///
-/// The menu hangs off the title rather than a control of its own because the
-/// title is what it changes: whose agents these are.
 private struct AgentsTab: View {
     let router: Router
     let accounts: AccountRegistry
@@ -553,6 +353,7 @@ private struct AgentsTab: View {
             // The one place the list is allowed to regroup. Data arriving
             // never reorders what a thumb is already travelling towards.
             case .refresh: stores.fleet.refreshOrder(now: stores.now())
+            case .toggleFamily(let head): stores.toggleFamily(head)
             }
         }
         // The screen draws its own header, so the bar would be a second one.
@@ -670,8 +471,8 @@ private struct NewAgentPage: View {
         // joined, not at the form that made it.
         .onChange(of: stores.newAgent.created) { _, started in
             guard let started else { return }
-            stores.fleet.opened(started.id)
-            router.show(.conversation(started.id))
+            stores.fleet.opened(started)
+            router.show(.conversation(started))
         }
     }
 }
@@ -768,7 +569,7 @@ private struct PairConfirmationPage: View {
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { ask() }
             .onChange(of: stores.account) { _, _ in ask() }
-            .onChange(of: stores.fleet.connection.state) { _, _ in ask() }
+            .onChange(of: stores.fleet.relay) { _, _ in ask() }
     }
 
     /// A machine only the relay has seen, reached by a phone with no relay, is
@@ -793,7 +594,7 @@ private struct PairConfirmationPage: View {
     /// Whether this invitation has nothing this phone can act on: no address
     /// to dial and no account to reach a relay with.
     private var unreachable: Bool {
-        invitation.needsAnAccount && stores.hosts.cloud == .signedOut
+        invitation.needsAnAccount && stores.hosts.account?.binding != .signedIn
     }
 
     private var confirmation: some View {
@@ -828,12 +629,12 @@ private struct PairConfirmationPage: View {
         // phone is already on: there is no relay in the way of it, so waiting
         // for one would strand a machine standing on the same desk behind an
         // account nobody needs.
-        guard !invitation.needsAnAccount || stores.fleet.connection.state == .connected,
+        guard !invitation.needsAnAccount || stores.fleet.relay == .connected,
               !unreachable,
               asked.shouldAsk(stores.account)
         else { return }
         stores.pairing.open()
-        if stores.pair(link: invitation.payload) { asked.asked(stores.account) }
+        if stores.pair(link: invitation.link) { asked.asked(stores.account) }
     }
 }
 
@@ -930,6 +731,7 @@ private struct YouTabRoot: View {
             // of the report's own UI appears — otherwise the picture would be
             // of the report rather than of what was wrong.
             case .report: report()
+            case .exportDump: actions(.exportDump)
             case .dismiss: break
             }
         }

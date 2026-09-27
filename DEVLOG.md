@@ -1,3 +1,25 @@
+2026-09-27 — **The phone's fleet, hosts, pairing and account screens run on the new bridge.**
+The home lists the runtime's ranked fleet, families and all: a head that
+started agents shows how many and a control to list them under it, and a
+family someone in it needs you from says so on its head. Row words come from
+the agent's attention and its host's presence. The Hosts tab groups the
+runtime's own host list by route, with found-but-unpaired machines as
+offers, a revoked or signed-out cause on an offline row, and this phone's
+identity and paired machines by fingerprint. Pairing reaches and
+authenticates a machine first and only trusts it once the person says Pair;
+links are handed to the runtime as the link itself. New Agent starts Claude
+on the SDK driver or Codex on the chosen host, offering the directories the
+host lists or, while hosts cannot list them, where the fleet's agents on it
+already work. Signing in binds the account's installation; signing out and
+removing an account act on it. A report now carries the runtime's dump of
+the profile, taken when the screen froze, and Help can export the same dump
+through the share sheet. The chat itself is a page that opens and closes the
+agent's chat and shows its phase until the chat screen is rebuilt on the
+vocabulary. The debug door drives the running app only: named fixture
+screens, report replay and the chat verbs are gone with the model they
+drew, and a driven launch names its test network's discovery scope and a
+loopback bind. Generated value code is excluded from the strings lint.
+
 2026-09-27 — **The phone's core runs on the new bridge.**
 The Swift core no longer mirrors the old bridge's events by hand: every
 value it reads is a generated type, and a small wrapper holds the runtime

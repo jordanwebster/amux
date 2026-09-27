@@ -17,8 +17,9 @@ public enum ReportAssembly {
     public static let reportFile = "report.json"
     public static let frameFile = "frame.png"
     public static let traceFile = "trace.jsonl"
-    public static let messagesFile = "msgs.jsonl"
-    public static let daemonFile = "daemon.json"
+    /// Where the runtime's dump goes in a report: each of its files under this
+    /// directory, by its path inside the dump.
+    public static let dumpDirectory = "dump"
     public static let logFile = "log.txt"
 
     /// Everything a report is, ready to go.
@@ -33,33 +34,63 @@ public enum ReportAssembly {
         build: String,
         gitSHA: String = "",
         createdAt: Date = Date(),
-        log: Result<String, PartAbsent>
+        log: Result<String, PartAbsent>,
+        dump: Result<[ReportPart], PartAbsent>
     ) -> ReportBundle {
-        let recording = RuntimeRecording.split(capture.snapshot)
         var parts: [ReportPart] = []
-
         parts.append(ReportPart(name: frameFile, data: capture.frame.png))
         parts.append(part(
             traceFile, capture.trace.map { Data($0.utf8) },
             absent: capture.traceAbsent ?? "the view-state recording was not captured"))
-        parts.append(part(
-            messagesFile, recording.messages.map { Data($0.utf8) },
-            absent: capture.snapshotAbsent ?? recording.messagesAbsent
-                ?? "the runtime recording was not captured"))
-        parts.append(part(
-            daemonFile, recording.daemon.map { Data($0.utf8) },
-            absent: capture.snapshotAbsent ?? recording.daemonAbsent
-                ?? "the embedded daemon did not answer"))
         switch log {
         case .success(let text): parts.append(ReportPart(name: logFile, data: Data(text.utf8)))
         case .failure(let absent):
             parts.append(ReportPart(name: logFile, absenceReason: absent.why))
         }
-
+        let dumped: String?
+        switch dump {
+        case .success(let files):
+            parts += files
+            dumped = nil
+        case .failure(let absent):
+            dumped = absent.why
+        }
         let header = self.header(
             capture: capture, draft: draft, build: build, gitSHA: gitSHA,
-            createdAt: createdAt, parts: parts)
+            createdAt: createdAt, parts: parts, dumpAbsent: dumped)
         return ReportBundle(parts: [ReportPart(name: reportFile, data: header)] + parts)
+    }
+
+    /// The files of the runtime's dump, each a part under `dump/`, or why
+    /// there are none.
+    public static func dumpParts(
+        _ dump: Task<Result<URL, PartAbsent>, Never>?
+    ) async -> Result<[ReportPart], PartAbsent> {
+        guard let dump else {
+            return .failure(PartAbsent("nothing was running, so there was nothing to dump"))
+        }
+        switch await dump.value {
+        case .failure(let absent): return .failure(absent)
+        case .success(let directory): return files(under: directory)
+        }
+    }
+
+    static func files(under directory: URL) -> Result<[ReportPart], PartAbsent> {
+        let root = directory.standardizedFileURL.path
+        guard let walk = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return .failure(PartAbsent("the dump could not be read"))
+        }
+        var parts: [ReportPart] = []
+        for case let file as URL in walk {
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
+                  let data = try? Data(contentsOf: file) else { continue }
+            let relative = String(file.standardizedFileURL.path.dropFirst(root.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            parts.append(ReportPart(name: "\(dumpDirectory)/\(relative)", data: data))
+        }
+        guard !parts.isEmpty else { return .failure(PartAbsent("the dump was empty")) }
+        return .success(parts.sorted { $0.name < $1.name })
     }
 
     private static func part(_ name: String, _ data: Data?, absent: String) -> ReportPart {
@@ -76,7 +107,7 @@ public enum ReportAssembly {
     /// daemon tooling could open.
     private static func header(
         capture: ReportCapture, draft: ReportDraft, build: String, gitSHA: String,
-        createdAt: Date, parts: [ReportPart]
+        createdAt: Date, parts: [ReportPart], dumpAbsent: String?
     ) -> Data {
         func declared(_ name: String) -> Any {
             guard let part = parts.first(where: { $0.name == name }) else {
@@ -89,8 +120,7 @@ public enum ReportAssembly {
         var declarations: [String: Any] = [
             "frame": declared(frameFile),
             "trace": declared(traceFile),
-            "msgs": declared(messagesFile),
-            "daemon": declared(daemonFile),
+            "dump": dumpAbsent.map { ["absent": ["reason": $0]] as Any } ?? "present",
             "log": declared(logFile),
         ]
         // The recorder that made the trace, named only when there is a trace
@@ -167,55 +197,3 @@ public enum ReportAssembly {
 /// a header line with the messages under it, and `daemon.json` is the dump.
 /// Splitting it here rather than at the writer means the phone's report and the
 /// phone's debug recording are assembled from one reading of the same shape.
-public enum RuntimeRecording {
-    public struct Split: Sendable, Equatable {
-        /// `msgs.jsonl`, header line and all, or nothing.
-        public var messages: String?
-        public var messagesAbsent: String?
-        /// `daemon.json`, or nothing.
-        public var daemon: String?
-        public var daemonAbsent: String?
-    }
-
-    public static func split(_ json: String?) -> Split {
-        guard let json else {
-            return Split(
-                messagesAbsent: "nothing was connected, so there was no recording to freeze",
-                daemonAbsent: "nothing was connected, so no daemon was asked")
-        }
-        guard
-            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)),
-            let report = object as? [String: Any]
-        else {
-            return Split(
-                messagesAbsent: "the runtime’s recording could not be read",
-                daemonAbsent: "the runtime’s recording could not be read")
-        }
-
-        var split = Split()
-        if let recording = report["msgs"] as? [String: Any],
-           let version = recording["format_version"],
-           let checkpoint = recording["checkpoint"],
-           let invariantViolation = recording["invariant_violation"],
-           let messages = recording["msgs"] as? [String],
-           let header = try? JSONSerialization.data(
-               withJSONObject: [
-                   "format_version": version, "checkpoint": checkpoint,
-                   "invariant_violation": invariantViolation,
-               ]) {
-            let lines = [String(decoding: header, as: UTF8.self)] + messages
-            split.messages = lines.joined(separator: "\n") + "\n"
-        } else {
-            split.messagesAbsent = report["msgs_absent_reason"] as? String
-                ?? "the runtime answered without a recording in it"
-        }
-
-        if let daemon = report["daemon"] as? String {
-            split.daemon = daemon
-        } else {
-            split.daemonAbsent = report["daemon_absent_reason"] as? String
-                ?? "the embedded daemon did not answer"
-        }
-        return split
-    }
-}

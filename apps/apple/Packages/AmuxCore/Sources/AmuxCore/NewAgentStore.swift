@@ -230,3 +230,7 @@ public final class NewAgentStore {
         }
     }
 }
+
+extension Directory: Identifiable {
+    public var id: String { path }
+}

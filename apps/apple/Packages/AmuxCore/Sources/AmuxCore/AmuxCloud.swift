@@ -108,9 +108,10 @@ public actor AmuxCloudService: CloudService {
         self.now = now
     }
 
-    public func takeRefreshToken(_ account: AccountId) -> String? {
-        defer { sessions[account]?.refresh = nil }
-        return sessions[account]?.refresh
+    public func handOver(_ account: AccountId) -> Handover? {
+        guard let refresh = sessions[account]?.refresh else { return nil }
+        sessions[account]?.refresh = nil
+        return Handover(cloud: endpoint.base, client: endpoint.clientID, refreshToken: refresh)
     }
 
     public func forgetSession(_ account: AccountId) {

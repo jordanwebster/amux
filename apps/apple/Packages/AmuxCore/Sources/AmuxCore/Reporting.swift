@@ -59,35 +59,26 @@ extension FrozenFrame {
 /// frozen — a re-encode in between could differ from what the phone saw.
 public struct ReportCapture: Sendable, Equatable {
     public var frame: FrozenFrame
-    /// The shared runtime's frozen recording, as the JSON the bridge answered,
-    /// or nothing when nothing was connected to freeze.
-    public var snapshot: String?
-    /// Why there is no runtime recording, when there is none. A part that is
-    /// missing says why rather than disappearing.
-    public var snapshotAbsent: String?
-    /// The view-state recording, one JSON object per line.
+    /// The runtime's dump of this profile, started when the screen froze so
+    /// it describes the same moment; its directory, or why there is none.
+    public var dump: Task<Result<URL, PartAbsent>, Never>?
+    /// The view-state recording, where this build keeps one.
     public var trace: String?
-    /// Why there is no view-state recording, when there is none.
     public var traceAbsent: String?
-    /// Where the person was when they froze it, by the name the screen
-    /// catalogue gives it. Written into the report so a reader knows what they
-    /// are looking at before they open the picture.
+    /// The page the person was on.
     public var route: String?
-    /// Diagnostic frozen with the frame, even when the worker cannot record.
     public var runtimeFailure: String?
 
     public init(
         frame: FrozenFrame,
-        snapshot: String? = nil,
-        snapshotAbsent: String? = nil,
+        dump: Task<Result<URL, PartAbsent>, Never>? = nil,
         trace: String? = nil,
         traceAbsent: String? = nil,
         route: String? = nil,
         runtimeFailure: String? = nil
     ) {
         self.frame = frame
-        self.snapshot = snapshot
-        self.snapshotAbsent = snapshotAbsent
+        self.dump = dump
         self.trace = trace
         self.traceAbsent = traceAbsent
         self.route = route
@@ -312,9 +303,8 @@ public final class ReportStore {
                 "Sign in to the account this report is about, then send it again.")
             return
         }
-        guard let bundle = assembled(build: build, gitSHA: gitSHA, log: log, now: now) else {
-            return
-        }
+        guard let bundle = await assembled(build: build, gitSHA: gitSHA, log: log, now: now)
+        else { return }
         uploadBundle = bundle
         let identity = captureID
         sending = .sending
@@ -346,11 +336,12 @@ public final class ReportStore {
     public func assembled(
         build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
         now: Date = Date()
-    ) -> ReportBundle? {
+    ) async -> ReportBundle? {
         if let uploadBundle { return uploadBundle }
         guard let capture else { return nil }
+        let dump = await ReportAssembly.dumpParts(capture.dump)
         return ReportAssembly.bundle(
             from: capture, draft: draft, build: build, gitSHA: gitSHA,
-            createdAt: now, log: log)
+            createdAt: now, log: log, dump: dump)
     }
 }

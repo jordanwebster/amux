@@ -11,9 +11,9 @@ public enum PairingAction: Equatable, Sendable {
     /// The code as it now stands. A complete one is a code to try.
     case digits(String)
     /// Trust the machine this attempt authenticated.
-    case confirm(PendingPeer)
+    case confirm(PendingPair)
     /// Turn it away. Nothing is written on either side.
-    case abandon(PendingPeer)
+    case abandon(PendingPair)
     /// Left without an attempt in flight.
     case cancel
     /// Get an account, because the machine the invitation names can only be
@@ -199,11 +199,13 @@ public struct PairByCode: View {
     /// name on this screen. Nothing where no machine has been pointed at,
     /// which is a code typed before anything was found.
     private var route: String? {
-        switch model.machine?.via {
-        case .direct: "On this network"
-        case .relay: "Through the relay"
-        case .ssh: "Over SSH"
-        case .offline, nil: nil
+        guard let machine = model.machine else { return nil }
+        if machine.candidate { return "On this network" }
+        switch machine.via {
+        case .direct: return "On this network"
+        case .relay: return "Through the relay"
+        case .ssh: return "Over SSH"
+        case .unspecified: return nil
         }
     }
 
@@ -437,14 +439,14 @@ public struct PairConfirmation: View {
         .padding(.top, 26)
     }
 
-    private func offer(_ peer: PendingPeer) -> some View {
+    private func offer(_ peer: PendingPair) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Pair with \(peer.name)?")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .padding(.top, 26)
                 .identified("pair-confirm.title", value: "Pair with \(peer.name)?")
-            Text("Match this fingerprint with the one printed by the host.")
+            Text("Pair only with a machine you started pairing on. This is its key.")
                 .designFont(.body, design)
                 .foregroundStyle(design.inkMuted.color)
                 .fixedSize(horizontal: false, vertical: true)
@@ -557,8 +559,8 @@ public struct PairConfirmation: View {
 
     /// When the offer runs out, as a length of time rather than a clock face:
     /// the machine started it, so what matters is how long is left.
-    private func expiry(_ peer: PendingPeer) -> String {
-        let left = peer.expiresAt.timeIntervalSince(model.now)
+    private func expiry(_ peer: PendingPair) -> String {
+        let left = Date(milliseconds: peer.expiresAtMs).timeIntervalSince(model.now)
         return left > 0 ? "in \(Elapsed.spelled(left))" : "shortly"
     }
 }

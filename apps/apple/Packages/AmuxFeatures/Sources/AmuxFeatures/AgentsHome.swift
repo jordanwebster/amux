@@ -6,7 +6,9 @@ import SwiftUI
 /// reaches the network; it says what the person did and the shell decides
 /// where that leads.
 public enum HomeAction: Equatable, Sendable {
-    case open(AgentId)
+    case open(AgentKey)
+    /// Lists or folds away a family's members.
+    case toggleFamily(AgentKey)
     case newAgent
     case switchAccount(AccountId)
     case addAccount
@@ -91,7 +93,7 @@ public struct AgentsHome: View {
                 // would say the pairing it just did never happened.
                 if !model.rows.isEmpty {
                     fleet
-                } else if !model.hosts.isEmpty {
+                } else if !model.machines.isEmpty {
                     noAgentsYet
                 } else {
                     nothingPairedYet
@@ -123,7 +125,7 @@ public struct AgentsHome: View {
 
     /// Whether any machine would actually run something started now.
     private var canStartAnAgent: Bool {
-        model.hosts.values.contains { model.reach(of: $0).live }
+        model.machines.contains { $0.reach.live }
     }
 
     private var header: some View {
@@ -211,7 +213,7 @@ public struct AgentsHome: View {
         // account's actions live under You, where there is room to state what
         // they do.
         case .signOut, .remove, .delete, .subscription, .appearance, .identity, .support,
-             .report:
+             .report, .exportDump:
             break
         }
     }
@@ -260,8 +262,8 @@ public struct AgentsHome: View {
                 : "\(entry.name) · \(waiting) need you"
         }
         if !model.rows.isEmpty { return model.subtitle }
-        if !model.hosts.isEmpty {
-            let count = model.hosts.count
+        if !model.machines.isEmpty {
+            let count = model.machines.count
             return "No agents yet · \(count) host\(count == 1 ? "" : "s")"
         }
         // Not "Not signed in" and not "Not subscribed". A phone with no agents
@@ -311,24 +313,37 @@ public struct AgentsHome: View {
         .refreshable { actions(.refresh) }
     }
 
-    @ViewBuilder
+    /// A row, indented under its family's head, with the head's control for
+    /// listing its members beside it.
     private func agentRow(_ row: AgentRow) -> some View {
-        let host = model.host(row.hostId)
-        let state = RowState(row: row, host: host, reach: model.reach(ofHost: row.hostId))
+        let state = RowState(row: row, host: model.host(row.hostId))
         let content = AgentRowView(
-            row: row, state: state, host: host.map { PlaceNames.host($0.name) },
-            now: model.orderedAt)
-        // An agent run by a provider this build has no case for is listed and
-        // not offered to open. A button that led to a conversation of which
-        // not one row could be read would be a worse answer than the row
-        // saying so where it stands.
+            row: row, state: state, host: PlaceNames.host(row.hostName), now: model.orderedAt)
+        return HStack(spacing: 0) {
+            if row.depth > 0 {
+                Rectangle()
+                    .fill(design.hairline.color)
+                    .frame(width: 1)
+                    .padding(.leading, CGFloat(row.depth) * 14)
+                    .padding(.vertical, 6)
+                    .accessibilityHidden(true)
+            }
+            openable(row, state, content)
+            if row.depth == 0 && row.children > 0 { family(row) }
+        }
+    }
+
+    // An agent of a kind this build has no chat for is listed and not
+    // offered to open. A button that led to a chat of which not one row
+    // could be read would be a worse answer than the row saying so where it
+    // stands.
+    @ViewBuilder
+    private func openable(_ row: AgentRow, _ state: RowState, _ content: AgentRowView) -> some View {
         if row.readable {
             Button { actions(.open(row.id)) } label: { content }
                 .buttonStyle(.amuxPush)
                 .accessibilityLabel(spoken(row, state))
-                .identified(
-                    "home.row.\(row.id)", label: spoken(row, state),
-                    value: row.confirmed ? state.name : "\(state.name), remembered")
+                .identified("home.row.\(row.id)", label: spoken(row, state), value: state.name)
         } else {
             content
                 .accessibilityElement(children: .combine)
@@ -337,30 +352,45 @@ public struct AgentsHome: View {
         }
     }
 
+    /// How many agents a head started, and the control that lists them.
+    private func family(_ row: AgentRow) -> some View {
+        let said = row.expanded
+            ? "Hide \(row.children) started by \(row.name)"
+            : "Show \(row.children) started by \(row.name)"
+        return Button { actions(.toggleFamily(row.id)) } label: {
+            HStack(spacing: 4) {
+                if row.familyNeedsYou && !row.needsYou { NeedsYouDot() }
+                Text("\(row.children)")
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkMuted.color)
+                Image(systemName: row.expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            .padding(.horizontal, 12)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.amuxControl)
+        .accessibilityLabel(said)
+        .identified(
+            "home.family.\(row.id)", label: said, value: row.expanded ? "expanded" : "folded")
+    }
+
     /// What a row says to somebody who cannot see it, in the order the row
     /// says it: who, what, where, how long, and what it needs.
     private func spoken(_ row: AgentRow, _ state: RowState) -> String {
         var parts = [row.name]
         if let headline = row.headline { parts.append(headline) }
         if let said = state.spoken { parts.append(said) }
-        if state.needsYou, let need = row.need { parts.append(need) }
-        if case .finished(let outcome) = state, let outcome { parts.append(outcome.arithmetic) }
-        parts.append([model.host(row.hostId)?.name, row.workingDirectory]
-            .compactMap { $0 }.joined(separator: ", "))
+        if row.familyNeedsYou && !row.needsYou { parts.append("an agent it started needs you") }
+        parts.append([PlaceNames.host(row.hostName), row.workingDirectory]
+            .joined(separator: ", "))
         parts.append(row.age(at: model.orderedAt) + " ago")
         if row.unread { parts.append("unread") }
-        // Said aloud too: a row nobody has confirmed yet looks different and
-        // must sound different, or VoiceOver reports a memory as a fact.
-        if !row.confirmed { parts.append("remembered, not confirmed yet") }
         return parts.joined(separator: ", ")
     }
 
-    /// A section worth naming but not worth listing, until you say otherwise.
-    ///
-    /// Nothing is hidden — the names are on the line and one tap opens it.
-    /// Work that has been quiet for a day is still work, and deleting it from
-    /// the screen to keep the screen short is how a list starts lying about
-    /// what exists.
     private func fold(_ section: FleetSection) -> some View {
         let names = section.rows.map(\.name).joined(separator: ", ")
         let title = "\(section.title) · \(section.rows.count)"
@@ -406,21 +436,9 @@ public struct AgentsHome: View {
     /// that a machine is offline. A phone that can reach every machine it owns
     /// shows none of it and is never asked for an account.
     private var exceptions: (text: String, act: HomeAction)? {
-        // A link that is down outranks everything — on a phone that has one.
-        // Nobody signed in means no relay was ever dialled, and a phone told
-        // it was offline would be told about the absence of something it never
-        // had; what is actually true about such a phone is said below, machine
-        // by machine.
-        if signedIn, model.connection.state == .disconnected, let sentence = model.exceptions {
-            return (sentence, .openExceptions)
-        }
         if let away = model.awayHost {
             return ("\(away) is away · subscribe to reach your agents from anywhere", .subscribe)
         }
-        // With nobody signed in there is one thing worth saying and one thing
-        // to do about it: a machine this phone cannot reach, and the account
-        // that would reach it from somewhere else. Everything else a link
-        // could report belongs to a phone that has one.
         guard signedIn else {
             return model.unreachableHost == nil ? nil : (SignInCopy.caption, .signIn)
         }
@@ -550,7 +568,7 @@ public struct AgentsHome: View {
     /// somebody is standing when they have nothing: the shortest true sentence
     /// about an empty phone on a network with a host on it is that the host is
     /// right there.
-    private var found: [HostEntry] { hosts.candidates(.onThisNetwork) }
+    private var found: [HostView] { hosts.candidates(.onThisNetwork) }
 
     private var offers: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -559,7 +577,7 @@ public struct AgentsHome: View {
         }
     }
 
-    private func offer(_ host: HostEntry) -> some View {
+    private func offer(_ host: HostView) -> some View {
         HStack(spacing: 11) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(host.name)
@@ -570,28 +588,28 @@ public struct AgentsHome: View {
                     .foregroundStyle(design.inkFaint.color)
             }
             Spacer(minLength: 6)
-            Button { actions(.pair(host.id)) } label: {
+            Button { if let id = host.id { actions(.pair(id)) } } label: {
                 ActionLabel("Pair", kind: .outline)
             }
             .buttonStyle(.amuxRow)
             .accessibilityLabel("Pair with \(host.name)")
-            .identified("home.pair.\(host.id)", label: "Pair with \(host.name)")
+            .identified("home.pair.\(host.id?.description ?? host.name)", label: "Pair with \(host.name)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 44)
         .accessibilityElement(children: .contain)
-        .identified("home.offer.\(host.id)", label: spokenOffer(host), value: "found")
+        .identified("home.offer.\(host.id?.description ?? host.name)", label: spokenOffer(host), value: "found")
     }
 
-    private func offered(_ host: HostEntry) -> String {
+    private func offered(_ host: HostView) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
         parts.append("found")
         return parts.joined(separator: " · ")
     }
 
-    private func spokenOffer(_ host: HostEntry) -> String {
+    private func spokenOffer(_ host: HostView) -> String {
         var parts = [host.name]
         if let platform = host.platform { parts.append(platform) }
         parts.append("found, not paired")
@@ -666,8 +684,8 @@ struct AgentRowView: View {
     /// command it wants to run — in the one colour this app keeps for that.
     @ViewBuilder
     private var third: some View {
-        if case .needsYou(let why) = state {
-            Text(row.need ?? why.spoken)
+        if state.needsYou || (row.familyNeedsYou && state.word == nil) {
+            Text(state.needsYou ? "Needs you" : "An agent it started needs you")
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.accent.color)
                 .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)

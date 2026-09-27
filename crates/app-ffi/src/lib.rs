@@ -209,11 +209,14 @@ unsafe fn parse<T: DeserializeOwned>(value: *const c_char) -> Option<T> {
 /// Runs a call, turning a panic into the failure value rather than letting
 /// it unwind into the host.
 fn guard<T>(failed: T, call: impl FnOnce() -> T) -> T {
-    catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
-        #[cfg(test)]
-        CAUGHT.with(|caught| caught.set(caught.get() + 1));
-        failed
-    })
+    match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(value) => value,
+        Err(_) => {
+            #[cfg(test)]
+            CAUGHT.with(|caught| caught.set(caught.get() + 1));
+            failed
+        }
+    }
 }
 
 // A shipping build aborts on a panic instead of unwinding, so a panic the

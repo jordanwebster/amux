@@ -158,6 +158,9 @@ final class DeepLinkTests: XCTestCase {
             String(data: try XCTUnwrap(Data(base64URLEncoded: encoded)), encoding: .utf8))
         XCTAssertTrue(invitation.payload.hasPrefix("{"),
                       "the offer handed on is the machine's own JSON")
+        // The runtime reads the link itself: rebuilt from the offer, it is the
+        // link that arrived, unpadded as the machine wrote it.
+        XCTAssertEqual(invitation.link, link.absoluteString)
     }
 
     /// A sign-in in between does not lose the invitation.

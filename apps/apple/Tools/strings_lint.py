@@ -132,10 +132,20 @@ def literals(source):
     return sorted(found, key=lambda item: item.line)
 
 
+# Swift generated from the Rust definitions of the bridge's values: its
+# literals are wire keys and case names, which change with the Rust and are
+# never shown to anybody, and `xtask swift-types --check` already fails on
+# any hand edit.
+GENERATED = Path("apps/apple/Packages/AmuxCore/Sources/AmuxValues")
+
+
 def swift_sources(root):
     roots = [root / "apps/apple/Amux/Sources", root / "apps/apple/Amux/Debug",
              *sorted((root / "apps/apple/Packages").glob("*/Sources"))]
-    return sorted(path for directory in roots for path in directory.rglob("*.swift"))
+    generated = root / GENERATED
+    return sorted(
+        path for directory in roots for path in directory.rglob("*.swift")
+        if generated not in path.parents)
 
 
 def debug_source(path):

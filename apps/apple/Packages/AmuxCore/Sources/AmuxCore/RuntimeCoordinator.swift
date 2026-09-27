@@ -189,7 +189,7 @@ public final class RuntimeCoordinator {
         _ installation: String, cloud: URL, client: String, refreshToken: String
     ) async -> Result<Nothing, RuntimeFailure> {
         guard let runtime = await started(installation) else {
-            return .failure(RuntimeFailure("this account's installation did not start"))
+            return .failure(RuntimeFailure("this account’s installation did not start"))
         }
         let bound = await runtime.signIn(cloud: cloud, client: client, refreshToken: refreshToken)
         await stores.refreshAccount()
@@ -234,6 +234,26 @@ public final class RuntimeCoordinator {
     public func discovered(_ hosts: [FoundHost]) {
         found = hosts
         runtime?.discovered(hosts.map(\.found))
+    }
+
+    /// A bearer for the account on screen, borrowed from its runtime, which
+    /// alone holds the account's refresh token.
+    public func bearer(for account: AccountId) async -> String? {
+        guard registry.selected == account, let runtime,
+              case .success(let bearer) = await runtime.accessToken() else { return nil }
+        return bearer.bearer
+    }
+
+    /// The tail of the running installation's log, for a report.
+    public func logTail(bytes: Int = 64 * 1024) -> String? {
+        guard let running,
+              let handle = try? FileHandle(
+                forReadingFrom: directory(of: running).appendingPathComponent("runtime.log"))
+        else { return nil }
+        defer { try? handle.close() }
+        let end = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: end > UInt64(bytes) ? end - UInt64(bytes) : 0)
+        return (try? handle.readToEnd()).map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// Deletes an installation nothing runs from.

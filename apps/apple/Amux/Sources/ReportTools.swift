@@ -53,20 +53,15 @@ extension Composition {
         Task {
             await reports.send(
                 with: cloud, as: account, build: AppFiles.build,
-                gitSHA: AppFiles.gitSHA, log: AppFiles.logTail)
+                gitSHA: AppFiles.gitSHA, log: logTail)
         }
     }
 }
 
-extension AppFiles {
-    /// The tail of this app's own log, or why there is none.
-    ///
-    /// There is none. The app logs through the system, which keeps its records
-    /// in a store no app may read back — not even its own — so there is no
-    /// file to take a tail of. The part is declared absent with that reason
-    /// rather than left out, because a reader who found no log needs to know
-    /// whether it was withheld, lost, or never existed.
-    static var logTail: Result<String, PartAbsent> {
-        .failure(PartAbsent("this app logs through the system, which keeps no file it can read back"))
+extension Composition {
+    /// The end of the running installation's own log.
+    var logTail: Result<String, PartAbsent> {
+        runtime.logTail().map { .success($0) }
+            ?? .failure(PartAbsent("nothing was running, so there was no log to read"))
     }
 }

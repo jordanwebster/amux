@@ -8,7 +8,10 @@ import XCTest
 /// possibly months later and possibly by a different build, so what it puts on
 /// a line is pinned here.
 final class TraceTests: XCTestCase {
-    private let agent = AgentId(UUID(uuidString: "6f1c1f8e-0000-4000-8000-000000000001")!)
+    private let frozen = Date(timeIntervalSince1970: 1_789_087_062.034)
+    private let agent = AgentKey(
+        host: HostId(UUID(uuidString: "6f1c1f8e-0000-4000-8000-0000000000aa")!),
+        agent: UUID(uuidString: "6f1c1f8e-0000-4000-8000-000000000001")!)
     private let ada = AccountEntry(
         account: SignedInAccount(id: AccountId("ada"), email: "ada@example.com"),
         entitlement: .active(grant: .granted, renews: nil))
@@ -29,10 +32,6 @@ final class TraceTests: XCTestCase {
             .route(.screen("probe")),
             .sheet("overflow"),
             .sheet(nil),
-            .reading(agent, TranscriptResting(entry: "msg-41", into: 128.5)),
-            .draft(agent, Self.halfWritten),
-            .draft(agent, MessageDraft()),
-            .setAside(agent),
             .appearance(.dark),
             .dynamicType("accessibility3"),
             .frozen(at: frozen, ordered: frozen.addingTimeInterval(-44)),
@@ -41,24 +40,9 @@ final class TraceTests: XCTestCase {
         ]
         XCTAssertEqual(try Trace.events(Trace.lines(events)), events)
         XCTAssertEqual(
-            Set(events.map(Self.kind(of:))).count, 9,
+            Set(events.map(Self.kind(of:))).count, 6,
             "a kind of event is missing from the list that is written and read back")
     }
-
-    /// A draft with a token standing in it: the sentence alone is not the
-    /// draft, because each token holds one private character of it and the
-    /// character says nothing about what it stands for.
-    private static let halfWritten: MessageDraft = {
-        var draft = MessageDraft(prose: "have another look at ")
-        draft.place(caret: 21)
-        draft.insert(DraftToken(
-            kind: .review, label: "Review · 2 comments", element: "<review id=\"abc\"/>",
-            attachment: DraftAttachment(
-                id: ArtifactId("sha256:abc"), kind: .diff, name: "review.diff",
-                mime: "text/x-diff", size: 4_096)))
-        draft.insert(text: " before you start")
-        return draft
-    }()
 
     /// The kinds there are, named once. A kind added to the event and not
     /// named here stops this file compiling, which is the point.
@@ -66,49 +50,12 @@ final class TraceTests: XCTestCase {
         switch event {
         case .route: "route"
         case .sheet: "sheet"
-        case .reading: "reading"
-        case .draft: "draft"
-        case .setAside: "setAside"
         case .appearance: "appearance"
         case .dynamicType: "dynamicType"
         case .frozen: "frozen"
         case .account: "account"
         }
     }
-
-    /// A half-written message comes back whole: the sentence, the caret in it
-    /// and every token standing in it. What a token becomes in the sent
-    /// message and the artifact travelling with it cannot be worked out again
-    /// from the draft, so both have to survive the file.
-    func testADraftComesBackWithItsTokensStandingInIt() throws {
-        let read = try Trace.events(Trace.lines([.draft(agent, Self.halfWritten)]))
-        guard case .draft(_, let draft)? = read.first else {
-            return XCTFail("a draft did not come back as a draft: \(read)")
-        }
-        XCTAssertEqual(draft.body, Self.halfWritten.body)
-        XCTAssertEqual(draft.caret, Self.halfWritten.caret)
-        XCTAssertEqual(draft.ordered.map(\.label), ["Review · 2 comments"])
-        XCTAssertEqual(draft.ordered.first?.attachment?.name, "review.diff")
-    }
-
-    /// Where a reader had got to is written as the entry they were resting on
-    /// and how far into it, never as a distance down the whole feed: markdown
-    /// measures differently at another type size or under an older build, and
-    /// a distance would then point at another row entirely.
-    func testAReadingPositionIsAnEntryAndHowFarIntoIt() throws {
-        let written = try object(Trace.lines([
-            .reading(agent, TranscriptResting(entry: "msg-41", into: 128.5)),
-        ]))
-        let resting = try XCTUnwrap(written["reading"] as? [String: Any])
-        XCTAssertEqual(resting["entry"] as? String, "msg-41")
-        XCTAssertEqual(resting["into"] as? Double, 128.5)
-    }
-
-    /// An instant is written the way every other timestamp that leaves this
-    /// app is, and comes back the same instant: a replay reads the ages on a
-    /// rebuilt screen from it, and a second of drift is a second of wrong age
-    /// on every row.
-    private let frozen = Date(timeIntervalSince1970: 1_789_087_062.034)
 
     func testTheFrozenInstantsSurviveAsTimestamps() throws {
         let line = try Trace.lines([.frozen(at: frozen, ordered: frozen)])
@@ -119,12 +66,15 @@ final class TraceTests: XCTestCase {
 
     /// What a person was looking at is recorded as the place they were in, so
     /// a replay can put them back into the app rather than onto a picture of
-    /// one screen. A conversation is named by agent id: a name belongs to the
-    /// fleet and the fleet may rename it before anybody reads the report.
+    /// one screen. A conversation is named by its agent's key, host and id: a
+    /// name belongs to the fleet and the fleet may rename it before anybody
+    /// reads the report.
     func testAPlaceIsRecordedByWhatItIsAndWhatItIsAbout() throws {
         let written = try object(Trace.lines([.route(.conversation(agent))]))
         XCTAssertEqual(written["place"] as? String, "conversation")
-        XCTAssertEqual(written["agent"] as? String, agent.description)
+        let key = try XCTUnwrap(written["agent"] as? [String: Any])
+        XCTAssertEqual(key["agent"] as? [UInt8], agent.agent)
+        XCTAssertEqual(key["host"] as? [UInt8], agent.host)
         XCTAssertNil(written["screen"])
         XCTAssertEqual(
             try object(Trace.lines([.route(.home)]))["place"] as? String, "home")

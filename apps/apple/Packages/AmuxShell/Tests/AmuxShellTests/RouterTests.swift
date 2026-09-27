@@ -31,7 +31,7 @@ private final class RecordingLoader: RouteLoader {
 final class RouterTests: XCTestCase {
     private let machine = HostId(UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!)
 
-    private func agent() -> AgentId { AgentId(UUID()) }
+    private func agent() -> AgentKey { AgentKey(host: machine, agent: UUID()) }
 
     /// Leaving a page is said once, however it was left: by the app popping,
     /// by the system writing the stack back after a back gesture, or by one

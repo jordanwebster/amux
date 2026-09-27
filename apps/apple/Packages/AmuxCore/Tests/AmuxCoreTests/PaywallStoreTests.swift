@@ -79,7 +79,7 @@ private final class OneCloud: CloudService, @unchecked Sendable {
         if let recording { throw recording }
     }
 
-    func takeRefreshToken(_ id: AccountId) async -> String? { nil }
+    func handOver(_ id: AccountId) async -> Handover? { nil }
     func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async {}
     func forgetSession(_ id: AccountId) async throws {}
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {

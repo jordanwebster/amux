@@ -18,7 +18,7 @@ final class ReportFreezeTests: XCTestCase {
     /// Photographed, named, and honest about the one recording it cannot make:
     /// a build without the driving tools records no view state, and the bundle
     /// says why rather than leaving the part out.
-    func testAFreezeWithoutTheDrivingToolsDeclaresTheTraceAbsent() throws {
+    func testAFreezeWithoutTheDrivingToolsDeclaresTheTraceAbsent() async throws {
         let shown = window()
         let freezer = ReportFreeze(window: { shown }, route: { "you" })
 
@@ -30,17 +30,33 @@ final class ReportFreezeTests: XCTestCase {
         XCTAssertEqual(capture.route, "you")
         XCTAssertNil(capture.trace)
         XCTAssertEqual(capture.traceAbsent, "this build does not record view state")
-        // The session and host records are either carried or declared absent
-        // with a reason; they are never silently missing.
-        XCTAssertTrue(capture.snapshot != nil || capture.snapshotAbsent != nil)
-
+        // With nothing running there is no dump, and the bundle says why
+        // rather than leaving the part out.
+        XCTAssertNil(capture.dump)
+        let dump = await ReportAssembly.dumpParts(capture.dump)
         let bundle = ReportAssembly.bundle(
             from: capture, draft: ReportDraft(note: "wrong"), build: "amux-ios/test",
-            log: AppFiles.logTail)
+            log: .failure(PartAbsent("no log")), dump: dump)
         XCTAssertEqual(bundle.part(ReportAssembly.frameFile)?.present, true)
         XCTAssertEqual(
             bundle.part(ReportAssembly.traceFile)?.absenceReason,
             "this build does not record view state")
+        XCTAssertFalse(bundle.parts.contains { $0.name.hasPrefix("dump/") })
+    }
+
+    /// The dump starts when the screen freezes, so it describes the moment
+    /// somebody saw what they are reporting.
+    func testTheDumpStartsWithTheFreeze() async throws {
+        let shown = window()
+        var started = 0
+        let freezer = ReportFreeze(window: { shown }, dump: {
+            started += 1
+            return Task { .failure(PartAbsent("a test dumps nothing")) }
+        })
+        let capture = try XCTUnwrap(freezer.freeze())
+        XCTAssertEqual(started, 1)
+        let dump = await ReportAssembly.dumpParts(capture.dump)
+        XCTAssertThrowsError(try dump.get())
     }
 
     func testNothingOnScreenIsNothingToReport() {

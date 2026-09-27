@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use app_runtime::values::{
-    AccountView, Bearer, Binding, Found, Identity, PairedPeer, PendingPair, RelayLink, Roster,
+    AccountBinding, AccountView, Bearer, Found, Identity, PairedPeer, PendingPair, RelayLink,
+    Roster,
 };
 pub use app_runtime::values::{PairRequest, StartConfig};
 use client::{Client, Clock, InProcess, SystemClock};
@@ -435,10 +436,10 @@ fn fingerprint(pubkey: &[u8]) -> String {
 
 fn account_view(info: &ProfileInfo) -> AccountView {
     let binding = match info.intent() {
-        Intent::Bound => Binding::SignedIn,
-        Intent::LoggedOut => Binding::SignedOut,
-        Intent::Paused => Binding::Paused,
-        Intent::Unbound | Intent::Unspecified => Binding::Unbound,
+        Intent::Bound => AccountBinding::SignedIn,
+        Intent::LoggedOut => AccountBinding::SignedOut,
+        Intent::Paused => AccountBinding::Paused,
+        Intent::Unbound | Intent::Unspecified => AccountBinding::Unbound,
     };
     let relay = match info.observed() {
         Observed::Unspecified | Observed::Local => RelayLink::Off,

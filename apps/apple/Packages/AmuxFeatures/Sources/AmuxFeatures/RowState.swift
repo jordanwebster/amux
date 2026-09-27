@@ -19,21 +19,18 @@ import SwiftUI
 /// A word is more precise than a glyph and needs no vocabulary learnt first.
 enum RowState: Equatable {
     /// Stopped and cannot continue without you. The only case with a mark.
-    case needsYou(Why)
+    case needsYou
     case working
+    case starting
     /// The machine that owns this agent is not answering.
     case hostOffline(String)
-    /// The relay can see the machine that owns this agent and will not carry
-    /// anything to it on this account. The row is the cache, and it stays on
-    /// the list: the agent exists, it is simply not being watched.
+    /// Listed, and not reachable from here: the row is what this phone last
+    /// held, and it stays on the list.
     case hostAway(String)
-    /// Amux no longer trusts its own guess that a turn is running, and says
-    /// nothing rather than guessing again. See `word`.
-    case unheard
-    /// Run by a provider this build has no case for, under the name the host
-    /// used for it.
-    case unsupported(String)
-    case finished(TurnOutcome?)
+    /// A kind this build has no chat for.
+    case unsupported
+    /// The agent's process ended, and why where it said.
+    case exited(String?)
     case idle
 
     /// Read once, in one order, so the order is a thing somebody can look at.
@@ -41,88 +38,58 @@ enum RowState: Equatable {
     /// Being unreadable comes first because it is a fact about this build
     /// rather than about the agent, and it outranks anything the agent might
     /// be doing — none of which can be acted on from here anyway. A dark
-    /// machine comes next, and above `needsYou` deliberately: the core has
-    /// already made that call inside `effective_attention`, which degrades an
-    /// offline host's agents to `unknown` whatever they last wanted. Reading
-    /// the host directly rather than only through the attention is what also
-    /// catches a remembered row, which keeps the attention it was cached with.
-    init(row: AgentRow, host: HostEntry?, reach: HostReach? = nil) {
-        if case .unknown(let provider) = row.card.agent.kind {
-            self = .unsupported(provider)
+    /// machine comes next, and above `needsYou` deliberately: what an agent
+    /// last asked for on a machine nobody can reach cannot be answered.
+    init(row: AgentRow, host: HostView? = nil) {
+        if !row.readable {
+            self = .unsupported
             return
         }
-        if let host, !host.online || reach == .offline {
-            self = .hostOffline(PlaceNames.host(host.name))
+        let machine = PlaceNames.host(host?.name ?? row.hostName)
+        let reach = host?.reach
+        if row.hostPresence == .offline || reach == .offline {
+            self = .hostOffline(machine)
             return
         }
-        // Listed and not live. Nothing here is stale — the last thing this
-        // phone was told is still the last thing that was true — but nothing
-        // is arriving either, and a row that said "Working" about an agent no
-        // stream is reaching would be this phone guessing.
-        if let host, reach == .away {
-            self = .hostAway(PlaceNames.host(host.name))
+        if row.hostPresence == .away || reach == .away {
+            self = .hostAway(machine)
             return
         }
         switch row.attention {
-        case .needsYou(let why):
-            self = why == .finished ? .finished(row.outcome) : .needsYou(why)
-        case .unknown:
-            self = .unheard
-        case .working:
-            self = .working
-        case .idle:
-            self = .idle
+        case .needsYou: self = .needsYou
+        case .working: self = .working
+        case .starting: self = .starting
+        case .exited: self = .exited(row.card.exitCause)
+        case .idle: self = .idle
         }
     }
 
-    /// The word the third line leads with, or nothing where the row is better
-    /// off saying nothing.
-    ///
-    /// `unheard` is the deliberate silence. All the core knows by then is that
-    /// its own inference has expired: a Claude turn said it was working and no
-    /// dated transcript row or prompt dispatch has been seen for ten minutes.
-    /// The agent could be part-way through a long build and not writing rows,
-    /// could have finished with the delivery lost, could be wedged, could be
-    /// fine behind a wedged stream. Nothing here distinguishes those, so any
-    /// word would be a diagnosis this app cannot support — and `Working` is
-    /// doubly wrong, because the core deliberately stopped asserting it. The
-    /// row already carries the honest fact: the age in its top corner.
-    ///
-    /// `needsYou` says nothing either: its row says what is wanted instead.
+    /// The word the third line opens with. Needing you has none: the accent
+    /// line under it says what for.
     var word: String? {
         switch self {
-        case .needsYou, .unheard: nil
+        case .needsYou: nil
         case .working: "Working"
+        case .starting: "Starting"
         case .hostOffline(let machine): "\(machine) offline"
         case .hostAway(let machine): "\(machine) away"
-        case .unsupported(let provider): provider
-        case .finished: "Finished"
+        case .unsupported: "Unknown agent"
+        case .exited: "Exited"
         case .idle: "Idle"
         }
     }
 
-    /// What follows the word, where the state has something of its own to say
-    /// rather than leaving the row to fall back on where the agent runs.
+    /// What follows the word, where it says more than the place.
     var elaboration: String? {
         switch self {
-        // Why it cannot be opened, and what to do about it. The old wording
-        // said "Cannot be read", which named this app's own limitation and
-        // left a reader with nothing to do and no idea what the agent was.
         case .unsupported: "update amux to open it"
-        // The one thing a reader needs from this row: what it says happened
-        // is remembered rather than watched.
         case .hostAway: "not live"
-        // Whatever the turn changed. An agent that has gone quiet since
-        // finishing changed exactly what it changed, and the numbers are the
-        // readable part; an absent count is not a zero and is never drawn as
-        // one.
-        case .finished(let outcome): outcome?.arithmetic
+        case .exited(let cause): cause.flatMap { $0.isEmpty ? nil : $0 }
         default: nil
         }
     }
 
-    /// Whether the word has already named the machine, so the row does not
-    /// print it again on its trailing edge.
+    /// Whether the word already names the machine.
     var namesTheHost: Bool {
         switch self {
         case .hostOffline, .hostAway: true
@@ -130,41 +97,32 @@ enum RowState: Equatable {
         }
     }
 
-    /// Whether the row is waiting on a person, which is the one state a row
-    /// draws in the accent colour.
-    var needsYou: Bool {
-        if case .needsYou = self { return true }
-        return false
-    }
+    var needsYou: Bool { self == .needsYou }
 
-    /// The state said aloud, for a reader who cannot see the row. Nothing
-    /// where the row itself says nothing: the age is read out regardless, and
-    /// it is the same fact a sighted reader is given.
+    /// The same, as VoiceOver says it.
     var spoken: String? {
         switch self {
-        case .needsYou(let why): why.spoken
+        case .needsYou: "Needs you"
         case .working: "Working"
+        case .starting: "Starting"
         case .hostOffline(let machine): "\(machine) is offline"
         case .hostAway(let machine): "\(machine) is away, not live"
-        case .unheard: nil
-        case .unsupported(let provider): "\(provider), update amux to open it"
-        case .finished: "Finished"
+        case .unsupported: "Unknown agent, update amux to open it"
+        case .exited(let cause): ["Exited", cause].compactMap { $0 }.joined(separator: ", ")
         case .idle: "Idle"
         }
     }
 
-    /// The word a capture and a door query agree on. Kept separate from what
-    /// is drawn: a screen's wording is allowed to change without a journey
-    /// that drives the screen having to be rewritten.
+    /// What a driver reads the row's state as.
     var name: String {
         switch self {
-        case .needsYou(let why): why.spoken
+        case .needsYou: "needs-you"
         case .working: "working"
+        case .starting: "starting"
         case .hostOffline: "host-offline"
         case .hostAway: "host-away"
-        case .unheard: "unheard"
         case .unsupported: "unsupported"
-        case .finished: "finished"
+        case .exited: "exited"
         case .idle: "idle"
         }
     }

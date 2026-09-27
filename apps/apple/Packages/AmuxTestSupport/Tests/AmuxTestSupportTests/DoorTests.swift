@@ -196,7 +196,7 @@ final class DoorTests: XCTestCase {
             .ack,
             .state(state),
             .bridge(bridge),
-            .conversation(ConversationReading(ConversationStore(agent: Scenario.focus))),
+            .conversation(ConversationReading(agent: "helper", frame: nil, rows: [], ask: nil)),
             .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
             .bundle(path: "/tmp/report", parts: ["msgs.jsonl", "trace.jsonl"]),
             .replayed(ReplayedState(
@@ -219,42 +219,6 @@ final class DoorTests: XCTestCase {
         }
     }
 
-    func testAScreenIsBuiltOneStateAtATime() {
-        // The conversation screen draws its ordinary state and the one whose
-        // host was lost, and the one at an accessibility type size, but not the
-        // one the design catalogue describes and nobody has drawn: each has
-        // its own baseline and is written on its own. Declared per screen, all
-        // four became openable together and a check of what is built so far
-        // started failing on work nobody had started.
-        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run"))
-        XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
-        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run-accessibility"))
-        XCTAssertFalse(Fixtures.isBuilt(.home, state: "home-empty"))
-        // A state with no fixture behind it is unbuilt rather than unknown, so
-        // asking for it names work still to come. The permission ask expects a
-        // picture of a Codex approval and nothing fills one yet.
-        XCTAssertFalse(Fixtures.isBuilt(.askPermission, state: "codex-approval"))
-        XCTAssertNil(Fixtures.named("codex-approval"))
-        // The home screen has two states built, so this is about the pair and
-        // not about a screen being all-or-nothing either way.
-        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home"))
-        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home-accessibility"))
-    }
-
-    func testEveryBuiltStateHasAFixtureBehindIt() {
-        // A state cannot be declared built with nothing to fill it: the door
-        // would answer "no state named" for a state the manifest expects a
-        // baseline for, which reads as a broken fixture rather than as work
-        // still to come.
-        for state in Fixtures.built {
-            let fixture = Fixtures.named(state.state)
-            XCTAssertNotNil(fixture, "\(state.state) is built with nothing to fill it")
-            XCTAssertEqual(
-                fixture?.screen, state.screen,
-                "\(state.state) is built for \(state.screen.rawValue) but fills another screen")
-        }
-    }
-
     func testACaptureNamesItsSizeInPixels() throws {
         let data = try encoder.encode(
             DoorReply.captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3))
@@ -272,16 +236,8 @@ final class DoorTests: XCTestCase {
         XCTAssertEqual(Door.readyArgument, "amux-door-ready")
     }
 
-    /// Fixtures and door requests both name a type size in words; a name one
-    /// of them uses and the other cannot read would silently render the wrong
-    /// size in a capture.
-    func testFixtureTypeSizesAreDoorNames() throws {
-        for fixture in Fixtures.all {
-            guard let named = fixture.typeSize else { continue }
-            XCTAssertNotNil(
-                DynamicTypeSize(doorName: named),
-                "\(fixture.id) asks for a type size the door cannot name: \(named)")
-        }
+    /// A door request names a type size in words.
+    func testTypeSizesAreDoorNames() throws {
         XCTAssertEqual(DynamicTypeSize(doorName: "large"), .large)
         XCTAssertEqual(DynamicTypeSize(doorName: "accessibility5"), .accessibility5)
         XCTAssertNil(DynamicTypeSize(doorName: "enormous"))

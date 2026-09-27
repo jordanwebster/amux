@@ -31,9 +31,9 @@ public enum Tab: String, Hashable, Sendable, CaseIterable, Codable {
 /// arrives afterwards. That is what lets a tap push on the frame it happened
 /// in rather than after a round trip to the host.
 public enum Route: Hashable, Sendable {
-    case conversation(AgentId)
+    case conversation(AgentKey)
     /// The changes one agent has made, opened from its conversation.
-    case changes(AgentId)
+    case changes(AgentKey)
     case newAgent
     /// Typing the six-digit code one machine printed. It carries that machine,
     /// because a code proves possession of one machine's offer and is

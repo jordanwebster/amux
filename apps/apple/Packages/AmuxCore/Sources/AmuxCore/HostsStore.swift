@@ -98,3 +98,9 @@ public final class HostsStore {
         hosts.first { $0.id == id } ?? discovered.first { $0.id == id }
     }
 }
+
+extension PairedPeer: Identifiable {
+    public var id: [UInt8] { hostId }
+    /// The machine, as the bridge names it.
+    public var host: HostId? { HostId(bytes: hostId) }
+}

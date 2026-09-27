@@ -1103,6 +1103,15 @@ public enum Door {
     /// link that lands before anybody has signed in.
     public static let linkArgument = "amux-link"
 
+    /// The discovery scope a driven launch's runtime lists machines in: the
+    /// scope its served test network advertises, so real machines on the same
+    /// network never appear and the test network's never leak out.
+    public static let discoveryScopeArgument = "amux-discovery-scope"
+
+    /// Where a driven launch's direct links listen, as `ip:port`: loopback,
+    /// so a simulator run never listens on the Mac's network.
+    public static let lanBindArgument = "amux-lan-bind"
+
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {
         public let port: UInt16
@@ -1140,20 +1149,24 @@ extension SwiftUI.DynamicTypeSize {
     }
 }
 
-/// The state a conversation view actually reads, without creating or altering it.
+/// What an agent's chat holds on this phone, read through the runtime the
+/// app runs: its frame, its rows and the ask at its head.
 public struct ConversationReading: Codable, Sendable, Equatable {
-    public let agent: AgentId
-    public let entries: [FeedEntry]
-    public let gate: SendGate
-    public let settingsGate: SettingsGate
-    public let results: [OpResult]
+    public let agent: String
+    public let frame: ChatFrame?
+    public let rows: [Row]
+    public let ask: AskCard?
 
-    @MainActor
-    public init(_ conversation: ConversationStore) {
-        agent = conversation.agent
-        entries = conversation.entries
-        gate = conversation.gate
-        settingsGate = conversation.settingsGate
-        results = conversation.results
+    public init(agent: String, frame: ChatFrame?, rows: [Row], ask: AskCard?) {
+        self.agent = agent
+        self.frame = frame
+        self.rows = rows
+        self.ask = ask
     }
+}
+
+/// What a test account buys, as a driver hands it a credential.
+public enum Tier: String, Codable, Sendable, Equatable {
+    case free
+    case pro
 }

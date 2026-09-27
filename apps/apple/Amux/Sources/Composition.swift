@@ -37,160 +37,101 @@ final class Composition {
     /// The one report this phone is in the middle of, from a screenshot or
     /// from Help. In every build: reporting a problem is for everybody.
     let reports = ReportStore()
-    /// What photographs the screen and freezes the records a report carries.
+    /// What photographs the screen and starts the dump a report carries.
     let freezer: any ReportFreezing
-    /// Where the conversations say what they have open and where they are
-    /// being read, so a report can carry two things no message ever does.
-    /// Only a build with the driving tools records them, because only that
-    /// build can put a recording of the views back.
-    let conversations: ConversationRecording?
-    /// A store failure replaces the entire shell; no cached or live state is
+    /// A store failure replaces the entire shell; nothing cached or live is
     /// left drawable behind it.
     var storeFailure: String?
     /// The account service. Every screen sees it as `CloudService` and none of
-    /// them knows there is HTTP behind it. A debug build's driving door is
-    /// handed the same one, so a launch driven against the real service is
-    /// driven against the service the app itself is using.
+    /// them knows there is HTTP behind it.
     let cloud: any CloudService
-    /// The App Store. The paywall sees it as `StoreFront` and does not know
-    /// StoreKit is behind it.
+    /// The App Store, as the paywall sees it.
     private let store: any StoreFront
-    /// Where signing in happens: the system's own browser, which this app
-    /// hands a URL and is told what came back from.
+    /// Where signing in happens: the system's own browser.
     private let webAuth: any WebAuthPresenter
+    /// The one place this app looks at the local network.
+    let discovery: LocalDiscovery
 
-    /// Where a fleet goes before anybody has signed in. The app runs signed
-    /// out — it shows an empty home rather than a login wall — so there has to
-    /// be somewhere for a cache to land that is not an account's.
-    private let signedOut = StoreBundle(account: AccountId("signed-out"))
-
-    var stores: StoreBundle { accounts.stores ?? signedOut }
+    /// What the screens draw: the account on screen's stores, or the signed-out
+    /// phone's.
+    var stores: StoreBundle { runtime.stores }
 
     init() {
-        // Held locally as well as stored, so what freezes a report can be
-        // given the router without reaching back through an object that is
-        // still being built.
         let router = Router()
         self.router = router
-        // The real services, unless the launch says otherwise. A launch driven
-        // by a test says otherwise: signing in must not open a browser at
-        // amux.sh, buying must not reach the App Store, and deleting must not
-        // delete anybody's account. The doubles are the same shape, so
-        // everything above this line is the app either way.
+        // The real services, unless a driven launch says otherwise: signing in
+        // must not open a browser at amux.sh, buying must not reach the App
+        // Store, and deleting must not delete anybody's account. The doubles
+        // are the same shape, so everything above this line is the app either
+        // way.
         #if AMUX_DEBUG_TOOLS
         let scripted = ProcessInfo.processInfo.arguments
             .contains("-\(Door.scriptedCloudArgument)")
-        cloud = scripted ? DoorHost.shared.cloud : AmuxCloudService(savedSessions: KeychainCloudSessions())
+        cloud = scripted ? DoorHost.shared.cloud : AmuxCloudService()
         store = scripted ? DoorHost.shared.store : AppStoreFront()
         webAuth = scripted ? DoorHost.shared.webAuth : WebSignIn()
+        let options = Launch.options
+        let only = Launch.discoverable
         #else
-        cloud = AmuxCloudService(savedSessions: KeychainCloudSessions())
+        cloud = AmuxCloudService()
         store = AppStoreFront()
         webAuth = WebSignIn()
-        #endif
-        #if AMUX_DEBUG_TOOLS
-        let allowLoopback = true
-        #else
-        let allowLoopback = false
-        #endif
-        let coordinator = RuntimeCoordinator(
-            registry: accounts, cloud: cloud, support: AppFiles.support, cache: AppFiles.cache,
-            deviceName: UIDevice.current.name, allowPlainLoopback: allowLoopback)
-        // Only the system may look at the network a phone is on, so the browser
-        // is the app's and the shared library is handed what it saw. Weak, or
-        // the two would hold each other alive for the life of the process.
-        #if AMUX_DEBUG_TOOLS
-        let only = Self.driven ? Self.discoverable : nil
-        #else
+        let options = RuntimeCoordinator.Options()
         let only: Set<HostId>? = nil
         #endif
-        coordinator.discovery = LocalDiscovery(only: only) { [weak coordinator] hosts in
-            coordinator?.discovered(hosts)
+        let runtime = RuntimeCoordinator(
+            registry: accounts, support: AppFiles.support, deviceName: UIDevice.current.name,
+            signedOut: StoreBundle(account: AccountId("signed-out")), options: options)
+        self.runtime = runtime
+        // Only the system may look at the network a phone is on, so the
+        // browser is the app's and the runtime is handed what it saw.
+        discovery = LocalDiscovery(only: only) { [weak runtime] found in
+            runtime?.discovered(found)
         }
-        // The stores this app draws with nobody signed in are the same ones
-        // the runtime writes into then. A phone without an account still finds
-        // the machines on its own network and still reaches the ones it has
-        // paired with, so there is a connection behind this screen too.
-        coordinator.signedOutStores = signedOut
-        runtime = coordinator
-        // The page the person is on goes into the report, so whoever opens the
-        // bundle knows what they are looking at before they open the picture —
-        // and so a picture taken on one page and written up on another says
-        // which one it is of.
+        runtime.discovery = discovery
+        // Once a sign-in's own access token has expired, the app borrows one
+        // from the runtime whose profile holds the account's refresh token.
+        let lend: @Sendable (AccountId) async -> String? = { [weak runtime] account in
+            await runtime?.bearer(for: account)
+        }
+        let cloud = cloud
+        Task { await cloud.lend(from: lend) }
         let route = { router.top?.name ?? router.tab.rawValue }
-        #if AMUX_DEBUG_TOOLS
-        freezer = ReportFreeze.driven(
-            route: route,
-            place: { Self.place(for: router) },
-            account: { [accounts] in accounts.selectedAccount },
-            ordered: { [accounts, signedOut] in (accounts.stores ?? signedOut).fleet.orderedAt },
-            // Every half-written message on this phone, not only the one in
-            // front of whoever froze the report: a person who wrote to one
-            // agent, went to another and reported from there is reporting
-            // about both, and the drafts are on the same phone either way.
-            drafts: { [accounts, signedOut] in
-                (accounts.stores ?? signedOut).conversations.compactMapValues {
-                    $0.draft.isEmpty ? nil : $0.draft
+        let dump: () -> Task<Result<URL, PartAbsent>, Never>? = { [weak runtime] in
+            guard let running = runtime?.runtime else { return nil }
+            return Task {
+                switch await running.dump(reason: "report") {
+                case .success(let directory): .success(URL(fileURLWithPath: directory))
+                case .failure(let why): .failure(PartAbsent(why.description))
                 }
-            },
-            runtimeFailure: { [runtime] in runtime.failure })
-        // Where somebody goes is recorded as they go there, rather than only
-        // where they ended up: a report is replayed by walking the same trail,
-        // and a recording that held one destination could not put back a
-        // conversation reached from a tab that had been left somewhere else.
-        // Set here and nowhere in the shell, because the recording belongs to
-        // a build with the reporting tools in it.
+            }
+        }
+        #if AMUX_DEBUG_TOOLS
+        freezer = ReportFreeze(
+            route: route, dump: dump, trace: { DoorHost.shared.trace(route: route()) },
+            runtimeFailure: { [weak runtime] in runtime?.failure })
         router.arrived = { [weak router] in
             guard let router else { return }
             DoorHost.shared.arrived(at: Self.place(for: router))
         }
-        // A card left open and a transcript scrolled back are in no message
-        // and belong to no store, so the screens that own them say so here and
-        // a freeze writes down whatever they last said.
-        let conversations = ConversationRecording()
-        conversations.opened = { DoorHost.shared.opened($1, over: $0) }
-        conversations.read = { DoorHost.shared.reading($1, of: $0) }
-        conversations.asided = { DoorHost.shared.setAside($1, for: $0) }
-        self.conversations = conversations
         #else
-        freezer = ReportFreeze(route: route, runtimeFailure: { [runtime] in runtime.failure })
-        conversations = nil
+        freezer = ReportFreeze(
+            route: route, dump: dump, runtimeFailure: { [weak runtime] in runtime?.failure })
         #endif
         storeFailure = runtime.storeFailure
         runtime.storeFailureChanged = { [weak self] in self?.storeFailure = $0 }
         router.loads(with: self)
-        // Starting the runtime reads the account's remembered fleet off disk
-        // before it dials, so the first frame has rows and needs no network.
+        // Starting the runtime reads this phone's own store before it dials,
+        // so the first frame has rows and needs no network.
         runtime.start()
+        discovery.start()
         settleOutstandingPurchases()
     }
 
     #if AMUX_DEBUG_TOOLS
-    /// Where the app is, in the words a recording of what somebody was looking
-    /// at names places by.
-    ///
-    /// A report's view-state recording is replayed into the shell, so this is
-    /// the vocabulary that decides where a bundle can be put back. A tab with
-    /// nothing pushed on it is that tab's own root; a conversation and an
-    /// agent's changes carry the agent, because that is what they are about
-    /// and the fleet may rename it before anybody reads the report. Anything
-    /// else is named the way the report header names it, which is the name the
-    /// screen catalogue uses where it has one.
-    /// Whether a driver opened the door on this launch.
-    private static var driven: Bool {
-        let defaults = UserDefaults.standard
-        return defaults.string(forKey: Door.readyArgument) != nil
-            || defaults.string(forKey: Door.portArgument) != nil
-    }
-
-    /// The machines a driven launch may find on the network, which are the
-    /// ones its driver put there.
-    private static var discoverable: Set<HostId> {
-        let named = UserDefaults.standard.string(forKey: Door.discoverOnlyArgument) ?? ""
-        return Set(named.split(separator: ",").compactMap { HostId(String($0)) })
-    }
-
-    private static func place(for router: Router) -> Place {
+    /// Where the app is, in the words a report's view-state recording names
+    /// places by.
+    static func place(for router: Router) -> Place {
         switch router.top {
         case .conversation(let agent): return .conversation(agent)
         case .changes(let agent): return .review(agent)
@@ -208,19 +149,13 @@ final class Composition {
     /// What the shell asks for that it cannot do itself.
     func handle(_ action: ShellAction) {
         switch action {
-        // Changing which account is on screen empties every stack behind it.
-        // A page pushed under the account just left is about that account's
-        // machines and that account's agents, and coming back to a tab must
-        // not find one of them still standing under another account's name.
+        // Changing which account is on screen empties every stack behind it:
+        // a page pushed under the account just left is about that account's
+        // machines and agents.
         case .selectAccount(let id):
             guard accounts.selected != id else { break }
             accounts.select(id)
-            for tab in Tab.allCases { router.setPath([], for: tab) }
-        // Signing in is a page, pushed onto whichever stack asked for it so
-        // going back leads where the person came from. The page is the same
-        // for adding an account and for signing back into one; what it asks
-        // amux.sh for is not. Adding offers the account chooser. Signing back
-        // in names the account, and whoever comes back is checked against it.
+            resetTabs()
         case .addAccount:
             signIn.begin(.adding)
             router.open(.signIn(router.tab))
@@ -236,17 +171,13 @@ final class Composition {
             signIn.begin(entry.map { .returning($0.account) } ?? .adding)
             router.open(.signIn(router.tab))
         case .keepSignIn:
-            Task { await signIn.keep(with: cloud, into: accounts) }
+            Task { await signIn.keep(keeping: keep) }
         case .discardSignIn:
-            Task { await signIn.discard(with: cloud, from: accounts) }
-        // The hand-off itself. It leaves for a browser this app cannot read
-        // and comes back with an account or with what went wrong; the store
-        // holds which, and the screen draws it.
+            Task { await signIn.discard(with: cloud) }
         case .handOffSignIn:
-            Task { await signIn.signIn(with: cloud, presenting: webAuth, into: accounts) }
-        // Subscribing is a page too, and it asks the store what it has on the
-        // way: the screen is useful before the answer arrives and nothing
-        // waits on it.
+            Task { await signIn.signIn(with: cloud, presenting: webAuth, keeping: keep) }
+        // Subscribing is a page, and it asks the store what it has on the
+        // way: the screen is useful before the answer arrives.
         case .subscribe:
             paywall.entitled(accounts.selectedAccount?.entitlement ?? .none)
             router.open(.paywall(router.tab))
@@ -262,9 +193,7 @@ final class Composition {
                 await confirm(purchase)
             }
         // A purchase that went through and has not been confirmed, offered to
-        // amux.sh again. Where there is nothing left to send — the cloud took
-        // it and it was reading the entitlement back that failed — asking
-        // again is asking what this account may now do.
+        // amux.sh again, or the entitlement read again where nothing is held.
         case .retryPurchase:
             Task {
                 if let held = paywall.holding {
@@ -273,54 +202,83 @@ final class Composition {
                     paywall.unconfirmed(.unreachable)
                 }
             }
-        // Leaving an account. It stays listed with Sign In beside it: the
-        // address is the one thing a person recognises, and forgetting it
-        // would make signing back in look like adding a stranger.
+        // Leaving an account. It stays listed with Sign In beside it, and its
+        // installation keeps running signed out: the machines on this network
+        // are still reachable.
         case .signOutAccount(let id):
             accounts.signOut(id)
-            Task { [cloud] in try? await cloud.forgetSession(id) }
-        // Taking an account off this phone, asked first. It reaches amux.sh
-        // only to let go of this phone's session, and the account there is
-        // untouched. The registry puts it on the accounts the runtime deletes
-        // the profile of — its key, the hosts it paired, what it cached — and
-        // moves the screen to another account when it was the one on screen.
+            Task { [cloud, runtime] in
+                try? await cloud.forgetSession(id)
+                if accounts.selected == id { _ = await runtime.runtime?.signOut() }
+                await runtime.stores.refreshAccount()
+            }
         case .removeAccount(let id):
             removal.ask(id)
         case .cancelRemoval:
             removal.dismiss()
+        // Taking an account off this phone: its installation — its key, the
+        // machines it paired, what it held — is deleted once nothing runs
+        // from it. The account on amux.sh is untouched.
         case .confirmRemoval:
             guard let id = removal.account else { break }
             removal.dismiss()
             let wasSelected = accounts.selected == id
             Task { [cloud] in try? await cloud.forgetSession(id) }
-            accounts.forget(id)
-            if wasSelected {
-                for tab in Tab.allCases { router.setPath([], for: tab) }
-            }
+            forget(id)
+            if wasSelected { resetTabs() }
         case .wear(let wanted):
             appearance = wanted
-        // Giving up an account for good. What it costs is asked first, over
-        // the page it was asked from; nothing leaves this phone until the
-        // address has been typed and Delete pressed.
         case .deleteAccount(let id):
             deletion.ask(id)
         case .cancelDeletion:
             deletion.dismiss()
-        // The account service is what deletes an account, and it refuses while
-        // a subscription is still set to renew. Both answers land in the store
-        // the question is drawn from, and a deletion that went through takes
-        // the account off this phone with it.
         case .confirmDeletion:
-            Task { await deletion.delete(with: cloud, from: accounts) }
+            Task { await deletion.delete(with: cloud, forgetting: { [weak self] in self?.forget($0) }) }
+        case .exportDump:
+            Task { await exportDump() }
         }
     }
+
+    private func resetTabs() {
+        for tab in Tab.allCases { router.setPath([], for: tab) }
+    }
+
+    private func forget(_ id: AccountId) {
+        guard let installation = accounts.forget(id) else { return }
+        runtime.delete(installation: installation)
+    }
+
+    /// Keeps an account that signed in: puts it on screen and binds its
+    /// installation with the sign-in's refresh token, which the profile
+    /// spends from then on.
+    private func keep(_ account: SignedInAccount) async -> CloudError? {
+        guard let handover = await cloud.handOver(account.id) else { return .unauthenticated }
+        let entitlement = try? await cloud.entitlement(account.id)
+        let installation = accounts.installation(for: account.id)
+        accounts.add(account, entitlement: entitlement ?? .none, installation: installation)
+        let bound = await runtime.bind(
+            installation, cloud: handover.cloud, client: handover.client,
+            refreshToken: handover.refreshToken)
+        switch bound {
+        case .success: return nil
+        case .failure(let why): return .refused(why.description)
+        }
+    }
+
+    /// Writes this phone's dump and offers it to the share sheet.
+    private func exportDump() async {
+        guard case .success(let directory) = await stores.dump(reason: "exported from the phone")
+        else { return }
+        let sheet = UIActivityViewController(activityItems: [directory], applicationActivities: nil)
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let root = scenes.flatMap(\.windows).first(where: \.isKeyWindow)?.rootViewController
+        var top = root
+        while let presented = top?.presentedViewController { top = presented }
+        top?.present(sheet, animated: true)
+    }
+
     /// Reads what the account service says this account may do, after
     /// something changed what that is.
-    ///
-    /// The App Store's receipt reaches the account service through its own
-    /// webhook, so this is asked of the cloud rather than worked out from the
-    /// purchase: a subscription bought on the web through the CLI has to be
-    /// honoured by exactly the same read.
     @discardableResult
     private func refreshEntitlement() async -> Bool {
         guard let id = accounts.selected else { return false }
@@ -328,23 +286,11 @@ final class Composition {
         guard let accepted = accounts.accept(entitlement, for: id) else { return false }
         accounts.entitlement(accepted, for: id)
         paywall.entitled(accepted)
-        // And tell the link, which is what actually decides whether a machine
-        // can be reached. The account service knowing about a purchase changes
-        // nothing on its own: the relay reads the tier off the credential the
-        // link holds, and without this the machines bought a moment ago stay
-        // away until the link's own re-check comes round minutes later.
-        accounts.stores?.refreshEntitlement()
         return true
     }
 
     /// Tells amux.sh about a purchase and reads back what this account may now
     /// do.
-    ///
-    /// Both halves matter. The post is what makes the subscription the
-    /// account's; the read is what the screen believes, and it is the same
-    /// read a subscription bought on the web arrives through — so a purchase
-    /// the cloud took but could not be read back afterwards says so rather
-    /// than showing somebody a subscription the home screen cannot use.
     private func confirm(_ purchase: SignedPurchase) async {
         guard let id = accounts.selected else {
             // Nobody to record it against. The purchase is kept and the
@@ -359,12 +305,6 @@ final class Composition {
 
     /// Sends anything the App Store is still holding, and goes on listening
     /// for purchases that are approved later.
-    ///
-    /// This is what makes an unconfirmed purchase temporary. A phone that lost
-    /// its network mid-purchase, an app killed before the post finished, a
-    /// child's purchase a parent approves tomorrow: each one reaches amux.sh
-    /// without anybody pressing anything, because the transaction was never
-    /// finished with the store.
     private func settleOutstandingPurchases() {
         Task {
             guard let id = accounts.selected else { return }
@@ -381,50 +321,19 @@ final class Composition {
 }
 
 extension Composition: RouteLoader {
-    /// Fills a page that is already on screen.
-    ///
-    /// Opening a conversation opens its store, which is what tells the runtime
-    /// this client is watching that agent. The transcript arrives afterwards
-    /// and lands in the page the tap already pushed.
-    func load(_ route: Route) {
-        switch route {
-        case .conversation(let agent), .changes(let agent):
-            stores.openConversation(agent)
-        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .paywall, .accounts:
-            break
-        }
-    }
-
-    /// Leaving a conversation stops the machine streaming it.
-    ///
-    /// What was read stays read — coming back finds the transcript where it
-    /// was left — but a phone that went on streaming every conversation
-    /// somebody had ever opened would be reading its machines on behalf of
-    /// nobody. The changes page is the same conversation seen differently, so
-    /// leaving it for the conversation above it changes nothing.
-    func left(_ route: Route) {
-        switch route {
-        case .conversation(let agent):
-            stores.releaseStream(agent)
-        case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .signIn,
-             .paywall, .accounts:
-            break
-        }
-    }
+    // A chat page opens its chat when it appears and closes it when it goes,
+    // so there is nothing to start or stop on the way in or out.
+    func load(_ route: Route) {}
+    func left(_ route: Route) {}
 }
 
-/// Where this app keeps things between launches.
-///
-/// The fleet is a cache: losing it costs one launch its remembered rows and
-/// nothing else, so it lives where the system is allowed to reclaim it. The
-/// shared runtime is handed the same two directories, so what a launch reads
-/// and what a connection writes are one file.
+/// Where this app keeps things between launches: each account's installation
+/// under the support directory, beside the list of accounts.
 enum AppFiles {
     static let support = directory(.applicationSupportDirectory)
-    static let cache = directory(.cachesDirectory)
 
-    /// What this build calls itself in a report, the way the terminal's own
-    /// reports name theirs: the thing that wrote it, then its version.
+    /// What this build calls itself in a report: the thing that wrote it,
+    /// then its version.
     static var build: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
         return "amux-ios/\(version as? String ?? "0")"

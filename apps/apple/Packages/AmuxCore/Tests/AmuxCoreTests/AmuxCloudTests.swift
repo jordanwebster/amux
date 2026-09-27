@@ -441,9 +441,11 @@ final class AmuxCloudTests: XCTestCase {
     func testTheRefreshTokenIsHandedOverOnce() async throws {
         let cloud = service(signedIn)
         let account = try await cloud.signIn(.adding, presenting: Handed.returning(code: "code-1"))
-        let first = await cloud.takeRefreshToken(account.id)
-        let second = await cloud.takeRefreshToken(account.id)
-        XCTAssertEqual(first, "rt-1")
+        let first = await cloud.handOver(account.id)
+        let second = await cloud.handOver(account.id)
+        XCTAssertEqual(
+            first,
+            Handover(cloud: URL(string: "https://amux.test")!, client: "mobile", refreshToken: "rt-1"))
         XCTAssertNil(second)
     }
 

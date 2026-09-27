@@ -28,24 +28,16 @@ struct RootView: View {
 
     @ViewBuilder private var scene: some View {
         #if AMUX_DEBUG_TOOLS
-        if let probe = ColdStartProbe.requested {
-            ColdStartProbe.view(probe)
-        } else {
-            DrivenRoot { app }
-                // What a driver queries is what is on screen, and until it
-                // opens a screen by name that is the app itself.
-                .onAppear {
-                    DoorHost.shared.adopt(
-                        composition.stores, accounts: composition.accounts,
-                        runtime: composition.runtime)
-                    DoorHost.shared.connectAsLaunchAsks()
-                    // A link the launch carried goes through the same door the
-                    // system's own links go through, before anything else has
-                    // happened — which is what a cold start opened by a link
-                    // is, and the case where nobody has signed in yet.
-                    if let link = DoorHost.linkAsLaunchAsks { composition.router.open(link) }
-                }
-        }
+        DrivenRoot { app }
+            // What a driver queries and drives is the app itself.
+            .onAppear {
+                DoorHost.shared.adopt(composition)
+                // A link the launch carried goes through the same door the
+                // system's own links go through, before anything else has
+                // happened — which is what a cold start opened by a link is,
+                // and the case where nobody has signed in yet.
+                if let link = DoorHost.linkAsLaunchAsks { composition.router.open(link) }
+            }
         #else
         app
         #endif
@@ -68,7 +60,6 @@ struct RootView: View {
                     removal: composition.removal,
                     appearance: composition.appearance,
                     report: { composition.beginReport() },
-                    recording: composition.conversations,
                     actions: { composition.handle($0) }
                 )
             }

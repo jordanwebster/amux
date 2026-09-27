@@ -104,11 +104,10 @@ public enum CloudCall: Sendable, Equatable {
     /// A sign-in, with the account it asked amux.sh for.
     case signIn(SignInIntent)
     /// An account kept, and with it the session this phone holds for it.
-    case keepSession(AccountId)
+    case handOver(AccountId)
     case forgetSession(AccountId)
     case account(AccountId)
     case entitlement(AccountId)
-    case connectToken(AccountId)
     case recordPurchase(AccountId)
     case requestDeletion(AccountId, confirmedEmail: String)
     case uploadReport(AccountId, parts: [String])
@@ -127,6 +126,10 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     public init(state: ScriptedCloudState = ScriptedCloudState()) {
         self.state = state
     }
+
+    /// The moment a scripted receipt or lapse is stamped with, fixed so a
+    /// capture of one reads the same every run.
+    public static let now = Date(timeIntervalSince1970: 1_764_580_800)
 
     public var calls: [CloudCall] { lock.withLock { recorded } }
 
@@ -188,9 +191,17 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         }
     }
 
-    public func keepSession(_ id: AccountId) async throws(CloudError) {
-        _ = record(.keepSession(id))
+    /// The account's refresh token for the runtime: the scripted relay's own
+    /// login, which that relay's identity endpoint accepts as the CLI's.
+    public func handOver(_ id: AccountId) async -> Handover? {
+        let state = record(.handOver(id))
+        guard let token = state.token,
+              let cloud = URL(string: "http://\(state.relayHost):\(state.relayPort)")
+        else { return nil }
+        return Handover(cloud: cloud, client: "cli", refreshToken: token)
     }
+
+    public func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async {}
 
     public func forgetSession(_ id: AccountId) async throws {
         _ = record(.forgetSession(id))
@@ -209,22 +220,6 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         let state = record(.entitlement(id))
         await wait(state)
         return state.entitlement
-    }
-
-    public func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
-        let state = record(.connectToken(id))
-        await wait(state)
-        guard let token = state.token else { throw CloudError.unauthenticated }
-        // Testnet credentials do not expire. Giving one the fixture clock’s
-        // date would make it already expired against the runtime’s real clock.
-        //
-        // The tier follows what the account has bought, because that is what
-        // amux.sh does: the same reply issues the credential and says what the
-        // relay will carry on it. A token that said nothing would be read as
-        // free, and every machine on the far side of the relay would go out of
-        // reach on an account that had paid for exactly that.
-        return ConnectToken(
-            bearer: token, host: state.relayHost, port: state.relayPort, tier: state.tier)
     }
 
     public func recordPurchase(
@@ -262,7 +257,7 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         await wait(state)
         switch state.upload {
         case .accepted(let receipt):
-            return ReportReceipt(id: receipt, receivedAt: Scenario.now)
+            return ReportReceipt(id: receipt, receivedAt: ScriptedCloudService.now)
         case .refused(let reason): throw CloudError.refused(reason)
         case .offline: throw CloudError.network("offline")
         }
@@ -415,7 +410,7 @@ public struct CloudScript: Codable, Sendable, Equatable {
         case "none": .none
         // A subscription that ran out says when, because a screen that only
         // said "ended" would be telling somebody less than they knew.
-        case "lapsed": .lapsed(grant: bought, endedAt: Scenario.now.addingTimeInterval(-86_400))
+        case "lapsed": .lapsed(grant: bought, endedAt: ScriptedCloudService.now.addingTimeInterval(-86_400))
         default: .active(grant: bought, renews: nil)
         }
     }

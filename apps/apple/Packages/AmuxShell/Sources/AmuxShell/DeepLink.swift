@@ -45,6 +45,15 @@ public struct PairingInvitation: Hashable, Sendable, CustomStringConvertible {
     /// the relay has seen, and there is no relay without an account.
     public var needsAnAccount: Bool { addrs.isEmpty }
 
+    /// The link itself, as the runtime reads it.
+    public var link: String {
+        let encoded = Data(payload.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "\(DeepLink.scheme)://pair?payload=\(encoded)"
+    }
+
     /// The invitation is a secret, so it prints as the machine it came from
     /// and no more; a description that carried the secret would put it into
     /// every log and report that ever mentioned this value.

@@ -314,7 +314,7 @@ pub struct Found {
 /// show it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AccountView {
-    pub binding: Binding,
+    pub binding: AccountBinding,
     pub email: String,
     pub name: String,
     /// Whether the account buys the relay, as the relay link last heard.
@@ -323,7 +323,7 @@ pub struct AccountView {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum Binding {
+pub enum AccountBinding {
     /// Never signed in: this device works on its own network.
     Unbound,
     SignedIn,

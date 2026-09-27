@@ -4,17 +4,26 @@
 
 import Foundation
 
+public enum AccountBinding: String, Codable, Hashable, Sendable, CaseIterable {
+    case signedIn = "SignedIn"
+    case signedOut = "SignedOut"
+    /// Never signed in: this device works on its own network.
+    case unbound = "Unbound"
+    /// Signed in, with the relay link turned off.
+    case paused = "Paused"
+}
+
 /// The account this device's profile is bound to, as the account screens
 /// show it.
 public struct AccountView: Codable, Hashable, Sendable {
-    public var binding: Binding
+    public var binding: AccountBinding
     public var email: String
     public var name: String
     public var relay: RelayLink
     /// Whether the account buys the relay, as the relay link last heard.
     public var pro: Bool?
 
-    public init(binding: Binding, email: String, name: String, relay: RelayLink, pro: Bool?) {
+    public init(binding: AccountBinding, email: String, name: String, relay: RelayLink, pro: Bool?) {
         self.binding = binding
         self.email = email
         self.name = name
@@ -882,15 +891,6 @@ public struct Bearer: Codable, Hashable, Sendable {
         case bearer
         case expiresAtMs = "expires_at_ms"
     }
-}
-
-public enum Binding: String, Codable, Hashable, Sendable, CaseIterable {
-    case signedIn = "SignedIn"
-    case signedOut = "SignedOut"
-    /// Never signed in: this device works on its own network.
-    case unbound = "Unbound"
-    /// Signed in, with the relay link turned off.
-    case paused = "Paused"
 }
 
 /// Content-addressed bytes in the owning agent's directory. The name belongs

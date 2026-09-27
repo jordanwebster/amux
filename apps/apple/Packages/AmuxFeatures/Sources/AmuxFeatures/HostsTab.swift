@@ -126,7 +126,7 @@ public struct HostsTab: View {
                 // short: nothing found on a network nobody let this app look
                 // at is not a fact about the network.
                 if model.localNetwork == .denied { refusedNetwork }
-                ForEach(HostsStore.Reach.all, id: \.name) { reach in
+                ForEach(HostReach.all, id: \.name) { reach in
                     group(reach)
                 }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
@@ -148,7 +148,7 @@ public struct HostsTab: View {
     /// do — an offer carries Pair and nothing else — and that is said on the
     /// row, where it is true.
     @ViewBuilder
-    private func group(_ reach: HostsStore.Reach) -> some View {
+    private func group(_ reach: HostReach) -> some View {
         let paired = model.hosts(reach)
         let offers = model.candidates(reach)
         if !paired.isEmpty || !offers.isEmpty {
@@ -168,7 +168,7 @@ public struct HostsTab: View {
         }
     }
 
-    private func title(_ reach: HostsStore.Reach) -> String {
+    private func title(_ reach: HostReach) -> String {
         switch reach {
         case .onThisNetwork: "On this network"
         case .throughTheRelay: "Through the relay"
@@ -179,7 +179,7 @@ public struct HostsTab: View {
 
     /// The one thing worth saying under a group, and nothing where there is
     /// nothing.
-    private func caption(_ reach: HostsStore.Reach, offers: Bool) -> String? {
+    private func caption(_ reach: HostReach, offers: Bool) -> String? {
         switch reach {
         case .onThisNetwork:
             return offers ? "Run amux pair on one of these and enter the code it prints." : nil
@@ -209,7 +209,7 @@ public struct HostsTab: View {
     /// a different row, because nothing of its is readable and nothing can be
     /// started on it. What it is, is an offer, so it carries the one thing
     /// there is to do with one.
-    private func offer(_ host: HostEntry) -> some View {
+    private func offer(_ host: HostView) -> some View {
         HStack(spacing: 11) {
             Image(systemName: glyph(host))
                 .font(.system(size: 15, weight: .medium))
@@ -224,32 +224,32 @@ public struct HostsTab: View {
                     .foregroundStyle(design.inkFaint.color)
             }
             Spacer(minLength: 6)
-            Button { actions(.pair(host.id)) } label: {
+            Button { if let id = host.id { actions(.pair(id)) } } label: {
                 ActionLabel("Pair", kind: .outline)
             }
             .buttonStyle(.amuxRow)
             .accessibilityLabel("Pair with \(host.name)")
-            .identified("hosts.pair.\(host.id)", label: "Pair with \(host.name)")
+            .identified("hosts.pair.\(key(host))", label: "Pair with \(host.name)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 44)
         .accessibilityElement(children: .contain)
-        .identified("hosts.offer.\(host.id)", label: spokenOffer(host), value: "not paired")
+        .identified("hosts.offer.\(key(host))", label: spokenOffer(host), value: "not paired")
     }
 
     /// "Linux · found", and only the half that is known. "Found" rather than
     /// "not paired": the group has already said where it is, and what this row
     /// reports is that this phone saw it, which is the thing that makes it
     /// worth offering.
-    private func offered(_ host: HostEntry) -> String {
+    private func offered(_ host: HostView) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
-        parts.append(model.reach(of: host) == .onThisNetwork ? "found" : "not paired")
+        parts.append(host.reach == .onThisNetwork ? "found" : "not paired")
         return parts.joined(separator: " · ")
     }
 
-    private func spokenOffer(_ host: HostEntry) -> String {
+    private func spokenOffer(_ host: HostView) -> String {
         var parts = [host.name]
         if let platform = host.platform { parts.append(platform) }
         parts.append("found, not paired")
@@ -265,7 +265,7 @@ public struct HostsTab: View {
     /// this device presents to all of them. The count is a way in rather than
     /// the answer — deciding to revoke means reading a fingerprint, and a
     /// fingerprint on every row would bury the machines.
-    private func thisPhone(_ roster: DeviceRoster) -> some View {
+    private func thisPhone(_ roster: Roster) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "This Phone")
             RowGroup(items: facts(roster)) { fact in
@@ -281,13 +281,13 @@ public struct HostsTab: View {
         }
     }
 
-    private func facts(_ roster: DeviceRoster) -> [Fact] {
+    private func facts(_ roster: Roster) -> [Fact] {
         [
             Fact(
                 label: "Identity", value: identity(roster.identity), mono: true,
                 opensDevices: false),
             Fact(
-                label: "Paired Devices", value: "\(roster.devices.count)", mono: false,
+                label: "Paired Devices", value: "\(roster.peers.count)", mono: false,
                 opensDevices: true),
         ]
     }
@@ -299,7 +299,7 @@ public struct HostsTab: View {
     /// at every width and type size. The whole fingerprint is one tap away, in
     /// the same place the machines' are, because ends alone are not what
     /// anybody should compare a key by.
-    private func identity(_ identity: DeviceIdentity) -> String {
+    private func identity(_ identity: Identity) -> String {
         "\(identity.name) · \(Fingerprint.short(identity.fingerprint))"
     }
 
@@ -348,9 +348,9 @@ public struct HostsTab: View {
         .identified("hosts.empty", value: "No hosts yet")
     }
 
-    private func row(_ host: HostEntry, _ reach: HostsStore.Reach) -> some View {
+    private func row(_ host: HostView, _ reach: HostReach) -> some View {
         Button {
-            actions(.open(host.id))
+            if let id = host.id { actions(.open(id)) }
         } label: {
             HStack(spacing: 11) {
                 Image(systemName: glyph(host))
@@ -378,13 +378,18 @@ public struct HostsTab: View {
         .buttonStyle(.amuxPush)
         .accessibilityLabel(spoken(host, reach))
         .identified(
-            "hosts.row.\(host.id)", label: spoken(host, reach), value: reach.name)
+            "hosts.row.\(key(host))", label: spoken(host, reach), value: reach.name)
     }
 
     /// The machine drawn as the kind of machine it said it was. A host that
     /// has not said gets the plain computer rather than a guess, because the
     /// glyph is the first thing read and a wrong one is a wrong answer.
-    private func glyph(_ host: HostEntry) -> String {
+    /// What a driver names a host's row by.
+    private func key(_ host: HostView) -> String {
+        host.id?.description ?? host.name
+    }
+
+    private func glyph(_ host: HostView) -> String {
         switch host.platform {
         case "Mac Studio": "desktopcomputer"
         case "Mac mini": "macmini"
@@ -404,7 +409,7 @@ public struct HostsTab: View {
     /// offline machine says how long it has been gone where this phone
     /// watched it go, and says that it was found here when its advertisement
     /// is on this network and no link to it will stand.
-    private func status(_ host: HostEntry, _ reach: HostsStore.Reach) -> String {
+    private func status(_ host: HostView, _ reach: HostReach) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
         switch reach {
@@ -412,16 +417,18 @@ public struct HostsTab: View {
         case .throughTheRelay: parts.append("via relay")
         case .away: parts.append("away")
         case .offline:
-            if model.foundButUnreachable.contains(host.id) {
+            if host.away == .revoked {
+                parts.append("no longer trusts this phone")
+            } else if let id = host.id, model.foundButUnreachable.contains(id) {
                 parts.append("found, not answering")
             // Said because it settles which of two very different things is
             // wrong. A machine that never signed in cannot be reached from
             // anywhere but its own network whatever anybody buys, so the one
             // thing to do about it is on the machine — and offering a
             // subscription for it would be selling a fix that is not one.
-            } else if host.neverSignedIn {
-                parts.append("offline, not signed in")
-            } else if let gone = model.wentOffline(host.id) {
+            } else if host.away == .signedOut {
+                parts.append("offline, this phone is signed out")
+            } else if let id = host.id, let gone = model.wentOffline(id) {
                 parts.append("offline for \(since(gone))")
             } else {
                 parts.append("offline")
@@ -440,7 +447,7 @@ public struct HostsTab: View {
 
     /// What a row says to somebody who cannot see it, in the order the row
     /// says it: which machine, what it is, and how it stands.
-    private func spoken(_ host: HostEntry, _ reach: HostsStore.Reach) -> String {
+    private func spoken(_ host: HostView, _ reach: HostReach) -> String {
         var parts = [host.name]
         if let platform = host.platform { parts.append(platform) }
         switch reach {
@@ -450,11 +457,13 @@ public struct HostsTab: View {
             parts.append("away")
             parts.append("seen by the relay and not reachable from here")
         case .offline:
-            if model.foundButUnreachable.contains(host.id) {
+            if host.away == .revoked {
+                parts.append("it no longer trusts this phone, pair again to reach it")
+            } else if let id = host.id, model.foundButUnreachable.contains(id) {
                 parts.append("found on this network and not answering")
-            } else if host.neverSignedIn {
-                parts.append("offline and never signed in")
-            } else if let gone = model.wentOffline(host.id) {
+            } else if host.away == .signedOut {
+                parts.append("offline while this phone is signed out")
+            } else if let id = host.id, let gone = model.wentOffline(id) {
                 parts.append("offline for \(since(gone))")
             } else {
                 parts.append("offline")
@@ -599,7 +608,7 @@ private struct DevicesSheet: View {
         }
     }
 
-    private func row(_ device: PairedDevice) -> some View {
+    private func row(_ device: PairedPeer) -> some View {
         HStack(spacing: 11) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
@@ -611,19 +620,19 @@ private struct DevicesSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            Button { actions(.revoke(device.host)) } label: {
+            Button { if let host = device.host { actions(.revoke(host)) } } label: {
                 ActionLabel("Revoke", kind: .outline)
             }
             .buttonStyle(.amuxRow)
             .accessibilityLabel("Revoke \(device.name)")
-            .identified("hosts.revoke.\(device.host)", label: "Revoke \(device.name)")
+            .identified("hosts.revoke.\(device.host?.description ?? device.name)", label: "Revoke \(device.name)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 44)
         .accessibilityElement(children: .contain)
         .identified(
-            "hosts.device.\(device.host)", label: "\(device.name), \(device.fingerprint)",
+            "hosts.device.\(device.host?.description ?? device.name)", label: "\(device.name), \(device.fingerprint)",
             value: device.fingerprint)
     }
 }

@@ -15,7 +15,9 @@ private struct OneAnswer: CloudService, @unchecked Sendable {
         var forgotten: [AccountId] = []
     }
 
-    func takeRefreshToken(_ id: AccountId) async -> String? { "refresh-\(id)" }
+    func handOver(_ id: AccountId) async -> Handover? {
+        Handover(cloud: URL(string: "https://amux.test")!, client: "mobile", refreshToken: "refresh-\(id)")
+    }
     func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async {}
     func forgetSession(_ id: AccountId) async throws { asked.forgotten.append(id) }
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {

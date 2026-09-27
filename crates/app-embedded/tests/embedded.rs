@@ -246,7 +246,10 @@ async fn a_phone_signed_in_to_the_account_reaches_its_hosts_over_the_relay() {
     // The token refreshes as the client that obtained it.
     assert_eq!(relay.refreshed_as()[before..], ["mobile"]);
     let account = embedded.account().await.unwrap();
-    assert_eq!(account.binding, app_runtime::values::Binding::SignedIn);
+    assert_eq!(
+        account.binding,
+        app_runtime::values::AccountBinding::SignedIn
+    );
     assert_eq!(account.email, "ada@example.com");
     assert_eq!(embedded.access_token().await.unwrap().bearer, "access-ada");
     eventually("the relay link", || {

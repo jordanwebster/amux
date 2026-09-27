@@ -22,9 +22,9 @@ public enum Place: Sendable, Equatable {
     case hosts
     /// The You tab, showing its own root: this phone's settings.
     case settings
-    case conversation(AgentId)
+    case conversation(AgentKey)
     /// The changes one agent has made, read as a review.
-    case review(AgentId)
+    case review(AgentKey)
     /// A picture from the screen catalogue, for a report taken while a capture
     /// run was driving the app.
     case screen(String)
@@ -73,18 +73,6 @@ public enum TraceEvent: Sendable, Equatable {
     /// the session's own answer: it comes back out of the runtime's recording
     /// with the rest of the conversation and nothing here has to say so.
     case sheet(String?)
-    /// Where in one agent's transcript the reader had got to.
-    case reading(AgentId, TranscriptResting)
-    /// The message somebody had half written to one agent and not sent.
-    case draft(AgentId, MessageDraft)
-    /// One agent's finished turn, whose offer of its changes had been set
-    /// aside for this visit.
-    ///
-    /// Recorded because it is the reader's answer and not the agent's: the
-    /// turn is still finished and the changes are still there, so a replay
-    /// that did not know somebody had said Later would put the offer back over
-    /// the composer and hide everything they were writing underneath it.
-    case setAside(AgentId)
     case appearance(Appearance)
     /// The reader's type size, spelled the way a door request spells it.
     case dynamicType(String)
@@ -110,8 +98,7 @@ public enum TraceEvent: Sendable, Equatable {
 
 extension TraceEvent: Codable {
     private enum Key: String, CodingKey {
-        case kind, place, screen, agent, sheet, reading, draft, appearance, size, at, ordered,
-             account
+        case kind, place, screen, agent, sheet, appearance, size, at, ordered, account
     }
 
     public init(from decoder: any Decoder) throws {
@@ -120,16 +107,6 @@ extension TraceEvent: Codable {
         switch kind {
         case "route": self = .route(try Self.place(from: fields))
         case "sheet": self = .sheet(try fields.decodeIfPresent(String.self, forKey: .sheet))
-        case "reading":
-            self = .reading(
-                try fields.decode(AgentId.self, forKey: .agent),
-                try fields.decode(TranscriptResting.self, forKey: .reading))
-        case "draft":
-            self = .draft(
-                try fields.decode(AgentId.self, forKey: .agent),
-                try fields.decode(MessageDraft.self, forKey: .draft))
-        case "setAside":
-            self = .setAside(try fields.decode(AgentId.self, forKey: .agent))
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType": self = .dynamicType(try fields.decode(String.self, forKey: .size))
@@ -154,17 +131,6 @@ extension TraceEvent: Codable {
         case .sheet(let sheet):
             try fields.encode("sheet", forKey: .kind)
             try fields.encodeIfPresent(sheet, forKey: .sheet)
-        case .reading(let agent, let resting):
-            try fields.encode("reading", forKey: .kind)
-            try fields.encode(agent, forKey: .agent)
-            try fields.encode(resting, forKey: .reading)
-        case .draft(let agent, let draft):
-            try fields.encode("draft", forKey: .kind)
-            try fields.encode(agent, forKey: .agent)
-            try fields.encode(draft, forKey: .draft)
-        case .setAside(let agent):
-            try fields.encode("setAside", forKey: .kind)
-            try fields.encode(agent, forKey: .agent)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)
@@ -190,8 +156,8 @@ extension TraceEvent: Codable {
         case "home": return .home
         case "hosts": return .hosts
         case "settings": return .settings
-        case "conversation": return .conversation(try fields.decode(AgentId.self, forKey: .agent))
-        case "review": return .review(try fields.decode(AgentId.self, forKey: .agent))
+        case "conversation": return .conversation(try fields.decode(AgentKey.self, forKey: .agent))
+        case "review": return .review(try fields.decode(AgentKey.self, forKey: .agent))
         case "screen": return .screen(try fields.decode(String.self, forKey: .screen))
         default:
             throw DecodingError.dataCorruptedError(

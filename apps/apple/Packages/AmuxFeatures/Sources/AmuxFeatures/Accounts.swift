@@ -18,6 +18,8 @@ public enum AccountsAction: Equatable, Sendable {
     case identity
     case support
     case report
+    /// Write this phone's diagnostic dump and hand it to the share sheet.
+    case exportDump
     /// Put the switcher away without changing anything.
     case dismiss
 }
@@ -416,8 +418,12 @@ public struct YouScreen: View {
                 glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
                     actions(.report)
                 }
+                rule(inset: 14)
+                glyphRow("Export Diagnostics", glyph: "square.and.arrow.up", id: "dump") {
+                    actions(.exportDump)
+                }
             }
-            Text("A report includes a screenshot and available session and host records.")
+            Text("A report includes a screenshot and this phone’s diagnostic dump.")
                 .designFont(.caption, design)
                 .foregroundStyle(design.inkFaint.color)
                 .fixedSize(horizontal: false, vertical: true)

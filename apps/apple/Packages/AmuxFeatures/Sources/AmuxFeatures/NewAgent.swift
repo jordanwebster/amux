@@ -133,15 +133,16 @@ public struct NewAgent: View {
         }
     }
 
-    private func machine(_ host: HostEntry) -> some View {
-        Button { actions(.point(host.id)) } label: {
+    private func machine(_ host: HostView) -> some View {
+        let live = host.reach.live
+        return Button { if let id = host.id { actions(.point(id)) } } label: {
             HStack(spacing: 11) {
                 Radio(chosen: model.machine == host.id)
-                    .opacity(host.online ? 1 : 0.4)
+                    .opacity(live ? 1 : 0.4)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(host.name)
                         .designFont(.identifier, design)
-                        .foregroundStyle(host.online ? design.ink.color : design.inkFaint.color)
+                        .foregroundStyle(live ? design.ink.color : design.inkFaint.color)
                     Text(reach(host))
                         .designFont(.monoSmall, design)
                         .foregroundStyle(design.inkFaint.color)
@@ -155,28 +156,37 @@ public struct NewAgent: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.amuxRow)
-        .disabled(!host.online)
+        .disabled(!live)
         .accessibilityLabel(spoken(host))
         .accessibilityAddTraits(model.machine == host.id ? [.isSelected] : [])
         .identified(
-            "new-agent.host.\(host.id)", label: spoken(host),
-            value: model.machine == host.id ? "chosen" : "not chosen", enabled: host.online)
+            "new-agent.host.\(host.id?.description ?? host.name)", label: spoken(host),
+            value: model.machine == host.id ? "chosen" : "not chosen", enabled: live)
     }
 
     /// "macOS · via relay", or the sentence that says why this row cannot be
     /// chosen. The refusal is on the row it is about rather than under the
     /// group, because it is the reason this one row is grey.
-    private func reach(_ host: HostEntry) -> String {
+    private func reach(_ host: HostView) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
-        parts.append(host.online ? "via relay" : "offline, cannot start here")
+        parts.append(route(host))
         return parts.joined(separator: " · ")
     }
 
-    private func spoken(_ host: HostEntry) -> String {
+    private func route(_ host: HostView) -> String {
+        switch host.reach {
+        case .onThisNetwork: "direct"
+        case .throughTheRelay: "via relay"
+        case .away: "away, cannot start here"
+        case .offline: "offline, cannot start here"
+        }
+    }
+
+    private func spoken(_ host: HostView) -> String {
         var parts = [host.name]
         if let platform = host.platform { parts.append(platform) }
-        parts.append(host.online ? "reachable via relay" : "offline, cannot start here")
+        parts.append(route(host))
         return parts.joined(separator: ", ")
     }
 
@@ -222,7 +232,7 @@ public struct NewAgent: View {
             }
             if !chips.isEmpty { recent }
             if model.listing == .unavailable {
-                Explain("\(machineName) could not list its projects. Type a path instead.")
+                Explain("\(machineName) could not list its projects. Choose where its agents work, or type a path.")
                     .identified("new-agent.directory.unavailable")
             }
             if let failure = model.failure {
@@ -234,7 +244,7 @@ public struct NewAgent: View {
 
     /// The other directories this machine was used in recently — the chosen one
     /// is in the row above and is not repeated as a chip.
-    private var chips: [Project] {
+    private var chips: [Directory] {
         model.recent.filter { $0.path != model.directory }.prefix(4).map { $0 }
     }
 
@@ -309,35 +319,10 @@ public struct NewAgent: View {
                 ForEach(NewAgentStore.Provider.allCases) { provider in
                     LayerCard(
                         provider: provider, chosen: model.provider == provider,
-                        model: modelLine(provider), choices: choices(provider),
-                        choose: { model.choose(provider: provider) },
-                        chooseModel: { model.choose(model: $0) })
+                        choose: { model.choose(provider: provider) })
                 }
             }
         }
-    }
-
-    /// What this layer will start under.
-    ///
-    /// Claude's is always the machine's own default: a create request names
-    /// Claude's driver and nothing else, so a model chosen here would be a
-    /// choice this app silently dropped. Codex's is whatever was chosen, or the
-    /// same default where nothing was.
-    private func modelLine(_ provider: NewAgentStore.Provider) -> String {
-        switch provider {
-        case .claude: "Host Default"
-        case .codex: model.model ?? "Host Default"
-        }
-    }
-
-    /// The models this card can offer.
-    ///
-    /// Nothing tells a phone what models a layer has until that layer is
-    /// running, so the only honest list is the one the sessions on this account
-    /// already reported. Claude offers none because its create request cannot
-    /// carry one.
-    private func choices(_ provider: NewAgentStore.Provider) -> [ModelInfo] {
-        provider == .codex ? model.codexModels : []
     }
 
     // MARK: - Starting it
@@ -367,18 +352,14 @@ public struct NewAgent: View {
 
 /// One layer, as a card that is chosen whole.
 ///
-/// The model sits inside the card rather than beside the two, because it is a
-/// fact about that layer: the model Codex runs under means nothing to Claude.
+/// Every agent starts on its host's default model: nothing tells a phone what
+/// models a host offers before an agent of that kind runs there.
 private struct LayerCard: View {
     @Environment(\.design) private var design
     let provider: NewAgentStore.Provider
     let chosen: Bool
-    let model: String
-    let choices: [ModelInfo]
     let choose: @MainActor () -> Void
-    let chooseModel: @MainActor (String?) -> Void
-    /// Whether the list of models is up.
-    @State private var picking = false
+    private let model = "Host Default"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -412,46 +393,8 @@ private struct LayerCard: View {
             label: "\(provider.title), \(model)", value: chosen ? "chosen" : "not chosen")
     }
 
-    /// The model line. A chevron only where there is a list behind it: one that
-    /// opened on nothing would be an offer this screen cannot keep.
-    @ViewBuilder
     private var models: some View {
-        if choices.isEmpty {
-            line
-                .identified("new-agent.model.\(provider.rawValue)", value: model)
-        } else {
-            // A button and a list of choices rather than a `Menu`, which draws
-            // the same line but puts two controls in the accessibility tree:
-            // its own, and a second one inside it that answers to nothing
-            // stated out here — no name, no identifier — so somebody using
-            // VoiceOver meets a control with nothing to read out and no way to
-            // guess what it does. Neither hiding it, naming it from inside nor
-            // combining the pair reaches it.
-            Button { picking = true } label: {
-                HStack(spacing: 4) {
-                    line
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(design.inkFaint.color)
-                }
-                .thumbTarget(y: 15)
-            }
-            .buttonStyle(.amuxControl)
-            .accessibilityLabel("Model for \(provider.title)")
-            .identified(
-                "new-agent.model.\(provider.rawValue)",
-                label: "Model for \(provider.title)", value: model)
-            .reclaimingThumbTarget(y: 15)
-            .confirmationDialog(
-                "Model for \(provider.title)", isPresented: $picking,
-                titleVisibility: .visible
-            ) {
-                Button("Host Default") { chooseModel(nil) }
-                ForEach(choices, id: \.id) { choice in
-                    Button(choice.name) { chooseModel(choice.id) }
-                }
-            }
-        }
+        line.identified("new-agent.model.\(provider.rawValue)", value: model)
     }
 
     private var line: some View {
@@ -621,7 +564,7 @@ private struct DirectorySheet: View {
         return "No repositories under \(model.roots.joined(separator: ", "))."
     }
 
-    private func row(_ project: Project, recent: Bool) -> some View {
+    private func row(_ project: Directory, recent: Bool) -> some View {
         Button {
             model.choose(directory: project.path)
             model.browsing = false

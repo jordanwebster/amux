@@ -7,7 +7,7 @@ final class ScriptedCloudTests: XCTestCase {
 
     func testItAnswersWhatTheStateSaysAndRecordsWhatItWasAsked() async throws {
         let cloud = ScriptedCloudService(state: ScriptedCloudState(
-            entitlement: .active(grant: .purchased(.appStore), renews: Scenario.now),
+            entitlement: .active(grant: .purchased(.appStore), renews: ScriptedCloudService.now),
             token: "connect-me",
             deletion: .deleted,
             upload: .accepted(id: "report-7")))
@@ -15,12 +15,12 @@ final class ScriptedCloudTests: XCTestCase {
         let account = try await cloud.signIn(.adding, presenting: ScriptedWebAuth())
         XCTAssertEqual(account.email, "ada@example.com")
         let entitlement = try await cloud.entitlement(ada)
-        XCTAssertEqual(entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
-        let token = try await cloud.connectToken(ada)
-        XCTAssertNil(token.expiresAt, "testnet credentials must not expire against the frozen fixture clock")
-        XCTAssertEqual(token.bearer, "connect-me")
+        XCTAssertEqual(entitlement, .active(grant: .purchased(.appStore), renews: ScriptedCloudService.now))
+        let handed = await cloud.handOver(ada)
+        XCTAssertEqual(handed?.refreshToken, "connect-me")
+        XCTAssertEqual(handed?.client, "cli", "the scripted relay's identity endpoint is the CLI's")
         let facts = try await cloud.account(ada)
-        XCTAssertEqual(facts.entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
+        XCTAssertEqual(facts.entitlement, .active(grant: .purchased(.appStore), renews: ScriptedCloudService.now))
         let deletion = try await cloud.requestDeletion(ada, confirmedEmail: "ada@example.com")
         XCTAssertEqual(deletion, .deleted)
         let receipt = try await cloud.uploadReport(ada, bundle: ReportBundle(
@@ -32,7 +32,7 @@ final class ScriptedCloudTests: XCTestCase {
         XCTAssertEqual(cloud.calls, [
             .signIn(.adding),
             .entitlement(ada),
-            .connectToken(ada),
+            .handOver(ada),
             .account(ada),
             .requestDeletion(ada, confirmedEmail: "ada@example.com"),
             .uploadReport(ada, parts: ["report.json", "frame.png", "trace.jsonl"]),
@@ -50,7 +50,8 @@ final class ScriptedCloudTests: XCTestCase {
 
         let offline = ScriptedCloudService(state: ScriptedCloudState(signIn: .offline, token: nil))
         await assert(CloudError.network("offline")) { try await offline.signIn(.adding, presenting: ScriptedWebAuth()) }
-        await assert(CloudError.unauthenticated) { try await offline.connectToken(ada) }
+        let nothing = await offline.handOver(ada)
+        XCTAssertNil(nothing, "no token, nothing to hand over")
 
         let unreachable = ScriptedCloudService(state: ScriptedCloudState(upload: .offline))
         await assert(CloudError.network("offline")) {
@@ -127,14 +128,6 @@ final class ScriptedCloudTests: XCTestCase {
         XCTAssertEqual(script.state.signIn, .refused("amux.sh has no account for this sign-in"))
         XCTAssertEqual(script.state.upload, .refused("amux.sh could not take this report"))
         XCTAssertEqual(CloudScript().state.upload, .accepted(id: "report-1"))
-    }
-
-    func testEveryFixtureDeclaresItsCloud() {
-        for fixture in Fixtures.all {
-            XCTAssertNotNil(ScriptedCloudService(state: fixture.cloud).scripted.latency)
-        }
-        XCTAssertEqual(Fixtures.named("first-run")?.cloud.entitlement, Entitlement.none)
-        XCTAssertEqual(Fixtures.named("upload-failed")?.cloud.upload, .offline)
     }
 
     private func assert(

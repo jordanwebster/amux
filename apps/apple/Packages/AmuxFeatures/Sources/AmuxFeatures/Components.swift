@@ -39,14 +39,10 @@ public struct AttentionMark: View {
         // The space is held whatever the state, so a row with nothing to
         // demand lines its name up with the rows that do.
         switch attention {
-        case .idle, .working, .unknown:
+        case .exited, .idle, .starting, .working:
             Color.clear.frame(width: size, height: size)
-        case .needsYou(let why):
-            if why == .finished {
-                Color.clear.frame(width: size, height: size)
-            } else {
-                NeedsYouMark(glyph: why.glyph, size: size)
-            }
+        case .needsYou:
+            NeedsYouMark(glyph: "hand.raised.fill", size: size)
         }
     }
 }
@@ -96,26 +92,6 @@ public struct NeedsYouDot: View {
             .fill(design.accent.color)
             .frame(width: 8, height: 8)
             .accessibilityHidden(true)
-    }
-}
-
-extension Why {
-    public var glyph: String {
-        switch self {
-        case .permission: "hand.raised.fill"
-        case .question: "questionmark"
-        case .finished: "checkmark"
-        }
-    }
-
-    /// What the mark means, said aloud. A mark that only exists as a shape is
-    /// unreadable to anyone using VoiceOver, so every row spells it.
-    public var spoken: String {
-        switch self {
-        case .permission: "Needs permission"
-        case .question: "Has a question"
-        case .finished: "Finished"
-        }
     }
 }
 
@@ -433,5 +409,26 @@ public enum Fingerprint {
     public static func short(_ fingerprint: String) -> String {
         guard fingerprint.count > 11 else { return fingerprint }
         return "\(fingerprint.prefix(4))…\(fingerprint.suffix(4))"
+    }
+}
+
+/// One choice of several, chosen or not.
+struct Radio: View {
+    @Environment(\.design) private var design
+    let chosen: Bool
+    var mark: Ramp?
+
+    var body: some View {
+        let mark = (mark ?? design.accent).color
+        return ZStack {
+            Circle()
+                .strokeBorder(
+                    chosen ? mark : design.hairline.color, lineWidth: chosen ? 2 : 1)
+                .frame(width: 15, height: 15)
+            if chosen {
+                Circle().fill(mark).frame(width: 7, height: 7)
+            }
+        }
+        .frame(width: 18, height: 18)
     }
 }
