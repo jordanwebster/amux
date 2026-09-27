@@ -34,6 +34,7 @@ goldens! {
     lifecycle_events_write_boundaries_and_interrupt => "lifecycle",
     permission_asks_keep_scopes_reason_and_description => "asks",
     questions_and_plan_verdicts_are_asks => "verdicts",
+    a_stopped_question_is_dismissed => "question_stopped",
     usage_health_and_sign_in_are_strip_fields => "strip",
     refusal_fallback_is_a_model_switch_row => "rows",
     inputs_become_stream_json_writes => "inputs",

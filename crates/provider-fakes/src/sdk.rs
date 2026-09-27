@@ -120,6 +120,8 @@ struct Engine {
     /// Command uuids folded into the running turn.
     absorbed: Vec<String>,
     cut: Option<Cut>,
+    /// The interrupt refused a call whose permission it cancelled.
+    refused_call: bool,
     answers: BTreeMap<String, Value>,
     turns: u32,
     last_text: String,
@@ -177,6 +179,7 @@ impl Engine {
             running: None,
             absorbed: Vec::new(),
             cut: None,
+            refused_call: false,
             answers: BTreeMap::new(),
             turns: 0,
             last_text: String::new(),
@@ -730,11 +733,24 @@ impl Engine {
     /// be cut short.
     async fn request(&mut self, body: Value) -> Option<Value> {
         let id = uuid();
+        let call = body["tool_use_id"].as_str().map(str::to_owned);
         self.send(json!({ "type": "control_request", "request_id": id, "request": body }))
             .await;
         loop {
             if let Some(answer) = self.answers.remove(&id) {
                 return Some(answer);
+            }
+            // An interrupt cancels an open permission request, as Claude
+            // does, and refuses the call it was for.
+            if self.cut == Some(Cut::Interrupted)
+                && let Some(call) = &call
+            {
+                self.send(json!({ "type": "control_cancel_request", "request_id": id }))
+                    .await;
+                self.user_result(call, json!(REFUSED), true, json!("User rejected tool use"))
+                    .await;
+                self.refused_call = true;
+                return None;
             }
             if self.cut.is_some() {
                 return None;
@@ -984,9 +1000,14 @@ impl Engine {
     /// interruption marker, then an error result.
     async fn interrupted(&mut self, calls: u32) {
         self.skip_turn();
+        let marker = if std::mem::take(&mut self.refused_call) {
+            "[Request interrupted by user for tool use]"
+        } else {
+            "[Request interrupted by user]"
+        };
         let frame = json!({
             "type": "user",
-            "message": { "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user]" }] },
+            "message": { "role": "user", "content": [{ "type": "text", "text": marker }] },
             "parent_tool_use_id": null,
             "session_id": self.session,
             "timestamp": timestamp(),
@@ -1057,6 +1078,9 @@ fn subagent_stats() -> Value {
     })
 }
 
+/// What Claude answers a call the person refused.
+const REFUSED: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+
 /// The allow or the refusal text of a `can_use_tool` answer.
 fn allowed(answer: &Value) -> Result<(), String> {
     let response = &answer["response"];
@@ -1066,7 +1090,7 @@ fn allowed(answer: &Value) -> Result<(), String> {
     Err(response["message"]
         .as_str()
         .filter(|message| !message.is_empty())
-        .unwrap_or("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.")
+        .unwrap_or(REFUSED)
         .to_owned())
 }
 

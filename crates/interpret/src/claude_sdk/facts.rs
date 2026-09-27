@@ -45,6 +45,7 @@ impl State {
             "user" => self.user(emit, &line),
             "result" => self.result(emit, &line),
             "control_request" => self.control_request_in(emit, &line),
+            "control_cancel_request" => self.request_cancelled(emit, text(&line, "request_id")),
             "control_response" => self.control_response_in(&line),
             "command_lifecycle" => {
                 if text(&line, "state") == "started" {

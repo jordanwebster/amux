@@ -1,3 +1,16 @@
+2026-09-27 — **A stopped headless Claude question reads Dismissed, from the fake too.**
+Stopped with AskUserQuestion open, Claude 2.1.283 sends
+`control_cancel_request` for the open permission request, refuses the call
+(a rejected tool result), writes "[Request interrupted by user for tool
+use]" and ends the turn with an aborted result; amux already drew that as
+`⊘ Dismissed`. The fake headless Claude only stopped waiting, so the
+question stayed `? Asking …` forever; it now does what Claude does. The
+claude_sdk interpreter closes an ask on `control_cancel_request`, and an
+ask left open when the turn or the provider ends marks its unfinished call
+cancelled, so the row reads dismissed whether or not a refusal follows.
+Fixture `question_stopped` mirrors the live frames; the fake's corpus
+check exempts `control_cancel_request`, which no recording holds yet.
+
 2026-09-27 — **Resuming a terminal Claude whose first run never began its session.**
 An agent that exited before Claude started its session (at the folder-trust
 dialog, say) had its session id recorded, so every resume launched

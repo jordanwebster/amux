@@ -1,0 +1,318 @@
+{
+  "about": "Stopping a turn while headless Claude's question is open, as Claude 2.1.283 does it: control_cancel_request for the open request, the call refused, the interruption marker, an aborted result. The question row reads dismissed; a turn that ends with a question still open closes it the same way.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "system",
+          "subtype": "init",
+          "uuid": "init-s1",
+          "session_id": "s1",
+          "claude_code_version": "2.1.283",
+          "model": "claude-sonnet-5",
+          "permissionMode": "default"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "ask whether to ship"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m1",
+          "message": {
+            "id": "m1",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "AskUserQuestion",
+                "input": {
+                  "questions": [
+                    {
+                      "question": "Ship it today?",
+                      "header": "Ship",
+                      "multiSelect": false,
+                      "options": [
+                        {
+                          "label": "Yes",
+                          "description": "Ship it today"
+                        },
+                        {
+                          "label": "No",
+                          "description": "Do not ship it today"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_request",
+          "request_id": "req-1",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "AskUserQuestion",
+            "display_name": "AskUserQuestion",
+            "input": {
+              "questions": [
+                {
+                  "question": "Ship it today?",
+                  "header": "Ship",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes",
+                      "description": "Ship it today"
+                    },
+                    {
+                      "label": "No",
+                      "description": "Do not ship it today"
+                    }
+                  ]
+                }
+              ]
+            },
+            "tool_use_id": "t1"
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "req-1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "i1",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_cancel_request",
+          "request_id": "req-1"
+        }
+      },
+      "expect": {
+        "asks": [],
+        "items": [
+          "t1"
+        ]
+      },
+      "note": "the interrupt cancels the open request: the question is over and its call will not run"
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+                "is_error": true,
+                "tool_use_id": "t1"
+              }
+            ]
+          },
+          "tool_use_result": "User rejected tool use",
+          "tool_result_meta": [
+            {
+              "id": "t1",
+              "non_execution_kind": "user-rejected"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "items": [
+          "t1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "[Request interrupted by user for tool use]"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "result",
+          "subtype": "error_during_execution",
+          "uuid": "r1",
+          "is_error": true,
+          "terminal_reason": "aborted_tools",
+          "stop_reason": "tool_use",
+          "duration_ms": 6016,
+          "duration_api_ms": 3488,
+          "num_turns": 3,
+          "errors": [],
+          "session_id": "s1"
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p2",
+        "prompt": {
+          "text": "ask again"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "assistant",
+          "uuid": "m2",
+          "message": {
+            "id": "m2",
+            "model": "claude-sonnet-5",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "AskUserQuestion",
+                "input": {
+                  "questions": [
+                    {
+                      "question": "Ship it today?",
+                      "header": "Ship",
+                      "multiSelect": false,
+                      "options": [
+                        {
+                          "label": "Yes",
+                          "description": "Ship it today"
+                        },
+                        {
+                          "label": "No",
+                          "description": "Do not ship it today"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "control_request",
+          "request_id": "req-2",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "AskUserQuestion",
+            "display_name": "AskUserQuestion",
+            "input": {
+              "questions": [
+                {
+                  "question": "Ship it today?",
+                  "header": "Ship",
+                  "multiSelect": false,
+                  "options": [
+                    {
+                      "label": "Yes",
+                      "description": "Ship it today"
+                    },
+                    {
+                      "label": "No",
+                      "description": "Do not ship it today"
+                    }
+                  ]
+                }
+              ]
+            },
+            "tool_use_id": "t2"
+          }
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "req-2"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "stream",
+        "json": {
+          "type": "result",
+          "subtype": "error_during_execution",
+          "uuid": "r2",
+          "is_error": true,
+          "terminal_reason": "aborted_tools",
+          "duration_ms": 10,
+          "errors": [],
+          "session_id": "s1"
+        }
+      },
+      "expect": {
+        "asks": [],
+        "phase": "IDLE",
+        "items": [
+          "t2",
+          "turn:2"
+        ]
+      },
+      "note": "a turn that ends with the question open closes it too"
+    }
+  ]
+}

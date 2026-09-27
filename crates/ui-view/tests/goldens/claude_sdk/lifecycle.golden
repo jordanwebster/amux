@@ -16,12 +16,13 @@
 ## 5 daemon_lost {}
   row    4 boundary:2 Boundary { kind: DaemonLost, cause: "" }
 ## 8 exiting "orphaned while waiting for you"
+  row    3 t1 Command { command: "rm -rf target", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(0) }
   row    5 boundary:3 Boundary { kind: Exited, cause: "orphaned while waiting for you" }
   ask none
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 70310000-0000-4000-8000-000000000000 Prompt { text: [Text("clean")], steered: false }
-     3 t1 Command { command: "rm -rf target", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
+     3 t1 Command { command: "rm -rf target", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(0) }
      4 boundary:2 Boundary { kind: DaemonLost, cause: "" }
      5 boundary:3 Boundary { kind: Exited, cause: "orphaned while waiting for you" }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

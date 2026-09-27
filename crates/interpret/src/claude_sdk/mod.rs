@@ -546,8 +546,36 @@ impl State {
     /// ended under it.
     fn dismiss_asks(&mut self, emit: &mut Emit) {
         for ask in self.shared.close_all_asks() {
-            self.asks.remove(&ask.key);
-            self.emit_ask(emit, &ask, Some(ask_item::dismissed()));
+            self.dismissed(emit, &ask);
+        }
+    }
+
+    /// Claude withdrew a request it had asked: an interrupt cancels an
+    /// open permission request, and Claude refuses the call.
+    pub(super) fn request_cancelled(&mut self, emit: &mut Emit, request_id: &str) {
+        if let Some(ask) = self.shared.close_ask(request_id) {
+            self.dismissed(emit, &ask);
+        }
+    }
+
+    /// An ask closed with no answer. Its own item says so; a call it held
+    /// that is still in flight will never run, so it reads cancelled until
+    /// Claude says more.
+    fn dismissed(&mut self, emit: &mut Emit, ask: &Ask) {
+        let meta = self.asks.remove(&ask.key);
+        self.emit_ask(emit, ask, Some(ask_item::dismissed()));
+        let Some(id) = meta.map(|meta| meta.tool_use_id) else {
+            return;
+        };
+        if let Some(tool) = self.tools.get_mut(&id)
+            && matches!(
+                wire::ToolState::try_from(tool.state),
+                Ok(wire::ToolState::Pending | wire::ToolState::Running)
+            )
+        {
+            tool.state = wire::ToolState::Cancelled as i32;
+            tool.ended_at_ms.get_or_insert(self.shared.now_ms());
+            self.emit_tool(emit, &id);
         }
     }
 

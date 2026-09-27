@@ -12,7 +12,12 @@ use support::Host as Line;
 
 /// A cancel answer is shown by the probe of Claude 2.1.282
 /// (notes/rearchitect/probes/sdk-side-channel.md), not by any recording yet.
-const EXEMPT: &[&str] = &["control_response/cancel_async_message/success"];
+/// Claude 2.1.283 sends control_cancel_request when an interrupt lands on an
+/// open permission request, as seen live; no recording has one yet.
+const EXEMPT: &[&str] = &[
+    "control_response/cancel_async_message/success",
+    "control_cancel_request",
+];
 
 struct Host(Line);
 
@@ -357,6 +362,48 @@ async fn every_ask_blocks_until_answered_and_resolves_the_call() {
     assert!(results[4].1.contains("\\\"Which?\\\"=\\\"Blue\\\""));
     assert!(results[5].1.contains("approved your plan"));
     assert!(results[6].1.contains("elicitation accept"));
+    assert_eq!(host.close().await, 0);
+}
+
+/// An interrupt with a question open, as Claude 2.1.283 answers it:
+/// the open request cancelled, the call refused, the tool-use marker, an
+/// aborted result.
+#[tokio::test]
+async fn interrupt_cancels_an_open_question_and_refuses_its_call() {
+    let mut host = Host::start(json!({"steps": [
+        {"ask": {"question": {"questions": [{"question": "Ship it today?", "header": "Ship",
+                                             "options": ["Yes", "No"]}]}}},
+        {"text": {"chunks": ["never said"]}},
+        "turn_end",
+    ]}))
+    .await;
+    host.prompt(A, "Ask", None).await;
+    let request = host.until(|frame| frame["type"] == "control_request").await;
+    host.send(
+        json!({"type":"control_request","request_id":"req_1","request":{"subtype":"interrupt"}}),
+    )
+    .await;
+    let cancel = host
+        .until(|frame| frame["type"] == "control_cancel_request")
+        .await;
+    assert_eq!(cancel["request_id"], request["request_id"]);
+    let result = host.until(|frame| frame["type"] == "result").await;
+    assert_eq!(result["subtype"], "error_during_execution");
+    assert_eq!(result["terminal_reason"], "aborted_tools");
+    let after: Vec<&Value> = host
+        .frames
+        .iter()
+        .skip_while(|frame| frame["type"] != "control_cancel_request")
+        .filter(|frame| frame["type"] == "user")
+        .collect();
+    let refused = &after[0]["message"]["content"][0];
+    assert_eq!(refused["type"], "tool_result");
+    assert_eq!(refused["is_error"], true);
+    assert_eq!(refused["tool_use_id"], request["request"]["tool_use_id"]);
+    assert_eq!(
+        after[1]["message"]["content"][0]["text"],
+        "[Request interrupted by user for tool use]"
+    );
     assert_eq!(host.close().await, 0);
 }
 
