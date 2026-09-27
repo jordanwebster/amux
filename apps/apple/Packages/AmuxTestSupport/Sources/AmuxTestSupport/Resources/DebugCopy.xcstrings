@@ -853,6 +853,18 @@
         }
       }
     },
+    "Resuming from the live checklist": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resuming from the live checklist"
+          }
+        }
+      }
+    },
     "Rollout": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -933,6 +945,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sign in to Linear to continue."
+          }
+        }
+      }
+    },
+    "Split the lexer": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Split the lexer"
           }
         }
       }
@@ -1693,6 +1717,42 @@
         }
       }
     },
+    "claude-opus-5-5": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "claude-opus-5-5"
+          }
+        }
+      }
+    },
+    "claude-sonnet-5": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "claude-sonnet-5"
+          }
+        }
+      }
+    },
+    "claude.ai Google Drive": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "claude.ai Google Drive"
+          }
+        }
+      }
+    },
     "code 1": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1801,6 +1861,18 @@
         }
       }
     },
+    "connection refused": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "connection refused"
+          }
+        }
+      }
+    },
     "conversation": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -1881,6 +1953,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "dismissed"
+          }
+        }
+      }
+    },
+    "docs": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "docs"
           }
         }
       }
@@ -2029,6 +2113,18 @@
         }
       }
     },
+    "five_hour": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "five_hour"
+          }
+        }
+      }
+    },
     "form": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -2109,6 +2205,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "gpt-5"
+          }
+        }
+      }
+    },
+    "gpt-5.6-luna": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "gpt-5.6-luna"
           }
         }
       }
@@ -2445,6 +2553,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "o1"
+          }
+        }
+      }
+    },
+    "on-request": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "on-request"
           }
         }
       }
@@ -3057,6 +3177,42 @@
           "stringUnit": {
             "state": "translated",
             "value": "strip"
+          }
+        }
+      }
+    },
+    "strip-claude-pty": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "strip-claude-pty"
+          }
+        }
+      }
+    },
+    "strip-claude-sdk": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "strip-claude-sdk"
+          }
+        }
+      }
+    },
+    "strip-codex": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "strip-codex"
           }
         }
       }

@@ -309,6 +309,10 @@ struct ChatTray: View {
 /// The facts strip above the composer: tasks, context near its end, what
 /// runs in the background, a usage limit coming, a tool server that failed.
 /// Each part shows only while it is true.
+///
+/// The parts are one run of text that wraps rather than a row of labels that
+/// truncate: at a phone's width three facts side by side each cut to a few
+/// letters, and a fact nobody can read is not shown at all.
 struct StripLine: View {
     @Environment(\.design) private var design
     let strip: Strip
@@ -316,21 +320,22 @@ struct StripLine: View {
     var body: some View {
         let parts = ChatWords.strip(strip)
         if !parts.isEmpty {
-            HStack(spacing: 6) {
-                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                    if index > 0 {
-                        Text("·").designFont(.caption, design).foregroundStyle(design.inkFaint.color)
-                    }
-                    Text(part.text)
-                        .designFont(.caption, design)
+            HStack(spacing: 0) {
+                parts.enumerated().reduce(Text(verbatim: "")) { line, item in
+                    let (index, part) = item
+                    let fact = Text(verbatim: part.text)
                         .foregroundStyle(part.warn ? design.accent.color : design.inkMuted.color)
-                        .lineLimit(1)
+                    guard index > 0 else { return line + fact }
+                    return line + Text(verbatim: " · ").foregroundStyle(design.inkFaint.color) + fact
                 }
+                .designFont(.caption, design)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .frosted(Capsule(), as: .glass)
+            .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous), as: .glass)
             .accessibilityElement(children: .combine)
             .identified("chat.strip", label: parts.map(\.text).joined(separator: ", "))
         }

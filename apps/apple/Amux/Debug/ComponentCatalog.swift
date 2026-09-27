@@ -364,6 +364,24 @@ enum ComponentCatalog {
                         tasks: TasksView(done: 3, total: 7, current: "Updating the pairing copy"),
                         context: ContextView(usedTokens: 168_000, inStrip: true, percent: 84, windowTokens: 200_000),
                         model: "opus 4.6", effort: "high", mode: "plan", background: 2)),
+            // The strip once per provider kind, carrying the facts that
+            // kind's interpreter reports: the renderer never sees the kind,
+            // so these differ only in which facts are present.
+            composer("strip-claude-pty", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
+                tasks: TasksView(done: 1, total: 3, current: "Resuming from the live checklist"),
+                context: ContextView(usedTokens: 171_000, inStrip: true, percent: 86, windowTokens: 200_000),
+                model: "claude-sonnet-5", mode: "acceptEdits", background: 2)),
+            composer("strip-claude-sdk", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
+                context: ContextView(usedTokens: 30_513, inStrip: false, percent: 16, windowTokens: 200_000),
+                model: "claude-opus-5-5", effort: "low", mode: "plan",
+                usage: UsageView(blocked: false, windows: [UsageWindowView(name: "five_hour", usedPercent: 83, resetsAtMs: nil)], credits: nil),
+                failedServers: [ServerView(name: "claude.ai Google Drive", error: "", needsAuth: true)],
+                background: 3)),
+            composer("strip-codex", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
+                tasks: TasksView(done: 1, total: 3, current: "Split the lexer"),
+                context: ContextView(usedTokens: 16_447, inStrip: false, percent: 6, windowTokens: 258_400),
+                model: "gpt-5.6-luna", effort: "high", mode: "on-request",
+                failedServers: [ServerView(name: "docs", error: "connection refused", needsAuth: false)])),
             composer("strip-trouble", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 model: "gpt-5", usage: UsageView(blocked: false, windows: [UsageWindowView(name: "5h", usedPercent: 91, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "github", error: "exited", needsAuth: false)])),
