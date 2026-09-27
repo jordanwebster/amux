@@ -635,6 +635,72 @@ fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
     });
 }
 
+/// Terminal Claude on a folder it has not been told to trust asks first.
+/// The question reaches the daemon before Claude counts as ready, a prompt
+/// sent meanwhile waits instead of being typed into the dialog, and
+/// trusting the folder starts the session, which takes the prompt.
+#[test]
+fn terminal_claude_asks_to_trust_its_folder_before_taking_a_prompt() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            untrusted_folder: true,
+            steps: vec![
+                Step::Text {
+                    chunks: vec!["hello from a trusted folder".into()],
+                },
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent
+            .wait("the trust question opens", |log| {
+                log.phase() == Some(wire::Phase::NeedsYou)
+            })
+            .await;
+        assert_eq!(daemon.prompt(b"p1", "say hello").await, Verdict::Queued);
+        answer(
+            &agent,
+            &mut daemon,
+            b"a1",
+            serde_json::json!({"selected": [0]}),
+        )
+        .await;
+        agent
+            .wait("the waiting prompt's turn ends", |log| log.turn_ends() == 1)
+            .await;
+        let log = agent.log();
+        assert!(log.has_text("say hello"), "{:#?}", log.sequence());
+        assert!(log.has_text("hello from a trusted folder"));
+        daemon.stop(StopMode::Graceful).await;
+        assert_eq!(agent.exit().await, ExitCause::Stopped);
+    });
+}
+
+/// Answering the trust question with Exit ends Claude, as its own No does.
+#[test]
+fn terminal_claude_exits_when_its_folder_is_not_trusted() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            untrusted_folder: true,
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        answer(
+            &agent,
+            &mut daemon,
+            b"a1",
+            serde_json::json!({"selected": [1]}),
+        )
+        .await;
+        assert_eq!(agent.exit().await, ExitCause::ProviderExited(Some(1)));
+    });
+}
+
 /// Terminal Claude dies while its permission menu is open.
 #[test]
 fn terminal_claude_replays_transport_loss_mid_turn() {

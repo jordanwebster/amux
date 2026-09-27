@@ -839,6 +839,16 @@ pointers. Findings:
   dedupe at the emission seam, live-confirmed (every Phase 0 fixture
   carried adjacent duplicates; folds still tolerate them for historical
   streams).
+- **Folder trust (2.1.283).** In a folder neither trusted nor under a
+  trusted parent, Claude's first screen (drawn with bracketed paste already
+  on) is "Is this a project you created or one you trust?" over `❯ No,
+  exit` / `Yes, I trust this folder`, words placed by cursor moves; Enter
+  confirms, Esc cancels. No exits with code 1. No hook runs before it is
+  answered: SessionStart follows the trust. amux's agent reports the
+  dialog before counting Claude ready (its first screen must be quiet for
+  100 ms), the interpreter asks it as a question with its own item and
+  holds prompts until the session starts, and the answer types Enter (exit)
+  or Down, Enter (trust).
 
 ---
 

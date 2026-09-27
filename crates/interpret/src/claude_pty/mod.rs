@@ -33,6 +33,10 @@
 //!   amux closes it cancelled; that call's result, a row from a later
 //!   assistant message, and the facts that close every ask close it
 //!   dismissed.
+//! - Claude's first screen may ask whether its folder is trusted; the
+//!   agent process reports it before Claude counts as ready. It opens a
+//!   question with its own item, answered through amux or closed by the
+//!   session starting (trusted in the terminal) or Claude exiting.
 //! - Rows are read by polling and hooks arrive at once, so a hook of the
 //!   turn a prompt sent through amux began can land before that prompt's
 //!   row. Items only hooks have reported so far are held until the row
@@ -96,6 +100,10 @@ pub enum TerminalInput {
     Question {
         questions: Vec<QuestionShape>,
         answers: Vec<QuestionChoice>,
+    },
+    /// Answer the folder-trust dialog: trust the folder, or exit.
+    Trust {
+        trust: bool,
     },
 }
 
@@ -176,6 +184,7 @@ impl fmt::Display for TerminalInput {
                 }
                 Ok(())
             }
+            Self::Trust { trust } => write!(f, "trust {trust}"),
         }
     }
 }
@@ -197,6 +206,12 @@ pub fn launch_fact(version: &str, keymap: &str) -> Vec<u8> {
 /// nothing else says a new terminal takes input.
 pub fn ready_fact() -> Vec<u8> {
     br#"{"type":"ready"}"#.to_vec()
+}
+
+/// The fact the agent process sends, before [`ready_fact`], when Claude's
+/// first screen is its folder-trust dialog.
+pub fn trust_dialog_fact() -> Vec<u8> {
+    br#"{"type":"trust_dialog"}"#.to_vec()
 }
 
 /// What the interpreter knows about the Claude process and its session.
@@ -325,6 +340,8 @@ enum AskShape {
     Unanswerable {
         call: Option<String>,
     },
+    /// Claude's folder-trust dialog.
+    Trust,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -638,9 +655,10 @@ impl State {
 
     /// Closes an ask with the outcome the closing fact carries.
     fn close(&mut self, emit: &mut Emit, ask_key: &str, decision: Decision) {
-        if let Some(AskShape::Unanswerable { .. }) = self.asks.get(ask_key).map(|meta| &meta.shape)
+        if let Some(AskShape::Unanswerable { .. } | AskShape::Trust) =
+            self.asks.get(ask_key).map(|meta| &meta.shape)
         {
-            return self.close_unanswerable(emit, ask_key, ask_item::dismissed());
+            return self.close_ask_item(emit, ask_key, ask_item::dismissed());
         }
         self.shared.close_ask(ask_key);
         let Some(meta) = self.asks.get_mut(ask_key) else {
@@ -674,12 +692,19 @@ impl State {
         }
     }
 
-    /// Writes an unanswerable ask's own item, open or closed.
-    fn emit_unanswerable(&mut self, emit: &mut Emit, ask: &Ask, closed: Option<AskClosed>) {
-        let Some(wire::ask::Body::Unanswerable(unanswerable)) = &ask.body else {
-            return;
+    /// Writes the own item of an ask that is not a call's (an unanswerable
+    /// dialog, the trust question), open or closed.
+    fn emit_ask_item(&mut self, emit: &mut Emit, ask: &Ask, closed: Option<AskClosed>) {
+        let item = match &ask.body {
+            Some(wire::ask::Body::Unanswerable(unanswerable)) => {
+                wire::ask_item::Ask::Unanswerable(unanswerable.clone())
+            }
+            Some(wire::ask::Body::Question(question)) => {
+                wire::ask_item::Ask::Question(question.clone())
+            }
+            _ => return,
         };
-        let item = ask_item::opened(wire::ask_item::Ask::Unanswerable(unanswerable.clone()));
+        let item = ask_item::opened(item);
         let unseen = closed.is_none();
         let item = match closed {
             Some(closed) => ask_item::close(item, closed),
@@ -698,11 +723,36 @@ impl State {
         );
     }
 
-    fn close_unanswerable(&mut self, emit: &mut Emit, ask_key: &str, closed: AskClosed) {
+    fn close_ask_item(&mut self, emit: &mut Emit, ask_key: &str, closed: AskClosed) {
         self.asks.remove(ask_key);
         if let Some(ask) = self.shared.close_ask(ask_key) {
-            self.emit_unanswerable(emit, &ask, Some(closed));
+            self.emit_ask_item(emit, &ask, Some(closed));
         }
+    }
+
+    /// The open trust question, if any.
+    pub(super) fn trust_ask(&self) -> Option<String> {
+        self.asks
+            .iter()
+            .find(|(_, meta)| matches!(meta.shape, AskShape::Trust))
+            .map(|(key, _)| key.clone())
+    }
+
+    /// The session started with the trust question open: the folder was
+    /// trusted in Claude's own terminal.
+    fn close_trust_answered_elsewhere(&mut self, emit: &mut Emit) {
+        let Some(key) = self.trust_ask() else {
+            return;
+        };
+        let closed = AskClosed {
+            outcome: wire::AskOutcome::Answered as i32,
+            answers: vec![wire::AnsweredQuestion {
+                picked: vec![facts::TRUST_YES.to_owned()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        self.close_ask_item(emit, &key, closed);
     }
 
     /// The open unanswerable asks and the call each was raised under.
@@ -721,7 +771,7 @@ impl State {
     fn close_unanswerable_for_tool(&mut self, emit: &mut Emit, tool_id: &str) {
         for (key, call) in self.unanswerable_asks() {
             if call.as_deref().is_none_or(|call| call == tool_id) {
-                self.close_unanswerable(emit, &key, ask_item::dismissed());
+                self.close_ask_item(emit, &key, ask_item::dismissed());
             }
         }
     }
@@ -795,7 +845,7 @@ impl State {
         // The interrupt key cancels a dialog Claude shows in its terminal
         // whether or not the turn goes on, and nothing else reports that.
         for (key, _) in self.unanswerable_asks() {
-            self.close_unanswerable(emit, &key, ask_item::outcome(wire::AskOutcome::Cancelled));
+            self.close_ask_item(emit, &key, ask_item::outcome(wire::AskOutcome::Cancelled));
         }
     }
 
@@ -932,6 +982,9 @@ impl State {
         let parsed = ClaudeAnswer::decode(answer.body.as_slice())
             .ok()
             .and_then(|answer| answer.of);
+        if let Some(AskShape::Trust) = self.asks.get(&key).map(|meta| &meta.shape) {
+            return self.answer_trust(emit, id, &key, parsed);
+        }
         let Some((terminal, decision)) = self
             .asks
             .get(&key)
@@ -942,6 +995,47 @@ impl State {
         self.shared.answer(emit, id, &key);
         self.close(emit, &key, decision);
         emit.effect(Effect::Terminal(terminal));
+        self.shared.accept(emit, id, false);
+    }
+}
+
+impl State {
+    /// The trust question answered through amux: its first answer trusts
+    /// the folder, its second exits.
+    fn answer_trust(
+        &mut self,
+        emit: &mut Emit,
+        id: &[u8],
+        key: &str,
+        parsed: Option<claude_answer::Of>,
+    ) {
+        let trust = match &parsed {
+            Some(claude_answer::Of::Question(answer))
+                if answer.note.trim().is_empty()
+                    && answer.answers.len() == 1
+                    && answer.answers[0].other.is_none() =>
+            {
+                match answer.answers[0].selected.as_slice() {
+                    [0] => Some(true),
+                    [1] => Some(false),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let (Some(trust), Some(claude_answer::Of::Question(answer))) = (trust, parsed) else {
+            return self.shared.reject(emit, id, reason::UNSUPPORTED);
+        };
+        let Some(ask) = self.shared.answer(emit, id, key) else {
+            return;
+        };
+        self.asks.remove(key);
+        let closed = match &ask.body {
+            Some(wire::ask::Body::Question(asked)) => ask_item::answered(asked, &answer),
+            _ => None,
+        };
+        self.emit_ask_item(emit, &ask, closed);
+        emit.effect(Effect::Terminal(TerminalInput::Trust { trust }));
         self.shared.accept(emit, id, false);
     }
 }

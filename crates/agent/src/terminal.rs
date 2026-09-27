@@ -121,6 +121,32 @@ impl Keys {
                 });
                 self.encode(ProgramName::PlanMenu, Some(&ask), Some(&answer))
             }
+            // The trust dialog preselects No: Enter exits, Down and Enter
+            // trusts the folder.
+            TerminalInput::Trust { trust } => {
+                let key = |name| {
+                    self.keymap
+                        .keys
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| unsupported(&format!("the keymap has no {name:?} key")))
+                };
+                let mut steps = Vec::new();
+                if *trust {
+                    let pause = self
+                        .keymap
+                        .delays
+                        .get(&keymap::DelayName::AfterMove)
+                        .copied()
+                        .unwrap_or_default();
+                    steps.push(KeyStep::Write(key(keymap::KeyName::Down)?));
+                    steps.push(KeyStep::Delay(std::time::Duration::from_millis(u64::from(
+                        pause,
+                    ))));
+                }
+                steps.push(KeyStep::Write(key(keymap::KeyName::Enter)?));
+                Ok(steps)
+            }
             TerminalInput::Question { questions, answers } => {
                 let ask = AskKind::Question {
                     questions: questions

@@ -112,6 +112,8 @@ pub struct Setup {
     pub journal_bytes: u64,
     /// Terminal Claude's permission menu offers to switch to auto mode.
     pub offers_auto_mode: bool,
+    /// Terminal Claude asks whether its folder is trusted first.
+    pub untrusted_folder: bool,
 }
 
 impl Setup {
@@ -131,6 +133,7 @@ impl Setup {
             session: None,
             journal_bytes: 0,
             offers_auto_mode: false,
+            untrusted_folder: false,
         }
     }
 }
@@ -198,6 +201,7 @@ impl Agent {
         let script = Script {
             steps: setup.steps,
             offers_auto_mode: setup.offers_auto_mode,
+            untrusted_folder: setup.untrusted_folder,
             ..Script::default()
         };
         let script = serde_json::to_string(&script)

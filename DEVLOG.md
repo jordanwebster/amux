@@ -1,3 +1,20 @@
+2026-09-27 — **Terminal Claude's folder-trust dialog is asked, not typed into.**
+In a folder Claude had not been told to trust, its first screen is the
+trust dialog with No preselected; amux counted Claude ready and idle, and
+the first message typed into it confirmed No, so Claude exited. The agent
+now watches Claude's first screen for the dialog (drawn text compared with
+escapes and spaces removed) and waits for that screen to settle, 100 ms
+quiet or 500 ms, before reporting Claude ready, so the dialog is reported
+first. The claude_pty interpreter asks it as a question with its own item
+("Do you trust the files in this folder?" — Trust this folder / Exit),
+holds prompts until Claude starts its session (it runs SessionStart only
+once trusted), and an answer types Down and Enter to trust or Enter to
+exit; trusted in Claude's own terminal, the session starting closes the
+question as trusted. The fake terminal Claude draws the dialog when a
+script says `untrusted_folder`. Verified live on 2.1.283: the question
+appeared, a message sent meanwhile waited as queued, and after Trust it
+ran.
+
 2026-09-27 — **A question's note reaches the agent and shows on the row.**
 The card's `n add a note` was recorded on the decision but never sent:
 headless Claude answered "no additional notes". The note now goes out with

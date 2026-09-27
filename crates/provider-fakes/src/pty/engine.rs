@@ -334,6 +334,7 @@ struct Engine {
     /// The session has started: the first prompt arrived.
     started: bool,
     offers_auto_mode: bool,
+    untrusted_folder: bool,
 }
 
 impl Engine {
@@ -355,6 +356,7 @@ impl Engine {
             closed: false,
             steps: script.steps.into(),
             offers_auto_mode: script.offers_auto_mode,
+            untrusted_folder: script.untrusted_folder,
             model: args
                 .model
                 .clone()
@@ -406,6 +408,14 @@ impl Engine {
             let _ = stdout.write_all(BRACKETED_PASTE_OFF);
             let _ = stdout.write_all(BRACKETED_PASTE_ON);
             let _ = stdout.flush();
+        }
+        if self.untrusted_folder {
+            if !self.trust_folder().await {
+                return 1;
+            }
+            // Trusted, Claude starts its session at once, as 2.1.283 does,
+            // rather than at the first prompt.
+            self.session_start();
         }
         self.screen("Claude Code (scripted)");
         for input in kept {
@@ -533,6 +543,26 @@ impl Engine {
             self.row(row);
         }
         self.queue.push_back(queued);
+    }
+
+    /// Claude's folder-trust dialog, drawn as its first screen with its
+    /// words placed by cursor moves as Claude places them. True once Yes is
+    /// confirmed; No or Escape exits.
+    async fn trust_folder(&mut self) -> bool {
+        self.screen(&format!(
+            "Accessing workspace:\n{}\nQuick safety check: Is this a project you created or one you trust?\n\u{1b}[2G\u{276f}\u{1b}[4GNo,\u{1b}[8Gexit\n\u{1b}[4GYes,\u{1b}[9GI\u{1b}[11Gtrust\u{1b}[17Gthis\u{1b}[22Gfolder\nEnter to confirm · Esc to cancel",
+            self.cwd
+        ));
+        let mut yes = false;
+        loop {
+            match self.input.recv().await {
+                Some(In::Key(Key::Down)) => yes = true,
+                Some(In::Key(Key::Up)) => yes = false,
+                Some(In::Key(Key::Enter)) => return yes,
+                Some(In::Key(Key::Escape)) | None => return false,
+                Some(_) => {}
+            }
+        }
     }
 
     fn screen(&self, text: &str) {

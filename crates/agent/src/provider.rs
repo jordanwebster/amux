@@ -29,6 +29,12 @@ use crate::terminal::{self, Keys};
 
 /// How long output still in flight is collected after the child exits.
 const TRAILING_OUTPUT: Duration = Duration::from_millis(300);
+/// How long terminal Claude's output must stay quiet after its input goes
+/// live before it counts as ready, so a first screen that is its
+/// folder-trust dialog is seen before anything is typed into it.
+const FIRST_SCREEN_QUIET: Duration = Duration::from_millis(100);
+/// The longest the first screen is waited for once input is live.
+const FIRST_SCREEN_WAIT: Duration = Duration::from_millis(500);
 /// The request ids of the agent's own Codex handshake; the interpreter's
 /// requests are numbered amux-N.
 const CODEX_INITIALIZE: &str = "agent-initialize";
@@ -401,22 +407,47 @@ impl Provider {
         let mut exit = process.exit;
         let forward = events.clone();
         tokio::spawn(async move {
+            let agent_fact = |payload| {
+                ProviderEvent::Fact(Fact {
+                    channel: Channel::Agent,
+                    payload,
+                })
+            };
             let mut ready = crate::ready::InputLive::default();
+            // Only a first screen is the trust dialog; later output that
+            // happens to read like it is not.
+            let mut trust = Some(crate::ready::TrustDialog::default());
+            // Input is live: when the first screen has settled (quiet, or
+            // waited for long enough), Claude is ready.
+            let mut settling: Option<(tokio::time::Instant, tokio::time::Instant)> = None;
             let status = loop {
+                let settled = settling.map(|(quiet, cap)| quiet.min(cap));
                 tokio::select! {
                     bytes = output.recv() => match bytes {
                         Some(bytes) => {
                             let _ = forward.send(ProviderEvent::Output(bytes.to_vec())).await;
+                            if trust.as_mut().is_some_and(|trust| trust.watch(&bytes)) {
+                                trust = None;
+                                let payload = interpret::claude_pty::trust_dialog_fact();
+                                let _ = forward.send(agent_fact(payload)).await;
+                            }
+                            let now = tokio::time::Instant::now();
                             if ready.watch(&bytes) {
-                                let fact = Fact {
-                                    channel: Channel::Agent,
-                                    payload: interpret::claude_pty::ready_fact(),
-                                };
-                                let _ = forward.send(ProviderEvent::Fact(fact)).await;
+                                settling = Some((now + FIRST_SCREEN_QUIET, now + FIRST_SCREEN_WAIT));
+                            } else if let Some((quiet, _)) = &mut settling {
+                                *quiet = now + FIRST_SCREEN_QUIET;
                             }
                         }
                         None => break exit.wait().await,
                     },
+                    () = tokio::time::sleep_until(settled.unwrap_or_else(tokio::time::Instant::now)),
+                        if settled.is_some() =>
+                    {
+                        settling = None;
+                        trust = None;
+                        let payload = interpret::claude_pty::ready_fact();
+                        let _ = forward.send(agent_fact(payload)).await;
+                    }
                     status = exit.wait() => break status,
                 }
             };

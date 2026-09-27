@@ -121,9 +121,88 @@ impl InputLive {
     }
 }
 
+/// Watches terminal output for Claude's folder-trust dialog: "Is this a
+/// project you created or one you trust?" over "No, exit" and "Yes, I trust
+/// this folder". Claude places each word with a cursor move, so drawn text
+/// is compared with escapes and spaces taken out.
+#[derive(Debug, Default)]
+pub(crate) struct TrustDialog {
+    state: Scan,
+    /// The newest drawn bytes, spaces left out.
+    tail: Vec<u8>,
+}
+
+/// The dialog's Yes choice as drawn, spaces left out.
+const TRUST_CHOICE: &[u8] = b"Yes,Itrustthisfolder";
+
+impl TrustDialog {
+    /// True when these bytes finish drawing the dialog's Yes choice.
+    pub(crate) fn watch(&mut self, bytes: &[u8]) -> bool {
+        let mut found = false;
+        for &byte in bytes {
+            self.state = match self.state {
+                Scan::Ground => match byte {
+                    0x1b => Scan::Escape,
+                    0x21..=0x7e | 0x80.. => {
+                        self.tail.push(byte);
+                        if self.tail.len() > 2 * TRUST_CHOICE.len() {
+                            self.tail.drain(..self.tail.len() - TRUST_CHOICE.len());
+                        }
+                        found |= self.tail.ends_with(TRUST_CHOICE);
+                        Scan::Ground
+                    }
+                    _ => Scan::Ground,
+                },
+                Scan::Escape => match byte {
+                    b'[' => Scan::Csi,
+                    b']' | b'P' | b'X' | b'^' | b'_' => Scan::String,
+                    0x20..=0x2f => Scan::EscapeIntermediate,
+                    0x1b => Scan::Escape,
+                    _ => Scan::Ground,
+                },
+                Scan::EscapeIntermediate => match byte {
+                    0x20..=0x2f => Scan::EscapeIntermediate,
+                    0x1b => Scan::Escape,
+                    _ => Scan::Ground,
+                },
+                Scan::Csi => match byte {
+                    0x20..=0x3f => Scan::Csi,
+                    0x1b => Scan::Escape,
+                    _ => Scan::Ground,
+                },
+                Scan::String => match byte {
+                    0x07 => Scan::Ground,
+                    0x1b => Scan::StringEscape,
+                    _ => Scan::String,
+                },
+                Scan::StringEscape => match byte {
+                    b'\\' => Scan::Ground,
+                    0x1b => Scan::StringEscape,
+                    _ => Scan::String,
+                },
+            };
+        }
+        found
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Claude 2.1.283's trust dialog as it drew it on an untrusted folder,
+    /// split across reads mid-escape and mid-word.
+    #[test]
+    fn the_trust_dialog_is_seen_across_reads() {
+        let drawn: &[u8] = b"\x1b[?2004h\x1b[2G\x1b[38;2;177;185;249m\xe2\x9d\xaf\x1b[4GNo,\x1b[8Gexit\x1b[39m\r\r\n\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder\r\r\n\x1b]8;;\x07";
+        for split in 1..drawn.len() {
+            let mut trust = TrustDialog::default();
+            let seen = trust.watch(&drawn[..split]) | trust.watch(&drawn[split..]);
+            assert!(seen, "split at {split}");
+        }
+        let mut trust = TrustDialog::default();
+        assert!(!trust.watch(b"Yes, I trust this code\r\n\x1b[4Gfolder"));
+    }
 
     fn fires_at(chunks: &[&[u8]]) -> Option<usize> {
         let mut live = InputLive::default();

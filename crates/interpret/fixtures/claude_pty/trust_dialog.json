@@ -1,0 +1,124 @@
+{
+  "about": "Claude's folder-trust dialog is its first screen when its folder is not trusted yet. The agent process reports it before Claude counts as ready; it opens a question with its own item, a prompt waits behind it, and an answer through amux types the choice.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "trust_dialog"
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "ask:1"
+        ],
+        "items": [
+          "ask:ask:1"
+        ]
+      },
+      "note": "Claude's first screen asks whether its folder is trusted"
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "ready"
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU"
+      },
+      "note": "its input is live, but it takes no prompt until trusted"
+    },
+    {
+      "input": {
+        "id": "p1",
+        "prompt": {
+          "text": "look around"
+        }
+      },
+      "expect": {
+        "reply": "queued",
+        "effects": [
+          "reply p1 queued"
+        ]
+      },
+      "note": "a prompt waits: nothing is typed into the dialog"
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "selected": [
+              "x"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
+      }
+    },
+    {
+      "input": {
+        "id": "a2",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "selected": [
+              0
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "phase": "STARTING",
+        "items": [
+          "ask:ask:1"
+        ],
+        "effects": [
+          "terminal trust true",
+          "reply a2 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "effects": [
+          "follow \"/t/s1.jsonl\"",
+          "terminal prompt \"look around\""
+        ]
+      },
+      "note": "trusted, Claude starts its session and takes the waiting prompt"
+    }
+  ]
+}

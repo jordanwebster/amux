@@ -27,6 +27,9 @@ const ELICITATION_FORM: &str = "elicitation_dialog";
 const ELICITATION_LINK: &str = "elicitation_url_dialog";
 /// What an unanswerable ask says, for a form and for a link.
 const UNANSWERABLE_FORM: &str = "Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
+const TRUST_QUESTION: &str = "Do you trust the files in this folder?";
+pub(super) const TRUST_YES: &str = "Trust this folder";
+const TRUST_NO: &str = "Exit";
 const UNANSWERABLE_LINK: &str = "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
 
 /// The agent id of a subagent Claude launched in the background, from the
@@ -86,15 +89,19 @@ impl State {
         match fact.channel {
             Channel::Transcript => self.row(emit, &value),
             Channel::Hook => self.hook(emit, &value),
-            Channel::Agent => self.agent_fact(&value),
+            Channel::Agent => self.agent_fact(emit, &value),
             Channel::Stream | Channel::Rpc | Channel::Tools => {}
         }
     }
 
-    fn agent_fact(&mut self, value: &Value) {
+    fn agent_fact(&mut self, emit: &mut Emit, value: &Value) {
         match text(value, "type") {
             "launch" => {}
+            // Waiting on its trust dialog, Claude takes no prompt; it
+            // starts its session once trusted, and that start says so.
+            "ready" if self.trust_ask().is_some() => return,
             "ready" => return self.shared.provider_started(),
+            "trust_dialog" => return self.trust_dialog(emit),
             _ => return,
         }
         let provider = &mut self.provider;
@@ -153,6 +160,9 @@ impl State {
 
     fn session_start(&mut self, emit: &mut Emit, hook: &Value) {
         self.shared.provider_started();
+        // Claude starts its session only once its folder is trusted: No
+        // exits.
+        self.close_trust_answered_elsewhere(emit);
         self.close_all_unknown(emit);
         let session = text(hook, "session_id");
         if !session.is_empty() {
@@ -325,6 +335,58 @@ impl State {
         });
     }
 
+    /// Claude's first screen asks whether its folder is trusted, and
+    /// exits on No. It is asked here as a question with those two answers.
+    fn trust_dialog(&mut self, emit: &mut Emit) {
+        if self
+            .asks
+            .values()
+            .any(|meta| matches!(meta.shape, AskShape::Trust))
+        {
+            return;
+        }
+        let seq = self.next_seq();
+        self.next_ask += 1;
+        let key = format!("ask:{}", self.next_ask);
+        self.asks.insert(
+            key.clone(),
+            AskMeta {
+                seq,
+                tool_name: String::new(),
+                input: String::new(),
+                shape: AskShape::Trust,
+                bound: None,
+                closed: None,
+                agent: None,
+            },
+        );
+        let option = |label: &str, description: &str| wire::QuestionOption {
+            label: label.to_owned(),
+            description: description.to_owned(),
+            ..Default::default()
+        };
+        let ask = Ask {
+            item_key: ask_item::key(&key),
+            key,
+            body: Some(wire::ask::Body::Question(wire::QuestionAsk {
+                questions: vec![wire::Question {
+                    header: "Folder".to_owned(),
+                    question: TRUST_QUESTION.to_owned(),
+                    multi_select: false,
+                    options: vec![
+                        option(TRUST_YES, "Claude can read, edit and run files here"),
+                        option(TRUST_NO, "Claude exits without starting"),
+                    ],
+                    allow_other: false,
+                    secret: false,
+                }],
+            })),
+            opened_at_ms: self.shared.now_ms(),
+        };
+        self.shared.open_ask(ask.clone());
+        self.emit_ask_item(emit, &ask, None);
+    }
+
     /// A tool server's form or link on Claude's screen. No hook answers it,
     /// so the ask can only be answered in the terminal or ended by stopping.
     fn notification(&mut self, emit: &mut Emit, hook: &Value) {
@@ -365,7 +427,7 @@ impl State {
             opened_at_ms: self.shared.now_ms(),
         };
         self.shared.open_ask(ask.clone());
-        self.emit_unanswerable(emit, &ask, None);
+        self.emit_ask_item(emit, &ask, None);
     }
 
     fn post_tool_use(&mut self, emit: &mut Emit, hook: &Value, failed: bool) {
@@ -971,7 +1033,7 @@ impl State {
                 None => true,
             };
             if later {
-                self.close_unanswerable(emit, &key, ask_item::dismissed());
+                self.close_ask_item(emit, &key, ask_item::dismissed());
             }
         }
         if row.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {

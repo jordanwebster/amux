@@ -65,6 +65,8 @@ goldens! {
     asks_open_on_the_hook_and_close_only_on_facts => "ask_rules",
     a_late_row_for_amuxs_own_prompt_leaves_the_ask_open => "late_prompt_row",
     a_prompt_row_behind_its_hooks_still_comes_first => "hook_before_prompt_row",
+    the_trust_dialog_is_a_question_a_prompt_waits_behind => "trust_dialog",
+    the_trust_question_exits_or_closes_when_trusted_elsewhere => "trust_dialog_exit_and_elsewhere",
     answers_through_amux_become_terminal_inputs => "answers",
     semantic_inputs_become_effects => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",

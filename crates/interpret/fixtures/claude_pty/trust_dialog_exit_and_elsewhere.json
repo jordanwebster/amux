@@ -1,0 +1,124 @@
+{
+  "about": "The trust question answered Exit through amux ends Claude; answered in Claude's own terminal, the session starting closes it as trusted.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "trust_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "ready"
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "a1",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "selected": [
+              1
+            ]
+          }
+        }
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "effects": [
+          "terminal trust false",
+          "reply a1 accepted"
+        ]
+      }
+    },
+    {
+      "provider_exit": {
+        "code": 1
+      },
+      "expect": {
+        "phase": "STARTING"
+      },
+      "note": "No exits with code 1"
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "trust_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:2"
+        ],
+        "items": [
+          "ask:ask:2"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "ready"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "model": "claude-opus-5-5"
+        }
+      },
+      "expect": {
+        "asks": [],
+        "phase": "IDLE",
+        "items": [
+          "ask:ask:2",
+          "boundary:2"
+        ]
+      },
+      "note": "the session starting says the folder was trusted in Claude's own terminal"
+    }
+  ]
+}

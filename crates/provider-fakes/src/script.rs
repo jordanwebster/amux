@@ -60,6 +60,11 @@ pub struct Script {
     /// third and No fourth.
     #[serde(default)]
     pub offers_auto_mode: bool,
+    /// Terminal Claude has not been told to trust its working directory:
+    /// its first screen asks, with No preselected, and No or Escape exits
+    /// with code 1.
+    #[serde(default)]
+    pub untrusted_folder: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
