@@ -117,6 +117,9 @@ pub enum Away {
     /// nothing for it; a host only the relay reaches is away until it signs
     /// in again.
     SignedOut,
+    /// The host said, as it closed its link, that it no longer trusts this
+    /// machine; only pairing again brings it back.
+    Revoked,
 }
 
 /// Whether this machine is signed out of the account its profile is bound
@@ -127,9 +130,17 @@ pub fn signed_out(fleet: &FleetState, local_host: &[u8]) -> bool {
         .is_some_and(|entry| entry.signed_in == Some(false))
 }
 
-/// Why `host` is away, when it is.
+/// Why `host` is away, when it is. What the host itself said comes first.
 pub fn away(fleet: &FleetState, local_host: &[u8], host: &[u8]) -> Away {
-    if host != local_host && signed_out(fleet, local_host) {
+    if host == local_host {
+        return Away::Plain;
+    }
+    if fleet
+        .host(host)
+        .is_some_and(|entry| entry.revoked == Some(true))
+    {
+        Away::Revoked
+    } else if signed_out(fleet, local_host) {
         Away::SignedOut
     } else {
         Away::Plain

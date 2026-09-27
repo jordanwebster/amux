@@ -833,6 +833,66 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
     assert!(!screen.contains("signed out"), "{screen}");
 }
 
+/// A host that closed its link saying it no longer trusts this machine is
+/// captioned and headed with that, never with its own old sign-in.
+#[test]
+fn a_host_that_revoked_trust_says_so_instead_of_not_signed_in() {
+    let mut fleet = FleetState::new();
+    inventory(
+        &mut fleet,
+        host(
+            b"laptop",
+            "laptop",
+            wire::Trust::Trusted,
+            wire::Presence::Online,
+        ),
+    );
+    let mut desk = host(
+        b"host",
+        "desk",
+        wire::Trust::Trusted,
+        wire::Presence::Offline,
+    );
+    if let wire::inventory_event::Of::Host(entry) = &mut desk {
+        entry.via = wire::HostVia::Unspecified as i32;
+        entry.signed_in = Some(false);
+        entry.revoked = Some(true);
+    }
+    inventory(&mut fleet, desk);
+
+    let screen: Vec<String> = crate::hosts::overlay_lines(&fleet, b"laptop", 100, theme())
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let screen = screen.join("\n");
+    assert!(
+        screen.contains("offline · no longer trusts this machine"),
+        "{screen}"
+    );
+    assert!(!screen.contains("not signed in"), "{screen}");
+
+    let mut state = chat(replies(1, 5));
+    state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
+    state.update(event(session_event::Of::Detached(wire::Detached {})));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("desk no longer trusts this machine"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("sending waits until you pair again"),
+        "{screen}"
+    );
+}
+
 #[test]
 fn a_reset_keeps_the_rows_until_caught_up_then_shows_the_newest() {
     let mut state = chat(replies(1, 60));

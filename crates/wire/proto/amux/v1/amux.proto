@@ -297,6 +297,9 @@ message HostEntry {
   Presence presence = 13;
   // Where discovery found a candidate; what pairing dials.
   repeated string addrs = 14;
+  // Set when this host closed its link saying it no longer trusts this
+  // machine; cleared when it links to this machine again.
+  optional bool revoked = 15;
 }
 
 enum Trust {

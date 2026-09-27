@@ -855,6 +855,9 @@ async fn handle_control_body(
         wire::pb::message::Body::LinkClose(close) => {
             let reason = wire::pb::LinkCloseReason::try_from(close.reason)
                 .unwrap_or(wire::pb::LinkCloseReason::Unspecified);
+            if reason == wire::pb::LinkCloseReason::UserRevoked {
+                ctx.routing.note_revoked(link.peer()).await;
+            }
             ControlAction::Close(reason, link_close_status(&close))
         }
         wire::pb::message::Body::Hello(_) | wire::pb::message::Body::HelloAck(_) => {

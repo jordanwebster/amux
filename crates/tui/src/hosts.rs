@@ -19,10 +19,11 @@ fn route(entry: &HostEntry) -> &'static str {
     }
 }
 
-/// How a trusted host is reached now, in words. `local` is this machine's
-/// own entry: while it is signed out, a host that is not online is away for
-/// that reason as far as anyone here can say, and the words name this
-/// machine rather than the host.
+/// How a trusted host is reached now, in words. A host that said it no
+/// longer trusts this machine is captioned with that. `local` is this
+/// machine's own entry: while it is signed out, a host that is not online
+/// is away for that reason as far as anyone here can say, and the words
+/// name this machine rather than the host.
 pub fn caption(entry: &HostEntry, local: Option<&HostEntry>) -> String {
     let here_signed_out = local.is_some_and(|local| local.signed_in == Some(false));
     let here = local.is_some_and(|local| local.host_id == entry.host_id);
@@ -41,7 +42,9 @@ pub fn caption(entry: &HostEntry, local: Option<&HostEntry>) -> String {
     }
     // Signing in matters only for reaching a host through the relay.
     let relay = entry.presence() != Presence::Online || entry.via() == HostVia::Relay;
-    if here_signed_out && !here && entry.presence() != Presence::Online {
+    if entry.revoked == Some(true) {
+        parts.push("no longer trusts this machine".into());
+    } else if here_signed_out && !here && entry.presence() != Presence::Online {
         parts.push("this machine is signed out".into());
     } else if relay && entry.signed_in == Some(false) {
         parts.push("not signed in".into());

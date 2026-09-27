@@ -751,3 +751,42 @@ fn describe(event: &SessionEvent) -> String {
     use testnet::observe::Describe as _;
     event.describe()
 }
+
+/// A peer that untrusts this host says so as it closes the link, and this
+/// host's inventory keeps that on the peer's entry, so a client can say the
+/// peer no longer trusts this machine rather than guess at why it is away.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_revokes_trust_is_listed_as_having_revoked_it() {
+    let mut net = Net::start(desk_and_laptop()).await.unwrap();
+    let mut fleet = net.observe_inventory("laptop").await.unwrap();
+    fleet
+        .observe_until(
+            |events| lists_host(&net, events, "desk", Trust::Trusted, Presence::Online),
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    let desk_id = net.host("desk").unwrap().host_id;
+    let desk = move |events: &[InventoryEvent]| {
+        inventory_hosts(events)
+            .into_iter()
+            .find(|host| host.host_id == desk_id.as_bytes())
+    };
+    assert_eq!(desk(fleet.events()).unwrap().revoked, None);
+
+    net.untrust("desk", "laptop").await.unwrap();
+    fleet
+        .observe_until(
+            |events| {
+                desk(events).is_some_and(|entry| {
+                    entry.revoked == Some(true)
+                        && entry.presence == Presence::Offline as i32
+                        && entry.trust == Trust::Trusted as i32
+                })
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    net.shutdown().await.unwrap();
+}

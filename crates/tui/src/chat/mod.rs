@@ -898,17 +898,17 @@ fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<
             },
             theme.muted(),
         ),
-        (Composer::Disabled(Waiting::Detached), _) => (
-            format!(
-                "{} away · {}",
-                if host.is_empty() { "host" } else { &host },
+        (Composer::Disabled(Waiting::Detached), _) => {
+            let host = if host.is_empty() { "host" } else { &host };
+            (
                 match away {
-                    Away::Plain => "not current",
-                    Away::SignedOut => "this machine is signed out",
-                }
-            ),
-            theme.warn(),
-        ),
+                    Away::Plain => format!("{host} away · not current"),
+                    Away::SignedOut => format!("{host} away · this machine is signed out"),
+                    Away::Revoked => format!("{host} no longer trusts this machine"),
+                },
+                theme.warn(),
+            )
+        }
         (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
         (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
         (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
@@ -1016,6 +1016,9 @@ pub(crate) fn hint_line(
         Composer::Resume => "enter resume with this message · ctrl+j newline",
         Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
             "draft kept · sending waits until this machine signs in"
+        }
+        Composer::Disabled(Waiting::Detached) if away == Away::Revoked => {
+            "draft kept · sending waits until you pair again"
         }
         Composer::Disabled(_) => "draft kept · sending waits",
     };

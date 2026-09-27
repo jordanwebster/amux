@@ -857,3 +857,18 @@ fn a_host_is_away_because_this_machine_signed_out_only_when_it_did() {
     fleet.update(host_entry("laptop", Some(true)));
     assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Plain);
 }
+
+#[test]
+fn a_host_that_revoked_trust_is_away_for_that_reason_first() {
+    let mut fleet = FleetState::new();
+    fleet.update(host_entry("laptop", Some(false)));
+    let FleetMsg::Event(mut desk) = host_entry("desk", Some(false)) else {
+        unreachable!()
+    };
+    if let Some(wire::inventory_event::Of::Host(entry)) = &mut desk.of {
+        entry.revoked = Some(true);
+    }
+    fleet.update(FleetMsg::Event(desk));
+    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Revoked);
+    assert_eq!(away(&fleet, b"laptop", b"laptop"), Away::Plain);
+}

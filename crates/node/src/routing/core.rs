@@ -54,6 +54,9 @@ struct RoutingState {
     claims: HashMap<HostId, ClaimedEntry>,
     replacing: HashSet<HostId>,
     client_visible_activity: HashMap<HostId, Instant>,
+    /// Hosts that closed their link saying they no longer trust this one,
+    /// until one links directly again.
+    revoked: HashSet<HostId>,
     next_host_sequence: u64,
     routing_events: EventSource<RoutingEvent>,
     host_events: EventSource<HostReachabilityEvent>,
@@ -174,6 +177,7 @@ impl RoutingCore {
         }
 
         let newly_present = !state.is_present(host_id);
+        state.revoked.remove(&host_id);
         let entry = state.directs.entry(host_id).or_insert_with(|| DirectEntry {
             host: host.clone(),
             links: Vec::new(),
@@ -424,6 +428,17 @@ impl RoutingCore {
 }
 
 impl RoutingCore {
+    /// Records that `host_id` closed its link saying it no longer trusts
+    /// this host.
+    pub(crate) async fn note_revoked(&self, host_id: HostId) {
+        self.state.write().await.revoked.insert(host_id);
+    }
+
+    /// Whether `host_id` last said it no longer trusts this host.
+    pub(crate) async fn revoked(&self, host_id: HostId) -> bool {
+        self.state.read().await.revoked.contains(&host_id)
+    }
+
     /// The account-binding fact recorded for `host_id`, as a client listing
     /// hosts would read it.
     pub(crate) fn signed_in_for(&self, host_id: HostId) -> Option<bool> {

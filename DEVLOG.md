@@ -1,3 +1,15 @@
+2026-09-27 — **A peer that untrusts this machine says so on screen.**
+After a desk unpaired the laptop, the laptop's hosts overlay read `offline ·
+not signed in`: the entry never changed, the caption simply showed the
+desk's own last Hello (a desk never signed in to an account says so) once
+the desk was no longer online. The laptop now keeps the `USER_REVOKED`
+close the desk sends on a direct link as `HostEntry.revoked`, cleared when
+the desk links to it directly again. `ui_view::away` puts that cause first,
+so the chat header reads `desk no longer trusts this machine`, the composer
+says the draft waits until the two are paired again, and the overlay
+captions the desk the same way. Over the relay no close reaches the laptop
+and the desk stays listed online; that path is still open.
+
 2026-09-27 — **A signed-out machine names itself as the reason a host is away.**
 The daemon's own inventory entry now carries whether its profile is signed
 in to the account it is bound to (unset for a profile never bound, still

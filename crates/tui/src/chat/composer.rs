@@ -213,6 +213,9 @@ pub fn placeholder(mode: &Composer, name: &str, host: &str, away: Away) -> Strin
             Away::Plain => {
                 format!("{host} is away · your draft is kept; sending waits until it is back")
             }
+            Away::Revoked => format!(
+                "{host} no longer trusts this machine · your draft is kept; sending waits until you pair again"
+            ),
             Away::SignedOut => format!(
                 "{host} is away · this machine is signed out · your draft is kept; sending waits until you sign in again"
             ),

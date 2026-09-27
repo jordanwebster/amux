@@ -1502,5 +1502,12 @@ fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)
             Away::SignedOut,
             "",
         ),
+        (
+            "composer_detached_revoked",
+            "The composer while the agent's host has said it no longer trusts this machine: the draft is kept and sending waits until the two are paired again.",
+            Composer::Disabled(Waiting::Detached),
+            Away::Revoked,
+            "",
+        ),
     ]
 }

@@ -490,6 +490,12 @@ impl Edge {
         self.routing.signed_in_for(host)
     }
 
+    /// Whether `host` closed its link saying it no longer trusts this host,
+    /// and has not linked directly since.
+    pub async fn revoked(&self, host: HostId) -> bool {
+        self.routing.revoked(host).await
+    }
+
     /// The route calls to `host` take now. A different value from one
     /// read earlier means the host went away or came back in between,
     /// however briefly.

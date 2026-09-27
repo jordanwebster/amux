@@ -4489,6 +4489,10 @@ pub struct HostEntry {
     /// Where discovery found a candidate; what pairing dials.
     #[prost(string, repeated, tag = "14")]
     pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Set when this host closed its link saying it no longer trusts this
+    /// machine; cleared when it links to this machine again.
+    #[prost(bool, optional, tag = "15")]
+    pub revoked: ::core::option::Option<bool>,
 }
 impl ::prost::Name for HostEntry {
     const NAME: &'static str = "HostEntry";
