@@ -15,7 +15,7 @@ mod common;
 use std::time::Duration;
 
 use common::{assert_golden, capture};
-use provider_fakes::script::{Ask, Step};
+use provider_fakes::script::{Ask, Outcome, Step, Tool, ToolClass};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -24,7 +24,7 @@ use testnet::{AgentDecl, FakeKind, JournalCut, Net, PATIENCE, Topology};
 use tui::chat::ChatView;
 use tui::fleet::FleetView;
 use tui::{ColorMode, Theme};
-use ui_state::{Connection, FleetMsg, FleetState, Msg, SessionState};
+use ui_state::{Connection, FleetMsg, FleetState, ItemClass, Msg, SessionState};
 use wire::{InventoryEvent, SessionEvent, session_event};
 
 fn theme() -> Theme {
@@ -222,6 +222,7 @@ async fn served_frames_match_their_goldens() {
             AgentDecl::new("gatekeeper", "desk")
                 .kind(FakeKind::ClaudePty)
                 .steps(vec![
+                    text("Signing in to the tracker first."),
                     Step::Ask(Ask::ToolServerDialog {
                         server: "tracker".to_owned(),
                         tool: "sign_in".to_owned(),
@@ -239,11 +240,11 @@ async fn served_frames_match_their_goldens() {
     let mut asking = net.observe("laptop", "gatekeeper", 20).await.unwrap();
     let events = asking
         .observe_until(
-            // Terminal Claude's calls and the ask's own row are held until
-            // the prompt's row lands, so the card can arrive first; the
-            // frame waits for the rows it shows above the card. The turn
-            // says nothing before the dialog: text from Claude's transcript
-            // can land on either side of rows its hooks deliver.
+            // Terminal Claude's rows come from its transcript in the order
+            // Claude wrote them, so the text that introduced the call sits
+            // above it. The dialog is announced by a hook: its card can open
+            // before the call's row lands, and its own row waits for that
+            // row, so the frame waits for the card to point at its row.
             |events| {
                 caught_up(events)
                     && ui_view::ask_card(&chat_state(&listed, &gatekeeper.agent_id, events))
@@ -263,6 +264,47 @@ async fn served_frames_match_their_goldens() {
         "the dialog is an ask the chat cannot answer"
     );
     frame("ask_escape", &draw_chat(&state, 110, 24));
+
+    // A terminal Claude's call opens on its transcript row, as it starts,
+    // so the chat draws it running, below the text that introduced it,
+    // while it runs.
+    let runner = net
+        .spawn(
+            AgentDecl::new("runner", "desk")
+                .kind(FakeKind::ClaudePty)
+                .steps(vec![
+                    text("Reading the relay logs first."),
+                    Step::Tool(Tool {
+                        name: Some("Read".to_owned()),
+                        class: ToolClass::Exploration,
+                        input: Some(serde_json::json!({ "file_path": "logs/relay.log" })),
+                        outcome: Outcome::default(),
+                        wait_for: Some("never".into()),
+                    }),
+                    Step::TurnEnd,
+                ])
+                .prompt("Why did the relay drop?"),
+        )
+        .await
+        .unwrap();
+    let listed = fleet_listing(&net, "laptop", &runner.agent_id).await;
+    let mut running = net.observe("laptop", "runner", 20).await.unwrap();
+    let events = running
+        .observe_until(
+            |events| {
+                caught_up(events)
+                    && chat_state(&listed, &runner.agent_id, events)
+                        .transcript()
+                        .iter()
+                        .any(|held| matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight))
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap()
+        .to_vec();
+    let state = chat_state(&listed, &runner.agent_id, &events);
+    frame("running_call", &draw_chat(&state, 110, 24));
 
     // The origin rewinds to a checkpoint taken before the second turn: the
     // laptop's replica is Reset while its rows stay on screen, and swaps to

@@ -57,7 +57,11 @@ pub const FRAMES: &[(&str, &str)] = &[
     ),
     (
         "ask_escape",
-        "A terminal Claude on the desk showing a tool server's sign-in dialog in its own terminal, read from the laptop: the escape card docked where the composer was, its reason sending the person to Claude's own terminal and Stop as the one choice (a remote agent's terminal is not offered here), with the conversation still above it.",
+        "A terminal Claude on the desk showing a tool server's sign-in dialog in its own terminal, read from the laptop: the escape card docked where the composer was, its reason sending the person to Claude's own terminal and Stop as the one choice (a remote agent's terminal is not offered here), with the conversation still above it: the prompt, the text that introduced the tool server's call and the call, in the order Claude wrote them.",
+    ),
+    (
+        "running_call",
+        "A terminal Claude on the desk mid-call, read from the laptop: the text that introduced the call above it and the call drawn running while it runs, before any result.",
     ),
     (
         "rewind_before_swap",

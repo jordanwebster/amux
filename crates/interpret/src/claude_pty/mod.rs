@@ -41,7 +41,8 @@
 //!   announced only by a Notification hook, which no hook can answer. It
 //!   opens an unanswerable ask with an item of its own, the one item a hook
 //!   makes, pointing at the call that was running (a tool server's, when
-//!   one was). An interrupt through amux closes it cancelled; that call's
+//!   one was). When that call's row has not landed yet, the item waits for
+//!   it, so it sits below the call and the rows before it. An interrupt through amux closes it cancelled; that call's
 //!   result, a row from a later assistant message, and the facts that close
 //!   every ask close it dismissed.
 //! - Claude's first screen may ask whether its folder is trusted; the
@@ -665,8 +666,34 @@ impl State {
 
     fn close_ask_item(&mut self, emit: &mut Emit, ask_key: &str, closed: AskClosed) {
         self.asks.remove(ask_key);
-        if let Some(ask) = self.shared.close_ask(ask_key) {
+        if let Some(mut ask) = self.shared.close_ask(ask_key) {
+            // Closed before the row it waited for: it lands now.
+            if ask.item_key.is_empty() {
+                ask.item_key = ask_item::key(ask_key);
+            }
             self.emit_ask_item(emit, &ask, Some(closed));
+        }
+    }
+
+    /// A call's row landed: the unanswerable asks raised under it before
+    /// then get their items, below it.
+    fn emit_unanswerable_items_for(&mut self, emit: &mut Emit, tool_id: &str) {
+        for (key, call) in self.unanswerable_asks() {
+            if call.as_deref() != Some(tool_id) {
+                continue;
+            }
+            let Some(open) = self.shared.asks().get(&key) else {
+                continue;
+            };
+            if !open.item_key.is_empty() {
+                continue;
+            }
+            let ask = Ask {
+                item_key: ask_item::key(&key),
+                ..open.clone()
+            };
+            self.shared.open_ask(ask.clone());
+            self.emit_ask_item(emit, &ask, None);
         }
     }
 

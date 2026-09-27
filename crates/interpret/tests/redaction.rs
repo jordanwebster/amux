@@ -124,6 +124,10 @@ fn claude_pty_session() -> Vec<Event> {
         with(
             json!({ "hook_event_name": "PreToolUse", "tool_use_id": "t2", "tool_name": "Bash", "tool_input": { "command": command() } }),
         ),
+        fact(
+            Channel::Transcript,
+            json!({ "type": "assistant", "uuid": "a2", "timestamp": "2027-01-15T08:00:01.000Z", "sessionId": SESSION, "message": { "id": "m2", "role": "assistant", "model": "claude-opus-5-5", "content": [{ "type": "tool_use", "id": "t2", "name": "Bash", "input": { "command": command() } }] } }),
+        ),
         with(
             json!({ "hook_event_name": "Notification", "message": "Claude Code needs your input", "notification_type": "elicitation_dialog" }),
         ),

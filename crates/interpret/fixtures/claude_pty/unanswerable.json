@@ -1,5 +1,5 @@
 {
-  "about": "Terminal Claude shows a tool server's form or link in its own terminal and announces it only through the Notification hook (notification_type elicitation_dialog or elicitation_url_dialog on 2.1.283). It opens an unanswerable ask with its own item: no answer fits it, an interrupt through amux types the interrupt key and closes it cancelled, and the running call's result row, a row from a later message, Stop, SessionEnd and the provider's exit close it dismissed. Other notification types draw nothing.",
+  "about": "Terminal Claude shows a tool server's form or link in its own terminal and announces it only through the Notification hook (notification_type elicitation_dialog or elicitation_url_dialog on 2.1.283). It opens an unanswerable ask with its own item, which waits below the running call's row when only the call's PreToolUse hook has arrived: no answer fits it, an interrupt through amux types the interrupt key and closes it cancelled, and the running call's result row, a row from a later message, Stop, SessionEnd and the provider's exit close it dismissed. Other notification types draw nothing.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -295,6 +295,26 @@
     },
     {
       "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_url_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:2"
+        ],
+        "items": []
+      }
+    },
+    {
+      "fact": {
         "channel": "transcript",
         "json": {
           "type": "assistant",
@@ -317,26 +337,10 @@
             ]
           }
         }
-      }
-    },
-    {
-      "fact": {
-        "channel": "hook",
-        "json": {
-          "session_id": "s1",
-          "transcript_path": "/t/s1.jsonl",
-          "cwd": "/w",
-          "permission_mode": "default",
-          "hook_event_name": "Notification",
-          "message": "Claude Code needs your input",
-          "notification_type": "elicitation_url_dialog"
-        }
       },
       "expect": {
-        "asks": [
-          "ask:2"
-        ],
         "items": [
+          "t2",
           "ask:ask:2"
         ]
       }

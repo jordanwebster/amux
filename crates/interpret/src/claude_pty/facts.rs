@@ -396,14 +396,18 @@ impl State {
             _ => return,
         };
         // A tool server asks while one of its calls runs; that call's
-        // result ends the dialog.
-        let call = self
+        // result ends the dialog. A call only a PreToolUse hook announced
+        // has its row on the way: the ask's item waits for that row, so it
+        // lands below the call and the rows written before it.
+        let landed = self
             .tools
             .iter()
             .filter(|(_, tool)| !tool.finished && !tool.awaiting_notification)
             .max_by_key(|(_, tool)| (!tool.server.is_empty(), tool.seq))
-            .map(|(id, _)| id.clone())
-            .or_else(|| self.running.last().map(|running| running.id.clone()));
+            .map(|(id, _)| id.clone());
+        let announced = self.running.last().map(|running| running.id.clone());
+        let awaits_row = landed.is_none() && announced.is_some();
+        let call = landed.or(announced);
         let seq = self.next_seq();
         self.next_ask += 1;
         let key = format!("ask:{}", self.next_ask);
@@ -420,7 +424,11 @@ impl State {
             },
         );
         let ask = Ask {
-            item_key: ask_item::key(&key),
+            item_key: if awaits_row {
+                String::new()
+            } else {
+                ask_item::key(&key)
+            },
             key,
             body: Some(wire::ask::Body::Unanswerable(wire::UnanswerableAsk {
                 reason: reason.to_owned(),
@@ -428,7 +436,9 @@ impl State {
             opened_at_ms: self.shared.now_ms(),
         };
         self.shared.open_ask(ask.clone());
-        self.emit_ask_item(emit, &ask, None);
+        if !awaits_row {
+            self.emit_ask_item(emit, &ask, None);
+        }
     }
 
     /// A call starts. Its row follows within a second or so, and by
@@ -512,6 +522,7 @@ impl State {
             );
         }
         self.emit_tool(emit, id);
+        self.emit_unanswerable_items_for(emit, id);
     }
 
     fn tool_result(&mut self, emit: &mut Emit, block: &Value, row: &Value, at_ms: Option<i64>) {

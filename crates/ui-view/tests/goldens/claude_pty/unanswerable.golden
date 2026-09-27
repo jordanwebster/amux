@@ -28,14 +28,17 @@
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 19 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"PreToolUse","permission_mode":"default","session_id":"s1","tool_input":{"account":"work"},"tool_name":"mcp__docs__sign_in","tool_use_id":"t2","transcript_path":"/t/s1.jsonl"}}
   composer Send activity=Some(Running { key: "t2" }) queue=[] outbox=[]
-## 20 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t2","input":{"account":"work"},"name":"mcp__docs__sign_in","type":"tool_use"}],"id":"m2","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:30.100Z","type":"assistant","uuid":"a2"}}
+## 20 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"Notification","message":"Claude Code needs your input","notification_type":"elicitation_url_dialog","permission_mode":"default","session_id":"s1","transcript_path":"/t/s1.jsonl"}}
+  ask ask:2 -> "" 1/1 Open
+    choices 
+    body Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent." }
+  composer Send activity=None queue=[] outbox=[]
+## 21 fact {"channel":"transcript","json":{"message":{"content":[{"id":"t2","input":{"account":"work"},"name":"mcp__docs__sign_in","type":"tool_use"}],"id":"m2","model":"claude-opus-5-5","role":"assistant"},"sessionId":"s1","timestamp":"2027-01-15T08:00:30.100Z","type":"assistant","uuid":"a2"}}
   row    6 t2 ToolCall { server: "docs", tool: "sign_in", fact: "work", state: Running, result: "" }
-## 21 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"Notification","message":"Claude Code needs your input","notification_type":"elicitation_url_dialog","permission_mode":"default","session_id":"s1","transcript_path":"/t/s1.jsonl"}}
   row    7 ask:ask:2 Ask(Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Open }) attention
   ask ask:2 -> "ask:ask:2" 1/1 Open
     choices 
     body Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent." }
-  composer Send activity=None queue=[] outbox=[]
 ## 22 input {"id":"i1","interrupt":{}}
   row    7 ask:ask:2 Ask(Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Cancelled })
   ask none
@@ -73,8 +76,7 @@
 ## 33 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"PreToolUse","permission_mode":"default","session_id":"s1","tool_input":{"title":"Crash on launch"},"tool_name":"mcp__github__create_issue","tool_use_id":"t5","transcript_path":"/t/s1.jsonl"}}
   composer Send activity=Some(Running { key: "t5" }) queue=[] outbox=[]
 ## 34 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"Notification","message":"Claude Code needs your input","notification_type":"elicitation_dialog","permission_mode":"default","session_id":"s1","transcript_path":"/t/s1.jsonl"}}
-  row   13 ask:ask:5 Ask(Unanswerable { reason: "Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Open }) attention
-  ask ask:5 -> "ask:ask:5" 1/1 Open
+  ask ask:5 -> "" 1/1 Open
     choices 
     body Unanswerable { reason: "Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent." }
   composer Send activity=None queue=[] outbox=[]
@@ -87,8 +89,7 @@
 ## 38 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"PreToolUse","permission_mode":"default","session_id":"s1","tool_input":{"title":"Crash on launch"},"tool_name":"mcp__github__create_issue","tool_use_id":"t6","transcript_path":"/t/s1.jsonl"}}
   composer Send activity=Some(Running { key: "t6" }) queue=[] outbox=[]
 ## 39 fact {"channel":"hook","json":{"cwd":"/w","hook_event_name":"Notification","message":"Claude Code needs your input","notification_type":"elicitation_url_dialog","permission_mode":"default","session_id":"s1","transcript_path":"/t/s1.jsonl"}}
-  row   15 ask:ask:6 Ask(Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Open }) attention
-  ask ask:6 -> "ask:ask:6" 1/1 Open
+  ask ask:6 -> "" 1/1 Open
     choices 
     body Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent." }
   composer Send activity=None queue=[] outbox=[]

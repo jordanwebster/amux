@@ -1,3 +1,17 @@
+2026-09-27 — **A tool server's dialog lands below the call it interrupts; the terminal client's goldens show transcript order.**
+Terminal Claude announces a tool server's dialog only through a hook, which
+can reach the agent before the transcript rows Claude wrote ahead of it, so
+the dialog's own row sometimes landed above the prompt that started the
+turn. When the call it was raised under is known only from its PreToolUse
+hook, the ask now opens at once with its card pointing at no row, and its
+row lands right after the call's row (or when the ask closes, if that row
+never comes). The served ask-escape frame gets back the text that introduces
+the tool server's call and shows prompt, text, call and dialog in that
+order; it failed under load before. A new served frame shows a terminal
+Claude call drawn running below its introducing text. The terminal Claude
+conversation-decision journey is re-recorded: the permission card now shows
+no call row until the decision, since Claude writes a gated call's row then.
+
 2026-09-27 — **Terminal Claude's rows come from its transcript, in transcript order.**
 Every row, tool calls included, is emitted from its transcript row: a
 tool_use row opens the call running and its tool_result row lands the

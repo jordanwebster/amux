@@ -17,11 +17,11 @@
 
 
 
+
+
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 ▎   Check the deployment once.
-
-▌ ▸ Wants to run deploy --check
 
 
   ● Wants to run a command
