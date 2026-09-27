@@ -2,9 +2,8 @@
 //! every kind; which message carries them is the kind's.
 
 use wire::{
-    AnswerInput, Attachment, ClaudePtyInput, ClaudeSdkInput, CodexInput, Input, Interrupt, Kind,
-    PromptInput, SendQueuedNow, WithdrawQueued, claude_pty_input, claude_sdk_input, codex_input,
-    input,
+    Attachment, ClaudePtyInput, ClaudeSdkInput, CodexInput, Input, Interrupt, Kind, PromptInput,
+    SendQueuedNow, WithdrawQueued, claude_pty_input, claude_sdk_input, codex_input, input,
 };
 
 /// A fresh client-generated input id.
@@ -15,7 +14,6 @@ pub fn input_id() -> Vec<u8> {
 /// One act, before it is put in a kind's arm.
 enum Act {
     Prompt(PromptInput),
-    Answer(AnswerInput),
     Withdraw(WithdrawQueued),
     SendNow(SendQueuedNow),
     Interrupt,
@@ -26,7 +24,6 @@ fn wrap(kind: Kind, act: Act) -> Option<Input> {
         Kind::ClaudePty => input::Of::ClaudePty(ClaudePtyInput {
             of: Some(match act {
                 Act::Prompt(prompt) => claude_pty_input::Of::Prompt(prompt),
-                Act::Answer(answer) => claude_pty_input::Of::Answer(answer),
                 Act::Withdraw(withdraw) => claude_pty_input::Of::Withdraw(withdraw),
                 Act::SendNow(now) => claude_pty_input::Of::SendNow(now),
                 Act::Interrupt => claude_pty_input::Of::Interrupt(Interrupt {}),
@@ -35,7 +32,6 @@ fn wrap(kind: Kind, act: Act) -> Option<Input> {
         Kind::ClaudeSdk => input::Of::ClaudeSdk(ClaudeSdkInput {
             of: Some(match act {
                 Act::Prompt(prompt) => claude_sdk_input::Of::Prompt(prompt),
-                Act::Answer(answer) => claude_sdk_input::Of::Answer(answer),
                 Act::Withdraw(withdraw) => claude_sdk_input::Of::Withdraw(withdraw),
                 Act::SendNow(now) => claude_sdk_input::Of::SendNow(now),
                 Act::Interrupt => claude_sdk_input::Of::Interrupt(Interrupt {}),
@@ -44,7 +40,6 @@ fn wrap(kind: Kind, act: Act) -> Option<Input> {
         Kind::Codex => input::Of::Codex(CodexInput {
             of: Some(match act {
                 Act::Prompt(prompt) => codex_input::Of::Prompt(prompt),
-                Act::Answer(answer) => codex_input::Of::Answer(answer),
                 Act::Withdraw(withdraw) => codex_input::Of::Withdraw(withdraw),
                 Act::SendNow(now) => codex_input::Of::SendNow(now),
                 Act::Interrupt => codex_input::Of::Interrupt(Interrupt {}),
@@ -67,10 +62,6 @@ pub fn prompt(kind: Kind, text: &str, attachments: Vec<Attachment>) -> Option<In
             attachments,
         }),
     )
-}
-
-pub fn answer(kind: Kind, answer: AnswerInput) -> Option<Input> {
-    wrap(kind, Act::Answer(answer))
 }
 
 pub fn withdraw(kind: Kind, queued_input_id: &[u8]) -> Option<Input> {

@@ -329,6 +329,43 @@ pub fn replay<I: Interpreter>(fixture: &Path) -> Result<Vec<Replayed>, String> {
         .collect())
 }
 
+/// A fixture as the events it feeds an interpreter, for tests that drive
+/// one themselves.
+pub struct FixtureScript {
+    pub spec: AgentSpec,
+    pub producer: String,
+    /// Each event with its label, in order; `None` is a checkpoint the
+    /// fixture takes there.
+    pub events: Vec<(String, Option<Event>)>,
+}
+
+/// Reads one fixture for interpreter `I` without running it.
+pub fn fixture_script<I: Interpreter>(fixture: &Path) -> Result<FixtureScript, String> {
+    let text =
+        std::fs::read_to_string(fixture).map_err(|error| format!("read fixture: {error}"))?;
+    let parsed: Fixture =
+        serde_json::from_str(&text).map_err(|error| format!("parse fixture: {error}"))?;
+    let events = script::<I>(fixture, &parsed)?
+        .into_iter()
+        .map(|scripted| {
+            let event = match scripted.action {
+                Action::Event(event) => Some(event),
+                Action::Checkpoint => None,
+            };
+            (scripted.label, event)
+        })
+        .collect();
+    Ok(FixtureScript {
+        spec: spec::<I>(&parsed.spec),
+        producer: parsed
+            .spec
+            .producer_version
+            .clone()
+            .unwrap_or_else(|| "test".into()),
+        events,
+    })
+}
+
 /// Runs one fixture through interpreter `I` and checks its golden, its
 /// expectations, the invariants and the checkpoint property.
 pub fn run_golden<I: Interpreter>(fixture: &Path) -> GoldenReport {

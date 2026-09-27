@@ -17,7 +17,7 @@ mod segments;
 
 pub use ask::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionView,
-    Scope, ask_card, question_answer,
+    Scope, answer_input, ask_card, question_answer,
 };
 pub use composer::{
     CONTEXT_STRIP_PERCENT, ComposerView, ContextView, OutboxRow, OutboxState, QueuedRow,

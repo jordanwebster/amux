@@ -1,6 +1,7 @@
 //! The ask card: one anatomy for every kind. The head ask with its count,
 //! the subject verbatim, the body variant, and choices stated as outcomes.
 
+use prost::Message as _;
 use serde_json::Value;
 use ui_state::{InputState, OpenAsk, SessionState};
 use wire::{ClaudeAnswer, CodexAnswer, Decision as CodexDecision, ask, claude_answer, codex_ask};
@@ -166,7 +167,7 @@ pub enum Scope {
     Other(String),
 }
 
-/// The answer body a choice sends; the driver wraps it in an input.
+/// The answer body a choice sends; [`answer_input`] puts it in an input.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
     Claude(ClaudeAnswer),
@@ -740,4 +741,81 @@ pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
             of: Some(claude_answer::Of::Question(answers)),
         }),
     }
+}
+
+/// The input that sends `answer` to the card's ask, in the card's kind's
+/// arm: an answer body under the ask's key, or for a Codex approval the
+/// decision on the request the card names. `note` goes back to the agent
+/// with a choice that takes one and with a question answer; other choices
+/// ignore it. The input has no id: the session gives it a fresh one when it
+/// sends it. None when the kind does not take this answer.
+pub fn answer_input(card: &AskCard, answer: &Answer, note: &str) -> Option<wire::Input> {
+    use wire::{claude_pty_input, claude_sdk_input, codex_input, input};
+    let body = |kind: &str, body: Vec<u8>| wire::AnswerInput {
+        ask_key: card.key.clone(),
+        kind: kind.to_owned(),
+        body,
+    };
+    let of = match (card.kind, with_note(answer, note)) {
+        (wire::Kind::ClaudePty, Answer::Claude(answer)) => {
+            input::Of::ClaudePty(wire::ClaudePtyInput {
+                of: Some(claude_pty_input::Of::Answer(body(
+                    "claude_pty",
+                    answer.encode_to_vec(),
+                ))),
+            })
+        }
+        (wire::Kind::ClaudeSdk, Answer::Claude(answer)) => {
+            input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+                of: Some(claude_sdk_input::Of::Answer(body(
+                    "claude_sdk",
+                    answer.encode_to_vec(),
+                ))),
+            })
+        }
+        (wire::Kind::Codex, Answer::Codex(answer)) => input::Of::Codex(wire::CodexInput {
+            of: Some(codex_input::Of::Answer(body(
+                "codex",
+                answer.encode_to_vec(),
+            ))),
+        }),
+        (wire::Kind::Codex, Answer::CodexDecision(decision)) => {
+            input::Of::Codex(wire::CodexInput {
+                of: Some(codex_input::Of::Approve(wire::Approve {
+                    request_id: card.key.clone(),
+                    decision: decision as i32,
+                })),
+            })
+        }
+        _ => return None,
+    };
+    Some(wire::Input {
+        input_id: Vec::new(),
+        of: Some(of),
+    })
+}
+
+/// The answer with the person's note in the place its kind carries one.
+fn with_note(answer: &Answer, note: &str) -> Answer {
+    let mut answer = answer.clone();
+    if note.is_empty() {
+        return answer;
+    }
+    match &mut answer {
+        Answer::Claude(ClaudeAnswer { of: Some(of) }) => match of {
+            claude_answer::Of::Permission(wire::PermissionAnswer {
+                of: Some(wire::permission_answer::Of::Deny(deny)),
+            }) => deny.note = note.to_owned(),
+            claude_answer::Of::Plan(wire::PlanAnswer {
+                of: Some(wire::plan_answer::Of::SendBack(send_back)),
+            }) => send_back.note = note.to_owned(),
+            claude_answer::Of::Question(question) => question.note = note.to_owned(),
+            _ => {}
+        },
+        Answer::Codex(CodexAnswer {
+            of: Some(wire::codex_answer::Of::Question(question)),
+        }) => question.note = note.to_owned(),
+        _ => {}
+    }
+    answer
 }

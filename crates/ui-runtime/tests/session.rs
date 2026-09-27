@@ -10,7 +10,7 @@ use support::*;
 use ui_runtime::{DriverEvent, InputError, PageError, Session, TRACE_EVENTS, TraceEvent};
 use ui_state::{Composer, Connection, InputOutcome, InputState, Waiting};
 use wire::{
-    AnswerInput, ErrorCode, FetchResponse, GetBlobResponse, Kind, SendInputRequest,
+    AnswerInput, ErrorCode, FetchResponse, GetBlobResponse, Input, Kind, SendInputRequest,
     claude_pty_input, claude_sdk_input, codex_input, input, subscribe_request,
 };
 
@@ -290,6 +290,34 @@ async fn an_append_whose_base_is_not_held_is_answered_with_get() {
     );
 }
 
+/// An ask's answer as a card makes it: a Codex approval is a decision on
+/// the request, any other answer an encoded body under the ask's key.
+fn answering(kind: Kind) -> Input {
+    let answer = AnswerInput {
+        ask_key: "ask-1".into(),
+        kind: String::new(),
+        body: Vec::new(),
+    };
+    let of = match kind {
+        Kind::ClaudePty => input::Of::ClaudePty(wire::ClaudePtyInput {
+            of: Some(claude_pty_input::Of::Answer(answer)),
+        }),
+        Kind::ClaudeSdk => input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+            of: Some(claude_sdk_input::Of::Answer(answer)),
+        }),
+        _ => input::Of::Codex(wire::CodexInput {
+            of: Some(codex_input::Of::Approve(wire::Approve {
+                request_id: "ask-1".into(),
+                decision: wire::Decision::Approve as i32,
+            })),
+        }),
+    };
+    Input {
+        input_id: Vec::new(),
+        of: Some(of),
+    }
+}
+
 fn act_arm(request: &SendInputRequest) -> String {
     let of = request.input.as_ref().unwrap().of.as_ref().unwrap();
     match of {
@@ -311,7 +339,7 @@ fn act_arm(request: &SendInputRequest) -> String {
             codex_input::Of::Withdraw(_) => "withdraw",
             codex_input::Of::SendNow(_) => "send_now",
             codex_input::Of::Interrupt(_) => "interrupt",
-            codex_input::Of::Answer(_) => "answer",
+            codex_input::Of::Answer(_) | codex_input::Of::Approve(_) => "answer",
             _ => "other",
         },
         _ => "not a kind's arm",
@@ -341,15 +369,7 @@ async fn acts_on_the_chat_go_in_the_kinds_own_arm_and_return_the_verdict() {
                         "withdraw" => session.withdraw(b"queued-1").await,
                         "send_now" => session.send_now(b"queued-1").await,
                         "interrupt" => session.interrupt().await,
-                        _ => {
-                            session
-                                .answer(AnswerInput {
-                                    ask_key: "ask-1".into(),
-                                    kind: "ClaudeAnswer".into(),
-                                    body: Vec::new(),
-                                })
-                                .await
-                        }
+                        _ => session.answer(answering(kind)).await,
                     }
                 }
             });

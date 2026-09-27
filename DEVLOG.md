@@ -1,3 +1,16 @@
+2026-09-27 — **An ask card's choice becomes its input in the library.**
+`ui_view::answer_input(card, answer, note)` turns a card's choice, or a
+question card's picks, into the wire input for the card's kind: a Claude
+answer and a Codex question, form, link or grant answer as an answer body
+under the ask's key, and a Codex command, file-change or tool decision as an
+approval of the request the card names; the note lands where the kind
+carries one. `Session::answer` now sends that input, so a Codex approval can
+be sent through it. A new ui-view test drives every interpreter fixture of
+all three kinds into a session and, wherever a card is open, sends each
+offered choice to a copy of the interpreter at that point, which must accept
+it and close the ask (`interpret::fixture_script` exposes a fixture's
+events for tests that drive an interpreter themselves).
+
 2026-09-27 — **Shared values in `model`, dump bundles replay, the dependency policy for the new crates.**
 `model` now holds only the plain values the session model computes and the
 views and the phone bridge hand on (agent key, attention, connection,

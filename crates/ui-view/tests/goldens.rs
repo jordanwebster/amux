@@ -6,7 +6,7 @@
 //! Goldens live in `tests/goldens/<kind>/<fixture>.golden` and are only
 //! rewritten with `UI_VIEW_UPDATE_GOLDENS=1`; review the diff.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,10 @@ use ui_view::{
 };
 use wire::{Kind, SessionEvent, session_event};
 
+mod support;
+
+use support::Committer;
+
 const UPDATE: &str = "UI_VIEW_UPDATE_GOLDENS";
 
 fn fixtures(kind: &str) -> PathBuf {
@@ -33,52 +37,6 @@ fn goldens(kind: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/goldens")
         .join(kind)
-}
-
-/// Commits interpreter steps the way the owning daemon does.
-#[derive(Default)]
-struct Committer {
-    revision: u64,
-    next_order: u64,
-    orders: HashMap<String, u64>,
-    revisions: HashMap<String, u64>,
-}
-
-impl Committer {
-    fn commit(&mut self, step: &wire::Step) -> Vec<SessionEvent> {
-        let event = |of| SessionEvent { of: Some(of) };
-        let mut out = Vec::new();
-        for item in &step.items {
-            self.revision += 1;
-            let order = *self.orders.entry(item.key.clone()).or_insert_with(|| {
-                self.next_order += 1;
-                self.next_order
-            });
-            self.revisions.insert(item.key.clone(), self.revision);
-            let mut item = item.clone();
-            item.order = order;
-            item.revision = self.revision;
-            out.push(event(session_event::Of::Item(item)));
-        }
-        for append in &step.appends {
-            self.revision += 1;
-            let base = self
-                .revisions
-                .insert(append.key.clone(), self.revision)
-                .unwrap_or(0);
-            let mut append = append.clone();
-            append.base_revision = base;
-            append.revision = self.revision;
-            out.push(event(session_event::Of::Append(append)));
-        }
-        if let Some(snapshot) = &step.snapshot {
-            self.revision += 1;
-            let mut snapshot = snapshot.clone();
-            snapshot.revision = self.revision;
-            out.push(event(session_event::Of::Snapshot(snapshot)));
-        }
-        out
-    }
 }
 
 fn agent(kind: Kind) -> wire::Agent {

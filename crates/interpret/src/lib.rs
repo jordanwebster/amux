@@ -27,8 +27,9 @@ pub mod unknown;
 mod testkind;
 
 pub use golden::{
-    EndRules, FixtureInput, GoldenReport, Replayed, UPDATE_GOLDENS_ENV, check_invariants,
-    claude_pty_input, claude_sdk_input, codex_input, replay, run_golden,
+    EndRules, FixtureInput, FixtureScript, GoldenReport, Replayed, UPDATE_GOLDENS_ENV,
+    check_invariants, claude_pty_input, claude_sdk_input, codex_input, fixture_script, replay,
+    run_golden,
 };
 pub use redact::{redact, redact_text};
 use serde::Serialize;

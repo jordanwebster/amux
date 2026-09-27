@@ -8,10 +8,10 @@ publish = false
 
 [dependencies]
 attachments = { workspace = true }
+prost = { workspace = true }
 serde_json = { workspace = true }
 ui-state = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
 interpret = { workspace = true }
-prost = { workspace = true }

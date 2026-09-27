@@ -17,10 +17,9 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use ui_state::{BlobStatus, Connection, InputId, InputOutcome, Key, Msg, Outcome, SessionState};
 use wire::{
-    Agent, AnswerInput, BlobRef, DumpFile, DumpPart, ErrorCode, FetchRequest, GetBlobRequest,
-    GetRequest, HostEntry, Input, PutBlobRequest, ResumeAgentRequest, SendInputRequest,
-    SendInputResponse, SessionEvent, SubscribeRequest, send_input_response, session_event,
-    subscribe_request,
+    Agent, BlobRef, DumpFile, DumpPart, ErrorCode, FetchRequest, GetBlobRequest, GetRequest,
+    HostEntry, Input, PutBlobRequest, ResumeAgentRequest, SendInputRequest, SendInputResponse,
+    SessionEvent, SubscribeRequest, send_input_response, session_event, subscribe_request,
 };
 
 use crate::trace::{DriverEvent, DriverTrace, Ring, TraceEvent};
@@ -472,9 +471,10 @@ impl Session {
         self.act(inputs::send_now(self.kind(), queued)).await
     }
 
-    /// Answers the ask `answer.ask_key` names; any open ask can be answered.
-    pub async fn answer(&self, answer: AnswerInput) -> Result<(), InputError> {
-        self.act(inputs::answer(self.kind(), answer)).await
+    /// Answers an open ask with the input `ui_view::answer_input` made
+    /// from its card and the person's choice; any open ask can be answered.
+    pub async fn answer(&self, input: Input) -> Result<(), InputError> {
+        self.act(Some(input)).await
     }
 
     pub async fn interrupt(&self) -> Result<(), InputError> {
