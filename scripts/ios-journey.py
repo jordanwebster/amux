@@ -21,7 +21,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ios_simulators  # noqa: E402
-from journeys.phone import ROOT, PhoneJourney, story  # noqa: E402
+from journeys.phone import ROOT, DoorError, PhoneJourney, story  # noqa: E402
 
 SIMULATOR = "golden"
 
@@ -239,11 +239,139 @@ def conversation_decision(journey: PhoneJourney, agent: str, provider_logs: bool
     return assertions
 
 
+def never_received(chat: dict, text: str) -> None:
+    if prompts(chat, text):
+        raise RuntimeError(f"the desk received {text!r} while access was lost")
+
+
+def switch_to(journey: PhoneJourney, account: str) -> None:
+    """The account a person picks from the switcher under the title."""
+    journey.tap("tab.agents")
+    journey.tap("home.title")
+    journey.wait_for(f"account.{account}@example.com")
+    journey.tap(f"account.{account}@example.com")
+    journey.wait(
+        lambda drawn: (drawn.get("home.subtitle", {}).get("value") or "").startswith(f"{account} ·"),
+        f"{account} on screen",
+    )
+
+
+def pair_through_the_relay(journey: PhoneJourney, host: str) -> None:
+    """Pairs by the link `host` printed. The phone's relay link comes up a
+    moment after signing in, and until it has, the link reaches nobody; the
+    person scans the same code again."""
+    pairing, link = journey.pairing_link(host)
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            journey.pair(link)
+            break
+        except DoorError:
+            if time.monotonic() > deadline:
+                pairing.kill()
+                raise
+            time.sleep(2)
+    pairing.wait(timeout=30)
+
+
+def keep_authority(journey: PhoneJourney) -> list[str]:
+    asked = "Are you there?"
+    held = "Still there?"
+    desk = journey.host_id("desk")
+    guarded = next(item["id"] for item in journey.ready["agents"] if item["name"] == "guarded")
+    relay = journey.ready["cloud_url"]
+    journey.launch()
+
+    # Signed in to the desk's account, the phone pairs with the desk by the
+    # link it printed; there is no local network between them, only the
+    # relay.
+    journey.app({"kind": "connect", "relay": relay, "token": "refresh-ada", "user": "ada"})
+    pair_through_the_relay(journey, "desk")
+    journey.tap("tab.agents")
+    journey.wait_for(f"home.row.{guarded}")
+
+    # A second account is a profile of its own, on its own empty fleet.
+    journey.app({"kind": "addAccount", "user": "bob", "token": "refresh-bob"})
+    journey.wait(lambda drawn: f"home.row.{guarded}" not in drawn and "home.title" in drawn, "bob's empty fleet")
+    journey.tap("tab.hosts")
+    drawn = journey.wait(lambda drawn: "hosts" in drawn, "bob's hosts")
+    if f"hosts.row.{desk}" in drawn:
+        raise RuntimeError("bob's profile knows the desk")
+    journey.screen("other-account")
+    switch_to(journey, "ada")
+    journey.wait_for(f"home.row.{guarded}")
+
+    # Through the relay the desk's agent answers.
+    journey.tap(f"home.row.{guarded}")
+    journey.wait_for("chat.field")
+    send(journey, asked)
+    journey.wait(lambda drawn: labelled(drawn, "Only this account reaches me."), "the first reply")
+    reflected_once(journey.wait_chat("desk", "guarded", lambda chat: chat["phase"] == "IDLE", "reached"), asked)
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+
+    # Signed out, the phone has no way to the desk: the chat says so and a
+    # message written now never reaches it.
+    journey.tap("tab.you")
+    journey.wait_for("you.signOut")
+    journey.tap("you.signOut")
+    journey.wait(
+        lambda drawn: "Signed out" in (drawn.get("account.ada@example.com", {}).get("label") or ""), "signed out"
+    )
+    journey.tap("tab.hosts")
+    journey.wait(lambda drawn: labelled(drawn, "signed out"), "the hosts tab naming the sign-out")
+    journey.screen("blocked-hosts")
+    journey.tap("tab.agents")
+    journey.tap(f"home.row.{guarded}")
+    journey.wait(lambda drawn: "chat.field" in drawn and labelled(drawn, "this phone is signed out"), "the chat naming the sign-out")
+    journey.type("chat.field", held)
+    drawn = journey.wait(lambda drawn: drawn.get("chat.field", {}).get("value") == held, "the draft written")
+    if drawn.get("chat.send", {}).get("enabled"):
+        raise RuntimeError("the phone offers to send while signed out")
+    time.sleep(2)
+    # The draft is kept across leaving the chat; read with the keyboard down.
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    journey.tap(f"home.row.{guarded}")
+    journey.wait(lambda drawn: drawn.get("chat.field", {}).get("value") == held, "the draft kept")
+    journey.screen("blocked")
+    blocked = journey.request({"Chat": {"host": "desk", "agent": "guarded"}}, "while-signed-out")
+    never_received(blocked, held)
+    control = negative_control(never_received, blocked, asked)
+
+    # Signed in again: the chat is current and the held message goes once.
+    journey.app({"kind": "connect", "relay": relay, "token": "refresh-ada", "user": "ada"})
+    journey.wait(
+        lambda drawn: not labelled(drawn, "this phone is signed out") and drawn.get("chat.send", {}).get("enabled") is True,
+        "the chat current again, the draft ready to send",
+    )
+    journey.tap("chat.send")
+    journey.wait(lambda drawn: labelled(drawn, "The relay carries us again."), "the reply after signing in")
+    after = journey.wait_chat(
+        "desk", "guarded", lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, held)) == 1, "sent-after-sign-in"
+    )
+    reflected_once(after, asked)
+    reflected_once(after, held)
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    journey.tap(f"home.row.{guarded}")
+    journey.wait(lambda drawn: labelled(drawn, "The relay carries us again.") and "chat.row.turn-end" in drawn, "the chat again")
+    journey.screen("recovered", volatile=("chat.row.turn-end",))
+    return [
+        "a second account opened on its own profile, with an empty fleet that knows no desk",
+        f"through the relay the desk received {asked!r} once and answered",
+        "signed out, the phone named its own sign-out in the hosts tab and the chat, kept the draft and would not send it; the desk never received it",
+        control,
+        f"signed in again, the chat was current and {held!r} reached the desk once and was answered",
+    ]
+
+
 STORIES = {
     "reach-host": reach_host,
     "conversation-decision-claude-pty": lambda j: conversation_decision(j, "decision-pty", False),
     "conversation-decision-claude-sdk": lambda j: conversation_decision(j, "decision-sdk", True),
     "conversation-decision-codex": lambda j: conversation_decision(j, "decision-codex", True),
+    "keep-authority": keep_authority,
 }
 
 

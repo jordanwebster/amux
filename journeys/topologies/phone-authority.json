@@ -1,0 +1,23 @@
+{
+  "scope": "phone-authority",
+  "relay": {"accounts": [{"name": "ada"}, {"name": "bob"}]},
+  "hosts": [
+    {"name": "desk", "account": "ada"}
+  ],
+  "agents": [
+    {
+      "name": "guarded",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "hello",
+      "script": {"steps": [
+        {"text": {"chunks": ["Ready."]}},
+        "turn_end",
+        {"text": {"chunks": ["Only this account reaches me."]}},
+        "turn_end",
+        {"text": {"chunks": ["The relay carries us again."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}
