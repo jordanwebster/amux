@@ -465,8 +465,7 @@ async fn a_daemon_killed_mid_turn_loses_nothing() {
     install.run_daemon().await;
     let mut client = install.client().await;
     assert!(
-        line_of(&install.ok(&["ls"]).await, "codex")
-            .contains("exited: exited while the daemon was away")
+        line_of(&install.ok(&["ls"]).await, "codex").contains("exited: while the daemon was away")
     );
     let found = chat(&mut client, &codex).await;
     for item in &before["codex"] {
