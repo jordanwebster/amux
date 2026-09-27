@@ -1,3 +1,17 @@
+2026-09-27 — **The phone's composer offers the agent's commands and turns a long paste into one attachment.**
+A draft that is exactly a leading "/word" lists up to five of the agent's
+commands above the composer, matched by prefix or by prefix after a plugin's
+namespace, from the commands the settings view carries (the ones the
+provider offered, less those a headless agent cannot run). A tap puts the
+command in the draft: Claude's as "/name", a Codex skill as its "$name"
+mention. Terminal Claude offers no list, so nothing is shown there and the
+draft goes as typed. A paste of eight lines or a thousand characters, the
+terminal client's threshold, leaves the field and becomes one "Pasted text ·
+N lines" chip that is sent as inline text. The field's edits now go through
+the chat model, which also ignores the text view's echo of a paste; without
+that, one paste arrived as two attachments. Also adds the catalogue string
+for the whole-chat settings example.
+
 2026-09-27 — **The phone changes an agent's model, effort and permission mode.**
 The composer's model chip is now a button: it reads the model on one line
 and the effort and mode under it (so a long model id no longer hides the

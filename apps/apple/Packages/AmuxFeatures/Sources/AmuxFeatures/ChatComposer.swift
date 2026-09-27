@@ -33,7 +33,7 @@ struct ComposerBox: View {
             }
             if let sentence = model.dictation.sentence { dictationLine(sentence) }
             if !model.attachments.isEmpty || model.uploading > 0 { attachments }
-            TextField(placeholder, text: $model.draft, axis: .vertical)
+            TextField(placeholder, text: Binding(get: { model.draft }, set: { model.type($0) }), axis: .vertical)
                 .lineLimit(1...8)
                 .designFont(.body, design)
                 .foregroundStyle(design.ink.color)
@@ -234,7 +234,7 @@ extension DraftAttachment {
         switch self {
         case .image(let blob): .image(blob)
         case .file(let blob): .file(blob)
-        case .text(let name, let text): .text(name: name, lines: UInt32(text.split(separator: "\n").count))
+        case .text(let name, let text): .text(name: name, lines: UInt32(ChatModel.lines(text)))
         case .review(let diff, let comments): .review(comments: UInt32(comments.count), patch: diff.patch)
         }
     }
@@ -417,6 +417,55 @@ struct StripLine: View {
             .accessibilityElement(children: .combine)
             .identified("chat.strip", label: parts.map(\.text).joined(separator: ", "))
         }
+    }
+}
+
+/// The agent's commands matching a draft that is a leading "/word", one
+/// row each; a tap puts the command in the draft.
+struct SlashRows: View {
+    @Environment(\.design) private var design
+    let commands: [CommandView]
+    /// Codex's commands are its skills, mentioned by "$name".
+    let codex: Bool
+    let pick: (CommandView) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(commands, id: \.name) { command in
+                Button { pick(command) } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(verbatim: (codex ? "$" : "/") + command.name)
+                                .designFont(.mono, design)
+                                .foregroundStyle(design.ink.color)
+                                .lineLimit(1)
+                            if !command.argumentHint.isEmpty {
+                                Text(verbatim: command.argumentHint)
+                                    .designFont(.monoSmall, design)
+                                    .foregroundStyle(design.inkFaint.color)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        if !command.description.isEmpty {
+                            Text(verbatim: command.description)
+                                .designFont(.detail, design)
+                                .foregroundStyle(design.inkMuted.color)
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel(ChatWords.command(command))
+                .identified("chat.slash.\(command.name)", label: ChatWords.command(command))
+            }
+        }
+        .padding(.vertical, 4)
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous), as: .glass)
     }
 }
 

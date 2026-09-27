@@ -77,8 +77,10 @@
 		47CBB7C99F9BAEB5C99571E5 /* components.row-stopped-light.png in Resources */ = {isa = PBXBuildFile; fileRef = E7FB140A6EB9DA85DD7CFB7E /* components.row-stopped-light.png */; };
 		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
 		49EC6A960B2039A2D13480CB /* components.composer-draft-light.png in Resources */ = {isa = PBXBuildFile; fileRef = CFBC562F89834BACC9F27F08 /* components.composer-draft-light.png */; };
+		4A23A84C419C6FB28B5C82AD /* components.composer-pasted-text-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7EC21828843E654DE2E45C26 /* components.composer-pasted-text-dark.png */; };
 		4B8BD61834F9593096D815C1 /* components.chat-settings-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 326535A03ED710A7D221B099 /* components.chat-settings-light.png */; };
 		4D1C556B5BD225B9420AC756 /* components.composer-working-light.png in Resources */ = {isa = PBXBuildFile; fileRef = B5F398C12A24574F54373225 /* components.composer-working-light.png */; };
+		4EDD1CEB63161D803A79A9B3 /* components.composer-slash-light.png in Resources */ = {isa = PBXBuildFile; fileRef = F9A659C06ACC81C034B66E55 /* components.composer-slash-light.png */; };
 		5106CD688A312E655A041162 /* components.row-subagent-done-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 757787B49189F5DDD342BD5E /* components.row-subagent-done-dark.png */; };
 		525EF880AEEEE49C657CF985 /* components.row-prose-working-note-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 805D717887BD6709C470725D /* components.row-prose-working-note-light.png */; };
 		526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */; };
@@ -127,6 +129,7 @@
 		7A11E806AFFDDE1D229C43E7 /* components.row-ask-plan-approved-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 0D956881E6C814094C241719 /* components.row-ask-plan-approved-dark.png */; };
 		7A7CFABC0D355BD52D12075C /* components.row-prose-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7CA633D6597DD871BFB43351 /* components.row-prose-dark.png */; };
 		7AA5EDD4B2A713C1D6A97CF1 /* components.row-tool-call-asking-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 6C42EAB0841DAD4BDDCE6C3B /* components.row-tool-call-asking-dark.png */; };
+		7B274F9363F47E1E99F97BFE /* components.composer-pasted-text-light.png in Resources */ = {isa = PBXBuildFile; fileRef = B0D27720D36646BB763D2E07 /* components.composer-pasted-text-light.png */; };
 		7B527425E59EABBA61CF99CB /* components.row-subagent-steps-light.png in Resources */ = {isa = PBXBuildFile; fileRef = C7E3018FAAEF5371B49C548D /* components.row-subagent-steps-light.png */; };
 		7C3AC1C2DC443517E3DA36A1 /* components.composer-settings-claude-pty-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 82B83E88BEF89370E94A777E /* components.composer-settings-claude-pty-light.png */; };
 		7C56ED7B840B63A61D3DE69B /* components.row-tool-call-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 5C85909A0001866E42215DD3 /* components.row-tool-call-light.png */; };
@@ -285,6 +288,7 @@
 		FE61E5C2BFC319179E4361AA /* components.composer-catching-up-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B6BAE4424A8786AC8504710 /* components.composer-catching-up-light.png */; };
 		FEBA1A1A192A1C4DDFF960C1 /* components.composer-sending-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 72944A8BB86F187E3E7573E9 /* components.composer-sending-dark.png */; };
 		FECCD286E139E2AE150C9B59 /* components.ask-access-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 26B70DA5646FAA4A91591B17 /* components.ask-access-dark.png */; };
+		FEFC3BBA0CB92BA1BB050232 /* components.composer-slash-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 577232130231CB5D8185A90C /* components.composer-slash-dark.png */; };
 		FFF6A7EFCC5AE20CB7B034F7 /* components.row-command-asking-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7498B4D487BB9006C1BD65DF /* components.row-command-asking-dark.png */; };
 /* End PBXBuildFile section */
 
@@ -413,6 +417,7 @@
 		5351FBE10B09ABC576796F8B /* components.row-ask-secret-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-ask-secret-light.png"; sourceTree = "<group>"; };
 		5501C694E2C5445818AA5B11 /* components.composer-strip-claude-sdk-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-claude-sdk-light.png"; sourceTree = "<group>"; };
 		56885C30816CE2F941A5380A /* components.composer-settings-codex-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-settings-codex-dark.png"; sourceTree = "<group>"; };
+		577232130231CB5D8185A90C /* components.composer-slash-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-slash-dark.png"; sourceTree = "<group>"; };
 		577BD51E4D818B2C3EB3BD93 /* components.composer-strip-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-dark.png"; sourceTree = "<group>"; };
 		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
 		581B37F7D26DE8D94FAC9EBC /* components.composer-empty-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-empty-light.png"; sourceTree = "<group>"; };
@@ -462,6 +467,7 @@
 		7CA633D6597DD871BFB43351 /* components.row-prose-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-prose-dark.png"; sourceTree = "<group>"; };
 		7CE6A81789B041D9C9A246B7 /* components.composer-empty-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-empty-dark.png"; sourceTree = "<group>"; };
 		7E1C13AE584BFB9E9FC9FA43 /* components.composer-sign-in-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-sign-in-light.png"; sourceTree = "<group>"; };
+		7EC21828843E654DE2E45C26 /* components.composer-pasted-text-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-pasted-text-dark.png"; sourceTree = "<group>"; };
 		7EFA664B34926A7CA4A7A53B /* components.row-unrecognized-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-unrecognized-light.png"; sourceTree = "<group>"; };
 		805D717887BD6709C470725D /* components.row-prose-working-note-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-prose-working-note-light.png"; sourceTree = "<group>"; };
 		80BABFCC5A2E31FFB3A3AC9D /* components.row-command-denied-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-denied-dark.png"; sourceTree = "<group>"; };
@@ -503,6 +509,7 @@
 		AE009EE95BD902CA978349EB /* components.chat-asking-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.chat-asking-dark.png"; sourceTree = "<group>"; };
 		AEC1C59630E396B315B79EAD /* components.row-command-denied-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-command-denied-light.png"; sourceTree = "<group>"; };
 		AF2048C362D092E5418E90F6 /* components.composer-strip-claude-sdk-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-claude-sdk-dark.png"; sourceTree = "<group>"; };
+		B0D27720D36646BB763D2E07 /* components.composer-pasted-text-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-pasted-text-light.png"; sourceTree = "<group>"; };
 		B12154918323E6A8E9DA9131 /* components.composer-sending-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-sending-light.png"; sourceTree = "<group>"; };
 		B15686E183A5940905681E49 /* components.composer-detached-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-detached-light.png"; sourceTree = "<group>"; };
 		B192DEEE50C1769CE270B5C3 /* components.row-tool-call-asking-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-tool-call-asking-light.png"; sourceTree = "<group>"; };
@@ -591,6 +598,7 @@
 		F460A9D995FBAC0E48BB9818 /* components.ask-permission-terminal-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-permission-terminal-light.png"; sourceTree = "<group>"; };
 		F5B661BE2402BC7D004818A5 /* Workloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workloads.swift; sourceTree = "<group>"; };
 		F93A8EC6AA37E9E680EE94FE /* components.composer-not-confirmed-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-not-confirmed-dark.png"; sourceTree = "<group>"; };
+		F9A659C06ACC81C034B66E55 /* components.composer-slash-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-slash-light.png"; sourceTree = "<group>"; };
 		FA19A1CEBA9AAAA23C10BEC6 /* components.composer-catching-up-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-catching-up-dark.png"; sourceTree = "<group>"; };
 		FAD9CF7657C7C197DD88CAE7 /* components.composer-strip-codex-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-strip-codex-dark.png"; sourceTree = "<group>"; };
 		FB3B3860AEB77F64BD97FC40 /* components.ask-question-single-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.ask-question-single-light.png"; sourceTree = "<group>"; };
@@ -854,6 +862,8 @@
 				581B37F7D26DE8D94FAC9EBC /* components.composer-empty-light.png */,
 				F93A8EC6AA37E9E680EE94FE /* components.composer-not-confirmed-dark.png */,
 				ACFB6BA5C91F806AB9A49DDF /* components.composer-not-confirmed-light.png */,
+				7EC21828843E654DE2E45C26 /* components.composer-pasted-text-dark.png */,
+				B0D27720D36646BB763D2E07 /* components.composer-pasted-text-light.png */,
 				CD2A0EF27614688247D83CE8 /* components.composer-queued-dark.png */,
 				CB187C70CF9274491BE5E309 /* components.composer-queued-light.png */,
 				449239C060A0ED02BFBC36B7 /* components.composer-rejected-dark.png */,
@@ -874,6 +884,8 @@
 				351FC4C659500A7FA80AC3C1 /* components.composer-settings-codex-light.png */,
 				CD4AD7E78FECFAC1FB20B7CA /* components.composer-sign-in-dark.png */,
 				7E1C13AE584BFB9E9FC9FA43 /* components.composer-sign-in-light.png */,
+				577232130231CB5D8185A90C /* components.composer-slash-dark.png */,
+				F9A659C06ACC81C034B66E55 /* components.composer-slash-light.png */,
 				93D2A8BB17F55C0A30E8632D /* components.composer-strip-claude-pty-dark.png */,
 				22E6B7DDC057921A403490AE /* components.composer-strip-claude-pty-light.png */,
 				AF2048C362D092E5418E90F6 /* components.composer-strip-claude-sdk-dark.png */,
@@ -1329,6 +1341,8 @@
 				C53EFD5F4B50F04228855DA0 /* components.composer-empty-light.png in Resources */,
 				A953AD4948297C8BC643D2F0 /* components.composer-not-confirmed-dark.png in Resources */,
 				20034EEB0AB2A54C9462F0C0 /* components.composer-not-confirmed-light.png in Resources */,
+				4A23A84C419C6FB28B5C82AD /* components.composer-pasted-text-dark.png in Resources */,
+				7B274F9363F47E1E99F97BFE /* components.composer-pasted-text-light.png in Resources */,
 				70D3E286A27EAE44DD836178 /* components.composer-queued-dark.png in Resources */,
 				5FEF5D237E78C3AFDB1224C1 /* components.composer-queued-light.png in Resources */,
 				ECD4C15E66AF94D71FF2C473 /* components.composer-rejected-dark.png in Resources */,
@@ -1349,6 +1363,8 @@
 				ACE9847AE3C5A2C70F7B648F /* components.composer-settings-codex-light.png in Resources */,
 				DD35235B098FA20C78C38F00 /* components.composer-sign-in-dark.png in Resources */,
 				BC23FFD0FDD117F3F3D55ACE /* components.composer-sign-in-light.png in Resources */,
+				FEFC3BBA0CB92BA1BB050232 /* components.composer-slash-dark.png in Resources */,
+				4EDD1CEB63161D803A79A9B3 /* components.composer-slash-light.png in Resources */,
 				F44FCA2B2478CFE03208FCE7 /* components.composer-strip-claude-pty-dark.png in Resources */,
 				23200604267677AC7EAC432E /* components.composer-strip-claude-pty-light.png in Resources */,
 				787759F72BE167600828B638 /* components.composer-strip-claude-sdk-dark.png in Resources */,

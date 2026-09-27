@@ -120,6 +120,8 @@ public final class ChatModel {
     public private(set) var reviewing: ReviewModel?
     /// Dictation into the draft; the app's speech recogniser drives it.
     public var dictation = DictationState()
+    /// The field's text when a paste last left it, and when.
+    @ObservationIgnored private var pasteEcho: (text: String, at: ContinuousClock.Instant)?
 
     /// - Parameter loadingHintAfter: how long an empty chat waits before
     ///   saying it is loading; zero says so from the first frame.
@@ -389,6 +391,83 @@ public final class ChatModel {
             }
             woke()
         }
+    }
+
+    // MARK: - Slash commands and pastes
+
+    /// How many commands the slash rows offer at once.
+    public static let slashRows = 5
+    /// A paste this long becomes one attachment instead of draft text, as
+    /// the terminal client does.
+    public static let pasteLines = 8
+    public static let pasteCharacters = 1_000
+
+    /// The agent's commands that match a draft that is exactly a leading
+    /// "/word": by prefix, or by prefix after a plugin's namespace. The
+    /// list is the settings view's, which already leaves out what a
+    /// headless agent cannot run; an agent that offers none lists nothing.
+    public var slashMatches: [CommandView] {
+        guard let word = Self.slashWord(draft), let commands = settings?.commands else { return [] }
+        return Array(commands.filter { Self.command($0.name, matches: word) }.prefix(Self.slashRows))
+    }
+
+    static func slashWord(_ draft: String) -> String? {
+        guard draft.hasPrefix("/") else { return nil }
+        let word = draft.dropFirst()
+        guard !word.contains(where: { $0.isWhitespace || $0 == "/" }) else { return nil }
+        return word.lowercased()
+    }
+
+    static func command(_ name: String, matches word: String) -> Bool {
+        let name = name.lowercased()
+        if name.hasPrefix(word) { return true }
+        guard let colon = name.firstIndex(of: ":") else { return false }
+        return name[name.index(after: colon)...].hasPrefix(word)
+    }
+
+    /// Puts a picked command in the draft as the agent reads one: Claude's
+    /// "/name", and a Codex skill by its "$name" mention.
+    public func pick(_ command: CommandView) {
+        let sigil = frame?.kind == .codex ? "$" : "/"
+        draft = sigil + command.name + " "
+    }
+
+    /// The field's edits. A long run arriving in one edit is a paste: it
+    /// leaves the draft and joins it as one inline text attachment. Only
+    /// the person's typing comes through here, so words put back into the
+    /// draft stay words.
+    public func type(_ text: String) {
+        let text = text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        // The text view sends a paste's whole text again after the draft
+        // takes it out; the same text straight after is that echo.
+        if let echo = pasteEcho, echo.text == text, echo.at.duration(to: .now) < .milliseconds(500) {
+            return
+        }
+        pasteEcho = nil
+        let old = Array(draft)
+        let new = Array(text)
+        var head = 0
+        while head < old.count, head < new.count, old[head] == new[head] { head += 1 }
+        var tail = 0
+        while tail < old.count - head, tail < new.count - head,
+              old[old.count - 1 - tail] == new[new.count - 1 - tail] { tail += 1 }
+        let inserted = String(new[head..<(new.count - tail)])
+        guard inserted.count >= Self.pasteCharacters || Self.lines(inserted) >= Self.pasteLines else {
+            draft = text
+            return
+        }
+        draft = String(new[..<head]) + String(new[(new.count - tail)...])
+        attachments.append(.text(name: String(localized: "Pasted text"), text: inserted))
+        pasteEcho = (text, .now)
+    }
+
+    /// Lines as the chat counts them: a last line break ends a line rather
+    /// than starting one.
+    nonisolated public static func lines(_ text: String) -> Int {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.last?.isEmpty == true { lines.removeLast() }
+        return lines.count
     }
 
     /// The whole of what dictation has heard so far.

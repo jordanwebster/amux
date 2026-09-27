@@ -889,6 +889,18 @@
         }
       }
     },
+    "%@, from %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, from %@"
+          }
+        }
+      }
+    },
     "%@, one %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift.",
       "extractionState": "manual",

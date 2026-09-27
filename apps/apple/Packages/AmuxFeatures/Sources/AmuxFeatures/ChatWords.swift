@@ -456,6 +456,13 @@ public enum ChatWords {
         kind == .codex ? String(localized: "CODEX PERMISSIONS") : String(localized: "CLAUDE PERMISSIONS")
     }
 
+    /// A command as VoiceOver speaks it: its name, then where it comes from.
+    public static func command(_ command: CommandView) -> String {
+        command.source.isEmpty
+            ? command.name
+            : String(localized: "\(command.name), from \(command.source)")
+    }
+
     /// The plus menu's permissions row: the current mode after the name.
     public static func permissionsItem(_ settings: SettingsView) -> String {
         guard let current = settings.modes.first(where: { $0.current }) else {

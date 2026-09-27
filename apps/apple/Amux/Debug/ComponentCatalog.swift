@@ -419,6 +419,12 @@ enum ComponentCatalog {
             composer("chip-stops-asking", height: 160, frame: ScriptedChat.frame(kind: .claudeSdk),
                      strip: ScriptedChat.strip(model: "claude-opus-5-5", effort: "low", mode: "bypassPermissions"),
                      settings: F.claudeSdkSettings(mode: "bypassPermissions")),
+            composer("slash", height: 460, frame: ScriptedChat.frame(kind: .claudeSdk), draft: "/c",
+                     settings: F.withCommands),
+            composer("pasted-text", height: 220, frame: ScriptedChat.frame(phase: .idle)) { model in
+                model.type("Why does this fail? ")
+                model.type("Why does this fail? " + (1...14).map { "error[E0308]: mismatched types at line \($0)" }.joined(separator: "\n"))
+            },
             composer("usage-blocked", height: 200, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 usage: UsageView(blocked: true, windows: [UsageWindowView(name: "weekly", usedPercent: 100, resetsAtMs: nil)], credits: "Resets Monday"))),
         ]
@@ -583,6 +589,19 @@ enum CatalogFixtures {
             effortRefusal: "Claude takes its effort when the agent starts and keeps it until it restarts.",
             modeRefusal: nil, modelRefusal: nil)
     }
+
+    static let withCommands: SettingsView = {
+        var view = claudeSdkSettings()
+        view.commands = [
+            CommandView(name: "clear", description: "Clear conversation history and free up context", argumentHint: "", source: ""),
+            CommandView(name: "compact", description: "Clear history but keep a summary in context", argumentHint: "<instructions>", source: ""),
+            CommandView(name: "context", description: "Show current context usage", argumentHint: "", source: ""),
+            CommandView(name: "cost", description: "Show the total cost and duration of the session", argumentHint: "", source: ""),
+            CommandView(name: "code-review:review", description: "Review the current diff for correctness bugs", argumentHint: "[level]", source: "code-review"),
+            CommandView(name: "init", description: "Initialize a new CLAUDE.md file", argumentHint: "", source: ""),
+        ]
+        return view
+    }()
 
     static let settingsCodex: SettingsView = {
         let efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]

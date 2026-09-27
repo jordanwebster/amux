@@ -1129,7 +1129,8 @@
       {"literal": "\"haiku\"", "context": "ModelChoice(value: \"haiku\", displayName: \"Haiku\", description: \"Haiku 4.5 · Fastest for quick answers\", efforts: [], current: false, reported: false, defaultEffort: nil),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"GPT-6-Astra\"", "context": "ModelChoice(value: \"gpt-6-astra\", displayName: \"GPT-6-Astra\", description: \"Frontier agentic coding model.\", efforts: efforts, current: true, reported: false, defaultEffort: \"medium\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"gpt-6-sol\"", "context": "ModelChoice(value: \"gpt-6-sol\", displayName: \"GPT-6-Sol\", description: \"Smaller, faster and cheaper.\", efforts: efforts, current: false, reported: false, defaultEffort: \"medium\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
-      {"literal": "\"GPT-6-Sol\"", "context": "ModelChoice(value: \"gpt-6-sol\", displayName: \"GPT-6-Sol\", description: \"Smaller, faster and cheaper.\", efforts: efforts, current: false, reported: false, defaultEffort: \"medium\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"GPT-6-Sol\"", "context": "ModelChoice(value: \"gpt-6-sol\", displayName: \"GPT-6-Sol\", description: \"Smaller, faster and cheaper.\", efforts: efforts, current: false, reported: false, defaultEffort: \"medium\"),", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"/c\"", "context": "composer(\"slash\", height: 460, frame: ScriptedChat.frame(kind: .claudeSdk), draft: \"/c\",", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift": [
       {"literal": "\"arrow.up.circle\"", "context": "Image(systemName: \"arrow.up.circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
@@ -1232,7 +1233,10 @@
       {"literal": "\"\\(model.dictation.phase)\"", "context": ".identified(\"chat.dictation\", label: sentence, value: \"\\(model.dictation.phase)\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"hand.raised\"", "context": "Label(ChatWords.permissionsItem(settings), systemImage: \"hand.raised\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"chevron.up.chevron.down\"", "context": "Image(systemName: \"chevron.up.chevron.down\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
-      {"literal": "\"chat.model\"", "context": ".identified(\"chat.model\", label: label)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"chat.model\"", "context": ".identified(\"chat.model\", label: label)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"$\"", "context": "Text(verbatim: (codex ? \"$\" : \"/\") + command.name)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"/\"", "context": "Text(verbatim: (codex ? \"$\" : \"/\") + command.name)", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"chat.slash.\\(command.name)\"", "context": ".identified(\"chat.slash.\\(command.name)\", label: ChatWords.command(command))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift": [
       {"literal": "\"chat.row.meta.volatile\"", "context": ".reported(\"chat.row.meta.volatile\")", "reason": "Stable driving identifier for a surface a compared screenshot masks, not a displayed label.", "count": 1},
@@ -1417,6 +1421,13 @@
       {"literal": "\"chat.settings.mode.\\(Self.key(choice.value))\"", "context": "id: \"chat.settings.mode.\\(Self.key(choice.value))\",", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"largecircle.fill.circle\"", "context": "Image(systemName: current ? \"largecircle.fill.circle\" : \"circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
       {"literal": "\"\\(approval).\\(sandbox)\"", "context": "case .codex(let approval, let sandbox, let preset): preset ?? \"\\(approval).\\(sandbox)\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ChatModel.swift": [
+      {"literal": "\"/\"", "context": "guard draft.hasPrefix(\"/\") else { return nil }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"/\"", "context": "guard !word.contains(where: { $0.isWhitespace || $0 == \"/\" }) else { return nil }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\":\"", "context": "guard let colon = name.firstIndex(of: \":\") else { return false }", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"$\"", "context": "let sigil = frame?.kind == .codex ? \"$\" : \"/\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1},
+      {"literal": "\"/\"", "context": "let sigil = frame?.kind == .codex ? \"$\" : \"/\"", "reason": "Protocol field, format syntax, file or media type; not interface copy.", "count": 1}
     ]
   }
 }

@@ -116,10 +116,10 @@ private func row(_ id: String, _ order: UInt64, _ text: String = "", run: RunInf
 
 private func frame(
     mode: Composer = .send, caughtUp: Bool = true, hasOlder: Bool = false,
-    phase: PhaseView = .idle
+    phase: PhaseView = .idle, kind: Kind = .claudeSdk
 ) -> ChatFrame {
     ChatFrame(
-        agent: AgentKey(host: [1], agent: [2]), name: "a", kind: .claudeSdk, phase: phase,
+        agent: AgentKey(host: [1], agent: [2]), name: "a", kind: kind, phase: phase,
         composer: ComposerView(mode: mode, activity: nil), connection: .live, caughtUp: caughtUp,
         hasOlder: hasOlder, queue: [], outbox: [], askInput: nil, ended: nil, waiting: nil)
 }
@@ -308,6 +308,79 @@ final class ChatModelTests: XCTestCase {
         model.woke()
         XCTAssertEqual(model.settings?.models.first { $0.current }?.value, "sonnet")
         XCTAssertEqual(model.strip?.model, "sonnet")
+    }
+
+    private func offering(_ names: [String]) -> SettingsView {
+        SettingsView(
+            models: [], efforts: [], modes: [], cycleMode: false,
+            commands: names.map { CommandView(name: $0, description: "", argumentHint: "", source: "") },
+            changeByTyping: nil, effortRefusal: nil, modeRefusal: nil, modelRefusal: nil)
+    }
+
+    func testALeadingSlashWordListsUpToFiveMatchingCommandsAndAPickFillsTheDraft() {
+        let source = FakeChat(rows: [], frame: frame())
+        source.offered = offering([
+            "clear", "compact", "context", "cost", "config-check", "code-review:review",
+            "documents:documents", "init",
+        ])
+        let model = ChatModel(source: source)
+        model.draft = "/c"
+        XCTAssertEqual(
+            model.slashMatches.map(\.name), ["clear", "compact", "context", "cost", "config-check"],
+            "five at most, in the agent's order")
+        model.draft = "/Doc"
+        XCTAssertEqual(model.slashMatches.map(\.name), ["documents:documents"])
+        model.draft = "/rev"
+        XCTAssertEqual(model.slashMatches.map(\.name), ["code-review:review"], "after a plugin's namespace")
+        for draft in ["/compact now", "please /c", "c", "/a/b", ""] {
+            model.draft = draft
+            XCTAssertTrue(model.slashMatches.isEmpty, "\(draft) is not a leading /word")
+        }
+        model.draft = "/comp"
+        model.pick(model.slashMatches[0])
+        XCTAssertEqual(model.draft, "/compact ")
+        XCTAssertTrue(model.slashMatches.isEmpty)
+    }
+
+    func testACodexSkillIsPickedAsItsMention() {
+        let source = FakeChat(rows: [], frame: frame(kind: .codex))
+        source.offered = offering(["autopilot"])
+        let model = ChatModel(source: source)
+        model.draft = "/auto"
+        model.pick(model.slashMatches[0])
+        XCTAssertEqual(model.draft, "$autopilot ")
+    }
+
+    func testAnAgentOfferingNoCommandsListsNothing() {
+        let source = FakeChat(rows: [], frame: frame(kind: .claudePty))
+        source.offered = offering([])
+        let model = ChatModel(source: source)
+        model.draft = "/model"
+        XCTAssertTrue(model.slashMatches.isEmpty)
+    }
+
+    func testALongPasteBecomesOnePastedTextAttachmentSentInline() async {
+        let source = FakeChat(rows: [], frame: frame())
+        let model = ChatModel(source: source)
+        model.type("Look at this: ")
+        let log = (1...12).map { "line \($0)" }.joined(separator: "\r\n") + "\r\n"
+        model.type("Look at this: " + log)
+        XCTAssertEqual(model.draft, "Look at this: ", "the paste leaves the draft")
+        let text = (1...12).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        XCTAssertEqual(model.attachments, [.text(name: "Pasted text", text: text)])
+        XCTAssertEqual(ChatModel.lines(text), 12)
+        model.type("Look at this: " + log)
+        XCTAssertEqual(model.attachments.count, 1, "the text view's echo of the paste is not a second paste")
+        XCTAssertEqual(model.draft, "Look at this: ")
+        model.type("Look at this: two\nlines")
+        XCTAssertEqual(model.draft, "Look at this: two\nlines", "a short paste stays words")
+        XCTAssertEqual(model.attachments.count, 1)
+        model.type(model.draft + String(repeating: "x", count: ChatModel.pasteCharacters))
+        XCTAssertEqual(model.attachments.count, 2, "one very long line is a paste too")
+        model.send()
+        await settle()
+        XCTAssertEqual(source.sent.first?.text, "Look at this: two\nlines")
+        XCTAssertEqual(source.sent.first?.attachments?.first, .text(name: "Pasted text", text: text))
     }
 
     func testAnEmptyChatSaysItIsLoadingOnlyAfterAMoment() async throws {

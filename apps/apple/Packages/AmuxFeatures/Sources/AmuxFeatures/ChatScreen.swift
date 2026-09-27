@@ -438,6 +438,8 @@ public struct ChatStanding: View {
     private var composerStack: some View {
         ChatTray(model: model)
         if let strip = model.strip { StripLine(strip: strip) }
+        let matches = model.slashMatches
+        if !matches.isEmpty { SlashRows(commands: matches, codex: model.frame?.kind == .codex, pick: model.pick) }
         if let signIn = model.strip?.signIn {
             FootCard(kind: "sign-in", title: ChatWords.signIn(signIn), detail: signIn.message)
         } else if let usage = model.strip?.usage, usage.blocked {
