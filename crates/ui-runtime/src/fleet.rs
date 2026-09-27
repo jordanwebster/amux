@@ -15,7 +15,7 @@ use ui_state::{AgentKey, Connection, FleetMsg, FleetState};
 use wire::{DumpFile, DumpPart, InventoryEvent, inventory_event};
 
 use crate::Backoff;
-use crate::trace::{DriverEvent, DriverTrace, Ring, TraceEvent};
+use crate::trace::{DriverEvent, DriverTrace, Ring, Structure as _, TraceEvent};
 
 struct Model {
     state: FleetState,
@@ -164,11 +164,12 @@ impl Fleet {
         self.inner.model().trace.trace()
     }
 
-    /// The fleet's part of a dump bundle.
+    /// The fleet's part of a dump bundle: the structure of its state and
+    /// its trace, with no names, paths or status text.
     pub fn dump_part(&self) -> DumpPart {
         let (state, trace) = {
             let model = self.inner.model();
-            (format!("{:#?}\n", model.state), model.trace.trace())
+            (model.state.structure(), model.trace.trace())
         };
         DumpPart {
             dump_id: Vec::new(),

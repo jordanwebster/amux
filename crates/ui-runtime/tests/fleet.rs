@@ -61,3 +61,43 @@ async fn the_fleet_opens_at_caught_up_and_relists_after_a_reconnect() {
         .collect();
     assert_eq!(names, ["client/fleet/state.txt", "client/fleet/trace.txt"]);
 }
+
+#[tokio::test]
+async fn the_fleet_dump_part_writes_no_names_paths_or_status_text() {
+    const NAME: &str = "PLANTEDname0001";
+    const CWD: &str = "PLANTEDcwd0002";
+    const WORKING_ON: &str = "PLANTEDworkingon0003";
+    const EXIT: &str = "PLANTEDexit0004";
+    const HOST: &str = "PLANTEDhost0005";
+    let (client, mut calls) = runtime();
+    let open = tokio::spawn(Fleet::open(client, ManualClock::new(0)));
+    let feed = calls.inventory().await;
+    feed.send(wire::InventoryEvent {
+        of: Some(wire::inventory_event::Of::Host(wire::HostEntry {
+            host_id: b"host-a".to_vec(),
+            name: HOST.into(),
+            last_dial_error: Some(HOST.into()),
+            addrs: vec![HOST.into()],
+            ..wire::HostEntry::default()
+        })),
+    });
+    feed.send(inventory_agent(wire::Agent {
+        name: Some(NAME.into()),
+        cwd: CWD.into(),
+        working_on: Some(wire::WorkingOn {
+            text: WORKING_ON.into(),
+            updated_at_ms: 1,
+        }),
+        exit_cause: Some(EXIT.into()),
+        ..named(b"a")
+    }));
+    feed.send(inventory_caught_up());
+    let fleet = open.await.unwrap().expect("the fleet opens");
+    let part = fleet.dump_part();
+    for secret in [NAME, CWD, WORKING_ON, EXIT, HOST] {
+        assert_eq!(part_holds(&part, secret), None, "{secret} is in the dump");
+    }
+    let trace = String::from_utf8(part.files[1].contents.clone()).unwrap();
+    assert!(trace.contains("Agent 686f73742d61/61 Codex"), "{trace}");
+    assert!(trace.contains("CaughtUp rev=0"), "{trace}");
+}

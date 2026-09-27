@@ -6,6 +6,7 @@
 //! their own clock, and keep a bounded trace for dumps. Nothing is
 //! persisted: every open rebuilds from the runtime's rows.
 
+mod dump;
 mod fleet;
 pub mod inputs;
 mod session;
@@ -16,7 +17,7 @@ use std::path::{Component, Path};
 
 pub use fleet::{Fleet, FleetGuard};
 pub use session::{Changes, InputError, PageError, Sent, Session, StateGuard};
-pub use trace::{DriverEvent, DriverTrace, TRACE_EVENTS, TraceEvent, Traced};
+pub use trace::{DriverEvent, DriverTrace, Structure, TRACE_EVENTS, TraceEvent, Traced};
 
 /// The first wait before reconnecting to the local runtime.
 pub const RECONNECT_FIRST_MS: i64 = 250;

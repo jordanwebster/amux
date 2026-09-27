@@ -1,3 +1,14 @@
+2026-09-27 — **The client's dump part carries structure, not content.**
+A session's and the fleet's part of a dump bundle used to be the Debug
+text of their model and trace, which held every item's text and body, the
+snapshot body, and every input the client sent, while the daemon's slice of
+the same agent was redacted per kind. Both now write only structure: keys,
+orders, revisions, input ids and states, snapshot queue ids and ask keys,
+markers and the driver's own acts, in the order the client saw them; no item
+text or body, snapshot body, input payload, or an inventory row's name,
+path, status or host name. Tests plant secrets in each of those places and
+check none reaches the written part as text, hex or a byte list.
+
 2026-09-27 — **An ask card's choice becomes its input in the library.**
 `ui_view::answer_input(card, answer, note)` turns a card's choice, or a
 question card's picks, into the wire input for the card's kind: a Claude

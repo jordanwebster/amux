@@ -22,7 +22,7 @@ use wire::{
     SessionEvent, SubscribeRequest, send_input_response, session_event, subscribe_request,
 };
 
-use crate::trace::{DriverEvent, DriverTrace, Ring, TraceEvent};
+use crate::trace::{DriverEvent, DriverTrace, Ring, Structure as _, TraceEvent};
 use crate::{Backoff, inputs};
 
 /// What became of a send.
@@ -554,11 +554,12 @@ impl Session {
         self.inner.model().trace.trace()
     }
 
-    /// This session's part of a dump bundle: its state and its trace.
+    /// This session's part of a dump bundle: the structure of its state and
+    /// its trace, with no content (see `dump`).
     pub fn dump_part(&self) -> DumpPart {
         let (state, trace) = {
             let model = self.inner.model();
-            (format!("{:#?}\n", model.state), model.trace.trace())
+            (model.state.structure(), model.trace.trace())
         };
         let dir = format!("client/sessions/{}", hex(&self.inner.agent_id));
         DumpPart {

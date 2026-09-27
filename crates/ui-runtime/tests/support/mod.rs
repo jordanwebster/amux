@@ -434,3 +434,19 @@ pub async fn until<T>(
     .await
     .expect("the state never got there")
 }
+
+/// The secret anywhere in a dump part's files: as text, hex-encoded (the
+/// form the facts ring keeps bytes in) or as the byte list a Debug print
+/// of its bytes shows.
+pub fn part_holds(part: &wire::DumpPart, secret: &str) -> Option<String> {
+    let hex: String = secret.bytes().map(|byte| format!("{byte:02x}")).collect();
+    let list = format!("{:?}", secret.as_bytes());
+    let list = list.trim_start_matches('[').trim_end_matches(']');
+    part.files
+        .iter()
+        .find(|file| {
+            let text = String::from_utf8_lossy(&file.contents);
+            text.contains(secret) || text.contains(&hex) || text.contains(list)
+        })
+        .map(|file| file.name.clone())
+}

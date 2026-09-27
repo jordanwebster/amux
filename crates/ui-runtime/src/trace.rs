@@ -3,8 +3,6 @@
 //! transitions instead of only showing where they ended. That order is the
 //! one thing the runtime's rows cannot reproduce. Memory only and bounded.
 
-use std::fmt::Debug;
-
 /// Events a trace keeps: between half this and this many.
 pub const TRACE_EVENTS: usize = 400;
 
@@ -86,15 +84,23 @@ impl<S, M> DriverTrace<S, M> {
     }
 }
 
-impl<S: Debug, M: Debug> DriverTrace<S, M> {
-    /// The trace as text: the starting model, then one event per line.
+/// A model or message as a dump may carry it: its structure, with no
+/// content a person or an agent wrote.
+pub trait Structure {
+    fn structure(&self) -> String;
+}
+
+impl<S: Structure, M: Structure> DriverTrace<S, M> {
+    /// The trace as a dump carries it: the starting model's structure, then
+    /// one event per line.
     pub fn render(&self) -> String {
-        let mut out = format!("start:\n{:#?}\n\nevents:\n", self.start);
+        let mut out = format!("start:\n{}\nevents:\n", self.start.structure());
         for traced in &self.events {
-            out.push_str(&format!(
-                "{} @{} {:?}\n",
-                traced.seq, traced.at_ms, traced.event
-            ));
+            let event = match &traced.event {
+                TraceEvent::Msg(msg) => msg.structure(),
+                TraceEvent::Driver(driver) => format!("{driver:?}"),
+            };
+            out.push_str(&format!("{} @{} {event}\n", traced.seq, traced.at_ms));
         }
         out
     }

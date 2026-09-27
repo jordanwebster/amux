@@ -565,6 +565,118 @@ async fn the_dump_part_carries_the_state_and_the_trace() {
 }
 
 #[tokio::test]
+async fn the_dump_part_writes_structure_and_no_content() {
+    const ITEM_TEXT: &str = "PLANTEDitemtext0001";
+    const ITEM_BODY: &str = "PLANTEDitembody0002";
+    const APPENDED: &str = "PLANTEDappended0003";
+    const SNAPSHOT_BODY: &str = "PLANTEDsnapshotbody0004";
+    const WORKING_ON: &str = "PLANTEDworkingon0005";
+    const QUEUED: &str = "PLANTEDqueuedtext0006";
+    const PROMPT: &str = "PLANTEDprompt0007";
+    const HIDDEN_ANSWER: &str = "PLANTEDhiddenanswer0008";
+    const ENTRY: &str = "PLANTEDentry0009";
+    const HOST: &str = "PLANTEDhostname0010";
+
+    let clock = ManualClock::new(0);
+    let (client, mut calls) = runtime();
+    let open = tokio::spawn(Session::open(client, agent(KIND), 40, clock.clone()));
+    let (_, feed) = calls.subscribe().await;
+    let mut first = snapshot(KIND, 3, &[b"queued-1"]);
+    if let Some(wire::session_event::Of::Snapshot(snapshot)) = &mut first.of {
+        snapshot.body = SNAPSHOT_BODY.as_bytes().to_vec();
+        snapshot.working_on = Some(WORKING_ON.into());
+        snapshot.queue[0].text = QUEUED.into();
+    }
+    feed.send(first);
+    feed.send(ev(wire::Item {
+        body: ITEM_BODY.as_bytes().to_vec(),
+        ..text_item(KIND, 1, 1, ITEM_TEXT)
+    }));
+    feed.send(ev(text_item(KIND, 2, 2, "streaming ")));
+    feed.send(append("k2", 2, 3, APPENDED));
+    feed.send(caught_up(3));
+    let session = Arc::new(open.await.unwrap().unwrap());
+    session.set_entry(wire::Agent {
+        name: Some(ENTRY.into()),
+        cwd: format!("/Users/{ENTRY}"),
+        working_on: Some(wire::WorkingOn {
+            text: ENTRY.into(),
+            updated_at_ms: 1,
+        }),
+        ..agent(KIND)
+    });
+    session.set_host(wire::HostEntry {
+        host_id: b"host-a".to_vec(),
+        name: HOST.into(),
+        last_dial_error: Some(HOST.into()),
+        ..wire::HostEntry::default()
+    });
+
+    let prompting = tokio::spawn({
+        let session = session.clone();
+        async move { session.send_prompt(PROMPT, Vec::new()).await }
+    });
+    let (_, reply) = calls.send_input().await;
+    reply.send(Ok(accepted(true))).ok();
+    let prompt = prompting.await.unwrap();
+    let answering = tokio::spawn({
+        let session = session.clone();
+        async move {
+            let answer = AnswerInput {
+                ask_key: "ask-1".into(),
+                kind: "claude_sdk".into(),
+                body: HIDDEN_ANSWER.as_bytes().to_vec(),
+            };
+            session
+                .answer(Input {
+                    input_id: Vec::new(),
+                    of: Some(input::Of::ClaudeSdk(wire::ClaudeSdkInput {
+                        of: Some(claude_sdk_input::Of::Answer(answer)),
+                    })),
+                })
+                .await
+        }
+    });
+    let (_, reply) = calls.send_input().await;
+    reply.send(Ok(accepted(false))).ok();
+    answering.await.unwrap().unwrap();
+
+    let part = session.dump_part();
+    for secret in [
+        ITEM_TEXT,
+        ITEM_BODY,
+        APPENDED,
+        SNAPSHOT_BODY,
+        WORKING_ON,
+        QUEUED,
+        PROMPT,
+        HIDDEN_ANSWER,
+        ENTRY,
+        HOST,
+    ] {
+        assert_eq!(part_holds(&part, secret), None, "{secret} is in the dump");
+    }
+    // The structure stays: keys, revisions, input ids and the order of events.
+    let text: String = part
+        .files
+        .iter()
+        .map(|file| String::from_utf8_lossy(&file.contents).into_owned())
+        .collect();
+    let id: String = prompt.id.iter().map(|byte| format!("{byte:02x}")).collect();
+    for expected in [
+        "k1 order=1 rev=1",
+        "Append k2 base=2 rev=3",
+        "CaughtUp rev=3",
+        "Subscribed { tail: 40 }",
+        "answer ask=ask-1",
+    ] {
+        assert!(text.contains(expected), "{expected} is missing:\n{text}");
+    }
+    assert!(text.contains(&format!("Send {id} prompt attachments=0")));
+    assert!(text.contains(&format!("Sent {id} accepted queued=true")));
+}
+
+#[tokio::test]
 async fn closing_drops_the_stream_and_a_late_result_changes_nothing() {
     let (client, mut calls) = runtime();
     let open = tokio::spawn(Session::open(client, agent(KIND), 40, ManualClock::new(0)));
