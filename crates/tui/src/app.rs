@@ -383,8 +383,15 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key),
             Event::Paste(text) => {
-                if let Some(chat) = &mut self.chat {
-                    chat.view.editor.paste(&text);
+                if self.help {
+                    return Flow::Continue;
+                }
+                match &mut self.chat {
+                    Some(chat) => {
+                        let state = chat.session.state();
+                        chat.view.paste_text(&state, &text);
+                    }
+                    None => self.fleet_view.paste(&text),
                 }
                 Flow::Continue
             }
@@ -410,7 +417,10 @@ impl App {
             if self.field_text() {
                 self.quit_armed = None;
                 match &mut self.chat {
-                    Some(chat) => chat.view.kill_field(),
+                    Some(chat) => {
+                        let state = chat.session.state();
+                        chat.view.kill_field(&state)
+                    }
                     None => self.fleet_view.kill_field(),
                 };
                 return Flow::Continue;
@@ -535,14 +545,6 @@ impl App {
     }
 
     fn fleet_key(&mut self, key: KeyEvent) -> Flow {
-        match key.code {
-            KeyCode::Char('q') if !self.fleet_view.field_text() => return Flow::Quit,
-            KeyCode::Char('?') if !self.fleet_view.field_text() => {
-                self.help = true;
-                return Flow::Continue;
-            }
-            _ => {}
-        }
         let effects = {
             let fleet = self.fleet.state();
             self.fleet_view.key(&fleet, key)
@@ -558,6 +560,8 @@ impl App {
     fn fleet_effect(&mut self, effect: FleetEffect) -> Option<Flow> {
         let client = self.client.clone();
         match effect {
+            FleetEffect::Quit => return Some(Flow::Quit),
+            FleetEffect::Help => self.help = true,
             FleetEffect::Open(agent) => self.open(agent),
             FleetEffect::Attach(agent) => return self.raw_attach(&agent),
             FleetEffect::Create { kind } => {

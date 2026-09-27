@@ -1,3 +1,18 @@
+2026-09-27 — **Terminal client keys and pastes go to the open field.**
+After a denial's note or a plan send-back was answered, the card's note
+stayed "open" behind the scenes, so Ctrl+C never quit and never cleared the
+draft again in that chat; the card's field now counts only while its ask is
+up and taking answers, and the card state is dropped with the ask. Ctrl+C
+in an ask field (note, "Something else…", form field) clears only that
+field; it used to fall through and kill the hidden composer draft when the
+field was empty or a form field. A bracketed paste lands in the field with
+the keys (review comment, ask note, "Something else…" including a secret
+one, form field, fleet rename as one line) instead of always in the
+composer. In the fleet, q and ? go to an open overlay first: q closes the
+hosts overlay rather than quitting, does nothing in the new and confirm
+overlays, and both type into an empty rename. Esc on a later question or
+a multi-question review goes back, as the review's hint says.
+
 2026-09-27 — **Terminal client wording and keys from QA.**
 Typing '?' in a review comment opened a help screen and swallowed the next
 key; '?' now opens help only from the empty composer and types into every

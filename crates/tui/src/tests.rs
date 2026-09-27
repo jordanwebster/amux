@@ -1735,3 +1735,316 @@ fn typing_on_something_else_starts_the_answer() {
     assert!(screen.contains("Something else: fish"), "{screen}");
     assert!(view.reader.is_none());
 }
+
+// --- keys and pastes go to the field or overlay that is open -----------------
+
+fn screen_of(view: &mut ChatView, state: &SessionState, at: i64) -> String {
+    let (buffer, _) = draw(view, state, at, 120, 60, theme());
+    text(&buffer)
+}
+
+/// Picks the permission card's deny, which opens its note.
+fn deny_with_note(view: &mut ChatView, state: &SessionState) {
+    let card = ask_card(state).unwrap();
+    let deny = card.choices.iter().position(|c| c.takes_note).unwrap();
+    let digit = char::from_digit(deny as u32 + 1, 10).unwrap();
+    view.key(state, key(KeyCode::Char(digit)), theme());
+    view.key(state, key(KeyCode::Enter), theme());
+}
+
+fn multi_question() -> (SessionState, i64) {
+    fixtures::frame_where(
+        Kind::ClaudeSdk,
+        "recorded_question_every_shape",
+        |state| matches!(ask_card(state).map(|card| card.body), Some(AskBody::Question(questions)) if questions.len() > 1),
+    )
+}
+
+fn form() -> (SessionState, i64) {
+    fixtures::frame_where(Kind::ClaudeSdk, "recorded_elicitation_accepted", |state| {
+        matches!(
+            ask_card(state).map(|card| card.body),
+            Some(AskBody::Form { .. })
+        )
+    })
+}
+
+#[test]
+fn a_note_answered_does_not_keep_ctrl_c_from_the_composer() {
+    for note in ["use cargo clean", ""] {
+        let (asking, at) = fixtures::Named::ClaudePermissionAsk.state();
+        let mut view = ChatView::new(b"agent".to_vec(), at, false);
+        deny_with_note(&mut view, &asking);
+        typed(&mut view, &asking, note);
+        let effects = view.key(&asking, key(KeyCode::Enter), theme());
+        let [ChatEffect::Answer(input)] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        // While the answer goes out the card has no field.
+        let mut sending = asking.clone();
+        sending.update(Msg::Send(input.clone()));
+        assert_eq!(ask_card(&sending).unwrap().state, CardState::Sending);
+        assert!(!view.field_text(&sending), "note {note:?}: sending");
+        // The ask is answered and gone: Ctrl+C is the composer's again.
+        let answered = chat(replies(1, 3));
+        assert!(
+            !view.field_text(&answered),
+            "note {note:?}: nothing to clear"
+        );
+        typed(&mut view, &answered, "draft");
+        assert!(view.field_text(&answered));
+        assert!(view.kill_field(&answered));
+        assert!(view.editor.is_empty());
+        assert!(!view.field_text(&answered));
+    }
+}
+
+#[test]
+fn ctrl_c_in_an_ask_field_clears_that_field_and_never_the_draft() {
+    let draft = |view: &mut ChatView| view.editor.set("hidden draft", vec![]);
+    let kept = |view: &ChatView| assert_eq!(view.editor.text(), "hidden draft");
+
+    // A denial's note.
+    let (state, at) = fixtures::Named::ClaudePermissionAsk.state();
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    draft(&mut view);
+    deny_with_note(&mut view, &state);
+    assert!(
+        !view.field_text(&state),
+        "an empty note has nothing to clear"
+    );
+    assert!(!view.kill_field(&state));
+    kept(&view);
+    typed(&mut view, &state, "no");
+    assert!(view.field_text(&state));
+    assert!(view.kill_field(&state));
+    kept(&view);
+    assert!(screen_of(&mut view, &state, at).contains("Tell it why (optional):\n"));
+
+    // "Something else…".
+    let (state, at) = multi_question();
+    let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
+        unreachable!()
+    };
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    draft(&mut view);
+    for _ in 0..questions[0].options.len() {
+        view.key(&state, key(KeyCode::Down), theme());
+    }
+    typed(&mut view, &state, "fish");
+    assert!(view.field_text(&state));
+    assert!(view.kill_field(&state));
+    kept(&view);
+    assert!(!view.kill_field(&state));
+    kept(&view);
+
+    // A form field.
+    let (state, at) = form();
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    draft(&mut view);
+    view.key(&state, key(KeyCode::Enter), theme());
+    view.kill_field(&state);
+    kept(&view);
+    typed(&mut view, &state, "jlw/amux");
+    assert!(view.field_text(&state));
+    assert!(view.kill_field(&state));
+    kept(&view);
+    assert!(!view.field_text(&state));
+    assert!(!view.kill_field(&state));
+    kept(&view);
+}
+
+#[test]
+fn a_paste_goes_to_the_field_with_the_keys() {
+    // The composer, when it has them.
+    let idle = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.paste_text(&idle, "hello");
+    assert_eq!(view.editor.text(), "hello");
+
+    // A review comment.
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.open_review(working_tree_diff(), PATCH.into());
+    view.key(&idle, key(KeyCode::Char('j')), theme());
+    view.key(&idle, key(KeyCode::Char('c')), theme());
+    view.paste_text(&idle, "why this?");
+    view.key(&idle, key(KeyCode::Enter), theme());
+    let review = review_token(&view).expect("the comment is saved");
+    assert_eq!(review.comments[0].text, "why this?");
+    assert_eq!(
+        view.editor.text().chars().count(),
+        1,
+        "only the review token"
+    );
+
+    // A denial's note; on the menu there is nothing to paste into.
+    let (state, at) = fixtures::Named::ClaudePermissionAsk.state();
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    view.paste_text(&state, "ignored");
+    deny_with_note(&mut view, &state);
+    view.paste_text(&state, "because");
+    assert!(view.editor.is_empty());
+    let screen = screen_of(&mut view, &state, at);
+    assert!(
+        screen.contains("Tell it why (optional): because\n"),
+        "{screen}"
+    );
+
+    // "Something else…": a paste on it starts the answer, as typing does.
+    let (state, at) = multi_question();
+    let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
+        unreachable!()
+    };
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    for _ in 0..questions[0].options.len() {
+        view.key(&state, key(KeyCode::Down), theme());
+    }
+    view.paste_text(&state, "fish");
+    view.paste_text(&state, " soup");
+    assert!(view.editor.is_empty());
+    let screen = screen_of(&mut view, &state, at);
+    assert!(screen.contains("Something else: fish soup"), "{screen}");
+
+    // A form field.
+    let (state, at) = form();
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    view.key(&state, key(KeyCode::Enter), theme());
+    view.kill_field(&state);
+    view.paste_text(&state, "jlw/amux");
+    view.key(&state, key(KeyCode::Enter), theme());
+    assert!(view.editor.is_empty());
+    let screen = screen_of(&mut view, &state, at);
+    assert!(screen.contains("jlw/amux"), "{screen}");
+}
+
+#[test]
+fn a_paste_into_a_secret_answer_shows_as_bullets() {
+    let token = ui_view::QuestionView {
+        header: "Token".into(),
+        question: "Paste the deploy token".into(),
+        multi_select: false,
+        options: vec![],
+        allow_other: true,
+        secret: true,
+    };
+    let card = ui_view::AskCard {
+        kind: Kind::ClaudeSdk,
+        key: "ask".into(),
+        item_key: "k".into(),
+        position: 1,
+        count: 1,
+        body: AskBody::Question(vec![token]),
+        choices: vec![],
+        question_note: true,
+        state: CardState::Open,
+    };
+    let mut ask = crate::chat::ask::AskUi::default();
+    ask.sync(&card);
+    ask.paste(&card, "s3cret");
+    let lines = ask.render(&card, "worker", false, 100, theme());
+    let screen: Vec<String> = lines
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let screen = screen.join("\n");
+    assert!(screen.contains("Something else: ••••••"), "{screen}");
+    assert!(!screen.contains("s3cret"), "{screen}");
+}
+
+#[test]
+fn a_paste_in_the_fleet_types_into_the_rename_field() {
+    let mut fleet = FleetState::new();
+    inventory(
+        &mut fleet,
+        host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online),
+    );
+    inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
+    let mut view = FleetView::default();
+    view.paste("ignored");
+    view.key(&fleet, key(KeyCode::Char('r')));
+    view.key(&fleet, ctrl('u'));
+    view.paste("lead\r");
+    view.paste("er");
+    let effects = view.key(&fleet, key(KeyCode::Enter));
+    assert!(
+        matches!(effects.as_slice(), [FleetEffect::Rename { name, .. }] if name == "leader"),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn q_and_question_mark_reach_an_open_fleet_overlay_first() {
+    let mut fleet = FleetState::new();
+    inventory(
+        &mut fleet,
+        host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online),
+    );
+    inventory(&mut fleet, agent_row(b"p", "planner", Phase::Idle, None));
+    let mut view = FleetView::default();
+    let q = key(KeyCode::Char('q'));
+    let help = key(KeyCode::Char('?'));
+    assert_eq!(view.key(&fleet, help), vec![FleetEffect::Help]);
+
+    // The hosts overlay: q closes it, and the next q quits.
+    view.key(&fleet, key(KeyCode::Char('h')));
+    assert!(fleet_screen(&mut view, &fleet).contains("studio"));
+    assert_eq!(view.key(&fleet, q), vec![]);
+    assert_eq!(view.key(&fleet, q), vec![FleetEffect::Quit]);
+
+    // New and confirm keep their overlay.
+    for opens in ['n', 'd'] {
+        view.key(&fleet, key(KeyCode::Char(opens)));
+        assert_eq!(view.key(&fleet, q), vec![], "{opens}");
+        assert_eq!(view.key(&fleet, help), vec![], "{opens}");
+        view.key(&fleet, key(KeyCode::Esc));
+    }
+
+    // Rename types both, even into an empty field.
+    view.key(&fleet, key(KeyCode::Char('r')));
+    view.key(&fleet, ctrl('u'));
+    assert_eq!(view.key(&fleet, q), vec![]);
+    assert_eq!(view.key(&fleet, help), vec![]);
+    let effects = view.key(&fleet, key(KeyCode::Enter));
+    assert!(
+        matches!(effects.as_slice(), [FleetEffect::Rename { name, .. }] if name == "q?"),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn esc_on_a_later_question_and_the_review_goes_back() {
+    let (state, at) = multi_question();
+    let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
+        unreachable!()
+    };
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    let asks = |view: &mut ChatView, question: &str| {
+        let screen = screen_of(view, &state, at);
+        assert!(screen.contains(question), "{question}\n{screen}");
+    };
+    if questions[0].multi_select {
+        view.key(&state, key(KeyCode::Char(' ')), theme());
+    }
+    view.key(&state, key(KeyCode::Enter), theme());
+    asks(&mut view, &questions[1].question);
+    view.key(&state, key(KeyCode::Esc), theme());
+    asks(&mut view, &questions[0].question);
+
+    for question in &questions {
+        if question.multi_select {
+            view.key(&state, key(KeyCode::Char(' ')), theme());
+        }
+        view.key(&state, key(KeyCode::Enter), theme());
+    }
+    asks(&mut view, "enter send · esc back");
+    view.key(&state, key(KeyCode::Esc), theme());
+    let screen = screen_of(&mut view, &state, at);
+    assert!(!screen.contains("enter send"), "{screen}");
+    asks(&mut view, &questions[questions.len() - 1].question);
+}

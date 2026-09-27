@@ -316,12 +316,61 @@ impl AskUi {
         matches!(self.stage, Stage::Note(_) | Stage::Other | Stage::Field)
     }
 
+    /// Whether this state's field has the keys on `card`: the field is
+    /// open, and the card is this ask's and still takes answers. A field
+    /// left open when its answer went out does not outlive the ask.
+    pub fn editing_on(&self, card: &AskCard) -> bool {
+        self.key == card.key
+            && matches!(card.state, CardState::Open | CardState::Rejected(_))
+            && self.editing()
+    }
+
+    /// The editor of the field being edited.
+    fn field(&mut self) -> Option<&mut Editor> {
+        match self.stage {
+            Stage::Note(_) => Some(&mut self.note),
+            Stage::Other | Stage::Field => Some(&mut self.other),
+            Stage::Menu | Stage::Review => None,
+        }
+    }
+
+    /// Whether the field with the keys on `card` holds something, for
+    /// Ctrl+C.
+    pub fn field_text(&self, card: &AskCard) -> bool {
+        self.editing_on(card)
+            && match self.stage {
+                Stage::Note(_) => !self.note.is_empty(),
+                _ => !self.other.is_empty(),
+            }
+    }
+
     /// Clears the field being edited, as a kill.
     pub fn kill_field(&mut self) -> bool {
-        match self.stage {
-            Stage::Note(_) => self.note.kill_all(),
-            Stage::Other => self.other.kill_all(),
-            _ => false,
+        self.field().is_some_and(Editor::kill_all)
+    }
+
+    /// Whether Esc on `card` is the card's: it leaves a field, the review,
+    /// or a later question, rather than moving the chat.
+    pub fn takes_escape(&self, card: &AskCard) -> bool {
+        self.editing()
+            || matches!(card.body, AskBody::Question(_))
+                && (self.stage == Stage::Review || self.stage == Stage::Menu && self.step > 0)
+    }
+
+    /// A bracketed paste on `card`: into the open field, or starting a
+    /// "Something else…" answer where typing would. Anywhere else on the
+    /// card there is nothing to paste into.
+    pub fn paste(&mut self, card: &AskCard, text: &str) {
+        if !matches!(card.state, CardState::Open | CardState::Rejected(_)) {
+            return;
+        }
+        if self.on_other(card)
+            && let AskBody::Question(questions) = &card.body
+        {
+            self.open_other(&questions[self.step]);
+        }
+        if let Some(field) = self.field() {
+            field.insert_str(text);
         }
     }
 

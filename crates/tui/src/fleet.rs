@@ -33,6 +33,10 @@ pub enum FleetEffect {
     },
     Stop(AgentKey),
     Delete(AgentKey),
+    /// Leave amux.
+    Quit,
+    /// Show the key help.
+    Help,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,9 +127,28 @@ impl FleetView {
         }
     }
 
+    /// A bracketed paste types into the rename field; nothing else in the
+    /// fleet takes text. A name is one line.
+    pub fn paste(&mut self, text: &str) {
+        if let Some(Overlay::Rename { editor, .. }) = &mut self.overlay {
+            let parts: Vec<&str> = text
+                .split(['\r', '\n'])
+                .filter(|part| !part.is_empty())
+                .collect();
+            editor.insert_str(&parts.join(" "));
+        }
+    }
+
+    /// One key: an open overlay's first, so `q` and `?` quit and help only
+    /// from the list.
     pub fn key(&mut self, fleet: &FleetState, key: KeyEvent) -> Vec<FleetEffect> {
         if let Some(overlay) = self.overlay.take() {
             return self.overlay_key(overlay, key);
+        }
+        match key.code {
+            KeyCode::Char('q') => return vec![FleetEffect::Quit],
+            KeyCode::Char('?') => return vec![FleetEffect::Help],
+            _ => {}
         }
         let rows = self.rows(fleet);
         let at = self.index(&rows);

@@ -133,6 +133,13 @@ impl ReviewPage {
             .is_some_and(|composing| composing.editor.kill_all())
     }
 
+    /// A bracketed paste types into the comment being written.
+    pub fn paste(&mut self, text: &str) {
+        if let Some(composing) = &mut self.composing {
+            composing.editor.insert_str(text);
+        }
+    }
+
     pub fn key(&mut self, key: KeyEvent) -> ReviewAction {
         if self.composing.is_some() {
             return self.composing_key(key);

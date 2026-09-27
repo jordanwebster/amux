@@ -163,9 +163,13 @@ impl ChatView {
         }
     }
 
-    /// The card to draw, synced with this client's picks.
+    /// The card to draw, synced with this client's picks. With no ask
+    /// open, the last one's picks and fields go.
     fn card(&mut self, state: &SessionState) -> Option<AskCard> {
-        let card = ask_card(state)?;
+        let Some(card) = ask_card(state) else {
+            self.ask = AskUi::default();
+            return None;
+        };
         self.ask.sync(&card);
         Some(card)
     }
@@ -181,10 +185,10 @@ impl ChatView {
         if self.review_open {
             return self.review.as_ref().is_some_and(ReviewPage::editing);
         }
-        if self.ask.editing() {
-            return true;
+        if let Some(card) = self.card_takes_keys(state) {
+            return self.ask.field_text(&card);
         }
-        self.card_takes_keys(state).is_none() && self.tray.is_none() && !self.editor.is_empty()
+        self.tray.is_none() && !self.editor.is_empty()
     }
 
     /// Whether `key` opens the key help: '?' while the empty composer has
@@ -199,12 +203,39 @@ impl ChatView {
             && self.editor.is_empty()
     }
 
-    /// Ctrl+C on a field with text: clears it as a kill.
-    pub fn kill_field(&mut self) -> bool {
+    /// Ctrl+C on a field with text: clears it as a kill. Only the field
+    /// with the keys: a draft hidden behind a card stays.
+    pub fn kill_field(&mut self, state: &SessionState) -> bool {
         if self.review_open {
             return self.review.as_mut().is_some_and(ReviewPage::kill_field);
         }
-        self.ask.kill_field() || self.editor.kill_all()
+        if let Some(card) = self.card_takes_keys(state) {
+            return self.ask.editing_on(&card) && self.ask.kill_field();
+        }
+        self.tray.is_none() && self.editor.kill_all()
+    }
+
+    /// A bracketed paste goes to the field with the keys, and nowhere when
+    /// none has them.
+    pub fn paste_text(&mut self, state: &SessionState, text: &str) {
+        if self.review_open {
+            if let Some(page) = &mut self.review {
+                page.paste(text);
+            }
+            return;
+        }
+        if self.reader.is_some() {
+            return;
+        }
+        if let Some(card) = self.card_takes_keys(state) {
+            self.ask.sync(&card);
+            self.ask.paste(&card, text);
+            return;
+        }
+        if self.tray.is_none() {
+            self.editor.paste(text);
+            self.focus = None;
+        }
     }
 
     fn card_takes_keys(&self, state: &SessionState) -> Option<AskCard> {
@@ -275,7 +306,7 @@ impl ChatView {
         }
         if let Some(card) = self.card_takes_keys(state) {
             self.ask.sync(&card);
-            if key.code == KeyCode::Esc && !self.ask.editing() {
+            if key.code == KeyCode::Esc && !self.ask.takes_escape(&card) {
                 self.escape();
                 return vec![];
             }
