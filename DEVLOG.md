@@ -1,3 +1,9 @@
+2026-09-27 — **The account cards on the You tab are no longer under the tab bar.**
+The delete and remove cards rise from the bottom of the You tab, and the
+floating tab bar was drawn over their Cancel and Delete buttons; it steps
+aside while either card is up, as it already did for the devices sheet. An
+account with nothing paired yet reads as its email rather than "0 hosts".
+
 2026-09-27 — **The phone reaches a served relay, and its home and accounts say what is true again.**
 A driving build can dial a served test relay's plaintext carrier, and the
 test network's ready file names the relay and its account service, so the

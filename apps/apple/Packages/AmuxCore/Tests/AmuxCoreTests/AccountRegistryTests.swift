@@ -127,5 +127,7 @@ final class AccountRegistryTests: XCTestCase {
         let ada = AccountRegistry(file: file).accounts.first { $0.id == AccountId("ada") }
         XCTAssertEqual(ada?.line, "2 hosts")
         XCTAssertEqual(ada?.attention, 1)
+        let bob = AccountRegistry(file: file).accounts.first { $0.id == AccountId("bob") }
+        XCTAssertEqual(bob?.line, "bob@example.com", "nothing paired yet reads as the address")
     }
 }

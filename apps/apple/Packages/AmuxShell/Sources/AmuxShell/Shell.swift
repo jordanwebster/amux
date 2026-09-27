@@ -137,6 +137,15 @@ public struct Shell: View {
         self.actions = actions
     }
 
+    /// Whether a bottom sheet or card is up over the tab on screen.
+    private var coveredByASheet: Bool {
+        switch router.tab {
+        case .hosts: stores.hosts.readingDevices
+        case .you: removal.account != nil || deletion.account != nil
+        case .agents: false
+        }
+    }
+
     public var body: some View {
         @Bindable var router = router
         ZStack(alignment: .bottom) {
@@ -165,9 +174,9 @@ public struct Shell: View {
                 .tabSurface(selected: router.tab == .you)
             }
 
-            // A bottom sheet over a tab's root takes the tab bar's place: the
-            // bar drawn over it would cover the sheet's last row.
-            if router.path.isEmpty && !(router.tab == .hosts && stores.hosts.readingDevices) {
+            // A bottom sheet or card over a tab's root takes the tab bar's
+            // place: the bar drawn over it would cover its last row.
+            if router.path.isEmpty && !coveredByASheet {
                 ShellTabBar(selected: router.tab) { router.select($0) }
                     .safeAreaPadding(.bottom, 6)
             }

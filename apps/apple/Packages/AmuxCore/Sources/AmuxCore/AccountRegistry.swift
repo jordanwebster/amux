@@ -34,7 +34,8 @@ public struct AccountEntry: Sendable, Equatable, Identifiable, Codable {
     /// The second line an account row shows.
     public var line: String {
         if !signedIn { return "Signed out" }
-        guard let hosts else { return account.email }
+        // An account with nothing paired yet is better known by its address.
+        guard let hosts, hosts > 0 else { return account.email }
         return hosts == 1 ? "1 host" : "\(hosts) hosts"
     }
 
