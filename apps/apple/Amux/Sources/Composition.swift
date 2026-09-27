@@ -286,6 +286,11 @@ final class Composition {
         guard let accepted = accounts.accept(entitlement, for: id) else { return false }
         accounts.entitlement(accepted, for: id)
         paywall.entitled(accepted)
+        // The relay link learns what the account buys only when it next
+        // renews its credential; a purchase should not wait minutes for it.
+        if let running = runtime.runtime, case .success = await running.refreshEntitlement() {
+            await accounts.stores?.refreshAccount()
+        }
         return true
     }
 

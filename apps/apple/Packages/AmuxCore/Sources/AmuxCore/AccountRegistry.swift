@@ -91,7 +91,7 @@ public final class AccountRegistry {
         accounts = saved.accounts
         if let installation = saved.signedOutInstallation { signedOutInstallation = installation }
         selected = saved.selected.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
-        stores = selected.map { StoreBundle(account: $0) }
+        stores = selected.map(bundle)
     }
 
     private func persist() {
@@ -201,7 +201,7 @@ public final class AccountRegistry {
 
     private func place(_ id: AccountId?) {
         selected = id
-        stores = id.map { StoreBundle(account: $0) }
+        stores = id.map(bundle)
         persist()
         switching?(id)
         changed?()
@@ -213,6 +213,16 @@ public final class AccountRegistry {
         accounts[index].entitlement = entitlement
         persist()
         changed?()
+    }
+
+    /// The stores for an account going on screen, which report what it
+    /// lists so its row can say so once it is off screen.
+    private func bundle(_ id: AccountId) -> StoreBundle {
+        let stores = StoreBundle(account: id)
+        stores.saw = { [weak self] hosts, attention in
+            self?.saw(hosts: hosts, attention: attention, for: id)
+        }
+        return stores
     }
 
     /// What the account on screen lists, remembered for when it is not.

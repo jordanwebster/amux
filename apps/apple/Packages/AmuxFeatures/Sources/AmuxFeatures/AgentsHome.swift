@@ -436,6 +436,9 @@ public struct AgentsHome: View {
     /// that a machine is offline. A phone that can reach every machine it owns
     /// shows none of it and is never asked for an account.
     private var exceptions: (text: String, act: HomeAction)? {
+        if signedIn, let trouble = model.relayTrouble {
+            return (trouble, model.relay == .signInAgain ? .signIn : .openExceptions)
+        }
         if let away = model.awayHost {
             return ("\(away) is away · subscribe to reach your agents from anywhere", .subscribe)
         }

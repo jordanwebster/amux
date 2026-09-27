@@ -190,16 +190,24 @@ public final class FleetStore {
 
     /// One line for what is wrong with reaching the fleet, if anything.
     public var exceptions: String? {
-        switch relay {
-        case .signInAgain: return "Sign in again to reach your hosts through the relay"
-        case .updateRequired: return "Update amux to reach your hosts through the relay"
-        case .off, .connecting, .connected, .retrying, .failed: break
-        }
+        if let relayTrouble { return relayTrouble }
         let offline = machines.filter { $0.reach == .offline }.map(\.name).sorted()
         switch offline.count {
         case 0: return nil
         case 1: return "\(offline[0]) offline"
         default: return "\(offline.count) hosts offline"
+        }
+    }
+
+    /// What is wrong with the relay link, when something is. A link still
+    /// coming up for the first time is not trouble; one that went down is.
+    public var relayTrouble: String? {
+        switch relay {
+        case .signInAgain: return "Sign in again to reach your hosts through the relay"
+        case .updateRequired: return "Update amux to reach your hosts through the relay"
+        case .retrying: return "Reconnecting to the relay"
+        case .failed: return "The relay cannot be reached"
+        case .off, .connecting, .connected: return nil
         }
     }
 

@@ -116,4 +116,16 @@ final class AccountRegistryTests: XCTestCase {
         XCTAssertNil(registry.accept(1, for: AccountId("bob")))
         XCTAssertEqual(registry.dropped, 1)
     }
+
+    func testAnAccountRemembersWhatItListedWhenItGoesOffScreen() {
+        let file = file()
+        let registry = AccountRegistry(file: file)
+        registry.add(account("ada"), installation: "a")
+        registry.stores?.saw?(2, 1)
+        registry.add(account("bob"), installation: "b")
+        registry.stores?.saw?(0, 0)
+        let ada = AccountRegistry(file: file).accounts.first { $0.id == AccountId("ada") }
+        XCTAssertEqual(ada?.line, "2 hosts")
+        XCTAssertEqual(ada?.attention, 1)
+    }
 }

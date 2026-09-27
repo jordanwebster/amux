@@ -244,8 +244,8 @@ targets:
           # `@testable import Amux` in an optimised build.
           ENABLE_TESTABILITY: YES
 
-  # Keychain access belongs to the signed process. These tests run in the
-  # actual app so disabling its signing cannot pass through a package runner.
+  # Tests that need the app's own window and UIKit run hosted by the app
+  # rather than by a package test runner.
   AmuxAppTests:
     type: bundle.unit-test
     platform: iOS
@@ -325,7 +325,7 @@ schemes:
       config: Debug
       # The package unit suites run from their own package schemes (see
       # scripts/ios-unit.py); this action carries the UI tests, which the
-      # journey plans select from, and the app-hosted Keychain tests.
+      # journey plans select from, and the app-hosted tests.
       targets:
         - AmuxUITests
         - AmuxAppTests

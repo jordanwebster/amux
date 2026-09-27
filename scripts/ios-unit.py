@@ -6,7 +6,7 @@ picks the package that owns the named test target and the other arguments are ha
 scheme are removed before invoking each one. A package with more than one
 library gets its whole-package scheme named `<package>-Package`, and only that
 scheme carries the test action, so the scheme is asked for rather than assumed.
-Keychain tests run in AmuxAppTests, hosted by the signed application rather than the package test runner.
+Tests that need the running application's UIKit, such as the report's frozen frame, run in AmuxAppTests, hosted by the app rather than the package test runner.
 """
 
 from contextlib import contextmanager

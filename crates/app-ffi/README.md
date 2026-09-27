@@ -76,7 +76,9 @@ fingerprint), `amux_runtime_confirm_pair` and `amux_runtime_abandon_pair`
 (the person's decision), `amux_runtime_unpair`, `amux_runtime_roster` (this
 device and the machines it trusts), `amux_runtime_account` (the binding and
 the relay link), `amux_runtime_access_token` (a bearer for the account
-service; the profile alone spends the refresh token), `amux_runtime_sign_in`
+service; the profile alone spends the refresh token),
+`amux_runtime_refresh_entitlement` (asks what the account buys now, so a
+purchase lifts the relay's tier at once), `amux_runtime_sign_in`
 (with the OAuth client the refresh token was issued to),
 `amux_runtime_sign_out`, `amux_runtime_create_agent`,
 `amux_runtime_directories`, `amux_runtime_agent_act` (rename, stop, delete)

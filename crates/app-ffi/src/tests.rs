@@ -275,6 +275,10 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     // SAFETY: the runtime is live.
     unsafe { amux_runtime_access_token(phone.runtime, on_result, phone.context()) };
     assert!(phone.result()["Err"].is_string());
+    // Nor can it ask what an account buys.
+    // SAFETY: the runtime is live.
+    unsafe { amux_runtime_refresh_entitlement(phone.runtime, on_result, phone.context()) };
+    assert!(phone.result()["Err"].is_string());
 
     // What the phone's own browser found is handed over whole; one this
     // runtime cannot read is left out.

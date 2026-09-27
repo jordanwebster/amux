@@ -72,6 +72,8 @@ pub enum EmbeddedError {
     Account(#[from] node::AuthError),
     #[error("this device's profile is not listed")]
     NoInfo,
+    #[error("{0}")]
+    Relay(String),
 }
 
 /// One installation with its one profile, in process.
@@ -353,6 +355,17 @@ impl EmbeddedRuntime {
                     .map(|since| since.as_millis() as i64)
             }),
         })
+    }
+
+    /// Asks the account service again what the account buys, over the
+    /// relay link, so a purchase lifts the relay's tier now rather than at
+    /// the link's next scheduled refresh.
+    pub async fn refresh_entitlement(&self) -> Result<(), EmbeddedError> {
+        let edge = self.runtime.edge().ok_or(EmbeddedError::NoProfile)?;
+        edge.refresh_entitlement()
+            .await
+            .map(|_| ())
+            .map_err(EmbeddedError::Relay)
     }
 
     /// Stops trusting a paired machine, telling it so where it can be

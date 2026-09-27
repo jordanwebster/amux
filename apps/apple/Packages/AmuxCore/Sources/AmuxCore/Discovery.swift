@@ -121,7 +121,7 @@ public final class LocalDiscovery {
         let browser = NWBrowser(
             for: .bonjourWithTXTRecord(type: Self.service, domain: nil), using: parameters)
         browser.stateUpdateHandler = { state in
-            MainActor.assumeIsolated { self.permission = Self.permission(for: state) }
+            MainActor.assumeIsolated { self.browserSaid(state) }
         }
         browser.browseResultsChangedHandler = { results, _ in
             MainActor.assumeIsolated {
@@ -150,7 +150,19 @@ public final class LocalDiscovery {
         browser?.cancel()
         browser = nil
         forget()
-        permission = .unknown
+        // A refusal outlives the browser: the person has to change it in
+        // Settings, and the card that says so must not vanish in the
+        // meantime. Anything else is asked again by the next browser.
+        if permission != .denied { permission = .unknown }
+    }
+
+    /// Takes what the browser says about this network. Once refused, only
+    /// a browser that is ready takes the refusal back: the waits and
+    /// cancellations that follow a refusal say nothing new about it.
+    func browserSaid(_ state: NWBrowser.State) {
+        let said = Self.permission(for: state)
+        guard said != .unknown || permission != .denied else { return }
+        permission = said
     }
 
     private func forget() {

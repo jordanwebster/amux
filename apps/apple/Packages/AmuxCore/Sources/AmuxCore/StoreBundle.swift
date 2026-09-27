@@ -23,6 +23,9 @@ public final class StoreBundle {
     /// Open chats by the id the runtime's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: Chat, woke: @MainActor () -> Void)] = [:]
     @ObservationIgnored public let now: @MainActor () -> Date
+    /// Told how many machines this account has paired and how many of its
+    /// agents need the person, each time the fleet is read.
+    @ObservationIgnored public var saw: (@MainActor (_ hosts: Int, _ attention: Int) -> Void)?
     /// Whether a re-read of a relay link still coming up is scheduled.
     @ObservationIgnored private var settling = false
 
@@ -59,6 +62,7 @@ public final class StoreBundle {
         fleet.show(runtime.fleetRows(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
         newAgent.remember(fleet.rows)
+        saw?(fleet.machines.filter(\.trusted).count, fleet.rows.filter(\.needsYou).count)
         applied += 1
         if hostsMoved {
             Task { await refreshAccount() }

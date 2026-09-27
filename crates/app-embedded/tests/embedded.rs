@@ -260,6 +260,15 @@ async fn a_phone_signed_in_to_the_account_reaches_its_hosts_over_the_relay() {
         )
     })
     .await;
+    assert_eq!(embedded.account().await.unwrap().pro, Some(true));
+    // What the account buys changes (a purchase, or here a lapse) and the
+    // phone asks at once rather than waiting for the link's next refresh.
+    relay.set_tier("ada", node::harness::Tier::Free);
+    embedded.refresh_entitlement().await.unwrap();
+    assert_eq!(embedded.account().await.unwrap().pro, Some(false));
+    relay.set_tier("ada", node::harness::Tier::Pro);
+    embedded.refresh_entitlement().await.unwrap();
+    assert_eq!(embedded.account().await.unwrap().pro, Some(true));
     // The account lists its hosts; pairing is what makes one trusted. The
     // desk listens on no local network: the pairing goes over the relay.
     let (pin, _) = pairing_pin(&net).await;

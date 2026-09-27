@@ -1,3 +1,16 @@
+2026-09-27 — **The phone reaches a served relay, and its home and accounts say what is true again.**
+A driving build can dial a served test relay's plaintext carrier, and the
+test network's ready file names the relay and its account service, so the
+simulator app signs in and reaches hosts through the relay end to end. A
+purchase now asks the relay link what the account buys at once, through a
+new bridge call, instead of waiting minutes for the link's next credential.
+A relay link that dropped leads the home's exceptions line again ("The
+relay cannot be reached", "Reconnecting to the relay") ahead of a host the
+account cannot reach. An account row once more shows how many hosts it
+paired and how many of its agents needed the person when it was last on
+screen. A local-network refusal stays on the Hosts tab until a browser is
+ready again, rather than vanishing when the browser waits or stops.
+
 2026-09-27 — **The phone's fleet, hosts, pairing and account screens run on the new bridge.**
 The home lists the runtime's ranked fleet, families and all: a head that
 started agents shows how many and a control to list them under it, and a

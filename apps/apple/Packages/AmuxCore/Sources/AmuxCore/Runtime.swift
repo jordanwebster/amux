@@ -197,6 +197,14 @@ public final class Runtime: @unchecked Sendable {
         }
     }
 
+    /// Asks the account service what the account buys now, over the relay
+    /// link, so the relay's tier follows a purchase at once.
+    public func refreshEntitlement() async -> Result<Nothing, RuntimeFailure> {
+        await act(Nothing.self) { live, callback, context in
+            amux_runtime_refresh_entitlement(live, callback, context)
+        }
+    }
+
     /// Binds this profile to an account with the refresh token a sign-in
     /// obtained as `client`. The profile spends the token from then on.
     public func signIn(

@@ -86,6 +86,22 @@ final class DiscoveryTests: XCTestCase {
     }
 
     @MainActor
+    func testARefusalStaysUntilABrowserIsReady() {
+        let browser = Browser()
+        var told: [LocalNetworkPermission] = []
+        browser.discovery.permissionChanged = { told.append($0) }
+        let denied = NWError.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))
+        browser.discovery.browserSaid(.waiting(denied))
+        browser.discovery.browserSaid(.cancelled)
+        browser.discovery.browserSaid(.setup)
+        XCTAssertEqual(browser.discovery.permission, .denied)
+        browser.discovery.stop()
+        XCTAssertEqual(browser.discovery.permission, .denied, "the card outlives the browser")
+        browser.discovery.browserSaid(.ready)
+        XCTAssertEqual(told, [.denied, .granted])
+    }
+
+    @MainActor
     func testARouteThatGivesNoAddressInTimeGivesWayToTheNext() {
         // A Mac's own loopback is one route a simulator sees, and a lookup
         // over it can wait forever for a record nobody answers for. The

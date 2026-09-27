@@ -608,6 +608,30 @@ pub unsafe extern "C" fn amux_runtime_access_token(
     });
 }
 
+/// Asks the account service what the account buys now, over the relay
+/// link, so the relay's tier follows a purchase at once; the callback gets
+/// `{"Ok": null}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_refresh_entitlement(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.refresh_entitlement().await)
+        });
+    });
+}
+
 /// Starts an agent from a `NewAgent` as JSON; the callback gets
 /// `{"Ok": AgentKey}` or `{"Err": ..}`.
 ///
