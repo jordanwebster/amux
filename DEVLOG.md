@@ -1,3 +1,14 @@
+2026-09-27 — **A peer's agent's blobs and diffs are made on its own host.**
+A client on the laptop reviewing or attaching to an agent on the desk got
+"a blob is written only into an agent this host runs": the laptop's daemon
+answered PutBlob and Diff itself and refused. Both now go to the agent's
+host, like rename, stop and resume, so the attachment lands in the agent's
+directory on the desk and the patch is computed from the desk's working
+tree. GetBlob still reads what this host holds first; a blob of a peer's
+agent not fetched yet is read from its origin, checked against its hash
+and kept under the replica, so the next read needs no link.
+`spec_replication` holds all three across a real link.
+
 2026-09-27 — **Terminal Claude's tool-server dialogs become unanswerable asks.**
 When Claude shows a tool server's form or link in its own terminal, the only
 fact amux gets is the Notification hook with `notification_type`

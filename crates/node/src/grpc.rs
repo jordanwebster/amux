@@ -27,6 +27,7 @@ use wire::{
     StopAgentRequest, StopMode, SubscribeRequest, subscribe_request,
 };
 
+use crate::blobs::BlobError;
 use crate::forward::{ForwardError, Owner};
 use crate::runtime::{AgentId, ProfileRuntime};
 
@@ -416,8 +417,16 @@ impl ClientService for ClientApi {
         request: Request<PutBlobRequest>,
     ) -> Result<Response<BlobRef>, Status> {
         self.people_only("store a blob")?;
-        self.runtime()?
-            .put_blob(request.into_inner())
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.put_blob(request).await
+            })
+            .await;
+        }
+        runtime
+            .put_blob(request)
             .await
             .map(Response::new)
             .map_err(|error| status(error.to_wire()))
@@ -427,17 +436,48 @@ impl ClientService for ClientApi {
         &self,
         request: Request<GetBlobRequest>,
     ) -> Result<Response<GetBlobResponse>, Status> {
-        self.runtime()?
-            .get_blob(request.into_inner())
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        match runtime.get_blob(request.clone()).await {
+            Err(BlobError::NoBlob(_)) => {}
+            read => {
+                return read
+                    .map(Response::new)
+                    .map_err(|error| status(error.to_wire()));
+            }
+        }
+        // A peer's blob not fetched yet: its origin reads it, and this
+        // host keeps the bytes under the replica for the next reader.
+        let Some(host) = self.forward_to(&runtime, &request.agent_id).await? else {
+            return Err(status(
+                BlobError::NoBlob(crate::blobs::hex(&request.hash)).to_wire(),
+            ));
+        };
+        let (agent_id, hash) = (request.agent_id.clone(), request.hash.clone());
+        let fetched = forwarded(&runtime, host, |mut client| async move {
+            client.get_blob(request).await
+        })
+        .await?;
+        runtime
+            .keep_replica_blob(&agent_id, &hash, &fetched.get_ref().bytes)
             .await
-            .map(Response::new)
-            .map_err(|error| status(error.to_wire()))
+            .map_err(|error| status(error.to_wire()))?;
+        Ok(fetched)
     }
 
     async fn diff(&self, request: Request<DiffRequest>) -> Result<Response<wire::Diff>, Status> {
         self.people_only("read a diff")?;
-        self.runtime()?
-            .diff(request.into_inner())
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        // The working tree is on the agent's own host, and so is the patch.
+        if let Some(host) = self.forward_to(&runtime, &request.agent_id).await? {
+            return forwarded(&runtime, host, |mut client| async move {
+                client.diff(request).await
+            })
+            .await;
+        }
+        runtime
+            .diff(request)
             .await
             .map(Response::new)
             .map_err(|error| status(error.to_wire()))

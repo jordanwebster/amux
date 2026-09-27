@@ -48,6 +48,8 @@ pub enum BlobError {
     Read(io::Error),
     #[error("{0}")]
     Git(String),
+    #[error("the bytes a peer sent are not the blob {0}")]
+    Mismatch(String),
     #[error("the store: {0}")]
     Store(#[from] StoreError),
 }
@@ -59,7 +61,9 @@ impl BlobError {
             Self::NotOwn | Self::Git(_) => ErrorCode::FailedPrecondition,
             Self::BadHash(_) | Self::NoBase => ErrorCode::InvalidArgument,
             Self::Write(error) if is_full(error) => ErrorCode::ResourceExhausted,
-            Self::Write(_) | Self::Read(_) | Self::Store(_) => ErrorCode::Internal,
+            Self::Write(_) | Self::Read(_) | Self::Mismatch(_) | Self::Store(_) => {
+                ErrorCode::Internal
+            }
         };
         wire::Error {
             code: code as i32,
@@ -130,6 +134,37 @@ impl ProfileRuntime {
             }),
             bytes,
         })
+    }
+
+    /// Keeps bytes of a peer's agent, read from its origin, under that
+    /// replica's directory, once they prove to be what `hash` names.
+    pub async fn keep_replica_blob(
+        &self,
+        agent_id: &[u8],
+        hash: &[u8],
+        bytes: &[u8],
+    ) -> Result<(), BlobError> {
+        if Sha256::digest(bytes)[..] != *hash {
+            return Err(BlobError::Mismatch(hex(hash)));
+        }
+        let row = self.blob_owner(agent_id).await?;
+        if row.agent.host == self.host().as_bytes() {
+            return Ok(());
+        }
+        let path = self.blob_path(&row, hash);
+        let dir = path
+            .parent()
+            .expect("a blob path has a directory")
+            .to_owned();
+        let (written, owned) = (hash.to_vec(), bytes.to_vec());
+        tokio::task::spawn_blocking(move || write_blob(&dir, &written, &owned))
+            .await
+            .map_err(|error| BlobError::Write(io::Error::other(error)))?
+            .map_err(BlobError::Write)?;
+        if let Some(blobs) = self.replica_blobs.lock().unwrap().as_mut() {
+            blobs.insert(path, bytes.len() as u64, self.clock_now());
+        }
+        Ok(())
     }
 
     /// Diffs the agent's working directory against `base` and writes the

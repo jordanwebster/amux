@@ -1203,3 +1203,122 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
     drop(laptop);
     net.shutdown().await.unwrap();
 }
+
+/// A person on the laptop works with the blobs of the desk's agent as with
+/// its own: an attachment stored from the laptop is written into the
+/// agent's directory on the desk, a diff of its working tree is made on the
+/// desk, and the laptop reads each blob from the desk once and keeps the
+/// bytes under the replica, so the next read needs no link.
+#[tokio::test(flavor = "multi_thread")]
+async fn blobs_and_diffs_of_a_peers_agent_are_made_at_its_origin_and_kept_by_the_reader() {
+    use wire::client_service_server::ClientService as _;
+    let topology = desk_and_laptop().agent(
+        AgentDecl::new("worker", "desk")
+            .steps(turns(1, 1))
+            .prompt("go"),
+    );
+    let mut net = Net::start_with(topology, options(8, |_, _| {}))
+        .await
+        .unwrap();
+    wait_origin_says(&net, "worker", "t0-0").await;
+    wait_current(&net, "laptop", "worker").await;
+    let worker = net.agent("worker").unwrap().clone();
+    let agent_id = worker.id.as_bytes().to_vec();
+    let own = net.host("desk").unwrap().data_dir.clone();
+
+    let work = net.host("desk").unwrap().work.clone();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(work.join("deploy.sh"), "rsync build/ prod:/srv\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "first"]);
+    std::fs::write(work.join("deploy.sh"), "rsync --delete build/ prod:/srv\n").unwrap();
+
+    let laptop = net.client("laptop").unwrap();
+    let stored = laptop
+        .put_blob(tonic::Request::new(wire::PutBlobRequest {
+            agent_id: agent_id.clone(),
+            name: "notes.txt".to_owned(),
+            mime: "text/plain".to_owned(),
+            bytes: b"from the laptop".to_vec(),
+        }))
+        .await
+        .expect("the desk stores the laptop's attachment")
+        .into_inner();
+    let hex = |hash: &[u8]| hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let on_desk = |hash: &[u8]| {
+        walk(&own).into_iter().find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == hex(hash).as_str())
+        })
+    };
+    let written = on_desk(&stored.hash).expect("the attachment is in the desk's data");
+    assert_eq!(std::fs::read(written).unwrap(), b"from the laptop");
+
+    let diff = laptop
+        .diff(tonic::Request::new(wire::DiffRequest {
+            agent_id: agent_id.clone(),
+            base: Some(wire::DiffBase {
+                base: Some(wire::diff_base::Base::WorkingTree(wire::Empty {})),
+            }),
+        }))
+        .await
+        .expect("the desk diffs its agent's working tree")
+        .into_inner();
+    let patch = diff.patch.unwrap();
+    assert!(
+        on_desk(&patch.hash).is_some(),
+        "the patch is the desk's blob"
+    );
+
+    let read = |hash: Vec<u8>| {
+        let laptop = laptop.clone();
+        let agent_id = agent_id.clone();
+        async move {
+            laptop
+                .get_blob(tonic::Request::new(wire::GetBlobRequest { agent_id, hash }))
+                .await
+                .map(|response| response.into_inner().bytes)
+        }
+    };
+    let bytes = read(patch.hash.clone())
+        .await
+        .expect("the laptop reads the patch");
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("+rsync --delete build/ prod:/srv"), "{text}");
+
+    // Kept: with the desk away the laptop still has the patch it read, and
+    // nothing it never read.
+    sever(&mut net).await;
+    assert_eq!(
+        read(patch.hash.clone())
+            .await
+            .expect("kept under the replica"),
+        text.as_bytes()
+    );
+    let unread = read(stored.hash.clone()).await;
+    assert!(unread.is_err(), "{unread:?}");
+    net.shutdown().await.unwrap();
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
