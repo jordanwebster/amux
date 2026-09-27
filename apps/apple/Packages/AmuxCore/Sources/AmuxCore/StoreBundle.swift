@@ -30,9 +30,8 @@ public final class StoreBundle {
     @ObservationIgnored public private(set) var profile: Profile?
     /// Open chats by the id the profile's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: OpenChat, woke: @MainActor () -> Void)] = [:]
-    /// The chat sessions held open, by agent: every agent that needs the
-    /// person, every chat a page shows, and chats viewed within the
-    /// retention.
+    /// The chat sessions held open, by agent: every chat a page shows and
+    /// chats viewed within the retention.
     @ObservationIgnored private var models: [AgentKey: (chat: OpenChat, model: ChatModel)] = [:]
     /// The agents whose chat a page shows.
     @ObservationIgnored private var shown: Set<AgentKey> = []
@@ -185,21 +184,16 @@ public final class StoreBundle {
         }
     }
 
-    /// Which chat sessions exist, after every read of the fleet. Every
-    /// agent whose entry says it needs the person gets one, so its chat is
-    /// already current when its page opens; a shown chat keeps its own; a
-    /// chat viewed within the retention keeps its own; nothing else is
-    /// opened or kept, because the runtime keeps every listed agent's rows
-    /// current without a session.
+    /// Which chat sessions exist, after every read of the fleet. A shown
+    /// chat keeps its own; a chat viewed within the retention keeps its
+    /// own; nothing else is opened or kept, not even for an agent that
+    /// needs the person, because the runtime keeps every listed agent's
+    /// rows current without a session and a chat opens from those rows.
     func keepSessions() {
-        for row in fleet.rows where row.needsYou && models[row.id] == nil {
-            _ = try? model(row.id)
-        }
         let at = now()
         let retention = Double(sessionRetention.components.seconds)
             + Double(sessionRetention.components.attoseconds) / 1e18
         for (agent, open) in models where !shown.contains(agent) {
-            if fleet.row(agent)?.needsYou == true { continue }
             if let last = viewed[agent], at.timeIntervalSince(last) < retention { continue }
             models.removeValue(forKey: agent)
             viewed.removeValue(forKey: agent)

@@ -1,3 +1,12 @@
+2026-09-27 — **The phone opens no chat session ahead of a tap.**
+The phone used to open a session for every agent that needed the person, so
+its chat was current before the page opened. The daemon already keeps every
+listed agent's rows current, so a chat opened from the fleet paints from the
+store at once and catches up like any other; the pre-open only ran
+machinery. The phone now holds a session for the chat on screen and for
+chats viewed within the retention after they were last viewed, and nothing
+else. Waking for a push still opens the one chat the push names.
+
 2026-09-27 — **An ask for a tool called with no arguments shows no arguments block.**
 A Codex approval of an MCP tool taking no input showed a bare `{}` in the
 phone's card. The shared ask view now reads an empty object or array as no

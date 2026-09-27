@@ -67,18 +67,17 @@ final class StoreBundleSessionTests: XCTestCase {
 
     private func sessions(for agent: AgentKey) -> [CaughtUpSession] { opened.filter { $0.agent == agent } }
 
-    func testANeedsYouAgentsChatIsAlreadyOpenAndCurrentWhenItsPageOpens() throws {
+    func testAnAgentThatNeedsThePersonOpensNothingUntilItsChatIsShown() throws {
         let stores = bundle()
         let asking = Cards.key(1)
         stores.fleet.show(
             [Cards.row(1, "asking", attention: .needsYou), Cards.row(2, "idle"), Cards.row(3, "working", attention: .working)],
             hosts: [Cards.host()])
         stores.keepSessions()
-        XCTAssertEqual(opened.map(\.agent), [asking], "only the agent that needs the person is warmed")
+        XCTAssertTrue(opened.isEmpty, "a row that needs the person opens no session ahead of a tap")
 
-        let model = try stores.chat(asking)
-        XCTAssertEqual(opened.count, 1, "the page takes the session already open")
-        XCTAssertEqual(model.frame?.caughtUp, true, "and it is current before the page drew it")
+        _ = try stores.chat(asking)
+        XCTAssertEqual(opened.map(\.agent), [asking], "its page opens the one session, like any other chat")
     }
 
     func testAViewedChatStaysForTheRetentionAndThenCloses() throws {
@@ -102,16 +101,16 @@ final class StoreBundleSessionTests: XCTestCase {
         XCTAssertTrue(sessions(for: viewed)[0].closed)
     }
 
-    func testANeedsYouSessionNobodyViewedClosesOnceTheAgentStopsAsking() {
+    func testAViewedChatThatStillNeedsThePersonClosesAfterTheRetention() throws {
         let stores = bundle()
         let asking = Cards.key(1)
         stores.fleet.show([Cards.row(1, "asking", attention: .needsYou)], hosts: [Cards.host()])
-        stores.keepSessions()
-        XCTAssertTrue(stores.holds(asking))
+        _ = try stores.chat(asking)
+        stores.leave(asking)
 
-        stores.fleet.show([Cards.row(1, "asking", attention: .working)], hosts: [Cards.host()])
+        clock = Cards.now.addingTimeInterval(301)
         stores.keepSessions()
-        XCTAssertFalse(stores.holds(asking))
+        XCTAssertFalse(stores.holds(asking), "only the shown chat and chats viewed within the retention hold one")
         XCTAssertTrue(sessions(for: asking)[0].closed)
     }
 
