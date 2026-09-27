@@ -284,8 +284,10 @@ async fn older_rows_arrive_below_the_oldest_the_host_holds() {
     let net = Net::start(topology()).await.unwrap();
     let (runtime, mut host) = open(&net).await;
     let chat = runtime.open_chat(&worker(&net), 50).await.unwrap();
-    until(&mut host, &chat, "the first turn", |chat| {
-        chat.frame().caught_up && says(chat, "turn one")
+    // The whole first turn, its end included: a row landing after the list
+    // is taken would be paged in below but missing from it.
+    until(&mut host, &chat, "the first turn to end", |chat| {
+        chat.frame().caught_up && says(chat, "turn one") && says(chat, "TurnEnd")
     })
     .await;
     let everything = chat.keys();

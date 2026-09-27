@@ -1,3 +1,9 @@
+2026-09-27 — **The app runtime's paging test waits for the first turn to end.**
+It took the chat's full key list as soon as "turn one" showed, so under load
+the turn's end row could land after the list was taken and then be paged in,
+and the two lists differed. It now waits for the turn-end row too; ten runs
+in a row pass beside six busy loops.
+
 2026-09-27 — **The daemon lists where a host offers to start an agent.**
 `ListRepositories` answered "not available yet"; the daemon now serves it.
 Recent directories are where this host's agents were started, newest first,
