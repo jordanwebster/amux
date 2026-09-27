@@ -149,6 +149,14 @@ public final class Runtime: @unchecked Sendable {
         }
     }
 
+    /// Opens pairing mode on a profile and answers the link its QR code
+    /// would carry. Only a driving build offers one.
+    public func offerPairing(_ profile: String) async -> Result<String, RuntimeFailure> {
+        await act(String.self) { live, callback, context in
+            profile.withCString { amux_runtime_offer_pairing(live, $0, callback, context) }
+        }
+    }
+
     /// Listed for the profile in front of somebody: every listed agent keeps
     /// a source open. Not listed for every other profile, and in the
     /// background: only the chats that open keep one.

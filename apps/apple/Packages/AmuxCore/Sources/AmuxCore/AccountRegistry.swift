@@ -97,8 +97,15 @@ public final class AccountRegistry {
         var seen: Seen
     }
 
-    public init(file: URL? = nil) {
+    /// Makes the stores for an account going on screen.
+    @ObservationIgnored private let makeStores: @MainActor (AccountId) -> StoreBundle
+
+    public init(
+        file: URL? = nil,
+        makeStores: @escaping @MainActor (AccountId) -> StoreBundle = { StoreBundle(account: $0) }
+    ) {
         self.file = file
+        self.makeStores = makeStores
         guard let file, let data = try? Data(contentsOf: file),
               let saved = try? AmuxJSON.decoder.decode(Remembered.self, from: data) else {
             persist()
@@ -216,7 +223,7 @@ public final class AccountRegistry {
     /// The stores for an account going on screen, which report what it
     /// lists so its row can say so once it is off screen.
     private func bundle(_ id: AccountId) -> StoreBundle {
-        let stores = StoreBundle(account: id)
+        let stores = makeStores(id)
         stores.saw = { [weak self] hosts, attention in
             self?.saw(hosts: hosts, attention: attention, for: id)
         }

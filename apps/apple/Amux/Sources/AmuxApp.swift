@@ -66,18 +66,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject,
     ) async -> UIBackgroundFetchResult {
         guard let agent = PushPayload.agent(payload) else { return .noData }
         let background = application.applicationState == .background
-        let current = await composition.runtime.warm(agent, inBackground: background)
-        return current ? .newData : .failed
+        switch await composition.runtime.warm(agent, inBackground: background) {
+        case .current: return .newData
+        case .behind: return .failed
+        case .unknownHost: return .noData
+        }
     }
 
-    /// A tap on the notification opens the chat it names; coming to the
-    /// foreground lists every agent again.
+    /// A tap on the notification opens the chat it names, under the account
+    /// whose profile trusts its host; coming to the foreground lists every
+    /// agent again.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
     ) async {
         guard let agent = PushPayload.agent(response.notification.request.content.userInfo)
         else { return }
-        await MainActor.run { composition.router.open(.conversation(agent)) }
+        await openPushed(agent)
+    }
+
+    private func openPushed(_ agent: AgentKey) async {
+        await composition.open(pushed: agent)
     }
 
     nonisolated func userNotificationCenter(

@@ -80,8 +80,10 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private var starting: Task<Void, Never>?
     /// Which start a started runtime answers; one a stop overtook is stopped.
     @ObservationIgnored private var launch = 0
-    /// Profiles with a pause or resume in flight, so a second is not sent.
-    @ObservationIgnored private var steering: Set<String> = []
+    /// The pauses and resumes under way, one run at a time.
+    @ObservationIgnored private var steering: Task<Void, Never>?
+    /// Whether what is on screen changed while a run was under way.
+    @ObservationIgnored private var steerAgain = false
 
     public init(
         registry: AccountRegistry, support: URL, deviceName: String,
@@ -217,32 +219,67 @@ public final class RuntimeCoordinator {
 
     /// Only the profile on screen lists every agent's source, and only in
     /// front of somebody; only it, of the bound profiles, keeps its relay
-    /// link, so one link is live.
+    /// link, so one link is live. Every other bound profile is paused before
+    /// the one on screen is resumed.
     private func steer() {
         guard let runtime else { return }
         let onScreen = registry.profile
         for view in profiles {
-            let shown = view.id == onScreen
-            runtime.setSourcePolicy(view.id, listed: shown && active)
-            let binding = view.account.binding
-            if shown, binding == .paused {
-                steer(view.id) { await runtime.resume($0) }
-            } else if !shown, binding == .signedIn {
-                steer(view.id) { await runtime.pause($0) }
-            }
+            runtime.setSourcePolicy(view.id, listed: view.id == onScreen && active)
+        }
+        guard steering == nil else {
+            steerAgain = true
+            return
+        }
+        steering = Task { [weak self] in
+            var moved = false
+            repeat {
+                self?.steerAgain = false
+                moved = await self?.relink(runtime) ?? false
+            } while self?.steerAgain == true
+            self?.steering = nil
+            if moved { await self?.stores.refreshAccount() }
         }
     }
 
-    private func steer(
-        _ id: String, _ act: @escaping @Sendable (String) async -> Result<ProfileView, RuntimeFailure>
-    ) {
-        guard steering.insert(id).inserted else { return }
-        Task {
-            _ = await act(id)
-            steering.remove(id)
-            profilesMoved()
-            await stores.refreshAccount()
+    /// Pauses every bound profile off screen, then resumes the one on it,
+    /// and says whether anything changed.
+    private func relink(_ runtime: Runtime) async -> Bool {
+        let onScreen = registry.profile
+        var moved = false
+        for view in profiles where view.id != onScreen && view.account.binding == .signedIn {
+            _ = await runtime.pause(view.id)
+            moved = true
         }
+        if let view = profiles.first(where: { $0.id == onScreen }), view.account.binding == .paused {
+            _ = await runtime.resume(view.id)
+            moved = true
+        }
+        if moved, self.runtime === runtime {
+            profiles = runtime.profiles()
+            registry.show(profiles)
+        }
+        return moved
+    }
+
+    /// Waits until the pauses and resumes under way are done.
+    public func settled() async {
+        while let run = steering { await run.value }
+    }
+
+    /// Puts the account whose profile trusts `host` on screen, as a push or
+    /// a tap on one naming that host asks. False when no profile trusts it.
+    @discardableResult
+    public func bringForward(_ host: HostId) async -> Bool {
+        guard let runtime = await started(),
+              case .success(let trusting?) = await runtime.trusting(host) else { return false }
+        if trusting != registry.profile {
+            guard let account = registry.accounts.first(where: { $0.profile == trusting })
+            else { return false }
+            registry.select(account.id)
+        }
+        await settled()
+        return profile?.id == trusting
     }
 
     /// Closes the fleet on screen, and every chat on it first.
@@ -314,10 +351,11 @@ public final class RuntimeCoordinator {
         launch += 1
         starting = nil
         answer(nil)
+        steering?.cancel()
+        steering = nil
         runtime?.stop()
         runtime = nil
         profiles = []
-        steering = []
     }
 
     /// Starts again after the store failed to open.
@@ -342,17 +380,20 @@ public final class RuntimeCoordinator {
         }
     }
 
-    /// Brings one agent's chat current for a push. In the background the
-    /// profile is put under the on-demand policy first, so the chat's own
-    /// open is the only source that runs; coming to the foreground lists
-    /// every agent again.
+    /// Brings one agent's chat current for a push, under the account whose
+    /// profile trusts the agent's host: that account goes on screen first,
+    /// its relay link resumed after the previous one is paused. In the
+    /// background the profile is put under the on-demand policy, so the
+    /// chat's own open is the only source that runs; coming to the
+    /// foreground lists every agent again. A host no profile trusts is left
+    /// alone.
     public func warm(
         _ agent: AgentKey, inBackground: Bool, within limit: Duration = .seconds(25)
-    ) async -> Bool {
+    ) async -> Warmed {
         if inBackground { setActive(false) }
         start()
-        guard await started() != nil, profile != nil else { return false }
-        return await stores.warm(agent, within: limit)
+        guard let host = agent.hostId, await bringForward(host) else { return .unknownHost }
+        return await stores.warm(agent, within: limit) ? .current : .behind
     }
 
     /// What the browser found, handed over whole to every profile, and to
@@ -393,4 +434,13 @@ public final class RuntimeCoordinator {
         try? handle.seek(toOffset: end > UInt64(bytes) ? end - UInt64(bytes) : 0)
         return (try? handle.readToEnd()).map { String(decoding: $0, as: UTF8.self) }
     }
+}
+
+/// How a push's chat was brought current.
+public enum Warmed: Sendable, Equatable {
+    case current
+    /// It did not catch up in time.
+    case behind
+    /// No profile on this phone trusts the host the push named.
+    case unknownHost
 }

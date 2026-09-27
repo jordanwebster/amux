@@ -50,7 +50,11 @@ profile's relay link runs: every other bound profile is paused, which holds its
 relay link down and keeps its direct links and store. The on-screen profile
 lists every agent's source while the app is in front of somebody; every other
 profile, and the on-screen one in the background, opens sources only for the
-chats that ask.
+chats that ask. A needs-you notification names only a host and an agent, so
+the account it is for is the one whose profile trusts that host: a push or a
+tap on one for another account's host puts that account on screen first (its
+relay link resumed after the previous one is paused), and a push for a host no
+profile trusts is left alone.
 
 Remove from This Phone (an account's own section on You, or the menu on any
 account row, including a signed-out one) takes an account off the phone and

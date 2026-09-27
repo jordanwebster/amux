@@ -1,3 +1,14 @@
+2026-09-27 — **A push for another account's host wakes that account on the phone.**
+A needs-you notification names only a host and an agent. The phone now asks
+its daemon which profile trusts that host: if it is an account off screen,
+that account goes on screen, the previous account's relay link is paused
+before its own resumes (so one link is live throughout), and the chat is
+warmed under the on-demand policy; tapping the notification switches account
+the same way before opening the chat. A push for a host no profile trusts is
+answered with no data and resumes nothing. A driving build can offer a
+profile's pairing link (`amux_runtime_offer_pairing`), which the coordinator
+test uses to pair two profiles of one installation.
+
 2026-09-27 — **A short chat's rows stay put when the bottom of the phone chat grows.**
 Opening the settings card, an ask docking or the keyboard rising moved a
 short chat's rows up under the header and about 18 pt out of the gutter, and

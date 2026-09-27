@@ -39,8 +39,9 @@ use wire::{
     BeginPairRequest, BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, HostVia,
     Intent, ListProfilesRequest, Observed, PeerEntry, PeerRef, PeerVia, PendingPairRequest,
     ProfileBeginPairRequest, ProfileInfo, ProfileOperation, ProfilePendingPairRequest,
-    ProfileRequest, ProfileUnpairRequest, Tier, WatchProfilesRequest, WatchProfilesResponse,
-    begin_pair_request, peer_ref, watch_profiles_response,
+    ProfileRequest, ProfileStartPairingRequest, ProfileUnpairRequest, StartPairingRequest, Tier,
+    WatchProfilesRequest, WatchProfilesResponse, begin_pair_request, peer_ref,
+    start_pairing_response, watch_profiles_response,
 };
 
 /// What a test or a driving build changes about the network edge.
@@ -425,6 +426,46 @@ impl EmbeddedRuntime {
             expires_at_ms: peer.expires_at_unix_ms,
             via,
         })
+    }
+
+    /// Opens pairing mode on a profile and answers the link its QR code
+    /// would carry: whoever pairs with it by that link is trusted. The phone
+    /// shows no pairing code of its own; a driving build uses this to pair
+    /// two of its profiles.
+    pub async fn offer_pairing(&self, profile: ProfileId) -> Result<String, EmbeddedError> {
+        let started = self
+            .door()
+            .start_pairing(Request::new(ProfileStartPairingRequest {
+                operation_id: operation(),
+                profile_id: profile.to_string(),
+                pairing: Some(StartPairingRequest {
+                    mode: wire::start_pairing_request::Mode::Qr as i32,
+                    ..StartPairingRequest::default()
+                }),
+            }))
+            .await?
+            .into_inner();
+        let Some(start_pairing_response::Secret::QrSecret(secret)) = &started.secret else {
+            return Err(EmbeddedError::Relay(
+                "pairing mode opened without a link secret".into(),
+            ));
+        };
+        let host = node::HostId::from_slice(
+            &started
+                .identity
+                .as_ref()
+                .map(|identity| identity.host_id.clone())
+                .unwrap_or_default(),
+        )
+        .map_err(|_| EmbeddedError::NoProfile(profile))?;
+        let addrs: Vec<SocketAddr> = started
+            .addrs
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .collect();
+        let invitation =
+            node::encode_qr_pairing_invitation(host, &addrs, started.cloud_url.as_deref(), secret)?;
+        Ok(node::pair_link(&invitation))
     }
 
     /// Trusts the machine an attempt reached.

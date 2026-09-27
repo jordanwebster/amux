@@ -606,6 +606,18 @@ fn the_profile_registry_through_the_c_abi() {
     // SAFETY: opened above, not used again.
     unsafe { amux_profile_close(opened) };
 
+    // Only a driving build offers pairing from the phone.
+    // SAFETY: the runtime is live; the string lives for the call.
+    unsafe {
+        amux_runtime_offer_pairing(phone.runtime, other.as_ptr(), on_result, phone.context())
+    };
+    let offered = phone.result();
+    assert_eq!(
+        offered["Ok"].is_string(),
+        cfg!(feature = "debug-tools"),
+        "{offered}"
+    );
+
     // Only a profile bound to an account has a relay link to pause.
     // SAFETY: the runtime is live; the string lives for the call.
     unsafe { amux_runtime_pause(phone.runtime, other.as_ptr(), on_result, phone.context()) };

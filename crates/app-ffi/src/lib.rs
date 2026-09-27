@@ -702,6 +702,36 @@ pub unsafe extern "C" fn amux_runtime_trusting_profile(
     });
 }
 
+/// Opens pairing mode on a profile and answers the link its QR code would
+/// carry; the callback gets `{"Ok": "amux://pair?.."}` or `{"Err": ..}`. Only
+/// a driving build offers one: the phone shows no pairing code of its own.
+///
+/// # Safety
+/// As for `amux_runtime_delete_profile`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_offer_pairing(
+    runtime: *const AmuxRuntime,
+    profile: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        profile_act(
+            runtime,
+            profile,
+            callback,
+            context,
+            |embedded, profile| async move {
+                if !cfg!(feature = "debug-tools") {
+                    return Answered::Err("only a driving build offers pairing".into());
+                }
+                Answered::from(embedded.offer_pairing(profile).await)
+            },
+        )
+    }
+}
+
 /// `listed` for the profile in front of somebody: every listed agent keeps
 /// a source. Not `listed` for every other profile, and in the background:
 /// only the chats that open keep one.

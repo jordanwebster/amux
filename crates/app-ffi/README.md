@@ -61,7 +61,9 @@ profile, else one that holds nothing, else a new one), `amux_runtime_sign_out`
 bearer for the account service; the profile alone spends the refresh token),
 `amux_runtime_refresh_entitlement` (asks what the account buys now, so a
 purchase lifts the relay's tier at once) and `amux_runtime_trusting_profile`
-(the profile whose trust store holds a host). `amux_runtime_discovered` hands
+(the profile whose trust store holds a host); a driving build's
+`amux_runtime_offer_pairing` opens pairing mode on a profile and answers its
+pairing link, so tests can pair two profiles. `amux_runtime_discovered` hands
 the whole set the phone's own browser found on the local network, which only
 the system may browse, to every profile.
 

@@ -139,11 +139,11 @@ final class RuntimeCoordinatorTests: XCTestCase {
             return XCTFail("the runtime did not start")
         }
         XCTAssertTrue(profile.listsSources)
-        // No machine is paired, so the named chat never catches up; what
-        // matters is the policy it was opened under and that it is closed.
+        // No machine is paired, so no profile trusts the host and no chat is
+        // opened; what matters is the policy the wake left behind.
         let agent = AgentKey(host: HostId(UUID()), agent: UUID())
-        let current = await coordinator.warm(agent, inBackground: true, within: .milliseconds(300))
-        XCTAssertFalse(current)
+        let warmed = await coordinator.warm(agent, inBackground: true, within: .milliseconds(300))
+        XCTAssertEqual(warmed, .unknownHost, "no profile trusts a host nobody paired")
         XCTAssertFalse(profile.listsSources, "a background wake opens only the chat it names")
         coordinator.setActive(true)
         XCTAssertTrue(profile.listsSources, "the foreground lists every agent again")
@@ -290,6 +290,74 @@ final class RuntimeCoordinatorTests: XCTestCase {
             binding(relaunched, ada) == .signedIn
                 && relaunched.profiles.filter { $0.account.binding == .paused }.count == 1
         }
+    }
+
+    /// A push names a host and an agent only. The account it is for is the
+    /// one whose profile trusts that host: off screen, it goes on screen,
+    /// the previous account's relay link paused before its own resumes,
+    /// under the on-demand policy; on screen, nothing moves; a host nobody
+    /// trusts is left alone.
+    func testAPushWakesTheAccountWhoseProfileTrustsItsHost() async throws {
+        let service = try await FakeAccountService.start()
+        defer { service.stop() }
+        let registry = AccountRegistry(makeStores: { account in
+            StoreBundle(account: account, opener: { agent in CaughtUpSession(id: 1, agent: agent) })
+        })
+        let coordinator = coordinator(registry)
+        defer { coordinator.stop() }
+        coordinator.start()
+        guard let runtime = await coordinator.started() else {
+            return XCTFail("the runtime did not start")
+        }
+        await sign(coordinator, in: "ada", at: service)
+        let ada = try XCTUnwrap(registry.profile)
+        await sign(coordinator, in: "bob", at: service)
+        let bob = try XCTUnwrap(registry.profile)
+        await coordinator.settled()
+
+        // A machine only ada's profile trusts: another profile of this
+        // installation, which ada's pairs with by its link.
+        guard case .success(let desk) = await runtime.createProfile(),
+              case .success(let link) = await runtime.offerPairing(desk.id) else {
+            return XCTFail("no pairing link offered")
+        }
+        let adaFleet = try runtime.open(ada) { _ in }
+        guard case .success(let pending) = await adaFleet.beginPair(.link(link)),
+              case .success(let paired) = await adaFleet.confirmPair(pending) else {
+            return XCTFail("ada's profile did not pair")
+        }
+        adaFleet.close()
+        let host = try XCTUnwrap(HostId(bytes: paired.hostId))
+        coordinator.profilesMoved()
+        await coordinator.settled()
+        XCTAssertEqual(registry.selected, AccountId("bob"))
+        let live = { coordinator.profiles.filter { $0.account.binding == .signedIn }.map(\.id) }
+
+        // The host of an account off screen.
+        let work = AgentKey(host: host, agent: UUID())
+        let offScreen = await coordinator.warm(work, inBackground: true, within: .seconds(5))
+        XCTAssertEqual(offScreen, .current)
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(coordinator.profile?.id, ada)
+        XCTAssertEqual(live(), [ada], "one relay link is live")
+        XCTAssertEqual(binding(coordinator, bob), .paused)
+        XCTAssertFalse(runtime.listsSources(ada), "a background wake opens only its chat")
+
+        // The host of the account on screen: nothing moves.
+        let again = AgentKey(host: host, agent: UUID())
+        let onScreen = await coordinator.warm(again, inBackground: true, within: .seconds(5))
+        XCTAssertEqual(onScreen, .current)
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(live(), [ada])
+
+        // A host nobody here trusts.
+        let stranger = AgentKey(host: HostId(UUID()), agent: UUID())
+        let unknown = await coordinator.warm(stranger, inBackground: true, within: .seconds(5))
+        XCTAssertEqual(unknown, .unknownHost)
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(live(), [ada])
+        XCTAssertEqual(binding(coordinator, bob), .paused, "nothing was resumed")
+        XCTAssertFalse(coordinator.stores.holds(stranger))
     }
 
     func testAStoreThatCannotOpenStopsTheApp() async {

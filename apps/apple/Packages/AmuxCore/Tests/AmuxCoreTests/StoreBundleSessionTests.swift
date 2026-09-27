@@ -5,7 +5,7 @@ import XCTest
 
 /// A session the bundle opened: it catches up the moment it opens, as the
 /// runtime's does once the agent's host answers, and says when it closed.
-private final class Session: OpenChat, @unchecked Sendable {
+final class CaughtUpSession: OpenChat, @unchecked Sendable {
     let id: UInt64
     let agent: AgentKey
     var closed = false
@@ -52,20 +52,20 @@ private final class Session: OpenChat, @unchecked Sendable {
 @MainActor
 final class StoreBundleSessionTests: XCTestCase {
     private var clock = Cards.now
-    private var opened: [Session] = []
+    private var opened: [CaughtUpSession] = []
 
     private func bundle() -> StoreBundle {
         StoreBundle(
             account: AccountId("a"), clock: { [unowned self] in clock },
             sessionRetention: .seconds(300),
             opener: { [unowned self] agent in
-                let session = Session(id: UInt64(opened.count + 1), agent: agent)
+                let session = CaughtUpSession(id: UInt64(opened.count + 1), agent: agent)
                 opened.append(session)
                 return session
             })
     }
 
-    private func sessions(for agent: AgentKey) -> [Session] { opened.filter { $0.agent == agent } }
+    private func sessions(for agent: AgentKey) -> [CaughtUpSession] { opened.filter { $0.agent == agent } }
 
     func testANeedsYouAgentsChatIsAlreadyOpenAndCurrentWhenItsPageOpens() throws {
         let stores = bundle()

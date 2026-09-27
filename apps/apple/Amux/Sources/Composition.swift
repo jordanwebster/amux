@@ -237,6 +237,15 @@ final class Composition {
         }
     }
 
+    /// Opens the chat a notification names, putting the account whose
+    /// profile trusts its host on screen first.
+    func open(pushed agent: AgentKey) async {
+        let before = accounts.selected
+        if let host = agent.hostId { await runtime.bringForward(host) }
+        if accounts.selected != before { resetTabs() }
+        router.open(.conversation(agent))
+    }
+
     private func resetTabs() {
         for tab in Tab.allCases { router.setPath([], for: tab) }
     }

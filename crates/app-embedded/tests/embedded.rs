@@ -215,6 +215,22 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         embedded.host_id(phone).unwrap()
     );
     assert!(embedded.roster(other).await.unwrap().peers.is_empty());
+    // Two profiles of one installation pair like any two hosts; each
+    // trusts the other and nobody else.
+    let link = embedded.offer_pairing(other).await.unwrap();
+    embedded
+        .pair(phone, &PairRequest::Link(link))
+        .await
+        .unwrap();
+    let other_host = embedded.host_id(other).unwrap();
+    assert_eq!(embedded.trusting(&other_host).await.unwrap(), Some(phone));
+    assert_eq!(
+        embedded
+            .trusting(&embedded.host_id(phone).unwrap())
+            .await
+            .unwrap(),
+        Some(other)
+    );
     embedded.delete_profile(other).await.unwrap();
     assert_eq!(embedded.profiles().await.unwrap().len(), 1);
 
