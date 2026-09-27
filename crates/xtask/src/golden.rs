@@ -985,7 +985,7 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         .unwrap_or(MAX_DIFFERING_PIXELS);
     // The chrome of a named pinned simulator, so a pair of files compares the
     // way the run compares them; without one, every pixel counts.
-    let chrome = match value(arguments, "--simulator") {
+    let mut chrome = match value(arguments, "--simulator") {
         Some(name) => GoldenManifest::read(Path::new(MANIFEST))?
             .simulators
             .get(&name)
@@ -994,6 +994,9 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
             .clone(),
         None => Vec::new(),
     };
+    // A journey's screen can carry text that moves with the run (an age, a
+    // scratch path); the driver names each such rectangle in pixels.
+    chrome.extend(masks(arguments)?);
     let verdict = diff(
         Path::new(&expected),
         Path::new(&actual),
@@ -1008,6 +1011,35 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     } else {
         Err(format!("{expected} and {actual}: {verdict}").into())
     }
+}
+
+/// Every `--mask x,y,width,height` rectangle, in the capture's pixels.
+fn masks(arguments: &[String]) -> Result<Vec<SystemChrome>, String> {
+    arguments
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| *argument == "--mask")
+        .map(|(at, _)| {
+            let text = arguments
+                .get(at + 1)
+                .ok_or("--mask names x,y,width,height")?;
+            let numbers = text
+                .split(',')
+                .map(str::parse)
+                .collect::<Result<Vec<u32>, _>>()
+                .map_err(|_| format!("--mask {text} is not x,y,width,height"))?;
+            let [x, y, width, height] = numbers[..] else {
+                return Err(format!("--mask {text} is not x,y,width,height"));
+            };
+            Ok(SystemChrome {
+                what: "volatile text the driver masked".into(),
+                x,
+                y,
+                width,
+                height,
+            })
+        })
+        .collect()
 }
 
 fn reference_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -1353,6 +1385,26 @@ mod tests {
             width: 2,
             height: 1,
         }
+    }
+
+    #[test]
+    fn masks_are_read_from_every_mask_argument() {
+        let arguments: Vec<String> = [
+            "--expected",
+            "a.png",
+            "--mask",
+            "1,2,3,4",
+            "--mask",
+            "0,0,10,20",
+        ]
+        .map(String::from)
+        .to_vec();
+        let read = masks(&arguments).unwrap();
+        assert_eq!(read.len(), 2);
+        assert!(read[0].covers(1, 2) && read[0].covers(3, 5) && !read[0].covers(4, 2));
+        assert!(read[1].covers(9, 19) && !read[1].covers(10, 0));
+        let bad: Vec<String> = ["--mask", "1,2,3"].map(String::from).to_vec();
+        assert!(masks(&bad).is_err());
     }
 
     #[test]

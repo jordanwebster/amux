@@ -926,7 +926,14 @@ impl Net {
                 bind: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
                 socket: None,
             }),
-            discovery: decl.discovery.then(|| scripted_discovery(&self.bus)),
+            discovery: if decl.bonjour {
+                Some(Arc::new(|| {
+                    Ok(Arc::new(crate::bonjour::SystemBonjour::new())
+                        as Arc<dyn node::discovery::Discovery>)
+                }))
+            } else {
+                decl.discovery.then(|| scripted_discovery(&self.bus))
+            },
             discovery_scope: decl
                 .scope
                 .clone()

@@ -1,3 +1,13 @@
+2026-09-27 — **A served host can put itself on the real local network for the phone to find.**
+A topology host with `"bonjour": true` (and `lan`) advertises its loopback
+listener through the system's mDNS responder (`dns-sd -P`), with the same
+TXT record every amux advertiser writes, so the iPhone app on a simulator
+finds it with its own browser in the net's discovery scope. The test
+binary never opens a multicast socket of its own, so no rebuilt binary asks
+for local-network access. `xtask golden diff` takes `--mask x,y,w,h`
+rectangles, so a journey can compare a screen that shows an age or a
+scratch path.
+
 2026-09-27 — **Test daemons stay off the real local network again.**
 Every test, qualification lane and live-capture script that starts an amux
 daemon sets `AMUX_TEST_DISCOVERY_MODE=disabled`, so debug daemons browse a

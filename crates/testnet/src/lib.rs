@@ -55,6 +55,7 @@
 //! <!-- door-capabilities:end -->
 
 mod binaries;
+mod bonjour;
 mod clock;
 pub mod door;
 mod gate;

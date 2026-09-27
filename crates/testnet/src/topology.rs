@@ -67,6 +67,10 @@ pub struct HostDecl {
     /// trusted hosts it finds.
     #[serde(default)]
     pub discovery: bool,
+    /// Advertise on the machine's real local network through the system's
+    /// mDNS responder, for a client outside the net to find; needs `lan`.
+    #[serde(default)]
+    pub bonjour: bool,
     /// This host's discovery scope, where it differs from the net's.
     #[serde(default)]
     pub scope: Option<String>,
@@ -169,6 +173,10 @@ pub enum TopologyError {
         b: String,
         unknown: String,
     },
+    #[error(
+        "host {0:?} advertises through Bonjour, which needs lan and not the scripted discovery"
+    )]
+    BonjourNeedsLan(String),
     #[error("host {0:?} is linked to itself")]
     SelfLink(String),
     #[error("hosts {a:?} and {b:?} are linked twice")]
@@ -292,6 +300,9 @@ impl Topology {
             }
             if !hosts.insert(host.name.as_str()) {
                 return Err(TopologyError::DuplicateHost(host.name.clone()));
+            }
+            if host.bonjour && (!host.lan || host.discovery) {
+                return Err(TopologyError::BonjourNeedsLan(host.name.clone()));
             }
         }
         let mut accounts = BTreeSet::new();
