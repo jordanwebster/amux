@@ -728,7 +728,7 @@ swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests"
 [[suite]]
 name = "phone-journeys"
 contract = "A person can complete every declared phone story through the real app and production amux path against a served topology."
-paths = ["apps/apple/AmuxUITests", "journeys/manifest.json", "journeys/goldens/phone", "scripts/ios-journey.py"]
+paths = ["scripts/journeys/phone.py", "scripts/ios-journey.py", "journeys/manifest.json", "journeys/topologies/phone-stories.json", "journeys/topologies/phone-reach.json", "journeys/topologies/phone-authority.json", "journeys/goldens/phone"]
 recipe = "just ios journey"
 boundary = "Journeys"
 oracle = "Declared acts, independent door and host observations, screenshots, exits, and teardown evidence."
@@ -738,8 +738,7 @@ time = "real"
 capabilities = ["macOS", "Xcode 26.6", "iOS 26.5 golden simulator"]
 lane = "journey"
 evidence = "target/ios/journeys"
-update = "UPDATE_JOURNEY_GOLDENS=1 just ios journey -- conversation"
-swift = ["AmuxUITests"]
+update = "UPDATE_JOURNEY_GOLDENS=1 just ios journey -- conversation-decision-claude-sdk"
 journey_manifest = "journeys/manifest.json"
 journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review", "writing", "claude-sessions", "hosts-lifecycle", "hosts", "accounts", "reports", "accessibility", "production-startup", "free-tier", "signed-out", "profiles"]
 
@@ -795,7 +794,7 @@ cases = ["scripts/ios-goldens-perturb.py"]
 [[suite]]
 name = "phone-accessibility-audit"
 contract = "Every drawn phone state gives controls readable VoiceOver names and at least forty-four-point hit targets."
-paths = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift", "scripts/ios-accessibility.py"]
+paths = ["apps/apple/AmuxUITests", "scripts/ios-accessibility.py"]
 recipe = "just ios accessibility"
 boundary = "Native presentation"
 oracle = "Accessibility tree names, frames, and hit-target geometry."
@@ -807,6 +806,7 @@ lane = "journey"
 evidence = "target/ios/accessibility"
 update = ""
 cases = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift"]
+swift = ["AmuxUITests"]
 
 [[suite]]
 name = "phone-report-replay"

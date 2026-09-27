@@ -327,8 +327,8 @@ schemes:
     test:
       config: Debug
       # The package unit suites run from their own package schemes (see
-      # scripts/ios-unit.py); this action carries the UI tests, which the
-      # journey plans select from, and the app-hosted tests.
+      # scripts/ios-unit.py); this action carries the accessibility audit's
+      # UI test and the app-hosted tests.
       targets:
         - AmuxUITests
         - AmuxAppTests

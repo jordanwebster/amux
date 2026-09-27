@@ -1,3 +1,13 @@
+2026-09-28 — **The phone's old XCUITest journeys are gone; the Python driver owns phone journeys.**
+Every phone story now runs through the app's door from Python against a
+served net, so the XCUITest journey suites and their shared case class are
+deleted; the UI test target keeps only the accessibility audit, with the
+socket client it needs. Topologies in the old format that no story uses are
+deleted. iOS verification now requires the eight shared stories to report a
+full pass, and the tests catalogue lists the phone driver, its topologies and
+goldens, with the UI test target under the accessibility audit. The phone's
+own older journeys stay declared until they move onto the new driver.
+
 2026-09-28 — **The phone runs the leave-and-recover and attachment-or-review stories.**
 leave-and-recover: after a first run makes the phone's replica, the desk
 moves on while the app is closed and then goes out of reach (its daemon

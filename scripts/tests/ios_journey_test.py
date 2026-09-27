@@ -129,9 +129,29 @@ class ReadingWhatIsSeen(unittest.TestCase):
             stories.reflected_once(chat, "hi")
         stories.reflected_once(chat, "other")
 
+    def test_a_review_is_read_as_text_then_paste_then_review_with_its_one_comment(self):
+        comment = {"path": "deploy.sh", "line": 3, "old_line": 0, "text": stories.COMMENT}
+        sent = {
+            "text": "Please check \ufffc against",
+            "attachments": [
+                {"kind": "text", "text": stories.PASTED},
+                {"kind": "review", "comments": [comment], "patch": "ab"},
+            ],
+        }
+        chat = {"items": [{"text": "earlier", "attachments": []}, sent]}
+        self.assertIs(stories.reviewed(chat, stories.COMMENT), sent)
+        with self.assertRaises(RuntimeError):
+            stories.reviewed(chat, "another comment")
+        swapped = {**sent, "attachments": list(reversed(sent["attachments"]))}
+        with self.assertRaises(RuntimeError):
+            stories.reviewed({"items": [swapped]}, stories.COMMENT)
+        with self.assertRaises(RuntimeError):
+            stories.reviewed({"items": [sent, sent]}, stories.COMMENT)
+
     def test_every_phone_story_written_is_declared_for_the_phone(self):
         for name in stories.STORIES:
             declared = phone.story(name)
+            self.assertIn("phone", declared["clients"], name)
             topology = phone.ROOT / declared.get("phone_topology", declared["topology"])
             self.assertTrue(topology.exists(), topology)
 

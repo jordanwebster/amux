@@ -69,19 +69,14 @@ const CAPTURES: &[&str] = &[
 ];
 
 const REQUIRED_JOURNEYS: &[&str] = &[
-    "home-coldstart",
-    "home",
-    "conversation",
-    "asks",
-    "review",
-    "writing",
-    "claude-sessions",
-    "hosts-lifecycle",
-    "hosts",
-    "accounts",
-    "production-startup",
-    "reports",
-    "accessibility",
+    "reach-host",
+    "conversation-decision-claude-pty",
+    "conversation-decision-claude-sdk",
+    "conversation-decision-codex",
+    "leave-and-recover",
+    "manage-agent",
+    "attachment-or-review",
+    "keep-authority",
 ];
 
 fn check_journeys(manifest: &str) -> Result<(), Box<dyn Error>> {

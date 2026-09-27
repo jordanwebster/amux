@@ -54,7 +54,7 @@ final class AccessibilityAuditTests: XCTestCase {
         app.launchArguments = ["-amux-door-port", port, "-amux-scripted-cloud"]
         app.launch()
 
-        let door = try JourneyCase.Lines(address: "127.0.0.1:\(port)")
+        let door = try DoorLines(address: "127.0.0.1:\(port)")
         let answered = try door.ask(["kind": "states"])
         let states = try XCTUnwrap(
             answered["states"] as? [[String: Any]],
@@ -133,7 +133,7 @@ final class AccessibilityAuditTests: XCTestCase {
     ///
     /// A name can be laid out more than once on a page, so every rectangle
     /// under a name is kept and the one covering the control is chosen later.
-    private func laidOut(_ door: JourneyCase.Lines) throws -> [String: [CGRect]] {
+    private func laidOut(_ door: DoorLines) throws -> [String: [CGRect]] {
         let answered = try door.ask(["kind": "query"])
         let elements = (answered["state"] as? [String: Any])?["elements"] as? [[String: Any]] ?? []
         var found: [String: [CGRect]] = [:]
