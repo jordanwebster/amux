@@ -222,7 +222,6 @@ async fn served_frames_match_their_goldens() {
             AgentDecl::new("gatekeeper", "desk")
                 .kind(FakeKind::ClaudePty)
                 .steps(vec![
-                    text("Signing in to the tracker first."),
                     Step::Ask(Ask::ToolServerDialog {
                         server: "tracker".to_owned(),
                         tool: "sign_in".to_owned(),
@@ -240,10 +239,15 @@ async fn served_frames_match_their_goldens() {
     let mut asking = net.observe("laptop", "gatekeeper", 20).await.unwrap();
     let events = asking
         .observe_until(
+            // Terminal Claude's calls and the ask's own row are held until
+            // the prompt's row lands, so the card can arrive first; the
+            // frame waits for the rows it shows above the card. The turn
+            // says nothing before the dialog: text from Claude's transcript
+            // can land on either side of rows its hooks deliver.
             |events| {
                 caught_up(events)
                     && ui_view::ask_card(&chat_state(&listed, &gatekeeper.agent_id, events))
-                        .is_some()
+                        .is_some_and(|card| !card.item_key.is_empty())
             },
             PATIENCE,
         )
