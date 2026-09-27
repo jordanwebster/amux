@@ -1,3 +1,8 @@
+2026-09-27 — **An ask for a tool called with no arguments shows no arguments block.**
+A Codex approval of an MCP tool taking no input showed a bare `{}` in the
+phone's card. The shared ask view now reads an empty object or array as no
+arguments, as it already read null, so every client omits the block.
+
 2026-09-27 — **The phone runs the keep-authority and manage-agent stories.**
 keep-authority: signed in to the desk's account, the phone pairs with the
 desk by the link it printed, over the relay only; a second account opens on

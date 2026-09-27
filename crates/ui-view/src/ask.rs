@@ -445,8 +445,16 @@ fn permission_body(p: &wire::PermissionAsk) -> AskBody {
     }
 }
 
+/// A tool called with no arguments shows no arguments block: null, `{}`
+/// and `[]` all read as nothing.
 fn pretty(value: &Value) -> String {
-    if value.is_null() {
+    let empty = match value {
+        Value::Null => true,
+        Value::Object(fields) => fields.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    };
+    if empty {
         String::new()
     } else {
         serde_json::to_string_pretty(value).unwrap_or_default()
@@ -909,6 +917,17 @@ fn with_note(answer: &Answer, note: &str) -> Answer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_called_with_no_arguments_shows_no_arguments_block() {
+        assert_eq!(pretty(&Value::Null), "");
+        assert_eq!(pretty(&serde_json::json!({})), "");
+        assert_eq!(pretty(&serde_json::json!([])), "");
+        assert_eq!(
+            pretty(&serde_json::json!({"path": "a.txt"})),
+            "{\n  \"path\": \"a.txt\"\n}"
+        );
+    }
 
     fn asked(multi_select: bool, labels: &[&str]) -> QuestionView {
         QuestionView {
