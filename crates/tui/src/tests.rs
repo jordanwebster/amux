@@ -1500,3 +1500,238 @@ async fn a_review_asks_for_the_working_tree_diff_then_its_patch() {
     assert_eq!(diff, working_tree_diff());
     assert_eq!(patch, PATCH);
 }
+
+// --- wording and keys found in use ------------------------------------------
+
+#[test]
+fn a_question_mark_types_into_a_review_comment() {
+    let state = chat(replies(1, 3));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let question = key(KeyCode::Char('?'));
+    assert!(
+        view.opens_help(&state, question),
+        "the empty composer's key"
+    );
+    view.open_review(working_tree_diff(), PATCH.into());
+    view.key(&state, key(KeyCode::Char('j')), theme());
+    view.key(&state, key(KeyCode::Char('c')), theme());
+    assert!(!view.opens_help(&state, question), "the comment's key");
+    typed(&mut view, &state, "why?");
+    typed(&mut view, &state, " ok");
+    view.key(&state, key(KeyCode::Enter), theme());
+    let review = review_token(&view).expect("the comment is saved");
+    assert_eq!(review.comments[0].text, "why? ok");
+}
+
+fn row_text(row: &ui_view::Row) -> String {
+    let state = crate::chat::rows::RowState {
+        focused: false,
+        expanded: false,
+    };
+    crate::chat::rows::row_lines(row, state, 100, theme())
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn call_row(kind: ui_view::RowKind) -> ui_view::Row {
+    ui_view::Row {
+        id: "k".into(),
+        order: 1,
+        at_ms: 0,
+        kind,
+        run: None,
+        collapsed: false,
+        decision: None,
+        attention: false,
+        parent: None,
+    }
+}
+
+#[test]
+fn a_call_row_leads_with_what_happened_to_it() {
+    use ui_view::{Decision, DecisionView, RowKind, ToolStateView};
+    let command = |state| {
+        call_row(RowKind::Command {
+            command: "rm -rf target".into(),
+            state,
+            exit_code: None,
+            output_head: vec![],
+            more_lines: 0,
+            duration_ms: None,
+        })
+    };
+    let denied = |mut row: ui_view::Row| {
+        row.decision = Some(Decision {
+            outcome: DecisionView::Denied,
+            scope: None,
+            note: Some("Use cargo clean instead".into()),
+            elsewhere: false,
+        });
+        row
+    };
+
+    let mut asking = command(ToolStateView::Running);
+    asking.attention = true;
+    let screen = row_text(&asking);
+    assert!(screen.contains("Wants to run rm -rf target"), "{screen}");
+    assert!(!screen.contains("running"), "{screen}");
+
+    let screen = row_text(&command(ToolStateView::Running));
+    assert!(screen.contains("Running rm -rf target"), "{screen}");
+    assert!(!screen.contains("running"), "{screen}");
+
+    let screen = row_text(&denied(command(ToolStateView::Denied)));
+    assert!(screen.contains("Denied rm -rf target"), "{screen}");
+    assert!(screen.contains("\"Use cargo clean instead\""), "{screen}");
+    assert!(
+        !screen.contains("Ran") && !screen.contains("denied"),
+        "{screen}"
+    );
+
+    let screen = row_text(&denied(call_row(RowKind::ToolCall {
+        server: "linear".into(),
+        tool: "delete_issue".into(),
+        fact: "FOX-12".into(),
+        state: ToolStateView::Denied,
+        result: String::new(),
+    })));
+    assert!(screen.contains("Denied linear · delete_issue"), "{screen}");
+    assert!(
+        !screen.contains("Used") && !screen.contains("denied"),
+        "{screen}"
+    );
+
+    let screen = row_text(&command(ToolStateView::Succeeded));
+    assert!(screen.contains("Ran rm -rf target"), "{screen}");
+}
+
+#[test]
+fn an_exited_agent_on_an_away_host_names_why_it_is_away() {
+    let mut state = chat(replies(1, 3));
+    let mut exited = fixtures::agent(Kind::ClaudeSdk);
+    exited.lifecycle = wire::Lifecycle::Exited as i32;
+    exited.exit_cause = Some("stopped".into());
+    state.update(Msg::Entry(exited));
+    state.update(Msg::Host(wire::HostEntry {
+        host_id: b"host".to_vec(),
+        name: "desk".into(),
+        trust: wire::Trust::Trusted as i32,
+        presence: wire::Presence::Offline as i32,
+        ..Default::default()
+    }));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.away = ui_view::Away::SignedOut;
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("exited · desk away · this machine is signed out"),
+        "{screen}"
+    );
+    assert!(screen.contains("worker has exited"), "{screen}");
+
+    // Back online, the header says how it ended.
+    state.update(Msg::Host(wire::HostEntry {
+        host_id: b"host".to_vec(),
+        name: "desk".into(),
+        trust: wire::Trust::Trusted as i32,
+        presence: wire::Presence::Online as i32,
+        ..Default::default()
+    }));
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    assert!(text(&buffer).contains("exited · stopped"));
+}
+
+#[test]
+fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
+    let mut state = chat(replies(1, 3));
+    let mut exited = fixtures::agent(Kind::ClaudeSdk);
+    exited.lifecycle = wire::Lifecycle::Exited as i32;
+    // The daemon's cause for an agent it found gone when it came back.
+    exited.exit_cause = Some("while the daemon was away".into());
+    state.update(Msg::Entry(exited.clone()));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("exited · while the daemon was away"),
+        "{screen}"
+    );
+    assert!(!screen.contains("exited · exited"), "{screen}");
+
+    let mut fleet = FleetState::new();
+    inventory(
+        &mut fleet,
+        host(
+            b"host",
+            "desk",
+            wire::Trust::Trusted,
+            wire::Presence::Online,
+        ),
+    );
+    inventory(&mut fleet, wire::inventory_event::Of::Agent(exited));
+    let mut fleet_view = FleetView::default();
+    let screen = fleet_screen(&mut fleet_view, &fleet);
+    assert!(
+        screen.contains("exited · while the daemon was away"),
+        "{screen}"
+    );
+    assert!(!screen.contains("exited · exited"), "{screen}");
+}
+
+#[test]
+fn thinking_with_no_measured_time_reads_thought_alone() {
+    use wire::claude_sdk_item::Kind as K;
+    let thinking = |order: u64, at_ms: i64| Item {
+        key: format!("t{order}"),
+        order,
+        revision: order,
+        text: "weighing it".into(),
+        kind: wire::kind_tag(Kind::ClaudeSdk).into(),
+        body: wire::ClaudeSdkItem {
+            kind: Some(K::Thinking(wire::Thinking { complete: true })),
+        }
+        .encode_to_vec(),
+        at_ms,
+        ..Item::default()
+    };
+    // The first thinking lands with the reply before it; the second three
+    // seconds after the first.
+    let state = chat(vec![item(1, None), thinking(2, 1_000), thinking(3, 4_000)]);
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    let (screen, _) = feed(&mut view, &state);
+    assert!(!screen.contains("Thought for 0ms"), "{screen}");
+    assert!(screen.contains("~ Thought\n"), "{screen}");
+    assert!(screen.contains("~ Thought for 3s"), "{screen}");
+}
+
+#[test]
+fn typing_on_something_else_starts_the_answer() {
+    let (state, at) = fixtures::frame_where(
+        Kind::ClaudeSdk,
+        "recorded_question_every_shape",
+        |state| matches!(ask_card(state).map(|card| card.body), Some(AskBody::Question(questions)) if questions.len() > 1),
+    );
+    let Some(AskBody::Question(questions)) = ask_card(&state).map(|card| card.body) else {
+        unreachable!()
+    };
+    assert!(questions[0].allow_other);
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    for _ in 0..questions[0].options.len() {
+        view.key(&state, key(KeyCode::Down), theme());
+    }
+    let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
+    assert!(text(&buffer).contains("Something else…"));
+    // 'f' would open the reader anywhere else on the card.
+    typed(&mut view, &state, "fish");
+    let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
+    let screen = text(&buffer);
+    assert!(screen.contains("Something else: fish"), "{screen}");
+    assert!(view.reader.is_none());
+}

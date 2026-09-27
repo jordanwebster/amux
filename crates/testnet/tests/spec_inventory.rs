@@ -132,6 +132,18 @@ async fn a_trusted_host_stays_in_every_snapshot_while_unreachable() {
         )
         .await
         .unwrap();
+    // A call that has to reach it says which host could not be reached, by
+    // the name a person knows it by.
+    let refused = wire::client_service_server::ClientService::stop_agent(
+        &net.client("laptop").unwrap(),
+        tonic::Request::new(wire::StopAgentRequest {
+            agent_id: net.agent("worker").unwrap().id.as_bytes().to_vec(),
+            ..wire::StopAgentRequest::default()
+        }),
+    )
+    .await
+    .expect_err("the desk cannot be reached");
+    assert_eq!(refused.message(), "desk cannot be reached");
     let mut reopened = net.observe_inventory("laptop").await.unwrap();
     let opening = reopened
         .observe_until(observe::inventory_caught_up, PATIENCE)

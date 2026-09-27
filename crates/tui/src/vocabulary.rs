@@ -538,9 +538,25 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_command",
-            "A command running, one succeeded with its output head, one failed with its exit code, opened.",
+            "A command waiting for the person's permission, one running, one denied with a note, one succeeded with its output head, one failed with its exit code, opened.",
             vec![
+                (
+                    Row {
+                        attention: true,
+                        ..command(ToolStateView::Running, None, &[], 0)
+                    },
+                    CLOSED,
+                ),
                 (command(ToolStateView::Running, None, &[], 0), CLOSED),
+                (
+                    decided(
+                        command(ToolStateView::Denied, None, &[], 0),
+                        DecisionView::Denied,
+                        None,
+                        Some("Use cargo clean instead"),
+                    ),
+                    CLOSED,
+                ),
                 (
                     command(
                         ToolStateView::Succeeded,

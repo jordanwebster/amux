@@ -18,7 +18,7 @@
 ## 31 recorded 30: fact Stream type=system subtype=init uuid=e4edb38b-8199-4b71-80e1-0d7b3ef76bdd
   row    7 boundary:2 Boundary { kind: Forked, cause: "" }
 ## 36 recorded 35: fact Stream type=assistant uuid=92e5fe46-e56f-40b7-bbe1-3da507dcd5b7
-  row    8 msg_011CeW3a4ns6SjojyajT2Ggc:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.\n\nI should respond with:\nALBATROSS", open: false, duration_ms: Some(0) }
+  row    8 msg_011CeW3a4ns6SjojyajT2Ggc:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.\n\nI should respond with:\nALBATROSS", open: false, duration_ms: None }
 ## 37 recorded 36: fact Stream type=assistant uuid=a2b48ca8-0a62-4d8e-8bb0-2756dcfcee3f
   row    9 msg_011CeW3a4ns6SjojyajT2Ggc:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
 ## 39 recorded 38: fact Stream type=result subtype=success uuid=4f0d1638-401b-4888-86b7-e7303b5b7ed0
@@ -32,7 +32,7 @@
      5 turn:1 TurnEnd { duration_ms: Some(2335), cost_usd: Some(0.022981), failed: false }
      6 73746469-6e2d-4400-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }
      7 boundary:2 Boundary { kind: Forked, cause: "" }
-     8 msg_011CeW3a4ns6SjojyajT2Ggc:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.\n\nI should respond with:\nALBATROSS", open: false, duration_ms: Some(0) }
+     8 msg_011CeW3a4ns6SjojyajT2Ggc:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.\n\nI should respond with:\nALBATROSS", open: false, duration_ms: None }
      9 msg_011CeW3a4ns6SjojyajT2Ggc:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
     10 turn:2 TurnEnd { duration_ms: Some(1316), cost_usd: Some(0.0034633000000000003), failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 28102, window_tokens: Some(200000), percent: Some(14), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: false, windows: [("five_hour", 19.0, Some(1787970000000)), ("seven_day", 83.0, Some(1787976000000))], credits: None }), failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

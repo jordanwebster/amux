@@ -187,6 +187,18 @@ impl ChatView {
         self.card_takes_keys(state).is_none() && self.tray.is_none() && !self.editor.is_empty()
     }
 
+    /// Whether `key` opens the key help: '?' while the empty composer has
+    /// the keys. Every other field that is open, a review comment or an
+    /// answer among them, types it.
+    pub fn opens_help(&self, state: &SessionState, key: KeyEvent) -> bool {
+        key.code == KeyCode::Char('?')
+            && !self.review_open
+            && self.reader.is_none()
+            && ask_card(state).is_none()
+            && self.tray.is_none()
+            && self.editor.is_empty()
+    }
+
     /// Ctrl+C on a field with text: clears it as a kill.
     pub fn kill_field(&mut self) -> bool {
         if self.review_open {
@@ -888,7 +900,25 @@ fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<
         about.push_str(&format!(" @ {host}"));
     }
     push(&mut line, about, theme.muted(), width);
+    let away_words = || {
+        let host = if host.is_empty() { "host" } else { &host };
+        match away {
+            Away::Plain => format!("{host} away · not current"),
+            Away::SignedOut => format!("{host} away · this machine is signed out"),
+            Away::Revoked => format!("{host} no longer trusts this machine"),
+        }
+    };
+    // The session's host entry follows the fleet; this machine's own is
+    // always online.
+    let host_away = state
+        .host()
+        .is_some_and(|entry| entry.presence != wire::Presence::Online as i32);
     let (words, style) = match (state.composer(), state.phase()) {
+        // Resuming asks the host, so why it is away matters more than how
+        // the agent ended.
+        (_, PhaseView::Exited { .. }) if host_away => {
+            (format!("exited · {}", away_words()), theme.warn())
+        }
         (_, PhaseView::Exited { cause }) => (
             match cause {
                 Some(cause) if !cause.is_empty() && cause != "exited" => {
@@ -898,17 +928,7 @@ fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<
             },
             theme.muted(),
         ),
-        (Composer::Disabled(Waiting::Detached), _) => {
-            let host = if host.is_empty() { "host" } else { &host };
-            (
-                match away {
-                    Away::Plain => format!("{host} away · not current"),
-                    Away::SignedOut => format!("{host} away · this machine is signed out"),
-                    Away::Revoked => format!("{host} no longer trusts this machine"),
-                },
-                theme.warn(),
-            )
-        }
+        (Composer::Disabled(Waiting::Detached), _) => (away_words(), theme.warn()),
         (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
         (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
         (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),

@@ -117,8 +117,8 @@ pub enum Away {
     /// nothing for it; a host only the relay reaches is away until it signs
     /// in again.
     SignedOut,
-    /// The host said, as it closed its link, that it no longer trusts this
-    /// machine; only pairing again brings it back.
+    /// The host said it no longer trusts this machine, as it closed its
+    /// link or refused a stream; only pairing again brings it back.
     Revoked,
 }
 

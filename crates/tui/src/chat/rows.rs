@@ -69,6 +69,29 @@ fn state_meta(state: ToolStateView) -> Option<&'static str> {
     }
 }
 
+/// A call's verb says what happened to it: waiting for the person, under
+/// way, refused, cancelled or done. The meta then never repeats it.
+fn call_verb(
+    state: ToolStateView,
+    row: &Row,
+    [wants, doing, done]: [&'static str; 3],
+) -> &'static str {
+    let denied = state == ToolStateView::Denied
+        || row
+            .decision
+            .as_ref()
+            .is_some_and(|decision| decision.outcome == DecisionView::Denied);
+    match state {
+        _ if denied => "Denied",
+        ToolStateView::Pending => wants,
+        // An open ask on the call: it runs only if the person allows it.
+        ToolStateView::Running if row.attention && row.decision.is_none() => wants,
+        ToolStateView::Running => doing,
+        ToolStateView::Cancelled => "Cancelled",
+        ToolStateView::Succeeded | ToolStateView::Failed | ToolStateView::Denied => done,
+    }
+}
+
 fn state_glyph(state: ToolStateView, done: &'static str, theme: Theme) -> (&'static str, Style) {
     match state {
         ToolStateView::Pending | ToolStateView::Running => ("▸", theme.accent()),
@@ -213,16 +236,21 @@ pub fn segment_lines(
     lines
 }
 
-fn decision_meta(decision: &Decision) -> String {
-    let mut parts = vec![
-        match decision.outcome {
-            DecisionView::Allowed => "allowed",
-            DecisionView::Denied => "denied",
-            DecisionView::AutoApproved => "auto-approved",
-            DecisionView::Dismissed => "dismissed",
-        }
-        .to_owned(),
-    ];
+/// A decision's meta; without its outcome word when the row's verb says
+/// it.
+fn decision_meta(decision: &Decision, said: bool) -> String {
+    let mut parts = Vec::new();
+    if !said {
+        parts.push(
+            match decision.outcome {
+                DecisionView::Allowed => "allowed",
+                DecisionView::Denied => "denied",
+                DecisionView::AutoApproved => "auto-approved",
+                DecisionView::Dismissed => "dismissed",
+            }
+            .to_owned(),
+        );
+    }
     if let Some(scope) = &decision.scope {
         parts.push(scope.clone());
     }
@@ -239,6 +267,12 @@ fn decision_meta(decision: &Decision) -> String {
 /// already says allowed or denied, so the call's own state word for the
 /// same thing is dropped.
 fn with_decision(meta: String, row: &Row) -> String {
+    with_decision_after(meta, row, "")
+}
+
+/// [`with_decision`] on a row whose verb may already say the outcome, as
+/// "Denied" does.
+fn with_decision_after(meta: String, row: &Row, verb: &str) -> String {
     let Some(decision) = &row.decision else {
         return meta;
     };
@@ -246,9 +280,12 @@ fn with_decision(meta: String, row: &Row) -> String {
         .split(" · ")
         .filter(|part| !part.is_empty() && !matches!(*part, "denied" | "cancelled" | "waiting"))
         .collect();
-    let decided = decision_meta(decision);
-    if kept.is_empty() {
-        decided
+    let decided = decision_meta(
+        decision,
+        verb == "Denied" && decision.outcome == DecisionView::Denied,
+    );
+    if decided.is_empty() || kept.is_empty() {
+        [kept.join(" · "), decided].concat()
     } else {
         format!("{} · {decided}", kept.join(" · "))
     }
@@ -405,18 +442,19 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
             } else {
                 format!("{server} · {tool}")
             };
+            let verb = call_verb(*tool_state, row, ["Wants to use", "Using", "Used"]);
             let mut meta = fact.clone();
-            if let Some(word) = state_meta(*tool_state) {
+            if *tool_state == ToolStateView::Failed {
                 meta = if meta.is_empty() {
-                    word.into()
+                    "failed".into()
                 } else {
-                    format!("{meta} · {word}")
+                    format!("{meta} · failed")
                 };
             }
-            let meta = with_decision(meta, row);
+            let meta = with_decision_after(meta, row, verb);
             let mut lines = vec![head(
                 state_glyph(*tool_state, "✔", theme),
-                "Used",
+                verb,
                 &subject,
                 &meta,
                 width,
@@ -486,25 +524,17 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
             more_lines,
             duration_ms,
         } => {
+            let verb = call_verb(*tool_state, row, ["Wants to run", "Running", "Ran"]);
             let mut meta = Vec::new();
             match (exit_code, tool_state) {
                 (Some(code), _) if *code != 0 => meta.push(format!("exit {code}")),
                 (None, ToolStateView::Failed) => meta.push("failed".into()),
-                (_, state) => meta.extend(
-                    state_meta(*state)
-                        .filter(|_| *state != ToolStateView::Failed)
-                        .map(str::to_owned),
-                ),
+                _ => {}
             }
             if let Some(ms) = duration_ms {
                 meta.push(text::duration(*ms));
             }
-            let meta = with_decision(meta.join(" · "), row);
-            let verb = if matches!(tool_state, ToolStateView::Running | ToolStateView::Pending) {
-                "Running"
-            } else {
-                "Ran"
-            };
+            let meta = with_decision_after(meta.join(" · "), row, verb);
             let mut lines = vec![head(
                 state_glyph(*tool_state, "✔", theme),
                 verb,

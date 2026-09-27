@@ -325,6 +325,24 @@ impl AskUi {
         }
     }
 
+    /// Whether the menu's highlight is on the current question's
+    /// "Something else…", where typing starts the answer.
+    fn on_other(&self, card: &AskCard) -> bool {
+        let AskBody::Question(questions) = &card.body else {
+            return false;
+        };
+        self.stage == Stage::Menu
+            && questions.get(self.step).is_some_and(|question| {
+                question.allow_other && self.selected == question.options.len()
+            })
+    }
+
+    fn open_other(&mut self, question: &QuestionView) {
+        self.other = Editor::default();
+        self.other.secret = question.secret;
+        self.stage = Stage::Other;
+    }
+
     fn reader(card: &AskCard) -> Option<AskAction> {
         let (title, text) = match &card.body {
             AskBody::Edit { path, diff, .. } => (path.clone(), diff.clone()),
@@ -363,7 +381,7 @@ impl AskUi {
             }
             CardState::Open | CardState::Rejected(_) => {}
         }
-        if key.code == KeyCode::Char('f') && !self.editing() {
+        if key.code == KeyCode::Char('f') && !self.editing() && !self.on_other(card) {
             return Self::reader(card).unwrap_or(AskAction::None);
         }
         if let AskBody::Question(questions) = &card.body {
@@ -605,9 +623,7 @@ impl AskUi {
                     return AskAction::Interrupt;
                 }
                 if self.selected == question.options.len() {
-                    self.other = Editor::default();
-                    self.other.secret = question.secret;
-                    self.stage = Stage::Other;
+                    self.open_other(question);
                     return AskAction::None;
                 }
                 if question.multi_select {
@@ -621,6 +637,18 @@ impl AskUi {
                     };
                 }
                 return self.advance(card, questions);
+            }
+            // Typing on "Something else…" starts the answer with what was
+            // typed; the digits stay the menu's.
+            KeyCode::Char(_)
+                if question.allow_other
+                    && self.selected == question.options.len()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.open_other(question);
+                self.other.key(key);
             }
             _ => {}
         }

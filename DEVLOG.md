@@ -1,3 +1,20 @@
+2026-09-27 — **Terminal client wording and keys from QA.**
+Typing '?' in a review comment opened a help screen and swallowed the next
+key; '?' now opens help only from the empty composer and types into every
+other field. Call rows lead with a verb for what happened: "Wants to run"
+while an ask waits on the call, "Running"/"Using" without a trailing
+"running", "Denied rm -rf target" with the note (no "Ran … denied"), and
+"Cancelled". `amux pair` with a wrong PIN says the PIN did not match (or
+the window closed) instead of printing INVALID_PIN. An exited agent whose
+host is away names why in the chat header ("exited · desk away · this
+machine is signed out"), and a forwarded call that cannot reach a host
+names it as it was paired ("desk cannot be reached") instead of by UUID.
+The daemon's cause for an agent found gone after a restart is "while the
+daemon was away", so no client reads "exited · exited …". A thinking row
+whose time is unknown (terminal Claude writes it with the row before) reads
+"Thought", never "Thought for 0ms". Typing while "Something else…" is
+highlighted opens the field with the keys, 'f' included.
+
 2026-09-27 — **A host learns over the relay that a peer no longer trusts it.**
 When the desk unpaired a tablet it reached only through the relay, the
 tablet kept listing the desk as online: the USER_REVOKED close goes only

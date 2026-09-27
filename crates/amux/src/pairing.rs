@@ -282,6 +282,10 @@ fn candidate<'a>(hosts: &'a [HostEntry], name: &str) -> Result<&'a HostEntry> {
 }
 
 async fn confirm(mut door: Door, profile: &ProfileInfo, pairing: BeginPairRequest) -> Result<()> {
+    let secret = match pairing.secret {
+        Some(begin_pair_request::Secret::QrSecret(_)) => "pairing link",
+        _ => "PIN",
+    };
     let pending = door
         .begin_pair(ProfileBeginPairRequest {
             operation_id: operation(),
@@ -289,7 +293,7 @@ async fn confirm(mut door: Door, profile: &ProfileInfo, pairing: BeginPairReques
             pairing: Some(pairing),
         })
         .await
-        .map_err(plain)?
+        .map_err(|status| refused(status, secret))?
         .into_inner();
     let peer = door
         .confirm_pair(ProfilePendingPairRequest {
@@ -300,12 +304,25 @@ async fn confirm(mut door: Door, profile: &ProfileInfo, pairing: BeginPairReques
             }),
         })
         .await
-        .map_err(plain)?
+        .map_err(|status| refused(status, secret))?
         .into_inner()
         .peer
         .unwrap_or_default();
     println!("{}", paired(&peer, &pending));
     Ok(())
+}
+
+/// A pairing's refusal in words. A wrong secret and a closed pairing
+/// window read the same on the wire, so a guesser learns nothing, and so
+/// the words name both.
+fn refused(status: tonic::Status, secret: &str) -> anyhow::Error {
+    if status.code() == tonic::Code::PermissionDenied && status.message() == "INVALID_PIN" {
+        return anyhow!(
+            "the {secret} did not match, or the other host's pairing window has closed; \
+             check the {secret} it shows and try again"
+        );
+    }
+    plain(status)
 }
 
 fn paired(peer: &PeerEntry, pending: &PendingPairResponse) -> String {
@@ -642,6 +659,22 @@ pub async fn logout(mut door: Door, profile: &ProfileInfo) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wrong_pin_is_refused_in_words() {
+        let refusal = refused(tonic::Status::permission_denied("INVALID_PIN"), "PIN").to_string();
+        assert_eq!(
+            refusal,
+            "the PIN did not match, or the other host's pairing window has closed; \
+             check the PIN it shows and try again"
+        );
+        assert!(!refusal.contains("INVALID_PIN"));
+        // Any other refusal reads as it did.
+        assert_eq!(
+            refused(tonic::Status::permission_denied("not allowed"), "PIN").to_string(),
+            "not allowed"
+        );
+    }
 
     #[test]
     fn a_pair_target_is_an_address_an_ssh_destination_or_a_name() {

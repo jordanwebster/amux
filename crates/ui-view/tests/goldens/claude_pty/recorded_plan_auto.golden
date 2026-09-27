@@ -12,7 +12,7 @@
   row    3 toolu_01MXgmxQYQDSMgBP7xGgnaYC Command { command: "cat README.md 2>/dev/null || echo \"NOT FOUND\"", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(500) }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 27 recorded 25: fact Transcript type=assistant uuid=c642dc93-7f82-4701-ab64-d977ff7b6593
-  row    4 c642dc93-7f82-4701-ab64-d977ff7b6593 Thinking { text: "", open: false, duration_ms: Some(0) }
+  row    4 c642dc93-7f82-4701-ab64-d977ff7b6593 Thinking { text: "", open: false, duration_ms: None }
 ## 29 recorded 27: fact Transcript type=user uuid=aecfa0ae-e06d-4822-8670-aaa38098673e
   row    3 toolu_01MXgmxQYQDSMgBP7xGgnaYC Command { command: "cat README.md 2>/dev/null || echo \"NOT FOUND\"", state: Succeeded, exit_code: None, output_head: ["CURRENT"], more_lines: 0, duration_ms: Some(500) }
 ## 38 recorded 36: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01HuAfsCW8FvRr5iyZt8Up84
@@ -22,7 +22,7 @@
   row    5 toolu_01HuAfsCW8FvRr5iyZt8Up84 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 44 recorded 42: fact Transcript type=assistant uuid=ee05acaa-d3b1-4310-8249-9fe53fdd2cf3
-  row    6 ee05acaa-d3b1-4310-8249-9fe53fdd2cf3 Thinking { text: "", open: false, duration_ms: Some(0) }
+  row    6 ee05acaa-d3b1-4310-8249-9fe53fdd2cf3 Thinking { text: "", open: false, duration_ms: None }
 ## 46 recorded 44: fact Transcript type=user uuid=cedcb714-fcf4-4d2b-ab61-099645f4574f
   row    5 toolu_01HuAfsCW8FvRr5iyZt8Up84 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
 ## 49 recorded 47: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01UbT2nWUMXVymiMwUBfmRiK
@@ -65,9 +65,9 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 1224baee-820a-4246-b67f-cfcfadf75a75 Prompt { text: [Text("Plan changing README.md's only line from CURRENT to UPDATED, then call ExitPlanMode. Do not ask questions.")], steered: false }
      3 toolu_01MXgmxQYQDSMgBP7xGgnaYC Command { command: "cat README.md 2>/dev/null || echo \"NOT FOUND\"", state: Succeeded, exit_code: None, output_head: ["CURRENT"], more_lines: 0, duration_ms: Some(500) }
-     4 c642dc93-7f82-4701-ab64-d977ff7b6593 Thinking { text: "", open: false, duration_ms: Some(0) }
+     4 c642dc93-7f82-4701-ab64-d977ff7b6593 Thinking { text: "", open: false, duration_ms: None }
      5 toolu_01HuAfsCW8FvRr5iyZt8Up84 FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
-     6 ee05acaa-d3b1-4310-8249-9fe53fdd2cf3 Thinking { text: "", open: false, duration_ms: Some(0) }
+     6 ee05acaa-d3b1-4310-8249-9fe53fdd2cf3 Thinking { text: "", open: false, duration_ms: None }
      7 toolu_01UbT2nWUMXVymiMwUBfmRiK Explore { verb: Search, subject: "select:ExitPlanMode", state: Succeeded }
      8 toolu_01KRCAuhBR8hvUPHSRDAiB9p Ask(Plan { plan: "# Context\n\nThe user wants README.md's single line of content changed from `CURRENT` to `UPDATED`. This is a trivial, isolated one-line edit.\n\n# Plan\n\n- Edit `README.md`, replacing its only line `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read `README.md` to confirm it now contains `UPDATED` and nothing else.\n", verdict: Approved, no…
      9 toolu_01MSt5E9ViPRq4nSpf3hbJii Explore { verb: Read, subject: "<MACHINE_PATH>", state: Succeeded }

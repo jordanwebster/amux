@@ -78,12 +78,12 @@ pub const TAIL_ROWS: u32 = 200;
 
 /// The exit causes the daemon records. It knows only what it asked for and
 /// what it saw; the agent's own account of its exit is its final boundary
-/// item.
+/// item. Clients show a cause after the word "exited", so none repeats it.
 pub const CAUSE_STOPPED: &str = "stopped";
 pub const CAUSE_ABORTED: &str = "aborted";
 pub const CAUSE_KILLED: &str = "killed";
 pub const CAUSE_EXITED: &str = "exited";
-pub const CAUSE_EXITED_AWAY: &str = "exited while the daemon was away";
+pub const CAUSE_EXITED_AWAY: &str = "while the daemon was away";
 pub const CAUSE_NO_DIRECTORY: &str = "its directory is gone";
 pub const CAUSE_UNSTARTED: &str = "the agent process could not start";
 

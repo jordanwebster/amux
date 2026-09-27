@@ -1,4 +1,8 @@
-  ▸ Running cargo test -p store                                                        running · 12s
+▌ ▸ Wants to run cargo test -p store                                                             12s
+
+  ▸ Running cargo test -p store                                                                  12s
+
+  ⊘ Denied cargo test -p store                                       12s · "Use cargo clean instead"
 
   ✔ Ran cargo test -p store                                                                      12s
     running 42 tests
@@ -11,7 +15,11 @@
     ··· 12 more lines
 
 --- styles
-..a.eeeeeee.ccccccccccccccccccc........................................................mmmmmmmmmmmmm
+a.a.eeeeeeeeeeee.ccccccccccccccccccc.............................................................mmm
+....................................................................................................
+..a.eeeeeee.ccccccccccccccccccc..................................................................mmm
+....................................................................................................
+..m.eeeeee.ccccccccccccccccccc.......................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 ....................................................................................................
 ..m.eee.ccccccccccccccccccc......................................................................mmm
 ....mmmmmmmmmmmmmmmm................................................................................

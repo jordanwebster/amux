@@ -12,7 +12,7 @@
   row    3 toolu_01CCKWYNmy7THHQyHVemofcc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 29 recorded 27: fact Transcript type=assistant uuid=8627bf34-f7e1-439f-8010-21bdf821e0ba
-  row    4 8627bf34-f7e1-439f-8010-21bdf821e0ba Thinking { text: "", open: false, duration_ms: Some(0) }
+  row    4 8627bf34-f7e1-439f-8010-21bdf821e0ba Thinking { text: "", open: false, duration_ms: None }
 ## 31 recorded 29: fact Transcript type=user uuid=bb4e1e3a-9c23-41ef-a35a-05e7bf2457af
   row    3 toolu_01CCKWYNmy7THHQyHVemofcc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
 ## 41 recorded 39: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01Egc5HsizMsVn1xBhztAhiU
@@ -37,7 +37,7 @@
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 9d93461f-f7ed-44fd-8de0-6196ce28c7df Prompt { text: [Text("Plan changing README.md's only line from CURRENT to UPDATED, then call ExitPlanMode. Do not ask questions.")], steered: false }
      3 toolu_01CCKWYNmy7THHQyHVemofcc FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 11 }, added: 11, removed: 0 }], state: Succeeded }
-     4 8627bf34-f7e1-439f-8010-21bdf821e0ba Thinking { text: "", open: false, duration_ms: Some(0) }
+     4 8627bf34-f7e1-439f-8010-21bdf821e0ba Thinking { text: "", open: false, duration_ms: None }
      5 toolu_01Egc5HsizMsVn1xBhztAhiU Explore { verb: Search, subject: "select:ExitPlanMode", state: Succeeded }
      6 toolu_012mL17q3UZCtEJ343VAWHka Ask(Plan { plan: "# Context\n\nThe user asked to change README.md's only line from `CURRENT` to `UPDATED`. This is a trivial, explicitly-specified text change.\n\n# Plan\n\n- Edit `README.md`, replacing its sole line's content `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read README.md after the edit to confirm it contains `UPDATED` and not `CURRENT`.\n", ve…
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 51419, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

@@ -288,7 +288,7 @@ impl ClientService for ClientApi {
                 .await;
             return match forwarded {
                 Ok(verdict) => Ok(Response::new(verdict)),
-                Err(ForwardError::Unreachable(_)) => {
+                Err(ForwardError::Unreachable { .. }) => {
                     Ok(Response::new(crate::relay::rejected(HOST_UNREACHABLE)))
                 }
                 Err(error) => Err(status(error.to_wire())),

@@ -266,7 +266,7 @@ impl ProfileRuntime {
             .await;
         match sent {
             Ok(_) => Ok(()),
-            Err(ForwardError::Unreachable(_)) => Err(RelayError::Unavailable),
+            Err(ForwardError::Unreachable { .. }) => Err(RelayError::Unavailable),
             Err(error) => match error.code() {
                 ErrorCode::NotFound => Err(RelayError::Stale),
                 ErrorCode::FailedPrecondition => Err(RelayError::Rejected(error.to_string())),

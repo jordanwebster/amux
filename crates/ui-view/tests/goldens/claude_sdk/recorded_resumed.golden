@@ -16,7 +16,7 @@
   row    6 73746469-6e2d-4400-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 29 recorded 28: fact Stream type=assistant uuid=34e88285-1b87-4017-b060-6d1b8a463d8c
-  row    7 msg_011CeW3Yn8yXiAArcPPibkqz:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.", open: false, duration_ms: Some(0) }
+  row    7 msg_011CeW3Yn8yXiAArcPPibkqz:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.", open: false, duration_ms: None }
 ## 30 recorded 29: fact Stream type=assistant uuid=262a9fba-ed92-4c0e-b3a9-1693137bf524
   row    8 msg_011CeW3Yn8yXiAArcPPibkqz:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
 ## 32 recorded 31: fact Stream type=result subtype=success uuid=a60fedaf-15ef-4505-8626-748bd69bfabe
@@ -29,7 +29,7 @@
      4 msg_011CeW3YaVFN1fZVnGSUSfbb:1 Prose { text: [Text("REMEMBERED")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(1418), cost_usd: Some(0.022579), failed: false }
      6 73746469-6e2d-4400-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }
-     7 msg_011CeW3Yn8yXiAArcPPibkqz:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.", open: false, duration_ms: Some(0) }
+     7 msg_011CeW3Yn8yXiAArcPPibkqz:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" in the previous message. Now they're asking me to reply with just that word.", open: false, duration_ms: None }
      8 msg_011CeW3Yn8yXiAArcPPibkqz:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
      9 turn:2 TurnEnd { duration_ms: Some(1033), cost_usd: Some(0.0032457000000000007), failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 28015, window_tokens: Some(200000), percent: Some(14), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: Some(UsageView { blocked: false, windows: [("five_hour", 19.0, Some(1787970000000)), ("seven_day", 83.0, Some(1787976000000))], credits: None }), failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

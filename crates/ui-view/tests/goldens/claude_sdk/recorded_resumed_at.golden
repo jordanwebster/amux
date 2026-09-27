@@ -26,7 +26,7 @@
   row   10 73746469-6e2d-4500-8000-000000000000 Prompt { text: [Text("List every word I asked you to remember, and nothing else.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 138 recorded 137: fact Stream type=assistant uuid=48804f23-114a-4733-9b11-f301067f7dea
-  row   11 msg_011CeXyLBWao6sWd7QVvXTek:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\". Then they asked me to list every word they asked me to remember, and nothing else.\n\nSo the word they asked me to remember is: ALBATROSS\n\nI should list just this word and nothing else.", open: false, duration_ms: Some(0) }
+  row   11 msg_011CeXyLBWao6sWd7QVvXTek:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\". Then they asked me to list every word they asked me to remember, and nothing else.\n\nSo the word they asked me to remember is: ALBATROSS\n\nI should list just this word and nothing else.", open: false, duration_ms: None }
 ## 139 recorded 138: fact Stream type=assistant uuid=c464d8f0-8ae6-4422-91ec-46e4cd2e8812
   row   12 msg_011CeXyLBWao6sWd7QVvXTek:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
 ## 141 recorded 140: fact Stream type=result subtype=success uuid=5f6d7739-cfeb-47ac-8d51-9d613bd437d2
@@ -43,7 +43,7 @@
      8 msg_011CeXyKyX1t4RuCoVfW18S9:1 Prose { text: [Text("REMEMBERED")], streaming: false, working_note: false }
      9 turn:2 TurnEnd { duration_ms: Some(1511), cost_usd: Some(0.0258283), failed: false }
     10 73746469-6e2d-4500-8000-000000000000 Prompt { text: [Text("List every word I asked you to remember, and nothing else.")], steered: false }
-    11 msg_011CeXyLBWao6sWd7QVvXTek:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\". Then they asked me to list every word they asked me to remember, and nothing else.\n\nSo the word they asked me to remember is: ALBATROSS\n\nI should list just this word and nothing else.", open: false, duration_ms: Some(0) }
+    11 msg_011CeXyLBWao6sWd7QVvXTek:0 Thinking { text: "The user asked me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\". Then they asked me to list every word they asked me to remember, and nothing else.\n\nSo the word they asked me to remember is: ALBATROSS\n\nI should list just this word and nothing else.", open: false, duration_ms: None }
     12 msg_011CeXyLBWao6sWd7QVvXTek:1 Prose { text: [Text("ALBATROSS")], streaming: false, working_note: false }
     13 turn:3 TurnEnd { duration_ms: Some(1542), cost_usd: Some(0.0029433000000000003), failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 24476, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

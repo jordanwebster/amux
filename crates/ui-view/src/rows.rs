@@ -698,6 +698,9 @@ fn thinking(state: &SessionState, held: &Held, complete: bool) -> RowKind {
 }
 
 /// "Thought for 8s": the thinking item's time minus the item before it.
+/// None when that is nothing: terminal Claude's thinking row lands with
+/// the item before it, so the two times say nothing about how long it
+/// thought.
 fn thinking_duration(state: &SessionState, held: &Held, complete: bool) -> Option<i64> {
     if !complete {
         return None;
@@ -706,7 +709,7 @@ fn thinking_duration(state: &SessionState, held: &Held, complete: bool) -> Optio
         .transcript()
         .range(0..=held.item.order.saturating_sub(1))
         .next_back()?;
-    Some((held.item.at_ms - before.item.at_ms).max(0))
+    Some(held.item.at_ms - before.item.at_ms).filter(|ms| *ms > 0)
 }
 
 fn turn_row(held: &Held, turn: &wire::Turn) -> RowKind {

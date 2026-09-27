@@ -629,8 +629,7 @@ impl App {
         };
         let effects = {
             let state = chat.session.state();
-            let composing = ui_view::ask_card(&state).is_none() && chat.view.tray.is_none();
-            if key.code == KeyCode::Char('?') && composing && chat.view.editor.is_empty() {
+            if chat.view.opens_help(&state, key) {
                 self.help = true;
                 return Flow::Continue;
             }
