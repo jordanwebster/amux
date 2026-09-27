@@ -165,22 +165,25 @@
     {
       "id": "conversation-decision-claude-pty",
       "stage": 15,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-stories.json",
+      "phone_topology": "journeys/topologies/phone-stories.json",
       "claim": "A person sends one prompt through the real terminal client to a Claude PTY session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host independently records the prompt and decision."
     },
     {
       "id": "conversation-decision-claude-sdk",
       "stage": 15,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-stories.json",
+      "phone_topology": "journeys/topologies/phone-stories.json",
       "claim": "A person sends one prompt through the real terminal client to a headless Claude session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host records the prompt once and the provider receives exactly one allow."
     },
     {
       "id": "conversation-decision-codex",
       "stage": 15,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-stories.json",
+      "phone_topology": "journeys/topologies/phone-stories.json",
       "claim": "A person sends one prompt through the real terminal client to a Codex session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host records the prompt once and the provider receives exactly one allow."
     },
     {

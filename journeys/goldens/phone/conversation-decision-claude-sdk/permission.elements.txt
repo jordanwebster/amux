@@ -1,26 +1,37 @@
 shell |  | agents | 0,62,402,778
 home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
-home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
+home.subtitle |  | 1 need you · 5 agents | 60,105,151,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<desk-work> | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
-home.row.<desk-work>.age.volatile | <volatile>
-home.row.<desk-work>.detail.volatile | <volatile>
-chat |  | desk-work | 0,62,402,778
-chat.row.prompt | Hello from the phone. |  | 18,132,366,40
+home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
+home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.detail.volatile | <volatile>
+home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
+home.row.<reviewer>.age.volatile | <volatile>
+home.row.<reviewer>.detail.volatile | <volatile>
+home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.detail.volatile | <volatile>
+home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
+home.row.<decision-codex>.age.volatile | <volatile>
+home.row.<decision-codex>.detail.volatile | <volatile>
+home.row.<decision-sdk> | decision-sdk, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,462,366,70
+home.row.<decision-sdk>.age.volatile | <volatile>
+chat |  | decision-sdk | 0,62,402,778
+chat.row.prompt | Check the deployment once. |  | 18,132,366,40
 chat.row.boundary | Started |  | 18,184,366,16
-chat.row.prose | The desk is reachable. | final | 18,211,366,20
-chat.prose.render |  | rendered | 18,211,366,20
-chat.row.turn-end | <volatile>
+chat.row.command | Wants to run, deploy --check |  | 18,211,366,20
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
-chat.title | desk-work | desk-work | 51,72,156,38
+chat.title | decision-sdk | decision-sdk | 51,72,156,38
 chat.more | More |  | 344,69,44,44
-chat.field | Message desk-work |  | 26,755,350,20
-chat.attach | Attach |  | 26,783,37,36
-chat.dictate | Dictate | idle | 55,781,33,40
-chat.model | claude-fake-1 · default |  | 83,792,180,17
-chat.send | Send |  | 342,784,34,34 (disabled)
+ask | Wants to run a command | open | 12,536,378,294
+ask.more | More |  | 345,547,41,30
+ask.subject | deploy --check |  | 28,584,118,18
+ask.choice.0 | Allow once |  | 28,614,346,44
+ask.choice.1 | Always allow Bash in this project |  | 28,666,346,44
+ask.choice.2 | Deny… |  | 28,718,346,44
+ask.choice.3 | Deny and stop… |  | 28,770,346,44
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -43,16 +54,18 @@ you.report | Report a Problem |  | 18,499,366,46
 you.dump | Export Diagnostics |  | 18,545,366,46
 you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
- | desk-work, /t/a/n/d/work · desk |  | 51,72,156,38
+ | decision-sdk, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Hello from the phone. |  | 197,132,187,40
+ | Check the deployment once. |  | 145,132,239,40
  | Started |  | 18,184,366,16
- | The desk is reachable. |  | 18,211,366,20
- | Worked <t> · $0.00 |  | 45,243,130,16
- | Attach |  | 26,783,37,36
- | Dictate |  | 55,781,33,40
- | claude-fake-1 · default |  | 83,792,180,17
- | Send |  | 342,784,34,34 (disabled)
+ | Wants to run, deploy --check |  | 18,211,366,20
+ | Wants to run a command |  | 46,552,189,20
+ | More |  | 345,547,41,30
+ | deploy --check |  | 28,584,118,18
+ | Allow once |  | 28,614,346,44
+ | Always allow Bash in this project |  | 28,666,346,44
+ | Deny… |  | 28,718,346,44
+ | Deny and stop… |  | 28,770,346,44
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

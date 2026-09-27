@@ -1,3 +1,18 @@
+2026-09-27 — **The phone runs the three conversation-decision stories, with steady screens.**
+On a topology of its own (the desk advertising to the phone's browser), the
+phone pairs by keypad, opens terminal Claude, headless Claude and Codex,
+sends the prompt, taps Allow once on the permission card and reads the
+settled turn; the desk holds the prompt once and the headless kinds'
+providers received exactly one allow. `testnet serve --root-in DIR` puts the
+net's root at DIR/net, and the phone driver serves every story from one
+fixed directory (serialized across checkouts by a lock), so the paths the
+phone draws in asks and rows are the same each run. A chat row's meta (its
+duration) is a volatile surface; volatile surfaces record only that they are
+drawn. Journey pixels allow up to 600 differing pixels at tolerance 12 for
+the glass header, which the render server resolves slightly differently per
+presentation; the geometry beside each screen still compares every word and
+frame exactly.
+
 2026-09-27 — **The phone's journeys run on a Python driver through the app's door.**
 scripts/journeys/phone.py mirrors the terminal driver: it serves a topology
 with `testnet serve`, installs the debug app fresh on the leased simulator,

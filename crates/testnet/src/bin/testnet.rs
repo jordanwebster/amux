@@ -24,6 +24,10 @@ enum Command {
         /// Where the control socket listens.
         #[arg(long, default_value = "127.0.0.1:0")]
         control: SocketAddr,
+        /// Put the net's root at DIR/net instead of a random temporary
+        /// directory, so every path a client draws is the same each run.
+        #[arg(long, value_name = "DIR")]
+        root_in: Option<PathBuf>,
     },
 }
 
@@ -35,9 +39,18 @@ async fn main() -> Result<()> {
             .with_writer(std::io::stderr)
             .init();
     }
-    let Command::Serve { topology, control } = Cli::parse().command;
+    let Command::Serve {
+        topology,
+        control,
+        root_in,
+    } = Cli::parse().command;
     let topology = Topology::load(&topology)?;
-    let mut served = testnet::door::serve(topology, control)
+    let options = testnet::NetOptions {
+        clock: testnet::ClockMode::Wall,
+        root_in,
+        ..testnet::NetOptions::default()
+    };
+    let mut served = testnet::door::serve_with(topology, control, options)
         .await
         .context("serving the topology")?;
     println!("{}", serde_json::to_string(&served.readiness)?);

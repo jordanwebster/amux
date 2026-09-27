@@ -1,0 +1,167 @@
+{
+  "scope": "phone-stories",
+  "hosts": [
+    {
+      "name": "desk",
+      "lan": true,
+      "bonjour": true,
+      "script": {
+        "steps": [
+          {
+            "text": {
+              "chunks": [
+                "Ready when you are."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    }
+  ],
+  "agents": [
+    {
+      "name": "decision-pty",
+      "host": "desk",
+      "kind": "claude_pty",
+      "script": {
+        "steps": [
+          {
+            "ask": {
+              "permission": {
+                "name": "Bash",
+                "class": "consequential",
+                "input": {
+                  "command": "deploy --check"
+                },
+                "outcome": {
+                  "output": "deploy check: ok"
+                }
+              }
+            }
+          },
+          {
+            "text": {
+              "chunks": [
+                "The deploy check passed."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    },
+    {
+      "name": "decision-sdk",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {
+        "steps": [
+          {
+            "ask": {
+              "permission": {
+                "name": "Bash",
+                "class": "consequential",
+                "input": {
+                  "command": "deploy --check"
+                },
+                "outcome": {
+                  "output": "deploy check: ok"
+                }
+              }
+            }
+          },
+          {
+            "text": {
+              "chunks": [
+                "The deploy check passed."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    },
+    {
+      "name": "decision-codex",
+      "host": "desk",
+      "kind": "codex",
+      "script": {
+        "steps": [
+          {
+            "ask": {
+              "permission": {
+                "class": "consequential",
+                "input": {
+                  "command": "deploy --check"
+                },
+                "outcome": {
+                  "output": "deploy check: ok"
+                }
+              }
+            }
+          },
+          {
+            "text": {
+              "chunks": [
+                "The deploy check passed."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    },
+    {
+      "name": "keeper",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Remember this recovery turn.",
+      "script": {
+        "steps": [
+          {
+            "text": {
+              "chunks": [
+                "The recovery state is safely stored."
+              ]
+            }
+          },
+          "turn_end",
+          {
+            "text": {
+              "chunks": [
+                "A second turn arrived while you were away."
+              ]
+            }
+          },
+          "turn_end",
+          {
+            "text": {
+              "chunks": [
+                "Back after the restart."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    },
+    {
+      "name": "reviewer",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {
+        "steps": [
+          {
+            "text": {
+              "chunks": [
+                "I read the review."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    }
+  ]
+}

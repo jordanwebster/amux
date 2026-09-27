@@ -72,6 +72,10 @@ pub struct NetOptions {
     pub driven: Option<DrivenClock>,
     pub edge: Option<EdgeHook>,
     pub launch: Option<LaunchHook>,
+    /// Put the net's root at `<dir>/net` rather than at a fresh random
+    /// temporary directory, so a client that draws the net's paths draws the
+    /// same ones on every run. The directory must not already hold a `net`.
+    pub root_in: Option<PathBuf>,
 }
 
 /// A verb's acknowledgement: what was installed, at what policy time.
@@ -233,7 +237,13 @@ impl Net {
             Some(driven) => Arc::new(driven.clone()),
             None => Arc::new(agent_dir::SystemClock),
         };
-        let root = tempfile::Builder::new().prefix("testnet").tempdir()?;
+        let root = match &options.root_in {
+            Some(dir) => tempfile::Builder::new()
+                .prefix("net")
+                .rand_bytes(0)
+                .tempdir_in(dir)?,
+            None => tempfile::Builder::new().prefix("testnet").tempdir()?,
+        };
         std::fs::create_dir_all(root.path().join("gates"))?;
         std::fs::create_dir_all(root.path().join("scripts"))?;
         let mut net = Self {

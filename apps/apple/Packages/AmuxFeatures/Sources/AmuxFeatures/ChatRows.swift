@@ -275,6 +275,8 @@ struct RailRow: View {
                 .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
                 .lineLimit(1)
                 .fixedSize()
+                // Usually a measured duration: a compared screenshot masks it.
+                .reported("chat.row.meta.volatile")
         }
     }
 

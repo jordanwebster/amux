@@ -81,8 +81,8 @@ class ComparingScreens(unittest.TestCase):
             drawn.splitlines(),
             [
                 "home.row.<desk-work> | desk-work, Idle, desk, <age> | idle | 0,100,390,60",
-                "home.row.<desk-work>.age.volatile | <volatile> | 340,104,30,14",
-                "hosts.fact.identity | <volatile> | 16,500,358,44",
+                "home.row.<desk-work>.age.volatile | <volatile>",
+                "hosts.fact.identity | <volatile>",
                 "chat.send | Send |  | 350,700,44,44 (disabled)",
                 "home.row.<id> |  |  | 0,0,1,1",
             ],

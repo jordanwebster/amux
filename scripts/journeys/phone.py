@@ -16,6 +16,7 @@ the acts and the assertions; UPDATE_JOURNEY_GOLDENS=1 rewrites the goldens.
 from __future__ import annotations
 
 import difflib
+import fcntl
 import json
 import os
 import re
@@ -23,7 +24,6 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 from typing import Callable
 
@@ -37,6 +37,8 @@ BUNDLE_ID = "sh.amux.app"
 MANIFEST = ROOT / "journeys/manifest.json"
 OUTPUT = ROOT / "target/journeys/phone"
 GOLDENS = ROOT / "journeys/goldens/phone"
+SCRATCH_DIR = Path("/tmp/amux-phone-journey")
+SCRATCH_LOCK = Path("/tmp/amux-phone-journey.lock")
 # The pinned simulator whose system-chrome masks every comparison uses.
 SIMULATOR = "golden"
 # How far one channel may move before a pixel counts as different. A journey
@@ -45,6 +47,12 @@ SIMULATOR = "golden"
 # changed word, place or colour moves pixels far further. Colour precision is
 # the whole-screen goldens' job, which photograph fixed screens.
 TOLERANCE = 12
+# How many pixels may differ beyond that: the glass header now and then
+# resolves some two hundred pixels of its edge and shadow further apart. The
+# element geometry beside each screen compares every word and frame exactly,
+# so the pixels are there for what geometry cannot say (colour, clipping,
+# overlap), and any of those moves thousands.
+MAX_DIFFERING = 600
 # The golden simulator draws three pixels to the point.
 SCALE = 3
 # A surface a view reports under a name ending here holds text that moves with
@@ -142,9 +150,11 @@ def geometry(elements: list[dict], named: tuple[str, ...] = (), ids: dict[str, s
         frame = element["frame"]
         where = ",".join(str(round(frame[key])) for key in ("x", "y", "width", "height"))
         if is_volatile(element["identifier"], named):
-            words = "<volatile>"
-        else:
-            words = normalize(f"{element.get('label') or ''} | {element.get('value') or ''}")
+            # Its size follows its words (a duration's width), so only that
+            # it is drawn is recorded.
+            lines.append(named_ids(f"{element['identifier']} | <volatile>", ids))
+            continue
+        words = normalize(f"{element.get('label') or ''} | {element.get('value') or ''}")
         state = "" if element.get("enabled", True) else " (disabled)"
         lines.append(named_ids(f"{element['identifier']} | {words} | {where}{state}", ids))
     return "\n".join(lines) + "\n"
@@ -183,9 +193,15 @@ class PhoneJourney:
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
         self.topology = json.loads(topology.read_text())
-        # Short: daemons bind Unix sockets under it.
-        self.scratch_owner = tempfile.TemporaryDirectory(prefix="aj-", dir="/tmp")
-        self.scratch = Path(self.scratch_owner.name)
+        # One fixed place, so every path the phone draws (an agent's working
+        # directory, an ask's scope) is the same on every run and every
+        # machine. Short: daemons bind Unix sockets under it. Journeys in
+        # other checkouts wait for it on the lock.
+        self.lock = open(SCRATCH_LOCK, "w")
+        fcntl.flock(self.lock, fcntl.LOCK_EX)
+        shutil.rmtree(SCRATCH_DIR, ignore_errors=True)
+        SCRATCH_DIR.mkdir()
+        self.scratch = SCRATCH_DIR
         self.actions: list[str] = []
         self.observations: dict[str, object] = {}
         self.process: subprocess.Popen[bytes] | None = None
@@ -195,7 +211,7 @@ class PhoneJourney:
         self.env.update({key: str(self.scratch) for key in ("TMPDIR", "TMP", "TEMP")})
         self.env["AMUX_TEST_DISCOVERY_MODE"] = "disabled"
         self.process = subprocess.Popen(
-            [str(TESTNET), "serve", str(topology)],
+            [str(TESTNET), "serve", str(topology), "--root-in", str(self.scratch)],
             cwd=ROOT,
             env=self.env,
             stdout=subprocess.PIPE,
@@ -424,6 +440,7 @@ class PhoneJourney:
                 "--out", str(self.output / "diff" / label),
                 "--simulator", SIMULATOR,
                 "--tolerance", str(TOLERANCE),
+                "--max-differing", str(MAX_DIFFERING),
                 *[argument for mask in masks for argument in ("--mask", mask)],
             ],
             cwd=ROOT, text=True, capture_output=True, timeout=600,
@@ -481,7 +498,8 @@ class PhoneJourney:
                     raise RuntimeError("testnet did not shut down within a minute")
             (self.output / "actions.txt").write_text("\n".join(self.actions) + "\n")
         finally:
-            self.scratch_owner.cleanup()
+            shutil.rmtree(self.scratch, ignore_errors=True)
+            self.lock.close()
 
 
 def story(name: str) -> dict:
