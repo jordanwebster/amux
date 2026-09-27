@@ -311,6 +311,9 @@ fn describe_settings(out: &mut String, state: &SessionState) {
             let _ = writeln!(out, "  refused {setting}: {refusal}");
         }
     }
+    if let Some(typing) = &view.change_by_typing {
+        let _ = writeln!(out, "  by typing: {typing}");
+    }
 }
 
 fn check(

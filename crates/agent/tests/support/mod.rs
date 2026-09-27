@@ -114,9 +114,6 @@ pub struct Setup {
     pub offers_auto_mode: bool,
     /// Terminal Claude asks whether its folder is trusted first.
     pub untrusted_folder: bool,
-    /// The models and commands the provider offers.
-    pub models: Vec<provider_fakes::OfferedModel>,
-    pub commands: Vec<provider_fakes::OfferedCommand>,
 }
 
 impl Setup {
@@ -137,8 +134,6 @@ impl Setup {
             journal_bytes: 0,
             offers_auto_mode: false,
             untrusted_folder: false,
-            models: Vec::new(),
-            commands: Vec::new(),
         }
     }
 }
@@ -207,8 +202,6 @@ impl Agent {
             steps: setup.steps,
             offers_auto_mode: setup.offers_auto_mode,
             untrusted_folder: setup.untrusted_folder,
-            models: setup.models,
-            commands: setup.commands,
             ..Script::default()
         };
         let script = serde_json::to_string(&script)
@@ -814,27 +807,6 @@ impl Log {
     /// What the newest snapshot says the agent is working on.
     pub fn working_on(&self) -> Option<String> {
         self.snapshot()?.working_on.clone()
-    }
-
-    /// What the newest terminal Claude snapshot says it offers: the model
-    /// values and the command names.
-    pub fn offered(&self) -> (Vec<String>, Vec<String>) {
-        let Some(snapshot) = self.snapshot() else {
-            return Default::default();
-        };
-        let snapshot = wire::ClaudePtySnapshot::decode(snapshot.body.as_slice()).unwrap();
-        (
-            snapshot
-                .models
-                .into_iter()
-                .map(|model| model.value)
-                .collect(),
-            snapshot
-                .commands
-                .into_iter()
-                .map(|command| command.name)
-                .collect(),
-        )
     }
 
     /// The permission mode the newest terminal Claude snapshot reports.

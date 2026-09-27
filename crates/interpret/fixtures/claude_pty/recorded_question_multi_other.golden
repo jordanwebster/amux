@@ -1,23 +1,23 @@
 ## 0 initial
-snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? models=[] commands=0 context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.251"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<MACHINE_PATH>"
 item boundary:1 boundary final at=1788070570788 text="" BOUNDARY_KIND_STARTED session=05eea9d2-cd6a-48bc-b070-2d0092901e50 version=2.1.251 keymap=claude-2.1
-snapshot IDLE queue=[] working_on=- at=1788070570788 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=? models=[] commands=0 context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1788070570788 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
 ## 6 recorded 4: fact Transcript type=permission-mode
-snapshot IDLE queue=[] working_on=- at=1788070570899 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1788070570899 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
 ## 11 recorded 9: fact Transcript type=user uuid=fb089f1b-6208-4df7-a30a-9391d3cd5dd3
 item fb089f1b-6208-4df7-a30a-9391d3cd5dd3 prompt final at=1788070571000 text="Use AskUserQuestion to ask one multi-select question with header Tools and options Hammer, Saw, and Drill. Then repeat my answer."
-snapshot WORKING queue=[] working_on=- at=1788070571000 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1788070571000 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
 ## 22 recorded 20: fact Hook hook_event_name=PermissionRequest
-snapshot NEEDS_YOU queue=[] working_on=- at=1788070574244 asks=[ask:1->- question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1788070574244 asks=[ask:1->- question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
 ## 24 recorded 22: fact Transcript type=assistant uuid=acabbbda-47af-4884-9f22-fd24dd342ef3
 item acabbbda-47af-4884-9f22-fd24dd342ef3 thinking final at=1788070573448 text=""
-snapshot NEEDS_YOU queue=[] working_on=- at=1788070574298 asks=[ask:1->- question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=34331 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1788070574298 asks=[ask:1->- question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=34331 tasks=? background=?
 ## 25 recorded 23: fact Transcript type=assistant uuid=f0d3a30f-71ef-4197-836f-8a0820dfce08
 item toolu_01BjHjS7UjeG6pCt2sMcY2oY tool final at=1788070574417 text="" AskUserQuestion TOOL_STATE_RUNNING input="{\"questions\":[{\"header\":\"Tools\",\"multiSelect\":true,\"options\"…"
-snapshot NEEDS_YOU queue=[] working_on=- at=1788070574298 asks=[ask:1->toolu_01BjHjS7UjeG6pCt2sMcY2oY question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=34331 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1788070574298 asks=[ask:1->toolu_01BjHjS7UjeG6pCt2sMcY2oY question:3m+other] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=34331 tasks=? background=?
 ## 27 recorded 25: fact Transcript type=user uuid=fb9ebb3e-92b4-4e9b-9c6b-de0744a0a91e
 item toolu_01BjHjS7UjeG6pCt2sMcY2oY tool final at=1788070574417 text="" AskUserQuestion TOOL_STATE_SUCCEEDED decision=DECISION_OUTCOME_ALLOWED elsewhere ended=1788070580233 input="{\"questions\":[{\"header\":\"Tools\",\"multiSelect\":true,\"options\"…" out="The user answered: \"Which tools would you like to use?\"=\"Ham…"
-snapshot WORKING queue=[] working_on=- at=1788070580169 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=34331 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1788070580169 asks=[] session=05eea9d2-cd6a-48bc-b070-2d0092901e50 model=claude-haiku-4-5-20251001 mode=default context=34331 tasks=? background=?

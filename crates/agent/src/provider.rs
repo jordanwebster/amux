@@ -35,12 +35,6 @@ const TRAILING_OUTPUT: Duration = Duration::from_millis(300);
 const FIRST_SCREEN_QUIET: Duration = Duration::from_millis(100);
 /// The longest the first screen is waited for once input is live.
 const FIRST_SCREEN_WAIT: Duration = Duration::from_millis(500);
-/// The longest the headless run that says what terminal Claude offers is
-/// given to answer, and then to exit. Claude 2.1.283 answered in about 2.3 s
-/// and exited at once; a cold start on a loaded machine takes a few times
-/// that. The answer only fills in the settings a person can choose, so a
-/// slower one is abandoned rather than waited for.
-const OFFER_WAIT: Duration = Duration::from_secs(15);
 /// The request ids of the agent's own Codex handshake; the interpreter's
 /// requests are numbered amux-N.
 const CODEX_INITIALIZE: &str = "agent-initialize";
@@ -111,9 +105,6 @@ pub struct Provider {
     dir: PathBuf,
     events: mpsc::Sender<ProviderEvent>,
     followers: Vec<Follower>,
-    /// Terminal Claude's headless run asking what it offers, stopped with
-    /// the provider.
-    offer: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Provider {
@@ -212,7 +203,6 @@ impl Provider {
             dir: dir.to_owned(),
             events,
             followers: Vec::new(),
-            offer: None,
         };
         // Claude reports nothing until it is asked; its answer is what says
         // it takes input.
@@ -350,7 +340,6 @@ impl Provider {
             dir: dir.to_owned(),
             events,
             followers: Vec::new(),
-            offer: None,
         })
     }
 
@@ -483,8 +472,6 @@ impl Provider {
             };
             let _ = forward.send(ProviderEvent::Exited(code)).await;
         });
-        // Asked once Claude's own terminal is up, beside it.
-        let offer = tokio::spawn(ask_offer(spec.clone(), dir.to_owned(), events.clone()));
         Ok(Self {
             input: Input::Terminal(terminal::typist(handle.clone())),
             pid: Some(handle.pid()),
@@ -496,7 +483,6 @@ impl Provider {
             dir: dir.to_owned(),
             events,
             followers: Vec::new(),
-            offer: Some(offer),
         })
     }
 
@@ -811,85 +797,6 @@ impl Drop for Provider {
         for follower in &self.followers {
             follower.task.abort();
         }
-        if let Some(offer) = &self.offer {
-            offer.abort();
-        }
-    }
-}
-
-/// Terminal Claude's offer: its models, each with its effort levels, and
-/// its commands. Its screen shows them to no program, so the same binary is
-/// run once headless (`-p`), asked `initialize`, and left to exit with its
-/// input closed; that runs no turn and writes no transcript. It runs beside
-/// the terminal, never ahead of it, and an answer that fails, is refused or
-/// takes longer than [`OFFER_WAIT`] leaves the offer empty. The agent's own
-/// hooks and tool server are not passed: the headless run must not report
-/// to this agent.
-async fn ask_offer(spec: AgentSpec, dir: PathBuf, events: mpsc::Sender<ProviderEvent>) {
-    let mut command = tokio::process::Command::new(&spec.provider_command);
-    command
-        .args([
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-        ])
-        .current_dir(&spec.cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(provider_log(&dir).map_or_else(|_| Stdio::null(), Stdio::from))
-        .kill_on_drop(true);
-    environment(&mut command, &spec);
-    #[cfg(unix)]
-    command.process_group(0);
-    let Ok(mut child) = command.spawn() else {
-        return;
-    };
-    let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        return;
-    };
-    let deadline = tokio::time::Instant::now() + OFFER_WAIT;
-    let answer = tokio::time::timeout_at(deadline, async move {
-        stdin
-            .write_all(interpret::claude_pty::OFFER_REQUEST.as_bytes())
-            .await
-            .ok()?;
-        stdin.write_all(b"\n").await.ok()?;
-        drop(stdin);
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(fact) = interpret::claude_pty::offered_fact(line.as_bytes()) {
-                return Some(fact);
-            }
-        }
-        None
-    })
-    .await
-    .ok()
-    .flatten();
-    // Claude may still be writing its own files as it exits; it is killed
-    // only when it overstays.
-    if tokio::time::timeout_at(deadline, child.wait())
-        .await
-        .is_err()
-    {
-        #[cfg(unix)]
-        if let Some(pid) = child.id() {
-            // SAFETY: killpg only sends a signal.
-            unsafe {
-                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-            }
-        }
-        let _ = child.kill().await;
-    }
-    if let Some(payload) = answer {
-        let fact = Fact {
-            channel: Channel::Agent,
-            payload,
-        };
-        let _ = events.send(ProviderEvent::Fact(fact)).await;
     }
 }
 

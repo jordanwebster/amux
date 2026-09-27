@@ -72,10 +72,6 @@ message ClaudePtySnapshot {
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
   BackgroundProcesses background_processes = 11;
-  // What the same Claude binary's headless initialize answer offers,
-  // asked by the agent process at each launch; empty until it answers.
-  repeated OfferedModel models = 12;
-  repeated OfferedCommand commands = 13;
 }
 
 message ClaudePtyInput {
@@ -87,9 +83,6 @@ message ClaudePtyInput {
     Interrupt interrupt = 5;
     WithdrawQueued withdraw = 6;
     SendQueuedNow send_now = 7;
-    // Typed as `/model <name>` and `/effort <level>` between turns.
-    SetModel model = 8;
-    SetEffort effort = 9;
   }
 }
 

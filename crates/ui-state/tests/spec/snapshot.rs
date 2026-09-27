@@ -231,13 +231,6 @@ fn the_offered_models_and_commands_ride_on_the_session_state() {
     };
     let state = decode_snapshot(Kind::Codex, &codex.encode_to_vec());
     assert_eq!((&state.models, &state.commands), (&models, &commands));
-    let pty = wire::ClaudePtySnapshot {
-        models: models.clone(),
-        commands: commands.clone(),
-        ..Default::default()
-    };
-    let state = decode_snapshot(Kind::ClaudePty, &pty.encode_to_vec());
-    assert_eq!((&state.models, &state.commands), (&models, &commands));
     let empty = decode_snapshot(Kind::Codex, &[]);
     assert!(empty.models.is_empty() && empty.commands.is_empty());
 }

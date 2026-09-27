@@ -1,3 +1,15 @@
+2026-09-27 — **Terminal Claude offers no model or effort list and takes no model or effort input.**
+The agent no longer runs a second, headless Claude at each terminal launch
+to learn its models and commands, and the fake terminal Claude no longer
+answers `-p`. Terminal Claude's snapshot loses its offered models and
+commands, and its input loses the model and effort changes (the proto
+baseline records the break). A person changes either by typing
+`/model <name>` or `/effort <level>` in the composer, an ordinary prompt
+whose transcript rows reflect it. The settings view for this kind shows the
+reported model, the mode beside the cycle action, and a sentence saying to
+type those commands; headless Claude and Codex keep their offered lists and
+picks, and an offered alias is still marked for the model id it resolves to.
+
 2026-09-27 — **The phone runs the three conversation-decision stories, with steady screens.**
 On a topology of its own (the desk advertising to the phone's browser), the
 phone pairs by keypad, opens terminal Claude, headless Claude and Codex,

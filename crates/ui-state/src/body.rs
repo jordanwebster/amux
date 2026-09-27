@@ -294,7 +294,7 @@ pub struct AgentState {
     pub mode: Option<String>,
     pub sandbox: Option<String>,
     /// The models the provider offers, each with its efforts; empty until
-    /// the provider lists them.
+    /// the provider lists them, and always for terminal Claude.
     pub models: Vec<OfferedModel>,
     /// The commands (Codex: skills) the provider offers.
     pub commands: Vec<OfferedCommand>,
@@ -330,8 +330,6 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.context = snapshot.context.unwrap_or_default();
             state.model = snapshot.model;
             state.mode = snapshot.permission_mode;
-            state.models = snapshot.models;
-            state.commands = snapshot.commands;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.unwrap_or_default();
             state.servers = snapshot.servers.unwrap_or_default();

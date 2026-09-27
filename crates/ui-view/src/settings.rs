@@ -32,8 +32,7 @@ const CODEX_PRESETS: &[(&str, &str, &str)] = &[
 
 /// Claude commands that open an interactive screen of Claude's own
 /// terminal, or change a setting this view offers directly: typed into a
-/// headless agent they do nothing useful. Terminal Claude runs them all, so
-/// its list keeps them.
+/// headless agent they do nothing useful.
 const TERMINAL_ONLY_COMMANDS: &[&str] = &[
     "agents",
     "auto-mode-setup",
@@ -78,6 +77,9 @@ pub struct SettingsView {
     pub model_refusal: Option<String>,
     pub effort_refusal: Option<String>,
     pub mode_refusal: Option<String>,
+    /// How a person changes the model and effort of a kind that offers no
+    /// pick: by typing the agent's own command in the composer.
+    pub change_by_typing: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
@@ -135,6 +137,11 @@ pub struct CommandView {
     /// provider does not say.
     pub source: String,
 }
+
+/// Terminal Claude lists no models or efforts and takes no model or effort
+/// input; it runs its own commands, typed as any prompt.
+const CLAUDE_PTY_TYPING: &str =
+    "To change the model or effort, type /model <name> or /effort <level> in the composer.";
 
 /// Why a setting cannot change from a client, by kind: only where the
 /// interpreter refuses that input.
@@ -249,6 +256,7 @@ pub fn settings(state: &SessionState) -> SettingsView {
         model_refusal,
         effort_refusal,
         mode_refusal,
+        change_by_typing: (kind == Kind::ClaudePty).then(|| CLAUDE_PTY_TYPING.to_owned()),
     }
 }
 

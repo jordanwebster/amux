@@ -15,3 +15,4 @@
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode: cycle to the next
   refused mode: Terminal Claude changes mode only by cycling through its modes.
+  by typing: To change the model or effort, type /model <name> or /effort <level> in the composer.

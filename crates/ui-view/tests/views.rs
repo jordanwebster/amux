@@ -1081,49 +1081,53 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
 }
 
 #[test]
-fn terminal_claude_offers_models_and_commands_and_cycles_its_mode() {
+fn an_offered_alias_is_marked_for_the_model_id_it_resolves_to() {
     let view = settings_of(
-        Kind::ClaudePty,
-        wire::ClaudePtySnapshot {
+        Kind::ClaudeSdk,
+        wire::ClaudeSdkSnapshot {
             model: Some("id-sonnet".into()),
-            permission_mode: Some("acceptEdits".into()),
             models: vec![
                 offered("default", &["low", "high"], None),
                 offered("sonnet", &["low", "medium", "high"], None),
             ],
-            commands: vec![command("compact"), command("config")],
             ..Default::default()
         }
         .encode_to_vec(),
     );
-    let current: Vec<&str> = view
+    let current: Vec<(&str, bool)> = view
         .models
         .iter()
         .filter(|model| model.current)
-        .map(|model| model.value.as_str())
+        .map(|model| (model.value.as_str(), model.reported))
         .collect();
     assert_eq!(
         current,
-        ["sonnet"],
+        [("sonnet", false)],
         "the reported id marks the alias that resolves to it"
     );
-    assert_eq!(
-        view.efforts
-            .iter()
-            .map(|effort| effort.value.as_str())
-            .collect::<Vec<_>>(),
-        ["low", "medium", "high"],
-        "nothing reports the effort, so none is current"
+}
+
+#[test]
+fn terminal_claude_shows_what_it_reports_and_says_how_to_type_a_change() {
+    let view = settings_of(
+        Kind::ClaudePty,
+        wire::ClaudePtySnapshot {
+            model: Some("claude-sonnet-5".into()),
+            permission_mode: Some("acceptEdits".into()),
+            ..Default::default()
+        }
+        .encode_to_vec(),
     );
-    assert!(view.efforts.iter().all(|effort| !effort.current));
     assert_eq!(
-        view.commands
+        view.models
             .iter()
-            .map(|command| command.name.as_str())
+            .map(|model| (model.value.as_str(), model.current, model.reported))
             .collect::<Vec<_>>(),
-        ["compact", "config"],
-        "terminal Claude runs its terminal-only commands"
+        [("claude-sonnet-5", true, true)],
+        "the reported model alone: nothing is offered"
     );
+    assert!(view.efforts.is_empty(), "nothing reports the effort");
+    assert!(view.commands.is_empty());
     assert_eq!(
         view.modes
             .iter()
@@ -1135,7 +1139,10 @@ fn terminal_claude_offers_models_and_commands_and_cycles_its_mode() {
     assert!(view.cycle_mode);
     assert_eq!((&view.model_refusal, &view.effort_refusal), (&None, &None));
     assert!(view.mode_refusal.is_some());
+    let typing = view.change_by_typing.expect("the typing sentence");
+    assert!(typing.contains("/model <name>") && typing.contains("/effort <level>"));
 
     let sdk = settings_of(Kind::ClaudeSdk, Vec::new());
     assert!(!sdk.cycle_mode, "headless Claude picks its mode");
+    assert_eq!(sdk.change_by_typing, None);
 }

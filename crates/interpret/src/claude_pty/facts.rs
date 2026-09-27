@@ -10,8 +10,8 @@ use wire::{
 use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Subagent, Tool, item_body};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    offered_commands, offered_models, question_ask, result_images, same_json, scope_choices,
-    split_tool_name, text, timestamp_ms, tool_class, without_image_bytes,
+    question_ask, result_images, same_json, scope_choices, split_tool_name, text, timestamp_ms,
+    tool_class, without_image_bytes,
 };
 use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -102,12 +102,6 @@ impl State {
             "ready" if self.trust_ask().is_some() => return,
             "ready" => return self.shared.provider_started(),
             "trust_dialog" => return self.trust_dialog(emit),
-            "offered" => {
-                let list = |key: &str| value.get(key).and_then(Value::as_array).cloned();
-                self.provider.models = offered_models(&list("models").unwrap_or_default());
-                self.provider.commands = offered_commands(&list("commands").unwrap_or_default());
-                return;
-            }
             _ => return,
         }
         let provider = &mut self.provider;
