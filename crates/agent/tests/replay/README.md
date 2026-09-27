@@ -16,7 +16,7 @@ from the recording host:
 | `codex_approval` | `codex-specs/fixtures/runtime/approval_allow` | the agent's handshake ids (`agent-initialize`, `agent-thread`) and `thread/start` params; `turn/start` as the interpreter writes it (`amux-1`, `text_elements`) |
 | `codex_lost` | `codex_approval` | cut after the approval request, then an exit |
 | `pty_deny` | `claude-specs/fixtures/pty/permission_deny_feedback` | nothing |
-| `pty_lost` | `pty_deny` | cut after the permission request, then an exit |
+| `pty_lost` | `pty_deny` as recorded on 2.1.251, before the deny became Escape | cut after the permission request, then an exit |
 
 Placeholders filled per run: `{{cwd}}`, `{{version}}` (the agent's), and
 `{{uuid:<input id>}}` (the uuid headless Claude's message for that input

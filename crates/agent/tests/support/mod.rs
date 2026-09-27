@@ -110,6 +110,8 @@ pub struct Setup {
     pub session: Option<&'static str>,
     /// The journal's segment size; the agent's default when zero.
     pub journal_bytes: u64,
+    /// Terminal Claude's permission menu offers to switch to auto mode.
+    pub offers_auto_mode: bool,
 }
 
 impl Setup {
@@ -128,6 +130,7 @@ impl Setup {
             replay: None,
             session: None,
             journal_bytes: 0,
+            offers_auto_mode: false,
         }
     }
 }
@@ -194,6 +197,7 @@ impl Agent {
 
         let script = Script {
             steps: setup.steps,
+            offers_auto_mode: setup.offers_auto_mode,
             ..Script::default()
         };
         let script = serde_json::to_string(&script)
@@ -799,6 +803,14 @@ impl Log {
     /// What the newest snapshot says the agent is working on.
     pub fn working_on(&self) -> Option<String> {
         self.snapshot()?.working_on.clone()
+    }
+
+    /// The permission mode the newest terminal Claude snapshot reports.
+    pub fn permission_mode(&self) -> Option<String> {
+        let snapshot = self.snapshot()?;
+        wire::ClaudePtySnapshot::decode(snapshot.body.as_slice())
+            .ok()?
+            .permission_mode
     }
 
     pub fn phase(&self) -> Option<Phase> {

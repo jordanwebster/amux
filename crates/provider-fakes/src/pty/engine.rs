@@ -333,6 +333,7 @@ struct Engine {
     last_text: String,
     /// The session has started: the first prompt arrived.
     started: bool,
+    offers_auto_mode: bool,
 }
 
 impl Engine {
@@ -353,6 +354,7 @@ impl Engine {
             input,
             closed: false,
             steps: script.steps.into(),
+            offers_auto_mode: script.offers_auto_mode,
             model: args
                 .model
                 .clone()
@@ -996,15 +998,22 @@ impl Engine {
 
     /// Wait for a menu or form's keys, or for the turn to be cut.
     async fn key(&mut self) -> Option<Key> {
+        match self.menu_key().await {
+            Some(Key::Escape) => {
+                self.cut = Some(Cut::Interrupted);
+                None
+            }
+            key => key,
+        }
+    }
+
+    /// Wait for a menu's keys, Escape among them.
+    async fn menu_key(&mut self) -> Option<Key> {
         loop {
             if self.closed {
                 return None;
             }
             match self.input.recv().await {
-                Some(In::Key(Key::Escape)) => {
-                    self.cut = Some(Cut::Interrupted);
-                    return None;
-                }
                 Some(In::Key(key)) => return Some(key),
                 Some(other) => self.handle(other),
                 None => {
@@ -1043,15 +1052,37 @@ impl Engine {
                     "tool_input": input,
                     "tool_name": name,
                 }));
-                self.screen("Do you want to proceed?\n1. Yes\n2. Yes, and don't ask again\n3. No");
+                let (menu, no) = if self.offers_auto_mode {
+                    (
+                        "Do you want to proceed?\n1. Yes\n2. Yes, and don't ask again\n3. Yes, and switch to auto mode\n4. No\nEsc to cancel",
+                        '4',
+                    )
+                } else {
+                    (
+                        "Do you want to proceed?\n1. Yes\n2. Yes, and don't ask again\n3. No\nEsc to cancel",
+                        '3',
+                    )
+                };
+                self.screen(menu);
+                // Escape cancels the menu, which Claude takes as No.
                 let choice = loop {
-                    match self.key().await {
+                    match self.menu_key().await {
                         None => return self.abandon(&id, &name, &input, &tool),
-                        Some(Key::Char(c @ '1'..='3')) => break c,
+                        Some(Key::Escape) => break no,
+                        Some(Key::Char(c)) if ('1'..=no).contains(&c) => break c,
                         Some(_) => {}
                     }
                 };
-                if choice == '3' {
+                if choice == '3' && no == '4' {
+                    self.mode = "auto".to_owned();
+                    let row = json!({
+                        "type": "permission-mode",
+                        "permissionMode": self.mode,
+                        "sessionId": self.session,
+                    });
+                    self.row(row);
+                }
+                if choice == no {
                     let refusal = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.".to_owned();
                     self.finish_tool(&id, &name, &input, &tool, Err(refusal));
                     // Terminal Claude ends the turn on a deny.

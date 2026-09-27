@@ -1,3 +1,19 @@
+2026-09-27 — **A terminal Claude deny never presses a Yes.**
+The keymap typed 3 for Deny, No's digit on the menus first recorded. Claude
+2.1.283 in manual mode, on a model with auto mode, draws `1 Yes / 2 Yes,
+and always allow / 3 Yes, and switch to auto mode / 4 No`, so a deny with
+a note ran the command, switched the session to auto mode and sent the note
+as a prompt. A deny is now Escape, which Claude takes as No whatever
+entries the menu holds (the rows are the same user-rejected result,
+interruption and turn end); the note still follows as a prompt, and a deny
+is accepted on a menu of any shape. `permission_deny_feedback` is
+re-recorded on 2.1.283 (the recorder now names transcript paths
+`<TRANSCRIPT_N>`, which the playback fake localizes too), the fake terminal
+Claude takes Escape as No and can draw the four-entry menu, and an agent
+test denies on it. Verified live on installed Claude 2.1.283 with sonnet:
+the four-entry menu, the row `⊘ … denied · "No writes in this test"`, no
+file written, the session still in manual mode.
+
 2026-09-27 — **Terminal Claude's prompt is drawn above the call it caused.**
 Hooks reach the agent at once while the transcript is read by polling, so
 the hook announcing a turn's first tool call could land before the row of

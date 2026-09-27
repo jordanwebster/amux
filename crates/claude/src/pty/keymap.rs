@@ -177,7 +177,6 @@ string_enum!(MenuName { Permission, Plan });
 string_enum!(MenuEntryName {
     AllowOnce,
     AllowScoped,
-    Deny,
     ApproveAuto,
     ApproveManual,
     RequestChanges,
@@ -210,6 +209,7 @@ string_enum!(Iter {
 });
 
 string_enum!(Cond {
+    Denies,
     HasFeedback,
     HasOther,
     MultiSelect,
@@ -950,7 +950,9 @@ fn validate_environment(
                     .contains(&suggestions)
             });
             let scoped = matches!(answer, PermissionAnswer::AllowScoped { .. });
-            if !whole && !(once_or_deny && !scoped) {
+            // Escape denies whatever entries the menu holds.
+            let denies = matches!(answer, PermissionAnswer::Deny { .. });
+            if !denies && !whole && !(once_or_deny && !scoped) {
                 return Err(InputError::UnverifiedShape {
                     program,
                     reason: if once_or_deny {
@@ -1202,10 +1204,6 @@ impl Interpreter<'_, '_> {
                         MenuEntryName::AllowScoped,
                         Some(AskAnswer::Permission(PermissionAnswer::AllowScoped { .. })),
                     ) | (
-                        MenuName::Permission,
-                        MenuEntryName::Deny,
-                        Some(AskAnswer::Permission(PermissionAnswer::Deny { .. })),
-                    ) | (
                         MenuName::Plan,
                         MenuEntryName::ApproveAuto,
                         Some(AskAnswer::Plan(PlanAnswer::ApproveAuto)),
@@ -1290,6 +1288,10 @@ impl Interpreter<'_, '_> {
 
     fn condition(&self, cond: Cond) -> Result<bool, InputError> {
         match cond {
+            Cond::Denies => Ok(matches!(
+                self.env.answer,
+                Some(AskAnswer::Permission(PermissionAnswer::Deny { .. }))
+            )),
             Cond::HasFeedback => Ok(match self.env.answer {
                 Some(AskAnswer::Permission(PermissionAnswer::Deny {
                     feedback: Some(feedback),
@@ -1406,8 +1408,12 @@ mod format {
         assert_eq!(keymap.delays[&DelayName::AfterDeny], 1_500);
         assert_eq!(keymap.delays[&DelayName::AfterOtherSave], 600);
         assert_eq!(
-            keymap.menus[&MenuName::Permission].entries[&MenuEntryName::Deny],
-            3
+            keymap.menus[&MenuName::Permission]
+                .entries
+                .keys()
+                .collect::<Vec<_>>(),
+            [&MenuEntryName::AllowOnce, &MenuEntryName::AllowScoped],
+            "No has no fixed entry"
         );
         assert_eq!(
             keymap.menus[&MenuName::Plan].entries[&MenuEntryName::RequestChanges],
@@ -1710,14 +1716,14 @@ mod interpret {
             ),
             (
                 AskAnswer::Permission(PermissionAnswer::Deny { feedback: None }),
-                vec![write(b"3")],
+                vec![write(b"\x1b")],
             ),
             (
                 AskAnswer::Permission(PermissionAnswer::Deny {
                     feedback: Some("try the other file".to_owned()),
                 }),
                 vec![
-                    write(b"3"),
+                    write(b"\x1b"),
                     delay(1_500),
                     write(b"\x1b[200~try the other file\x1b[201~"),
                     delay(400),
@@ -1739,7 +1745,7 @@ mod interpret {
                 Some(&ask),
             )
             .expect("plain deny"),
-            vec![write(b"3")]
+            vec![write(b"\x1b")]
         );
     }
 
@@ -2223,7 +2229,7 @@ mod resolve {
         );
         assert_eq!(
             permission_menu(2, PermissionAnswer::Deny { feedback: None }).unwrap(),
-            [KeyStep::Write(b"3".to_vec())]
+            [KeyStep::Write(b"\x1b".to_vec())]
         );
         let error = permission_menu(2, PermissionAnswer::AllowScoped { suggestion: 0 })
             .expect_err("a scope on a folded menu must be refused");
@@ -2231,6 +2237,31 @@ mod resolve {
             error.to_string(),
             "unverified keymap shape for PermissionMenu: a scoped allowance on a permission menu with 2 suggestions is not verified"
         );
+    }
+
+    /// Claude 2.1.283 in manual mode draws 1 Yes / 2 Yes, don't ask again /
+    /// 3 Yes, and switch to auto mode / 4 No. A deny, with or without a
+    /// note, never types a digit, so it cannot land on a Yes whatever
+    /// entries the menu holds; Escape is Claude's No.
+    #[test]
+    fn a_deny_types_no_digit_on_any_menu() {
+        for suggestions in [0, 1, 2, 3] {
+            for feedback in [None, Some("No network in this test".to_owned())] {
+                let keys =
+                    permission_menu(suggestions, PermissionAnswer::Deny { feedback }).unwrap();
+                let KeyStep::Write(first) = &keys[0] else {
+                    panic!("a deny starts with a key: {keys:?}");
+                };
+                assert_eq!(first, b"\x1b", "{suggestions} suggestions: {keys:?}");
+                assert!(
+                    !keys.iter().any(|key| matches!(
+                        key,
+                        KeyStep::Write(bytes) if bytes.len() == 1 && bytes[0].is_ascii_digit()
+                    )),
+                    "{suggestions} suggestions: {keys:?}"
+                );
+            }
+        }
     }
 
     #[test]

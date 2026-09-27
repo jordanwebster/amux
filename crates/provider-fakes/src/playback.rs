@@ -250,21 +250,31 @@ pub fn transcript_path(config_dir: &Path, cwd: &Path, session: &str) -> PathBuf 
 }
 
 /// A recorded hook payload as a fake hands it over on this machine: a
-/// transcript path the recorder sanitised becomes the file the fake writes
+/// transcript path the recorder sanitised (as a machine path, or as a
+/// numbered transcript by newer recorders) becomes the file the fake writes
 /// that session's rows to, so a host following the path reads them.
 pub fn localize_hook(payload: &[u8], transcript: &Path) -> Vec<u8> {
-    const SANITISED: &str = r#""transcript_path":"<MACHINE_PATH>""#;
+    const KEY: &str = r#""transcript_path":""#;
     let Ok(text) = std::str::from_utf8(payload) else {
         return payload.to_vec();
     };
-    if !text.contains(SANITISED) {
+    let Some(start) = text.find(KEY).map(|at| at + KEY.len()) else {
+        return payload.to_vec();
+    };
+    let Some(end) = text[start..].find('"').map(|len| start + len) else {
+        return payload.to_vec();
+    };
+    let recorded = &text[start..end];
+    let sanitised = recorded == "<MACHINE_PATH>"
+        || recorded
+            .strip_prefix("<TRANSCRIPT_")
+            .and_then(|rest| rest.strip_suffix('>'))
+            .is_some_and(|number| number.bytes().all(|byte| byte.is_ascii_digit()));
+    if !sanitised {
         return payload.to_vec();
     }
-    let local = format!(
-        r#""transcript_path":{}"#,
-        Value::String(transcript.display().to_string())
-    );
-    text.replace(SANITISED, &local).into_bytes()
+    let local = Value::String(transcript.display().to_string()).to_string();
+    format!("{}{local}{}", &text[..start - 1], &text[end + 1..]).into_bytes()
 }
 
 /// Every hook payload of a recorded process, localized as the fake hands

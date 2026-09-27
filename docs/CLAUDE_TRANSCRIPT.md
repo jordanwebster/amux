@@ -795,12 +795,16 @@ pointers. Findings:
   apply the suggestion — for a directory grant there is **NO
   `command_permissions` attachment** (§18's "allow for session emits
   command_permissions" holds only for command-rule grants), and a
-  different Bash command re-asks. Digit 3 (= 2 + suggestion count) = deny
-  **immediately**: typed `user-rejected` denial + `[Request interrupted
-  by user for tool use]` + `turn_duration` — the permission menu has **no
-  feedback field** (unlike the plan menu). Deny-with-feedback is composed
-  as digit 3 followed by the feedback as a normal prompt
-  (`permission_deny_feedback`).
+  different Bash command re-asks. `No` is last, but its digit moves:
+  2.1.283 in manual mode, on models with auto mode, adds `Yes, and switch
+  to auto mode` above it (1 Yes / 2 Yes, and always allow / 3 Yes, and
+  switch to auto mode / 4 No), so typing 3 there allows the call and
+  leaves manual mode. amux denies with Escape ("Esc to cancel"), which
+  Claude takes as No whatever the menu holds: typed `user-rejected`
+  denial + `[Request interrupted by user for tool use]` + `turn_duration`
+  — the permission menu has **no feedback field** (unlike the plan menu).
+  Deny-with-feedback is composed as Escape followed by the feedback as a
+  normal prompt (`permission_deny_feedback`, recorded on 2.1.283).
 - **Question forms: a DIGIT selects the option and auto-advances** — no
   Enter per question. A single-question single-select form **submits on
   selection** (no review); a multi-question or multi-select form ends on

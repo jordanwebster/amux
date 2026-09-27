@@ -55,6 +55,11 @@ pub struct Script {
     /// Slash commands the session offers.
     #[serde(default)]
     pub commands: Vec<String>,
+    /// Terminal Claude's permission menu offers to switch to auto mode, as
+    /// 2.1.283 does in manual mode: "Yes, and switch to auto mode" sits
+    /// third and No fourth.
+    #[serde(default)]
+    pub offers_auto_mode: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

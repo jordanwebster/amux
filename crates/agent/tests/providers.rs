@@ -552,6 +552,89 @@ fn terminal_claude_replays_a_prompt_a_denial_with_feedback_and_its_end() {
     });
 }
 
+/// Terminal Claude 2.1.283 in manual mode draws Yes / Yes, don't ask again
+/// / Yes, and switch to auto mode / No. A deny with a note reaches No: the
+/// call is refused, the session stays in manual mode and the note follows
+/// as a prompt.
+#[test]
+fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
+    use prost::Message as _;
+    use provider_fakes::{Ask, Outcome, Tool, ToolClass};
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            offers_auto_mode: true,
+            steps: vec![
+                Step::Ask(Ask::Permission(Tool {
+                    name: None,
+                    class: ToolClass::Consequential,
+                    input: Some(serde_json::json!({"command": "curl -s https://example.net"})),
+                    outcome: Outcome {
+                        output: "fetched".into(),
+                        error: false,
+                    },
+                    wait_for: None,
+                })),
+                Step::Text {
+                    chunks: vec!["never said".into()],
+                },
+                Step::TurnEnd,
+                Step::Text {
+                    chunks: vec!["Noted.".into()],
+                },
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(
+            daemon.prompt(b"p1", "Fetch example.net").await,
+            Verdict::Accepted
+        );
+        answer(
+            &agent,
+            &mut daemon,
+            b"a1",
+            serde_json::json!({"deny": {"note": "No network in this test"}}),
+        )
+        .await;
+        agent
+            .wait("the note's turn ends", |log| log.turn_ends() == 2)
+            .await;
+        let log = agent.log();
+        // Each call as its newest revision has it.
+        let tools = log
+            .items()
+            .into_iter()
+            .filter_map(|(_, item)| {
+                match wire::ClaudePtyItem::decode(item.body.as_slice())
+                    .ok()?
+                    .kind?
+                {
+                    wire::claude_pty_item::Kind::Tool(tool) => Some((item.key, tool)),
+                    _ => None,
+                }
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>();
+        let [tool] = tools.as_slice() else {
+            panic!("one call: {tools:#?}");
+        };
+        assert_eq!(tool.state(), wire::ToolState::Denied, "{tool:#?}");
+        let decision = tool.decision.clone().expect("a decision");
+        assert_eq!(decision.outcome(), wire::DecisionOutcome::Denied);
+        assert_eq!(decision.note, "No network in this test");
+        assert!(!log.has_text("never said"), "the deny ended the turn");
+        assert!(log.has_text("Noted."), "the note followed as a prompt");
+        assert_ne!(log.permission_mode().as_deref(), Some("auto"));
+        daemon.stop(StopMode::Graceful).await;
+        assert_eq!(agent.exit().await, ExitCause::Stopped);
+    });
+}
+
 /// Terminal Claude dies while its permission menu is open.
 #[test]
 fn terminal_claude_replays_transport_loss_mid_turn() {

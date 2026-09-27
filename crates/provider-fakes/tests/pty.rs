@@ -363,6 +363,56 @@ async fn menus_answer_by_digit_and_a_deny_ends_the_turn() {
     assert_eq!(terminal.exit_code().await, 0);
 }
 
+/// 2.1.283 in manual mode: Yes, Yes and don't ask again, Yes and switch to
+/// auto mode, No. Escape is No; the third entry allows the call and
+/// switches the session to auto mode.
+#[tokio::test]
+async fn escape_denies_on_the_menu_that_offers_auto_mode() {
+    let terminal = Terminal::started(json!({"offers_auto_mode": true, "steps": [
+        {"ask": {"permission": {"class": "consequential", "input": {"command": "curl a"}}}},
+        {"text": {"chunks": ["never said"]}},
+        "turn_end",
+        {"ask": {"permission": {"class": "consequential", "input": {"command": "curl b"},
+                                "outcome": {"output": "ok"}}}},
+        "turn_end",
+    ]}))
+    .await;
+    terminal.prompt("Fetch a").await;
+    terminal.hooks_of("PermissionRequest", 1).await;
+    terminal.keys(b"\x1b").await;
+    terminal.row(|row| row["subtype"] == "turn_duration").await;
+    terminal.prompt("Fetch b").await;
+    terminal.hooks_of("PermissionRequest", 2).await;
+    terminal.keys(b"3").await;
+    terminal.hook("Stop").await;
+    let rows = contents(&terminal.rows());
+    assert_eq!(
+        rows,
+        [
+            "user Fetch a",
+            "assistant tool_use Bash",
+            "user tool_result error=true",
+            "user text [Request interrupted by user for tool use]",
+            "user Fetch b",
+            "assistant tool_use Bash",
+            "user tool_result error=false",
+        ]
+    );
+    let modes = terminal
+        .rows()
+        .into_iter()
+        .filter(|row| row["type"] == "permission-mode")
+        .map(|row| row["permissionMode"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        modes,
+        [json!("default"), json!("auto")],
+        "the session starts in manual mode and only the third entry switches it"
+    );
+    terminal.check_shapes();
+    assert_eq!(terminal.exit_code().await, 0);
+}
+
 #[tokio::test]
 async fn a_question_form_takes_digits_arrows_space_tab_and_enter() {
     let terminal = Terminal::started(json!({"steps": [
