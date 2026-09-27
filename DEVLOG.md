@@ -1,3 +1,22 @@
+2026-09-27 — **Raw attach is back, local only, with the fleet as an overlay.**
+`amux attach <agent>` finds the agent's pty.sock by directory convention
+(`<profile dir>/agents/<id>/pty.sock`, from the profile's client socket),
+replays terminal Claude's retained tail, forwards keys and resizes, and
+opens Codex in stream mode, one `codex resume` view per connection. A
+second terminal attaches beside the first; `<leader> d` detaches and leaves
+the agent running. An agent on another host, or headless Claude, is refused
+with a pointer to its chat. `<leader> s` opens the fleet over the attached
+agent without closing the connection: a vt100 screen model keeps drawing
+underneath, so picking the agent again repaints the same process where it
+was, and the fleet's own raw attach goes through the same held connections.
+The replayed history has its terminal queries taken out (device attributes,
+cursor and status reports, colour and mode queries): the attaching terminal
+answered them, and the answers reached Claude as typed keys. The fleet
+header says `amux <version> is running · restart to update` when the
+daemon's host entry reports a different build, and offers raw attach only
+for terminals on this machine. Process tests in `crates/amux/tests/attach.rs`
+run the binary in a terminal of its own against a daemon on the fakes.
+
 2026-09-27 — **The amux binary serves the cloud relay again.**
 `amux server start --cloud --foreground` is back, with the configuration
 and environment the relay deployment already uses: the file `AMUX_CONFIG`

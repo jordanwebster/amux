@@ -3,6 +3,7 @@
 //! the agent process itself, the tool server its provider launches, and
 //! the hook command terminal Claude runs for each hook event.
 
+mod attach;
 mod connect;
 mod profiles;
 mod relay;
@@ -61,6 +62,13 @@ enum Command {
         /// Extra arguments for Claude, after `--`.
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    /// Hand this terminal to an agent's own interface: terminal Claude's
+    /// or a Codex view. Only agents on this machine; <leader> d detaches,
+    /// <leader> s opens the fleet over it.
+    Attach {
+        /// The agent's name or id.
+        agent: String,
     },
     /// Send an agent a prompt.
     Send {
@@ -314,6 +322,7 @@ fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) 
                     }
                 }
             }
+            Command::Attach { agent } => ui::attach(&config, profile, &agent).await,
             command => {
                 let mut client = connect::client(&config, profile).await?;
                 match command {

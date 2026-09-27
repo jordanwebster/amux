@@ -242,14 +242,27 @@ async fn stream_view(stream: LocalStream, spec: &AgentSpec, dir: &Path) -> io::R
 
 /// A terminal client's connection to an agent's pty.sock.
 pub struct Attached {
+    output: AttachedOutput,
+    input: AttachedInput,
+}
+
+/// What the terminal draws, read from one connection.
+pub struct AttachedOutput {
     reader: tokio::io::ReadHalf<LocalStream>,
-    writer: tokio::io::WriteHalf<LocalStream>,
     mode: PtyMode,
     pty: PathBuf,
     /// Files mode: how far this client has read, and how far the log goes.
     read: u64,
     written: u64,
+    /// Where the log ended when this client attached: what comes before is
+    /// history, replayed without its terminal queries.
+    history: u64,
     closed: Option<String>,
+}
+
+/// What the person types and their terminal's size, sent on one connection.
+pub struct AttachedInput {
+    writer: tokio::io::WriteHalf<LocalStream>,
 }
 
 impl Attached {
@@ -264,16 +277,49 @@ impl Attached {
             ));
         };
         Ok(Self {
-            reader,
-            writer,
-            mode: hello.mode(),
-            pty: dir.join(crate::dir::PTY),
-            read: hello.start,
-            written: hello.written,
-            closed: None,
+            output: AttachedOutput {
+                reader,
+                mode: hello.mode(),
+                pty: dir.join(crate::dir::PTY),
+                read: hello.start,
+                written: hello.written,
+                history: hello.written,
+                closed: None,
+            },
+            input: AttachedInput { writer },
         })
     }
 
+    /// The two directions apart, so one task can read while another types.
+    pub fn split(self) -> (AttachedOutput, AttachedInput) {
+        (self.output, self.input)
+    }
+
+    pub fn mode(&self) -> PtyMode {
+        self.output.mode
+    }
+
+    /// Why the agent ended the connection, once it has.
+    pub fn closed(&self) -> Option<&str> {
+        self.output.closed()
+    }
+
+    /// The next bytes the terminal drew, or None once the connection ended.
+    /// In files mode the first call returns everything the log still holds.
+    pub async fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
+        self.output.next().await
+    }
+
+    pub async fn keys(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.input.keys(bytes).await
+    }
+
+    pub async fn resize(&mut self, rows: u16, cols: u16) -> io::Result<()> {
+        self.input.resize(rows, cols).await
+    }
+}
+
+impl AttachedOutput {
     pub fn mode(&self) -> PtyMode {
         self.mode
     }
@@ -285,12 +331,22 @@ impl Attached {
 
     /// The next bytes the terminal drew, or None once the connection ended.
     /// In files mode the first call returns everything the log still holds.
+    /// Not cancel safe: a frame half read when the future is dropped is lost.
     pub async fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
         loop {
             if self.mode == PtyMode::Files && self.read < self.written {
-                let (from, bytes) = read_terminal_log(&self.pty, self.read, self.written)?;
+                let (from, mut bytes) = read_terminal_log(&self.pty, self.read, self.written)?;
                 self.read = from + bytes.len() as u64;
                 if !bytes.is_empty() {
+                    if from < self.history {
+                        // The terminal the history replays on would answer
+                        // the queries in it, and the answers would reach the
+                        // agent as typed keys.
+                        let past = ((self.history - from) as usize).min(bytes.len());
+                        let mut replay = without_queries(&bytes[..past]);
+                        replay.extend_from_slice(&bytes[past..]);
+                        bytes = replay;
+                    }
                     return Ok(Some(bytes));
                 }
                 self.read = self.written;
@@ -304,7 +360,9 @@ impl Attached {
             }
         }
     }
+}
 
+impl AttachedInput {
     pub async fn keys(&mut self, bytes: &[u8]) -> io::Result<()> {
         send(&mut self.writer, pty_frame::Of::Keys(bytes.to_vec())).await
     }
@@ -319,6 +377,89 @@ impl Attached {
         )
         .await
     }
+}
+
+/// `bytes` with every terminal query taken out: device attributes, status
+/// and cursor reports, version, keyboard-protocol and mode queries, window
+/// size reports, colour queries and setting requests. Everything else, the
+/// drawing and the modes it sets, is kept byte for byte.
+pub fn without_queries(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        let sequence = match rest {
+            [0x1b, b'[', ..] => csi(rest),
+            [0x1b, b']', ..] => string(rest).map(|(len, body)| (len, body.ends_with(b"?"))),
+            [0x1b, b'P', ..] => string(rest)
+                .map(|(len, body)| (len, body.starts_with(b"$q") || body.starts_with(b"+q"))),
+            _ => None,
+        };
+        match sequence {
+            Some((len, query)) => {
+                if !query {
+                    out.extend_from_slice(&rest[..len]);
+                }
+                at += len;
+            }
+            None => {
+                out.push(bytes[at]);
+                at += 1;
+            }
+        }
+    }
+    out
+}
+
+/// A control sequence at the front of `bytes`: its length, and whether it
+/// asks the terminal for an answer.
+fn csi(bytes: &[u8]) -> Option<(usize, bool)> {
+    let body = &bytes[2..];
+    let params = body
+        .iter()
+        .take_while(|b| (0x30..=0x3f).contains(*b))
+        .count();
+    let middle = body[params..]
+        .iter()
+        .take_while(|b| (0x20..=0x2f).contains(*b))
+        .count();
+    let last = *body.get(params + middle)?;
+    if !(0x40..=0x7e).contains(&last) {
+        return None;
+    }
+    let (params, middle) = (&body[..params], &body[params..params + middle]);
+    let query = match (last, middle) {
+        // Primary, secondary and tertiary device attributes; `CSI ? … c`
+        // is an answer, not a question.
+        (b'c', b"") => !params.starts_with(b"?"),
+        // Status and cursor position reports.
+        (b'n', b"") => matches!(params, b"5" | b"6" | b"?6" | b"?15" | b"?26"),
+        // The terminal's name and version.
+        (b'q', b"") => params.starts_with(b">"),
+        // The keyboard protocol's flags.
+        (b'u', b"") => params == b"?",
+        // A mode's state.
+        (b'p', b"$") => true,
+        // Window and cell sizes.
+        (b't', b"") => matches!(
+            params,
+            b"11" | b"13" | b"14" | b"15" | b"16" | b"18" | b"19"
+        ),
+        _ => false,
+    };
+    Some((2 + params.len() + middle.len() + 1, query))
+}
+
+/// An OSC or DCS string at the front of `bytes`, ended by BEL or ST: its
+/// length and its body.
+fn string(bytes: &[u8]) -> Option<(usize, &[u8])> {
+    let body = &bytes[2..];
+    let end = body.iter().enumerate().find_map(|(at, byte)| match byte {
+        0x07 => Some((at, 1)),
+        0x1b if body.get(at + 1) == Some(&b'\\') => Some((at, 2)),
+        _ => None,
+    })?;
+    Some((2 + end.0 + end.1, &body[..end.0]))
 }
 
 /// Reads the terminal log in `pty` from `from` up to `to`, as a files-mode
@@ -361,6 +502,26 @@ pub fn read_terminal_log(pty: &Path, from: u64, to: u64) -> io::Result<(u64, Vec
 mod tests {
     use super::*;
     use crate::dir::PtyLog;
+
+    #[test]
+    fn replayed_history_keeps_its_drawing_and_loses_its_questions() {
+        // Terminal Claude's startup, as the log keeps it.
+        let startup = b"\x1b[?2004h\x1b[>0q\x1b[?u\x1b[c\x1b[?2004l\x1b[?2004hClaude Code\r\n";
+        assert_eq!(
+            without_queries(startup),
+            b"\x1b[?2004h\x1b[?2004l\x1b[?2004hClaude Code\r\n"
+        );
+        let asks =
+            b"a\x1b[6nb\x1b]11;?\x07c\x1b]4;1;?\x1b\\d\x1bP$qm\x1b\\e\x1b[?2026$pf\x1b[18tg\x1b[>c";
+        assert_eq!(without_queries(asks), b"abcdefg");
+        // Drawing, colours, titles, cursor styles and keyboard modes stay.
+        let drawing =
+            b"\x1b[2J\x1b[1;31mred\x1b[0m\x1b]0;title\x07\x1b[2 q\x1b[>1u\x1b[?25l\x1b[3;4H";
+        assert_eq!(without_queries(drawing), drawing);
+        // A sequence cut off at the end is kept as it is.
+        assert_eq!(without_queries(b"x\x1b[6"), b"x\x1b[6");
+        assert_eq!(without_queries(b"x\x1b]11;?"), b"x\x1b]11;?");
+    }
 
     #[test]
     fn the_terminal_log_reads_by_position_across_segments_and_past_rotation() {

@@ -1,14 +1,19 @@
-//! Bare `amux`: the terminal client on the selected profile.
+//! Bare `amux`: the terminal client on the selected profile; and `amux
+//! attach`, whose fleet chord opens that client over the attached agent.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use settings::{ColorSetting, InstallationConfig, ThemeSetting, UiSettings};
 use tui::{
-    ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
-    parse_theme_file, query_terminal_colors, theme_from_file,
+    AttachFn, AttachReturn, ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig,
+    detect_color_mode, parse_theme_file, query_terminal_colors, theme_from_file,
 };
+use wire::{Agent, ProfileInfo};
+
+use crate::attach::{Attacher, Outcome, farewell};
 
 /// How long to wait for a terminal to say what colours it paints with.
 /// Terminals that answer do so in a few milliseconds; the bound is for the
@@ -16,8 +21,37 @@ use tui::{
 const TERMINAL_COLOR_QUERY: Duration = Duration::from_millis(250);
 
 pub async fn run(config: &InstallationConfig, profile: Option<&str>) -> Result<()> {
-    let socket = crate::connect::client_socket(config, profile).await?;
-    let client = client::GrpcClient::connect(&socket)
+    let profile = crate::connect::profile(config, profile).await?;
+    let attacher = Attacher::new(&profile, config.keybinds.leader.clone())?;
+    open(config, &profile, attacher).await
+}
+
+/// `amux attach`: the agent's own interface on this terminal, and the fleet
+/// over it on the fleet chord.
+pub async fn attach(config: &InstallationConfig, profile: Option<&str>, agent: &str) -> Result<()> {
+    let profile = crate::connect::profile(config, profile).await?;
+    let mut client = crate::connect::client_of(&profile).await?;
+    let agent = crate::verbs::resolve(&mut client, agent).await?;
+    let mut attacher = Attacher::new(&profile, config.keybinds.leader.clone())?;
+    if let Some(why) = attacher.refusal(&agent) {
+        return Err(anyhow!(why));
+    }
+    match attacher.attach(&agent).await? {
+        Outcome::Fleet => open(config, &profile, attacher).await,
+        outcome => {
+            println!("{}", farewell(&agent, &outcome));
+            Ok(())
+        }
+    }
+}
+
+async fn open(
+    config: &InstallationConfig,
+    profile: &ProfileInfo,
+    attacher: Attacher,
+) -> Result<()> {
+    let socket = Path::new(&profile.socket_path);
+    let client = client::GrpcClient::connect(socket)
         .await
         .with_context(|| format!("connecting to {}", socket.display()))?;
     // Asked before the alternate screen is entered, because the answers
@@ -34,8 +68,29 @@ pub async fn run(config: &InstallationConfig, profile: Option<&str>) -> Result<(
         theme,
         initial_chat: None,
         attach: false,
+        version: node::version().to_owned(),
+        local_host: attacher.local_host().to_vec(),
     };
-    tui::run(Arc::new(client), tui_config, None).await
+    tui::run(Arc::new(client), tui_config, Some(attach_fn(attacher))).await
+}
+
+/// The fleet's raw attach. Only the fleet chord comes back to the fleet;
+/// a detach or the agent ending leaves for the shell, as `amux attach`
+/// does.
+fn attach_fn(attacher: Attacher) -> AttachFn {
+    let attacher = Arc::new(tokio::sync::Mutex::new(attacher));
+    Box::new(move |agent: Agent| {
+        let attacher = attacher.clone();
+        Box::pin(async move {
+            match attacher.lock().await.attach(&agent).await? {
+                Outcome::Fleet => Ok(AttachReturn::Fleet(None)),
+                outcome => {
+                    println!("{}", farewell(&agent, &outcome));
+                    Ok(AttachReturn::Exit)
+                }
+            }
+        })
+    })
 }
 
 /// The colour facts the environment states, read once at the edge.

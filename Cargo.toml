@@ -147,6 +147,9 @@ nix = { version = "0.31", features = ["process", "signal"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["hooks"] }
 rustix = { version = "1.1", features = ["fs"] }
 if-addrs = "0.13"
+# A screen model of an attached agent's terminal, so leaving it for the
+# fleet and coming back repaints the same process where it was.
+vt100 = "0.15"
 
 # Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which
 # keeps every codegen unit's object file under target/<profile>/deps for the

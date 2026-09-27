@@ -46,6 +46,11 @@ pub struct TuiConfig {
     /// Whether the embedding CLI can hand the terminal to an agent's own
     /// interface.
     pub attach: bool,
+    /// This build's version, compared with the daemon's.
+    pub version: String,
+    /// The profile's host on this machine: only its agents' terminals are
+    /// here to attach to.
+    pub local_host: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +116,19 @@ fn now_ms() -> i64 {
     SystemClock.now_ms()
 }
 
+/// Why an agent's own terminal cannot be attached from here: raw attach
+/// reads the agent's directory on this machine, and headless Claude has no
+/// terminal at all. Its chat is the way in either way.
+pub(crate) fn terminal_refusal(agent: &Agent, config: &TuiConfig) -> Option<&'static str> {
+    if agent.host_id != config.local_host {
+        Some("its terminal is on another machine; enter opens its chat")
+    } else if agent.kind() == wire::Kind::ClaudeSdk {
+        Some("headless Claude has no terminal; enter opens its chat")
+    } else {
+        None
+    }
+}
+
 fn plain(error: InputError) -> String {
     match error {
         InputError::Rejected(reason) => format!("not sent: {reason}"),
@@ -123,6 +141,8 @@ impl App {
         let (events, receiver) = mpsc::unbounded_channel();
         let mut fleet_view = FleetView::default();
         fleet_view.attach = config.attach;
+        fleet_view.version = config.version.clone();
+        fleet_view.local_host = config.local_host.clone();
         App {
             client,
             fleet,
@@ -254,7 +274,10 @@ impl App {
                         if let Some(host) = host {
                             session.set_host(host);
                         }
-                        let view = ChatView::new(agent.agent.clone(), now_ms(), self.config.attach);
+                        let terminal = self.fleet.state().agent(&agent).is_some_and(|entry| {
+                            self.config.attach && terminal_refusal(entry, &self.config).is_none()
+                        });
+                        let view = ChatView::new(agent.agent.clone(), now_ms(), terminal);
                         self.fleet_view.select(agent.clone());
                         self.chat = Some(OpenChat {
                             session,
@@ -420,10 +443,9 @@ impl App {
                 self.next_in_family();
             }
             KeyCode::Char('t') if self.config.attach => {
-                let entry = self.fleet.state().agent(&chat.agent).cloned();
-                if let Some(entry) = entry {
-                    return Flow::Attach(Box::new(entry));
-                }
+                let agent = chat.agent.clone();
+                drop(state);
+                return self.raw_attach(&agent).unwrap_or(Flow::Continue);
             }
             _ => {}
         }
@@ -482,10 +504,7 @@ impl App {
         let client = self.client.clone();
         match effect {
             FleetEffect::Open(agent) => self.open(agent),
-            FleetEffect::Attach(agent) => {
-                let entry = self.fleet.state().agent(&agent).cloned();
-                return entry.map(|entry| Flow::Attach(Box::new(entry)));
-            }
+            FleetEffect::Attach(agent) => return self.raw_attach(&agent),
             FleetEffect::Create { kind } => {
                 let cwd = self.config.working_dir.to_string_lossy().into_owned();
                 self.spawn(async move {
@@ -699,11 +718,24 @@ impl App {
                 let _ = crate::terminal::write_osc52(&mut std::io::stdout(), &text);
             }
             ChatEffect::RawAttach => {
-                let entry = self.fleet.state().agent(&chat.agent).cloned();
-                return entry.map(|entry| Flow::Attach(Box::new(entry)));
+                let agent = chat.agent.clone();
+                return self.raw_attach(&agent);
             }
         }
         None
+    }
+
+    /// Hands the terminal to the agent's own interface when it is on this
+    /// machine and has one; says why not otherwise.
+    fn raw_attach(&mut self, agent: &AgentKey) -> Option<Flow> {
+        let entry = self.fleet.state().agent(agent).cloned()?;
+        match terminal_refusal(&entry, &self.config) {
+            None => Some(Flow::Attach(Box::new(entry))),
+            Some(why) => {
+                self.notice(why, Tone::Warn);
+                None
+            }
+        }
     }
 
     /// A deleted agent's open chat closes to the fleet.

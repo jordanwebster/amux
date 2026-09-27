@@ -1,7 +1,7 @@
 //! Finding the daemon: the installation config, the front door, and the
 //! selected profile's client socket.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -137,11 +137,19 @@ pub async fn select(
         })
 }
 
-/// The client socket of the selected profile.
-pub async fn client_socket(config: &InstallationConfig, profile: Option<&str>) -> Result<PathBuf> {
+/// The selected profile, as the front door describes it.
+pub async fn profile(config: &InstallationConfig, profile: Option<&str>) -> Result<ProfileInfo> {
     let door = front_door(config).await?;
-    let selected = select(&mut profiles(door), profile).await?;
-    Ok(PathBuf::from(&selected.socket_path))
+    select(&mut profiles(door), profile).await
+}
+
+/// The client service of a profile the front door described.
+pub async fn client_of(profile: &ProfileInfo) -> Result<ClientServiceClient<Channel>> {
+    let socket = Path::new(&profile.socket_path);
+    let channel = channel(socket)
+        .await
+        .with_context(|| format!("connecting to {}", socket.display()))?;
+    Ok(wire::client_service_client(channel))
 }
 
 /// The client service of the selected profile.
@@ -149,9 +157,5 @@ pub async fn client(
     config: &InstallationConfig,
     profile: Option<&str>,
 ) -> Result<ClientServiceClient<Channel>> {
-    let socket = client_socket(config, profile).await?;
-    let channel = channel(&socket)
-        .await
-        .with_context(|| format!("connecting to {}", socket.display()))?;
-    Ok(wire::client_service_client(channel))
+    client_of(&self::profile(config, profile).await?).await
 }

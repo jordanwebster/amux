@@ -67,6 +67,9 @@ pub struct FleetView {
     top: usize,
     /// Whether raw attach is offered.
     pub attach: bool,
+    /// This build's version, and the host whose daemon it talks to.
+    pub version: String,
+    pub local_host: Vec<u8>,
 }
 
 fn glyph(attention: Attention, theme: Theme) -> (&'static str, ratatui::style::Style) {
@@ -405,6 +408,21 @@ impl FleetView {
             .iter()
             .filter(|h| h.presence() != Presence::Online)
             .count();
+        // A daemon that restarted into a newer build keeps serving this
+        // older client; only the person can restart it.
+        let daemon = fleet
+            .host(&self.local_host)
+            .and_then(|host| host.version.as_deref())
+            .filter(|version| !self.version.is_empty() && *version != self.version);
+        if let Some(version) = daemon {
+            push_right(
+                &mut line,
+                &format!("amux {version} is running · restart to update"),
+                theme.warn(),
+                width,
+            );
+            return line;
+        }
         let right = match fleet.connection() {
             Connection::Connecting => "connecting".to_owned(),
             Connection::Reconnecting => "reconnecting to amux".to_owned(),

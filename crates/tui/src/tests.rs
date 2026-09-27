@@ -936,3 +936,62 @@ fn the_fleet_lists_families_and_acts_on_the_selected_agent() {
         [FleetEffect::Attach(_)]
     ));
 }
+
+fn fleet_screen(view: &mut FleetView, fleet: &FleetState) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(W, H)).unwrap();
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            view.draw(frame, area, fleet, None, 0, theme());
+        })
+        .unwrap();
+    text(terminal.backend().buffer())
+}
+
+#[test]
+fn the_fleet_says_restart_to_update_when_the_daemon_runs_another_build() {
+    let mut fleet = FleetState::new();
+    let mut studio = host(b"a", "studio", wire::Trust::Trusted, wire::Presence::Online);
+    if let wire::inventory_event::Of::Host(entry) = &mut studio {
+        entry.version = Some("0.8.0".into());
+    }
+    inventory(&mut fleet, studio);
+    inventory(
+        &mut fleet,
+        wire::inventory_event::Of::CaughtUp(wire::CaughtUp { revision: 0 }),
+    );
+    let mut view = FleetView::default();
+    view.version = "0.8.0".into();
+    view.local_host = b"a".to_vec();
+    let screen = fleet_screen(&mut view, &fleet);
+    assert!(!screen.contains("restart to update"), "{screen}");
+    view.version = "0.7.0".into();
+    let screen = fleet_screen(&mut view, &fleet);
+    assert!(
+        screen.contains("amux 0.8.0 is running · restart to update"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn raw_attach_is_only_for_terminals_on_this_machine() {
+    let config = crate::TuiConfig {
+        working_dir: ".".into(),
+        leader: 'a',
+        theme: theme(),
+        initial_chat: None,
+        attach: true,
+        version: "0.7.0".into(),
+        local_host: b"a".to_vec(),
+    };
+    let agent = |host: &[u8], kind: Kind| wire::Agent {
+        host_id: host.to_vec(),
+        kind: kind as i32,
+        ..Default::default()
+    };
+    let refusal = |agent: &wire::Agent| crate::app::terminal_refusal(agent, &config);
+    assert_eq!(refusal(&agent(b"a", Kind::ClaudePty)), None);
+    assert_eq!(refusal(&agent(b"a", Kind::Codex)), None);
+    assert!(refusal(&agent(b"a", Kind::ClaudeSdk)).is_some_and(|why| why.contains("its chat")));
+    assert!(refusal(&agent(b"b", Kind::ClaudePty)).is_some_and(|why| why.contains("its chat")));
+}
