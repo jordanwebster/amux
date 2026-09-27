@@ -790,3 +790,114 @@ async fn a_peer_that_revokes_trust_is_listed_as_having_revoked_it() {
         .unwrap();
     net.shutdown().await.unwrap();
 }
+
+/// Waits until `pred` holds over the inventory, moving the policy clock on
+/// a second at a time so a stream that ended is opened again past its
+/// backoff.
+async fn reconnecting_until(
+    net: &Net,
+    fleet: &mut testnet::observe::InventoryObserver,
+    pred: impl Fn(&[InventoryEvent]) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    while fleet
+        .observe_until(&pred, Duration::from_millis(250))
+        .await
+        .is_err()
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the inventory never came to what was waited for: {}",
+            fleet.transcript()
+        );
+        net.advance(Duration::from_secs(1)).unwrap();
+    }
+}
+
+/// A host on `account` that reaches others through the relay alone.
+fn on_account(name: &str, account: &str) -> HostDecl {
+    HostDecl {
+        name: name.to_owned(),
+        account: Some(account.to_owned()),
+        ..HostDecl::default()
+    }
+}
+
+/// Over the relay no link carries the peer's word, so a host learns it no
+/// longer is trusted from the peer's refusal of the next stream it opens,
+/// its own reconnect of what the revocation closed. A relay route that
+/// merely goes away is no such word, and trusting the host again takes the
+/// mark away.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_revokes_trust_over_the_relay_is_listed_as_having_revoked_it() {
+    let mut net = Net::start(
+        Topology::new()
+            .relay(&["ada"])
+            .host_decl(on_account("desk", "ada"))
+            .host_decl(on_account("tablet", "ada")),
+    )
+    .await
+    .unwrap();
+    net.trust("desk", "tablet").await.unwrap();
+    net.trust("tablet", "desk").await.unwrap();
+    let desk_id = net.host("desk").unwrap().host_id;
+    let desk = move |events: &[InventoryEvent]| {
+        inventory_hosts(events)
+            .into_iter()
+            .find(|host| host.host_id == desk_id.as_bytes())
+    };
+    let ever_revoked = move |events: &[InventoryEvent]| {
+        events.iter().any(|event| {
+            matches!(&event.of, Some(inventory_event::Of::Host(host))
+                if host.host_id == desk_id.as_bytes() && host.revoked.is_some())
+        })
+    };
+    let online = |events: &[InventoryEvent]| {
+        desk(events).is_some_and(|entry| {
+            entry.presence == Presence::Online as i32 && entry.revoked.is_none()
+        })
+    };
+    let mut fleet = net.observe_inventory("tablet").await.unwrap();
+    fleet.observe_until(online, PATIENCE).await.unwrap();
+
+    // The desk going away takes its relay route with it; that is not a
+    // revocation, nor is its coming back.
+    net.stop_daemon("desk").await.unwrap();
+    fleet
+        .observe_until(
+            |events| desk(events).is_some_and(|entry| entry.presence != Presence::Online as i32),
+            PATIENCE,
+        )
+        .await
+        .unwrap();
+    net.restart_daemon("desk").await.unwrap();
+    reconnecting_until(&net, &mut fleet, online).await;
+    for _ in 0..5 {
+        net.advance(Duration::from_secs(1)).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        !ever_revoked(fleet.events()),
+        "a relay route that goes away is not a revocation"
+    );
+
+    net.untrust("desk", "tablet").await.unwrap();
+    reconnecting_until(&net, &mut fleet, |events| {
+        desk(events).is_some_and(|entry| {
+            entry.revoked == Some(true)
+                && entry.presence != Presence::Online as i32
+                && entry.trust == Trust::Trusted as i32
+        })
+    })
+    .await;
+    // The relay still says the desk is online, which is what pairing again
+    // rides on.
+    assert_eq!(
+        net.edge("tablet").unwrap().via(desk_id).await,
+        node::harness::HostVia::Relay
+    );
+
+    net.trust("desk", "tablet").await.unwrap();
+    reconnecting_until(&net, &mut fleet, online).await;
+    net.shutdown().await.unwrap();
+}

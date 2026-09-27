@@ -23,7 +23,7 @@ pub mod pb {
 /// Bound for link-control messages and application-stream prefaces.
 pub const MESSAGE_SIZE_LIMIT: usize = 16 * 1024 * 1024;
 /// RPC payloads include blobs plus protobuf framing overhead.
-const CHANNEL_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
+pub const CHANNEL_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
 
 pub fn client_service_client(
     channel: tonic::transport::Channel,

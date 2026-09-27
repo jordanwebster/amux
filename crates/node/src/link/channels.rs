@@ -9,6 +9,7 @@ use std::sync::{Arc, RwLock, Weak};
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
+use futures_util::future::BoxFuture;
 use rustls::pki_types::ServerName;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -16,13 +17,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
 use tokio_util::sync::CancellationToken;
+use tonic::codegen::http;
 use tonic::transport::{Channel, Endpoint};
 use wire::pb;
 
 use super::{ByteStream, OpenError};
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::routing::{LinkId, LinkRegistry, Route};
+use crate::routing::{LinkId, LinkRegistry, Revocations, Route};
 use crate::transport::{channel_from_single_io, configure_tonic_endpoint_keepalive};
 use crate::trust::SharedTrustStore;
 use crate::{AgentId, HostId};
@@ -70,6 +72,7 @@ pub enum ChannelError {
 struct ChannelSecurity {
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
+    revocations: Revocations,
 }
 
 /// A calls channel kept for reuse, and whether the one connection under it
@@ -160,6 +163,7 @@ impl ChannelPool {
         links: Arc<LinkRegistry>,
         identity: DeviceIdentity,
         trust_store: SharedTrustStore,
+        revocations: Revocations,
     ) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
@@ -168,6 +172,7 @@ impl ChannelPool {
             security: Some(ChannelSecurity {
                 identity,
                 trust_store,
+                revocations,
             }),
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
             bulk_response_holds: std::sync::Mutex::new(HashMap::new()),
@@ -344,6 +349,7 @@ impl ChannelPool {
         .await
         .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
         .map_err(|error| ChannelError::Tls(error.to_string()))?;
+        let tls = TrustAnswer::new(tls, key.peer, security.revocations.clone());
         let endpoint = configure_tonic_endpoint_keepalive(Endpoint::from_static("https://peer"));
         let hold = (key.class == ChannelClass::Bulk).then(|| {
             self.bulk_response_holds
@@ -453,6 +459,159 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for Watched<T> {
         self.end_on(&result);
         result
     }
+}
+
+/// The message a call carries when the host it called refused this host's
+/// certificate as no longer trusted.
+pub const TRUST_REVOKED: &str = "the host no longer trusts this machine";
+
+/// Reads the far host's answer to this host's certificate off a channel's
+/// TLS stream. In TLS 1.3 the client's handshake finishes before the server
+/// has judged the client's certificate, so the answer comes with the first
+/// read: application data means it was taken, and a certificate_revoked
+/// alert means the host no longer trusts this one. Either is kept in
+/// `revocations`, and the refusal fails the read with an error
+/// [`PeerChannel`] names to the caller.
+struct TrustAnswer<T> {
+    inner: T,
+    peer: HostId,
+    revocations: Revocations,
+    answered: bool,
+}
+
+impl<T> TrustAnswer<T> {
+    fn new(inner: T, peer: HostId, revocations: Revocations) -> Self {
+        Self {
+            inner,
+            peer,
+            revocations,
+            answered: false,
+        }
+    }
+}
+
+fn revoked_certificate(error: &io::Error) -> bool {
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::AlertReceived(
+            rustls::AlertDescription::CertificateRevoked
+        ))
+    )
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for TrustAnswer<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        match ready!(Pin::new(&mut self.inner).poll_read(cx, buf)) {
+            Ok(()) => {
+                if !self.answered && buf.filled().len() > before {
+                    self.answered = true;
+                    self.revocations.clear(self.peer);
+                }
+                Poll::Ready(Ok(()))
+            }
+            Err(error) if !self.answered && revoked_certificate(&error) => {
+                self.answered = true;
+                self.revocations.note(self.peer);
+                Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    TRUST_REVOKED,
+                )))
+            }
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for TrustAnswer<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+}
+
+/// A channel to a trusted host whose calls fail with an Unauthenticated
+/// status saying so when that host no longer trusts this one, rather than
+/// with the anonymous transport error the refused stream would otherwise
+/// read as.
+#[derive(Clone)]
+pub struct PeerChannel(Channel);
+
+impl PeerChannel {
+    pub(crate) fn new(channel: Channel) -> Self {
+        Self(channel)
+    }
+}
+
+impl tower::Service<http::Request<tonic::body::Body>> for PeerChannel {
+    type Response = http::Response<tonic::body::Body>;
+    type Error = tower::BoxError;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx).map_err(name_refusal)
+    }
+
+    fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
+        let response = self.0.call(request);
+        Box::pin(async move { response.await.map_err(name_refusal) })
+    }
+}
+
+/// A PeerService client on a [`PeerChannel`].
+pub type PeerClient = wire::peer_service_client::PeerServiceClient<PeerChannel>;
+
+pub(crate) fn peer_client(channel: Channel) -> PeerClient {
+    wire::peer_service_client::PeerServiceClient::new(PeerChannel::new(channel))
+        .max_decoding_message_size(wire::CHANNEL_MESSAGE_SIZE_LIMIT)
+        .max_encoding_message_size(wire::CHANNEL_MESSAGE_SIZE_LIMIT)
+}
+
+/// The status for a transport error: Unauthenticated when [`TrustAnswer`]
+/// failed the stream because the host refused this one's certificate.
+/// HTTP/2 keeps only an I/O error's kind and text, so those are what is
+/// matched.
+fn name_refusal(error: tonic::transport::Error) -> tower::BoxError {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(current) = source {
+        if let Some(io) = current.downcast_ref::<io::Error>()
+            && io.kind() == io::ErrorKind::PermissionDenied
+            && io.to_string() == TRUST_REVOKED
+        {
+            return Box::new(tonic::Status::unauthenticated(TRUST_REVOKED));
+        }
+        source = current.source();
+    }
+    Box::new(error)
 }
 
 enum Http2ReadState {

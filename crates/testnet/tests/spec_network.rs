@@ -712,9 +712,10 @@ async fn revoking_a_host_closes_what_it_holds_open_over_a_direct_link_and_over_t
     }
 
     // Revoking closes every stream the revoked host holds, at once, and
-    // neither route lets it back in: the desk no longer holds its key. The
-    // relay may still say the host is online, as it says of any host on the
-    // account; saying so grants nothing.
+    // neither route lets it back in: the desk no longer holds its key, and
+    // says so when the host tries. The relay may still say the host is
+    // online, as it says of any host on the account; saying so grants
+    // nothing.
     for (host, mut session, mut inventory) in held {
         let id = host_id(&net, host);
         net.untrust("desk", host).await.unwrap();
@@ -726,10 +727,16 @@ async fn revoking_a_host_closes_what_it_holds_open_over_a_direct_link_and_over_t
         let unasked = peer_inventory_hosts(&edge(&net, "desk"), id)
             .await
             .expect_err("the desk calls no host it forgot");
+        // The desk refuses the key by name, on either route, so the host
+        // can tell it is no longer trusted from any other failure.
+        assert_eq!(
+            (refused.code(), refused.message()),
+            (tonic::Code::Unauthenticated, node::TRUST_REVOKED),
+            "{host}'s reopen is refused as no longer trusted"
+        );
         println!(
-            "{host} revoked: session {session_end}, inventory {inventory_end}; reopening: {:?}; \
+            "{host} revoked: session {session_end}, inventory {inventory_end}; \
              the desk calling it: {:?}; the desk sees it {:?}",
-            refused.code(),
             unasked.code(),
             edge(&net, "desk").via(id).await,
         );

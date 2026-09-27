@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Instant;
@@ -54,9 +55,6 @@ struct RoutingState {
     claims: HashMap<HostId, ClaimedEntry>,
     replacing: HashSet<HostId>,
     client_visible_activity: HashMap<HostId, Instant>,
-    /// Hosts that closed their link saying they no longer trust this one,
-    /// until one links directly again.
-    revoked: HashSet<HostId>,
     next_host_sequence: u64,
     routing_events: EventSource<RoutingEvent>,
     host_events: EventSource<HostReachabilityEvent>,
@@ -68,9 +66,39 @@ impl RoutingState {
     }
 }
 
+/// Hosts that said they no longer trust this one: by closing a link
+/// USER_REVOKED, or by refusing this host's certificate as revoked on a
+/// stream opened to them. A host leaves the set when it takes this host's
+/// certificate again, on a link or a stream, or when this host forgets it.
+///
+/// A plain mutex, because a stream notes the refusal from inside a read.
+#[derive(Clone, Default)]
+pub(crate) struct Revocations(Arc<std::sync::Mutex<HashSet<HostId>>>);
+
+impl Revocations {
+    pub(crate) fn note(&self, host_id: HostId) {
+        self.hosts().insert(host_id);
+    }
+
+    pub(crate) fn clear(&self, host_id: HostId) {
+        self.hosts().remove(&host_id);
+    }
+
+    pub(crate) fn contains(&self, host_id: HostId) -> bool {
+        self.hosts().contains(&host_id)
+    }
+
+    fn hosts(&self) -> std::sync::MutexGuard<'_, HashSet<HostId>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 #[derive(Default)]
 pub struct RoutingCore {
     state: RwLock<RoutingState>,
+    revocations: Revocations,
     trust_store: Option<SharedTrustStore>,
     trust_data_dir: Option<PathBuf>,
 }
@@ -84,6 +112,7 @@ impl RoutingCore {
     pub(crate) fn with_trust_store(trust_store: SharedTrustStore) -> Self {
         Self {
             state: RwLock::new(RoutingState::default()),
+            revocations: Revocations::default(),
             trust_store: Some(trust_store),
             trust_data_dir: None,
         }
@@ -95,6 +124,7 @@ impl RoutingCore {
     ) -> Self {
         Self {
             state: RwLock::new(RoutingState::default()),
+            revocations: Revocations::default(),
             trust_store: Some(trust_store),
             trust_data_dir: Some(data_dir),
         }
@@ -177,7 +207,7 @@ impl RoutingCore {
         }
 
         let newly_present = !state.is_present(host_id);
-        state.revoked.remove(&host_id);
+        self.revocations.clear(host_id);
         let entry = state.directs.entry(host_id).or_insert_with(|| DirectEntry {
             host: host.clone(),
             links: Vec::new(),
@@ -298,6 +328,7 @@ impl RoutingCore {
     /// Forgets everything about `host_id` (teardown / trust replacement):
     /// its direct links and every claim about it.
     pub(crate) async fn remove_host(&self, host_id: HostId) {
+        self.revocations.clear(host_id);
         let mut state = self.state.write().await;
         if let Some(entry) = state.directs.remove(&host_id) {
             for link in entry.links {
@@ -428,15 +459,9 @@ impl RoutingCore {
 }
 
 impl RoutingCore {
-    /// Records that `host_id` closed its link saying it no longer trusts
-    /// this host.
-    pub(crate) async fn note_revoked(&self, host_id: HostId) {
-        self.state.write().await.revoked.insert(host_id);
-    }
-
-    /// Whether `host_id` last said it no longer trusts this host.
-    pub(crate) async fn revoked(&self, host_id: HostId) -> bool {
-        self.state.read().await.revoked.contains(&host_id)
+    /// Who has said they no longer trust this host.
+    pub(crate) fn revocations(&self) -> &Revocations {
+        &self.revocations
     }
 
     /// The account-binding fact recorded for `host_id`, as a client listing

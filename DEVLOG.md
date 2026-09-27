@@ -1,3 +1,21 @@
+2026-09-27 — **A host learns over the relay that a peer no longer trusts it.**
+When the desk unpaired a tablet it reached only through the relay, the
+tablet kept listing the desk as online: the USER_REVOKED close goes only
+down direct links, and the tablet's reopened streams failed as an anonymous
+transport error. The desk now refuses a certificate it no longer pins with
+the TLS certificate_revoked alert. The tablet's channel reads that alert
+when its own reconnect (inventory follower, replica source) opens a stream,
+records the revocation beside the direct-link one, and fails the call as
+Unauthenticated "the host no longer trusts this machine". The inventory
+publishes a revoked host as offline, whatever route the relay still
+offers, so every client says the peer no longer trusts this machine; the
+relay route itself stays for pairing again. The mark clears the next time
+the desk accepts the tablet's certificate, on either route, or when the
+tablet forgets the desk. A desk that merely goes away never marks it. Tests:
+testnet spec_inventory a_peer_that_revokes_trust_over_the_relay_is_listed_as_having_revoked_it
+(mutation-checked), and spec_network's revoking case now asserts the
+refusal's code and words on both routes.
+
 2026-09-27 — **A stopped headless Claude question reads Dismissed, from the fake too.**
 Stopped with AskUserQuestion open, Claude 2.1.283 sends
 `control_cancel_request` for the open permission request, refuses the call

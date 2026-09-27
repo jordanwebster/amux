@@ -9,8 +9,11 @@ pub use carrier::{
     ByteStream, CarrierKind, ControlSink, ControlSource, LinkCarrier, OpenError, read_message,
     write_message,
 };
-pub use channels::{BulkResponseHold, ChannelClass, ChannelError, ChannelPool};
-pub(crate) use channels::{ChannelKey, serve_inbound_streams};
+pub use channels::{
+    BulkResponseHold, ChannelClass, ChannelError, ChannelPool, PeerChannel, PeerClient,
+    TRUST_REVOKED,
+};
+pub(crate) use channels::{ChannelKey, peer_client, serve_inbound_streams};
 pub use mux::{MuxCarrier, MuxRole};
 pub(crate) use piper::Piper;
 pub use quic::QuicCarrier;

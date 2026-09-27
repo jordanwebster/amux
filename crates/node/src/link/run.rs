@@ -856,7 +856,7 @@ async fn handle_control_body(
             let reason = wire::pb::LinkCloseReason::try_from(close.reason)
                 .unwrap_or(wire::pb::LinkCloseReason::Unspecified);
             if reason == wire::pb::LinkCloseReason::UserRevoked {
-                ctx.routing.note_revoked(link.peer()).await;
+                ctx.routing.revocations().note(link.peer());
             }
             ControlAction::Close(reason, link_close_status(&close))
         }

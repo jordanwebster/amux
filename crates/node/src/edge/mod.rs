@@ -250,6 +250,7 @@ impl Edge {
             links,
             identity.clone(),
             trust.clone(),
+            routing.revocations().clone(),
         ));
         let connections = Arc::new(ConnectionManager::new(routing.clone(), channels.clone()));
         let (incoming_streams_tx, incoming_streams_rx) = mpsc::channel(64);
@@ -490,10 +491,10 @@ impl Edge {
         self.routing.signed_in_for(host)
     }
 
-    /// Whether `host` closed its link saying it no longer trusts this host,
-    /// and has not linked directly since.
-    pub async fn revoked(&self, host: HostId) -> bool {
-        self.routing.revoked(host).await
+    /// Whether `host` last said it no longer trusts this host, by closing
+    /// a link or refusing a stream, and has not taken it back since.
+    pub fn revoked(&self, host: HostId) -> bool {
+        self.routing.revocations().contains(host)
     }
 
     /// The route calls to `host` take now. A different value from one
@@ -519,14 +520,8 @@ impl Edge {
 
     /// A PeerService client for a trusted host, over whichever route
     /// reaches it: a direct link, or the relay.
-    pub async fn peer(
-        &self,
-        host: HostId,
-    ) -> Result<
-        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
-        crate::link::ChannelError,
-    > {
-        Ok(wire::peer_service_client(self.channel(host).await?))
+    pub async fn peer(&self, host: HostId) -> Result<crate::PeerClient, crate::link::ChannelError> {
+        Ok(crate::link::peer_client(self.channel(host).await?))
     }
 
     /// The channel calls to a trusted host ride, for a caller that speaks
@@ -545,24 +540,18 @@ impl Edge {
         &self,
         host: HostId,
         agent: crate::AgentId,
-    ) -> Result<
-        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
-        crate::link::ChannelError,
-    > {
+    ) -> Result<crate::PeerClient, crate::link::ChannelError> {
         let channel = self.connections.session_channel_to(host, agent).await?;
-        Ok(wire::peer_service_client(channel))
+        Ok(crate::link::peer_client(channel))
     }
 
     /// A PeerService client for bulk transfers, blobs, apart from calls.
     pub async fn bulk_peer(
         &self,
         host: HostId,
-    ) -> Result<
-        wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>,
-        crate::link::ChannelError,
-    > {
+    ) -> Result<crate::PeerClient, crate::link::ChannelError> {
         let channel = self.connections.bulk_channel_to(host).await?;
-        Ok(wire::peer_service_client(channel))
+        Ok(crate::link::peer_client(channel))
     }
 
     /// Holds the next bulk transfer from `host` once its first data has

@@ -13,8 +13,8 @@ mod link_registry;
 mod types;
 mod wire;
 
-pub(crate) use core::RouteUpdateOutcome;
 pub use core::RoutingCore;
+pub(crate) use core::{Revocations, RouteUpdateOutcome};
 
 pub use events::RoutingEvent;
 pub(crate) use host::{

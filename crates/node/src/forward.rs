@@ -9,10 +9,8 @@ use std::future::Future;
 use std::time::Duration;
 
 use store::{AgentKey, AgentRow, Store as _, StoreError};
-use tonic::transport::Channel;
 use tonic::{Code, Response, Status};
 use uuid::Uuid;
-use wire::peer_service_client::PeerServiceClient;
 use wire::{
     AmbiguousHostName, DeleteAgentRequest, DeleteAgentResponse, ErrorCode, ErrorDetail, HostEntry,
     Trust,
@@ -154,7 +152,7 @@ impl ProfileRuntime {
     /// patience.
     pub(crate) async fn on_peer<T, F, Fut>(&self, host: HostId, call: F) -> Result<T, ForwardError>
     where
-        F: FnOnce(PeerServiceClient<Channel>) -> Fut,
+        F: FnOnce(crate::PeerClient) -> Fut,
         Fut: Future<Output = Result<Response<T>, Status>>,
     {
         let edge = self.edge().ok_or(ForwardError::Unreachable(host))?;

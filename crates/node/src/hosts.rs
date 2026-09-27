@@ -63,7 +63,16 @@ impl ProfileRuntime {
         if let Some(edge) = self.edge() {
             for (host, name, _) in edge.trusted() {
                 trusted.insert(host);
-                let via = edge.via(host).await;
+                // A host that said it no longer trusts this one takes no
+                // call from it, whatever route still reaches it: the relay
+                // keeps saying it is online, which pairing again needs and
+                // a client must not read as a working host.
+                let revoked = edge.revoked(host);
+                let via = if revoked {
+                    HostVia::Offline
+                } else {
+                    edge.via(host).await
+                };
                 let presence = if via == HostVia::Offline {
                     Presence::Offline
                 } else {
@@ -77,7 +86,7 @@ impl ProfileRuntime {
                         last_dial_error: edge.last_dial_error(host).await,
                         via: via.to_wire() as i32,
                         signed_in: edge.signed_in(host),
-                        revoked: edge.revoked(host).await.then_some(true),
+                        revoked: revoked.then_some(true),
                         trust: Trust::Trusted as i32,
                         presence: presence as i32,
                         ..HostEntry::default()

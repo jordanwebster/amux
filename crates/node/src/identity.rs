@@ -290,10 +290,12 @@ impl ClientCertVerifier for PinnedClientCertVerifier {
         if trust_store.host_id_for_pubkey(&pubkey).is_some() {
             Ok(ClientCertVerified::assertion())
         } else {
+            // Revoked, not an unknown issuer: only a host that trusts this
+            // one presents its certificate here, so the refusal tells it
+            // this host no longer trusts it, and the alert this raises is
+            // how that host learns so over a relay.
             emit_mtls_audit("client certificate pubkey is not trusted");
-            Err(TlsError::InvalidCertificate(
-                CertificateError::UnknownIssuer,
-            ))
+            Err(TlsError::InvalidCertificate(CertificateError::Revoked))
         }
     }
 

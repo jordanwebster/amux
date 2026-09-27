@@ -64,6 +64,7 @@ pub use install::{
     AGENTS, GENERATION, HOST_ID, INSTALLATION_LOCK, InstallationLock, LockError, PROFILES,
     REGISTRY, REPLICAS, REPORTS, STORE, write_durably,
 };
+pub use link::{PeerChannel, PeerClient, TRUST_REVOKED};
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use pairing::PairingAdmin;
 pub use pairing::qr::{

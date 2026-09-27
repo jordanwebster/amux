@@ -174,7 +174,7 @@ async fn forwarded<T, F, Fut>(
     call: F,
 ) -> Result<Response<T>, Status>
 where
-    F: FnOnce(wire::peer_service_client::PeerServiceClient<tonic::transport::Channel>) -> Fut,
+    F: FnOnce(crate::PeerClient) -> Fut,
     Fut: std::future::Future<Output = Result<Response<T>, Status>>,
 {
     runtime

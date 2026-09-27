@@ -219,6 +219,15 @@ The server reads the live trust store and the client pins the expected peer.
 This is the single authority decision for calls on direct QUIC, relay QUIC,
 relay TCP and SSH alike. Relays only copy its ciphertext.
 
+A server that no longer holds the client's pin refuses its certificate with
+the TLS `certificate_revoked` alert. Only a host that pins the server presents
+a certificate there, so the alert tells it the server has revoked it. Over a
+relay nothing else carries that news: no link joins the two hosts to close
+with `USER_REVOKED`. The client records the revocation when it reads the
+alert, fails the call as `UNAUTHENTICATED` ("the host no longer trusts this
+machine"), and lists the host as revoked and offline. The mark clears when
+the server next accepts the client's certificate on either route.
+
 The channel pool selects a live link by peer and route, opens a stream, performs
 that handshake, and gives the result to tonic as one HTTP/2 channel. Calls and
 inventory subscriptions share a cached `Calls` channel per peer and route.
