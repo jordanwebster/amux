@@ -220,8 +220,9 @@
     {
       "id": "attachment-or-review",
       "stage": 15,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-stories.json",
+      "phone_topology": "journeys/topologies/phone-stories.json",
       "claim": "On the laptop a person writes to an agent on the desk: text, a twelve-line paste that stands in the sentence as one token, more text, and a review of the diff the desk computed of the agent's working tree, with a comment on one changed line. The desk receives one prompt holding those four in that order, the paste's exact text and the comment on that line, and the review names a patch whose bytes on the desk's disk hash to that name and hold the edit. Opening the chat again shows the tokens as they were sent."
     },
     {

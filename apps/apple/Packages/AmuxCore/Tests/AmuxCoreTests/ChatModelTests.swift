@@ -359,6 +359,18 @@ final class ChatModelTests: XCTestCase {
         XCTAssertTrue(model.slashMatches.isEmpty)
     }
 
+    func testASpaceAddedWherePastedTextMeetsAWordStaysInTheSentence() {
+        let model = ChatModel(source: FakeChat(rows: [], frame: frame()))
+        model.type("Please check")
+        let log = (1...12).map { "line \($0)" }.joined(separator: "\n")
+        model.type("Please check " + log)
+        XCTAssertEqual(model.draft, "Please check ")
+        XCTAssertEqual(model.attachments, [.text(name: "Pasted text", text: log)])
+        model.type("Please check " + log + " against")
+        XCTAssertEqual(model.draft, "Please check  against")
+        XCTAssertEqual(model.attachments.count, 1)
+    }
+
     func testALongPasteBecomesOnePastedTextAttachmentSentInline() async {
         let source = FakeChat(rows: [], frame: frame())
         let model = ChatModel(source: source)
@@ -372,6 +384,9 @@ final class ChatModelTests: XCTestCase {
         model.type("Look at this: " + log)
         XCTAssertEqual(model.attachments.count, 1, "the text view's echo of the paste is not a second paste")
         XCTAssertEqual(model.draft, "Look at this: ")
+        model.type("Look at this: " + log + "now")
+        XCTAssertEqual(model.attachments.count, 1, "typing while the field still shows the paste")
+        XCTAssertEqual(model.draft, "Look at this: now")
         model.type("Look at this: two\nlines")
         XCTAssertEqual(model.draft, "Look at this: two\nlines", "a short paste stays words")
         XCTAssertEqual(model.attachments.count, 1)

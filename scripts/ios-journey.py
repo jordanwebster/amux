@@ -14,8 +14,11 @@ every story written here runs.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import os
 import re
 import signal
+import subprocess
 import sys
 import time
 
@@ -356,6 +359,132 @@ def manage_agent(journey: PhoneJourney) -> list[str]:
     ]
 
 
+PASTED = "\n".join(f"deploy log {n}: rsync finished with status 0" for n in range(12))
+COMMENT = "Why --delete here?"
+
+
+def reviewed(chat: dict, comment: str) -> dict:
+    """The one prompt carrying the paste and the review, as the desk holds
+    it. The phone's composer keeps a paste and a review as chips after the
+    text, so they follow it in the order they were added."""
+    sent = [item for item in chat["items"] if item["attachments"]]
+    if len(sent) != 1:
+        raise RuntimeError(f"the desk holds {len(sent)} prompts with attachments")
+    item = sent[0]
+    kinds = [attachment["kind"] for attachment in item["attachments"]]
+    words = item["text"].replace("\ufffc", " ").split()
+    if words != ["Please", "check", "against"] or kinds != ["text", "review"]:
+        raise RuntimeError(f"the prompt is not the text, then the paste, then the review: {item!r}")
+    if item["attachments"][0]["text"] != PASTED:
+        raise RuntimeError("the pasted text arrived changed")
+    comments = item["attachments"][1]["comments"]
+    if comments != [{"path": "deploy.sh", "line": 3, "old_line": 0, "text": comment}]:
+        raise RuntimeError(f"the review's comments are {comments!r}")
+    return item
+
+
+def chips(drawn: dict) -> list[str]:
+    return [
+        element.get("label") or ""
+        for name, element in drawn.items()
+        if name.startswith("chat.tray.") or "Pasted text" in (element.get("label") or "")
+    ]
+
+
+def attachment_or_review(journey: PhoneJourney) -> list[str]:
+    # The reviewer's working tree on the desk: one commit and an edit.
+    work = Path(journey.ready["root"]) / "desk" / "work"
+    pinned = {"GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(work), "-c", "user.name=Journey", "-c", "user.email=journey@example.invalid", *args],
+            check=True, capture_output=True, env={**os.environ, **pinned},
+        )
+
+    git("init", "-q", "-b", "main")
+    (work / "deploy.sh").write_text("#!/bin/sh\necho deploying\nrsync build/ prod:/srv\n")
+    git("add", "deploy.sh")
+    git("commit", "-qm", "Deploy by rsync")
+    (work / "deploy.sh").write_text("#!/bin/sh\necho deploying\nrsync --delete build/ prod:/srv\necho done\n")
+
+    journey.launch()
+    pair_by_code(journey, "desk")
+    reviewer = open_agent(journey, "reviewer")
+
+    # Text, a long paste that becomes one chip, more text.
+    journey.type("chat.field", "Please check")
+    time.sleep(1.5)
+    if os.environ.get("PASTE_PEEK"):
+        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"] + ".before.png"], check=True)
+    journey.paste("chat.field", PASTED)
+    journey.wait(lambda drawn: labelled(drawn, "Pasted text"), "the paste as one chip")
+    if os.environ.get("PASTE_PEEK"):
+        time.sleep(1)
+        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"]], check=True)
+        Path(os.environ["PASTE_PEEK"] + ".txt").write_text("\n".join(
+            f"{n} {e.get('frame')} {e.get('label')!r} {e.get('value')!r}" for n, e in journey.elements().items() if n.startswith("chat.")))
+        time.sleep(3)
+        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"] + ".later.png"], check=True)
+    journey.type("chat.field", " against")
+
+    # A review of the desk's working tree, with a comment on one line.
+    journey.wait_for("chat.changes")
+    journey.tap("chat.changes")
+    drawn = journey.wait(lambda drawn: any(name.startswith("review.line.") for name in drawn), "the review's lines")
+    line = next(
+        name for name, element in drawn.items()
+        if name.startswith("review.line.") and "rsync --delete" in (element.get("label") or "")
+    )
+    journey.perform(line, "Select line")
+    journey.wait_for("review.comment")
+    journey.screen("review-diff")
+    journey.tap("review.comment")
+    journey.wait_for("review.note")
+    journey.type("review.note", COMMENT)
+    journey.wait(lambda drawn: drawn.get("review.add", {}).get("enabled") is True, "a comment ready to add")
+    journey.tap("review.add")
+    journey.wait(lambda drawn: labelled(drawn, COMMENT) and "review.attach" in drawn, "the comment on the line")
+    journey.screen("review-comment")
+    journey.tap("review.attach")
+    journey.wait(lambda drawn: "chat.field" in drawn and "review.attach" not in drawn, "the chat again")
+
+    # Read with the keyboard down: the draft keeps its text and both chips.
+    drawn = reopen(journey, reviewer, lambda drawn: labelled(drawn, "Pasted text"))
+    journey.screen("composer-tokens")
+    journey.wait(lambda drawn: drawn.get("chat.send", {}).get("enabled") is True, "the draft ready to send")
+    journey.tap("chat.send")
+    journey.wait(lambda drawn: labelled(drawn, "I read the review."), "the reviewer's reply")
+
+    # The desk received the text, the paste's exact text, the comment, and
+    # the patch it made itself, whose bytes are on its disk.
+    received = journey.wait_chat(
+        "desk", "reviewer",
+        lambda chat: chat["phase"] == "IDLE" and any(i["attachments"] for i in chat["items"]), "received",
+    )
+    item = reviewed(received, COMMENT)
+    control = negative_control(reviewed, received, COMMENT + " (a wrong comment)")
+    patch = item["attachments"][1]["patch"]
+    found = [path for path in (Path(journey.ready["root"]) / "desk" / "data").rglob(patch) if path.parent.name == "blobs"]
+    if len(found) != 1:
+        raise RuntimeError(f"the desk holds the patch {patch} {len(found)} times")
+    held = found[0].read_bytes()
+    if hashlib.sha256(held).hexdigest() != patch or b"+rsync --delete build/ prod:/srv" not in held:
+        raise RuntimeError("the patch on the desk is not the reviewed diff")
+
+    # Opened again, the chat shows what was sent and the reply.
+    reopen(journey, reviewer, lambda drawn: labelled(drawn, "I read the review.") and "chat.row.turn-end" in drawn)
+    journey.screen("reopened", volatile=("chat.row.turn-end",))
+    return [
+        "the prompt reached the desk as the text, then the paste, then the review, as the composer showed them",
+        "the paste arrived as one attachment holding exactly the twelve lines pasted",
+        f"the review carries one comment on deploy.sh line 3: {COMMENT!r}",
+        control,
+        "the review names a patch the desk computed; its bytes on the desk hash to that name and hold the edit",
+        "the chat opened again shows what was sent and the reply",
+    ]
+
+
 def never_received(chat: dict, text: str) -> None:
     if prompts(chat, text):
         raise RuntimeError(f"the desk received {text!r} while access was lost")
@@ -490,6 +619,7 @@ STORIES = {
     "conversation-decision-codex": lambda j: conversation_decision(j, "decision-codex", True),
     "keep-authority": keep_authority,
     "manage-agent": manage_agent,
+    "attachment-or-review": attachment_or_review,
 }
 
 

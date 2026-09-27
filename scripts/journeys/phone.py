@@ -383,6 +383,11 @@ class PhoneJourney:
         self.app({"kind": "choose", "label": label})
         self.actions.append(f"choose {label!r}")
 
+    def perform(self, identifier: str, action: str) -> None:
+        """An element's named accessibility action, as VoiceOver offers it."""
+        self.app({"kind": "perform", "identifier": identifier, "action": action})
+        self.actions.append(f"{action} on {identifier}")
+
     def type(self, identifier: str, text: str) -> None:
         self.app({"kind": "type", "identifier": identifier, "text": text})
         self.actions.append(f"type {text!r} into {identifier}")

@@ -133,6 +133,9 @@ public enum DoorRequest: Sendable, Equatable {
     /// Activate the item reading `label` in what the system presented over
     /// the app, a menu among them, whose items carry no names of their own.
     case choose(label: String)
+    /// Run an element's named accessibility action, as VoiceOver's actions
+    /// rotor does: what a drag or a hold does for a person with a finger.
+    case perform(identifier: String, action: String)
     case type(identifier: String, text: String)
     /// Empty a named field, through the field's own delete.
     ///
@@ -613,7 +616,7 @@ extension DoorRequest: Codable {
         case note, marks
         case motion, transparency
         case permission, tier
-        case bytes, label
+        case bytes, label, action
     }
 
     public init(from decoder: any Decoder) throws {
@@ -682,6 +685,10 @@ extension DoorRequest: Codable {
             self = .tap(identifier: try fields.decode(String.self, forKey: .identifier))
         case "choose":
             self = .choose(label: try fields.decode(String.self, forKey: .label))
+        case "perform":
+            self = .perform(
+                identifier: try fields.decode(String.self, forKey: .identifier),
+                action: try fields.decode(String.self, forKey: .action))
         case "type":
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
@@ -845,6 +852,10 @@ extension DoorRequest: Codable {
         case .choose(let label):
             try fields.encode("choose", forKey: .kind)
             try fields.encode(label, forKey: .label)
+        case .perform(let identifier, let action):
+            try fields.encode("perform", forKey: .kind)
+            try fields.encode(identifier, forKey: .identifier)
+            try fields.encode(action, forKey: .action)
         case .type(let identifier, let text):
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)

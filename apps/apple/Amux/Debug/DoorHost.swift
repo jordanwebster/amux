@@ -139,6 +139,7 @@ final class DoorHost {
         case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
         case .choose(let label): return choose(label)
+        case .perform(let identifier, let action): return perform(action, on: identifier)
         case .type(let identifier, let text): return type(text, into: identifier)
         case .clear(let identifier): return clear(identifier)
         case .paste(let identifier, let text): return paste(text, into: identifier)
@@ -509,6 +510,28 @@ final class DoorHost {
             return .ack
         }
         return .error("no menu offers \(label)")
+    }
+
+    private func perform(_ action: String, on identifier: String) -> DoorReply {
+        guard let window = DoorWindow.current else { return .error("no window on screen") }
+        var candidates = [element(named: identifier, in: window)].compactMap { $0 }
+        if let declared = declared.first(where: { $0.identifier == identifier }),
+           let under = VisibleTree.element(
+               at: CGPoint(x: declared.frame.midX, y: declared.frame.midY), in: window,
+               saying: declared.label) {
+            candidates.append(under)
+        }
+        for candidate in candidates {
+            guard let custom = candidate.accessibilityCustomActions?
+                .first(where: { $0.name == action }) else { continue }
+            if let handler = custom.actionHandler {
+                if handler(custom) { return .ack }
+            } else if let target = custom.target as? NSObject {
+                _ = target.perform(custom.selector, with: custom)
+                return .ack
+            }
+        }
+        return .error("\(identifier) offers no action named \(action)")
     }
 
     private func type(_ text: String, into identifier: String) -> DoorReply {

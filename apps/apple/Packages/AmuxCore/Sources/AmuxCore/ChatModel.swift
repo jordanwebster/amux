@@ -121,7 +121,8 @@ public final class ChatModel {
     /// Dictation into the draft; the app's speech recogniser drives it.
     public var dictation = DictationState()
     /// The field's text when a paste last left it, and when.
-    @ObservationIgnored private var pasteEcho: (text: String, at: ContinuousClock.Instant)?
+    /// The last paste taken out of the draft, where the field still shows it.
+    @ObservationIgnored private var pasted: (at: Int, text: [Character])?
 
     /// - Parameter loadingHintAfter: how long an empty chat waits before
     ///   saying it is loading; zero says so from the first frame.
@@ -437,29 +438,56 @@ public final class ChatModel {
     /// the person's typing comes through here, so words put back into the
     /// draft stay words.
     public func type(_ text: String) {
-        let text = text.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        // The text view sends a paste's whole text again after the draft
-        // takes it out; the same text straight after is that echo.
-        if let echo = pasteEcho, echo.text == text, echo.at.duration(to: .now) < .milliseconds(500) {
-            return
+        var new = Array(
+            text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
+        // The field goes on showing a paste after the draft takes it out,
+        // and sends it back with its echo of the paste and with the next
+        // keystroke; it is taken out again until the field has redrawn.
+        if let pasted, new.count >= pasted.at + pasted.text.count,
+           Array(new[pasted.at..<(pasted.at + pasted.text.count)]) == pasted.text {
+            new.removeSubrange(pasted.at..<(pasted.at + pasted.text.count))
+            redrawField()
+        } else {
+            pasted = nil
         }
-        pasteEcho = nil
         let old = Array(draft)
-        let new = Array(text)
         var head = 0
         while head < old.count, head < new.count, old[head] == new[head] { head += 1 }
         var tail = 0
         while tail < old.count - head, tail < new.count - head,
               old[old.count - 1 - tail] == new[new.count - 1 - tail] { tail += 1 }
-        let inserted = String(new[head..<(new.count - tail)])
-        guard inserted.count >= Self.pasteCharacters || Self.lines(inserted) >= Self.pasteLines else {
-            draft = text
+        var inserted = Array(new[head..<(new.count - tail)])
+        guard inserted.count >= Self.pasteCharacters || Self.lines(String(inserted)) >= Self.pasteLines
+        else {
+            draft = String(new)
             return
         }
-        draft = String(new[..<head]) + String(new[(new.count - tail)...])
-        attachments.append(.text(name: String(localized: "Pasted text"), text: inserted))
-        pasteEcho = (text, .now)
+        var before = Array(new[..<head])
+        var after = Array(new[(new.count - tail)...])
+        // Pasting beside a word, the text view adds a space to keep the
+        // words apart; the space belongs to the sentence, not to the paste.
+        if inserted.first == " ", before.last.map({ !$0.isWhitespace }) ?? false {
+            inserted.removeFirst()
+            before.append(" ")
+        }
+        if inserted.last == " ", after.first.map({ !$0.isWhitespace }) ?? false {
+            inserted.removeLast()
+            after.insert(" ", at: 0)
+        }
+        draft = String(before + after)
+        attachments.append(.text(name: String(localized: "Pasted text"), text: String(inserted)))
+        pasted = (at: before.count, text: inserted)
+        redrawField()
+    }
+
+    /// Has the field read the draft again on the next turn, once the edit
+    /// it is in the middle of is over.
+    private func redrawField() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let draft = self.draft
+            self.draft = draft
+        }
     }
 
     /// Lines as the chat counts them: a last line break ends a line rather
