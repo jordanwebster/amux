@@ -141,6 +141,8 @@ pub struct Launch {
     /// it doubles on each failure up to the ceiling.
     pub source_backoff_ms: i64,
     pub source_backoff_max_ms: i64,
+    /// Where the host looks for Git repositories to offer new agents.
+    pub repository_roots: Vec<PathBuf>,
 }
 
 impl Default for Launch {
@@ -171,6 +173,7 @@ impl Default for Launch {
                 << 20,
             source_backoff_ms: 1_000,
             source_backoff_max_ms: 30_000,
+            repository_roots: Vec::new(),
         }
     }
 }
@@ -307,6 +310,8 @@ pub struct ProfileRuntime {
     pub(crate) replica_blobs: Mutex<Option<store::BlobLru>>,
     /// The host set as last published on the inventory.
     pub(crate) hosts: Mutex<crate::hosts::HostSet>,
+    /// The directories this profile's agents were started in.
+    recent: Arc<Mutex<crate::repositories::Recent>>,
 }
 
 pub(crate) struct AgentHandle {
@@ -472,7 +477,6 @@ impl ProfileRuntime {
             profile,
             host,
             generation,
-            dir,
             clock,
             fanout: Fanout::new(launch.fanout_capacity, launch.inventory_capacity),
             join_hook: Mutex::new(None),
@@ -496,6 +500,8 @@ impl ProfileRuntime {
             sources: Mutex::new(crate::sources::Sources::default()),
             replica_blobs: Mutex::new(None),
             hosts: Mutex::new(crate::hosts::HostSet::new()),
+            recent: Arc::new(Mutex::new(crate::repositories::Recent::load(&dir))),
+            dir,
         })
     }
 
@@ -718,7 +724,31 @@ impl ProfileRuntime {
             },
         );
         spec::write(&dir, &spec)?;
-        self.start_process(id, &dir, &launch).await
+        let started = self.start_process(id, &dir, &launch).await;
+        if started.is_ok() {
+            self.recent
+                .lock()
+                .unwrap()
+                .record(Path::new(&request.cwd), now);
+        }
+        started
+    }
+
+    /// Where this host offers to start an agent: see
+    /// [`crate::repositories::list`].
+    pub async fn list_repositories(
+        &self,
+        query: Option<String>,
+        limit: u32,
+    ) -> wire::ListRepositoriesResponse {
+        let roots = self.launch().repository_roots;
+        let recent = self.recent.clone();
+        tokio::task::spawn_blocking(move || {
+            let recent = recent.lock().unwrap();
+            crate::repositories::list(&roots, &recent, query.as_deref(), limit)
+        })
+        .await
+        .expect("listing repositories does not panic")
     }
 
     /// The host a create request is for: its id, else its name resolved

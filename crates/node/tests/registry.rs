@@ -662,3 +662,191 @@ fn wire_turn_end() -> provider_fakes::script::Step {
 fn exit(code: i32) -> provider_fakes::script::Step {
     provider_fakes::script::Step::Exit { code }
 }
+
+fn names(entries: &[wire::ProjectEntry]) -> Vec<&str> {
+    entries.iter().map(|entry| entry.name.as_str()).collect()
+}
+
+fn listing(
+    query: Option<&str>,
+    limit: u32,
+    host: Option<uuid::Uuid>,
+) -> tonic::Request<wire::ListRepositoriesRequest> {
+    tonic::Request::new(wire::ListRepositoriesRequest {
+        query: query.map(str::to_owned),
+        limit,
+        host_id: host.map(|host| host.as_bytes().to_vec()),
+    })
+}
+
+/// Where a host offers to start an agent: the directories its agents ran
+/// in, newest first and still after the agents are deleted, then the Git
+/// repositories under its roots. A paired host naming it gets the same
+/// answer through it; once it no longer trusts that host, nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_lists_where_its_agents_ran_and_its_repositories_for_trusted_hosts() {
+    use wire::client_service_server::ClientService as _;
+
+    let desk = Install::new();
+    let roots = desk.path("code");
+    for repository in ["amux", "notes", "nested/deep/site", "amux/vendor/lib"] {
+        std::fs::create_dir_all(roots.join(repository).join(".git")).unwrap();
+    }
+    // A worktree's .git is a file.
+    std::fs::create_dir_all(roots.join("amux-review")).unwrap();
+    std::fs::write(roots.join("amux-review/.git"), "gitdir: ../amux/.git\n").unwrap();
+    std::fs::create_dir_all(roots.join("plain")).unwrap();
+    let (older, newer) = (desk.work.join("older"), desk.work.join("newer"));
+    std::fs::create_dir_all(&older).unwrap();
+    std::fs::create_dir_all(&newer).unwrap();
+    let mut launch = desk.launch("idle", Vec::new());
+    launch.repository_roots = vec![roots.clone(), desk.path("missing")];
+    let desk_daemon = desk.start("boot-1", launch).await;
+    let desk_runtime = runtime(&desk_daemon, &desk);
+    let first = id_of(
+        &desk_runtime
+            .spawn(create(&older, "first", None), None)
+            .await
+            .unwrap(),
+    );
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let second = id_of(
+        &desk_runtime
+            .spawn(create(&newer, "second", None), None)
+            .await
+            .unwrap(),
+    );
+    desk_runtime.delete(first).await.unwrap();
+
+    let person = node::ClientApi::new(&desk_runtime, None);
+    let local = person
+        .list_repositories(listing(None, 50, None))
+        .await
+        .unwrap()
+        .into_inner();
+    println!("local listing: {local:#?}");
+    assert_eq!(
+        names(&local.recent),
+        ["newer", "older"],
+        "newest first, deleted agents too"
+    );
+    assert!(local.recent[0].last_used_unix_ms > local.recent[1].last_used_unix_ms);
+    assert_eq!(
+        local.recent[0].path,
+        newer.canonicalize().unwrap().to_str().unwrap()
+    );
+    // Nothing inside a repository is searched, and plain directories are
+    // not repositories.
+    assert_eq!(
+        names(&local.repositories),
+        ["amux", "amux-review", "site", "notes"]
+    );
+    assert!(
+        local
+            .repositories
+            .iter()
+            .all(|entry| entry.last_used_unix_ms.is_none())
+    );
+    assert_eq!(
+        local.roots,
+        [roots.canonicalize().unwrap().to_str().unwrap()]
+    );
+
+    let found = person
+        .list_repositories(listing(Some("REVIEW"), 50, Some(desk_runtime.host())))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(found.recent.is_empty());
+    assert_eq!(names(&found.repositories), ["amux-review"]);
+    let capped = person
+        .list_repositories(listing(None, 3, None))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(names(&capped.recent), ["newer", "older"]);
+    assert_eq!(
+        names(&capped.repositories),
+        ["amux"],
+        "the limit counts both lists"
+    );
+
+    let tools = node::ClientApi::new(&desk_runtime, Some(second));
+    let refused = tools
+        .list_repositories(listing(None, 50, None))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::PermissionDenied);
+
+    // A paired laptop asks the desk by its host id.
+    let laptop = Install::new();
+    let laptop_daemon = laptop
+        .start("boot-1", laptop.launch("idle", Vec::new()))
+        .await;
+    let laptop_runtime = runtime(&laptop_daemon, &laptop);
+    let (desk_edge, laptop_edge) = (desk_runtime.edge().unwrap(), laptop_runtime.edge().unwrap());
+    desk_edge.trust(&laptop_edge).await.unwrap();
+    laptop_edge.trust(&desk_edge).await.unwrap();
+    let link = laptop_edge.link_in_process(&desk_edge).unwrap();
+    assert!(
+        laptop_edge
+            .wait_for_route(desk_runtime.host(), PATIENCE)
+            .await
+    );
+    let from_laptop = node::ClientApi::new(&laptop_runtime, None);
+    let forwarded = from_laptop
+        .list_repositories(listing(None, 50, Some(desk_runtime.host())))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        forwarded, local,
+        "the desk answers the laptop as it answers its own clients"
+    );
+    let own = from_laptop
+        .list_repositories(listing(None, 50, Some(laptop_runtime.host())))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(own.recent.is_empty() && own.repositories.is_empty() && own.roots.is_empty());
+    let stranger = from_laptop
+        .list_repositories(listing(None, 50, Some(uuid::Uuid::new_v4())))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        stranger.code(),
+        tonic::Code::FailedPrecondition,
+        "{stranger:?}"
+    );
+
+    // The desk stops trusting the laptop: its listing is refused.
+    desk_edge
+        .unpair(
+            wire::PeerRef {
+                identifier: Some(wire::peer_ref::Identifier::HostId(
+                    laptop_runtime.host().as_bytes().to_vec(),
+                )),
+            },
+            "test".to_owned(),
+        )
+        .await
+        .unwrap();
+    let untrusted = from_laptop
+        .list_repositories(listing(None, 50, Some(desk_runtime.host())))
+        .await
+        .unwrap_err();
+    println!("untrusted: {untrusted:?}");
+    assert!(
+        matches!(
+            untrusted.code(),
+            tonic::Code::FailedPrecondition | tonic::Code::Unauthenticated
+        ),
+        "a host that stopped trusting the caller answers nothing: {untrusted:?}"
+    );
+
+    drop(link);
+    kill_all(&desk_runtime).await;
+    drop((desk_runtime, laptop_runtime, desk_edge, laptop_edge));
+    desk_daemon.shutdown().await.unwrap();
+    laptop_daemon.shutdown().await.unwrap();
+}

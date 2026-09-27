@@ -65,6 +65,7 @@ fn launch(config: &InstallationConfig) -> Result<Launch> {
         own_budget_bytes: config.retention.own_budget_mib << 20,
         replica_budget_bytes: config.retention.replica_rows_mib << 20,
         replica_blob_budget_bytes: config.retention.replica_blobs_mib << 20,
+        repository_roots: config.repository_roots.clone(),
         ..Launch::default()
     })
 }

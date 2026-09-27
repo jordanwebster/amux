@@ -120,6 +120,10 @@ impl AgentRef {
     }
 }
 
+/// The one repository root of a host that declares repositories, in its
+/// directory.
+const REPOSITORIES: &str = "repositories";
+
 /// Everything a host is on disk and in process.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostInfo {
@@ -851,6 +855,10 @@ impl Net {
         launch.agent.grace_secs = 20;
         launch.agent.drain_secs = 5;
         launch.stop_deadline_ms = 15_000;
+        let own = &self.hosts[&host.name];
+        if !own.decl.repositories.is_empty() {
+            launch.repository_roots = vec![own.dir.join(REPOSITORIES)];
+        }
         if let Some(hook) = &self.launch_hook {
             hook(&host.name, &mut launch);
         }
@@ -874,6 +882,20 @@ impl Net {
         let data_dir = dir.join("data");
         let work = dir.join("work");
         std::fs::create_dir_all(&work)?;
+        for repository in &decl.repositories {
+            let path = dir.join(REPOSITORIES).join(repository);
+            std::fs::create_dir_all(&path)?;
+            let initialized = std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&path)
+                .status()?;
+            if !initialized.success() {
+                return Err(NetError::Host {
+                    host: decl.name.clone(),
+                    error: format!("git init {} failed: {initialized}", path.display()),
+                });
+            }
+        }
         let profile = node::create_profile(&data_dir)?;
         let host_id = node::host_id(&node::profile_dir(&data_dir, profile))?;
         let front_door = dir.join("door.sock");

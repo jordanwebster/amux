@@ -219,7 +219,7 @@ impl AppRuntime {
     }
 
     /// Where a host offers to start an agent, filtered by `query` and at
-    /// most `limit` of each.
+    /// most `limit` in all, recent directories first.
     pub async fn directories(
         &self,
         host_id: &[u8],

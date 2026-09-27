@@ -457,37 +457,37 @@ described in [`A2A.md`](./A2A.md).
 
 ## Project discovery
 
-`Client::list_repositories` uses the `ListRepositories` RPC on both services.
-It selects a host by identity and sends an optional
-case-insensitive path/name query and a total result limit. `ClientService` routes
-it to that host's `AgentService` over the same authenticated direct or relayed
-channel used for agent operations. The host owns the search roots; callers
-cannot supply a directory to scan.
+`ListRepositories` is on both `ClientService` and `PeerService`. A client
+names a host by id (none means the daemon it asks) and sends an optional
+case-insensitive path/name query and a total result limit. A daemon asked about
+another host forwards the call, one hop, to that trusted host's `PeerService`
+over whatever link reaches it; a host that is not trusted, or that no longer
+trusts the caller, answers nothing. The host owns the search roots; callers
+cannot supply a directory to scan. Agents cannot list: the call is refused on
+an agent's tools socket.
 
 Configure `repository_roots` as a list of directories in the installation's YAML
-config; all profiles inherit those roots, while recent projects remain per profile.
-The default is empty. The host canonicalizes and deduplicates existing roots,
-searches directories in path order, recognizes both `.git` directories and
-worktree `.git` files, and stops descending at each repository. Directory
-symlinks are not followed; a symlink deliberately configured as a root resolves
-to its canonical directory. Missing or unreadable directories are skipped.
-Only paths representable by the text protocol are offered.
+config; all profiles inherit those roots, while recent directories remain per
+profile. The default is empty. The host canonicalizes and deduplicates existing
+roots, searches directories in path order, recognizes both `.git` directories
+and worktree `.git` files, and stops descending at each repository. Missing or
+unreadable directories are skipped. Only paths representable by the text
+protocol are offered.
 
-The response separates recent projects, repositories and canonical roots.
-Recent projects come first, newest creation first, with each directory appearing
-once across both lists. The requested limit caps their combined count, up to
-200; zero returns only roots. Each project has a path, display name and optional
-last-use time (the newest successful agent registration in that directory).
+The response separates recent directories, repositories and canonical roots.
+Recent directories come first, newest agent first, with each directory
+appearing once across both lists. The requested limit caps their combined
+count, up to 200; zero returns only roots. Each entry has a path, display name
+and, for recent ones, the time an agent last started there.
 Recent directories may be outside search roots: creating an agent with a typed
-path adds that project to the history. This does not restrict which typed paths
-agent creation accepts.
+path adds it to the history.
 
-The host retains its latest 200 recent directories in
-`data_dir/recent-projects.json`, written atomically with private permissions.
-Deleting agents and restarting the daemon preserve history; directories that no
-longer exist are omitted from results. Resuming an older session cannot move a
-project's timestamp backward. A history write failure is logged without failing
-an otherwise successful agent creation.
+Each profile keeps its latest 200 recent directories in
+`recent_directories.json` in the profile directory, written atomically with
+private permissions. Deleting agents and restarting the daemon preserve
+history; directories that no longer exist, or that became symlinks, are
+omitted from results. A history write failure is logged without failing an
+otherwise successful agent creation.
 
 ## Attachment storage and routing
 

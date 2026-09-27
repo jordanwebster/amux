@@ -1,3 +1,16 @@
+2026-09-27 — **The daemon lists where a host offers to start an agent.**
+`ListRepositories` answered "not available yet"; the daemon now serves it.
+Recent directories are where this host's agents were started, newest first,
+kept in a small file in the profile directory so they stay listed after the
+agents are deleted and across restarts; repositories are the Git checkouts
+and worktrees under the installation's `repository_roots`, never searched
+inside. Both are filtered by the query and capped together by the limit,
+recent first, which is what the phone's New Agent chooser already expects. A
+call naming another host is forwarded once to that trusted host; a host that
+is not trusted, or no longer trusts the caller, answers nothing, and an
+agent's tools socket is refused. Testnet hosts may declare `repositories`,
+which the net creates with `git init` under the host's one root.
+
 2026-09-27 — **A tool server's dialog lands below the call it interrupts; the terminal client's goldens show transcript order.**
 Terminal Claude announces a tool server's dialog only through a hook, which
 can reach the agent before the transcript rows Claude wrote ahead of it, so

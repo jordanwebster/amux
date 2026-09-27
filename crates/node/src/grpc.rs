@@ -193,6 +193,15 @@ fn agent_id(bytes: &[u8]) -> Result<AgentId, Status> {
     })
 }
 
+fn host_id(bytes: &[u8]) -> Result<crate::HostId, Status> {
+    Uuid::from_slice(bytes).map_err(|_| {
+        status(wire_error(
+            ErrorCode::InvalidArgument,
+            format!("a host id is 16 bytes, not {}", bytes.len()),
+        ))
+    })
+}
+
 type EventStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
 #[tonic::async_trait]
@@ -485,12 +494,30 @@ impl ClientService for ClientApi {
 
     async fn list_repositories(
         &self,
-        _request: Request<ListRepositoriesRequest>,
+        request: Request<ListRepositoriesRequest>,
     ) -> Result<Response<ListRepositoriesResponse>, Status> {
-        Err(status(wire_error(
-            ErrorCode::Unimplemented,
-            "listing repositories is not available yet",
-        )))
+        self.people_only("list repositories")?;
+        let request = request.into_inner();
+        let runtime = self.runtime()?;
+        let named = request.host_id.as_deref().map(host_id).transpose()?;
+        if let Some(host) = named.filter(|host| *host != runtime.host()) {
+            // A peer's call is answered for the peer's own host only.
+            if !self.forwards {
+                return Err(status(wire_error(
+                    ErrorCode::InvalidArgument,
+                    "a paired host lists only its own repositories",
+                )));
+            }
+            return forwarded(&runtime, host, |mut client| async move {
+                client.list_repositories(request).await
+            })
+            .await;
+        }
+        Ok(Response::new(
+            runtime
+                .list_repositories(request.query, request.limit)
+                .await,
+        ))
     }
 
     async fn dump(&self, request: Request<DumpRequest>) -> Result<Response<DumpResponse>, Status> {

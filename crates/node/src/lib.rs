@@ -35,6 +35,7 @@ mod pairing;
 mod profiles;
 mod relay;
 pub mod release;
+mod repositories;
 mod resource_limits;
 mod retention;
 mod routing;
