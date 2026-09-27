@@ -23,6 +23,8 @@ client = { workspace = true }
 clap = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
+quinn = { workspace = true }
+serde = { workspace = true }
 serde_yaml = { workspace = true }
 settings = { workspace = true }
 store = { workspace = true }
@@ -42,6 +44,11 @@ libc = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+jsonwebtoken = { workspace = true }
+rcgen = { workspace = true }
 agent = { workspace = true }
 interpret = { workspace = true }
 journal = { workspace = true }

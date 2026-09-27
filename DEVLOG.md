@@ -1,3 +1,15 @@
+2026-09-27 — **The amux binary serves the cloud relay again.**
+`amux server start --cloud --foreground` is back, with the configuration
+and environment the relay deployment already uses: the file `AMUX_CONFIG`
+names gives `host_name`, `tcp_port`, `udp_port` and `cloud_url`, and
+`AMUX_TLS_CERT` / `AMUX_TLS_KEY` name the certificate and key. It serves
+the node's relay server over TLS-over-TCP and QUIC, checks each host's
+connection token against the cloud's signing keys, logs to the per-user
+state directory, and runs no supervisor or updater. Two process tests start
+it with a self-signed certificate beside a stand-in cloud and see a signed-in
+daemon's cloud link connect through it, once over QUIC and once over TLS
+when the QUIC listener is elsewhere.
+
 2026-09-27 — **The terminal client is rebuilt on the view library.**
 `crates/tui` is back in the workspace as a thin client over `ui-runtime`'s
 drivers: the fleet composes `fleet_list`, the chat composes `chat_rows`,

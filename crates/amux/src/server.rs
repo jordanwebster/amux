@@ -147,7 +147,7 @@ async fn supervisor_gone(pipe: Option<node::ActivationPipe>) {
 }
 
 #[cfg(unix)]
-async fn terminated() {
+pub(crate) async fn terminated() {
     use tokio::signal::unix::{SignalKind, signal};
     let (Ok(mut term), Ok(mut int)) = (
         signal(SignalKind::terminate()),
@@ -162,7 +162,7 @@ async fn terminated() {
 }
 
 #[cfg(not(unix))]
-async fn terminated() {
+pub(crate) async fn terminated() {
     let _ = tokio::signal::ctrl_c().await;
 }
 

@@ -5,6 +5,7 @@
 
 mod connect;
 mod profiles;
+mod relay;
 mod server;
 mod setup;
 mod supervise;
@@ -153,7 +154,16 @@ enum ProfileCommand {
 enum ServerCommand {
     /// Start amux, detached from this terminal: the supervisor where the
     /// install has one, the daemon otherwise.
-    Start,
+    Start {
+        /// Run the cloud relay instead, in the foreground, from the relay
+        /// configuration `--config` names.
+        #[arg(long)]
+        cloud: bool,
+        /// The relay always runs in the foreground; accepted for the
+        /// service units that say so.
+        #[arg(long, requires = "cloud")]
+        foreground: bool,
+    },
     /// Stop amux cleanly: the supervisor first where one runs. Agents keep
     /// running.
     Stop,
@@ -209,6 +219,9 @@ fn main() -> ExitCode {
                     .and_then(|(pipe, config)| server::run_daemon(&config, pipe)),
             )
         }
+        Command::Server {
+            command: ServerCommand::Start { cloud: true, .. },
+        } => report(relay::run(cli.config.as_deref())),
         Command::Supervise { inherit } => report(
             connect::load_config(cli.config.as_deref()).and_then(|config| {
                 supervise::run(&config, cli.config.as_deref(), inherit.as_deref())
@@ -275,7 +288,7 @@ fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) 
             }
             Command::Update => setup::update(&config).await,
             Command::Server {
-                command: ServerCommand::Start,
+                command: ServerCommand::Start { .. },
             } => server::start(&config, config_path.as_deref()).await,
             Command::Server {
                 command: ServerCommand::Stop,
