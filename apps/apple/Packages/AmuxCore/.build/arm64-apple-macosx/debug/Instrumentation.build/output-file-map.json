@@ -1,0 +1,40 @@
+{
+  "": {
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/primary.swiftdeps"
+  },
+  "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/Instrumentation/Budgets.swift": {
+    "dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Budgets.d",
+    "object": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Budgets.swift.o",
+    "swiftmodule": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Budgets~partial.swiftmodule",
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Budgets.swiftdeps",
+    "diagnostics": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Budgets.dia"
+  },
+  "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/Instrumentation/Instruments.swift": {
+    "dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Instruments.d",
+    "object": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Instruments.swift.o",
+    "swiftmodule": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Instruments~partial.swiftmodule",
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Instruments.swiftdeps",
+    "diagnostics": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Instruments.dia"
+  },
+  "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/Instrumentation/Judge.swift": {
+    "dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Judge.d",
+    "object": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Judge.swift.o",
+    "swiftmodule": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Judge~partial.swiftmodule",
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Judge.swiftdeps",
+    "diagnostics": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Judge.dia"
+  },
+  "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/Instrumentation/PerfRun.swift": {
+    "dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/PerfRun.d",
+    "object": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/PerfRun.swift.o",
+    "swiftmodule": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/PerfRun~partial.swiftmodule",
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/PerfRun.swiftdeps",
+    "diagnostics": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/PerfRun.dia"
+  },
+  "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift": {
+    "dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Workloads.d",
+    "object": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Workloads.swift.o",
+    "swiftmodule": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Workloads~partial.swiftmodule",
+    "swift-dependencies": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Workloads.swiftdeps",
+    "diagnostics": "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/Workloads.dia"
+  }
+}

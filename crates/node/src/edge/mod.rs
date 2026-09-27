@@ -613,6 +613,16 @@ impl Edge {
         }
     }
 
+    /// A bearer for the account service, for a client that calls it on the
+    /// account's behalf. The refresh token stays here: it may be single use,
+    /// so only this process ever spends it.
+    pub async fn access_token(&self) -> Result<crate::auth::AccessToken, crate::auth::AuthError> {
+        match self.credentials() {
+            Some(credentials) => credentials.access_token().await,
+            None => Err(crate::auth::AuthError::Unauthenticated),
+        }
+    }
+
     fn credentials(&self) -> Option<Arc<dyn CredentialProvider>> {
         if let Some(credentials) = &self.credentials_override {
             return Some(credentials.clone());

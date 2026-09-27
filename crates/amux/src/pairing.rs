@@ -596,6 +596,7 @@ pub async fn login(mut door: Door, profile: Option<&ProfileInfo>, cloud_url: &st
         cloud_url: cloud_url.to_owned(),
         staged_refresh_token: refresh,
         adopt_non_pristine: false,
+        client_id: String::new(),
     };
     let bound = match door.bind_profile(request.clone()).await {
         Err(status)

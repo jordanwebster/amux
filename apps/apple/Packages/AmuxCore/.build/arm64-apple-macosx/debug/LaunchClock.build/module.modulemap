@@ -1,0 +1,4 @@
+module LaunchClock {
+    umbrella header "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/Sources/LaunchClock/include/LaunchClock.h"
+    export *
+}

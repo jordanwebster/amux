@@ -1,70 +1,12 @@
 import AmuxApp
 import Foundation
 
-/// The shared Rust library this build is linked against. Swift never
-/// reimplements protocol, projection or send-gate behaviour; it reads it here.
-public enum Bridge {
-    public static var version: String {
-        guard let version = amux_app_version() else { return "" }
-        return String(cString: version)
-    }
-
-    /// Which of the two libraries this binary linked. The version alone is the
-    /// shipping library; the version with `+debug-tools` is the one built with
-    /// the driving tools, which accepts a plaintext relay on this machine and
-    /// can freeze a recorder snapshot. Reading it costs nothing and is the
-    /// only way an app can tell from the inside.
-    public static var build: String {
-        guard let build = amux_app_build() else { return "" }
-        return String(cString: build)
-    }
-
-    // The suffix `build` carries when the driving tools are compiled in is
-    // deliberately not spelled anywhere in Swift. It is a string literal only
-    // the driving library contains, and `wt run ios-door-smoke` proves a
-    // release binary does not carry it by searching the bytes — a constant
-    // here would be found by that search and the check would be worthless.
-}
-
 extension Bridge {
-    /// The fleet one account last displayed on this device, read straight off
-    /// disk.
-    ///
-    /// A cold launch has rows to draw long before it has a connection, and
-    /// starting the runtime to get them would put the network's setup in front
-    /// of the first frame. This is the same answer the running library delivers
-    /// first — every card marked as awaiting its machine, the fleet as a whole
-    /// unreconciled — read by the same code, so the screen a launch draws and
-    /// the screen a connection replaces it with cannot disagree.
-    ///
-    /// The account is part of the question: a remembered row is one account's
-    /// machine and one account's agent, and a phone signed in to two of them
-    /// keeps a fleet for each. A nil account reads the signed-out profile.
-    public static func cachedFleet(in directory: URL, for account: AccountId?) throws -> [Event] {
-        Signposts.emit(.storeReadBegan)
-        let json = amux_app_cached_fleet(directory.path, account?.value ?? "")
-        Signposts.emit(.storeReadEnded)
-        guard let json else {
-            throw CachedFleetFailure("The stored fleet could not be read.")
-        }
-        defer { amux_app_free(json) }
-        let data = Data(String(cString: json).utf8)
-        if let batch = try? Event.batch(from: data, decoder: AmuxJSON.decoder) {
-            return batch.events
-        }
-        struct Failure: Decodable { var error: String }
-        if let failure = try? AmuxJSON.decoder.decode(Failure.self, from: data) {
-            throw CachedFleetFailure(failure.error)
-        }
-        throw CachedFleetFailure("The stored fleet returned an unreadable answer.")
-    }
-}
-
-/// A launch-time store diagnosis supplied by the shared runtime.
-public struct CachedFleetFailure: Error, CustomStringConvertible, Sendable, Equatable {
-    public let description: String
-
-    public init(_ description: String) {
-        self.description = description
+    /// The version of the Rust library this build linked. A library built
+    /// with the driving tools says so after a `+`; a release binary is
+    /// checked for not carrying that suffix, so it is spelled nowhere here.
+    public static var version: String {
+        guard let version = amux_version() else { return "" }
+        return String(cString: version)
     }
 }

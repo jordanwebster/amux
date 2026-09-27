@@ -60,6 +60,14 @@ pub fn definitions() -> Map<String, Value> {
         app_runtime::values::HostView,
         app_runtime::values::FleetChanges,
         app_runtime::values::PairRequest,
+        app_runtime::values::PendingPair,
+        app_runtime::values::Roster,
+        app_runtime::values::Found,
+        app_runtime::values::AccountView,
+        app_runtime::values::Bearer,
+        app_runtime::values::NewAgent,
+        app_runtime::values::Directories,
+        app_runtime::values::AgentAct,
     );
     generator.take_definitions(true)
 }

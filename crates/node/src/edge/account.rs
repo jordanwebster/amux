@@ -36,6 +36,14 @@ pub(crate) struct AccountRecord {
     pub(crate) refresh_token: Option<String>,
     #[serde(default)]
     pub(crate) paused: bool,
+    /// The OAuth client the refresh token was issued to, which is the only
+    /// one it refreshes under: the CLI's, or the phone's.
+    #[serde(default = "cli_client")]
+    pub(crate) client_id: String,
+}
+
+fn cli_client() -> String {
+    oauth::CLI_CLIENT_ID.to_owned()
 }
 
 /// The account file and the access token minted from it.
@@ -157,12 +165,13 @@ impl Account {
             .refresh_token
             .clone()
             .ok_or(AuthError::Unauthenticated)?;
-        let (access, rotated) = oauth::refresh_access_token(record.service.as_str(), &refresh)
-            .await
-            .map_err(|error| match error {
-                OAuthError::RefreshTokenExpired => AuthError::Unauthenticated,
-                other => AuthError::Provider(other.to_string()),
-            })?;
+        let (access, rotated) =
+            oauth::refresh_access_token(record.service.as_str(), &record.client_id, &refresh)
+                .await
+                .map_err(|error| match error {
+                    OAuthError::RefreshTokenExpired => AuthError::Unauthenticated,
+                    other => AuthError::Provider(other.to_string()),
+                })?;
         // Only onto the binding the exchange was made for, still signed in
         // with the token it spent and not paused, and only the token.
         let current = self
@@ -239,8 +248,13 @@ pub(crate) async fn bind(
             "the login carries no refresh token",
         ));
     }
+    let client_id = if request.client_id.is_empty() {
+        cli_client()
+    } else {
+        request.client_id.clone()
+    };
     let (access, rotated) =
-        oauth::refresh_access_token(service.as_str(), &request.staged_refresh_token)
+        oauth::refresh_access_token(service.as_str(), &client_id, &request.staged_refresh_token)
             .await
             .map_err(|error| failed(ErrorCode::Unauthenticated, error.to_string()))?;
     let refresh = rotated.unwrap_or(request.staged_refresh_token);
@@ -350,6 +364,7 @@ pub(crate) async fn bind(
         ),
         refresh_token: Some(refresh),
         paused: existing.is_some_and(|record| record.paused),
+        client_id,
     };
     edge.bind_account(record, access)
         .await
@@ -463,6 +478,7 @@ mod tests {
             bound_at_ms: 1,
             refresh_token: Some("r1".into()),
             paused: false,
+            client_id: cli_client(),
         };
         let expired = AccessToken {
             bearer: "a1".into(),

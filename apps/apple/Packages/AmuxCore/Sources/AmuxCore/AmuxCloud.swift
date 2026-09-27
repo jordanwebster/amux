@@ -46,7 +46,6 @@ public struct CloudEndpoint: Sendable, Equatable {
     var authorize: URL { base.appending(path: "connect/authorize") }
     var token: URL { base.appending(path: "connect/token") }
     var userinfo: URL { base.appending(path: "connect/userinfo") }
-    var connect: URL { base.appending(path: "api/connect") }
     var graphQL: URL { base.appending(path: "api/graphql") }
     var purchases: URL { base.appending(path: "api/purchases") }
     var account: URL { base.appending(path: "api/account") }
@@ -85,7 +84,8 @@ extension URLSession: CloudTransport {
 public actor AmuxCloudService: CloudService {
     private let endpoint: CloudEndpoint
     private let transport: any CloudTransport
-    private let savedSessions: (any CloudSessionStore)?
+    /// Where a fresh bearer comes from once a sign-in's own has expired.
+    private var lender: (@Sendable (AccountId) async -> String?)?
     private let now: @Sendable () -> Date
     /// What this phone holds for each account it has signed in. The access
     /// token is short-lived and the refresh token is what survives; both stay
@@ -101,51 +101,24 @@ public actor AmuxCloudService: CloudService {
     public init(
         endpoint: CloudEndpoint = .production,
         transport: any CloudTransport = URLSession.shared,
-        savedSessions: (any CloudSessionStore)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.endpoint = endpoint
         self.transport = transport
         self.now = now
-        self.savedSessions = savedSessions
     }
 
-    /// Restores a session this phone kept from a previous launch, so a cold
-    /// start does not send somebody back to a browser for an account they
-    /// signed into last week.
-    public func restore(_ account: AccountId, refresh: String) throws {
-        try savedSessions?.write(refresh, for: account)
-        sessions[account] = Session(access: "", refresh: refresh, expiresAt: .distantPast)
+    public func takeRefreshToken(_ account: AccountId) -> String? {
+        defer { sessions[account]?.refresh = nil }
+        return sessions[account]?.refresh
     }
 
-    /// The refresh token for an account, for whoever keeps it between
-    /// launches. Nothing else may read it.
-    public func refreshToken(of account: AccountId) -> String? {
-        sessions[account]?.refresh
-    }
-
-    /// Writes this phone's session for an account down, because the account
-    /// is being kept.
-    ///
-    /// Signing in leaves the session in memory only: what comes back from
-    /// amux.sh is not always the account that was asked for, and a refresh
-    /// token written for an account the person then turns down is one nobody
-    /// can see or sign out of. An account with no session here has nothing to
-    /// keep, which is not a failure.
-    public func keepSession(_ account: AccountId) throws(CloudError) {
-        guard let refresh = sessions[account]?.refresh else { return }
-        try save(refresh, for: account)
-    }
-
-    public func forgetSession(_ account: AccountId) throws {
+    public func forgetSession(_ account: AccountId) {
         sessions.removeValue(forKey: account)
-        try savedSessions?.write(nil, for: account)
     }
 
-    private func save(_ token: String?, for account: AccountId) throws(CloudError) {
-        do { try savedSessions?.write(token, for: account) }
-        catch let error as CloudError { throw error }
-        catch { throw .refused("This phone could not remember the sign-in. Please try again.") }
+    public func lend(from lender: @escaping @Sendable (AccountId) async -> String?) {
+        self.lender = lender
     }
 
     // MARK: - Signing in
@@ -264,18 +237,6 @@ public actor AmuxCloudService: CloudService {
         return access.entitlement
     }
 
-    /// A relay credential, minted for this account and good for the hour.
-    ///
-    /// An account with nothing bought is refused here rather than at the relay,
-    /// and the refusal is the second gate the home screen already draws.
-    public func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
-        let request = URLRequest(url: endpoint.connect)
-        let issued: Connected = try await ask(request, as: Connected.self, for: id)
-        return ConnectToken(
-            bearer: issued.token, host: issued.host, port: issued.port,
-            expiresAt: issued.expires_at, tier: issued.tier)
-    }
-
     /// Hands a signed App Store transaction to the account service.
     ///
     /// Nothing is read back but the fact that it was taken: what this account
@@ -321,7 +282,6 @@ public actor AmuxCloudService: CloudService {
         switch response.statusCode {
         case 200..<300:
             sessions.removeValue(forKey: id)
-            try save(nil, for: id)
             return .deleted
         case 401: throw CloudError.unauthenticated
         // Money is still moving. The account service names the provider that
@@ -412,29 +372,16 @@ public actor AmuxCloudService: CloudService {
     /// A minute of slack, because a token that is valid when the request is
     /// built can be expired by the time it arrives, and the failure that
     /// causes is one nobody can act on.
+    /// A bearer for an account: the one its sign-in obtained while it is
+    /// fresh, and after that one the runtime lends. This app never spends a
+    /// refresh token itself; the account's profile holds it.
     private func bearer(for id: AccountId) async throws(CloudError) -> String {
-        if sessions[id] == nil, let refresh = savedSessions?.read(id) {
-            sessions[id] = Session(access: "", refresh: refresh, expiresAt: .distantPast)
-        }
-        guard let session = sessions[id] else { throw CloudError.unauthenticated }
-        if !session.access.isEmpty, session.expiresAt > now().addingTimeInterval(60) {
+        if let session = sessions[id], !session.access.isEmpty,
+           session.expiresAt > now().addingTimeInterval(60) {
             return session.access
         }
-        guard let refresh = session.refresh else { throw CloudError.unauthenticated }
-        let issued = try await exchange([
-            "grant_type": "refresh_token",
-            "refresh_token": refresh,
-            "client_id": endpoint.clientID,
-        ])
-        guard sessions[id]?.refresh == refresh else { throw .unauthenticated }
-        try save(issued.refresh_token ?? refresh, for: id)
-        sessions[id] = Session(
-            access: issued.access_token,
-            // The account service rotates refresh tokens one use at a time, so
-            // the one that came back replaces the one just spent.
-            refresh: issued.refresh_token ?? refresh,
-            expiresAt: now().addingTimeInterval(TimeInterval(issued.expires_in ?? 3600)))
-        return issued.access_token
+        guard let lender, let lent = await lender(id) else { throw .unauthenticated }
+        return lent
     }
 
     private func exchange(_ form: [String: String]) async throws(CloudError) -> Issued {
@@ -570,16 +517,6 @@ private struct Who: Decodable {
     let sub: String
     let email: String?
     let name: String?
-}
-
-private struct Connected: Decodable {
-    let host: String
-    let port: Int
-    let token: String
-    let expires_at: Date?
-    /// What this account buys, as the connect reply says it. Older services
-    /// leave it out; the core then treats the account as free.
-    let tier: Tier?
 }
 
 /// What a purchase is posted as. One field: the App Store's signed

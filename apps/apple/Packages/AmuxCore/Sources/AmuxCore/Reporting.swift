@@ -335,7 +335,7 @@ public final class ReportStore {
         switch error {
         case .cancelled: "the upload was stopped"
         case .unauthenticated: "amux.sh no longer recognises this account"
-        case .refused(let reason), .keychain(let reason, _): reason
+        case .refused(let reason): reason
         case .network(let what): what
         case .timeout: "amux.sh did not answer"
         }

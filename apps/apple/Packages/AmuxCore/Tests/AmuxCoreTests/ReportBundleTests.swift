@@ -316,14 +316,14 @@ private final class OneUpload: CloudService {
         }
     }
 
-    func keepSession(_ id: AccountId) async throws(CloudError) {}
+    func takeRefreshToken(_ id: AccountId) async -> String? { nil }
+    func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async {}
     func forgetSession(_ id: AccountId) async throws {}
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated
     }
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts { throw .timeout }
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement { .none }
-    func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken { throw .timeout }
     func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError) {
         throw .timeout
     }

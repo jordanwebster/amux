@@ -57,6 +57,7 @@ const VIEW_VALUES: &[&str] = &[
     "amux.v1.BlobRef",
     "amux.v1.BoundaryKind",
     "amux.v1.EnvelopeKind",
+    "amux.v1.HostVia",
     "amux.v1.Kind",
     "amux.v1.Presence",
     "amux.v1.SendState",

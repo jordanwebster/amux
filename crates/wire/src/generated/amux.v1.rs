@@ -5316,6 +5316,10 @@ pub struct BindProfileRequest {
     pub staged_refresh_token: ::prost::alloc::string::String,
     #[prost(bool, tag = "5")]
     pub adopt_non_pristine: bool,
+    /// The OAuth client the refresh token was issued to; empty is the CLI's.
+    /// A token refreshes only under the client that obtained it.
+    #[prost(string, tag = "6")]
+    pub client_id: ::prost::alloc::string::String,
 }
 impl ::prost::Name for BindProfileRequest {
     const NAME: &'static str = "BindProfileRequest";
@@ -6273,6 +6277,7 @@ impl Presence {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum HostVia {

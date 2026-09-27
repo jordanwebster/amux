@@ -119,6 +119,7 @@ pub type HostId = uuid::Uuid;
 pub use agent_dir::Clock;
 pub use auth::claims::Tier;
 pub use auth::oauth::{OAuthError, run_device_flow};
+pub use auth::{AccessToken, AuthError};
 /// This binary's version, as stamped: the one it writes into every spec.
 pub use release::version;
 pub use transport::{TransportError, create_tls_acceptor, relay_quic_server_config};

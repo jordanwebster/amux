@@ -20,7 +20,8 @@ private struct OneDeletion: CloudService, @unchecked Sendable {
         }
     }
 
-    func keepSession(_ id: AccountId) async throws(CloudError) {}
+    func takeRefreshToken(_ id: AccountId) async -> String? { nil }
+    func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async {}
     func forgetSession(_ id: AccountId) async throws {}
     func signIn(_ intent: SignInIntent, presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         throw .unauthenticated
@@ -36,9 +37,6 @@ private struct OneDeletion: CloudService, @unchecked Sendable {
         throw .unauthenticated
     }
 
-    func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
-        throw .unauthenticated
-    }
 
     func requestDeletion(
         _ id: AccountId, confirmedEmail: String
@@ -64,7 +62,7 @@ final class DeletionStoreTests: XCTestCase {
 
     private func registry(_ accounts: SignedInAccount...) -> AccountRegistry {
         let registry = AccountRegistry()
-        registry.restore(accounts.map { AccountEntry(account: $0) })
+        for account in accounts { registry.add(account, installation: account.id.value) }
         return registry
     }
 
@@ -95,7 +93,7 @@ final class DeletionStoreTests: XCTestCase {
         let accounts = registry(ada)
         let cloud = OneDeletion(answer: .success(.deleted))
 
-        let outcome = await store.delete(with: cloud, from: accounts)
+        let outcome = await store.delete(with: cloud, forgetting: { accounts.forget($0) })
 
         XCTAssertEqual(outcome, .deleted)
         XCTAssertEqual(store.phase, .deleted)
@@ -116,7 +114,7 @@ final class DeletionStoreTests: XCTestCase {
         let cloud = OneDeletion(
             answer: .success(.blockedByRenewal(source: .web, manageURL: portal)))
 
-        let outcome = await store.delete(with: cloud, from: accounts)
+        let outcome = await store.delete(with: cloud, forgetting: { accounts.forget($0) })
 
         XCTAssertEqual(outcome, .blockedByRenewal(source: .web, manageURL: portal))
         XCTAssertEqual(store.phase, .blocked(source: .web, manageURL: portal))
@@ -134,7 +132,7 @@ final class DeletionStoreTests: XCTestCase {
         let accounts = registry(ada)
         let cloud = OneDeletion(answer: .success(.deleted))
 
-        await store.delete(with: cloud, from: accounts)
+        await store.delete(with: cloud, forgetting: { accounts.forget($0) })
 
         XCTAssertEqual(store.phase, .deleted)
         XCTAssertEqual(accounts.accounts.count, 0)
@@ -146,7 +144,7 @@ final class DeletionStoreTests: XCTestCase {
         let cloud = OneDeletion(
             answer: .failure(.refused("that is not this account's address")))
 
-        await store.delete(with: cloud, from: accounts)
+        await store.delete(with: cloud, forgetting: { accounts.forget($0) })
 
         XCTAssertEqual(store.phase, .failed("that is not this account's address"))
         XCTAssertEqual(accounts.accounts.map(\.id), [ada.id])

@@ -12,20 +12,19 @@ public protocol CloudService: Sendable {
     func signIn(
         _ intent: SignInIntent, presenting: any WebAuthPresenter
     ) async throws(CloudError) -> SignedInAccount
-    /// Keeps the session this phone holds for an account in whatever keeps
-    /// sessions between launches, because the account is being kept.
-    ///
-    /// The mirror of ``forgetSession(_:)``, and the only thing that writes a
-    /// session down. Signing in does not: until somebody keeps the account
-    /// that came back, a session written anywhere is one nobody can see or
-    /// sign out of.
-    func keepSession(_ id: AccountId) async throws(CloudError)
-    /// Lets go of the session this phone holds for an account, here and in
-    /// whatever keeps it between launches. The account on amux.sh is untouched.
+    /// Hands over the refresh token a sign-in obtained, once, for the
+    /// runtime to bind the account's profile with. From then on the profile
+    /// alone spends it: a refresh token may be good for one use, so two
+    /// holders would sign each other out.
+    func takeRefreshToken(_ id: AccountId) async -> String?
+    /// Lets go of what this phone holds for an account. The account on
+    /// amux.sh is untouched.
     func forgetSession(_ id: AccountId) async throws
+    /// Where a fresh bearer comes from once the one a sign-in obtained has
+    /// expired: the runtime whose profile holds the account's refresh token.
+    func lend(from lender: @escaping @Sendable (AccountId) async -> String?) async
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement
-    func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken
     /// Hands over a purchase the App Store signed, so the subscription it paid
     /// for becomes this account's.
     ///
@@ -63,8 +62,6 @@ public enum CloudError: Error, Sendable, Equatable {
     case unauthenticated
     case network(String)
     case refused(String)
-    /// The screen shows the sentence; diagnostics retain the Security status.
-    case keychain(String, status: Int32)
     case timeout
 }
 
@@ -152,36 +149,6 @@ public enum EntitlementSource: String, Sendable, Equatable, Codable {
 /// A relay credential issued by the configured cloud, and the relay it is good at. The bridge asks for one
 /// when it needs it and the app answers; nothing caches it beyond its expiry.
 ///
-/// The address travels with the credential because it is the account service
-/// that decides which relay an account reaches — an app holding a relay
-/// address of its own would keep dialling one machine after the service had
-/// moved the account to another, and the credential names a port and an
-/// audience the relay compares with its own configuration.
-public struct ConnectToken: Sendable, Equatable, Codable {
-    public var bearer: String
-    public var host: String
-    public var port: Int
-    public var expiresAt: Date?
-    /// What the account service said this account buys, in the same reply that
-    /// issued the token. The bearer is opaque to this phone and to the core
-    /// underneath it, so this is the only honest source; absent is read as
-    /// free, which can never grant more than was paid for.
-    public var tier: Tier?
-
-    public init(
-        bearer: String, host: String, port: Int, expiresAt: Date? = nil, tier: Tier? = nil
-    ) {
-        self.bearer = bearer
-        self.host = host
-        self.port = port
-        self.expiresAt = expiresAt
-        self.tier = tier
-    }
-
-    /// Where the relay is, as the runtime is told to reach it. Always TLS: the
-    /// account service only ever names a relay on the public internet.
-    public var relay: URL? { URL(string: "https://\(host):\(port)") }
-}
 
 /// Deletion can be refused while money is still moving, and the refusal has to
 /// say where to go and stop it.

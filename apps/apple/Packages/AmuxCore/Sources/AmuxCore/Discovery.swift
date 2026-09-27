@@ -1,3 +1,4 @@
+import AmuxValues
 import Foundation
 import Network
 import dnssd
@@ -13,12 +14,16 @@ public struct FoundHost: Equatable, Sendable, Codable {
     public let version: UInt32
     /// Where this machine can be dialled, as `address:port`.
     public let addrs: [String]
+    /// The advertiser's discovery scope: empty for real machines, set by a
+    /// test network so the two never meet.
+    public let scope: String
 
-    public init(host: HostId, name: String, version: UInt32, addrs: [String]) {
+    public init(host: HostId, name: String, version: UInt32, addrs: [String], scope: String = "") {
         self.host = host
         self.name = name
         self.version = version
         self.addrs = addrs
+        self.scope = scope
     }
 }
 
@@ -168,6 +173,7 @@ public final class LocalDiscovery {
         let host: HostId
         let name: String
         let version: UInt32
+        let scope: String
     }
 
     private struct Tracked {
@@ -195,7 +201,8 @@ public final class LocalDiscovery {
                   only?.contains(claimed.host) ?? true,
                   let name = Self.serviceName(of: sighting.endpoint)
             else { continue }
-            let claim = Claim(host: claimed.host, name: name, version: claimed.version)
+            let claim = Claim(
+                host: claimed.host, name: name, version: claimed.version, scope: claimed.scope)
             if let current = tracked[sighting.endpoint],
                current.claim == claim, current.routes == sighting.routes {
                 continue
@@ -244,7 +251,7 @@ public final class LocalDiscovery {
             self.tracked[endpoint]?.abandon = nil
             self.found[endpoint] = FoundHost(
                 host: entry.claim.host, name: entry.claim.name, version: entry.claim.version,
-                addrs: [address])
+                addrs: [address], scope: entry.claim.scope)
             self.handOver(Array(self.found.values))
         }
         if tracked[endpoint]?.attempt == attempt, tracked[endpoint]?.next == entry.next {
@@ -334,11 +341,13 @@ public final class LocalDiscovery {
     /// A record missing either field is not an amux host advertising itself —
     /// some other service on the same name, or a version that predates them —
     /// and is passed over rather than guessed at.
-    nonisolated static func claim(from record: NWTXTRecord) -> (host: HostId, version: UInt32)? {
+    nonisolated static func claim(
+        from record: NWTXTRecord
+    ) -> (host: HostId, version: UInt32, scope: String)? {
         guard let hid = record["hid"], let host = HostId(hid),
               let claimed = record["v"], let version = UInt32(claimed)
         else { return nil }
-        return (host, version)
+        return (host, version, record["scope"] ?? "")
     }
 
     /// The instance name a Bonjour endpoint carries, which is the machine's own.
@@ -387,5 +396,12 @@ public final class LocalDiscovery {
         case .failed(.dns(DNSServiceErrorType(kDNSServiceErr_PolicyDenied))): return .denied
         default: return .unknown
         }
+    }
+}
+
+extension FoundHost {
+    /// As the shared library takes it.
+    public var found: Found {
+        Found(hostId: host.bytes, name: name, version: version, addrs: addrs, scope: scope)
     }
 }

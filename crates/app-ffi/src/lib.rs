@@ -27,7 +27,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, StartConfig};
-use app_runtime::values::{ActOutcome, Draft, RowOptions};
+use app_runtime::values::{ActOutcome, AgentAct, Draft, Found, NewAgent, RowOptions};
 use app_runtime::{AppRuntime, Chat, Wake};
 use model::{AgentKey, Key};
 use node::SourcePolicy;
@@ -209,7 +209,19 @@ unsafe fn parse<T: DeserializeOwned>(value: *const c_char) -> Option<T> {
 /// Runs a call, turning a panic into the failure value rather than letting
 /// it unwind into the host.
 fn guard<T>(failed: T, call: impl FnOnce() -> T) -> T {
-    catch_unwind(AssertUnwindSafe(call)).unwrap_or(failed)
+    catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
+        #[cfg(test)]
+        CAUGHT.with(|caught| caught.set(caught.get() + 1));
+        failed
+    })
+}
+
+// A shipping build aborts on a panic instead of unwinding, so a panic the
+// guard turns into a failure in a test is a crash on the phone: the tests
+// count them on the calling thread.
+#[cfg(test)]
+thread_local! {
+    static CAUGHT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// # Safety
@@ -333,6 +345,8 @@ pub unsafe extern "C" fn amux_runtime_set_source_policy(runtime: *const AmuxRunt
     guard((), || {
         // SAFETY: the caller's contract.
         if let Some(runtime) = unsafe { live_runtime(runtime) } {
+            // Switching opens and closes sources, which run on the pool.
+            let _entered = runtime.handle().enter();
             runtime.embedded().set_source_policy(if listed {
                 SourcePolicy::Listed
             } else {
@@ -384,16 +398,47 @@ pub unsafe extern "C" fn amux_runtime_dump(
     });
 }
 
-/// Pairs with a machine by a `PairRequest` as JSON; the callback gets
-/// `{"Ok": {"host_id": [..], "name": ..}}` or `{"Err": ..}`.
+/// Reaches and authenticates a machine by a `PairRequest` as JSON; the
+/// callback gets `{"Ok": PendingPair}` or `{"Err": ..}`. Nothing is trusted
+/// until `amux_runtime_confirm_pair`.
 ///
 /// # Safety
 /// `runtime` is from `amux_runtime_start`; `request` is a NUL-terminated
 /// string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_runtime_pair(
+pub unsafe extern "C" fn amux_runtime_begin_pair(
     runtime: *const AmuxRuntime,
     request: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let request: Option<PairRequest> = unsafe { parse(request) };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(request) = request else {
+                return Answered::Err("the request is not a PairRequest".into());
+            };
+            Answered::from(embedded.begin_pair(&request).await)
+        });
+    });
+}
+
+/// Trusts the machine a pending pairing reached, named by its token as a
+/// JSON byte array; the callback gets `{"Ok": {"host_id": [..], "name":
+/// ..}}` or `{"Err": ..}`.
+///
+/// # Safety
+/// As for `amux_runtime_begin_pair`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_confirm_pair(
+    runtime: *const AmuxRuntime,
+    token: *const c_char,
     callback: AmuxCallback,
     context: *mut c_void,
 ) {
@@ -408,16 +453,235 @@ pub unsafe extern "C" fn amux_runtime_pair(
             return;
         };
         // SAFETY: the caller's contract.
-        let request: Option<PairRequest> = unsafe { parse(request) };
+        let token: Option<Vec<u8>> = unsafe { parse(token) };
         let embedded = runtime.embedded().clone();
         runtime.spawn(callback, context, async move {
-            let Some(request) = request else {
-                return Answered::Err("the request is not a PairRequest".into());
+            let Some(token) = token else {
+                return Answered::Err("the token is not a byte array".into());
             };
-            Answered::from(embedded.pair(&request).await.map(|peer| Paired {
+            Answered::from(embedded.confirm_pair(&token).await.map(|peer| Paired {
                 host_id: peer.host_id,
                 name: peer.name,
             }))
+        });
+    });
+}
+
+/// Turns away the machine a pending pairing reached.
+///
+/// # Safety
+/// As for `amux_runtime_begin_pair`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_abandon_pair(
+    runtime: *const AmuxRuntime,
+    token: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let token: Option<Vec<u8>> = unsafe { parse(token) };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(token) = token else {
+                return Answered::Err("the token is not a byte array".into());
+            };
+            Answered::from(embedded.abandon_pair(&token).await)
+        });
+    });
+}
+
+/// This device and the machines it trusts; the callback gets
+/// `{"Ok": Roster}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_roster(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.roster().await)
+        });
+    });
+}
+
+/// Hands over the whole set the phone's browser found, as `[Found]`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; `found` is a NUL-terminated
+/// string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_discovered(
+    runtime: *const AmuxRuntime,
+    found: *const c_char,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        if let Some(found) = unsafe { parse::<Vec<Found>>(found) } {
+            let _entered = runtime.handle().enter();
+            runtime.embedded().discovered(found);
+        }
+    });
+}
+
+/// The account the profile is bound to; the callback gets
+/// `{"Ok": AccountView}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_account(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.account().await)
+        });
+    });
+}
+
+/// A bearer for the account service, which the profile refreshes; the
+/// callback gets `{"Ok": Bearer}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_access_token(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.access_token().await)
+        });
+    });
+}
+
+/// Starts an agent from a `NewAgent` as JSON; the callback gets
+/// `{"Ok": AgentKey}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; `agent` is a NUL-terminated
+/// string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_create_agent(
+    runtime: *const AmuxRuntime,
+    agent: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let agent: Option<NewAgent> = unsafe { parse(agent) };
+        let app = runtime.app().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(agent) = agent else {
+                return Answered::Err("the agent is not a NewAgent".into());
+            };
+            Answered::from(app.create_agent(&agent).await)
+        });
+    });
+}
+
+/// Where a host, by its id as a JSON byte array, offers to start an agent,
+/// matching `query` (or everything when it is null or empty), at most
+/// `limit` of each; the callback gets `{"Ok": Directories}` or
+/// `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; the strings are NUL-terminated
+/// or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_directories(
+    runtime: *const AmuxRuntime,
+    host_id: *const c_char,
+    query: *const c_char,
+    limit: u32,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let host_id: Option<Vec<u8>> = unsafe { parse(host_id) };
+        // SAFETY: the caller's contract.
+        let query = unsafe { text(query) }.unwrap_or_default().to_owned();
+        let app = runtime.app().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(host_id) = host_id else {
+                return Answered::Err("the host id is not a byte array".into());
+            };
+            Answered::from(app.directories(&host_id, &query, limit).await)
+        });
+    });
+}
+
+/// Renames, stops or deletes an agent, named by its `AgentKey`, with an
+/// `AgentAct`, both as JSON; the callback gets `{"Ok": null}` or
+/// `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; the strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_agent_act(
+    runtime: *const AmuxRuntime,
+    agent: *const c_char,
+    act: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let agent: Option<AgentKey> = unsafe { parse(agent) };
+        // SAFETY: the caller's contract.
+        let act: Option<AgentAct> = unsafe { parse(act) };
+        let app = runtime.app().clone();
+        runtime.spawn(callback, context, async move {
+            let (Some(agent), Some(act)) = (agent, act) else {
+                return Answered::Err("the agent or the act is not readable".into());
+            };
+            Answered::from(app.agent_act(&agent, &act).await)
         });
     });
 }
@@ -451,7 +715,8 @@ pub unsafe extern "C" fn amux_runtime_unpair(
 }
 
 /// Binds the profile to an account with the refresh token the app's
-/// sign-in obtained; the relay link comes up from there.
+/// sign-in obtained as the OAuth client `client_id`; the relay link comes
+/// up from there. The profile alone spends the token from then on.
 ///
 /// # Safety
 /// As for `amux_runtime_pair`; both strings are NUL-terminated.
@@ -459,6 +724,7 @@ pub unsafe extern "C" fn amux_runtime_unpair(
 pub unsafe extern "C" fn amux_runtime_sign_in(
     runtime: *const AmuxRuntime,
     cloud_url: *const c_char,
+    client_id: *const c_char,
     refresh_token: *const c_char,
     callback: AmuxCallback,
     context: *mut c_void,
@@ -471,12 +737,14 @@ pub unsafe extern "C" fn amux_runtime_sign_in(
         // SAFETY: the caller's contract.
         let url = unsafe { text(cloud_url) }.unwrap_or_default().to_owned();
         // SAFETY: the caller's contract.
+        let client = unsafe { text(client_id) }.unwrap_or_default().to_owned();
+        // SAFETY: the caller's contract.
         let token = unsafe { text(refresh_token) }
             .unwrap_or_default()
             .to_owned();
         let embedded = runtime.embedded().clone();
         runtime.spawn(callback, context, async move {
-            Answered::from(embedded.sign_in(&url, &token).await.map(|_| ()))
+            Answered::from(embedded.sign_in(&url, &client, &token).await.map(|_| ()))
         });
     });
 }

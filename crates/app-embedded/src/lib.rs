@@ -16,18 +16,23 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use app_runtime::values::{
+    AccountView, Bearer, Binding, Found, Identity, PairedPeer, PendingPair, RelayLink, Roster,
+};
 pub use app_runtime::values::{PairRequest, StartConfig};
 use client::{Client, Clock, InProcess, SystemClock};
 use node::{
     ClientApi, CloudOptions, Daemon, DiscoveryFactory, EdgeOptions, FrontDoor, LanOptions,
     ProfileId, ProfileRuntime, SourcePolicy, StartError, StartOptions,
 };
+use sha2::{Digest, Sha256};
 use tonic::Request;
 use wire::profile_service_server::ProfileService as _;
 use wire::{
-    BeginPairRequest, BindProfileRequest, PeerEntry, PeerRef, PendingPairRequest,
-    ProfileBeginPairRequest, ProfileInfo, ProfileOperation, ProfilePendingPairRequest,
-    ProfileUnpairRequest, begin_pair_request, peer_ref,
+    BeginPairRequest, BindProfileRequest, HostVia, Intent, ListProfilesRequest, Observed,
+    PeerEntry, PeerRef, PeerVia, PendingPairRequest, ProfileBeginPairRequest, ProfileInfo,
+    ProfileOperation, ProfilePendingPairRequest, ProfileRequest, ProfileUnpairRequest, Tier,
+    begin_pair_request, peer_ref,
 };
 
 /// What a test or a driving build changes about the network edge.
@@ -62,6 +67,10 @@ pub enum EmbeddedError {
     Refused(#[from] tonic::Status),
     #[error(transparent)]
     Link(#[from] node::QrPairingError),
+    #[error("{0}")]
+    Account(#[from] node::AuthError),
+    #[error("this device's profile is not listed")]
+    NoInfo,
 }
 
 /// One installation with its one profile, in process.
@@ -166,9 +175,10 @@ impl EmbeddedRuntime {
         self.profile.to_string()
     }
 
-    /// Pairs with a machine by the PIN its person reads out or the link its
-    /// QR code carries, and returns the peer now trusted.
-    pub async fn pair(&self, request: &PairRequest) -> Result<PeerEntry, EmbeddedError> {
+    /// Reaches a machine by the PIN its person reads out or the link its QR
+    /// code carries, and authenticates it; nothing is trusted until the
+    /// attempt is confirmed.
+    pub async fn begin_pair(&self, request: &PairRequest) -> Result<PendingPair, EmbeddedError> {
         let pairing = match request {
             PairRequest::Pin {
                 host_id,
@@ -190,8 +200,8 @@ impl EmbeddedRuntime {
                 }
             }
         };
-        let door = self.door();
-        let pending = door
+        let pending = self
+            .door()
             .begin_pair(Request::new(ProfileBeginPairRequest {
                 operation_id: operation(),
                 profile_id: self.profile_id(),
@@ -199,19 +209,149 @@ impl EmbeddedRuntime {
             }))
             .await?
             .into_inner();
-        let peer = door
+        let via = match pending.via() {
+            PeerVia::Direct => HostVia::Direct,
+            PeerVia::Relay => HostVia::Relay,
+            PeerVia::Ssh => HostVia::Ssh,
+            PeerVia::Unspecified => HostVia::Unspecified,
+        };
+        let peer = pending.peer.unwrap_or_default();
+        Ok(PendingPair {
+            token: pending.token,
+            host_id: peer.host_id,
+            name: peer.name,
+            fingerprint: fingerprint(&peer.pubkey),
+            expires_at_ms: peer.expires_at_unix_ms,
+            via,
+        })
+    }
+
+    /// Trusts the machine an attempt reached.
+    pub async fn confirm_pair(&self, token: &[u8]) -> Result<PeerEntry, EmbeddedError> {
+        Ok(self
+            .door()
             .confirm_pair(Request::new(ProfilePendingPairRequest {
                 operation_id: operation(),
                 profile_id: self.profile_id(),
                 pairing: Some(PendingPairRequest {
-                    token: pending.token,
+                    token: token.to_vec(),
                 }),
             }))
             .await?
             .into_inner()
             .peer
-            .unwrap_or_default();
-        Ok(peer)
+            .unwrap_or_default())
+    }
+
+    /// Turns away the machine an attempt reached, telling it so.
+    pub async fn abandon_pair(&self, token: &[u8]) -> Result<(), EmbeddedError> {
+        self.door()
+            .abandon_pair(Request::new(ProfilePendingPairRequest {
+                operation_id: operation(),
+                profile_id: self.profile_id(),
+                pairing: Some(PendingPairRequest {
+                    token: token.to_vec(),
+                }),
+            }))
+            .await?;
+        Ok(())
+    }
+
+    /// Pairs in one step, trusting whoever the secret reaches.
+    pub async fn pair(&self, request: &PairRequest) -> Result<PeerEntry, EmbeddedError> {
+        let pending = self.begin_pair(request).await?;
+        self.confirm_pair(&pending.token).await
+    }
+
+    /// This device and the machines it trusts, sorted by name.
+    pub async fn roster(&self) -> Result<Roster, EmbeddedError> {
+        let request = || {
+            Request::new(ProfileRequest {
+                profile_id: self.profile_id(),
+            })
+        };
+        let identity = self
+            .door()
+            .get_device_identity(request())
+            .await?
+            .into_inner();
+        let mut peers: Vec<PairedPeer> = self
+            .door()
+            .list_peers(request())
+            .await?
+            .into_inner()
+            .peers
+            .into_iter()
+            .map(|peer| PairedPeer {
+                fingerprint: fingerprint(&peer.pubkey),
+                host_id: peer.host_id,
+                name: peer.name,
+                paired_at_ms: peer.paired_at_unix_ms,
+            })
+            .collect();
+        peers.sort_by_key(|peer| peer.name.to_lowercase());
+        Ok(Roster {
+            identity: Identity {
+                fingerprint: fingerprint(&identity.pubkey),
+                host_id: identity.host_id,
+                name: identity.name,
+            },
+            peers,
+        })
+    }
+
+    /// Hands over the whole set the phone's own browser found on the local
+    /// network; only the system may browse there.
+    pub fn discovered(&self, found: Vec<Found>) {
+        let Some(edge) = self.runtime.edge() else {
+            return;
+        };
+        let found = found
+            .into_iter()
+            .filter_map(|found| {
+                Some(node::harness::Advertisement {
+                    host_id: node::HostId::from_slice(&found.host_id).ok()?,
+                    name: found.name,
+                    version: found.version,
+                    addrs: found
+                        .addrs
+                        .iter()
+                        .filter_map(|addr| addr.parse().ok())
+                        .collect(),
+                    scope: found.scope,
+                })
+            })
+            .collect();
+        edge.hand_over_discovered(found);
+    }
+
+    /// The account the profile is bound to, and its relay link.
+    pub async fn account(&self) -> Result<AccountView, EmbeddedError> {
+        let info = self
+            .door()
+            .list_profiles(Request::new(ListProfilesRequest {}))
+            .await?
+            .into_inner()
+            .profiles
+            .into_iter()
+            .find(|info| info.id == self.profile_id())
+            .ok_or(EmbeddedError::NoInfo)?;
+        Ok(account_view(&info))
+    }
+
+    /// A bearer for the account service, refreshed by the profile when it
+    /// is about to expire.
+    pub async fn access_token(&self) -> Result<Bearer, EmbeddedError> {
+        let edge = self.runtime.edge().ok_or(EmbeddedError::NoProfile)?;
+        let token = edge.access_token().await?;
+        Ok(Bearer {
+            bearer: token.bearer,
+            expires_at_ms: token.expires_at.and_then(|at| {
+                at.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|since| since.as_millis() as i64)
+            }),
+        })
     }
 
     /// Stops trusting a paired machine, telling it so where it can be
@@ -232,9 +372,12 @@ impl EmbeddedRuntime {
 
     /// Binds the profile to an account with the refresh token the app's
     /// sign-in obtained; the relay link comes up from there.
+    /// `client_id` is the OAuth client the token was issued to, which is
+    /// the only one it refreshes under.
     pub async fn sign_in(
         &self,
         cloud_url: &str,
+        client_id: &str,
         refresh_token: &str,
     ) -> Result<ProfileInfo, EmbeddedError> {
         Ok(self
@@ -245,6 +388,7 @@ impl EmbeddedRuntime {
                 cloud_url: cloud_url.to_owned(),
                 staged_refresh_token: refresh_token.to_owned(),
                 adopt_non_pristine: true,
+                client_id: client_id.to_owned(),
             }))
             .await?
             .into_inner())
@@ -278,6 +422,44 @@ impl EmbeddedRuntime {
             Some(daemon) => daemon.shutdown().await,
             None => Ok(()),
         }
+    }
+}
+
+/// A key as a person compares it: hex of its SHA-256.
+fn fingerprint(pubkey: &[u8]) -> String {
+    Sha256::digest(pubkey)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn account_view(info: &ProfileInfo) -> AccountView {
+    let binding = match info.intent() {
+        Intent::Bound => Binding::SignedIn,
+        Intent::LoggedOut => Binding::SignedOut,
+        Intent::Paused => Binding::Paused,
+        Intent::Unbound | Intent::Unspecified => Binding::Unbound,
+    };
+    let relay = match info.observed() {
+        Observed::Unspecified | Observed::Local => RelayLink::Off,
+        Observed::Connecting => RelayLink::Connecting,
+        Observed::Connected => RelayLink::Connected,
+        Observed::Retrying => RelayLink::Retrying,
+        Observed::AuthenticationRequired => RelayLink::SignInAgain,
+        Observed::VersionMismatch => RelayLink::UpdateRequired,
+        Observed::StartupFailed => RelayLink::Failed,
+    };
+    let pro = match info.tier() {
+        Tier::Pro => Some(true),
+        Tier::Free => Some(false),
+        Tier::Unspecified => None,
+    };
+    AccountView {
+        binding,
+        email: info.email.clone(),
+        name: info.account_name.clone(),
+        pro,
+        relay,
     }
 }
 

@@ -65,6 +65,8 @@ struct CloudState {
     connects: Vec<String>,
     /// Every credential the relay was shown, in order.
     presented: Vec<String>,
+    /// The OAuth client each refresh named, in order.
+    refreshed_as: Vec<String>,
     /// How far the relay's clock runs ahead of the hosts'.
     ahead: Duration,
 }
@@ -213,6 +215,11 @@ impl Relay {
         self.cloud.state.lock().unwrap().connects.clone()
     }
 
+    /// The OAuth client each refresh-token exchange named, in order.
+    pub fn refreshed_as(&self) -> Vec<String> {
+        self.cloud.state.lock().unwrap().refreshed_as.clone()
+    }
+
     /// Every credential the relay was shown so far, in Hello or Reauth.
     pub fn presented(&self) -> Vec<String> {
         self.cloud.state.lock().unwrap().presented.clone()
@@ -327,6 +334,12 @@ impl Cloud {
         let form = String::from_utf8_lossy(&body).into_owned();
         match path.as_str() {
             "/connect/token" => {
+                let client = form
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix("client_id="))
+                    .unwrap_or_default()
+                    .to_owned();
+                self.state.lock().unwrap().refreshed_as.push(client);
                 let account = form
                     .split('&')
                     .find_map(|pair| pair.strip_prefix("refresh_token="))

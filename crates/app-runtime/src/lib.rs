@@ -25,8 +25,12 @@ use model::AgentKey;
 use tokio::task::JoinHandle;
 use ui_runtime::Fleet;
 use ui_view::{FamilyHeader, FleetCard, FleetRow};
+use values::{AgentAct, Directories, Directory, NewAgent};
 pub use values::{FleetChanges, HostView};
-use wire::{DumpRequest, Trust};
+use wire::{
+    CreateAgentRequest, DeleteAgentRequest, DumpRequest, Kind, ListRepositoriesRequest,
+    ProjectEntry, RenameAgentRequest, StopAgentRequest, StopMode, Trust, create_agent_request,
+};
 
 /// How many rows a chat opens with unless the host says otherwise.
 pub const DEFAULT_TAIL: u32 = 200;
@@ -166,6 +170,8 @@ impl AppRuntime {
                 version: host.version.clone(),
                 last_dial_error: host.last_dial_error.clone(),
                 addrs: host.addrs.clone(),
+                via: host.via(),
+                signed_in: host.signed_in,
             })
             .collect();
         hosts.sort_by(|a, b| (!a.local, &a.name).cmp(&(!b.local, &b.name)));
@@ -177,6 +183,94 @@ impl AppRuntime {
         FleetChanges {
             agents: batch.keys,
             hosts: batch.other,
+        }
+    }
+
+    /// Starts an agent on a host and returns it as the fleet names it.
+    pub async fn create_agent(&self, agent: &NewAgent) -> Result<AgentKey, RpcError> {
+        let config = match agent.kind {
+            Kind::Codex => Some(create_agent_request::Config::Codex(
+                wire::CodexCreateConfig {
+                    model: agent.model.clone(),
+                    ..Default::default()
+                },
+            )),
+            Kind::ClaudeSdk | Kind::ClaudePty => Some(create_agent_request::Config::Claude(
+                wire::ClaudeCreateConfig {
+                    model: agent.model.clone(),
+                    ..Default::default()
+                },
+            )),
+            Kind::Unspecified => None,
+        };
+        let created = self
+            .client
+            .create_agent(CreateAgentRequest {
+                agent_id: ui_runtime::inputs::input_id(),
+                host_id: Some(agent.host_id.clone()),
+                name: Some(agent.name.clone()).filter(|name| !name.is_empty()),
+                cwd: agent.cwd.clone(),
+                kind: agent.kind as i32,
+                config,
+                ..Default::default()
+            })
+            .await?;
+        Ok(ui_state::agent_key(&created))
+    }
+
+    /// Where a host offers to start an agent, filtered by `query` and at
+    /// most `limit` of each.
+    pub async fn directories(
+        &self,
+        host_id: &[u8],
+        query: &str,
+        limit: u32,
+    ) -> Result<Directories, RpcError> {
+        let listed = self
+            .client
+            .list_repositories(ListRepositoriesRequest {
+                query: Some(query.to_owned()).filter(|query| !query.is_empty()),
+                limit,
+                host_id: Some(host_id.to_vec()),
+            })
+            .await?;
+        let directory = |entry: ProjectEntry| Directory {
+            path: entry.path,
+            name: entry.name,
+            last_used_ms: entry.last_used_unix_ms,
+        };
+        Ok(Directories {
+            recent: listed.recent.into_iter().map(directory).collect(),
+            repositories: listed.repositories.into_iter().map(directory).collect(),
+            roots: listed.roots,
+        })
+    }
+
+    /// Renames, stops or deletes an agent.
+    pub async fn agent_act(&self, agent: &AgentKey, act: &AgentAct) -> Result<(), RpcError> {
+        let agent_id = agent.agent.clone();
+        match act {
+            AgentAct::Rename(name) => self
+                .client
+                .rename_agent(RenameAgentRequest {
+                    agent_id,
+                    name: name.clone(),
+                })
+                .await
+                .map(drop),
+            AgentAct::Stop => {
+                self.client
+                    .stop_agent(StopAgentRequest {
+                        agent_id,
+                        mode: StopMode::Graceful as i32,
+                    })
+                    .await
+            }
+            AgentAct::Delete => self
+                .client
+                .delete_agent(DeleteAgentRequest { agent_id })
+                .await
+                .map(drop),
         }
     }
 

@@ -74,7 +74,7 @@ public final class DeletionStore {
     /// screen says where to go and stop it.
     @discardableResult
     public func delete(
-        with cloud: any CloudService, from registry: AccountRegistry? = nil
+        with cloud: any CloudService, forgetting forget: (@MainActor (AccountId) -> Void)? = nil
     ) async -> DeletionOutcome? {
         guard let id = account, !working else { return nil }
         phase = .working
@@ -83,7 +83,7 @@ public final class DeletionStore {
             switch outcome {
             case .deleted:
                 phase = .deleted
-                registry?.forget(id)
+                forget?(id)
                 account = nil
                 typed = ""
             case .blockedByRenewal(let source, let manageURL):
@@ -100,7 +100,7 @@ public final class DeletionStore {
         switch error {
         case .cancelled: .asking
         case .unauthenticated: .failed("amux.sh no longer recognises this account")
-        case .refused(let reason), .keychain(let reason, _): .failed(reason)
+        case .refused(let reason): .failed(reason)
         case .network(let what): .failed(what)
         case .timeout: .failed("amux.sh did not answer")
         }

@@ -703,6 +703,9 @@ message BindProfileRequest {
   string cloud_url = 3;
   string staged_refresh_token = 4;
   bool adopt_non_pristine = 5;
+  // The OAuth client the refresh token was issued to; empty is the CLI's.
+  // A token refreshes only under the client that obtained it.
+  string client_id = 6;
 }
 message RenameProfileRequest {
   string operation_id = 1;

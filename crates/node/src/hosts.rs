@@ -104,6 +104,7 @@ impl ProfileRuntime {
                         name: advert.name,
                         trust: Trust::Candidate as i32,
                         presence: Presence::Online as i32,
+                        addrs: advert.addrs.iter().map(ToString::to_string).collect(),
                         ..HostEntry::default()
                     },
                 );

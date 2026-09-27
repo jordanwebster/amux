@@ -79,9 +79,14 @@ pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
         .ok_or(OAuthError::NoRefreshToken)
 }
 
-/// Get a new access token using a refresh token.
+/// The OAuth client the CLI signs in as.
+pub const CLI_CLIENT_ID: &str = "cli";
+
+/// Get a new access token using a refresh token, as the client it was
+/// issued to.
 pub async fn refresh_access_token(
     cloud_url: &str,
+    client_id: &str,
     refresh_token: &str,
 ) -> Result<(AccessToken, Option<String>), OAuthError> {
     let token_url = TokenUrl::new(format!("{cloud_url}/connect/token"))
@@ -89,7 +94,7 @@ pub async fn refresh_access_token(
     let auth_url = AuthUrl::new(format!("{cloud_url}/connect/authorize"))
         .map_err(|e| OAuthError::Config(e.to_string()))?;
 
-    let client = BasicClient::new(ClientId::new("cli".to_string()))
+    let client = BasicClient::new(ClientId::new(client_id.to_string()))
         .set_auth_uri(auth_url)
         .set_token_uri(token_url);
     let http = http_client()?;

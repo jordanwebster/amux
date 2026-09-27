@@ -4,6 +4,33 @@
 
 import Foundation
 
+/// The account this device's profile is bound to, as the account screens
+/// show it.
+public struct AccountView: Codable, Hashable, Sendable {
+    public var binding: Binding
+    public var email: String
+    public var name: String
+    public var relay: RelayLink
+    /// Whether the account buys the relay, as the relay link last heard.
+    public var pro: Bool?
+
+    public init(binding: Binding, email: String, name: String, relay: RelayLink, pro: Bool?) {
+        self.binding = binding
+        self.email = email
+        self.name = name
+        self.relay = relay
+        self.pro = pro
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case binding
+        case email
+        case name
+        case relay
+        case pro
+    }
+}
+
 /// What an act on a chat came to.
 public enum ActOutcome: Codable, Hashable, Sendable {
     case done
@@ -183,6 +210,57 @@ public enum ActivityKind: Codable, Hashable, Sendable {
             try _fields.encode(attempt, forKey: .attempt)
             try _fields.encode(maxAttempts, forKey: .maxAttempts)
             try _fields.encodeIfPresent(retryAtMs, forKey: .retryAtMs)
+        }
+    }
+}
+
+/// A change to one agent from outside its chat.
+public enum AgentAct: Codable, Hashable, Sendable {
+    case stop
+    case delete
+    case rename(String)
+
+    private enum Tag: String, CodingKey {
+        case rename = "Rename"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        if let _single = try? decoder.singleValueContainer(),
+           let _name = try? _single.decode(String.self)
+        {
+            switch _name {
+            case "Stop": self = .stop
+            case "Delete": self = .delete
+            default:
+                throw DecodingError.dataCorruptedError(
+                    in: _single, debugDescription: "no AgentAct is named \(_name)")
+            }
+            return
+        }
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a AgentAct names exactly one variant"))
+        }
+        switch _tag {
+        case .rename:
+            self = .rename(try _container.decode(String.self, forKey: .rename))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .stop:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Stop")
+        case .delete:
+            var _container = encoder.singleValueContainer()
+            try _container.encode("Delete")
+        case .rename(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .rename)
         }
     }
 }
@@ -789,6 +867,32 @@ public enum Away: String, Codable, Hashable, Sendable, CaseIterable {
     case revoked = "Revoked"
 }
 
+/// A bearer for the account service, borrowed from the profile, which alone
+/// spends the refresh token.
+public struct Bearer: Codable, Hashable, Sendable {
+    public var bearer: String
+    public var expiresAtMs: Int64?
+
+    public init(bearer: String, expiresAtMs: Int64?) {
+        self.bearer = bearer
+        self.expiresAtMs = expiresAtMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bearer
+        case expiresAtMs = "expires_at_ms"
+    }
+}
+
+public enum Binding: String, Codable, Hashable, Sendable, CaseIterable {
+    case signedIn = "SignedIn"
+    case signedOut = "SignedOut"
+    /// Never signed in: this device works on its own network.
+    case unbound = "Unbound"
+    /// Signed in, with the relay link turned off.
+    case paused = "Paused"
+}
+
 /// Content-addressed bytes in the owning agent's directory. The name belongs
 /// to the reference, not the bytes.
 public struct BlobRef: Codable, Hashable, Sendable {
@@ -1364,6 +1468,45 @@ public struct DiffLine: Codable, Hashable, Sendable {
     }
 }
 
+/// What a host offers to start an agent in: where agents ran lately and the
+/// repositories under its roots.
+public struct Directories: Codable, Hashable, Sendable {
+    public var recent: [Directory]
+    public var repositories: [Directory]
+    public var roots: [String]
+
+    public init(recent: [Directory], repositories: [Directory], roots: [String]) {
+        self.recent = recent
+        self.repositories = repositories
+        self.roots = roots
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recent
+        case repositories
+        case roots
+    }
+}
+
+/// A directory a host offers to start an agent in.
+public struct Directory: Codable, Hashable, Sendable {
+    public var path: String
+    public var name: String
+    public var lastUsedMs: Int64?
+
+    public init(path: String, name: String, lastUsedMs: Int64?) {
+        self.path = path
+        self.name = name
+        self.lastUsedMs = lastUsedMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case name
+        case lastUsedMs = "last_used_ms"
+    }
+}
+
 /// A prompt as the composer holds it.
 public struct Draft: Codable, Hashable, Sendable {
     public var text: String
@@ -1657,6 +1800,32 @@ public struct FleetRow: Codable, Hashable, Sendable {
     }
 }
 
+/// A machine the phone's own browser found on the local network.
+public struct Found: Codable, Hashable, Sendable {
+    public var hostId: [UInt8]
+    public var name: String
+    public var version: UInt32
+    /// Resolved addresses as `ip:port`, IPv6 in brackets.
+    public var addrs: [String]
+    public var scope: String
+
+    public init(hostId: [UInt8], name: String, version: UInt32, addrs: [String], scope: String) {
+        self.hostId = hostId
+        self.name = name
+        self.version = version
+        self.addrs = addrs
+        self.scope = scope
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hostId = "host_id"
+        case name
+        case version
+        case addrs
+        case scope
+    }
+}
+
 /// What an access grant granted, and for how long.
 public struct Granted: Codable, Hashable, Sendable {
     public var read: [String]
@@ -1679,6 +1848,13 @@ public struct Granted: Codable, Hashable, Sendable {
     }
 }
 
+public enum HostVia: String, Codable, Hashable, Sendable, CaseIterable {
+    case unspecified = "Unspecified"
+    case direct = "Direct"
+    case relay = "Relay"
+    case ssh = "Ssh"
+}
+
 /// A host in the fleet as a screen lists it.
 public struct HostView: Codable, Hashable, Sendable {
     public var hostId: [UInt8]
@@ -1692,11 +1868,16 @@ public struct HostView: Codable, Hashable, Sendable {
     public var away: Away
     /// Where discovery found it; what pairing dials.
     public var addrs: [String]
+    /// The route a live link runs over.
+    public var via: HostVia
     public var lastDialError: String?
     public var platform: String?
+    /// For this device: whether it is signed in to the account its profile
+    /// is bound to; None while it was never bound.
+    public var signedIn: Bool?
     public var version: String?
 
-    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], lastDialError: String?, platform: String?, version: String?) {
+    public init(hostId: [UInt8], name: String, local: Bool, trusted: Bool, candidate: Bool, presence: Presence, away: Away, addrs: [String], via: HostVia, lastDialError: String?, platform: String?, signedIn: Bool?, version: String?) {
         self.hostId = hostId
         self.name = name
         self.local = local
@@ -1705,8 +1886,10 @@ public struct HostView: Codable, Hashable, Sendable {
         self.presence = presence
         self.away = away
         self.addrs = addrs
+        self.via = via
         self.lastDialError = lastDialError
         self.platform = platform
+        self.signedIn = signedIn
         self.version = version
     }
 
@@ -1719,8 +1902,10 @@ public struct HostView: Codable, Hashable, Sendable {
         case presence
         case away
         case addrs
+        case via
         case lastDialError = "last_dial_error"
         case platform
+        case signedIn = "signed_in"
         case version
     }
 }
@@ -1737,6 +1922,25 @@ public struct Hunk: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case header
         case lines
+    }
+}
+
+/// This device as the machines it pairs with know it.
+public struct Identity: Codable, Hashable, Sendable {
+    public var hostId: [UInt8]
+    public var name: String
+    public var fingerprint: String
+
+    public init(hostId: [UInt8], name: String, fingerprint: String) {
+        self.hostId = hostId
+        self.name = name
+        self.fingerprint = fingerprint
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hostId = "host_id"
+        case name
+        case fingerprint
     }
 }
 
@@ -1821,6 +2025,32 @@ public enum LineKind: String, Codable, Hashable, Sendable, CaseIterable {
     case context = "Context"
     case added = "Added"
     case removed = "Removed"
+}
+
+/// An agent to start on a host.
+public struct NewAgent: Codable, Hashable, Sendable {
+    public var hostId: [UInt8]
+    public var kind: Kind
+    public var cwd: String
+    public var name: String
+    /// The provider's model; the host's default when absent.
+    public var model: String?
+
+    public init(hostId: [UInt8], kind: Kind, cwd: String, name: String, model: String?) {
+        self.hostId = hostId
+        self.kind = kind
+        self.cwd = cwd
+        self.name = name
+        self.model = model
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hostId = "host_id"
+        case kind
+        case cwd
+        case name
+        case model
+    }
 }
 
 public struct OptionView: Codable, Hashable, Sendable {
@@ -2023,6 +2253,60 @@ public enum PairRequest: Codable, Hashable, Sendable {
     }
 }
 
+/// A machine this device trusts.
+public struct PairedPeer: Codable, Hashable, Sendable {
+    public var hostId: [UInt8]
+    public var name: String
+    public var fingerprint: String
+    public var pairedAtMs: Int64
+
+    public init(hostId: [UInt8], name: String, fingerprint: String, pairedAtMs: Int64) {
+        self.hostId = hostId
+        self.name = name
+        self.fingerprint = fingerprint
+        self.pairedAtMs = pairedAtMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hostId = "host_id"
+        case name
+        case fingerprint
+        case pairedAtMs = "paired_at_ms"
+    }
+}
+
+/// A machine a pairing has reached and authenticated, before this device
+/// trusts it: what the person compares and then accepts or turns away.
+public struct PendingPair: Codable, Hashable, Sendable {
+    /// Names this attempt to confirm or abandon it.
+    public var token: [UInt8]
+    public var hostId: [UInt8]
+    public var name: String
+    /// The machine's key, as hex of its SHA-256.
+    public var fingerprint: String
+    /// When the machine stops holding this attempt open.
+    public var expiresAtMs: Int64
+    public var via: HostVia
+
+    public init(token: [UInt8], hostId: [UInt8], name: String, fingerprint: String, expiresAtMs: Int64, via: HostVia) {
+        self.token = token
+        self.hostId = hostId
+        self.name = name
+        self.fingerprint = fingerprint
+        self.expiresAtMs = expiresAtMs
+        self.via = via
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case token
+        case hostId = "host_id"
+        case name
+        case fingerprint
+        case expiresAtMs = "expires_at_ms"
+        case via
+    }
+}
+
 /// The header's phase: lifecycle from the entry, the rest from the snapshot.
 public enum PhaseView: Codable, Hashable, Sendable {
     case starting
@@ -2207,6 +2491,19 @@ public struct QueuedRow: Codable, Hashable, Sendable {
     }
 }
 
+/// The relay link, as far as a person needs to know it.
+public enum RelayLink: String, Codable, Hashable, Sendable, CaseIterable {
+    case off = "Off"
+    case connecting = "Connecting"
+    case connected = "Connected"
+    case retrying = "Retrying"
+    case failed = "Failed"
+    /// The account service wants the person to sign in again.
+    case signInAgain = "SignInAgain"
+    /// The account service refuses this build as too old.
+    case updateRequired = "UpdateRequired"
+}
+
 /// How an ask that is the work closed.
 public enum Resolution: String, Codable, Hashable, Sendable, CaseIterable {
     case open = "Open"
@@ -2275,6 +2572,22 @@ public struct ReviewFile: Codable, Hashable, Sendable {
         case hunks
         case comments
         case oldPath = "old_path"
+    }
+}
+
+/// This device and the machines it trusts, by name.
+public struct Roster: Codable, Hashable, Sendable {
+    public var identity: Identity
+    public var peers: [PairedPeer]
+
+    public init(identity: Identity, peers: [PairedPeer]) {
+        self.identity = identity
+        self.peers = peers
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case identity
+        case peers
     }
 }
 

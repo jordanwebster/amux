@@ -181,6 +181,7 @@ dependencies = [
  "model",
  "node",
  "provider-fakes",
+ "sha2",
  "tempfile",
  "testnet",
  "thiserror 2.0.20",

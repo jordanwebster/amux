@@ -293,6 +293,7 @@ async fn link_through_relay(quic: bool) -> RelayCarrier {
             cloud_url: cloud.url(),
             staged_refresh_token: REFRESH.into(),
             adopt_non_pristine: true,
+            client_id: String::new(),
         })
         .await
         .expect("the profile signs in");

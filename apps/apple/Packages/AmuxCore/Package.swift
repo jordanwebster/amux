@@ -22,7 +22,7 @@ let package = Package(
         .target(name: "LaunchClock"),
         .target(name: "AmuxValues"),
         .target(name: "AmuxCore", dependencies: ["AmuxApp", "AmuxValues", "LaunchClock"]),
-        .target(name: "Instrumentation", dependencies: ["AmuxCore"]),
+        .target(name: "Instrumentation", dependencies: ["AmuxCore", "AmuxValues"]),
         .testTarget(
             name: "InstrumentationTests",
             dependencies: ["Instrumentation"],

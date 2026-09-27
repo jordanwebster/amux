@@ -243,9 +243,50 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     }})
     .to_string());
     // SAFETY: the runtime is live; the strings live for the call.
-    unsafe { amux_runtime_pair(phone.runtime, request.as_ptr(), on_result, phone.context()) };
+    unsafe { amux_runtime_begin_pair(phone.runtime, request.as_ptr(), on_result, phone.context()) };
+    let pending = phone.result();
+    assert_eq!(pending["Ok"]["name"], "desk", "{pending}");
+    assert_eq!(pending["Ok"]["via"], "Direct", "{pending}");
+    let fingerprint = pending["Ok"]["fingerprint"].as_str().unwrap().to_owned();
+    assert_eq!(fingerprint.len(), 64, "{pending}");
+    let token = c(&pending["Ok"]["token"].to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe { amux_runtime_confirm_pair(phone.runtime, token.as_ptr(), on_result, phone.context()) };
     let paired = phone.result();
     assert_eq!(paired["Ok"]["name"], "desk", "{paired}");
+
+    // The roster names this phone and the desk by the same fingerprint.
+    // SAFETY: the runtime is live.
+    unsafe { amux_runtime_roster(phone.runtime, on_result, phone.context()) };
+    let roster = phone.result();
+    assert_eq!(roster["Ok"]["identity"]["name"], "phone", "{roster}");
+    assert_eq!(roster["Ok"]["peers"][0]["name"], "desk", "{roster}");
+    assert_eq!(
+        roster["Ok"]["peers"][0]["fingerprint"],
+        fingerprint.as_str()
+    );
+
+    // Never signed in: the account says so and lends no bearer.
+    // SAFETY: the runtime is live.
+    unsafe { amux_runtime_account(phone.runtime, on_result, phone.context()) };
+    let account = phone.result();
+    assert_eq!(account["Ok"]["binding"], "Unbound", "{account}");
+    // SAFETY: the runtime is live.
+    unsafe { amux_runtime_access_token(phone.runtime, on_result, phone.context()) };
+    assert!(phone.result()["Err"].is_string());
+
+    // What the phone's own browser found is handed over whole; one this
+    // runtime cannot read is left out.
+    let found = c(&json!([{
+        "host_id": [1, 2, 3],
+        "name": "unreadable",
+        "version": 1,
+        "addrs": ["127.0.0.1:1"],
+        "scope": "",
+    }])
+    .to_string());
+    // SAFETY: the runtime is live; the string lives for the call.
+    unsafe { amux_runtime_discovered(phone.runtime, found.as_ptr()) };
 
     // The desk's agent reaches the fleet from this device's own rows.
     let worker = net.agent("worker").unwrap();
@@ -267,10 +308,68 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let hosts = take(unsafe { amux_fleet_hosts(phone.runtime) });
     assert_eq!(hosts[0]["local"], true, "{hosts}");
     assert!(hosts.to_string().contains("\"desk\""));
+    let desk_id = c(&json!(desk.host_id.as_bytes().to_vec()).to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_runtime_directories(
+            phone.runtime,
+            desk_id.as_ptr(),
+            std::ptr::null(),
+            20,
+            on_result,
+            phone.context(),
+        )
+    };
+    // Answered either way; the desk may not list its repositories.
+    let directories = phone.result();
+    assert!(
+        directories["Ok"]["recent"].is_array() || directories["Err"].is_string(),
+        "{directories}"
+    );
+
+    // Renamed from outside its chat, the card follows.
+    let rename = c(&json!({"Rename": "builder"}).to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_runtime_agent_act(
+            phone.runtime,
+            agent_c.as_ptr(),
+            rename.as_ptr(),
+            on_result,
+            phone.context(),
+        )
+    };
+    assert!(phone.result().get("Ok").is_some());
+    phone.until(0, std::ptr::null(), "the new name", || {
+        // SAFETY: the runtime is live; the string lives for the call.
+        take(unsafe { amux_fleet_card(phone.runtime, agent_c.as_ptr()) })["name"] == "builder"
+    });
+    let rename = c(&json!({"Rename": "worker"}).to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_runtime_agent_act(
+            phone.runtime,
+            agent_c.as_ptr(),
+            rename.as_ptr(),
+            on_result,
+            phone.context(),
+        )
+    };
+    assert!(phone.result().get("Ok").is_some());
+    phone.until(0, std::ptr::null(), "the name back", || {
+        // SAFETY: the runtime is live; the string lives for the call.
+        take(unsafe { amux_fleet_card(phone.runtime, agent_c.as_ptr()) })["name"] == "worker"
+    });
+
+    // Called from a thread outside the pool, as the app's main thread is.
     // SAFETY: the runtime is live.
     unsafe { amux_runtime_set_source_policy(phone.runtime, false) };
+    // SAFETY: the runtime is live and not stopped until the phone drops.
+    let embedded = unsafe { &*phone.runtime }.embedded().clone();
+    assert_eq!(embedded.source_policy(), SourcePolicy::OnDemand);
     // SAFETY: the runtime is live.
     unsafe { amux_runtime_set_source_policy(phone.runtime, true) };
+    assert_eq!(embedded.source_policy(), SourcePolicy::Listed);
 
     // A chat: rows by key, a prompt, a permission answered by position.
     let mut error = std::ptr::null_mut();
@@ -386,6 +485,7 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
 
     // SAFETY: the chat is open, and closed once.
     unsafe { amux_session_close(chat) };
+    assert_eq!(CAUGHT.with(std::cell::Cell::get), 0, "a call panicked");
     drop(phone);
     tokio.block_on(net.shutdown()).unwrap();
 }
@@ -419,7 +519,9 @@ fn malformed_calls_are_refused_rather_than_crashing() {
     // SAFETY: as above.
     assert!(unsafe { amux_fleet_rows(std::ptr::null(), std::ptr::null()) }.is_null());
     // SAFETY: the runtime is live; the string lives for the call.
-    unsafe { amux_runtime_pair(phone.runtime, not_json.as_ptr(), on_result, phone.context()) };
+    unsafe {
+        amux_runtime_begin_pair(phone.runtime, not_json.as_ptr(), on_result, phone.context())
+    };
     assert!(phone.result()["Err"].is_string());
     let config = c("{}");
     let mut error = std::ptr::null_mut();

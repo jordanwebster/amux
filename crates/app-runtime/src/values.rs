@@ -10,7 +10,7 @@ use model::{AgentKey, Connection, InputState, Key, PhaseView, Waiting};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui_view::{Away, ComposerView, OutboxRow, QueuedRow, ToolRows};
-use wire::{BlobRef, Kind, Presence};
+use wire::{BlobRef, HostVia, Kind, Presence};
 
 /// What an embedded runtime starts from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -192,6 +192,11 @@ pub struct HostView {
     pub last_dial_error: Option<String>,
     /// Where discovery found it; what pairing dials.
     pub addrs: Vec<String>,
+    /// The route a live link runs over.
+    pub via: HostVia,
+    /// For this device: whether it is signed in to the account its profile
+    /// is bound to; None while it was never bound.
+    pub signed_in: Option<bool>,
 }
 
 /// What changed in the fleet since the host last took its changes.
@@ -216,4 +221,135 @@ pub enum PairRequest {
         addrs: Vec<String>,
     },
     Link(String),
+}
+
+/// An agent to start on a host.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NewAgent {
+    pub host_id: Vec<u8>,
+    pub kind: Kind,
+    pub cwd: String,
+    pub name: String,
+    /// The provider's model; the host's default when absent.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// A directory a host offers to start an agent in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Directory {
+    pub path: String,
+    pub name: String,
+    pub last_used_ms: Option<i64>,
+}
+
+/// What a host offers to start an agent in: where agents ran lately and the
+/// repositories under its roots.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Directories {
+    pub recent: Vec<Directory>,
+    pub repositories: Vec<Directory>,
+    pub roots: Vec<String>,
+}
+
+/// A change to one agent from outside its chat.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AgentAct {
+    Rename(String),
+    Stop,
+    Delete,
+}
+
+/// A machine a pairing has reached and authenticated, before this device
+/// trusts it: what the person compares and then accepts or turns away.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PendingPair {
+    /// Names this attempt to confirm or abandon it.
+    pub token: Vec<u8>,
+    pub host_id: Vec<u8>,
+    pub name: String,
+    /// The machine's key, as hex of its SHA-256.
+    pub fingerprint: String,
+    /// When the machine stops holding this attempt open.
+    pub expires_at_ms: i64,
+    pub via: HostVia,
+}
+
+/// This device as the machines it pairs with know it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Identity {
+    pub host_id: Vec<u8>,
+    pub name: String,
+    pub fingerprint: String,
+}
+
+/// A machine this device trusts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PairedPeer {
+    pub host_id: Vec<u8>,
+    pub name: String,
+    pub fingerprint: String,
+    pub paired_at_ms: i64,
+}
+
+/// This device and the machines it trusts, by name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Roster {
+    pub identity: Identity,
+    pub peers: Vec<PairedPeer>,
+}
+
+/// A machine the phone's own browser found on the local network.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Found {
+    pub host_id: Vec<u8>,
+    pub name: String,
+    pub version: u32,
+    /// Resolved addresses as `ip:port`, IPv6 in brackets.
+    pub addrs: Vec<String>,
+    pub scope: String,
+}
+
+/// The account this device's profile is bound to, as the account screens
+/// show it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AccountView {
+    pub binding: Binding,
+    pub email: String,
+    pub name: String,
+    /// Whether the account buys the relay, as the relay link last heard.
+    pub pro: Option<bool>,
+    pub relay: RelayLink,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Binding {
+    /// Never signed in: this device works on its own network.
+    Unbound,
+    SignedIn,
+    SignedOut,
+    /// Signed in, with the relay link turned off.
+    Paused,
+}
+
+/// The relay link, as far as a person needs to know it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum RelayLink {
+    Off,
+    Connecting,
+    Connected,
+    Retrying,
+    /// The account service wants the person to sign in again.
+    SignInAgain,
+    /// The account service refuses this build as too old.
+    UpdateRequired,
+    Failed,
+}
+
+/// A bearer for the account service, borrowed from the profile, which alone
+/// spends the refresh token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Bearer {
+    pub bearer: String,
+    pub expires_at_ms: Option<i64>,
 }

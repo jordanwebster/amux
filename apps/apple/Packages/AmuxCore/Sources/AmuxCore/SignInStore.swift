@@ -50,35 +50,30 @@ public final class SignInStore {
     /// their mind, and an error banner over it would be the app arguing. Every
     /// other refusal is said, because there is nothing the person can do about
     /// it until they know what it was.
+    /// Keeps an account that signed in: binds its installation with the
+    /// sign-in's refresh token and puts it on screen. Answers what stopped
+    /// it, if anything.
+    public typealias Keep = @MainActor (SignedInAccount) async -> CloudError?
+
     @discardableResult
     public func signIn(
         with cloud: any CloudService,
         presenting: any WebAuthPresenter,
-        into registry: AccountRegistry? = nil
+        keeping keep: Keep
     ) async -> SignedInAccount? {
         guard phase != .handingOff else { return nil }
         phase = .handingOff
         do {
             let account = try await cloud.signIn(intent, presenting: presenting)
-            // Somebody other than the account this was for. Adding them now
-            // would put an account on the phone nobody asked for, under a row
-            // the person pressed for a different one.
             if case .returning(let wanted) = intent, wanted.id != account.id {
                 phase = .mismatched(wanted: wanted, got: account)
                 return nil
             }
-            // The account is being kept, so this is where its session is
-            // written down. A phone that cannot remember it says so rather
-            // than starting an account that is signed out again next launch.
-            try await cloud.keepSession(account.id)
+            if let refused = await keep(account) {
+                phase = Self.phase(after: refused)
+                return nil
+            }
             phase = .signedIn(account)
-            // What the account is allowed to do decides which gate the home
-            // screen draws, so it is asked for here rather than left for the
-            // first screen that wonders. A cloud that will not say is not a
-            // failed sign-in: the account exists and the gate stays closed
-            // until it answers.
-            let entitlement = try? await cloud.entitlement(account.id)
-            registry?.add(account, entitlement: entitlement ?? .none)
             return account
         } catch {
             phase = Self.phase(after: error)
@@ -90,7 +85,7 @@ public final class SignInStore {
         switch error {
         case .cancelled: .ready
         case .unauthenticated: .failed("amux.sh did not recognise this sign-in")
-        case .refused(let reason), .keychain(let reason, _): .failed(reason)
+        case .refused(let reason): .failed(reason)
         case .network(let what): .failed(what)
         case .timeout: .failed("amux.sh did not answer")
         }
@@ -115,41 +110,24 @@ public final class SignInStore {
     }
 
     /// Keeps the account that came back instead of the one that was asked for.
+    /// Keeps the account that signed in instead of the one asked for.
     @discardableResult
-    public func keep(with cloud: any CloudService, into registry: AccountRegistry?) async
-        -> SignedInAccount?
-    {
+    public func keep(keeping keep: Keep) async -> SignedInAccount? {
         guard case .mismatched(_, let got) = phase else { return nil }
-        // Kept here, so its session is written down here, the same as a
-        // sign-in that returned the account it was asked for.
-        do { try await cloud.keepSession(got.id) } catch {
-            phase = Self.phase(after: error)
+        phase = .handingOff
+        if let refused = await keep(got) {
+            phase = Self.phase(after: refused)
             return nil
         }
         phase = .signedIn(got)
-        let entitlement = try? await cloud.entitlement(got.id)
-        registry?.add(got, entitlement: entitlement ?? .none)
         return got
     }
 
-    /// Turns down the account that came back.
-    ///
-    /// The sign-in left a session in memory for it, which is let go: nothing
-    /// was written down and nothing will be. Unless that account is already
-    /// signed in here — then this session is the one it was using, now
-    /// fresher, and it is the one worth keeping between launches.
-    ///
-    /// Leaving the page any other way needs no counterpart. What a back
-    /// press, a swipe or a second visit abandons is a session held in memory,
-    /// which dies with the process.
-    public func discard(with cloud: any CloudService, from registry: AccountRegistry?) async {
+    /// Turns away the account that signed in instead of the one asked for,
+    /// letting go of everything its sign-in obtained.
+    public func discard(with cloud: any CloudService) async {
         guard case .mismatched(_, let got) = phase else { return }
         phase = .ready
-        let inUse = registry?.accounts.contains { $0.id == got.id && $0.signedIn } ?? false
-        if inUse {
-            try? await cloud.keepSession(got.id)
-        } else {
-            try? await cloud.forgetSession(got.id)
-        }
+        try? await cloud.forgetSession(got.id)
     }
 }

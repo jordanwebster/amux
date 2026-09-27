@@ -1,3 +1,29 @@
+2026-09-27 — **The phone's core runs on the new bridge.**
+The Swift core no longer mirrors the old bridge's events by hand: every
+value it reads is a generated type, and a small wrapper holds the runtime
+and chat pointers, with a lock across each call so stopping waits for the
+calls in flight. Each account on the phone is its own installation of the
+embedded runtime, in its own directory; only the one on screen runs, and
+switching account stops one and starts the other. A phone nobody signed in
+on runs an installation of its own, which the first sign-in takes over, so
+what was paired before there was an account stays paired. Sign-in still
+happens in the system browser, but the refresh token it obtains goes to the
+runtime once and is never spent by Swift again: the profile holds it, and
+the app borrows a bearer from the runtime for its own calls to amux.sh. The
+account binding now records which OAuth client obtained the token, because
+the phone signs in as `mobile` and a token refreshes only under its own
+client. The bridge gained what the fleet, hosts and account screens need:
+two-step pairing (reach and authenticate, then trust or turn away), this
+phone's identity and paired machines with fingerprints, the found set the
+phone's own browser hands over, the account and relay state, a bearer,
+starting, renaming, stopping and deleting agents, and a host's
+directories. Candidates the daemon lists now carry the addresses discovery
+found. Setting the source policy from the app's main thread panicked in
+Rust, which a shipping build would turn into a crash; the call now runs in
+the runtime's context, and the bridge tests count panics the boundary
+catches. Starting a second runtime while one was still starting on the same
+installation failed on its lock; starts now queue.
+
 2026-09-27 — **The phone bridge is rebuilt on the session model.**
 The three app crates are back in the workspace, rewritten. `app-embedded`
 hosts the daemon's profile runtime in the phone's process (its own store of
