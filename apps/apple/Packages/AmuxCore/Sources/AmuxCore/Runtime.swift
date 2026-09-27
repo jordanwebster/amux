@@ -131,6 +131,11 @@ public final class Runtime: @unchecked Sendable {
         call(()) { amux_runtime_set_source_policy($0, listed) }
     }
 
+    /// Whether every listed agent keeps a source open now.
+    public var listsSources: Bool {
+        call(false) { amux_runtime_source_policy_listed($0) }
+    }
+
     /// Hands over the whole set this phone's browser found on the network.
     public func discovered(_ found: [Found]) {
         call(()) { live in Bridge.json(found).withCString { amux_runtime_discovered(live, $0) } }

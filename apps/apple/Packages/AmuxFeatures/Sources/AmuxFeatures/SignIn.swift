@@ -110,7 +110,7 @@ public struct SignIn: View {
         if case .returning(let account) = model.intent {
             return "Sign back in as \(account.email)."
         }
-        return "An account pairs your hosts and reaches them from anywhere."
+        return "An account lets this phone reach your hosts from anywhere."
     }
 
     /// The two things worth knowing before pressing the button: where the

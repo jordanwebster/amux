@@ -79,6 +79,23 @@ final class RuntimeCoordinatorTests: XCTestCase {
         runtime.setSourcePolicy(listed: true)
     }
 
+    /// Put away, only the chats a push opens keep a source; in front of
+    /// somebody, every listed agent does.
+    func testBackgroundAndForegroundSwitchTheSourcePolicy() async {
+        let registry = AccountRegistry()
+        let coordinator = coordinator(registry)
+        defer { coordinator.stop() }
+        coordinator.start()
+        guard let runtime = await coordinator.started(registry.installation) else {
+            return XCTFail("the runtime did not start")
+        }
+        XCTAssertTrue(runtime.listsSources)
+        coordinator.setActive(false)
+        XCTAssertFalse(runtime.listsSources)
+        coordinator.setActive(true)
+        XCTAssertTrue(runtime.listsSources)
+    }
+
     func testSwitchingAccountRunsTheOtherInstallation() async {
         let registry = AccountRegistry()
         let coordinator = coordinator(registry)

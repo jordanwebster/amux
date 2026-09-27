@@ -31,6 +31,9 @@ public final class PairingStore {
     public private(set) var phase = Phase.entering
     /// The machine the code is for, where the person chose one.
     public private(set) var machine: HostView?
+    /// Why the last attempt was refused, for diagnostics: the screen says
+    /// every refusal the same way, and a report or a driver needs the reason.
+    @ObservationIgnored public private(set) var refusal: String?
     /// Counts attempts, so an answer to one the person has since left is
     /// dropped.
     @ObservationIgnored private var attempt = 0
@@ -80,7 +83,8 @@ public final class PairingStore {
         switch result {
         case .success(let pending):
             phase = .confirming(pending)
-        case .failure:
+        case .failure(let why):
+            refusal = why.description
             digits = ""
             phase = relayOnly ? .needsSubscription : .refused
         }
@@ -91,7 +95,8 @@ public final class PairingStore {
         guard attempt == self.attempt else { return }
         switch result {
         case .success(let paired): phase = .trusted(paired.name)
-        case .failure:
+        case .failure(let why):
+            refusal = why.description
             digits = ""
             phase = .refused
         }

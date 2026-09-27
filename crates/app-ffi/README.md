@@ -45,7 +45,8 @@ the runtime.
 
 Reads return at once: `amux_session_keys`, `amux_session_rows_for`,
 `amux_session_ask_card`, `amux_session_strip`, `amux_session_frame`,
-`amux_fleet_rows`, `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`.
+`amux_fleet_rows`, `amux_fleet_card`, `amux_fleet_family`, `amux_fleet_hosts`,
+`amux_runtime_source_policy_listed`.
 
 Rows are handed out by item key, which never moves. The host's id sequence
 only grows at its two edges: `amux_session_new_keys_above(chat, newest)` for
@@ -69,10 +70,19 @@ with a JSON result the callback borrows until it returns:
 `amux_session_answer_questions`, `amux_session_withdraw`,
 `amux_session_send_now`, `amux_session_resend`, `amux_session_interrupt`,
 `amux_session_resume` (the exited composer's draft), `amux_session_page_older`,
-`amux_session_put_blob`, `amux_runtime_pair` (a PIN or a pairing link),
-`amux_runtime_unpair`, `amux_runtime_sign_in`, `amux_runtime_sign_out` and
-`amux_runtime_dump`. `amux_session_discard` forgets a not-confirmed input at
-once.
+`amux_session_put_blob`, `amux_runtime_begin_pair` (a PIN or a pairing
+link: reaches and authenticates the machine, answering its name and
+fingerprint), `amux_runtime_confirm_pair` and `amux_runtime_abandon_pair`
+(the person's decision), `amux_runtime_unpair`, `amux_runtime_roster` (this
+device and the machines it trusts), `amux_runtime_account` (the binding and
+the relay link), `amux_runtime_access_token` (a bearer for the account
+service; the profile alone spends the refresh token), `amux_runtime_sign_in`
+(with the OAuth client the refresh token was issued to),
+`amux_runtime_sign_out`, `amux_runtime_create_agent`,
+`amux_runtime_directories`, `amux_runtime_agent_act` (rename, stop, delete)
+and `amux_runtime_dump`. `amux_session_discard` forgets a not-confirmed input
+at once, and `amux_runtime_discovered` hands over the whole set the phone's
+own browser found on the local network, which only the system may browse.
 
 `amux_runtime_set_source_policy(rt, listed)` keeps a source open for every
 listed agent in the foreground, and only for the chats that open when a push

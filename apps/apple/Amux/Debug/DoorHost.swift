@@ -159,11 +159,58 @@ final class DoorHost {
                     ?? false
             }
         case .shutdown: return .ack
-        case .open, .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
+        case .open(let screen, let subject): return open(screen, about: subject)
+        case .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
              .report, .uploaded, .replay, .move, .attach, .requestChanges, .watch,
              .awaitSendable, .awaitReply, .send, .sendDraft:
             return .error("this build's door does not \(Self.verb(request))")
         }
+    }
+
+    /// Goes where a person would tap to: a tab, or a page of the running app
+    /// about the machine or agent `subject` names. Nothing is invented: a page
+    /// about something the runtime does not list is refused.
+    private func open(_ screen: String, about subject: String?) -> DoorReply {
+        guard let composition, let stores else { return .error("the app has not started") }
+        let router = composition.router
+        let agent = subject.flatMap { named in
+            stores.fleet.rows.first { $0.name == named || "\($0.id)" == named }
+        }
+        let host = subject.flatMap { named in
+            (stores.hosts.hosts + stores.hosts.discovered).first {
+                $0.name == named || $0.id?.description == named
+            }
+        }
+        switch screen {
+        case "home": router.setPath([], for: .agents); router.select(.agents)
+        case "hosts":
+            stores.hosts.stopReadingDevices()
+            router.setPath([], for: .hosts)
+            router.select(.hosts)
+        case "you": router.setPath([], for: .you); router.select(.you)
+        case "devices":
+            router.setPath([], for: .hosts)
+            router.select(.hosts)
+            stores.hosts.readDevices()
+            Task { await stores.refreshRoster() }
+        case "new-agent": router.open(.newAgent)
+        case "sign-in":
+            composition.handle(.signIn)
+        case "paywall":
+            composition.handle(.subscribe)
+        case "pin":
+            guard let id = host?.id else { return .error("no host named \(subject ?? "")") }
+            router.open(.pairByCode(id))
+        case "conversation":
+            guard let agent else { return .error("no agent named \(subject ?? "")") }
+            router.open(.conversation(agent.id))
+        case "family":
+            guard let agent else { return .error("no agent named \(subject ?? "")") }
+            stores.toggleFamily(agent.id)
+        default:
+            return .error("the running app has no page named \(screen)")
+        }
+        return .ack
     }
 
     /// Signs the launch's account in to the served network's relay, the way
@@ -201,11 +248,13 @@ final class DoorHost {
     /// Trusts whoever the pairing reached, and answers its name.
     private func confirm(in stores: StoreBundle) async -> DoorReply {
         guard case .confirming(let pending) = await settled(stores.pairing) else {
-            return .error("the pairing was refused: \(stores.pairing.phase)")
+            return .error(
+                "the pairing was refused: \(stores.pairing.refusal ?? "\(stores.pairing.phase)")")
         }
         stores.confirmPairing(pending)
         guard case .trusted(let name) = await settled(stores.pairing) else {
-            return .error("the machine was not trusted: \(stores.pairing.phase)")
+            return .error(
+                "the machine was not trusted: \(stores.pairing.refusal ?? "\(stores.pairing.phase)")")
         }
         return .paired(host: name)
     }
@@ -396,10 +445,14 @@ final class DoorHost {
         }
         // What VoiceOver does to a control, which is the one way to act on a
         // SwiftUI element from inside the process.
-        guard element.accessibilityActivate() else {
-            return .error("\(identifier) did not activate")
+        if element.accessibilityActivate() { return .ack }
+        if let declared = declared.first(where: { $0.identifier == identifier }),
+           let under = VisibleTree.element(
+               at: CGPoint(x: declared.frame.midX, y: declared.frame.midY), in: window),
+           under.accessibilityActivate() {
+            return .ack
         }
-        return .ack
+        return .error("\(identifier) did not activate")
     }
 
     private func type(_ text: String, into identifier: String) -> DoorReply {

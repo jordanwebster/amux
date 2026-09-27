@@ -359,6 +359,20 @@ pub unsafe extern "C" fn amux_runtime_set_source_policy(runtime: *const AmuxRunt
     });
 }
 
+/// Whether every listed agent keeps a source open: true in the foreground,
+/// false after a background wake narrowed it.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_source_policy_listed(runtime: *const AmuxRuntime) -> bool {
+    guard(false, || {
+        // SAFETY: the caller's contract.
+        unsafe { live_runtime(runtime) }
+            .is_some_and(|runtime| runtime.embedded().source_policy() == SourcePolicy::Listed)
+    })
+}
+
 #[derive(Serialize)]
 enum Answered<T> {
     Ok(T),

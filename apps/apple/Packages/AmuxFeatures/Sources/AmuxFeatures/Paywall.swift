@@ -107,7 +107,7 @@ public struct Paywall: View {
     }
 
     private var explanation: String {
-        "A subscription connects this phone to your hosts. Without one, nothing is reachable."
+        "A subscription reaches your hosts from anywhere. Hosts on this network work without one."
     }
 
     private var plans: some View {

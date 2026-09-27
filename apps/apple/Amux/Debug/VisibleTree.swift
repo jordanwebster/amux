@@ -27,6 +27,29 @@ enum VisibleTree {
         return found
     }
 
+    /// The smallest accessibility element whose frame holds `point`, in
+    /// window coordinates. SwiftUI does not show an element's identifier to
+    /// the process that drew it, so a control a screen declared is found
+    /// again by where it was drawn.
+    @MainActor
+    static func element(at point: CGPoint, in window: UIWindow) -> NSObject? {
+        var best: (NSObject, CGFloat)?
+        var seen = Set<ObjectIdentifier>()
+        func visit(_ node: NSObject) {
+            guard seen.insert(ObjectIdentifier(node)).inserted else { return }
+            if node.isAccessibilityElement {
+                let frame = window.convert(node.accessibilityFrame, from: nil)
+                let area = frame.width * frame.height
+                if frame.contains(point), area > 0, best.map({ area < $0.1 }) ?? true {
+                    best = (node, area)
+                }
+            }
+            for child in children(of: node) { visit(child) }
+        }
+        visit(window)
+        return best?.0
+    }
+
     @MainActor
     private static func walk(
         _ node: NSObject, in window: UIWindow,

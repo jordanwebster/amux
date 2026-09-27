@@ -165,7 +165,9 @@ public struct Shell: View {
                 .tabSurface(selected: router.tab == .you)
             }
 
-            if router.path.isEmpty {
+            // A bottom sheet over a tab's root takes the tab bar's place: the
+            // bar drawn over it would cover the sheet's last row.
+            if router.path.isEmpty && !(router.tab == .hosts && stores.hosts.readingDevices) {
                 ShellTabBar(selected: router.tab) { router.select($0) }
                     .safeAreaPadding(.bottom, 6)
             }
@@ -570,6 +572,9 @@ private struct PairConfirmationPage: View {
             .onAppear { ask() }
             .onChange(of: stores.account) { _, _ in ask() }
             .onChange(of: stores.fleet.relay) { _, _ in ask() }
+            // A link that opened the app arrives before its runtime has
+            // started; it is asked again once the runtime first answers.
+            .onChange(of: stores.applied > 0) { _, _ in ask() }
     }
 
     /// A machine only the relay has seen, reached by a phone with no relay, is

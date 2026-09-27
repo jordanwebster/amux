@@ -7548,6 +7548,30 @@
           }
         }
       }
+    },
+    "A subscription reaches your hosts from anywhere. Hosts on this network work without one.": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A subscription reaches your hosts from anywhere. Hosts on this network work without one."
+          }
+        }
+      }
+    },
+    "An account lets this phone reach your hosts from anywhere.": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An account lets this phone reach your hosts from anywhere."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

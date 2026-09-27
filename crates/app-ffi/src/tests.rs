@@ -368,6 +368,8 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let embedded = unsafe { &*phone.runtime }.embedded().clone();
     assert_eq!(embedded.source_policy(), SourcePolicy::OnDemand);
     // SAFETY: the runtime is live.
+    assert!(!unsafe { amux_runtime_source_policy_listed(phone.runtime) });
+    // SAFETY: the runtime is live.
     unsafe { amux_runtime_set_source_policy(phone.runtime, true) };
     assert_eq!(embedded.source_policy(), SourcePolicy::Listed);
 
