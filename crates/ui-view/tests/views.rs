@@ -815,6 +815,28 @@ fn authored_view_goldens() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// A resume's first prompt is sent with the resume, so it reads sending;
+/// when the new incarnation holds it in its queue, the queue row alone
+/// draws it.
+#[test]
+fn a_sent_prompt_the_queue_lists_is_drawn_once() {
+    for kind in KINDS {
+        let mut state = SessionState::new(agent(kind));
+        state.update(snapshot(kind, Phase::Starting, vec![], vec![]));
+        state.update(caught_up());
+        state.update(Msg::Send(prompt_input(kind, b"r1", "resumed")));
+        assert_eq!(outbox_rows(&state).len(), 1, "sending until it lands");
+        state.update(snapshot(
+            kind,
+            Phase::NeedsYou,
+            vec![],
+            vec![queued(b"r1", false, None)],
+        ));
+        assert!(outbox_rows(&state).is_empty());
+        assert_eq!(queue_rows(&state).len(), 1);
+    }
+}
+
 #[test]
 fn unknown_renders_one_way() {
     for kind in KINDS {

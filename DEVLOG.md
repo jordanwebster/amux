@@ -1,3 +1,17 @@
+2026-09-27 — **Resuming a terminal Claude whose first run never began its session.**
+An agent that exited before Claude started its session (at the folder-trust
+dialog, say) had its session id recorded, so every resume launched
+`claude --resume <id>`; Claude wrote no transcript for that session and
+refused ("No conversation found"), exiting at once while the resume's
+message sat in the chat as both `⋯ queued` and `◌ sending`. The agent now
+resumes only a session Claude has a transcript for, and otherwise starts it
+under the same id (`--session-id`), saying so in the agent's log; the fake
+terminal Claude refuses a resume without a transcript as Claude does. The
+outbox no longer draws a sent prompt the agent's queue already lists, so a
+resume's first prompt waiting behind a question reads queued once.
+Verified live on 2.1.283: the resume started Claude and both waiting
+messages ran.
+
 2026-09-27 — **Terminal Claude's folder-trust dialog is asked, not typed into.**
 In a folder Claude had not been told to trust, its first screen is the
 trust dialog with No preselected; amux counted Claude ready and idle, and

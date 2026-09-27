@@ -386,6 +386,16 @@ impl Engine {
     }
 
     async fn run(mut self) -> i32 {
+        // Claude resumes only a session whose transcript it wrote.
+        if let Some(session) = self
+            .args
+            .resume
+            .as_ref()
+            .filter(|_| !self.transcript.exists())
+        {
+            println!("No conversation found with session ID: {session}\r");
+            return 1;
+        }
         // Claude 2.1.283 turns bracketed paste on as its first output, queries
         // the terminal, then resets its input (paste off and on again) and
         // draws; keys typed before the reset are lost. Input is live from the

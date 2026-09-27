@@ -701,6 +701,44 @@ fn terminal_claude_exits_when_its_folder_is_not_trusted() {
     });
 }
 
+/// Terminal Claude's first run ended before its session began, so Claude
+/// wrote no transcript for it and would refuse to resume it: the next
+/// incarnation starts the session under the same id instead, and takes a
+/// prompt.
+#[test]
+fn a_terminal_session_that_never_began_is_started_not_resumed() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            steps: vec![
+                Step::Text {
+                    chunks: vec!["hello after all".into()],
+                },
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        let session = agent.provider_session();
+        daemon.stop(StopMode::Kill).await;
+        assert_eq!(agent.exit().await, ExitCause::Killed);
+
+        agent.resume();
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", "say hello").await, Verdict::Accepted);
+        agent
+            .wait("the turn ends", |log| log.turn_ends() == 1)
+            .await;
+        assert!(agent.log().has_text("hello after all"));
+        assert_eq!(agent.provider_session(), session, "the same session id");
+        daemon.stop(StopMode::Graceful).await;
+        assert_eq!(agent.exit().await, ExitCause::Stopped);
+    });
+}
+
 /// Terminal Claude dies while its permission menu is open.
 #[test]
 fn terminal_claude_replays_transport_loss_mid_turn() {

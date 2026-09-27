@@ -352,7 +352,16 @@ impl Provider {
         dir: &Path,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
-        let (session, resume) = provider_session(spec, dir)?;
+        let (session, mut resume) = provider_session(spec, dir)?;
+        // Claude writes a session's transcript once the session begins; one
+        // that ended before (at its folder-trust dialog, say) has none, and
+        // Claude refuses to resume it. It starts under the same id instead.
+        if resume && !session_began(spec, &session) {
+            eprintln!(
+                "amux agent: Claude's session {session} never began; starting it rather than resuming"
+            );
+            resume = false;
+        }
         let keys = Keys::resolve(Path::new(&spec.provider_command)).await;
         let launch = interpret::claude_pty::launch_fact(
             keys.as_ref().map_or("", |keys| keys.version.as_str()),
@@ -1060,6 +1069,29 @@ fn provider_session(spec: &AgentSpec, dir: &Path) -> io::Result<(String, bool)> 
         Err(error) if error.kind() == io::ErrorKind::NotFound => new_session(&path),
         Err(error) => Err(error),
     }
+}
+
+/// Whether Claude has a transcript for this session: resuming needs one.
+/// Claude keeps them under CLAUDE_CONFIG_DIR, as the spec or this process
+/// sets it, else ~/.claude.
+fn session_began(spec: &AgentSpec, session: &str) -> bool {
+    const CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";
+    let configured = spec
+        .provider_env
+        .get(CONFIG_DIR)
+        .or_else(|| {
+            spec.config
+                .as_ref()
+                .and_then(|config| config.env.get(CONFIG_DIR))
+        })
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os(CONFIG_DIR).map(PathBuf::from));
+    let Some(config) = configured
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
+    else {
+        return true;
+    };
+    claude::history::find_session_file(&config, Path::new(&spec.cwd), session).is_some()
 }
 
 fn new_session(path: &Path) -> io::Result<(String, bool)> {

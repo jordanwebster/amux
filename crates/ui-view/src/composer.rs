@@ -256,6 +256,14 @@ pub enum OutboxState {
 }
 
 pub fn outbox_rows(state: &SessionState) -> Vec<OutboxRow> {
+    // A sent prompt the agent's queue lists is drawn by its queue row: a
+    // resume's first prompt waits there when the new incarnation cannot
+    // take it yet.
+    let queued = state
+        .queue()
+        .iter()
+        .map(|row| row.entry.input_id.clone())
+        .collect::<Vec<_>>();
     state
         .inputs()
         .iter()
@@ -264,6 +272,7 @@ pub fn outbox_rows(state: &SessionState) -> Vec<OutboxRow> {
                 return None;
             };
             let state = match &sent.state {
+                InputState::Sent if queued.contains(&sent.id) => return None,
                 InputState::Sent => OutboxState::Sending,
                 InputState::Uncertain => OutboxState::NotConfirmed,
                 InputState::Rejected(reason) => OutboxState::Rejected(reason.clone()),
