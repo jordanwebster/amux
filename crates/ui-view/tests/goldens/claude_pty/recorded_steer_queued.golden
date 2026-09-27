@@ -6,40 +6,38 @@
   row    2 fa5e9ed5-2fc3-4847-a432-b2cfec56dee4 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly PTY_STEER_QUEUED plus any extra words the user asked for.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 41 recorded 39: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_0177QLZtD7mJgYG5i1jpCyFq
-  row    3 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_0177QLZtD7mJgYG5i1jpCyFq" }) queue=[] outbox=[]
 ## 43 recorded 41: fact Transcript type=assistant uuid=bbbc587c-90a4-4508-8da4-31ec6bbe9e97
-  row    4 bbbc587c-90a4-4508-8da4-31ec6bbe9e97 Thinking { text: "", open: false, duration_ms: None }
-  composer Send activity=Some(Working) queue=[] outbox=[]
-## 48 recorded 46: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_0177QLZtD7mJgYG5i1jpCyFq
-  row    3 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(15132) }
+  row    3 bbbc587c-90a4-4508-8da4-31ec6bbe9e97 Thinking { text: "", open: false, duration_ms: Some(2103) }
+## 44 recorded 42: fact Transcript type=assistant uuid=ff73dca0-8c7f-4fbf-b9ad-1cf9d156708c
+  row    4 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
 ## 50 recorded 48: fact Transcript type=user uuid=6209f922-e7dd-4e0f-af0d-abe36418c426
-  row    3 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15132) }
+  row    4 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15192) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
 ## 55 recorded 53: fact Transcript type=attachment uuid=721326aa-2cce-4201-a92f-3fc9c6deb9fe
   row    5 721326aa-2cce-4201-a92f-3fc9c6deb9fe Prompt { text: [Text("Also append the word BANANA.")], steered: true }
 ## 64 recorded 62: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01ADAvuLV3aTwhoCMVMFAcQB
-  row    6 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_01ADAvuLV3aTwhoCMVMFAcQB" }) queue=[] outbox=[]
 ## 66 recorded 64: fact Transcript type=assistant uuid=a53e936d-116e-4a20-9011-4d6630e006ea
-  row    7 a53e936d-116e-4a20-9011-4d6630e006ea Thinking { text: "", open: false, duration_ms: None }
-  composer Send activity=Some(Working) queue=[] outbox=[]
-## 70 recorded 68: fact Hook hook_event_name=PostToolUse tool_use_id=toolu_01ADAvuLV3aTwhoCMVMFAcQB
-  row    6 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: [], more_lines: 0, duration_ms: Some(5063) }
+  row    6 a53e936d-116e-4a20-9011-4d6630e006ea Thinking { text: "", open: false, duration_ms: Some(16155) }
+## 68 recorded 66: fact Transcript type=assistant uuid=e6fc9615-8ba2-461b-a646-ba44c442aff5
+  row    7 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
 ## 72 recorded 70: fact Transcript type=user uuid=67869676-4793-4f26-a4da-bd76b3456553
-  row    6 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5063) }
+  row    7 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5109) }
+  composer Send activity=Some(Working) queue=[] outbox=[]
 ## 78 recorded 76: fact Transcript type=assistant uuid=76c75e76-b967-41b4-8db0-fa7016e64164
-  row    8 76c75e76-b967-41b4-8db0-fa7016e64164 Thinking { text: "", open: false, duration_ms: Some(6780) }
+  row    8 76c75e76-b967-41b4-8db0-fa7016e64164 Thinking { text: "", open: false, duration_ms: Some(6252) }
 ## 79 recorded 77: fact Transcript type=assistant uuid=d0cce4ba-d3db-4f17-931a-22839a48285f
   row    9 d0cce4ba-d3db-4f17-931a-22839a48285f Prose { text: [Text("PTY_STEER_QUEUED BANANA")], streaming: false, working_note: false }
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 fa5e9ed5-2fc3-4847-a432-b2cfec56dee4 Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import time; time.sleep(15)'; echo S1. Then use Bash to run exactly: python3 -c 'import time; time.sleep(5)'; echo S2. Then reply exactly PTY_STEER_QUEUED plus any extra words the user asked for.")], steered: false }
-     3 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15132) }
-     4 bbbc587c-90a4-4508-8da4-31ec6bbe9e97 Thinking { text: "", open: false, duration_ms: None }
+     3 bbbc587c-90a4-4508-8da4-31ec6bbe9e97 Thinking { text: "", open: false, duration_ms: Some(2103) }
+     4 toolu_0177QLZtD7mJgYG5i1jpCyFq Command { command: "python3 -c 'import time; time.sleep(15)'; echo S1", state: Succeeded, exit_code: None, output_head: ["S1"], more_lines: 0, duration_ms: Some(15192) }
      5 721326aa-2cce-4201-a92f-3fc9c6deb9fe Prompt { text: [Text("Also append the word BANANA.")], steered: true }
-     6 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5063) }
-     7 a53e936d-116e-4a20-9011-4d6630e006ea Thinking { text: "", open: false, duration_ms: None }
-     8 76c75e76-b967-41b4-8db0-fa7016e64164 Thinking { text: "", open: false, duration_ms: Some(6780) }
+     6 a53e936d-116e-4a20-9011-4d6630e006ea Thinking { text: "", open: false, duration_ms: Some(16155) }
+     7 toolu_01ADAvuLV3aTwhoCMVMFAcQB Command { command: "python3 -c 'import time; time.sleep(5)'; echo S2", state: Succeeded, exit_code: None, output_head: ["S2"], more_lines: 0, duration_ms: Some(5109) }
+     8 76c75e76-b967-41b4-8db0-fa7016e64164 Thinking { text: "", open: false, duration_ms: Some(6252) }
      9 d0cce4ba-d3db-4f17-931a-22839a48285f Prose { text: [Text("PTY_STEER_QUEUED BANANA")], streaming: false, working_note: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 36836, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
 == settings

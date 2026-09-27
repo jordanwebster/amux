@@ -2353,6 +2353,12 @@ pub struct ClaudePtySnapshot {
     pub sign_in: ::core::option::Option<SignIn>,
     #[prost(message, optional, tag = "11")]
     pub background_processes: ::core::option::Option<BackgroundProcesses>,
+    /// The calls PreToolUse hooks announced that no result has ended yet,
+    /// oldest first. A call's transcript row can lag its hook by seconds while
+    /// a background task runs, so the activity line reads the call from here
+    /// until then.
+    #[prost(message, repeated, tag = "12")]
+    pub running_calls: ::prost::alloc::vec::Vec<RunningCall>,
 }
 impl ::prost::Name for ClaudePtySnapshot {
     const NAME: &'static str = "ClaudePtySnapshot";
@@ -2362,6 +2368,25 @@ impl ::prost::Name for ClaudePtySnapshot {
     }
     fn type_url() -> ::prost::alloc::string::String {
         "/amux.v1.ClaudePtySnapshot".into()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RunningCall {
+    #[prost(string, tag = "1")]
+    pub tool_use_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub tool_name: ::prost::alloc::string::String,
+    #[prost(int64, tag = "3")]
+    pub since_ms: i64,
+}
+impl ::prost::Name for RunningCall {
+    const NAME: &'static str = "RunningCall";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.RunningCall".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.RunningCall".into()
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

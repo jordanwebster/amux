@@ -687,6 +687,11 @@ impl Engine {
         let request = self.ids.next("req_fake");
         let message = self.ids.next("msg_fake");
         let exit = loop {
+            // A deny ends the turn at the menu: keys typed after it belong
+            // to the composer of an idle Claude, not to this turn's queue.
+            if self.cut.is_some() {
+                break None;
+            }
             self.drain();
             if self.cut.is_some() {
                 break None;
@@ -834,6 +839,14 @@ impl Engine {
 
     /// Announce a call: its PreToolUse hook, then its row.
     fn tool_use(&mut self, request: &str, message: &str, tool: &Tool) -> (String, String, Value) {
+        let (id, name, input) = self.pre_tool_use(tool);
+        self.call_row(request, message, &id, &name, &input);
+        (id, name, input)
+    }
+
+    /// A call's PreToolUse hook. Claude writes a permission-gated call's
+    /// row, and AskUserQuestion's, only once the menu is answered.
+    fn pre_tool_use(&mut self, tool: &Tool) -> (String, String, Value) {
         let (name, input) = claude_tool(tool, &self.cwd);
         let id = self.ids.next("toolu_fake");
         self.hook(json!({
@@ -842,6 +855,11 @@ impl Engine {
             "tool_name": name,
             "tool_use_id": id,
         }));
+        (id, name, input)
+    }
+
+    /// A call's tool_use row.
+    fn call_row(&mut self, request: &str, message: &str, id: &str, name: &str, input: &Value) {
         let block = json!({
             "type": "tool_use",
             "id": id,
@@ -854,10 +872,9 @@ impl Engine {
             message,
             block,
             "tool_use",
-            json!({ id.clone(): input.clone() }),
+            json!({ id: input.clone() }),
         );
         self.screen(&format!("● {name}"));
-        (id, name, input)
     }
 
     /// The call's result row, and its PostToolUse hook when it ran.
@@ -1081,7 +1098,7 @@ impl Engine {
     async fn ask(&mut self, request: &str, message: &str, ask: Ask) {
         match ask {
             Ask::Permission(tool) => {
-                let (id, name, input) = self.tool_use(request, message, &tool);
+                let (id, name, input) = self.pre_tool_use(&tool);
                 self.hook(json!({
                     "hook_event_name": "PermissionRequest",
                     "permission_suggestions": [{
@@ -1107,12 +1124,16 @@ impl Engine {
                 // Escape cancels the menu, which Claude takes as No.
                 let choice = loop {
                     match self.menu_key().await {
-                        None => return self.abandon(&id, &name, &input, &tool),
+                        None => {
+                            self.call_row(request, message, &id, &name, &input);
+                            return self.abandon(&id, &name, &input, &tool);
+                        }
                         Some(Key::Escape) => break no,
                         Some(Key::Char(c)) if ('1'..=no).contains(&c) => break c,
                         Some(_) => {}
                     }
                 };
+                self.call_row(request, message, &id, &name, &input);
                 if choice == '3' && no == '4' {
                     self.mode = "auto".to_owned();
                     let row = json!({
@@ -1134,7 +1155,7 @@ impl Engine {
             }
             Ask::Plan { markdown } => {
                 let tool = named("ExitPlanMode", json!({ "plan": markdown }));
-                let (id, name, input) = self.tool_use(request, message, &tool);
+                let (id, name, input) = self.pre_tool_use(&tool);
                 self.hook(json!({
                     "hook_event_name": "PermissionRequest",
                     "permission_suggestions": [],
@@ -1144,21 +1165,27 @@ impl Engine {
                 self.screen(&format!("{markdown}\n1. Yes, auto-accept edits\n2. Yes, manually approve edits\n3. No, keep planning"));
                 let choice = loop {
                     match self.key().await {
-                        None => return self.abandon(&id, &name, &input, &tool),
+                        None => {
+                            self.call_row(request, message, &id, &name, &input);
+                            return self.abandon(&id, &name, &input, &tool);
+                        }
                         Some(Key::Char(c @ '1'..='3')) => break c,
                         Some(_) => {}
                     }
                 };
                 if choice == '3' {
                     let Some(feedback) = self.line().await else {
+                        self.call_row(request, message, &id, &name, &input);
                         return self.abandon(&id, &name, &input, &tool);
                     };
+                    self.call_row(request, message, &id, &name, &input);
                     let refusal = format!(
                         "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n{feedback}"
                     );
                     self.finish_tool(&id, &name, &input, &tool, Err(refusal));
                     return;
                 }
+                self.call_row(request, message, &id, &name, &input);
                 self.mode = if choice == '1' {
                     "acceptEdits"
                 } else {
@@ -1179,7 +1206,7 @@ impl Engine {
                 let input =
                     json!({ "questions": questions.iter().map(question).collect::<Vec<_>>() });
                 let tool = named("AskUserQuestion", input);
-                let (id, name, input) = self.tool_use(request, message, &tool);
+                let (id, name, input) = self.pre_tool_use(&tool);
                 self.hook(json!({
                     "hook_event_name": "PermissionRequest",
                     "permission_suggestions": [],
@@ -1187,8 +1214,10 @@ impl Engine {
                     "tool_name": name,
                 }));
                 let Some(answers) = self.form(&questions).await else {
+                    self.call_row(request, message, &id, &name, &input);
                     return self.abandon(&id, &name, &input, &tool);
                 };
+                self.call_row(request, message, &id, &name, &input);
                 let said = questions
                     .iter()
                     .zip(&answers)

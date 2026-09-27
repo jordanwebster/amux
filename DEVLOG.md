@@ -1,3 +1,21 @@
+2026-09-27 — **Terminal Claude's rows come from its transcript, in transcript order.**
+Every row, tool calls included, is emitted from its transcript row: a
+tool_use row opens the call running and its tool_result row lands the
+outcome, so the text that introduced a call sits above it (the recordings
+used to draw hook-born calls above that text). PreToolUse and PostToolUse
+make no row; the snapshot's new `running_calls` lists the calls their hooks
+announced until a result ends them, and the activity line reads the newest
+as running when no newer in-flight row exists, since a call's row can lag
+its hook by seconds while a background task runs. The prompt hold and its
+2 s cap are gone: a prompt's row precedes its turn's rows. A permission card
+opens on its hook pointing at no row, then at the gated call's row, which
+Claude writes at the decision; the call's result lands a decision a closing
+fact left unknown. The unanswerable dialog keeps its own item, the one item a
+hook makes. A prompt amux typed that Claude folded into a running turn is
+reflected by its queued-command row, so later prompts keep their input ids.
+The fake terminal Claude writes a gated call's row after the decision, as
+the recordings do, and ends a denied turn before reading keys typed after it.
+
 2026-09-27 — **Terminal Claude offers no model or effort list and takes no model or effort input.**
 The agent no longer runs a second, headless Claude at each terminal launch
 to learn its models and commands, and the fake terminal Claude no longer

@@ -72,6 +72,17 @@ message ClaudePtySnapshot {
   ToolServerHealth servers = 9;
   SignIn sign_in = 10;
   BackgroundProcesses background_processes = 11;
+  // The calls PreToolUse hooks announced that no result has ended yet,
+  // oldest first. A call's transcript row can lag its hook by seconds while
+  // a background task runs, so the activity line reads the call from here
+  // until then.
+  repeated RunningCall running_calls = 12;
+}
+
+message RunningCall {
+  string tool_use_id = 1;
+  string tool_name = 2;
+  int64 since_ms = 3;
 }
 
 message ClaudePtyInput {

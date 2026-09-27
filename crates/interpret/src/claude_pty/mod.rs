@@ -2,45 +2,52 @@
 //! hook payloads on the agent's hooks socket, the agent process's own launch
 //! fact and the PTY's exit. Rows arrive whole, so nothing here streams.
 //!
+//! The transcript is the source of rows and hooks fill only its gaps. Every
+//! row, tool calls included, is emitted from its transcript row in
+//! transcript order: Claude writes a call's tool_use row as the call starts
+//! and its tool_result row as it ends, so a running call is live and the
+//! text that introduced a call sits above it. A prompt's row precedes the
+//! rows of the turn it began, so nothing waits for it. Hooks carry what the
+//! transcript never does: SessionStart names the transcript and the
+//! session, PermissionRequest opens an ask, Stop closes what the turn left
+//! open, and a Notification announces a dialog only the terminal can
+//! answer. PreToolUse and PostToolUse only mark a call running, for the
+//! activity line while its row is on the way; they never make a row.
+//!
 //! Terminal Claude has no protocol for asks, so this is the one interpreter
 //! that infers them, and every inference rule lives in this module:
 //!
-//! - A tool call is keyed by its tool-use id. PreToolUse and PostToolUse
-//!   hooks usually land before the transcript row for the same call; the
-//!   item is emitted from whichever arrives first and revised, same key,
-//!   when the other lands.
-//! - An ask opens on the PermissionRequest hook, which names no tool-use id.
-//!   It points at the running call with the same tool and input when a
-//!   PreToolUse hook announced one, and otherwise at the call whose row
-//!   lands later with that tool and input.
+//! - An ask opens on the PermissionRequest hook, which names no tool-use id,
+//!   as a card carrying the hook's tool and input. Claude writes a gated
+//!   call's row only once the call is decided (AskUserQuestion's once it is
+//!   answered), so the card points at no row until the row with that tool
+//!   and input lands, and then at that row.
 //! - An ask closes on an answer sent through amux (outcome known), on the
-//!   call's PostToolUse hook or its tool result (answered in the terminal),
-//!   or on a later fact that proves the call is over without saying how: a
-//!   new prompt, an interruption, the turn's end, a session change, the
-//!   provider exiting, or a row from a later assistant message (outcome
-//!   unknown, drawn dismissed). Nothing else closes one; a tick never does.
-//! - A subagent's calls reach the hooks socket carrying its agent id; they
-//!   are its steps, counted on the Agent row that started it, never rows of
-//!   their own. An ask a subagent raises points at that Agent row and closes
-//!   on the subagent's own result for the call. A subagent Claude runs in the
-//!   background answers the Agent call at once with launch metadata; its row
-//!   stays running, across the end of the turn that launched it, until a
-//!   user row of task-notification origin carries its result.
+//!   call's tool result (answered in the terminal: a refusal is a deny,
+//!   anything else an allow), or on a later fact that proves the call is
+//!   over without saying how: a new prompt, an interruption, the turn's
+//!   end, a session change, the provider exiting, or a row from a later
+//!   assistant message (outcome unknown, drawn dismissed, until the call's
+//!   result says how it went). Nothing else closes one; a tick never does.
+//! - A subagent's calls reach the hooks socket carrying its agent id and
+//!   never reach the followed transcript; they are its steps, counted on
+//!   the Agent row that started it, never rows of their own. An ask a
+//!   subagent raises points at that Agent row and closes on the subagent's
+//!   own PostToolUse for the call. A subagent Claude runs in the background
+//!   answers the Agent call at once with launch metadata; its row stays
+//!   running, across the end of the turn that launched it, until a user row
+//!   of task-notification origin carries its result.
 //! - A tool server's form or link that Claude shows in its own terminal is
 //!   announced only by a Notification hook, which no hook can answer. It
-//!   opens an unanswerable ask with an item of its own, pointing at the call
-//!   that was running (a tool server's, when one was). An interrupt through
-//!   amux closes it cancelled; that call's result, a row from a later
-//!   assistant message, and the facts that close every ask close it
-//!   dismissed.
+//!   opens an unanswerable ask with an item of its own, the one item a hook
+//!   makes, pointing at the call that was running (a tool server's, when
+//!   one was). An interrupt through amux closes it cancelled; that call's
+//!   result, a row from a later assistant message, and the facts that close
+//!   every ask close it dismissed.
 //! - Claude's first screen may ask whether its folder is trusted; the
 //!   agent process reports it before Claude counts as ready. It opens a
 //!   question with its own item, answered through amux or closed by the
 //!   session starting (trusted in the terminal) or Claude exiting.
-//! - Rows are read by polling and hooks arrive at once, so a hook of the
-//!   turn a prompt sent through amux began can land before that prompt's
-//!   row. Items only hooks have reported so far are held until the row
-//!   lands, so the prompt is drawn above the calls it caused.
 //!
 //! Terminal Claude offers no list of models, efforts or commands a program
 //! could read, so its snapshot offers none and it takes no model or effort
@@ -61,7 +68,7 @@ use serde_json::Value;
 use wire::{
     AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, Boundary, BoundaryKind,
     ClaudeAnswer, ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName,
-    Step, SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input,
+    RunningCall, Step, SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input,
     claude_pty_item, input, permission_answer, plan_answer,
 };
 
@@ -236,7 +243,7 @@ struct Provider {
     permission_mode: Option<String>,
 }
 
-/// A tool call as it stands, whichever of hook or row reported it first.
+/// A tool call as its transcript rows report it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Tool {
     /// Arrival order, so the newest running call can be found.
@@ -252,9 +259,9 @@ struct Tool {
     background: bool,
     decision: Option<Decision>,
     ended_at_ms: Option<i64>,
-    /// The assistant message the call's row belongs to, once it landed.
-    message_id: Option<String>,
-    /// A result arrived: a tool result row or a PostToolUse hook.
+    /// The assistant message the call's row belongs to.
+    message_id: String,
+    /// Its tool result row arrived.
     finished: bool,
     /// Drawn elsewhere than as a tool row: the status tool sets working_on
     /// and the task tools the task list.
@@ -370,22 +377,12 @@ struct Slash {
     output: Option<String>,
 }
 
-/// How long an item only hooks reported waits for the row of the prompt
-/// that caused it. The transcript is read every few tens of milliseconds,
-/// so a row this late is not coming soon: better drawn out of order than
-/// not at all.
-const HOLD_LIMIT_MS: i64 = 2_000;
-
-/// An item held back until the prompt that caused it is reflected.
+/// A call a PreToolUse hook announced, until its result.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct HeldItem {
-    /// When it was first held.
+struct Running {
+    id: String,
+    name: String,
     since_ms: i64,
-    key: String,
-    text: String,
-    #[serde(with = "serde_pb::item_body")]
-    body: Vec<u8>,
-    at_ms: i64,
 }
 
 /// Everything the Claude PTY interpreter holds; its checkpoint.
@@ -407,9 +404,11 @@ pub struct State {
     slash: Option<Slash>,
     /// The running turn began with a local command, not a model request.
     local_turn: bool,
-    /// Items only hooks have reported, held while a prompt sent through
-    /// amux awaits its row, in the order they were first reported.
-    held: Vec<HeldItem>,
+    running: Vec<Running>,
+    /// The text of each prompt typed through amux and not yet reflected,
+    /// by input id: a prompt Claude folds into a running turn is reflected
+    /// by its text alone.
+    submitted: Vec<PendingMessage>,
 }
 
 fn item_body(kind: claude_pty_item::Kind) -> Vec<u8> {
@@ -439,7 +438,8 @@ impl State {
             agents: BTreeMap::new(),
             slash: None,
             local_turn: false,
-            held: Vec::new(),
+            running: Vec::new(),
+            submitted: Vec::new(),
         }
     }
 
@@ -466,28 +466,23 @@ impl State {
                 running,
             },
         };
-        // An ask points at no item until its item is emitted.
-        let asks = self
-            .shared
-            .asks()
-            .open_asks()
-            .iter()
-            .map(|ask| match self.is_held(&ask.item_key) {
-                true => Ask {
-                    item_key: String::new(),
-                    ..ask.clone()
-                },
-                false => ask.clone(),
-            })
-            .collect();
         ClaudePtySnapshot {
-            asks,
+            asks: self.shared.asks().open_asks().to_vec(),
             tasks: Some(tasks),
             context: Some(context),
             model: self.provider.model.clone(),
             permission_mode: self.provider.permission_mode.clone(),
             provider_session: self.provider.session.clone(),
             background_processes: Some(background_processes),
+            running_calls: self
+                .running
+                .iter()
+                .map(|running| RunningCall {
+                    tool_use_id: running.id.clone(),
+                    tool_name: running.name.clone(),
+                    since_ms: running.since_ms,
+                })
+                .collect(),
             ..unknown::claude_pty()
         }
         .encode_to_vec()
@@ -498,7 +493,6 @@ impl State {
     /// Emits a tool call's item if it is drawn and changed since the last
     /// emission.
     fn emit_tool(&mut self, emit: &mut Emit, id: &str) {
-        let held = self.is_held(id);
         let Some(tool) = self.tools.get_mut(id) else {
             return;
         };
@@ -514,13 +508,12 @@ impl State {
                 ),
             );
             let body = item_body(claude_pty_item::Kind::AgentMessage(message));
-            if body == tool.emitted && !held {
+            if body == tool.emitted {
                 return;
             }
-            let unseen = tool.emitted.is_empty() && tool.message_id.is_none();
             tool.emitted = body.clone();
             let at_ms = tool.at_ms;
-            return self.put(
+            return self.shared.item(
                 emit,
                 ItemDraft {
                     key: id.to_owned(),
@@ -530,7 +523,6 @@ impl State {
                     complete: true,
                     ..Default::default()
                 },
-                unseen,
             );
         }
         let body = item_body(claude_pty_item::Kind::Tool(ToolCall {
@@ -553,13 +545,12 @@ impl State {
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
         }));
-        if body == tool.emitted && !held {
+        if body == tool.emitted {
             return;
         }
-        let unseen = tool.emitted.is_empty() && tool.message_id.is_none();
         tool.emitted = body.clone();
         let at_ms = tool.at_ms;
-        self.put(
+        self.shared.item(
             emit,
             ItemDraft {
                 key: id.to_owned(),
@@ -568,63 +559,7 @@ impl State {
                 complete: true,
                 ..Default::default()
             },
-            unseen,
         );
-    }
-
-    /// Emits an item, or holds it when it is `unseen` (never emitted, and
-    /// reported by hooks alone) and a prompt sent through amux has not been
-    /// reflected yet: that prompt began the turn the hooks belong to, and
-    /// its row is still on the way. An item already emitted has its place.
-    fn put(&mut self, emit: &mut Emit, draft: ItemDraft, unseen: bool) {
-        let held = self.held.iter().position(|held| held.key == draft.key);
-        let hold = (unseen || held.is_some()) && !self.shared.awaiting_reflection().is_empty();
-        if !hold {
-            if let Some(index) = held {
-                self.held.remove(index);
-            }
-            return self.shared.item(emit, draft);
-        }
-        let item = HeldItem {
-            since_ms: held.map_or(self.shared.now_ms(), |index| self.held[index].since_ms),
-            key: draft.key,
-            text: draft.text,
-            body: draft.body,
-            at_ms: draft.at_ms.unwrap_or_else(|| self.shared.now_ms()),
-        };
-        match held {
-            Some(index) => self.held[index] = item,
-            None => self.held.push(item),
-        }
-    }
-
-    fn is_held(&self, key: &str) -> bool {
-        self.held.iter().any(|held| held.key == key)
-    }
-
-    /// Emits the held items once no prompt awaits its row, or once the
-    /// oldest has waited out the hold limit.
-    fn release_held(&mut self, emit: &mut Emit) {
-        let waited_out = self
-            .held
-            .first()
-            .is_some_and(|held| self.shared.now_ms() - held.since_ms >= HOLD_LIMIT_MS);
-        if !self.shared.awaiting_reflection().is_empty() && !waited_out {
-            return;
-        }
-        for held in std::mem::take(&mut self.held) {
-            self.shared.item(
-                emit,
-                ItemDraft {
-                    key: held.key,
-                    text: held.text,
-                    body: held.body,
-                    at_ms: Some(held.at_ms),
-                    complete: true,
-                    ..Default::default()
-                },
-            );
-        }
     }
 
     // --- asks ------------------------------------------------------------
@@ -712,12 +647,11 @@ impl State {
             _ => return,
         };
         let item = ask_item::opened(item);
-        let unseen = closed.is_none();
         let item = match closed {
             Some(closed) => ask_item::close(item, closed),
             None => item,
         };
-        self.put(
+        self.shared.item(
             emit,
             ItemDraft {
                 key: ask.item_key.clone(),
@@ -726,7 +660,6 @@ impl State {
                 complete: true,
                 ..Default::default()
             },
-            unseen,
         );
     }
 
@@ -792,16 +725,18 @@ impl State {
         }
     }
 
-    /// The running, undecided call an ask for this tool and input points
-    /// at: the newest with equal input, else the newest with the tool.
+    /// The running, undecided call whose row already landed that an ask
+    /// for this tool and input points at: the newest with equal input.
+    /// Claude writes a gated call's row at its decision, so there is
+    /// usually none, and a call of the same tool with other input is
+    /// another call.
     fn tool_for_ask(&self, name: &str, input: &Value) -> Option<String> {
         let bound = self
             .asks
             .values()
             .filter_map(|meta| meta.bound.as_deref())
             .collect::<Vec<_>>();
-        let candidates = self
-            .tools
+        self.tools
             .iter()
             .filter(|(id, tool)| {
                 tool.name_matches(name)
@@ -809,16 +744,10 @@ impl State {
                     && !tool.finished
                     && tool.decision.is_none()
                     && !bound.contains(&id.as_str())
+                    && same_json(&tool.input, input)
             })
-            .collect::<Vec<_>>();
-        let newest = |exact: bool| {
-            candidates
-                .iter()
-                .filter(|(_, tool)| !exact || same_json(&tool.input, input))
-                .max_by_key(|(_, tool)| tool.seq)
-                .map(|(id, _)| (*id).clone())
-        };
-        newest(true).or_else(|| newest(false))
+            .max_by_key(|(_, tool)| tool.seq)
+            .map(|(id, _)| id.clone())
     }
 
     /// The unbound ask a newly seen call answers to: the oldest with equal
@@ -897,6 +826,19 @@ impl State {
 
     // --- inputs ----------------------------------------------------------
 
+    /// Types a prompt submitted from the queue or at once, remembering its
+    /// text until its reflection.
+    fn typed(&mut self, emit: &mut Emit, entry: wire::QueuedInput) {
+        self.submitted.push(PendingMessage {
+            id: entry.input_id,
+            text: entry.text.clone(),
+        });
+        emit.effect(Effect::Terminal(TerminalInput::Prompt {
+            text: entry.text,
+            attachments: entry.attachments,
+        }));
+    }
+
     fn input(&mut self, emit: &mut Emit, input: Input) {
         let id = input.input_id.clone();
         let arm = match input.of {
@@ -932,10 +874,7 @@ impl State {
         match arm {
             claude_pty_input::Of::Prompt(prompt) => {
                 if let Some(entry) = self.shared.admit_prompt(emit, &id, prompt, human()) {
-                    emit.effect(Effect::Terminal(TerminalInput::Prompt {
-                        text: entry.text,
-                        attachments: entry.attachments,
-                    }));
+                    self.typed(emit, entry);
                 }
             }
             claude_pty_input::Of::Withdraw(withdraw) => {
@@ -1193,13 +1132,13 @@ impl Interpreter for ClaudePty {
             Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
             Event::StopRequested(_) => {}
         }
-        state.release_held(&mut emit);
         if let Some(entry) = state.shared.next_queued() {
-            emit.effect(Effect::Terminal(TerminalInput::Prompt {
-                text: entry.text,
-                attachments: entry.attachments,
-            }));
+            state.typed(&mut emit, entry);
         }
+        let awaiting = state.shared.awaiting_reflection();
+        state
+            .submitted
+            .retain(|prompt| awaiting.contains(&prompt.id));
         let body = state.body();
         state.shared.finish(emit, body)
     }
@@ -1363,6 +1302,15 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             } else {
                 "?".into()
             }
-        ),
+        ) + &snapshot
+            .running_calls
+            .iter()
+            .map(|call| {
+                format!(
+                    " running={} {} since={}",
+                    call.tool_use_id, call.tool_name, call.since_ms
+                )
+            })
+            .collect::<String>(),
     }
 }

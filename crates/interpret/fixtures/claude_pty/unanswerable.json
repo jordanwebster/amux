@@ -1,5 +1,5 @@
 {
-  "about": "Terminal Claude shows a tool server's form or link in its own terminal and announces it only through the Notification hook (notification_type elicitation_dialog or elicitation_url_dialog on 2.1.283). It opens an unanswerable ask with its own item: no answer fits it, an interrupt through amux types the interrupt key and closes it cancelled, and the running call's result, a row from a later message, Stop, SessionEnd and the provider's exit close it dismissed. Other notification types draw nothing.",
+  "about": "Terminal Claude shows a tool server's form or link in its own terminal and announces it only through the Notification hook (notification_type elicitation_dialog or elicitation_url_dialog on 2.1.283). It opens an unanswerable ask with its own item: no answer fits it, an interrupt through amux types the interrupt key and closes it cancelled, and the running call's result row, a row from a later message, Stop, SessionEnd and the provider's exit close it dismissed. Other notification types draw nothing.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -230,6 +230,38 @@
             "number": 42
           },
           "duration_ms": 29000
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:1"
+        ],
+        "items": []
+      },
+      "note": "a hook makes no row: the dialog waits for the call's result"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r1",
+          "timestamp": "2027-01-15T08:00:30.000Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "{\"number\": 42}",
+                "is_error": false
+              }
+            ]
+          },
+          "toolUseResult": {
+            "number": 42
+          }
         }
       },
       "expect": {

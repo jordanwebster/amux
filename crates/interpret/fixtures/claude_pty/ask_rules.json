@@ -1,5 +1,5 @@
 {
-  "about": "Asks open on the PermissionRequest hook and close only on facts: the call's PostToolUse or tool result (answered in the terminal), or a later message (outcome unknown). A quiet period never closes one, and an answer to a closed ask writes nothing.",
+  "about": "Asks open on the PermissionRequest hook and close only on facts: the call's tool result (answered in the terminal), or a later message (outcome unknown). A quiet period never closes one, a hook never makes a row, and an answer to a closed ask writes nothing.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -108,6 +108,76 @@
     },
     {
       "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1",
+          "timestamp": "2027-01-15T08:10:00.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "Bash",
+                "input": {
+                  "command": "rm -rf build"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "t1"
+        ],
+        "asks": [
+          "ask:1"
+        ]
+      },
+      "note": "Claude writes a gated call's row at its decision: the card points at it"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r1",
+          "timestamp": "2027-01-15T08:10:00.140Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "",
+                "is_error": false
+              }
+            ]
+          },
+          "toolUseResult": {
+            "stdout": "",
+            "stderr": "",
+            "interrupted": false
+          }
+        }
+      },
+      "expect": {
+        "phase": "WORKING",
+        "asks": [],
+        "items": [
+          "t1"
+        ]
+      },
+      "note": "the call ran: allowed in the terminal"
+    },
+    {
+      "fact": {
         "channel": "hook",
         "json": {
           "hook_event_name": "PostToolUse",
@@ -123,13 +193,9 @@
         }
       },
       "expect": {
-        "phase": "WORKING",
-        "asks": [],
-        "items": [
-          "t1"
-        ]
+        "items": []
       },
-      "note": "the call ran: allowed in the terminal"
+      "note": "a hook makes no row"
     },
     {
       "fact": {
@@ -149,7 +215,7 @@
           "ask:2"
         ]
       },
-      "note": "no PreToolUse announced this call: the ask points at nothing yet"
+      "note": "the card opens before its call's row: it points at nothing yet"
     },
     {
       "fact": {

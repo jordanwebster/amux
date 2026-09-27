@@ -308,6 +308,9 @@ pub struct AgentState {
     pub background: BackgroundProcesses,
     pub provider_session: Option<String>,
     pub active_turn: Option<String>,
+    /// Terminal Claude's calls its hooks announced before their rows
+    /// landed, oldest first.
+    pub running_calls: Vec<wire::RunningCall>,
 }
 
 /// Decodes a snapshot body. A body that does not decode is drawn as nothing
@@ -335,6 +338,7 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.servers = snapshot.servers.unwrap_or_default();
             state.sign_in = snapshot.sign_in.unwrap_or_default();
             state.background = snapshot.background_processes.unwrap_or_default();
+            state.running_calls = snapshot.running_calls;
         }
         Kind::ClaudeSdk => {
             let Ok(snapshot) = ClaudeSdkSnapshot::decode(body) else {

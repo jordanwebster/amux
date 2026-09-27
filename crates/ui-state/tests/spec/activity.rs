@@ -1,6 +1,7 @@
 //! The activity line: derived from the newest items and the phase, timed
 //! against item timestamps with the caller's clock.
 
+use prost::Message as _;
 use ui_state::{ActivityKind, SessionState};
 use wire::{Kind, Phase, ToolState};
 
@@ -53,6 +54,47 @@ fn an_in_flight_tool_is_running_named_by_its_call() {
         );
         assert_eq!(kind_at(&state, 14_000).0, ActivityKind::Working);
     }
+}
+
+/// Terminal Claude writes a call's row up to seconds after its PreToolUse
+/// hook; the snapshot names the call meanwhile.
+#[test]
+fn terminal_claudes_announced_call_is_running_until_a_newer_row() {
+    let mut state = working(Kind::ClaudePty);
+    let mut announced = snapshot(Kind::ClaudePty, 2, Phase::Working, &[], &[]);
+    announced.body = wire::ClaudePtySnapshot {
+        running_calls: vec![wire::RunningCall {
+            tool_use_id: "t1".into(),
+            tool_name: "Bash".into(),
+            since_ms: 2_500,
+        }],
+        ..Default::default()
+    }
+    .encode_to_vec();
+    apply_checked(&mut state, ev_snapshot(announced));
+    assert_eq!(
+        kind_at(&state, 4_000),
+        (ActivityKind::Running { key: "t1".into() }, 1_500)
+    );
+    // An in-flight row older than the announcement does not hide it.
+    let mut state_with_older_row = state.clone();
+    apply_checked(
+        &mut state_with_older_row,
+        ev_item(command(Kind::ClaudePty, 2, 2, ToolState::Running)),
+    );
+    assert_eq!(
+        kind_at(&state_with_older_row, 4_000).0,
+        ActivityKind::Running { key: "t1".into() }
+    );
+    // A newer in-flight row is the running call.
+    apply_checked(
+        &mut state,
+        ev_item(command(Kind::ClaudePty, 3, 3, ToolState::Running)),
+    );
+    assert_eq!(
+        kind_at(&state, 4_000),
+        (ActivityKind::Running { key: "k3".into() }, 1_000)
+    );
 }
 
 #[test]

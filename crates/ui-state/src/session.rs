@@ -311,12 +311,29 @@ impl SessionState {
         }
         let subagents = subagents.max(running_tasks);
         let turn_start = turn_start.unwrap_or(self.state.at_ms);
+        // A call whose hook announced it and whose row has not landed, or
+        // landed after it: terminal Claude writes a call's row up to
+        // seconds after the call starts.
+        let announced = self.state.running_calls.last().filter(|call| {
+            !transcript.iter().any(|held| {
+                matches!(&held.class, ItemClass::Tool(tool) if tool.in_flight)
+                    && held.item.at_ms > call.since_ms
+            })
+        });
         let Some(newest) = transcript
             .iter()
             .rev()
             .find(|held| held.class != ItemClass::Ask)
         else {
-            return Some(at(turn_start, ActivityKind::Working));
+            return Some(match announced {
+                Some(call) => at(
+                    call.since_ms,
+                    ActivityKind::Running {
+                        key: call.tool_use_id.clone(),
+                    },
+                ),
+                None => at(turn_start, ActivityKind::Working),
+            });
         };
         let since = newest.item.at_ms;
         Some(match &newest.class {
@@ -334,6 +351,12 @@ impl SessionState {
             ),
             ItemClass::Compacting => at(since, ActivityKind::Compacting),
             ItemClass::Thinking { complete: false } => at(since, ActivityKind::Thinking),
+            _ if let Some(call) = announced => at(
+                call.since_ms,
+                ActivityKind::Running {
+                    key: call.tool_use_id.clone(),
+                },
+            ),
             ItemClass::Tool(tool) if tool.in_flight && !tool.subagent => at(
                 since,
                 ActivityKind::Running {

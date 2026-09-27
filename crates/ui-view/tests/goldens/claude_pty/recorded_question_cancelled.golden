@@ -6,17 +6,21 @@
   row    2 f7668940-8809-4b2a-ab07-379ab1dd09fe Prompt { text: [Text("Use AskUserQuestion to ask one single-select question with header Color and options Red and Blue. If I decline to answer, reply exactly QUESTION_DECLINED.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 40 recorded 38: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01NRiLvbG2zjs5v2m2r7HNAC
-  row    3 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Open: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], a…
   composer Send activity=Some(Running { key: "toolu_01NRiLvbG2zjs5v2m2r7HNAC" }) queue=[] outbox=[]
 ## 42 recorded 40: fact Hook hook_event_name=PermissionRequest
-  ask ask:1 -> "toolu_01NRiLvbG2zjs5v2m2r7HNAC" 1/1 Open
+  ask ask:1 -> "" 1/1 Open
     choices 
     body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
   composer Send activity=None queue=[] outbox=[]
 ## 44 recorded 42: fact Transcript type=assistant uuid=8ce7cc05-dfcf-433f-ab1a-08f691d91f7a
-  row    4 8ce7cc05-dfcf-433f-ab1a-08f691d91f7a Thinking { text: "", open: false, duration_ms: None }
+  row    3 8ce7cc05-dfcf-433f-ab1a-08f691d91f7a Thinking { text: "", open: false, duration_ms: Some(1808) }
+## 45 recorded 43: fact Transcript type=assistant uuid=aa9a5a99-6d21-497c-8a66-ea2448191e6e
+  row    4 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Open: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }], a…
+  ask ask:1 -> "toolu_01NRiLvbG2zjs5v2m2r7HNAC" 1/1 Open
+    choices 
+    body Question([QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false }])
 ## 46 recorded 44: fact Transcript type=user uuid=323384d6-6b58-4884-a639-e526ac614510
-  row    3 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false …
+  row    4 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false …
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 50 recorded 48: fact Transcript type=user uuid=a6dd91d0-4536-4059-99d9-953473724959
@@ -26,8 +30,8 @@
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 f7668940-8809-4b2a-ab07-379ab1dd09fe Prompt { text: [Text("Use AskUserQuestion to ask one single-select question with header Color and options Red and Blue. If I decline to answer, reply exactly QUESTION_DECLINED.")], steered: false }
-     3 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false …
-     4 8ce7cc05-dfcf-433f-ab1a-08f691d91f7a Thinking { text: "", open: false, duration_ms: None }
+     3 8ce7cc05-dfcf-433f-ab1a-08f691d91f7a Thinking { text: "", open: false, duration_ms: Some(1808) }
+     4 toolu_01NRiLvbG2zjs5v2m2r7HNAC [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secret: false …
      5 a6dd91d0-4536-4059-99d9-953473724959 Hidden collapsed
      6 turn:1 Stopped
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 36219, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

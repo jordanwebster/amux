@@ -168,14 +168,27 @@
     },
     {
       "fact": {
-        "channel": "hook",
+        "channel": "transcript",
         "json": {
-          "hook_event_name": "PreToolUse",
-          "tool_use_id": "t3",
-          "tool_name": "Bash",
-          "tool_input": {
-            "command": "npm run dev",
-            "run_in_background": true
+          "type": "assistant",
+          "uuid": "a5",
+          "timestamp": "2027-01-15T08:00:16.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m4",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t3",
+                "name": "Bash",
+                "input": {
+                  "command": "npm run dev",
+                  "run_in_background": true
+                }
+              }
+            ]
           }
         }
       },
@@ -190,11 +203,60 @@
         "channel": "hook",
         "json": {
           "hook_event_name": "PreToolUse",
+          "tool_use_id": "t3",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "npm run dev",
+            "run_in_background": true
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      },
+      "note": "a hook makes no row"
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "hook_event_name": "PreToolUse",
           "tool_use_id": "t4",
           "tool_name": "mcp__github__create_issue",
           "tool_input": {
             "title": "Flaky test",
             "body": "fails on CI"
+          }
+        }
+      },
+      "expect": {
+        "items": []
+      },
+      "note": "a hook makes no row: the call is running, for the activity line"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a6",
+          "timestamp": "2027-01-15T08:00:16.200Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m4",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t4",
+                "name": "mcp__github__create_issue",
+                "input": {
+                  "title": "Flaky test",
+                  "body": "fails on CI"
+                }
+              }
+            ]
           }
         }
       },
@@ -216,6 +278,42 @@
             "body": "fails on CI"
           },
           "tool_response": [
+            {
+              "type": "text",
+              "text": "Created issue #42"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "items": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r4",
+          "timestamp": "2027-01-15T08:00:16.300Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t4",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Created issue #42"
+                  }
+                ],
+                "is_error": false
+              }
+            ]
+          },
+          "toolUseResult": [
             {
               "type": "text",
               "text": "Created issue #42"

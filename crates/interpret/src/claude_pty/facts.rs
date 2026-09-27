@@ -7,7 +7,9 @@ use wire::{
     Ask, BoundaryKind, DecisionOutcome, PermissionAsk, PlanAsk, ToolState, Turn, TurnOutcome,
 };
 
-use super::{AskMeta, AskShape, Decision, PendingMessage, Slash, State, Subagent, Tool, item_body};
+use super::{
+    AskMeta, AskShape, Decision, PendingMessage, Running, Slash, State, Subagent, Tool, item_body,
+};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
     question_ask, result_images, same_json, scope_choices, split_tool_name, text, timestamp_ms,
@@ -113,6 +115,7 @@ impl State {
     }
 
     pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
+        self.running.clear();
         self.close_all_unknown(emit);
         self.boundary(emit, BoundaryKind::Exited, cause);
         self.shared.provider_exited();
@@ -139,19 +142,15 @@ impl State {
             "SessionStart" => self.session_start(emit, hook),
             "SessionEnd" => self.close_all_unknown(emit),
             "UserPromptSubmit" => self.shared.provider_started(),
-            "PreToolUse" => {
-                let id = text(hook, "tool_use_id");
-                let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
-                self.tool_seen(emit, id, text(hook, "tool_name"), &input, None, None);
-            }
+            "PreToolUse" => self.pre_tool_use(hook),
             "PermissionRequest" => self.permission_request(hook),
-            "PostToolUse" => self.post_tool_use(emit, hook, false),
-            "PostToolUseFailure" => self.post_tool_use(emit, hook, true),
+            "PostToolUse" | "PostToolUseFailure" => self.call_ended(text(hook, "tool_use_id")),
             "Notification" => self.notification(emit, hook),
             "Stop" => {
                 if let Some(tasks) = hook.get("background_tasks").and_then(Value::as_array) {
                     self.background = Some(tasks.len() as u32);
                 }
+                self.running.clear();
                 self.close_all_unknown(emit);
             }
             _ => {}
@@ -160,6 +159,7 @@ impl State {
 
     fn session_start(&mut self, emit: &mut Emit, hook: &Value) {
         self.shared.provider_started();
+        self.running.clear();
         // Claude starts its session only once its folder is trusted: No
         // exits.
         self.close_trust_answered_elsewhere(emit);
@@ -402,7 +402,8 @@ impl State {
             .iter()
             .filter(|(_, tool)| !tool.finished && !tool.awaiting_notification)
             .max_by_key(|(_, tool)| (!tool.server.is_empty(), tool.seq))
-            .map(|(id, _)| id.clone());
+            .map(|(id, _)| id.clone())
+            .or_else(|| self.running.last().map(|running| running.id.clone()));
         let seq = self.next_seq();
         self.next_ask += 1;
         let key = format!("ask:{}", self.next_ask);
@@ -430,59 +431,34 @@ impl State {
         self.emit_ask_item(emit, &ask, None);
     }
 
-    fn post_tool_use(&mut self, emit: &mut Emit, hook: &Value, failed: bool) {
-        let id = text(hook, "tool_use_id").to_owned();
-        let name = text(hook, "tool_name");
-        let input = hook.get("tool_input").cloned().unwrap_or(Value::Null);
-        self.tool_seen(emit, &id, name, &input, None, None);
-        // An ask this call answered that never learned its call: the hook
-        // names both.
-        let drawn = self.tools.get(&id).is_some_and(|tool| !tool.hidden);
-        if drawn
-            && let Some(ask) = self.ask_for_tool(name, &input)
-            && self.shared.asks().get(&ask).is_some()
+    /// A call starts. Its row follows within a second or so, and by
+    /// seconds while a background task runs; until then the activity line
+    /// names it from here. The model is working, whether or not the row
+    /// of the prompt that began the turn landed yet.
+    fn pre_tool_use(&mut self, hook: &Value) {
+        self.shared.turn_started();
+        let (server, name) = split_tool_name(text(hook, "tool_name"));
+        // Drawn elsewhere, or as its subagent's work.
+        if is_status_tool(&server, &name)
+            || (server.is_empty() && (TASK_TOOLS.contains(&name.as_str()) || name == AGENT_TOOL))
         {
-            self.bind(emit, &ask, &id);
-        }
-        let response = hook.get("tool_response").cloned().unwrap_or(Value::Null);
-        self.close_unanswerable_for_tool(emit, &id);
-        if self.agent_launched(&id, &response) {
-            self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
-            self.emit_tool(emit, &id);
             return;
         }
-        if let Some(tool) = self.tools.get_mut(&id) {
-            if !tool.finished {
-                tool.finished = true;
-                tool.state = if failed {
-                    ToolState::Failed as i32
-                } else {
-                    ToolState::Succeeded as i32
-                };
-                if failed {
-                    tool.outcome_text = text(hook, "error").to_owned();
-                }
-            }
-            if tool.outcome_json.is_empty() {
-                tool.outcome_json = compact_json(&without_image_bytes(&response));
-            }
-            if tool.ended_at_ms.is_none() {
-                tool.ended_at_ms = Some(match hook.get("duration_ms").and_then(Value::as_i64) {
-                    Some(duration) => tool.at_ms + duration,
-                    None => self.shared.now_ms(),
-                });
-            }
-        }
-        self.task_tool(&id, &response);
-        self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
-        self.emit_tool(emit, &id);
+        self.running.push(Running {
+            id: text(hook, "tool_use_id").to_owned(),
+            name,
+            since_ms: self.shared.now_ms(),
+        });
+    }
+
+    /// A call's PostToolUse hook or its result row: it no longer runs.
+    fn call_ended(&mut self, id: &str) {
+        self.running.retain(|running| running.id != id);
     }
 
     // --- tools -----------------------------------------------------------
 
-    /// A call seen from a hook or its row. The first report creates it; a
-    /// later one fills in what it adds. `row` carries the row's timestamp
-    /// and message id.
+    /// A call's tool_use row: the call opens, running.
     fn tool_seen(
         &mut self,
         emit: &mut Emit,
@@ -490,7 +466,7 @@ impl State {
         name: &str,
         input: &Value,
         at_ms: Option<i64>,
-        message_id: Option<&str>,
+        message_id: &str,
     ) {
         if id.is_empty() {
             return;
@@ -525,7 +501,7 @@ impl State {
                         .unwrap_or(false),
                     decision: None,
                     ended_at_ms: None,
-                    message_id: None,
+                    message_id: message_id.to_owned(),
                     finished: false,
                     hidden,
                     subagent,
@@ -534,11 +510,6 @@ impl State {
                     emitted: Vec::new(),
                 },
             );
-        }
-        if let Some(message_id) = message_id
-            && let Some(tool) = self.tools.get_mut(id)
-        {
-            tool.message_id = Some(message_id.to_owned());
         }
         self.emit_tool(emit, id);
     }
@@ -552,6 +523,7 @@ impl State {
             .unwrap_or(false);
         let rejected = is_error && output.starts_with(REJECTED);
         let result = row.get("toolUseResult").cloned().unwrap_or(Value::Null);
+        self.call_ended(&id);
         self.close_unanswerable_for_tool(emit, &id);
         // The launch metadata of a background subagent is for the model.
         if self.agent_launched(&id, &result) {
@@ -561,6 +533,22 @@ impl State {
         let Some(tool) = self.tools.get_mut(&id) else {
             return;
         };
+        let outcome = if rejected {
+            DecisionOutcome::Denied
+        } else {
+            DecisionOutcome::Allowed
+        };
+        let note = match output.find(REJECTED_NOTE) {
+            Some(at) if rejected => output[at + REJECTED_NOTE.len()..].trim().to_owned(),
+            _ => String::new(),
+        };
+        // An ask a fact closed without saying how: the result says.
+        if let Some(decision) = &mut tool.decision
+            && decision.outcome == DecisionOutcome::Unknown as i32
+        {
+            *decision = Decision::elsewhere(outcome);
+            decision.note = note.clone();
+        }
         let denied = tool
             .decision
             .as_ref()
@@ -596,17 +584,10 @@ impl State {
         if tool.ended_at_ms.is_none() {
             tool.ended_at_ms = at_ms.or(Some(self.shared.now_ms()));
         }
-        let outcome = if rejected {
-            DecisionOutcome::Denied
-        } else {
-            DecisionOutcome::Allowed
-        };
         for key in self.open_ask_keys() {
             if self.asks.get(&key).and_then(|meta| meta.bound.as_deref()) == Some(id.as_str()) {
                 let mut decision = Decision::elsewhere(outcome);
-                if rejected && let Some(at) = output.find(REJECTED_NOTE) {
-                    decision.note = output[at + REJECTED_NOTE.len()..].trim().to_owned();
-                }
+                decision.note = note.clone();
                 self.close(emit, &key, decision);
             }
         }
@@ -835,9 +816,10 @@ impl State {
     /// its input id.
     fn joined_prompt(&mut self, emit: &mut Emit, key: String, text: String, at_ms: Option<i64>) {
         let entry = self.steered_entry(&text);
-        let (input_id, attachments) = entry
-            .map(|entry| (entry.input_id, entry.attachments))
-            .unwrap_or_default();
+        let (input_id, attachments) = match entry {
+            Some(entry) => (entry.input_id, entry.attachments),
+            None => (self.folded_prompt(&text).unwrap_or_default(), Vec::new()),
+        };
         self.shared.item(
             emit,
             ItemDraft {
@@ -850,6 +832,20 @@ impl State {
                 complete: true,
             },
         );
+    }
+
+    /// A prompt amux typed while Claude's own turn ran, as when a
+    /// background task's notification began one first: Claude folds it
+    /// into that turn instead of reflecting it as a prompt row. It is
+    /// reflected here when its text is the oldest awaiting reflection, so
+    /// later reflections keep their own input ids.
+    fn folded_prompt(&mut self, text: &str) -> Option<Vec<u8>> {
+        let oldest = self.shared.awaiting_reflection().first()?;
+        let prompt = self.submitted.iter().find(|prompt| &prompt.id == oldest)?;
+        if prompt.text.trim() != text.trim() {
+            return None;
+        }
+        self.shared.reflect_prompt()
     }
 
     /// The steered queue entry a reflection with this text stands for.
@@ -915,6 +911,7 @@ impl State {
     }
 
     fn interrupted(&mut self, emit: &mut Emit, key: String, at_ms: Option<i64>) {
+        self.running.clear();
         self.close_all_unknown(emit);
         // Claude hands prompts still in its own queue back to its composer.
         self.shared.steers_lost();
@@ -953,6 +950,7 @@ impl State {
         duration_ms: Option<i64>,
     ) {
         self.local_turn = false;
+        self.running.clear();
         let Some(turn) = self.shared.turn_ended(emit) else {
             return;
         };
@@ -1015,19 +1013,15 @@ impl State {
                 .get(&key)
                 .and_then(|meta| meta.bound.as_ref())
                 .and_then(|bound| self.tools.get(bound))
-                .and_then(|tool| tool.message_id.as_deref())
-                .is_some_and(|asked| !message_id.is_empty() && asked != message_id);
+                .is_some_and(|tool| !message_id.is_empty() && tool.message_id != message_id);
             if later {
                 self.close(emit, &key, Decision::unknown());
             }
         }
         // The model writes again only once the dialog's call returned.
         for (key, call) in self.unanswerable_asks() {
-            let asked = call
-                .and_then(|call| self.tools.get(&call))
-                .map(|tool| tool.message_id.as_deref());
-            let later = match asked {
-                Some(Some(asked)) => !message_id.is_empty() && asked != message_id,
+            let later = match call.map(|call| self.tools.get(&call)) {
+                Some(Some(tool)) => !message_id.is_empty() && tool.message_id != message_id,
                 // The call's own row has not landed yet: this may be it.
                 Some(None) => false,
                 None => true,
@@ -1098,7 +1092,7 @@ impl State {
                     let id = text(block, "id").to_owned();
                     let name = text(block, "name").to_owned();
                     let input = block.get("input").cloned().unwrap_or(Value::Null);
-                    self.tool_seen(emit, &id, &name, &input, at_ms, Some(&message_id));
+                    self.tool_seen(emit, &id, &name, &input, at_ms, &message_id);
                     let drawn = self.tools.get(&id).is_some_and(|tool| !tool.hidden);
                     if drawn && let Some(ask) = self.ask_for_tool(&name, &input) {
                         self.bind(emit, &ask, &id);

@@ -6,13 +6,14 @@
   row    2 e270cef7-2013-4662-9819-d79c196a59df Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH. Do not do anything else.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 22 recorded 20: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_011sqpyfi3W1ULow63dEXrhs
-  row    3 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
   composer Send activity=Some(Running { key: "toolu_011sqpyfi3W1ULow63dEXrhs" }) queue=[] outbox=[]
 ## 24 recorded 22: fact Transcript type=assistant uuid=f08bc37e-03c3-4f7b-af02-f331434a1f69
-  row    4 f08bc37e-03c3-4f7b-af02-f331434a1f69 Thinking { text: "", open: false, duration_ms: None }
-  composer Send activity=Some(Working) queue=[] outbox=[]
+  row    3 f08bc37e-03c3-4f7b-af02-f331434a1f69 Thinking { text: "", open: false, duration_ms: Some(3303) }
+## 25 recorded 23: fact Transcript type=assistant uuid=76f964e3-7c06-4aee-9f48-e7ccfc507f04
+  row    4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Running, exit_code: None, output_head: [], more_lines: 0, duration_ms: None }
 ## 27 recorded 25: fact Transcript type=user uuid=6b0c800f-b309-48a7-b0b6-d6699fbc72db
-  row    3 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Cancelled, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell yo…
+  row    4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Cancelled, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell yo…
+  composer Send activity=Some(Working) queue=[] outbox=[]
 ## 28 recorded 26: fact Transcript type=user uuid=a24093e0-38fb-480c-9893-768a023c63b7
   row    5 a24093e0-38fb-480c-9893-768a023c63b7 Hidden collapsed
   row    6 turn:1 Stopped
@@ -20,8 +21,8 @@
 == chat
      1 boundary:1 Boundary { kind: Started, cause: "" }
      2 e270cef7-2013-4662-9819-d79c196a59df Prompt { text: [Text("Use Bash to run exactly: python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH. Do not do anything else.")], steered: false }
-     3 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Cancelled, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell yo…
-     4 f08bc37e-03c3-4f7b-af02-f331434a1f69 Thinking { text: "", open: false, duration_ms: None }
+     3 f08bc37e-03c3-4f7b-af02-f331434a1f69 Thinking { text: "", open: false, duration_ms: Some(3303) }
+     4 toolu_011sqpyfi3W1ULow63dEXrhs Command { command: "python3 -c 'import select; select.select([], [], [], 30)'; printf SHOULD_NOT_FINISH", state: Cancelled, exit_code: None, output_head: ["The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell yo…
      5 a24093e0-38fb-480c-9893-768a023c63b7 Hidden collapsed
      6 turn:1 Stopped
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34248, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }

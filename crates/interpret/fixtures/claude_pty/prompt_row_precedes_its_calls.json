@@ -1,5 +1,5 @@
 {
-  "about": "Rows are read by polling and hooks arrive at once, so the hooks of a turn a prompt sent through amux began can land before that prompt's row. What only hooks reported waits for the row, so the prompt is drawn above the calls and dialogs it caused. A row that never lands releases them after a bounded wait.",
+  "about": "Rows are read by polling and hooks arrive at once, so a hook of the turn a prompt sent through amux began can land before that prompt's row. A hook makes no row, so nothing waits: the prompt's row precedes its turn's rows in the transcript, and the calls follow it. A dialog only the terminal can answer owns its item from its hook. A prompt Claude folds into a turn already running is reflected by its queued-command row, so later reflections keep their own input ids.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -77,9 +77,10 @@
         }
       },
       "expect": {
-        "items": []
+        "items": [],
+        "phase": "WORKING"
       },
-      "note": "the call waits for the prompt's row"
+      "note": "the hook lands before the prompt's row, and makes no row"
     },
     {
       "tick": 1800000002000
@@ -125,11 +126,10 @@
       },
       "expect": {
         "items": [
-          "u1",
-          "t1"
+          "u1"
         ]
       },
-      "note": "the prompt first, then the call it caused"
+      "note": "the prompt's row precedes its turn's rows in the transcript"
     },
     {
       "fact": {
@@ -157,7 +157,9 @@
         }
       },
       "expect": {
-        "items": []
+        "items": [
+          "t1"
+        ]
       }
     },
     {
@@ -212,91 +214,6 @@
       "input": {
         "id": "p2",
         "prompt": {
-          "text": "List the releases."
-        }
-      },
-      "expect": {
-        "reply": "accepted"
-      }
-    },
-    {
-      "tick": 1800000003000
-    },
-    {
-      "fact": {
-        "channel": "hook",
-        "json": {
-          "hook_event_name": "PreToolUse",
-          "tool_use_id": "t2",
-          "tool_name": "Bash",
-          "tool_input": {
-            "command": "releases"
-          }
-        }
-      },
-      "expect": {
-        "items": []
-      }
-    },
-    {
-      "tick": 1800000004999,
-      "expect": {
-        "items": []
-      }
-    },
-    {
-      "tick": 1800000005000,
-      "expect": {
-        "items": [
-          "t2"
-        ]
-      },
-      "note": "a row that has not landed within the hold limit is not waited for any longer"
-    },
-    {
-      "fact": {
-        "channel": "transcript",
-        "json": {
-          "type": "user",
-          "uuid": "u2",
-          "timestamp": "2027-01-15T08:00:02.500Z",
-          "sessionId": "s1",
-          "origin": {
-            "kind": "human"
-          },
-          "promptSource": "typed",
-          "message": {
-            "role": "user",
-            "content": "List the releases."
-          }
-        }
-      },
-      "expect": {
-        "items": [
-          "u2"
-        ]
-      }
-    },
-    {
-      "fact": {
-        "channel": "transcript",
-        "json": {
-          "type": "system",
-          "uuid": "d2",
-          "timestamp": "2027-01-15T08:00:05.100Z",
-          "sessionId": "s1",
-          "subtype": "turn_duration",
-          "durationMs": 2600
-        }
-      },
-      "expect": {
-        "phase": "IDLE"
-      }
-    },
-    {
-      "input": {
-        "id": "p3",
-        "prompt": {
           "text": "Sign in to the tracker."
         }
       },
@@ -325,16 +242,18 @@
         "asks": [
           "ask:1"
         ],
-        "items": []
+        "items": [
+          "ask:ask:1"
+        ]
       },
-      "note": "a dialog the turn raised waits too"
+      "note": "a dialog only the terminal can answer owns its item, the one item a hook makes; nothing waits for the prompt's row"
     },
     {
       "fact": {
         "channel": "transcript",
         "json": {
           "type": "user",
-          "uuid": "u3",
+          "uuid": "u2",
           "timestamp": "2027-01-15T08:00:05.500Z",
           "sessionId": "s1",
           "origin": {
@@ -349,10 +268,152 @@
       },
       "expect": {
         "items": [
-          "u3",
-          "ask:ask:1"
+          "u2"
+        ],
+        "asks": [
+          "ask:1"
         ]
       }
+    },
+    {
+      "input": {
+        "id": "i1",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u3",
+          "timestamp": "2027-01-15T08:00:06.100Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "[Request interrupted by user]"
+          }
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p3",
+        "prompt": {
+          "text": "Summarise the log."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "n1",
+          "timestamp": "2027-01-15T08:00:06.200Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "task-notification"
+          },
+          "promptSource": "system",
+          "message": {
+            "role": "user",
+            "content": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command finished</summary>\n</task-notification>"
+          }
+        }
+      },
+      "expect": {
+        "silent": true
+      },
+      "note": "a background task's notification began a turn before the typed prompt landed"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "attachment",
+          "uuid": "q1",
+          "timestamp": "2027-01-15T08:00:06.300Z",
+          "sessionId": "s1",
+          "attachment": {
+            "type": "queued_command",
+            "prompt": "Summarise the log.",
+            "commandMode": "prompt"
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "q1"
+        ]
+      },
+      "note": "Claude folds the prompt amux typed into that turn: it is reflected here"
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "uuid": "d2",
+          "timestamp": "2027-01-15T08:00:06.400Z",
+          "sessionId": "s1",
+          "subtype": "turn_duration",
+          "durationMs": 200
+        }
+      },
+      "expect": {
+        "phase": "IDLE"
+      }
+    },
+    {
+      "input": {
+        "id": "p4",
+        "prompt": {
+          "text": "Now the errors."
+        }
+      },
+      "expect": {
+        "reply": "accepted"
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u4",
+          "timestamp": "2027-01-15T08:00:06.500Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "Now the errors."
+          }
+        }
+      },
+      "expect": {
+        "items": [
+          "u4"
+        ]
+      },
+      "note": "a later reflection keeps its own input id"
     }
   ]
 }
