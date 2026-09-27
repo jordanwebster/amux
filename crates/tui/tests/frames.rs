@@ -154,6 +154,12 @@ fn draw_fleet(fleet: &FleetState, now_ms: i64, width: u16, height: u16) -> Buffe
 }
 
 fn frame(name: &str, buffer: &Buffer) {
+    assert!(
+        tui::vocabulary::FRAMES
+            .iter()
+            .any(|(known, _)| *known == name),
+        "{name} is not described in tui::vocabulary::FRAMES"
+    );
     assert_golden(&format!("frame_{name}"), &capture(buffer, theme()));
 }
 

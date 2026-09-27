@@ -37,6 +37,31 @@ pub const WIDTH: u16 = 100;
 /// Rows the full-screen review page is drawn at.
 const PAGE_HEIGHT: u16 = 30;
 
+/// The whole frames drawn from served hosts, with what each shows; the
+/// frames test draws exactly these.
+pub const FRAMES: &[(&str, &str)] = &[
+    (
+        "fleet",
+        "The fleet at 110 columns as the laptop sees it: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, with the trusted host count.",
+    ),
+    (
+        "fleet_60col",
+        "The same fleet at 60 columns: rows keep name, kind and host and drop the prompt and age.",
+    ),
+    (
+        "chat_strip",
+        "A headless Claude chat on the desk read from the laptop: header with model and mode, the first turn, the composer and its keys.",
+    ),
+    (
+        "rewind_before_swap",
+        "The same chat after the desk rewound under it: the Reset is pending, the second turn's rows stay on screen and the header says the host is away until the rebuilt transcript catches up.",
+    ),
+    (
+        "rewind_after_swap",
+        "After the CaughtUp: the rebuilt transcript swapped in, the rewound turn gone, and the composer live again.",
+    ),
+];
+
 /// One named component drawn in `theme`.
 pub struct Component {
     pub name: &'static str,

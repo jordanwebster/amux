@@ -6,17 +6,10 @@ license.workspace = true
 description = "Deterministic PNG renderer for named amux TUI states"
 publish = false
 
-[features]
-default = []
-bundled = ["tui/bundled"]
-
 [dependencies]
-ui-state = { workspace = true }
 tui = { workspace = true, features = ["fixtures"] }
 clap = { workspace = true }
-crossterm = { workspace = true }
 fontdue = { workspace = true }
-gif = { workspace = true }
 png = { workspace = true }
 ratatui = { workspace = true }
 serde = { workspace = true }

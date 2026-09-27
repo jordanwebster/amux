@@ -25,6 +25,7 @@ members = [
     "crates/redaction",
     "crates/replay-support",
     "crates/settings",
+    "crates/shot",
     "crates/store",
     "crates/testnet",
     "crates/tui",
@@ -40,7 +41,6 @@ exclude = [
     "crates/app-ffi",
     "crates/app-runtime",
     "crates/node-test-support",
-    "crates/shot",
 ]
 
 [workspace.package]

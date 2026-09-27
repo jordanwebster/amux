@@ -1,3 +1,13 @@
+2026-09-27 — **`just shot -- render vocabulary` draws the terminal goldens as PNGs.**
+The shot crate is a workspace member again, reduced to what the new client
+needs: it rasterizes every `tui::vocabulary` component in light and dark
+with the vendored fonts, records each PNG's size and hash in a manifest,
+and writes an `index.md` naming each golden file with what it shows beside
+its PNGs, plus the whole frames the served-host test draws. The old scroll,
+review and draft recordings went with the fixtures they drove. A test that
+every glyph the vocabulary draws has a vendored face found the background
+row's `⧗` in neither font; that row now uses `◷`.
+
 2026-09-27 — **Whole-frame terminal goldens from served hosts.**
 `crates/tui/tests/frames.rs` starts a desk and a laptop on testnet with a
 Claude terminal, a Codex and a headless Claude agent on the desk, observes

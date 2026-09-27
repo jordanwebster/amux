@@ -579,11 +579,11 @@ cargo = [
 
 [[suite]]
 name = "terminal-evidence-tools"
-contract = "Terminal evidence tools render deterministic PNG and GIF artifacts and preserve scripted review flows."
+contract = "Terminal evidence tools render deterministic PNGs of every vocabulary component and verify them."
 paths = ["crates/shot/src"]
 recipe = "just test -- -p shot"
 boundary = "Native presentation"
-oracle = "Byte-stable images, exact dimensions, scripted frames, and manifest membership."
+oracle = "Byte-stable images, exact dimensions, a face for every drawn glyph, and manifest membership."
 real = ["font rasterizer", "temporary image files"]
 substituted = ["interactive terminal"]
 time = "none"
@@ -592,8 +592,8 @@ lane = "tool"
 evidence = "target/tui-evidence"
 update = ""
 cargo = [
-  { package = "shot", kind = "lib", targets = ["shot"], features = ["bundled"] },
-  { package = "shot", kind = "bin", targets = ["amux-shot"], features = ["bundled"] },
+  { package = "shot", kind = "lib", targets = ["shot"] },
+  { package = "shot", kind = "bin", targets = ["amux-shot"] },
 ]
 
 [[suite]]

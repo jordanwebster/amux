@@ -600,7 +600,7 @@ fn body(row: &Row, state: RowState, width: usize, theme: Theme) -> Vec<Line<'sta
             lines
         }
         RowKind::Background { command, running } => vec![head(
-            ("⧗", theme.muted()),
+            ("◷", theme.muted()),
             "In background",
             first_line(command),
             if *running { "running" } else { "finished" },

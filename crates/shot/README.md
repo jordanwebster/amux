@@ -1,66 +1,24 @@
 # amux-shot
 
-`amux-shot` renders deterministic PNG screenshots and animated wheel recordings from the same pure
-the `tui::render` boundary used by the text goldens. It does not start a PTY,
-connect to a daemon, or inspect the local terminal. Every capture uses a
-120-column by 40-row ratatui `TestBackend`, 10×20-pixel cells, and vendored
-JetBrains Mono faces with a DejaVu Sans fallback. Both fonts carry their
-open-source licenses beside the assets.
+`amux-shot` renders deterministic PNGs of the terminal's chat vocabulary:
+the same buffers the component goldens in `crates/tui/tests/golden`
+compare as text and style maps, rasterized so a reviewer can see them. It
+does not start a PTY, connect to a daemon, or inspect the local terminal.
+Every cell is 10×22 pixels, drawn with vendored JetBrains Mono faces and a
+DejaVu Sans fallback; both fonts carry their open-source licenses beside
+the assets.
 
 Run it through the declared task from the repository root:
 
 ```sh
 just shot -- list
-just shot -- render claude-idle --out target/shot/claude-idle.png
-just shot -- render claude-idle --theme light --color ansi \
-  --out target/shot/claude-idle-light-ansi.png
-just shot -- render-set chat --out target/shot/chat
-just shot -- record-scroll claude --out target/shot/scroll
-just shot -- record-scroll codex --out target/shot/scroll
-just shot -- verify target/shot
+just shot -- render vocabulary --out target/amux-shot/vocabulary
+just shot -- render vocabulary --theme dark --color ansi --out target/amux-shot/ansi
+just shot -- verify target/amux-shot/vocabulary
 ```
 
-To reproduce the complete review bundle in one command, use the repository
-wrapper:
-
-```sh
-just tui-evidence -- target/tui-evidence
-```
-
-Wt gives every worktree its own Cargo output and sweeps it after the task. The
-evidence task uses that same tree, so it inherits the warm snapshot and does
-not create a hidden Cargo configuration outside wt's inventory.
-
-The wrapper renders every declared set, records both agents' wheel sessions,
-captures the command help and fixture list, proves byte-for-byte repeatability,
-and records the debug and release paint benchmarks plus the theme-loader and
-OSC 52 tests. It finishes by recursively verifying every PNG manifest below
-the output directory and exits non-zero if rendering, recording, testing,
-repeatability, or verification fails. Existing unrelated files in the output
-directory are left in place.
-
-`--theme` accepts `dark`, `light`, or a YAML theme-file path. `--color`
-accepts `truecolor` or `ansi` and defaults to truecolor.
-
-`record-scroll <claude|codex>` builds that agent's 1,000-entry long-feed
-fixture, captures the initial frame, then routes twelve wheel-up and twelve
-wheel-down mouse events through the production chat handler. It writes a
-25-frame `<agent>-wheel.gif` and updates the shared `events.json` with every
-event and resulting scroll state. Running both commands into one directory
-preserves both recordings. The `scroll` render set supplies the matching
-following and scrolled-back PNGs for both agents.
-
-The declared PNG sets are `chat`, `agent-specific`, `gallery`, `scroll`, `copy`,
-`collapse`, `themes`, `fleet`, and `all`.
-
-Each successful render records its state, theme, colour mode, viewport, pixel
-dimensions, filename, and SHA-256 digest in `manifest.json` beside the PNG. A
-re-render of the same filename replaces its prior record, and a repeated
-`render-set` replaces the receipt with the same set name. `verify` recursively
-reads those manifests, checks the hashes and fixed dimensions, and fully
-decodes every PNG, so truncated files are rejected.
-
-The JetBrains Mono files and `assets/OFL.txt` come from the
-[JetBrains Mono project](https://github.com/JetBrains/JetBrainsMono). The
-fallback and `assets/DejaVu-LICENSE.txt` come from the
-[DejaVu Fonts project](https://github.com/dejavu-fonts/dejavu-fonts).
+`render vocabulary` writes one PNG per component and theme, a
+`manifest.json` recording each file's size and SHA-256, and an `index.md`
+naming every golden file with what it shows beside its PNGs. `verify`
+checks every manifest below a directory: each PNG decodes, has the recorded
+hash, and is exactly its recorded cell grid times the cell size.

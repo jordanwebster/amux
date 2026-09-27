@@ -120,7 +120,7 @@ qualify NAME *ARGS:
 
 # Render or inspect deterministic TUI evidence.
 shot *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot {{desktop_features}} -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
 
 # Run one declared journey through its real client. System journeys are the
 # built binaries on the fakes, printing their transcripts.
