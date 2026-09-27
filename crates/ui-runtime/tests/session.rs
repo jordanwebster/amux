@@ -169,7 +169,13 @@ async fn the_end_of_the_stream_reconnects_on_the_sessions_clock_with_doubling_ba
 
 #[tokio::test]
 async fn an_uncertain_input_is_settled_from_the_queue_or_the_items_and_otherwise_left() {
-    for found in ["queue", "items", "nowhere"] {
+    // The connection dropping with the input in flight, and the daemon
+    // saying it handed the input on and lost the agent's answer, are the
+    // same uncertainty.
+    for (lost, found) in ["transport", "answer lost"]
+        .into_iter()
+        .flat_map(|lost| ["queue", "items", "nowhere"].map(|found| (lost, found)))
+    {
         let clock = ManualClock::new(0);
         let (session, mut calls, feed) = open_caught_up(&clock, 2).await;
         let sending = tokio::spawn({
@@ -178,10 +184,18 @@ async fn an_uncertain_input_is_settled_from_the_queue_or_the_items_and_otherwise
         });
         let (request, reply) = calls.send_input().await;
         let id = request.input.unwrap().input_id;
-        // The daemon went away with the input in flight.
-        reply.send(Err(transport())).ok();
+        let error = match lost {
+            "transport" => transport(),
+            _ => RpcError::Refused(wire::Error {
+                code: ErrorCode::Aborted as i32,
+                message: "the agent's answer was lost; the input may or may not have arrived"
+                    .into(),
+                details: Vec::new(),
+            }),
+        };
+        reply.send(Err(error)).ok();
         let sent = sending.await.unwrap();
-        assert_eq!(sent.outcome, InputOutcome::Lost);
+        assert_eq!(sent.outcome, InputOutcome::Lost, "{lost}");
         assert_eq!(
             session.state().input_state(&id),
             Some(InputState::Uncertain)
@@ -209,7 +223,11 @@ async fn an_uncertain_input_is_settled_from_the_queue_or_the_items_and_otherwise
             "items" => InputState::Settled,
             _ => InputState::Uncertain,
         };
-        assert_eq!(session.state().input_state(&id), Some(expected), "{found}");
+        assert_eq!(
+            session.state().input_state(&id),
+            Some(expected),
+            "{lost}: {found}"
+        );
         if found == "nowhere" {
             assert_eq!(session.state().not_confirmed().count(), 1);
         }

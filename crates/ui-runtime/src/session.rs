@@ -189,8 +189,11 @@ impl Inner {
         let outcome = match self.client.send_input(request).await {
             Ok(reply) => InputOutcome::Reply(reply),
             Err(RpcError::Transport(_)) => InputOutcome::Lost,
-            // The runtime refused the call itself: it never reached the
-            // agent, which is a rejection, never uncertain.
+            // The runtime handed the input on and lost the agent's answer:
+            // it may or may not have arrived.
+            Err(error) if error.code() == Some(ErrorCode::Aborted) => InputOutcome::Lost,
+            // Any other refusal never reached the agent, which is a
+            // rejection, never uncertain.
             Err(RpcError::Refused(error)) => InputOutcome::Reply(rejected(error.message)),
         };
         self.apply(Msg::Sent(id.clone(), outcome.clone()));

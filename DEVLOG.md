@@ -1,3 +1,15 @@
+2026-09-27 — **A message the daemon lost the answer to is not confirmed, not "not sent".**
+When the laptop's daemon handed a message to its agent and died before the
+agent acknowledged it, the daemon answered `ABORTED` ("the agent's answer
+was lost; the input may or may not have arrived") and the client treated
+every refusal as never having reached the agent: the row read `✗ not sent`
+for good, even after the reconnected chat showed the message and its
+reply. The session now takes `ABORTED` on a send as a lost answer, the same
+as the connection dropping: the row reads `! not confirmed … resend ·
+discard` during the outage and settles at catch-up when the message is
+among the items. Found by driving the terminal client by hand against a
+served desk and laptop.
+
 2026-09-27 — **A peer that untrusts this machine says so on screen.**
 After a desk unpaired the laptop, the laptop's hosts overlay read `offline ·
 not signed in`: the entry never changed, the caption simply showed the
