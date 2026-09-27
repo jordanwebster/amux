@@ -633,16 +633,6 @@ impl AsyncWrite for QuicByteStream {
 }
 
 impl AsyncStream for QuicByteStream {
-    fn finish(&mut self) -> BoxFuture<'_, io::Result<()>> {
-        Box::pin(async move {
-            future::poll_fn(|cx| self.poll_accept(cx)).await?;
-            self.admission = Admission::Closed;
-            self.send
-                .finish()
-                .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))
-        })
-    }
-
     fn reset(&mut self, code: pb::StreamRefusal) -> BoxIoFuture<'_, ()> {
         reset_stream_pair(&mut self.send, &mut self.recv, code);
         self.admission = Admission::Closed;

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use wire::pb;
@@ -76,16 +76,24 @@ impl Piper {
         Ok(tokio::spawn(async move {
             let (mut incoming_read, mut incoming_write) = tokio::io::split(incoming);
             let (mut outgoing_read, mut outgoing_write) = tokio::io::split(outgoing);
-            tokio::select! {
-                _ = tokio::io::copy(&mut incoming_read, &mut outgoing_write) => {}
-                _ = tokio::io::copy(&mut outgoing_read, &mut incoming_write) => {}
-            }
-            let mut incoming = incoming_read.unsplit(incoming_write);
-            let mut outgoing = outgoing_read.unsplit(outgoing_write);
-            let _ = incoming.finish().await;
-            let _ = outgoing.finish().await;
+            // Each direction runs to its own end, whatever becomes of the
+            // other. A host refusing a stream writes its last words, a TLS
+            // alert saying why, and stops reading at once: forwarding
+            // toward it fails then, and its words must still reach the far
+            // end.
+            tokio::join!(
+                forward(&mut incoming_read, &mut outgoing_write),
+                forward(&mut outgoing_read, &mut incoming_write),
+            );
         }))
     }
+}
+
+/// Copies `from` into `to` until `from` ends or either fails, then closes
+/// the writing side of `to`.
+async fn forward(from: &mut (impl AsyncRead + Unpin), to: &mut (impl AsyncWrite + Unpin)) {
+    let _ = tokio::io::copy(from, to).await;
+    let _ = to.shutdown().await;
 }
 
 fn is_free_cloud(admission: LinkAdmission) -> bool {
@@ -316,8 +324,14 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn two_pinned_key_links_pipe_with_no_tier_anywhere() {
+    /// A stream piped between two pinned-key links: the task copying it,
+    /// the origin's end, the destination's end, and the carriers under them.
+    async fn piped() -> (
+        JoinHandle<()>,
+        ByteStream,
+        ByteStream,
+        (CarrierPair, CarrierPair),
+    ) {
         let local = HostId::from_u128(1);
         let links = Arc::new(LinkRegistry::default());
         let origin_link = register_link(&links, 2, LinkAdmission::PinnedKey, None).await;
@@ -358,11 +372,22 @@ mod tests {
             .await
             .expect("timed out accepting the destination stream")
             .unwrap();
-        let mut origin_stream = tokio::time::timeout(Duration::from_secs(1), opening)
+        let origin_stream = tokio::time::timeout(Duration::from_secs(1), opening)
             .await
             .expect("timed out accepting the origin stream")
             .unwrap()
             .unwrap();
+        (
+            copy_task,
+            origin_stream,
+            destination_stream,
+            (origin_pair, destination_pair),
+        )
+    }
+
+    #[tokio::test]
+    async fn two_pinned_key_links_pipe_with_no_tier_anywhere() {
+        let (copy_task, mut origin_stream, mut destination_stream, _carriers) = piped().await;
 
         origin_stream.write_all(b"outbound").await.unwrap();
         let mut outbound = [0; 8];
@@ -386,10 +411,54 @@ mod tests {
         .unwrap();
         assert_eq!(&inbound, b"inbound");
 
-        destination_stream.finish().await.unwrap();
+        destination_stream.shutdown().await.unwrap();
+        origin_stream.shutdown().await.unwrap();
         tokio::time::timeout(Duration::from_secs(1), copy_task)
             .await
-            .expect("the piper copy task must end when either stream ends")
+            .expect("the piper copy task must end when both streams end")
+            .unwrap();
+    }
+
+    /// One end that stops sending does not cut off what the other end is
+    /// still sending it: a host refusing a stream says why and stops, and
+    /// the far end must still read why.
+    #[tokio::test]
+    async fn an_end_that_stops_sending_still_reads_all_the_other_end_sent() {
+        let (copy_task, mut origin_stream, mut destination_stream, _carriers) = piped().await;
+        // More than the carriers buffer, so most of it is still on its way
+        // when the origin stops sending.
+        let sent = (0..4 * 1024 * 1024)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let sending = tokio::spawn({
+            let sent = sent.clone();
+            async move {
+                destination_stream.write_all(&sent).await.unwrap();
+                destination_stream.shutdown().await.unwrap();
+                let mut rest = Vec::new();
+                destination_stream.read_to_end(&mut rest).await.unwrap();
+                rest
+            }
+        });
+
+        origin_stream.shutdown().await.unwrap();
+        let mut received = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            origin_stream.read_to_end(&mut received),
+        )
+        .await
+        .expect("timed out reading what the destination sent")
+        .unwrap();
+        assert_eq!(received.len(), sent.len());
+        assert!(
+            received == sent,
+            "the origin read what the destination sent"
+        );
+        assert!(sending.await.unwrap().is_empty());
+        tokio::time::timeout(Duration::from_secs(1), copy_task)
+            .await
+            .expect("the piper copy task must end when both streams end")
             .unwrap();
     }
 }

@@ -1,3 +1,19 @@
+2026-09-27 — **An unpaired peer learns it is no longer trusted, every time.**
+Under load a host that unpaired a peer often left the peer thinking the
+host was merely offline, or failing its reopen as a bare transport error.
+Three losses, each fixed where it happened. Over a direct link the close
+saying USER_REVOKED was queued and the link torn down at once; the link's
+own task now writes that close and then closes the connection with it as
+the close code, and the peer takes the code as the host's word when the
+message itself is dropped. The peer could also notice the connection end
+before reading the close that had already arrived; when a connection ends,
+a link now reads what the peer sent first, and a yamux control stream
+hands over what already arrived instead of waiting on a connection that is
+gone. Over the relay, the host's certificate_revoked alert was cut off:
+the relay stopped piping both ways as soon as either direction ended, and
+a host refusing a stream stops reading the moment it writes the alert. The
+relay now runs each direction to its own end.
+
 2026-09-27 — **Pairing again clears a peer's no-longer-trusts mark at once.**
 After a peer unpaired this machine and the two paired again, the chat kept
 saying the peer no longer trusted this machine, and the composer kept

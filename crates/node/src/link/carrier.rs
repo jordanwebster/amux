@@ -10,9 +10,6 @@ use wire::{self, pb};
 
 /// A bidirectional byte stream carried by a link.
 pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {
-    /// Gracefully closes the writing side of the stream.
-    fn finish(&mut self) -> BoxFuture<'_, io::Result<()>>;
-
     /// Rejects an unopened stream, preserving the application refusal reason.
     fn reset(&mut self, code: pb::StreamRefusal) -> BoxFuture<'_, io::Result<()>>;
 }

@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
 
+use futures_util::FutureExt as _;
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -91,6 +92,7 @@ impl MuxCarrier {
             control_write_rx,
             control_read_tx,
             control_ready_tx,
+            closed.subscribe(),
         ));
 
         Self {
@@ -324,6 +326,7 @@ async fn run_control_stream(
     writes: mpsc::Receiver<ControlWrite>,
     reads: mpsc::Sender<io::Result<pb::Message>>,
     ready: watch::Sender<bool>,
+    mut closed: watch::Receiver<Option<pb::LinkCloseReason>>,
 ) {
     let Ok(Ok(stream)) = stream.await else {
         return;
@@ -337,6 +340,12 @@ async fn run_control_stream(
     tokio::select! {
         _ = &mut read => {}
         _ = &mut write => {}
+        _ = closed.wait_for(Option::is_some) => {
+            // The connection has ended, and a yamux stream need not say
+            // so to a reader waiting on it: hand over what already
+            // arrived, the peer's close saying why above all, and end.
+            let _ = read.as_mut().now_or_never();
+        }
     }
 }
 
@@ -522,10 +531,6 @@ impl MuxByteStream {
             other => other,
         }
     }
-
-    async fn ensure_accepted(&mut self) -> io::Result<()> {
-        poll_fn(|cx| self.poll_accept(cx)).await
-    }
 }
 
 impl AsyncRead for MuxByteStream {
@@ -589,17 +594,6 @@ impl AsyncWrite for MuxByteStream {
 }
 
 impl AsyncStream for MuxByteStream {
-    fn finish(&mut self) -> BoxFuture<'_, io::Result<()>> {
-        Box::pin(async move {
-            self.ensure_accepted().await?;
-            if let Some(stream) = self.stream.as_mut() {
-                stream.shutdown().await?;
-            }
-            self.admission = Admission::Closed;
-            Ok(())
-        })
-    }
-
     fn reset(&mut self, code: pb::StreamRefusal) -> BoxIoFuture<'_, ()> {
         Box::pin(async move {
             if self.admission == Admission::Pending
@@ -730,7 +724,7 @@ mod tests {
         let (connector, acceptor) = carriers().await;
         let opening = tokio::spawn(async move { connector.open_stream(preface(4)).await.unwrap() });
         let (_, mut inbound) = acceptor.accept_stream().await.unwrap();
-        inbound.finish().await.unwrap();
+        inbound.shutdown().await.unwrap();
         let mut outbound = opening.await.unwrap();
         let mut byte = [0];
         assert_eq!(outbound.read(&mut byte).await.unwrap(), 0);
@@ -810,7 +804,7 @@ mod tests {
         let slow_payload = vec![7; 512 * 1024];
         let slow_write = tokio::spawn(async move {
             slow_outbound.write_all(&slow_payload).await.unwrap();
-            slow_outbound.finish().await.unwrap();
+            slow_outbound.shutdown().await.unwrap();
         });
 
         let opens = (1..=10)

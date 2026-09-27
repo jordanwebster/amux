@@ -658,7 +658,15 @@ async fn run_established(
                 }
             }
             stream = carrier.accept_stream() => {
-                let Some((preface, stream)) = stream else { break };
+                let Some((preface, stream)) = stream else {
+                    if let Some((reason, status)) =
+                        last_word(&ctx, link, &mut handshake, &mut source).await
+                    {
+                        close_reason = reason;
+                        close_status = status;
+                    }
+                    break;
+                };
                 spawn_inbound_dispatch(ctx.clone(), link, peer_host.id, preface, stream);
             }
             _ = maybe_policy_sleep(auth_expiry), if acceptor_auth.is_some() => {
@@ -731,6 +739,12 @@ async fn run_established(
             }
             reason = carrier.closed() => {
                 close_reason = reason;
+                if let Some((reason, status)) =
+                    last_word(&ctx, link, &mut handshake, &mut source).await
+                {
+                    close_reason = reason;
+                    close_status = status;
+                }
                 break;
             }
         }
@@ -754,6 +768,29 @@ async fn run_established(
         Some(status) => Err(status.into()),
         None => Ok(()),
     }
+}
+
+/// The peer's close, saying why, from what it sent before its connection
+/// ended. The close arrives just ahead of the end, and the end can be
+/// noticed first, with the close still unread; the connection is gone, so
+/// what is left to read runs out at once.
+async fn last_word(
+    ctx: &LinkCtx,
+    link: LinkId,
+    handshake: &mut ConnectHandshake,
+    source: &mut super::ControlSource,
+) -> Option<(wire::pb::LinkCloseReason, Option<tonic::Status>)> {
+    while let Ok(Some(message)) = read_message(source).await {
+        if let Ok(ConnectHandshakeEvent::PostHandshake(
+            body @ wire::pb::message::Body::LinkClose(_),
+        )) = handshake.receive(message)
+            && let ControlAction::Close(reason, status) =
+                handle_control_body(ctx, link, body, None).await
+        {
+            return Some((reason, status));
+        }
+    }
+    None
 }
 
 fn spawn_inbound_dispatch(
