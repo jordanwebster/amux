@@ -18,6 +18,8 @@ pub mod run;
 pub mod terminal;
 pub(crate) mod text;
 pub mod theme;
+#[cfg(feature = "fixtures")]
+pub mod vocabulary;
 
 #[cfg(test)]
 mod fixtures;

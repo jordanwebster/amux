@@ -1,0 +1,7 @@
+  ⚖ Auto-reviewed approved                                                                  low risk
+    Reads only; no writes outside the workspace.
+
+--- styles
+..m.eeeeeeeeeeeee.cccccccc..................................................................mmmmmmmm
+....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................................
+....................................................................................................

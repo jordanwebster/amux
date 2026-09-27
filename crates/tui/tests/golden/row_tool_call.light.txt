@@ -1,0 +1,19 @@
+  ▸ Used github · create_issue                                                    jlw/amux · running
+
+  ✔ Used WebFetch                                       docs.rs/ratatui · allowed · for this session
+
+  ⊘ Used linear · delete_issue                               FOX-12 · denied · "never delete issues"
+
+  ✗ Used github · get_pr                                                               #412 · failed
+    404 Not Found
+
+--- styles
+..a.eeee.ccccccccccccccccccccc....................................................mmmmmmmmmmmmmmmmmm
+....................................................................................................
+..m.eeee.cccccccc.......................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+....................................................................................................
+..m.eeee.ccccccccccccccccccccc...............................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+....................................................................................................
+..x.eeee.ccccccccccccccc...............................................................mmmmmmmmmmmmm
+....mmmmmmmmmmmmm...................................................................................
+....................................................................................................

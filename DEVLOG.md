@@ -1,3 +1,17 @@
+2026-09-27 — **Terminal goldens for the chat vocabulary.**
+`tui::vocabulary` draws each piece of the chat vocabulary from authored view
+values: every row kind (with its states and an opened body where rows
+open), the activity line for each kind of work, every ask body with its
+choices stated as outcomes, the unanswerable escape, an answer sending,
+rejected and not confirmed, the tray's not-confirmed prompt with resend and
+discard, the exited and detached composers, the review page, and the
+session strip once per provider kind. `crates/tui/tests/golden.rs` holds
+each as text plus a map of semantic style classes, in light and dark, and
+fails on a golden no component draws. `UPDATE_GOLDENS=1` rewrites them and
+is refused when `CI` is set. `Theme::classify` now reads a cell's Reset
+colours as no colour, so ordinary text classifies as text instead of
+unknown.
+
 2026-09-27 — **A fleet of the previous build stays open through an update.**
 A new system test starts the terminal client from a re-stamped previous
 build against a supervised install whose agent is mid-turn, then updates

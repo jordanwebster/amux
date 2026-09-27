@@ -570,11 +570,11 @@ substituted = ["terminal device", "network", "provider"]
 time = "none"
 capabilities = ["fixtures feature"]
 lane = "fast"
-evidence = "crates/tui/tests/goldens"
+evidence = "crates/tui/tests/golden"
 update = "UPDATE_GOLDENS=1 just test-tui"
 cargo = [
   { package = "tui", kind = "lib", targets = ["tui"], features = ["fixtures"] },
-  { package = "tui", targets = ["a2a_chat", "backend_vocabulary", "chat_golden", "codex_chat_golden", "component_golden", "golden", "no_claude_key_bytes", "perf", "reports", "sdk_ask_golden", "sdk_chat_golden", "switcher_frames"], features = ["fixtures"] },
+  { package = "tui", targets = ["golden"], features = ["fixtures"] },
 ]
 
 [[suite]]

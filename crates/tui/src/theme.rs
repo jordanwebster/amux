@@ -536,8 +536,10 @@ impl Theme {
 
     /// Convert a rendered cell style into its semantic style-map class.
     pub fn classify(self, style: Style) -> char {
-        let fg = style.fg;
-        let bg = style.bg;
+        // A drawn cell's unset colours read back as Reset: the terminal's
+        // own default, which is no colour of the theme's.
+        let fg = style.fg.filter(|color| *color != Color::Reset);
+        let bg = style.bg.filter(|color| *color != Color::Reset);
 
         if fg == Some(self.color(self.tokens.accent))
             && bg == Some(self.color(self.tokens.user_surface))

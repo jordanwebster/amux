@@ -740,18 +740,11 @@ impl ChatView {
                     cursor = Some((start + row - skip, col));
                 }
                 bottom.push(Line::default());
-                // The card sits on the panel surface, edge to edge.
-                let panel = theme.panel();
-                bottom.extend(lines.lines.into_iter().skip(skip).map(|line| {
-                    let mut line = Line::from(
-                        line.spans
-                            .into_iter()
-                            .map(|span| Span::styled(span.content, panel.patch(span.style)))
-                            .collect::<Vec<_>>(),
-                    );
-                    text::fill(&mut line, panel, width);
-                    line
-                }));
+                bottom.extend(on_panel(
+                    lines.lines.into_iter().skip(skip).collect(),
+                    width,
+                    theme,
+                ));
                 if footer.is_none() && card.state == CardState::Dismissed {
                     let (lines, at) = editor_lines(
                         &self.editor,
@@ -992,10 +985,20 @@ fn composer_hint(
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
-    let words = match state.composer() {
-        Composer::Send if state.phase() == PhaseView::Working => {
-            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop"
-        }
+    let working = state.phase() == PhaseView::Working;
+    hint_line(&state.composer(), working, editor, width, theme)
+}
+
+/// The keys under the composer, for its mode and draft.
+pub(crate) fn hint_line(
+    composer: &Composer,
+    working: bool,
+    editor: &Editor,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let words = match composer {
+        Composer::Send if working => "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop",
         Composer::Send if editor.is_empty() => {
             "enter send · ctrl+j newline · ctrl+v attach · ? help"
         }
@@ -1006,6 +1009,28 @@ fn composer_hint(
     let mut line = Line::from(Span::raw("  "));
     push(&mut line, words, theme.muted(), width);
     line
+}
+
+/// The ask card's lines on the panel surface, edge to edge.
+pub(crate) fn on_panel(
+    lines: Vec<Line<'static>>,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let panel = theme.panel();
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut line = Line::from(
+                line.spans
+                    .into_iter()
+                    .map(|span| Span::styled(span.content, panel.patch(span.style)))
+                    .collect::<Vec<_>>(),
+            );
+            text::fill(&mut line, panel, width);
+            line
+        })
+        .collect()
 }
 
 fn empty_feed(

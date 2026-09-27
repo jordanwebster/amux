@@ -1,0 +1,13 @@
+  ◇ Agent Survey the redraw paths                                                            7 tools
+    └ Read crates/tui/src/app.rs
+
+  ◆ Agent Survey the redraw paths                                                  12 tools · 1m 35s
+    Two paths redraw: the tick and inventory events.
+
+--- styles
+..a.eeeee.ccccccccccccccccccccccc............................................................mmmmmmm
+....mmmmmmmmmmmmmmmmmmmmmmmmmmmm....................................................................
+....................................................................................................
+..m.eeeee.ccccccccccccccccccccccc..................................................mmmmmmmmmmmmmmmmm
+....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm................................................
+....................................................................................................

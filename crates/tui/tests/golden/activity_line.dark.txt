@@ -1,0 +1,15 @@
+  ◒ Working · 3s                                                                         ctrl+x stop
+  ◐ Thinking · 12s                                                                       ctrl+x stop
+  ◐ Running cargo test -p store · 1m 4s                                                  ctrl+x stop
+  ◒ 3 subagents working · 1m 35s                                                         ctrl+x stop
+  ◑ Compacting · 2s                                                                      ctrl+x stop
+  ◒ Retrying · attempt 3 of 10                                                           ctrl+x stop
+  ◓ Retrying · attempt 2                                                                 ctrl+x stop
+--- styles
+aaaammmmmmmmmmmm.........................................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmm.......................................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm..................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmmm......................................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmmmmmmmmmmmmmm...........................................................mmmmmmmmmmm
+aaaammmmmmmmmmmmmmmmmmmm.................................................................mmmmmmmmmmm
