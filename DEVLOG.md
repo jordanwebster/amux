@@ -1,3 +1,10 @@
+2026-09-27 — **The debug door drives the phone chat.**
+Attach, send, wait until sendable and wait for a reply act on the chat a
+page would open, so phone journeys can write to agents again. A door tap
+that could not activate its element no longer lands on a hidden tab's
+control: the hit-test fallback prefers an element saying the declared
+label, which stops a question option tap exporting a dump from the You tab.
+
 2026-09-27 — **The phone's chat is rebuilt on the chat vocabulary.**
 A chat holds its row keys, which only grow at their two edges, reads a row
 by key when its cell is first drawn, and redraws only the cells an update
