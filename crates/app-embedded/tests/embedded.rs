@@ -275,6 +275,17 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
     net.shutdown().await.unwrap();
 }
 
+/// The desk as the phone's browser resolves it.
+fn found(desk: node::HostId, addrs: Vec<String>) -> app_runtime::values::Found {
+    app_runtime::values::Found {
+        host_id: desk.as_bytes().to_vec(),
+        name: "desk".into(),
+        version: node::PROTOCOL_VERSION,
+        addrs,
+        scope: String::new(),
+    }
+}
+
 /// Whether the phone reaches the desk right now.
 fn desk_online(app: &AppRuntime) -> bool {
     app.hosts()
@@ -283,7 +294,7 @@ fn desk_online(app: &AppRuntime) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_phone_links_to_its_desk_again_when_its_browser_finds_the_desk_back() {
+async fn a_phone_links_to_its_desk_again_once_its_browser_finds_the_desk_back() {
     let mut net = Net::start(
         Topology::new()
             .host_decl(HostDecl {
@@ -323,14 +334,19 @@ async fn a_phone_links_to_its_desk_again_when_its_browser_finds_the_desk_back() 
     // The phone's own browser sees the desk advertise again and hands it
     // over; nothing else tells the phone the desk is back.
     let (_, addrs) = pairing_pin(&net).await;
-    embedded.discovered(vec![app_runtime::values::Found {
-        host_id: desk.as_bytes().to_vec(),
-        name: "desk".into(),
-        version: node::PROTOCOL_VERSION,
-        addrs,
-        scope: String::new(),
-    }]);
+    embedded.discovered(vec![found(desk, addrs.clone())]);
     eventually("the desk online again", || desk_online(&app)).await;
+
+    // Handed over while the desk is still down, the dial fails; the phone
+    // tries again while its browser lists the desk, and links once the
+    // desk answers.
+    net.stop_daemon("desk").await.unwrap();
+    eventually("the desk out of reach again", || !desk_online(&app)).await;
+    embedded.discovered(vec![found(desk, addrs.clone())]);
+    // Past the dial's QUIC handshake, so that dial has failed.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    net.restart_daemon("desk").await.unwrap();
+    eventually("the desk online after a failed dial", || desk_online(&app)).await;
 
     drop(app);
     embedded.shutdown().await.unwrap();

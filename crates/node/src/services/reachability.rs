@@ -32,6 +32,12 @@ const DIRECT_QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 /// a redial straight away is refused the same way — often enough, in a loop,
 /// to trip the peer's handshake rate limit.
 const SHORT_LINK_REDIAL_PAUSE: Duration = Duration::from_secs(1);
+/// How long a failed direct dial to a peer discovery still lists waits
+/// before the next, doubling each time up to [`FOUND_REDIAL_MAX`]. A
+/// machine that restarts may be advertised again before it answers, and a
+/// browser that saw its advertisement come and go says nothing more.
+const FOUND_REDIAL_FIRST: Duration = Duration::from_secs(1);
+const FOUND_REDIAL_MAX: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct ReachabilityLinkConnector {
@@ -82,6 +88,8 @@ struct ReachabilityLinkAttempt {
     peer: HostId,
     reachability: Reachability,
     ordinal: usize,
+    /// Failed direct dials to this found peer just before this one.
+    redials: u32,
 }
 
 impl ReachabilityLinkConnector {
@@ -230,6 +238,7 @@ impl ReachabilityLinkConnector {
             peer,
             reachability,
             ordinal: 0,
+            redials: 0,
         }) else {
             return;
         };
@@ -245,6 +254,7 @@ impl ReachabilityLinkConnector {
             peer,
             reachability: Reachability::Direct { addrs },
             ordinal: 0,
+            redials: 0,
         }) {
             self.retain_task(task);
             return;
@@ -358,6 +368,8 @@ impl ReachabilityLinkConnector {
         let dialing = inner.dialing.clone();
         let shutdown_rx = inner.direct_shutdown.lock().unwrap().subscribe();
         let pause_shutdown_rx = shutdown_rx.clone();
+        let connector = Arc::downgrade(inner);
+        let redials = attempt.redials;
         let span = tracing::info_span!(
             "reachability_link",
             // Which profile is dialling: a phone runs one runtime per account
@@ -384,6 +396,9 @@ impl ReachabilityLinkConnector {
                         if let Some(runtime) = context.runtime.lock().unwrap().clone() {
                             runtime.discovery.requery();
                         }
+                    } else {
+                        redial_while_found(connector, context, peer, redials, pause_shutdown_rx)
+                            .await;
                     }
                 }
             }
@@ -439,6 +454,7 @@ fn snapshot_attempts(
                 peer,
                 reachability,
                 ordinal,
+                redials: 0,
             });
         }
     }
@@ -685,6 +701,50 @@ async fn await_connector(
 
 /// Holds the next dial back after a link that closed almost as soon as it came
 /// up, unless the connector is shutting down.
+/// Dials a peer again after a failed direct dial, once the pause for this
+/// many failures is over, if discovery still lists it and nothing else has
+/// linked to it meanwhile.
+async fn redial_while_found(
+    connector: std::sync::Weak<ReachabilityLinkConnectorInner>,
+    context: ReachabilityLinkContext,
+    peer: HostId,
+    redials: u32,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    let pause = FOUND_REDIAL_FIRST
+        .saturating_mul(1 << redials.min(5))
+        .min(FOUND_REDIAL_MAX);
+    tokio::select! {
+        () = tokio::time::sleep(pause) => {}
+        _ = shutdown_rx.wait_for(|shutting_down| *shutting_down) => return,
+    }
+    let found = context
+        .runtime
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|runtime| !runtime.found_hosts.addrs_for(peer).is_empty());
+    if !found || !is_trusted(&context.trust_store, peer) || has_direct_route(&context, peer).await {
+        return;
+    }
+    let Some(inner) = connector.upgrade() else {
+        return;
+    };
+    let connector = ReachabilityLinkConnector {
+        mode: ReachabilityLinkConnectorMode::Enabled(inner),
+    };
+    if let Some(task) = connector.spawn_attempt(ReachabilityLinkAttempt {
+        peer,
+        reachability: Reachability::Direct {
+            addrs: direct_candidates(&context, peer),
+        },
+        ordinal: 0,
+        redials: redials.saturating_add(1),
+    }) {
+        connector.retain_task(task);
+    }
+}
+
 async fn pause_after_short_link(
     established: tokio::time::Instant,
     mut shutdown_rx: watch::Receiver<bool>,

@@ -1,3 +1,11 @@
+2026-09-28 — **A failed direct dial to a machine discovery still lists is tried again.**
+When a desk's daemon restarts quickly (a rewind or an update), the phone
+redials the moment its link drops, while the desk is still down, and the
+browser may report nothing more once the advertisement is back. That one
+failed dial left the phone out of reach for good. A failed direct dial to a
+trusted machine is now tried again after 1 s, doubling to 30 s, for as long
+as discovery lists it and nothing else has linked to it.
+
 2026-09-28 — **The phone links to a paired machine again when its browser finds it back.**
 The phone's runtime has no browser of its own: the app's system browser
 hands it what it sees. That handed set only filled the list of found
