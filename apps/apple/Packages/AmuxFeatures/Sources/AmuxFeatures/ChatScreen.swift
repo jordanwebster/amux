@@ -288,9 +288,23 @@ public struct ChatScreen: View {
             atNewest = now
             if !userScrolling, now { model.reading(atNewest: true) }
         }
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height.rounded() } action: { _, _ in
+        // New rows, and a change in what stands at the bottom (a card
+        // opening, an ask docking, the keyboard rising), keep the newest row
+        // in view for somebody following along. A chat that fits above the
+        // bottom holds its top instead: a held bottom edge is applied again
+        // whenever the space changes, and for content shorter than the space
+        // that put the rows under the header and out of the gutter.
+        .onScrollGeometryChange(for: Fit.self) { geometry in
+            Fit(
+                content: geometry.contentSize.height.rounded(),
+                space: geometry.containerSize.height.rounded())
+        } action: { _, fit in
             guard model.following, !userScrolling else { return }
-            position.scrollTo(edge: .bottom)
+            if fit.content <= fit.space {
+                position.scrollTo(point: .zero)
+            } else {
+                position.scrollTo(edge: .bottom)
+            }
         }
         .onScrollPhaseChange { _, phase in
             switch phase {
@@ -312,6 +326,12 @@ public struct ChatScreen: View {
                 withAnimation(Motion.quick) { position.scrollTo(edge: .bottom) }
             }
         }
+    }
+
+    /// How tall the rows are against the space the scroll view shows them in.
+    private struct Fit: Equatable {
+        var content: CGFloat
+        var space: CGFloat
     }
 
     /// Above the oldest row: older history on its way or out of reach, or

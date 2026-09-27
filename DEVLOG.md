@@ -1,3 +1,16 @@
+2026-09-27 — **A short chat's rows stay put when the bottom of the phone chat grows.**
+Opening the settings card, an ask docking or the keyboard rising moved a
+short chat's rows up under the header and about 18 pt out of the gutter, and
+could take them off the screen. The feed held its scroll position at the
+bottom edge, and the scroll view applies a held edge again whenever the space
+it shows changes; for content shorter than that space the offset it chose was
+wrong in both directions. The feed now follows along on changes of both the
+rows' height and the space: a chat that fits holds its top, a longer one keeps
+the newest row just above what stands at the bottom. Checked live on the
+simulator with the card open and closed, typing with the keyboard up (the
+composer and its command rows stand above it) and an ask docking, without
+leaving the chat.
+
 2026-09-27 — **The phone is one installation with one profile per account, as the desktop is.**
 Each account used to be an installation of its own, and switching account
 stopped the running one and started the other's. Now the embedded daemon's
