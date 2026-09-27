@@ -65,6 +65,15 @@ pub use install::{
     REGISTRY, REPLICAS, REPORTS, STORE, write_durably,
 };
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
+pub use pairing::PairingAdmin;
+pub use pairing::qr::{
+    QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, parse_qr_pairing_payload,
+};
+pub use pairing::ssh::{
+    SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_target,
+};
+#[cfg(unix)]
+pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use profiles::{
     PROFILE_SOCKET, ProfileEntry, ProfileId, Registry, create_profile, host_id, profile_dir,
 };
@@ -87,9 +96,6 @@ pub mod harness {
     pub use crate::auth::claims::Tier;
     pub use crate::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscovery};
     pub use crate::identity::device_key_path;
-    pub use crate::pairing::qr::{
-        QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, parse_qr_pairing_payload,
-    };
     pub use crate::routing::{AuthenticatedLinkUser, HostVia, LinkTokenAuthenticator};
     pub use crate::transport::{
         relay_quic_client_config_with_roots, relay_quic_server_config_from_der,

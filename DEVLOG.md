@@ -1,3 +1,20 @@
+2026-09-27 — **Pairing, peers and sign-in are CLI verbs again.**
+`amux pair` opens pairing mode on the selected profile and shows a PIN and
+the addresses this host listens at (`--qr` shows a QR code carrying an
+`amux://pair` link instead; `--print-link` prints the link too), waiting
+until a host pairs, the mode expires, or Ctrl+C closes it. `amux pair
+<target>` pairs with a host found nearby by name or id, or at an address,
+with the PIN typed at the prompt; `amux pair user@host` pairs over SSH,
+running the hidden `amux pair-recv` there, and later SSH links run the
+hidden `amux relay --profile <id>`, joined to the profile's link socket.
+`amux pair --link <link>` pairs from a QR code's link. `amux peers` lists
+trusted hosts with how each is reached, then hosts found nearby with the
+command that pairs them; `amux unpair <peer>` asks first unless `--force`.
+`amux login` runs the account's device sign-in and binds the profile with
+its refresh token, asking before adopting a profile that already has agents
+or paired hosts; `amux logout` signs it out. Two daemons on one machine
+paired by address and PIN and by QR link, listed each other, and unpaired.
+
 2026-09-27 — **Raw attach is back, local only, with the fleet as an overlay.**
 `amux attach <agent>` finds the agent's pty.sock by directory convention
 (`<profile dir>/agents/<id>/pty.sock`, from the profile's client socket),

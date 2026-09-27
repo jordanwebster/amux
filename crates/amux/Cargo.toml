@@ -18,12 +18,15 @@ path = "src/main.rs"
 agent = { workspace = true }
 agent-dir = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = "0.22"
 claude = { workspace = true }
 client = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
+qrcode = { workspace = true }
 quinn = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }

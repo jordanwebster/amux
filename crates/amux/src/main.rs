@@ -5,6 +5,7 @@
 
 mod attach;
 mod connect;
+mod pairing;
 mod profiles;
 mod relay;
 mod server;
@@ -96,6 +97,48 @@ enum Command {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Pair with another host: one found nearby by name, an address, or
+    /// user@host over SSH. With none, this host opens pairing mode and shows
+    /// a PIN, or a QR code for the phone.
+    Pair {
+        target: Option<String>,
+        /// Show a QR code instead of a PIN.
+        #[arg(long, conflicts_with_all = ["target", "link", "cancel"])]
+        qr: bool,
+        /// With --qr, print the QR code's link too, to paste into a simulator.
+        #[arg(long = "print-link", requires = "qr")]
+        print_link: bool,
+        /// Pair with the host whose QR code carries this amux://pair link.
+        #[arg(long, value_name = "LINK", conflicts_with_all = ["target", "cancel"])]
+        link: Option<String>,
+        /// Close this host's pairing mode.
+        #[arg(long, conflicts_with = "target")]
+        cancel: bool,
+    },
+    /// List the paired hosts and the hosts found nearby.
+    Peers,
+    /// Stop trusting a paired host, by name or id.
+    Unpair {
+        peer: String,
+        /// Unpair without asking.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Sign the profile in to an amux account, so its hosts reach each
+    /// other through the relay.
+    Login {
+        /// The account service.
+        #[arg(long, default_value = settings::DEFAULT_CLOUD_URL)]
+        cloud_url: String,
+    },
+    /// Sign the profile out; its agents and paired hosts stay.
+    Logout,
+    /// The far end of an SSH pairing, over stdin and stdout.
+    #[command(name = "pair-recv", hide = true)]
+    PairRecv,
+    /// A peer's link over SSH, joined to the profile's link socket.
+    #[command(hide = true)]
+    Relay,
     /// List the installation's profiles.
     Profiles,
     /// Manage the installation's profiles.
@@ -323,6 +366,69 @@ fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) 
                 }
             }
             Command::Attach { agent } => ui::attach(&config, profile, &agent).await,
+            Command::Pair {
+                target,
+                qr,
+                print_link,
+                link,
+                cancel,
+            } => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                if cancel {
+                    pairing::cancel(door, &selected).await
+                } else if let Some(link) = link {
+                    pairing::pair_with_link(door, &selected, &link).await
+                } else if let Some(target) = target {
+                    let mut client = connect::client_of(&selected).await?;
+                    let target = pairing::Target::parse(&target)?;
+                    pairing::pair(door, &mut client, &selected, target).await
+                } else {
+                    pairing::wait(door, &selected, qr, print_link).await
+                }
+            }
+            Command::Peers => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                let mut client = connect::client_of(&selected).await?;
+                pairing::peers(door, &mut client, &selected).await
+            }
+            Command::Unpair { peer, force } => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                pairing::unpair(door, &selected, &peer, force).await
+            }
+            Command::Login { cloud_url } => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                // Without --profile the daemon chooses: the profile already
+                // bound to this account, or the unbound one.
+                let selected = match profile {
+                    Some(wanted) => Some(connect::select(&mut door.clone(), Some(wanted)).await?),
+                    None => None,
+                };
+                pairing::login(door, selected.as_ref(), &cloud_url).await
+            }
+            Command::Logout => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                pairing::logout(door, &selected).await
+            }
+            #[cfg(unix)]
+            Command::PairRecv => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                pairing::pair_recv(door, &selected).await
+            }
+            #[cfg(unix)]
+            Command::Relay => {
+                let door = connect::profiles(connect::front_door(&config).await?);
+                let selected = connect::select(&mut door.clone(), profile).await?;
+                pairing::relay(&selected).await
+            }
+            #[cfg(not(unix))]
+            Command::PairRecv | Command::Relay => {
+                anyhow::bail!("pairing over SSH needs a Unix host")
+            }
             command => {
                 let mut client = connect::client(&config, profile).await?;
                 match command {

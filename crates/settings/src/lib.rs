@@ -109,7 +109,8 @@ impl Clone for ConfigError {
     }
 }
 
-const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
+/// The amux account service a profile signs in to unless told otherwise.
+pub const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
 
 /// Local-network listener settings for a device profile.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
