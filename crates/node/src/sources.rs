@@ -771,8 +771,34 @@ async fn follow(runtime: Weak<ProfileRuntime>, host: HostId) {
         }
         let clock = me.clock().clone();
         let until = clock.now_ms() + backoff.next();
+        let renewed = me.edge().map(|edge| edge.revocation_cleared(host));
         drop(me);
-        wait_while_reachable(&runtime, host, route, clock.sleep_until(until)).await;
+        if redial_early(
+            wait_while_reachable(&runtime, host, route, clock.sleep_until(until)),
+            renewed,
+        )
+        .await
+        {
+            backoff.reset();
+        }
+    }
+}
+
+/// Waits out `wait`, unless the host that refused this host's stream as no
+/// longer trusted takes that back first (`renewed`), as when this host
+/// pairs with it again: then true, and the stream reopens at once instead
+/// of after a backoff grown on refusals.
+async fn redial_early(
+    wait: impl Future<Output = ()>,
+    renewed: Option<impl Future<Output = ()>>,
+) -> bool {
+    let Some(renewed) = renewed else {
+        wait.await;
+        return false;
+    };
+    tokio::select! {
+        () = wait => false,
+        () = renewed => true,
     }
 }
 
@@ -950,8 +976,11 @@ async fn run_source(runtime: Weak<ProfileRuntime>, key: AgentKey, host: HostId, 
                 }
                 let clock = me.clock().clone();
                 let until = clock.now_ms() + backoff.next();
+                let renewed = me.edge().map(|edge| edge.revocation_cleared(host));
                 drop(me);
-                clock.sleep_until(until).await;
+                if redial_early(clock.sleep_until(until), renewed).await {
+                    backoff.reset();
+                }
             }
         }
     }

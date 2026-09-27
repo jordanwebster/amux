@@ -211,12 +211,20 @@ impl ConnectionManager {
     /// the trust store, so nothing of it gets back in unless it is paired
     /// again, and then its new streams must not be closed as they arrive.
     pub(crate) async fn close_host_access(&self, peer: HostId) {
+        self.routing.revocations().clear(peer);
         self.routing.remove_direct_links(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
         self.channels.link_registry().close_host(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.finish_host_replacement(peer);
+    }
+
+    /// This host has just paired with `peer`: whatever `peer` said about
+    /// no longer trusting it is out of date, and streams waiting to reopen
+    /// to it try again now.
+    pub(crate) fn trust_renewed(&self, peer: HostId) {
+        self.routing.revocations().clear(peer);
     }
 
     pub(crate) async fn finish_host_replacement(&self, peer: HostId) {

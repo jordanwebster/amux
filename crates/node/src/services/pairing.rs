@@ -794,6 +794,7 @@ impl PeerTrustCommitGuard {
         }
         self.before = None;
         self.finish_replacement().await;
+        self.connections.trust_renewed(self.host_id);
         audit::trust_pairing_update(self.host_id, &self.outcome);
         Ok(())
     }

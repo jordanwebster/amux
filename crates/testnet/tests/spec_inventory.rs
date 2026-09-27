@@ -10,6 +10,8 @@
 
 #![cfg(unix)]
 
+mod support;
+
 use std::time::Duration;
 
 use provider_fakes::script::Step;
@@ -911,5 +913,83 @@ async fn a_peer_that_revokes_trust_over_the_relay_is_listed_as_having_revoked_it
 
     net.trust("desk", "tablet").await.unwrap();
     reconnecting_until(&net, &mut fleet, online).await;
+    net.shutdown().await.unwrap();
+}
+
+/// Pairing again with a host that refused this one as no longer trusted
+/// takes the mark off at once: the host is listed as trusting this one,
+/// and its streams reopen then rather than after the backoff their
+/// refusals grew. The driven clock never moves after the pairing, so
+/// nothing here waits out a backoff.
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_again_with_a_peer_that_revoked_trust_clears_the_mark_at_once() {
+    let mut net = Net::start(
+        Topology::new()
+            .relay(&["ada"])
+            .host_decl(on_account("desk", "ada"))
+            .host_decl(on_account("tablet", "ada")),
+    )
+    .await
+    .unwrap();
+    net.trust("desk", "tablet").await.unwrap();
+    net.trust("tablet", "desk").await.unwrap();
+    let desk_id = net.host("desk").unwrap().host_id;
+    let desk = move |events: &[InventoryEvent]| {
+        inventory_hosts(events)
+            .into_iter()
+            .find(|host| host.host_id == desk_id.as_bytes())
+    };
+    let online = move |events: &[InventoryEvent]| {
+        desk(events).is_some_and(|entry| {
+            entry.presence == Presence::Online as i32 && entry.revoked.is_none()
+        })
+    };
+    let mut fleet = net.observe_inventory("tablet").await.unwrap();
+    fleet.observe_until(online, PATIENCE).await.unwrap();
+
+    net.untrust("desk", "tablet").await.unwrap();
+    reconnecting_until(&net, &mut fleet, |events| {
+        desk(events).is_some_and(|entry| entry.revoked == Some(true))
+    })
+    .await;
+    // Refused, the tablet cannot see what the desk starts meanwhile.
+    net.spawn(AgentDecl::new("late", "desk").steps(says("l")).prompt("go"))
+        .await
+        .unwrap();
+    let late = net.agent("late").unwrap().id;
+
+    // The desk shows a code and the tablet pairs with it over the relay;
+    // the tablet's pairing commits the key it already held.
+    let started = support::start_pairing(&net, "desk", support::qr_mode())
+        .await
+        .unwrap();
+    let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = started.secret else {
+        panic!("a QR window hands out a secret");
+    };
+    let pending = support::begin_pair(
+        &net,
+        "tablet",
+        Some(desk_id),
+        wire::begin_pair_request::Secret::QrSecret(secret),
+        Vec::new(),
+    )
+    .await
+    .expect("pairing through the relay");
+    assert_eq!(pending.via, wire::PeerVia::Relay as i32);
+    support::confirm_pair(&net, "tablet", pending.token)
+        .await
+        .unwrap();
+    fleet
+        .observe_until(
+            |events| {
+                online(events)
+                    && inventory_agents(events)
+                        .iter()
+                        .any(|agent| agent.agent_id == late.as_bytes())
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap();
     net.shutdown().await.unwrap();
 }

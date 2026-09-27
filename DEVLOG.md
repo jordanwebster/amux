@@ -1,3 +1,14 @@
+2026-09-27 — **Pairing again clears a peer's no-longer-trusts mark at once.**
+After a peer unpaired this machine and the two paired again, the chat kept
+saying the peer no longer trusted this machine, and the composer kept
+holding sends, until a stream happened to reopen past its reconnect
+backoff (up to 30 s). Only a successful stream read, a direct link coming
+up, or forgetting the host cleared the mark. Now committing trust in a
+host (every pairing, PIN or QR, direct or over the relay) and unpairing it
+clear the mark, and the host's inventory follower and replica sources,
+which wait on the mark, reopen their streams at once with their backoff
+reset. The revocation set is a watch so those waits can wake on it.
+
 2026-09-27 — **Terminal client keys and pastes go to the open field.**
 After a denial's note or a plan send-back was answered, the card's note
 stayed "open" behind the scenes, so Ctrl+C never quit and never cleared the

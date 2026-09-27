@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
 use tokio::time::Instant;
 
 use crate::HostId;
@@ -69,29 +69,49 @@ impl RoutingState {
 /// Hosts that said they no longer trust this one: by closing a link
 /// USER_REVOKED, or by refusing this host's certificate as revoked on a
 /// stream opened to them. A host leaves the set when it takes this host's
-/// certificate again, on a link or a stream, or when this host forgets it.
+/// certificate again, on a link or a stream, when this host pairs with it
+/// again, or when this host forgets it.
 ///
-/// A plain mutex, because a stream notes the refusal from inside a read.
-#[derive(Clone, Default)]
-pub(crate) struct Revocations(Arc<std::sync::Mutex<HashSet<HostId>>>);
+/// A watch, because a stream notes the refusal from inside a read, and a
+/// stream waiting to reopen to a host that refused it wakes when the host
+/// leaves the set.
+#[derive(Clone)]
+pub(crate) struct Revocations(Arc<watch::Sender<HashSet<HostId>>>);
+
+impl Default for Revocations {
+    fn default() -> Self {
+        Self(Arc::new(watch::Sender::new(HashSet::new())))
+    }
+}
 
 impl Revocations {
     pub(crate) fn note(&self, host_id: HostId) {
-        self.hosts().insert(host_id);
+        self.0.send_if_modified(|hosts| hosts.insert(host_id));
     }
 
     pub(crate) fn clear(&self, host_id: HostId) {
-        self.hosts().remove(&host_id);
+        self.0.send_if_modified(|hosts| hosts.remove(&host_id));
     }
 
     pub(crate) fn contains(&self, host_id: HostId) -> bool {
-        self.hosts().contains(&host_id)
+        self.0.borrow().contains(&host_id)
     }
 
-    fn hosts(&self) -> std::sync::MutexGuard<'_, HashSet<HostId>> {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    /// Resolves when `host_id`, in the set now, leaves it; never when it
+    /// is not in the set now.
+    pub(crate) fn cleared(&self, host_id: HostId) -> impl Future<Output = ()> + Send + use<> {
+        let mut hosts = self.0.subscribe();
+        let marked = hosts.borrow_and_update().contains(&host_id);
+        async move {
+            if !marked
+                || hosts
+                    .wait_for(|hosts| !hosts.contains(&host_id))
+                    .await
+                    .is_err()
+            {
+                std::future::pending::<()>().await;
+            }
+        }
     }
 }
 
