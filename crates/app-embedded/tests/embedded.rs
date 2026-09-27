@@ -348,6 +348,12 @@ async fn a_phone_links_to_its_desk_again_once_its_browser_finds_the_desk_back() 
     net.restart_daemon("desk").await.unwrap();
     eventually("the desk online after a failed dial", || desk_online(&app)).await;
 
+    // The desk loses power and comes back where it listened before: the
+    // address the browser handed over still reaches it.
+    net.checkpoint_host("desk").await.unwrap();
+    net.rewind_host("desk", &[]).await.unwrap();
+    eventually("the desk online after losing power", || desk_online(&app)).await;
+
     drop(app);
     embedded.shutdown().await.unwrap();
     net.shutdown().await.unwrap();

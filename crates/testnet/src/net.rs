@@ -1138,6 +1138,22 @@ impl Net {
             async move { gone }
         })
         .await?;
+        // A dead daemon's sockets die with its process, and the next one
+        // listens where it did. In process, the dropped listener lets go of
+        // its port only once its last task has, so wait for that.
+        let lan_port = std::fs::read_to_string(
+            node::profile_dir(&host.info.data_dir, host.info.profile).join(node::LAN_PORT_FILE),
+        )
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        .filter(|_| host.decl.lan);
+        if let Some(port) = lan_port {
+            observe::eventually(&format!("{name}'s LAN port to be free"), PATIENCE, || {
+                let free = std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok();
+                async move { free }
+            })
+            .await?;
+        }
         Ok(())
     }
 

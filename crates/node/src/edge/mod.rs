@@ -56,7 +56,7 @@ use crate::{Clock, HostId};
 const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The file a profile keeps its last LAN port in, so peers holding its
 /// address find it again after a restart.
-const LAN_PORT_FILE: &str = "lan_port";
+pub const LAN_PORT_FILE: &str = "lan_port";
 /// The local socket an SSH relay hands a peer's link to.
 pub const LINK_SOCKET: &str = "link.sock";
 /// How long links get to carry their LinkClose before the edge stops.

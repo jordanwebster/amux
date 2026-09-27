@@ -1,3 +1,12 @@
+2026-09-28 — **A crashed served daemon comes back on the port it listened on.**
+The net crashes a daemon in process by dropping it, and its LAN listener
+let go of its port only once its last task had. A daemon restarted at once
+(a rewind is instant) found the port taken and listened elsewhere, which a
+real restart after a crash does not do: the phone kept dialling the old
+address its browser had resolved, since the advertisement's name and record
+were unchanged. The net now waits for the port to be free before the
+daemon comes back.
+
 2026-09-28 — **A failed direct dial to a machine discovery still lists is tried again.**
 When a desk's daemon restarts quickly (a rewind or an update), the phone
 redials the moment its link drops, while the desk is still down, and the
