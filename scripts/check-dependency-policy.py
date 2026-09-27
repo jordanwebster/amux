@@ -8,38 +8,55 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_LOCAL = {
+    "wire": set(),
+    # The plain values the views and the phone bridge share; the Swift
+    # mirrors are generated from them, so they depend on nothing.
     "model": set(),
-    "fold": {"model"},
-    "store": {"fold", "model"},
-    "wire": {"model"},
-    "settings": {"model"},
-    "artifacts": {"model"},
-    # The seam both clients call the local runtime through: the local socket
-    # and the shared clock trait come from the agent directory contract.
-    "client": {"agent-dir", "wire"},
+    "settings": set(),
+    "attachments": {"wire"},
+    "journal": {"wire"},
+    "store": {"wire"},
     "agent-dir": {"wire"},
+    "redaction": set(),
+    # The pure per-kind step, and the per-kind body redactor beside it.
+    "interpret": {"redaction", "wire"},
+    # The agent process: its lock, journal and sockets, the interpreter,
+    # and the provider hosts.
+    "agent": {"agent-dir", "attachments", "claude", "interpret", "journal", "pty-host", "wire"},
+    "claude": {"pty-host"},
+    "codex": set(),
+    "pty-host": set(),
     # The daemon reaches agent processes only through the directory contract,
     # never the agent crate, so the phone can host a runtime without a
     # provider in its graph.
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
     "node": {"agent-dir", "interpret", "journal", "settings", "store", "version-stamp", "wire"},
+    "amux": {"agent", "agent-dir", "claude", "node", "settings", "store", "wire"},
     # The version stamp a release tool can rewrite in a built binary; the
     # xtask shares it without building the daemon.
     "version-stamp": set(),
-    "redaction": set(),
-    "ui-state": {"wire"},
+    "xtask": {"version-stamp"},
+    # The seam both clients call the local runtime through: the local socket
+    # and the shared clock trait come from the agent directory contract.
+    "client": {"agent-dir", "wire"},
+    "ui-state": {"model", "wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
     "ui-runtime": {"client", "ui-state", "wire"},
-    # Report replay reconstructs canonical store-backed windows using the
-    # provider folds, while ordinary rendering still consumes ui-state.
-    "tui": {"fold", "ui-runtime", "ui-state"},
-    # The app layer any rich client reuses. app-runtime never reaches node, so
-    # a desktop app attached to a running daemon links it without app-embedded.
-    "app-runtime": {"artifacts", "client", "model", "store", "ui-runtime", "ui-state"},
-    "app-embedded": {"app-runtime", "client", "node"},
-    "app-ffi": {"app-embedded", "app-runtime"},
+    # Replays a dump bundle's three pure stages: facts through the
+    # interpreter (the journal for comparison), records through the session
+    # model, state through the views; and provider recordings for the
+    # capture tools.
+    "replay-support": {
+        "interpret", "journal", "redaction", "ui-state", "ui-view", "wire",
+    },
 }
+# The UI library and the clients built on it reach the daemon only through
+# the client seam: none of them may link, directly or through another crate,
+# the daemon, its store, the interpreters or a provider. The phone bridge
+# (app-ffi, app-embedded) hosts the runtime in process and is not one of them.
+UI_CRATES = {"model", "client", "ui-state", "ui-view", "ui-runtime", "tui", "app-runtime"}
+FORBIDDEN_FOR_UI = {"node", "store", "interpret", "agent", "claude", "codex", "pty-host"}
 TEST_SUPPORT = {
     "testnet",
     "qualification",
@@ -50,26 +67,9 @@ TEST_SUPPORT = {
     "shot",
 }
 SUPPORT_ALLOWED_LOCAL = {
-    # The harness drives scripted Claude and Codex sessions through the
-    # provider crates' own source seams, replays recordings, folds the served
-    # door's report conversion through the client layer, and exercises
-    # whole-daemon behavior through production boundaries.
-    "testnet": {
-        "artifacts",
-        "claude",
-        "client",
-        "codex",
-        "fold",
-        "model",
-        "node",
-        "node-test-support",
-        "pty-host",
-        "replay-support",
-        "store",
-        "ui-runtime",
-        "ui-state",
-        "wire",
-    },
+    # The many-daemons harness: real daemons in process, real agents on the
+    # fake providers, synthetic journals, and the production boundaries.
+    "testnet": {"agent-dir", "journal", "node", "provider-fakes", "store", "wire"},
     # Qualification owns environment-dependent provider and performance
     # checks while reusing the network harness rather than shipping it.
     "qualification": {"node", "provider-fakes", "store", "testnet", "wire"},
@@ -119,6 +119,21 @@ def main() -> int:
     for name, package in packages.items():
         if name not in TEST_SUPPORT and (edges := local_edges(package) & TEST_SUPPORT):
             failures.append(f"{name}: production edges reach test support: {sorted(edges)}")
+
+    edges = {name: local_edges(package) for name, package in packages.items()}
+    for name in sorted(UI_CRATES & edges.keys()):
+        reached, frontier = set(), [name]
+        while frontier:
+            for edge in edges.get(frontier.pop(), set()):
+                if edge not in reached:
+                    reached.add(edge)
+                    frontier.append(edge)
+        if forbidden := reached & FORBIDDEN_FOR_UI:
+            failures.append(f"{name}: a UI crate reaches {sorted(forbidden)}")
+
+    unlisted = packages.keys() - (ALLOWED_LOCAL | SUPPORT_ALLOWED_LOCAL).keys()
+    for name in sorted(unlisted):
+        failures.append(f"{name}: a workspace package with no entry in the policy")
 
     if failures:
         print("dependency policy failed:", file=sys.stderr)

@@ -1,27 +1,8 @@
 //! What this client sent and what became of each input: the one thing only
 //! the sender can know.
 
+pub use model::{InputId, InputState};
 use wire::{Attachment, Input, SendInputResponse};
-
-pub type InputId = Vec<u8>;
-
-/// An input as this client observes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum InputState {
-    /// In flight, or accepted and waiting for its reflection. The optimistic
-    /// row exists.
-    Sent,
-    /// Accepted into the agent's queue; listed by every snapshot until it is
-    /// submitted or withdrawn.
-    Queued,
-    /// Accepted and, for a prompt, reflected by an item.
-    Settled,
-    Rejected(String),
-    /// The connection dropped before a reply. Resolved only at CaughtUp from
-    /// the snapshot's queue and the items; one found in neither stays here
-    /// and the person decides. Nothing is resent on its own.
-    Uncertain,
-}
 
 /// What became of a SendInput call.
 #[derive(Clone, Debug, PartialEq)]

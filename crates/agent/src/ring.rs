@@ -18,94 +18,11 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use interpret::{Channel, Event, Fact};
-use prost::Message as _;
-use serde::{Deserialize, Serialize};
-use wire::StopMode;
+pub use interpret::ring::Entry;
 
 /// Segments kept.
 const KEEP: usize = 2;
 const CHECKPOINT: &str = "checkpoint";
-
-/// One event as the ring records it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-pub enum Entry {
-    Fact {
-        channel: Channel,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        text: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        hex: Option<String>,
-    },
-    Input {
-        hex: String,
-    },
-    Tick {
-        at_ms: i64,
-    },
-    ProviderExit {
-        code: Option<i32>,
-    },
-    DaemonLost,
-    Stop {
-        mode: i32,
-    },
-    Exiting {
-        cause: String,
-    },
-}
-
-impl Entry {
-    pub fn of(event: &Event) -> Self {
-        match event {
-            Event::Fact(fact) => match std::str::from_utf8(&fact.payload) {
-                Ok(text) => Entry::Fact {
-                    channel: fact.channel,
-                    text: Some(text.to_owned()),
-                    hex: None,
-                },
-                Err(_) => Entry::Fact {
-                    channel: fact.channel,
-                    text: None,
-                    hex: Some(interpret::to_hex(&fact.payload)),
-                },
-            },
-            Event::Input(input) => Entry::Input {
-                hex: interpret::to_hex(&input.encode_to_vec()),
-            },
-            Event::Tick { at_ms } => Entry::Tick { at_ms: *at_ms },
-            Event::ProviderExit { code } => Entry::ProviderExit { code: *code },
-            Event::DaemonLost => Entry::DaemonLost,
-            Event::StopRequested(mode) => Entry::Stop { mode: *mode as i32 },
-            Event::Exiting { cause } => Entry::Exiting {
-                cause: cause.clone(),
-            },
-        }
-    }
-
-    /// The event again; None for an entry this build cannot read.
-    pub fn event(self) -> Option<Event> {
-        Some(match self {
-            Entry::Fact { channel, text, hex } => Event::Fact(Fact {
-                channel,
-                payload: match (text, hex) {
-                    (Some(text), _) => text.into_bytes(),
-                    (None, Some(hex)) => interpret::from_hex(&hex).ok()?,
-                    (None, None) => Vec::new(),
-                },
-            }),
-            Entry::Input { hex } => {
-                Event::Input(wire::Input::decode(interpret::from_hex(&hex).ok()?.as_slice()).ok()?)
-            }
-            Entry::Tick { at_ms } => Event::Tick { at_ms },
-            Entry::ProviderExit { code } => Event::ProviderExit { code },
-            Entry::DaemonLost => Event::DaemonLost,
-            Entry::Stop { mode } => Event::StopRequested(StopMode::try_from(mode).ok()?),
-            Entry::Exiting { cause } => Event::Exiting { cause },
-        })
-    }
-}
 
 /// The writer of one agent's ring.
 pub struct Ring {
@@ -213,11 +130,7 @@ pub fn saved(dir: &Path) -> io::Result<Option<Saved>> {
             Err(error) => return Err(error),
         };
         let bytes = fs::read(journal::segment_path(dir, start))?;
-        let entries = bytes
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .map_while(|line| serde_json::from_slice(line).ok())
-            .collect();
+        let entries = interpret::ring::entries(&bytes);
         return Ok(Some(Saved {
             checkpoint,
             entries,
@@ -245,6 +158,9 @@ fn start_segment(dir: &Path, start: u64, checkpoint: &[u8]) -> io::Result<File> 
 
 #[cfg(test)]
 mod tests {
+    use interpret::{Channel, Event, Fact};
+    use wire::StopMode;
+
     use super::*;
 
     fn tick(at_ms: i64) -> Entry {

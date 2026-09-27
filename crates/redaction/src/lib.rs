@@ -1,3 +1,9 @@
+//! The structural redactor for what is not a per-kind body: free text and
+//! JSON in reports, logs, specs and provider captures. It knows key names
+//! and text shapes (secrets, machine paths, emails, the local user and
+//! host) and nothing about any record's schema; bodies are redacted per
+//! kind in `interpret`, the only code that can decode them.
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -82,7 +88,7 @@ fn should_redact_personal_identifier(key: &str, rules: &Redaction) -> bool {
 /// Capture-specific field names remain on [`Redaction::personal_identifier_keys`].
 /// This shared rule is public so evidence tooling can reject the same account,
 /// organization, user, and bridge identifiers that corpus sanitization removes.
-pub fn is_personal_identifier_key(key: &str) -> bool {
+fn is_personal_identifier_key(key: &str) -> bool {
     let normalized = normalized_key(key);
     normalized == "bridgesessionid"
         || matches!(
@@ -349,4 +355,80 @@ fn redact_windows_user_paths(input: &str, summary: &mut RedactionSummary) -> Str
         }
     }
     input.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn rules() -> Redaction {
+        Redaction {
+            home: PathBuf::from("/Users/someone"),
+            secret_env: vec!["s3cret-value".into()],
+            hostname: Some("desk.local".into()),
+            user: Some("someone".into()),
+            ..Redaction::default()
+        }
+    }
+
+    #[test]
+    fn json_is_redacted_by_key_and_keeps_its_shape() {
+        let mut value = json!({
+            "apiKey": "sk-ant-abc",
+            "cwd": "/Users/someone/src",
+            "nested": {"accountUuid": "1234", "note": "fine"},
+            "paths": {"workingDirectory": ["/tmp/a", "relative/b"]},
+            "absent": {"token": null},
+        });
+        let mut summary = RedactionSummary::default();
+        redact_value(&mut value, &rules(), &mut summary);
+        assert_eq!(
+            value,
+            json!({
+                "apiKey": SECRET_PLACEHOLDER,
+                "cwd": PATH_PLACEHOLDER,
+                "nested": {"accountUuid": IDENTIFIER_PLACEHOLDER, "note": "fine"},
+                "paths": {"workingDirectory": [PATH_PLACEHOLDER, "relative/b"]},
+                "absent": {"token": null},
+            })
+        );
+        assert_eq!(
+            summary,
+            RedactionSummary {
+                secrets: 1,
+                machine_paths: 2,
+                personal_identifiers: 1,
+            }
+        );
+        // Redacting again changes nothing and counts nothing.
+        let before = value.clone();
+        let mut again = RedactionSummary::default();
+        redact_value(&mut value, &rules(), &mut again);
+        assert_eq!(value, before);
+        assert_eq!(again, RedactionSummary::default());
+    }
+
+    #[test]
+    fn text_loses_secrets_emails_and_the_machine_it_came_from() {
+        let mut summary = RedactionSummary::default();
+        let text = redact_text(
+            "key sk-ant-api03-XYZ and s3cret-value from someone@example.com on desk.local \
+             in /Users/someone/src and C:\\Users\\someone\\x",
+            &rules(),
+            &mut summary,
+        );
+        for gone in [
+            "sk-ant-api03-XYZ",
+            "s3cret-value",
+            "someone@example.com",
+            "desk.local",
+        ] {
+            assert!(!text.contains(gone), "{gone} survived in {text}");
+        }
+        assert!(text.contains(SECRET_PLACEHOLDER));
+        assert!(text.contains(EMAIL_PLACEHOLDER));
+        assert!(summary.secrets >= 2 && summary.personal_identifiers >= 1);
+    }
 }

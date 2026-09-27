@@ -1,3 +1,4 @@
+pub mod bundle;
 mod manifest;
 mod observation;
 mod probe;

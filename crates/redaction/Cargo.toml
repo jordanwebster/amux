@@ -10,3 +10,4 @@ publish = false
 serde.workspace = true
 serde_json.workspace = true
 unicode-width = "0.2"
+

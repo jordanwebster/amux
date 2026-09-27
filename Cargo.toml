@@ -8,7 +8,6 @@ members = [
     "crates/agent",
     "crates/agent-dir",
     "crates/amux",
-    "crates/artifacts",
     "crates/attachments",
     "crates/claude",
     "crates/claude-specs",
@@ -16,7 +15,6 @@ members = [
     "crates/codex",
     "crates/codex-specs",
     "crates/fake-amux",
-    "crates/fold",
     "crates/interpret",
     "crates/journal",
     "crates/model",
@@ -63,12 +61,10 @@ testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 interpret = { path = "crates/interpret" }
 journal = { path = "crates/journal" }
-fold = { path = "crates/fold" }
 model = { path = "crates/model" }
 store = { path = "crates/store" }
 wire = { path = "crates/wire" }
 settings = { path = "crates/settings" }
-artifacts = { path = "crates/artifacts" }
 attachments = { path = "crates/attachments" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
@@ -88,6 +84,8 @@ signal-hook = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The Swift mirrors of the shared values are generated from their schemas.
+schemars = "1"
 postcard = { version = "1", features = ["alloc"] }
 serde_yaml = "0.9"
 toml = "0.8.23"

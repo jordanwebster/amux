@@ -3,22 +3,13 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+pub use model::{Activity, ActivityKind, BlobStatus, Composer, Connection, PhaseView, Waiting};
 use wire::{Agent, HostEntry, Input, Item, Kind, QueuedInput, SessionEvent, session_event};
 
 use crate::Key;
 use crate::body::{AgentState, ItemClass, OpenAsk};
 use crate::inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
 use crate::transcript::{Appended, Changed, Transcript};
-
-/// The client's connection to its local runtime, as the driver reports it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Connection {
-    #[default]
-    Connecting,
-    Live,
-    /// The stream ended; the driver is re-tailing.
-    Reconnecting,
-}
 
 /// Everything the driver forwards to a session.
 #[derive(Clone, Debug, PartialEq)]
@@ -63,79 +54,6 @@ pub struct Outcome {
     /// Something outside the rows moved: the snapshot, entry, host, inputs,
     /// connection or caught-up state.
     pub session: bool,
-}
-
-/// An attachment's bytes in the driver's cache; rows hold a placeholder from
-/// the reference's name, type and size until they are ready.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum BlobStatus {
-    #[default]
-    Missing,
-    Fetching,
-    Ready,
-    Failed(String),
-}
-
-/// What the composer offers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Composer {
-    Send,
-    /// The agent has exited: the draft goes through ResumeAgent as the new
-    /// incarnation's first prompt, one tap.
-    Resume,
-    /// Drafting continues; sending waits.
-    Disabled(Waiting),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Waiting {
-    /// Rows are painted but the origin has not been reached yet.
-    CatchingUp,
-    /// The origin is not being followed; rows may be stale.
-    Detached,
-    /// The local runtime is being reconnected.
-    Reconnecting,
-}
-
-/// The header's phase: lifecycle from the entry, the rest from the snapshot.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PhaseView {
-    Starting,
-    Idle,
-    Working,
-    NeedsYou,
-    Exited { cause: Option<String> },
-}
-
-/// The line above the composer while the agent works. Not a row; timed
-/// against item timestamps with the caller's clock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Activity {
-    pub kind: ActivityKind,
-    pub since_ms: i64,
-    pub elapsed_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ActivityKind {
-    /// Busy and nothing more specific applies.
-    Working,
-    /// A thinking block is open.
-    Thinking,
-    /// A tool is in flight; the key names the call.
-    Running {
-        key: Key,
-    },
-    /// The agent waits on its subagents.
-    Subagents {
-        count: u32,
-    },
-    Compacting,
-    Retrying {
-        attempt: u32,
-        max_attempts: u32,
-        retry_at_ms: Option<i64>,
-    },
 }
 
 /// A queued prompt as the composer draws it.

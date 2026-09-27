@@ -18,6 +18,7 @@ pub mod claude_sdk;
 pub mod codex;
 mod golden;
 pub mod redact;
+pub mod ring;
 mod serde_pb;
 mod shared;
 pub mod unknown;

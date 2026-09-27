@@ -1,0 +1,27 @@
+{
+  "agents": [
+    {
+      "agent_id": "77e49bee-c78e-4872-9a66-23aaf3f3491d",
+      "host_id": "12574a27-ae97-44bc-9dd6-0d4786a9c916",
+      "incarnation": 1,
+      "kind": "claude_sdk",
+      "lifecycle": 1,
+      "own": true,
+      "part": [
+        "facts/0000000000",
+        "facts/0000000000.checkpoint",
+        "spec.1"
+      ],
+      "rows": 8
+    }
+  ],
+  "automatic": false,
+  "created_at_ms": 1790471460303,
+  "daemon_version": "0.7.0",
+  "dump_id": "b9f455c1-52c4-4d70-ab5a-bda7fbddad52",
+  "errors": [],
+  "generation": 1,
+  "host": "12574a27-ae97-44bc-9dd6-0d4786a9c916",
+  "profile": "d5a98390-bf58-4abb-8fcb-6bbd5f45d62a",
+  "reason": "fixture"
+}

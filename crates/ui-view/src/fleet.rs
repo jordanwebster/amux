@@ -32,12 +32,12 @@ pub struct FleetRow {
 }
 
 fn card(fleet: &FleetState, agent: &Agent) -> FleetCard {
-    let at = AgentKey::of(agent);
+    let at = ui_state::agent_key(agent);
     let host = fleet.host(&agent.host_id);
     FleetCard {
         name: agent.name.clone().unwrap_or_default(),
         kind: agent.kind(),
-        attention: Attention::of(agent),
+        attention: ui_state::attention(agent),
         exit_cause: agent.exit_cause.clone(),
         working_on: agent
             .working_on
@@ -119,7 +119,7 @@ pub struct FamilyHeader {
 /// None for an agent with no parent and no children.
 pub fn family_header(fleet: &FleetState, agent_id: &[u8]) -> Option<FamilyHeader> {
     let agent = fleet.find(agent_id)?;
-    let at = AgentKey::of(agent);
+    let at = ui_state::agent_key(agent);
     let parent = fleet.parent(&at).map(|parent| card(fleet, parent));
     let children: Vec<FleetCard> = fleet
         .families()

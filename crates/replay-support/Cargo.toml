@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 chrono.workspace = true
+interpret.workspace = true
+journal.workspace = true
+prost.workspace = true
 redaction.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde.workspace = true
@@ -14,7 +17,10 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+ui-state.workspace = true
+ui-view.workspace = true
 unicode-width = "0.2"
+wire.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

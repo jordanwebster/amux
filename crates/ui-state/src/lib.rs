@@ -17,13 +17,13 @@ mod session;
 mod transcript;
 
 pub use body::{AgentState, Explore, ItemBody, ItemClass, OpenAsk, ToolFacts, decode_snapshot};
-pub use fleet::{AgentKey, Attention, Families, FleetMsg, FleetState, HostId};
+pub use fleet::{
+    AgentKey, Attention, Families, FleetMsg, FleetState, HostId, agent_key, attention, parent_key,
+};
 pub use inputs::{InputId, InputOutcome, InputState, InputWhat, Inputs, SentInput};
+pub use model::Key;
 pub use session::{
     Activity, ActivityKind, BlobStatus, Composer, Connection, Msg, Outcome, PhaseView, QueueRow,
     SessionState, Waiting,
 };
 pub use transcript::{Held, Run, RunIndex, Transcript};
-
-/// An item key: the row id, which never moves.
-pub type Key = String;

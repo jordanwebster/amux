@@ -1,3 +1,22 @@
+2026-09-27 — **Shared values in `model`, dump bundles replay, the dependency policy for the new crates.**
+`model` now holds only the plain values the session model computes and the
+views and the phone bridge hand on (agent key, attention, connection,
+composer and waiting, phase, activity, blob and input status), with serde
+and JSON-schema derives so the Swift mirrors can be generated from them;
+`ui-state` re-exports them and builds them from wire records. The old
+`model` types went with the `fold` and `artifacts` crates, whose only users
+had already left the workspace. `replay-support` opens a dump bundle and
+replays its three pure stages: the facts ring through the agent's
+interpreter from its oldest checkpoint (the ring's line format moved into
+`interpret::ring` so this needs no agent process), the store slice through
+`SessionState` as a subscription delivers it, and that state through the
+views; a bundle a real daemon wrote for a real agent is the fixture, and the
+facts replay reproduces its journal's final texts and snapshot.
+`redaction` is the structural text and JSON redactor with its own tests. The
+dependency policy lists the rebuilt crates' edges and rejects any UI crate
+that reaches the daemon, the store, the interpreters or a provider, directly
+or through another crate.
+
 2026-09-27 — **The client seam and the session and fleet drivers.**
 `crates/client` is now one `Client` trait over the whole client service,
 with a gRPC implementation over the profile's local socket and an

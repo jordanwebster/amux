@@ -3,57 +3,37 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub use model::{AgentKey, Attention, HostId};
 use wire::{Agent, HostEntry, InventoryEvent, inventory_event};
 
 use crate::session::Connection;
 
-pub type HostId = Vec<u8>;
-
-/// An agent is named by its host and its id: a parent may live elsewhere.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AgentKey {
-    pub host: HostId,
-    pub agent: Vec<u8>,
-}
-
-impl AgentKey {
-    pub fn of(agent: &Agent) -> AgentKey {
-        AgentKey {
-            host: agent.host_id.clone(),
-            agent: agent.agent_id.clone(),
-        }
-    }
-
-    fn parent(agent: &Agent) -> Option<AgentKey> {
-        agent.parent.as_ref().map(|parent| AgentKey {
-            host: parent.host_id.clone(),
-            agent: parent.agent_id.clone(),
-        })
+/// The key naming an agent's row.
+pub fn agent_key(agent: &Agent) -> AgentKey {
+    AgentKey {
+        host: agent.host_id.clone(),
+        agent: agent.agent_id.clone(),
     }
 }
 
-/// How loudly an agent asks for the person, quietest first. A family is as
-/// loud as its loudest member.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Attention {
-    Exited,
-    Idle,
-    Starting,
-    Working,
-    NeedsYou,
+/// The key of an agent's parent, if it has one.
+pub fn parent_key(agent: &Agent) -> Option<AgentKey> {
+    agent.parent.as_ref().map(|parent| AgentKey {
+        host: parent.host_id.clone(),
+        agent: parent.agent_id.clone(),
+    })
 }
 
-impl Attention {
-    pub fn of(agent: &Agent) -> Attention {
-        if agent.lifecycle() == wire::Lifecycle::Exited {
-            return Attention::Exited;
-        }
-        match agent.phase() {
-            wire::Phase::Starting => Attention::Starting,
-            wire::Phase::Idle => Attention::Idle,
-            wire::Phase::Working => Attention::Working,
-            wire::Phase::NeedsYou => Attention::NeedsYou,
-        }
+/// How loudly the row asks for the person.
+pub fn attention(agent: &Agent) -> Attention {
+    if agent.lifecycle() == wire::Lifecycle::Exited {
+        return Attention::Exited;
+    }
+    match agent.phase() {
+        wire::Phase::Starting => Attention::Starting,
+        wire::Phase::Idle => Attention::Idle,
+        wire::Phase::Working => Attention::Working,
+        wire::Phase::NeedsYou => Attention::NeedsYou,
     }
 }
 
@@ -130,7 +110,7 @@ impl FleetState {
 
     /// The agent's parent, when the fleet holds it.
     pub fn parent(&self, agent: &AgentKey) -> Option<&Agent> {
-        let parent = AgentKey::parent(self.agents.get(agent)?)?;
+        let parent = parent_key(self.agents.get(agent)?)?;
         self.agents.get(&parent)
     }
 
@@ -138,7 +118,7 @@ impl FleetState {
     pub fn root(&self, agent: &AgentKey) -> AgentKey {
         let mut at = agent.clone();
         let mut seen = BTreeSet::new();
-        while let Some(parent) = self.agents.get(&at).and_then(AgentKey::parent) {
+        while let Some(parent) = self.agents.get(&at).and_then(parent_key) {
             if !self.agents.contains_key(&parent) || !seen.insert(at.clone()) {
                 break;
             }
@@ -151,7 +131,7 @@ impl FleetState {
     /// hold.
     pub fn roots(&self) -> impl Iterator<Item = &Agent> {
         self.agents.values().filter(|agent| {
-            AgentKey::parent(agent).is_none_or(|parent| !self.agents.contains_key(&parent))
+            parent_key(agent).is_none_or(|parent| !self.agents.contains_key(&parent))
         })
     }
 
@@ -175,7 +155,7 @@ impl FleetState {
     /// How loudly the agent's family asks for the person: its loudest
     /// member, the agent included.
     pub fn family_attention(&self, agent: &AgentKey) -> Option<Attention> {
-        self.family(agent).into_iter().map(Attention::of).max()
+        self.family(agent).into_iter().map(attention).max()
     }
 
     /// Applies one message and returns the agents whose card or family
@@ -219,7 +199,7 @@ impl FleetState {
                         }
                     }
                     inventory_event::Of::Agent(agent) => {
-                        let at = AgentKey::of(&agent);
+                        let at = agent_key(&agent);
                         if let Some((_, agents)) = &mut self.relisted {
                             agents.insert(at.clone());
                         }
@@ -256,7 +236,7 @@ impl FleetState {
     /// Replaces or removes one row, keeping the parent edges, and marks the
     /// row and every ancestor whose family attention may move.
     fn put(&mut self, at: AgentKey, agent: Option<Agent>, changed: &mut BTreeSet<AgentKey>) {
-        let old_parent = self.agents.get(&at).and_then(AgentKey::parent);
+        let old_parent = self.agents.get(&at).and_then(parent_key);
         if let Some(parent) = &old_parent {
             self.mark_ancestors(parent, changed);
             if let Some(children) = self.families.children.get_mut(parent) {
@@ -269,7 +249,7 @@ impl FleetState {
         changed.insert(at.clone());
         match agent {
             Some(agent) => {
-                let parent = AgentKey::parent(&agent);
+                let parent = parent_key(&agent);
                 self.agents.insert(at.clone(), agent);
                 if let Some(parent) = parent {
                     self.families
@@ -297,7 +277,7 @@ impl FleetState {
             if !changed.insert(agent.clone()) {
                 break;
             }
-            at = self.agents.get(&agent).and_then(AgentKey::parent);
+            at = self.agents.get(&agent).and_then(parent_key);
         }
     }
 }

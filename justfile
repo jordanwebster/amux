@@ -33,10 +33,6 @@ test *ARGS:
 test-crate CRATE *ARGS:
     crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
-# Exercise the shared merge algebra and provider folds.
-test-fold *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; if [ "${2-}" = --nocapture ]; then filter=$1; shift 2; {{bounded}} 1200 cargo test --locked -p fold "$filter" -- --nocapture "$@"; else {{bounded}} 1200 cargo test --locked -p fold "$@"; fi
-
 # Exercise the profile store against both of its implementations.
 test-store *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"

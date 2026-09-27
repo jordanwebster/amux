@@ -313,7 +313,7 @@ async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
                     let fleet = fleet(events);
                     fleet
                         .find(helper.as_bytes())
-                        .is_some_and(|child| fleet.parent(&ui_state::AgentKey::of(child)).is_some())
+                        .is_some_and(|child| fleet.parent(&ui_state::agent_key(child)).is_some())
                 },
                 PATIENCE,
             )
@@ -322,7 +322,7 @@ async fn a_spawn_by_host_name_resolves_among_trusted_hosts_and_is_forwarded() {
         let fleet = fleet(events);
         let lead = fleet.find(lead_id.as_bytes()).unwrap();
         let family: Vec<String> = fleet
-            .family(&ui_state::AgentKey::of(lead))
+            .family(&ui_state::agent_key(lead))
             .iter()
             .map(|agent| {
                 format!(
@@ -546,7 +546,7 @@ async fn a_cascade_delete_reaches_a_reachable_child_and_orphans_an_unreachable_o
         "listed under its own host"
     );
     assert!(
-        fleet.parent(&ui_state::AgentKey::of(orphan)).is_none(),
+        fleet.parent(&ui_state::agent_key(orphan)).is_none(),
         "its parent edge points at nothing"
     );
     assert!(
@@ -874,7 +874,7 @@ async fn cross_host_family_journey() {
                 let Some(lead) = fleet.find(lead.id.as_bytes()) else {
                     return false;
                 };
-                fleet.family_attention(&ui_state::AgentKey::of(lead)) == Some(Attention::NeedsYou)
+                fleet.family_attention(&ui_state::agent_key(lead)) == Some(Attention::NeedsYou)
             },
             PATIENCE,
         )
@@ -885,9 +885,7 @@ async fn cross_host_family_journey() {
     assert_eq!(child_card.phase(), Phase::NeedsYou);
     assert_eq!(child_card.host_id, helper.host_id.as_bytes());
     let family: Vec<String> = seen
-        .family(&ui_state::AgentKey::of(
-            seen.find(lead.id.as_bytes()).unwrap(),
-        ))
+        .family(&ui_state::agent_key(seen.find(lead.id.as_bytes()).unwrap()))
         .iter()
         .map(|agent| {
             format!(
