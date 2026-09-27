@@ -128,15 +128,18 @@ shot *ARGS:
 
 # Run one declared journey through its real client. System journeys are the
 # built binaries on the fakes, printing their transcripts.
-journey CLIENT NAME:
+journey CLIENT NAME *ARGS:
     #!/usr/bin/env sh
     set -eu
+    if [ "${3-}" = -- ]; then shift 3; else shift 2; fi
     case "{{CLIENT}}" in
     terminal)
         {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet --bins {{desktop_features}}
         {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
         ;;
     system)
+        # --keep leaves the install running for other clients to open.
+        if [ "${1-}" = --keep ]; then export AMUX_JOURNEY_KEEP=1; fi
         {{bounded}} 1500 cargo test --locked -p amux --test system_journeys -- --exact --nocapture "$(echo "{{NAME}}" | tr - _)"
         ;;
     *)

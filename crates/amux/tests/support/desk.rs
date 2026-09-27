@@ -31,6 +31,8 @@ pub struct Desk {
     pub socket: PathBuf,
     pub data: PathBuf,
     pub work: PathBuf,
+    /// Left running for other clients: nothing is stopped or removed.
+    kept: bool,
 }
 
 impl Desk {
@@ -92,6 +94,7 @@ impl Desk {
             data,
             work,
             root,
+            kept: false,
         }
     }
 
@@ -181,10 +184,22 @@ impl Desk {
     }
 }
 
+impl Desk {
+    /// Leaves the install and everything it runs in place, and says where.
+    pub fn keep(mut self) -> PathBuf {
+        self.kept = true;
+        self.root.disable_cleanup(true);
+        self.root.path().to_owned()
+    }
+}
+
 impl Drop for Desk {
     /// Stops amux, then kills whatever a failed test left running from this
     /// install: agents mid-turn outlive their daemon on purpose.
     fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
         let _ = std::process::Command::new(self.amux_path())
             .args(["server", "stop"])
             .env("AMUX_CONFIG", &self.config)

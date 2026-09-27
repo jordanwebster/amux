@@ -164,9 +164,27 @@ async fn survive_daemon() {
         say(format!("{name} in the store: {:?}", spoken(&after)));
     }
     desk.run(&["ls"]).await;
+    say("== survive-daemon: every finished turn is in the store and every resume kept its history");
+    if keep() {
+        let root = desk.keep();
+        say(format!(
+            "-- kept running for other clients: AMUX_CONFIG={} (install under {})",
+            root.join("installation.yaml").display(),
+            root.display()
+        ));
+        return;
+    }
     for name in agents.keys() {
         desk.run(&["stop", name, "--mode", "kill"]).await;
     }
     desk.run(&["server", "stop"]).await;
-    say("== survive-daemon: every finished turn is in the store and every resume kept its history");
 }
+
+/// Whether the journey leaves its install running afterwards, so a phone
+/// or a terminal can open the same chats: `just journey system <id> --
+/// --keep`.
+fn keep() -> bool {
+    std::env::var_os(KEEP_ENV).is_some()
+}
+
+const KEEP_ENV: &str = "AMUX_JOURNEY_KEEP";
