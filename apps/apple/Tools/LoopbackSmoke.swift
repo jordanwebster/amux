@@ -1,131 +1,135 @@
 import AmuxApp
 import Foundation
 
-// Rust owns callback delivery. Snapshots run on the main thread without holding
-// this condition, so a worker callback cannot deadlock a snapshot request.
-private final class Observation: @unchecked Sendable {
+// A bare Swift executable linking the driving bridge: it starts the runtime,
+// pairs with one served machine by the link that machine printed, and reads
+// back the machine and its agents the way the app's stores read them. Nothing
+// here is the app; what it proves is that the bridge links, starts and talks
+// to a real daemon from Swift on the simulator.
+
+private func fail(_ code: Int, _ message: String) -> NSError {
+    NSError(domain: "LoopbackSmoke", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+}
+
+/// One callback's answer, waited for on a condition.
+private final class Answer: @unchecked Sendable {
     let condition = NSCondition()
-    let expected: Set<String>
-    var connected = false
-    var reconciled = false
-    var connectionDescription = "no connection callback"
-    var failure: String?
+    var json: String?
 
-    init(expected: Set<String>) { self.expected = expected }
-
-    func receive(_ bytes: UnsafePointer<CChar>) {
-        condition.lock()
-        defer { condition.broadcast(); condition.unlock() }
-        do {
-            let events = try JSONSerialization.jsonObject(with: Data(String(cString: bytes).utf8)) as! [[String: Any]]
-            for event in events {
-                if let invariant = event["Invariant"] { failure = "Bridge invariant: \(invariant)" }
-                if let connection = event["Connection"] as? [String: Any] {
-                    connected = connection["state"] as? String == "connected"
-                    connectionDescription = String(describing: connection)
-                }
-                if let fleet = event["Fleet"] as? [String: Any], let rows = fleet["hosts"] as? [[String: Any]] {
-                    for row in rows {
-                        guard let entry = row["entry"] as? [String: Any], let id = entry["id"] as? String else {
-                            failure = "Invalid Fleet host: \(row)"
-                            continue
-                        }
-                        if expected.contains(id) || entry["trust_status"] as? String != "trusted" {
-                            failure = "Unpaired relay host appeared in Fleet: \(entry)"
-                        }
-                    }
-                    reconciled = fleet["reconciled"] as? Bool == true
-                }
-            }
-        } catch { failure = "Invalid callback JSON: \(error)" }
-    }
-
-    func wait(handle: OpaquePointer) throws -> [String: String] {
-        let deadline = Date().addingTimeInterval(30)
-        var hosts: [String: String] = [:]
-        while Date() < deadline {
-            // Discovery includes online peers before pairing; the displayed
-            // Fleet intentionally includes only trusted hosts. Polling here is
-            // bounded test observation, not an application refresh loop.
-            hosts = try discoveredHosts(handle: handle)
-            condition.lock()
-            let complete = connected && reconciled && !hosts.isEmpty && Set(hosts.keys) == expected
-            let failure = failure
-            if failure == nil && !complete {
-                _ = condition.wait(until: min(deadline, Date().addingTimeInterval(0.02)))
-            }
-            condition.unlock()
-            if let failure {
-                throw NSError(domain: "LoopbackSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: failure])
-            }
-            if complete { return hosts }
-        }
+    func wait(_ what: String) throws -> Any {
         condition.lock()
         defer { condition.unlock() }
-        throw NSError(domain: "LoopbackSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey:
-            failure ?? "Relay did not deliver all daemon identities within 30 seconds: \(hosts); \(connectionDescription); Fleet reconciled=\(reconciled)"])
-    }
-
-    private func discoveredHosts(handle: OpaquePointer) throws -> [String: String] {
-        guard let bytes = amux_app_snapshot(handle) else {
-            throw NSError(domain: "LoopbackSmoke", code: 4, userInfo: [NSLocalizedDescriptionKey: "Bridge snapshot unavailable"])
+        let deadline = Date().addingTimeInterval(30)
+        while json == nil {
+            guard condition.wait(until: deadline) else { throw fail(6, "no answer to \(what) within 30 seconds") }
         }
-        defer { amux_app_free(bytes) }
-        let model = try JSONSerialization.jsonObject(with: Data(String(cString: bytes).utf8)) as! [String: Any]
-        let rows = model["hosts"] as! [String: [String: Any]]
-        var hosts: [String: String] = [:]
-        for row in rows.values {
-            guard let entry = row["entry"] as? [String: Any],
-                  let id = entry["id"] as? String, expected.contains(id),
-                  entry["online"] as? Bool == true,
-                  let name = entry["name"] as? String else { continue }
-            guard entry["trust_status"] as? String == "untrusted_but_online" else {
-                throw NSError(domain: "LoopbackSmoke", code: 5, userInfo: [NSLocalizedDescriptionKey: "Discovery unexpectedly granted trust to \(id)"])
-            }
-            hosts[id] = name
-        }
-        return hosts
+        return try JSONSerialization.jsonObject(with: Data(json!.utf8), options: [.fragmentsAllowed])
     }
 }
 
-private func receive(_ bytes: UnsafePointer<CChar>?, _ context: UnsafeMutableRawPointer?) {
-    guard let bytes, let context else { return }
-    Unmanaged<Observation>.fromOpaque(context).takeUnretainedValue().receive(bytes)
+/// The runtime wakes its host on every change; this smoke reads snapshots
+/// instead, so a wake has nothing to do.
+private func woke(_ context: UnsafeMutableRawPointer?, _ chat: UInt64) {}
+
+private func answered(_ context: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>?) {
+    guard let context, let json else { return }
+    let answer = Unmanaged<Answer>.fromOpaque(context).takeRetainedValue()
+    answer.condition.lock()
+    answer.json = String(cString: json)
+    answer.condition.broadcast()
+    answer.condition.unlock()
+}
+
+/// Calls one bridge entry that answers through a callback and returns what
+/// its `Ok` carried, or throws what its `Err` said.
+private func ask(_ what: String, _ call: (AmuxCallback, UnsafeMutableRawPointer) -> Void) throws -> Any {
+    let answer = Answer()
+    call(answered, Unmanaged.passRetained(answer).toOpaque())
+    let reply = try answer.wait(what)
+    guard let result = reply as? [String: Any], let ok = result["Ok"] else {
+        throw fail(7, "\(what) was refused: \(reply)")
+    }
+    return ok
+}
+
+private func read(_ bytes: UnsafeMutablePointer<CChar>?) throws -> Any {
+    guard let bytes else { throw fail(4, "the bridge answered nothing") }
+    defer { amux_string_free(bytes) }
+    return try JSONSerialization.jsonObject(with: Data(String(cString: bytes).utf8), options: [.fragmentsAllowed])
+}
+
+private func json(_ value: Any) -> String {
+    String(decoding: try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys]), as: UTF8.self)
+}
+
+/// Reads until `found` answers something, for at most thirty seconds. The
+/// runtime wakes its host on every change; polling a snapshot here is bounded
+/// test observation, not how the app reads.
+private func until<T>(_ what: String, _ found: () throws -> T?) throws -> T {
+    let deadline = Date().addingTimeInterval(30)
+    while Date() < deadline {
+        if let value = try found() { return value }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    throw fail(1, "\(what) did not happen within 30 seconds")
 }
 
 private func smoke() throws {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 4 else {
-        throw NSError(domain: "LoopbackSmoke", code: 2, userInfo: [NSLocalizedDescriptionKey: "Expected relay, token and daemon UUIDs"])
+    guard arguments.count == 4 else {
+        throw fail(2, "Expected a pairing link, the machine's name and one of its agents' names")
     }
+    let (link, machine, agent) = (arguments[1], arguments[2], arguments[3])
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("amux-loopback-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let config: [String: Any] = [
         "data_dir": root.appendingPathComponent("data").path,
-        "cache_dir": root.appendingPathComponent("cache").path,
         "log_path": root.appendingPathComponent("amux.log").path,
         "device_name": "simulator-loopback",
-        "relay": ["url": "http://\(arguments[1])", "tls": "PlainLoopback"],
-        "accounts": [["id": "personal", "token": ["Static": ["bearer": arguments[2]]]]],
-        "active": "personal"
+        "discovery_scope": "loopback-smoke-\(UUID().uuidString)",
+        "lan_bind": "127.0.0.1:0",
     ]
-    let json = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
-    let observation = Observation(expected: Set(arguments.dropFirst(3)))
-    let context = Unmanaged.passRetained(observation)
-    defer { context.release() }
-    guard let handle = json.withCString({ amux_app_start($0, receive, context.toOpaque()) }) else {
-        throw NSError(domain: "LoopbackSmoke", code: 3, userInfo: [NSLocalizedDescriptionKey: "Bridge rejected loopback configuration"])
+    var error: UnsafeMutablePointer<CChar>?
+    guard let runtime = json(config).withCString({ amux_runtime_start($0, woke, nil, &error) }) else {
+        let reason = error.map { String(cString: $0) } ?? "no reason"
+        if let error { amux_string_free(error) }
+        throw fail(3, "the runtime did not start: \(reason)")
     }
-    defer { amux_app_stop(handle) }
-    let hosts = try observation.wait(handle: handle)
-    let output = String(decoding: try JSONSerialization.data(withJSONObject: hosts, options: [.sortedKeys]), as: UTF8.self)
-    print("daemon_names=\(output)")
-    print("unpaired relay hosts excluded from Fleet; discovery verified through snapshot")
+    defer { amux_runtime_stop(runtime) }
+
+    let pending = try ask("pairing") { callback, context in
+        json(["Link": link]).withCString { amux_runtime_begin_pair(runtime, $0, callback, context) }
+    }
+    guard let pending = pending as? [String: Any], let token = pending["token"] else {
+        throw fail(5, "pairing answered no token: \(pending)")
+    }
+    guard pending["name"] as? String == machine else {
+        throw fail(5, "the link reached \(pending["name"] ?? "nobody"), not \(machine)")
+    }
+    let paired = try ask("confirming") { callback, context in
+        json(token).withCString { amux_runtime_confirm_pair(runtime, $0, callback, context) }
+    }
+
+    let host = try until("\(machine) online and trusted") { () -> [String: Any]? in
+        let hosts = try read(amux_fleet_hosts(runtime)) as? [[String: Any]] ?? []
+        return hosts.first {
+            $0["name"] as? String == machine && $0["trusted"] as? Bool == true
+                && $0["presence"] as? String == "Online"
+        }
+    }
+    let names = try until("\(agent) in the fleet") { () -> [String]? in
+        let rows = try read(amux_fleet_rows(runtime, nil)) as? [[String: Any]] ?? []
+        let names = rows.compactMap { ($0["card"] as? [String: Any])?["name"] as? String }
+        return names.contains(agent) ? names.sorted() : nil
+    }
+    print("paired=\(json(paired))")
+    print("host=\(json(["name": host["name"]!, "via": host["via"]!]))")
+    print("agents=\(json(names))")
 }
 
 do {
     try smoke()
-    print("mobile worker stopped")
+    print("runtime stopped")
 } catch {
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
     exit(1)

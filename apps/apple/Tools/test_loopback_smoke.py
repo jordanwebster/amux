@@ -1,4 +1,4 @@
-"""Failure guards for simulator inventory and runner listener cleanup."""
+"""Failure guards for the simulator's fleet read and runner listener cleanup."""
 
 import json
 from pathlib import Path
@@ -28,21 +28,20 @@ class LoopbackGuards(unittest.TestCase):
         stage.assert_called_once_with(
             built, output / loopback_smoke.bridge.SIMULATOR_TRIPLE)
 
-    def test_requires_real_nonempty_inventory_and_worker_stop(self):
-        expected = {"host-id": "laptop"}
-        discovery = "unpaired relay hosts excluded from Fleet; discovery verified through snapshot"
-        inventory = "daemon_names=" + json.dumps(expected)
-        teardown = "\nmobile worker stopped\n" + discovery
-        for output in ("", "daemon_names={}" + teardown,
-                       'daemon_names={"host-id":"another-host"}' + teardown,
-                       inventory + "\n" + inventory + teardown,
-                       inventory + "\nmobile worker stopped",
-                       inventory + "\n" + discovery):
+    def test_requires_the_paired_machine_over_its_direct_link_and_its_agent(self):
+        def said(paired="desk", host="desk", via="Direct", agents=("helper",), stopped=True):
+            lines = [
+                "paired=" + json.dumps({"host_id": [1], "name": paired}),
+                "host=" + json.dumps({"name": host, "via": via}),
+                "agents=" + json.dumps(list(agents)),
+            ]
+            return "\n".join(lines + (["runtime stopped"] if stopped else []))
+
+        validate_output(said(), "desk", "helper")
+        for output in ("", said(paired="laptop"), said(host="laptop"), said(via="Relay"),
+                       said(agents=()), said(stopped=False), said() + "\n" + said()):
             with self.subTest(output=output), self.assertRaises(RuntimeError):
-                validate_output(output, expected)
-        validate_output(inventory + teardown, expected)
-        with self.assertRaises(RuntimeError):
-            validate_output("daemon_names={}" + teardown, {})
+                validate_output(output, "desk", "helper")
 
     def test_rejects_live_runner_listener_and_accepts_released_listener(self):
         listener = socket.socket()

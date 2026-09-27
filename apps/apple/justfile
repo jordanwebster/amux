@@ -159,8 +159,9 @@ perf *ARGS: rust package tools
     if [ "${1-}" = -- ]; then shift; fi; scripts/quiet; scripts/with iphone -- {{bounded}} 2700 {{python}} -B scripts/ios-perf.py "$@"
 
 # Link the driving bridge from a bare Swift executable, run it on the
-# simulator against a served test network and read the relay inventory back.
-# Link the driving bridge from bare Swift and read a served relay back.
+# simulator, pair it with a machine a served test network runs by the link
+# that machine prints, and read the machine and its agents back.
+# Link the driving bridge from bare Swift and pair it with a served machine.
 loopback-smoke: tools
     scripts/with iphone -- {{bounded}} 1800 {{python}} -B apps/apple/Tools/loopback_smoke.py
 

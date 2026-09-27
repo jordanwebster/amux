@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Observe real relay inventory from a Swift executable on the iOS simulator."""
+"""Pair a bare Swift executable on the iOS simulator with a served machine and read its fleet back."""
 
 import json
 import os
@@ -18,14 +18,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import ios_bridge as bridge
 
 
-def control(address: str, request: object) -> None:
+TOPOLOGY = "journeys/topologies/phone-loopback.json"
+MARKER = "runtime stopped"
+
+
+def control(address: str, request: object) -> object:
+    """One request to the served net's door, and what it answered."""
     host, port = address.rsplit(":", 1)
-    with socket.create_connection((host, int(port)), timeout=15) as connection:
+    with socket.create_connection((host, int(port)), timeout=60) as connection:
         connection.sendall((json.dumps(request) + "\n").encode())
         with connection.makefile("rb") as stream:
             reply = json.loads(stream.readline())
-        if "Ack" not in reply:
-            raise RuntimeError(f"Runner refused {request}: {reply}")
+    if "ok" not in reply:
+        raise RuntimeError(f"Runner refused {request}: {reply}")
+    return reply["ok"]
 
 
 def released(address: str) -> None:
@@ -36,62 +42,94 @@ def released(address: str) -> None:
         if connection.connect_ex(endpoint) == 0:
             raise RuntimeError(f"Runner listener survived shutdown: {address}")
     with socket.socket() as listener:
-        # Closed accepted connections may remain in TIME_WAIT. Reuse the
-        # address as a server would; the failed connect above proves closure.
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(endpoint)
 
 
-def read_ready(process: subprocess.Popen) -> dict:
+def read_line(stream, what: str, timeout: float = 120) -> str:
+    """One line from a child's output, or a named failure when none comes."""
     lines = queue.Queue()
-    threading.Thread(target=lambda: lines.put(process.stdout.readline()), daemon=True).start()
+    threading.Thread(target=lambda: lines.put(stream.readline()), daemon=True).start()
     try:
-        return json.loads(lines.get(timeout=30))
+        line = lines.get(timeout=timeout)
     except queue.Empty as error:
-        raise RuntimeError("Runner did not become ready within 30 seconds") from error
+        raise RuntimeError(f"{what} within {timeout:.0f} seconds") from error
+    if not line:
+        raise RuntimeError(f"{what}: the process ended first")
+    return line
 
 
-def validate_output(output: str, expected: dict[str, str]) -> None:
-    lines = [line.removeprefix("daemon_names=") for line in output.splitlines() if line.startswith("daemon_names=")]
-    if len(lines) != 1 or not expected:
-        raise RuntimeError(f"Expected one nonempty daemon inventory: {output}")
-    observed = json.loads(lines[0])
-    markers = {"mobile worker stopped", "unpaired relay hosts excluded from Fleet; discovery verified through snapshot"}
-    if not observed or observed != expected or not markers.issubset(output.splitlines()):
-        raise RuntimeError(f"Simulator inventory or teardown mismatch: {output}")
+def read_ready(process: subprocess.Popen) -> dict:
+    # The first start builds amux and the fake providers beside the runner.
+    return json.loads(read_line(process.stdout, "Runner did not become ready", timeout=600))
+
+
+def pairing_link(amux: Path, config: str, environment: dict) -> tuple[subprocess.Popen, str]:
+    """The link a served machine prints when it opens pairing, the way a
+    person asks for it: `amux pair --qr --print-link`."""
+    process = subprocess.Popen(
+        [str(amux), "--config", config, "pair", "--qr", "--print-link"],
+        env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    while True:
+        line = read_line(process.stdout, "the machine printed no pairing link", timeout=60)
+        if line.startswith("Pairing link: "):
+            return process, line.removeprefix("Pairing link: ").strip()
+
+
+def validate_output(output: str, machine: str, agent: str) -> None:
+    lines = output.splitlines()
+    def one(prefix: str) -> object:
+        found = [line.removeprefix(prefix) for line in lines if line.startswith(prefix)]
+        if len(found) != 1:
+            raise RuntimeError(f"Expected one {prefix} line: {output}")
+        return json.loads(found[0])
+    paired, host, agents = one("paired="), one("host="), one("agents=")
+    if paired.get("name") != machine or host.get("name") != machine:
+        raise RuntimeError(f"Paired with the wrong machine: {output}")
+    if host.get("via") != "Direct":
+        raise RuntimeError(f"{machine} was not reached over its direct link: {output}")
+    if agent not in agents:
+        raise RuntimeError(f"{agent} is missing from the fleet: {output}")
+    if MARKER not in lines:
+        raise RuntimeError(f"The runtime did not stop: {output}")
 
 
 def round_trip(executable: Path, device: str) -> str:
-    with tempfile.TemporaryDirectory(prefix="amux-ios-loopback-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="amux-lb-", dir="/tmp") as temporary:
         root = Path(temporary)
-        environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
-        runner = subprocess.Popen([
-            *bridge.TESTNET_SERVE, "--topology", "journeys/topologies/two-hosts.json",
-        ], env=environment, stdout=subprocess.PIPE, text=True)
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("AMUX_LOG", "AMUX_CONFIG")}
+        environment |= {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
+        runner = subprocess.Popen(
+            [*bridge.TESTNET_SERVE, TOPOLOGY],
+            env=environment, stdout=subprocess.PIPE, text=True)
+        pairing = None
         try:
             ready = read_ready(runner)
-            expected = {daemon["host_id"]: daemon["name"] for daemon in ready["daemons"]}
-            token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
-            output = run("xcrun", "simctl", "spawn", device, str(executable), ready["relay"], token, *expected, timeout=60)
-            validate_output(output, expected)
+            desk, = ready["hosts"]
+            agent, = [agent["name"] for agent in ready["agents"]]
+            pairing, link = pairing_link(Path("target/debug/amux").resolve(), desk["config"], environment)
+            try:
+                output = run("xcrun", "simctl", "spawn", device, str(executable), link, desk["name"], agent, timeout=90)
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(f"The Swift executable failed: {error.stderr}{error.stdout}") from error
+            validate_output(output, desk["name"], agent)
             control(ready["control"], "Shutdown")
-            if runner.wait(timeout=15) != 0:
+            if runner.wait(timeout=30) != 0:
                 raise RuntimeError("Runner failed during shutdown")
             if runner.stdout.read():
                 raise RuntimeError("Runner wrote unexpected stdout after readiness")
-            released(ready["relay"])
             released(ready["control"])
-            if list(root.iterdir()):
-                raise RuntimeError("Runner left temporary state after shutdown")
-            return output + "\nRunner teardown verified: successful exit, listeners released, temporary state removed\n"
+            return output + "\nRunner teardown verified: successful exit, control listener released\n"
         finally:
-            if runner.poll() is None:
-                runner.terminate()
-                try:
-                    runner.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    runner.kill()
-                    runner.wait(timeout=5)
+            for process in (pairing, runner):
+                if process is not None and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
             runner.stdout.close()
 
 
