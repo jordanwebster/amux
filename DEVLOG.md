@@ -1,3 +1,14 @@
+2026-09-27 — **A question tool row says what was answered.**
+A Claude AskUserQuestion call's row now carries each question's picked
+options and typed answer, read in `ui-view` from the result both Claude
+kinds record (`answers` maps each question to the picked labels joined by
+", ", then anything typed; a "(Recommended)" tag is lifted), instead of the
+tool's raw result text. The row's resolution is open, answered or
+dismissed: a question cannot be declined, only left by the person or a
+stop. The terminal draws it as the other question rows do: "Answered
+<question> · <answer>" for one question, a line per header for several. The
+view goldens print each question row's answers ahead of the clipped row.
+
 2026-09-27 — **Pairing, peers and sign-in are CLI verbs again.**
 `amux pair` opens pairing mode on the selected profile and shows a PIN and
 the addresses this host listens at (`--qr` shows a QR code carrying an

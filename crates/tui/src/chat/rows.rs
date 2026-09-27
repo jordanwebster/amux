@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ui_view::{
     AnswerView, AskRow, AttachmentView, Decision, DecisionView, ExploreVerb, FileChangeView,
-    PlanVerdict, Resolution, Row, RowKind, RunInfo, Segment, ToolStateView,
+    PlanVerdict, QuestionView, Resolution, Row, RowKind, RunInfo, Segment, ToolStateView,
 };
 use wire::{BoundaryKind, EnvelopeKind, SendState};
 
@@ -852,29 +852,61 @@ fn rule(words: &str, width: usize, theme: Theme) -> Line<'static> {
     line
 }
 
+/// Questions asked as the work: one reads "Answered <question> · <answer>",
+/// several list each header with its answer.
+fn questions_lines(
+    questions: &[QuestionView],
+    answers: &[AnswerView],
+    note: Option<&str>,
+    resolution: Resolution,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let glyph = resolution_glyph(resolution, theme);
+    let verb = resolution_verb(resolution, "Answered");
+    let mut lines = Vec::new();
+    if questions.len() == 1 {
+        let question = &questions[0];
+        let subject = match answers.first().map(answer_text) {
+            Some(answer) if !answer.is_empty() => format!("{} · {answer}", question.question),
+            _ => question.question.clone(),
+        };
+        lines.push(head(glyph, verb, &subject, "", width, theme));
+    } else {
+        let subject = format!("{} questions", questions.len());
+        lines.push(head(glyph, verb, &subject, "", width, theme));
+        for (question, answer) in questions.iter().zip(answers) {
+            let label = if question.header.is_empty() {
+                &question.question
+            } else {
+                &question.header
+            };
+            let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
+            push(&mut line, format!("{label}: "), theme.muted(), width);
+            push(&mut line, answer_text(answer), theme.text(), width);
+            lines.push(line);
+        }
+    }
+    if let Some(note) = note {
+        let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
+        push(
+            &mut line,
+            format!("Note: {}", first_line(note)),
+            theme.muted(),
+            width,
+        );
+        lines.push(line);
+    }
+    lines
+}
+
 fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'static>> {
     match ask {
         AskRow::Question {
             questions,
-            answer,
-            answered,
-        } => {
-            let question = questions
-                .first()
-                .map(|q| q.question.as_str())
-                .unwrap_or_default();
-            let (glyph, verb) = if *answered {
-                (("✔", theme.ok()), "Answered")
-            } else {
-                (("?", theme.accent()), "Asking")
-            };
-            let mut lines = vec![head(glyph, verb, question, "", width, theme)];
-            if !answer.is_empty() {
-                let limit = if open { OPEN_LINES } else { 1 };
-                lines.extend(detail(answer, width, theme.muted(), limit, theme));
-            }
-            lines
-        }
+            answers,
+            resolution,
+        } => questions_lines(questions, answers, None, *resolution, width, theme),
         AskRow::Plan { plan, verdict } => {
             let (glyph, verb) = match verdict {
                 PlanVerdict::Open => (("?", theme.accent()), "Plan proposed"),
@@ -893,41 +925,14 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             answers,
             note,
             resolution,
-        } => {
-            let glyph = resolution_glyph(*resolution, theme);
-            let verb = resolution_verb(*resolution, "Answered");
-            let mut lines = Vec::new();
-            if questions.len() == 1 {
-                let question = &questions[0];
-                let meta = answers.first().map(answer_text).unwrap_or_default();
-                lines.push(head(glyph, verb, &question.question, &meta, width, theme));
-            } else {
-                let subject = format!("{} questions", questions.len());
-                lines.push(head(glyph, verb, &subject, "", width, theme));
-                for (question, answer) in questions.iter().zip(answers) {
-                    let label = if question.header.is_empty() {
-                        &question.question
-                    } else {
-                        &question.header
-                    };
-                    let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
-                    push(&mut line, format!("{label}: "), theme.muted(), width);
-                    push(&mut line, answer_text(answer), theme.text(), width);
-                    lines.push(line);
-                }
-            }
-            if let Some(note) = note {
-                let mut line = Line::from(Span::raw(" ".repeat(INDENT)));
-                push(
-                    &mut line,
-                    format!("Note: {}", first_line(note)),
-                    theme.muted(),
-                    width,
-                );
-                lines.push(line);
-            }
-            lines
-        }
+        } => questions_lines(
+            questions,
+            answers,
+            note.as_deref(),
+            *resolution,
+            width,
+            theme,
+        ),
         AskRow::Form {
             server,
             message,

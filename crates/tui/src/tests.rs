@@ -995,3 +995,34 @@ fn raw_attach_is_only_for_terminals_on_this_machine() {
     assert!(refusal(&agent(b"a", Kind::ClaudeSdk)).is_some_and(|why| why.contains("its chat")));
     assert!(refusal(&agent(b"b", Kind::ClaudePty)).is_some_and(|why| why.contains("its chat")));
 }
+
+#[test]
+fn an_answered_question_row_reads_the_question_and_what_was_picked() {
+    for (kind, name, row) in [
+        (
+            Kind::ClaudePty,
+            "recorded_question_single",
+            "Answered Which color do you prefer? · Red",
+        ),
+        (
+            Kind::ClaudePty,
+            "recorded_question_other_single",
+            "Answered Which color do you prefer? · \"a warm ochre\"",
+        ),
+        (
+            Kind::ClaudeSdk,
+            "recorded_question_every_shape",
+            "Answered 4 questions",
+        ),
+    ] {
+        let (_, state, at) = fixtures::frames(kind, name).pop().unwrap();
+        let mut view = ChatView::new(b"agent".to_vec(), at, false);
+        let (buffer, _) = draw(&mut view, &state, at, W, H, theme());
+        let screen = text(&buffer);
+        assert!(screen.contains(row), "{name}:\n{screen}");
+        if kind == Kind::ClaudeSdk {
+            assert!(screen.contains("Tools: Hammer, Drill"), "{screen}");
+            assert!(screen.contains("Snack: \"Dried mango\""), "{screen}");
+        }
+    }
+}

@@ -11,7 +11,7 @@ use wire::{
     ToolCall, ToolState, TurnOutcome,
 };
 
-use crate::ask::{QuestionView, lifted, question, question_view};
+use crate::ask::{QuestionView, lifted, question, question_view, recorded_answers};
 use crate::segments::{Segment, segments};
 
 /// How many lines of a command's output a row carries.
@@ -192,10 +192,13 @@ pub enum RowKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AskRow {
+    /// A Claude AskUserQuestion call: its questions, then what was picked
+    /// and typed for each, read from the tool's recorded result.
     Question {
         questions: Vec<QuestionView>,
-        answer: String,
-        answered: bool,
+        /// One per question once answered, in the ask's order.
+        answers: Vec<AnswerView>,
+        resolution: Resolution,
     },
     Plan {
         plan: String,
@@ -945,11 +948,23 @@ fn claude_tool(
             "Agent" | "Task" => subagent(state, held, tool, &input),
             "AskUserQuestion" => {
                 let questions = question_view(&input);
-                let answered = matches!(view, ToolStateView::Succeeded);
+                // A question cannot be declined: one that closed without
+                // answers was dismissed, by the person or by a stop.
+                let resolution = match view {
+                    ToolStateView::Pending | ToolStateView::Running => Resolution::Open,
+                    ToolStateView::Succeeded => Resolution::Answered,
+                    ToolStateView::Denied | ToolStateView::Failed | ToolStateView::Cancelled => {
+                        Resolution::Dismissed
+                    }
+                };
+                let answers = match resolution {
+                    Resolution::Answered => recorded_answers(&questions, &tool.outcome_json),
+                    _ => Vec::new(),
+                };
                 RowKind::Ask(AskRow::Question {
                     questions,
-                    answer: tool.outcome_text.clone(),
-                    answered,
+                    answers,
+                    resolution,
                 })
             }
             "ExitPlanMode" => {

@@ -62,8 +62,41 @@ fn clip(line: String) -> String {
     clipped
 }
 
+/// A question row's answers, ahead of the clipped row so they stay legible.
+fn answered(kind: &ui_view::RowKind) -> String {
+    let ui_view::RowKind::Ask(ui_view::AskRow::Question {
+        questions,
+        answers,
+        resolution,
+    }) = kind
+    else {
+        return String::new();
+    };
+    let answers: Vec<String> = questions
+        .iter()
+        .zip(answers)
+        .map(|(question, answer)| {
+            let mut said = answer.picked.join(", ");
+            if let Some(other) = &answer.other {
+                if !said.is_empty() {
+                    said.push_str(", ");
+                }
+                let _ = write!(said, "{other:?}");
+            }
+            format!("{} = {said}", question.header)
+        })
+        .collect();
+    format!("[{resolution:?}: {}] ", answers.join("; "))
+}
+
 fn describe_row(row: &ui_view::Row) -> String {
-    let mut line = format!("{:>4} {} {:?}", row.order, row.id, row.kind);
+    let mut line = format!(
+        "{:>4} {} {}{:?}",
+        row.order,
+        row.id,
+        answered(&row.kind),
+        row.kind
+    );
     if let Some(run) = &row.run {
         let _ = write!(
             line,
