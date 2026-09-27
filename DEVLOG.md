@@ -1,3 +1,19 @@
+2026-09-28 — **The phone runs the leave-and-recover and attachment-or-review stories.**
+leave-and-recover: after a first run makes the phone's replica, the desk
+moves on while the app is closed and then goes out of reach (its daemon
+stops, its agent keeps its journal). Opened again, the app paints the chat
+from its own store without the turn it never received, says the desk is out
+of reach and keeps a draft it will not send; when the desk returns the
+missed turn appears once and only then can the draft go; it reaches the desk
+once and is answered; through the desk's power loss and Reset the rows stay
+on screen and the chat reads the agent exited. attachment-or-review: text, a
+twelve-line paste that becomes one chip, more text and a review of the
+desk's working tree with a comment on one line reach the desk as one prompt,
+the patch's bytes on the desk hashing to its name. The app's driving door
+gains `perform`, which runs an element's named accessibility action (how a
+review line is selected without a drag). A paste beside a word keeps the
+space the field adds in the sentence rather than in the pasted text.
+
 2026-09-28 — **A crashed served daemon comes back on the port it listened on.**
 The net crashes a daemon in process by dropping it, and its LAN listener
 let go of its port only once its last task had. A daemon restarted at once

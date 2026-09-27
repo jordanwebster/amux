@@ -326,6 +326,11 @@ class PhoneJourney:
                 time.sleep(0.5)
         raise RuntimeError("the app's door did not open within a minute")
 
+    def quit(self) -> None:
+        """The app closed, as a person swipes it away."""
+        simctl("terminate", self.udid, BUNDLE_ID, timeout=60)
+        self.actions.append("quit the app")
+
     def _running(self) -> bool:
         listed = subprocess.run(
             ["xcrun", "simctl", "spawn", self.udid, "launchctl", "list"], capture_output=True, text=True, timeout=60

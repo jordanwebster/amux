@@ -3,46 +3,44 @@ home |  | signed-out | 0,62,402,778
 home.title | Agents, switch account | Agents | 60,65,104,46
 home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
 home.newAgent | New Agent |  | 345,74,44,44
-home.row.<decision-pty> | decision-pty, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
-home.row.<decision-pty>.age.volatile | <volatile>
-home.row.<decision-pty>.detail.volatile | <volatile>
-home.row.<reviewer> | reviewer, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,229,366,70
-home.row.<reviewer>.age.volatile | <volatile>
-home.row.<reviewer>.detail.volatile | <volatile>
-home.row.<keeper> | keeper, Remember this recovery turn., Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,300,366,91
+home.row.<keeper> | keeper, Remember this recovery turn., Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,159,366,91
 home.row.<keeper>.age.volatile | <volatile>
 home.row.<keeper>.detail.volatile | <volatile>
-home.row.<decision-codex> | decision-codex, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,392,366,70
+home.row.<decision-pty> | decision-pty, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,251,366,70
+home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.detail.volatile | <volatile>
+home.row.<reviewer> | reviewer, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,321,366,70
+home.row.<reviewer>.age.volatile | <volatile>
+home.row.<reviewer>.detail.volatile | <volatile>
+home.row.<decision-codex> | decision-codex, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,392,366,70
 home.row.<decision-codex>.age.volatile | <volatile>
 home.row.<decision-codex>.detail.volatile | <volatile>
-home.row.<decision-sdk> | decision-sdk, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,462,366,70
+home.row.<decision-sdk> | decision-sdk, Exited, while the daemon was away, desk, /tmp/amux-phone-journey/net/desk/work, <age> | exited | 18,462,366,70
 home.row.<decision-sdk>.age.volatile | <volatile>
 home.row.<decision-sdk>.detail.volatile | <volatile>
-chat |  | reviewer | 0,62,402,778
-chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
+chat |  | keeper | 0,62,402,778
+chat.row.prompt | Remember this recovery turn. |  | 18,132,366,40
+chat.row.boundary | Started |  | 18,184,366,16
+chat.row.prose | The recovery state is safely stored. | final | 18,211,366,20
+chat.prose.render |  | rendered | 18,211,366,20
+chat.row.turn-end | <volatile>
+chat.row.prompt | Carry on. |  | 18,271,366,40
+chat.row.prose | A second turn arrived while you were away. | final | 18,322,366,20
+chat.prose.render |  | rendered | 18,322,366,20
+chat.row.turn-end | <volatile>
+chat.row.prompt | Pick up where we left off. |  | 18,382,366,40
+chat.row.prose | Back after the restart. | final | 18,433,366,20
+chat.prose.render |  | rendered | 18,433,366,20
+chat.row.turn-end | <volatile>
+chat.header | Exited · while the daemon was away | live | 18,64,295,54
 chat.back | Back |  | 16,68,42,46
-chat.title | reviewer | reviewer | 51,72,156,38
-chat.changes | +2 −1 | shown | 280,73,60,36
+chat.title | keeper | keeper | 51,72,250,38
 chat.more | More |  | 344,69,44,44
-chat.attachment | Pasted text · 12 lines |  | 26,721,215,26
-chat.attachment.remove | Remove |  | 211,719,31,30
-chat.field | Message reviewer | Please check against | 26,755,350,20
+chat.field | keeper has exited · a message resumes it |  | 26,755,350,20
 chat.attach | Attach |  | 26,783,37,36
 chat.dictate | Dictate | idle | 55,781,33,40
-chat.clear | Clear |  | 73,782,38,37
-chat.send | Send |  | 342,784,34,34
-review |  | 0 | 0,62,402,778
-review.file.0 | deploy.sh | open | 0,153,402,41
-review.files | All Files |  | 299,153,77,40
-review.line.0.0.0 | #!/bin/sh |  | 0,223,402,19
-review.line.0.0.1 | echo deploying |  | 0,242,402,19
-review.line.0.0.2 | rsync build/ prod:/srv |  | 0,261,402,19
-review.line.0.0.3 | rsync --delete build/ prod:/srv | selected | 0,280,402,19
-review.line.0.0.4 | echo done |  | 0,299,402,19
-review.deselect | Cancel |  | 30,780,83,44
-review.comment | Comment on 1 line |  | 197,780,175,44
-review.back | Back to reviewer |  | 17,51,79,46
-review.summary | 1 file, 2 added, 1 removed |  | 18,128,104,17
+chat.model | claude-fake-1 · Default |  | 83,784,114,34
+chat.resume | Resume |  | 287,784,89,34 (disabled)
 hosts |  | 1 reachable | 0,62,402,778
 hosts.title |  | Hosts | 18,72,69,32
 hosts.subtitle |  | 1 reachable | 18,105,79,16
@@ -64,19 +62,23 @@ you.support | Contact Support |  | 18,453,366,46
 you.report | Report a Problem |  | 18,499,366,46
 you.dump | Export Diagnostics |  | 18,545,366,46
 you.help.caption |  |  | 18,599,354,31
- | Back to reviewer |  | 17,51,79,46
- | Review |  | 18,90,84,32
- | 1 file, 2 added, 1 removed |  | 18,128,104,17
- | Cancel |  | 46,792,51,20
- | Comment on 1 line |  | 197,780,175,44
- | deploy.sh | Open | 18,163,279,21
- | All Files |  | 299,153,77,40
- | @@ -1,3 +1,4 @@ |  | 18,200,117,17
- | Line 1, #!/bin/sh |  | 0,223,402,19
- | Line 2, echo deploying |  | 0,242,402,19
- | Removed line 3, rsync build/ prod:/srv |  | 0,261,402,19
- | Added line 3, rsync --delete build/ prod:/srv |  | 0,280,402,19
- | Added line 4, echo done |  | 0,299,402,19
+ | Back |  | 16,68,42,46
+ | keeper, Exited · while the daemon was away |  | 51,72,250,38
+ | More |  | 344,69,44,44
+ | Remember this recovery turn. |  | 139,132,245,40
+ | Started |  | 18,184,366,16
+ | The recovery state is safely stored. |  | 18,211,366,20
+ | Worked <t> · $0.00 |  | 45,243,130,16
+ | Carry on. |  | 290,271,94,40
+ | A second turn arrived while you were away. |  | 18,322,366,20
+ | Worked <t> · $0.00 |  | 45,354,130,16
+ | Pick up where we left off. |  | 174,382,210,40
+ | Back after the restart. |  | 18,433,366,20
+ | Worked <t> · $0.00 |  | 45,465,130,16
+ | Attach |  | 26,783,37,36
+ | Dictate |  | 55,781,33,40
+ | claude-fake-1, Default |  | 83,784,114,34
+ | Resume |  | 287,784,89,34 (disabled)
  | Hosts |  | 18,72,69,32
  | 1 reachable |  | 18,105,79,16
  | ON THIS NETWORK |  | 20,137,105,14

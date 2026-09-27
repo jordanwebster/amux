@@ -366,8 +366,8 @@ final class ChatModelTests: XCTestCase {
         model.type("Please check " + log)
         XCTAssertEqual(model.draft, "Please check ")
         XCTAssertEqual(model.attachments, [.text(name: "Pasted text", text: log)])
-        model.type("Please check " + log + " against")
-        XCTAssertEqual(model.draft, "Please check  against")
+        model.type("Please check " + log + "against")
+        XCTAssertEqual(model.draft, "Please check against")
         XCTAssertEqual(model.attachments.count, 1)
     }
 

@@ -28,7 +28,7 @@ chat.attachment | Pasted text · 12 lines |  | 26,721,215,26
 chat.attachment.remove | Remove |  | 211,719,31,30
 chat.attachment | Review · 1 comment |  | 247,721,189,26
 chat.attachment.remove | Remove |  | 405,719,31,30
-chat.field | Message reviewer | Please check  against | 26,755,350,20
+chat.field | Message reviewer | Please check against | 26,755,350,20
 chat.attach | Attach |  | 26,783,37,36
 chat.dictate | Dictate | idle | 55,781,33,40
 chat.clear | Clear |  | 73,782,38,37

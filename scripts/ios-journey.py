@@ -414,19 +414,10 @@ def attachment_or_review(journey: PhoneJourney) -> list[str]:
 
     # Text, a long paste that becomes one chip, more text.
     journey.type("chat.field", "Please check")
-    time.sleep(1.5)
-    if os.environ.get("PASTE_PEEK"):
-        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"] + ".before.png"], check=True)
     journey.paste("chat.field", PASTED)
     journey.wait(lambda drawn: labelled(drawn, "Pasted text"), "the paste as one chip")
-    if os.environ.get("PASTE_PEEK"):
-        time.sleep(1)
-        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"]], check=True)
-        Path(os.environ["PASTE_PEEK"] + ".txt").write_text("\n".join(
-            f"{n} {e.get('frame')} {e.get('label')!r} {e.get('value')!r}" for n, e in journey.elements().items() if n.startswith("chat.")))
-        time.sleep(3)
-        subprocess.run(["xcrun", "simctl", "io", journey.udid, "screenshot", os.environ["PASTE_PEEK"] + ".later.png"], check=True)
-    journey.type("chat.field", " against")
+    # The field keeps the space it put between the words and the paste.
+    journey.type("chat.field", "against")
 
     # A review of the desk's working tree, with a comment on one line.
     journey.wait_for("chat.changes")
@@ -482,6 +473,105 @@ def attachment_or_review(journey: PhoneJourney) -> list[str]:
         control,
         "the review names a patch the desk computed; its bytes on the desk hash to that name and hold the edit",
         "the chat opened again shows what was sent and the reply",
+    ]
+
+
+FIRST = "The recovery state is safely stored."
+SECOND = "A second turn arrived while you were away."
+THIRD = "Back after the restart."
+DRAFT = "Pick up where we left off."
+
+
+def leave_and_recover(journey: PhoneJourney) -> list[str]:
+    # A real first run makes the phone's replica of the desk's agent.
+    journey.launch()
+    pair_by_code(journey, "desk")
+    keeper = open_agent(journey, "keeper")
+    journey.wait(lambda drawn: labelled(drawn, FIRST) and "chat.row.turn-end" in drawn, "the first turn")
+    journey.quit()
+
+    # The desk moves on while the phone is closed, then goes out of reach:
+    # its daemon stops, and its agent keeps its journal.
+    journey.request({"Send": {"agent": "keeper", "text": "Carry on."}})
+    journey.wait_chat(
+        "desk", "keeper", lambda chat: chat["phase"] == "IDLE" and any(SECOND in i["text"] for i in chat["items"]),
+        "desk-moved-on",
+    )
+    journey.request({"StopDaemon": {"host": "desk"}})
+    away = time.monotonic()
+
+    # Opened again, the app paints the chat from its own store: the cached
+    # tail, the desk out of reach, a composer that keeps a draft and will
+    # not send it.
+    journey.relaunch()
+    journey.tap("tab.agents")
+    journey.wait_for(f"home.row.{keeper}")
+    journey.tap(f"home.row.{keeper}")
+    drawn = journey.wait(
+        lambda drawn: labelled(drawn, FIRST) and labelled(drawn, "out of reach"), "the cached chat, out of reach"
+    )
+    if labelled(drawn, SECOND):
+        raise RuntimeError("the cached chat shows a turn the phone never received")
+    journey.type("chat.field", DRAFT)
+    drawn = journey.wait(lambda drawn: drawn.get("chat.field", {}).get("value") == DRAFT, "the draft written")
+    if drawn.get("chat.send", {}).get("enabled"):
+        raise RuntimeError("the phone offers to send to a desk out of reach")
+    detached = reopen(journey, keeper, lambda drawn: drawn.get("chat.field", {}).get("value") == DRAFT)
+    if not labelled(detached, "out of reach") or labelled(detached, SECOND):
+        raise RuntimeError("the chat opened again is not the cached tail out of reach")
+    journey.screen("cached-offline", volatile=("chat.row.turn-end",))
+    journey.observations["seconds-out-of-reach"] = round(time.monotonic() - away, 1)
+
+    # The desk comes back: the missed turn appends once, and the chat says
+    # it is current (the draft can go) only once it has.
+    journey.request({"RestartDaemon": {"host": "desk"}})
+    deadline = time.monotonic() + 60
+    while True:
+        drawn = journey.elements()
+        sendable = drawn.get("chat.send", {}).get("enabled") is True
+        if sendable and not labelled(drawn, SECOND):
+            raise RuntimeError("the phone was ready to send before the missed turn arrived")
+        if sendable:
+            break
+        if time.monotonic() > deadline:
+            raise RuntimeError("the chat did not come back after the desk did")
+        time.sleep(0.1)
+    journey.actions.append("reached the missed turn, then a composer ready to send")
+    if replies(drawn, SECOND) != 1 or drawn.get("chat.field", {}).get("value") != DRAFT:
+        raise RuntimeError("the missed turn did not append once with the draft kept")
+    journey.tap("chat.send")
+    journey.wait(lambda drawn: labelled(drawn, THIRD), "the reply to the kept draft")
+    after = journey.wait_chat(
+        "desk", "keeper", lambda chat: chat["phase"] == "IDLE" and any(THIRD in i["text"] for i in chat["items"]),
+        "sent-after-return",
+    )
+    reflected_once(after, DRAFT)
+    control = negative_control(reflected_once, after, DRAFT + " (a wrong draft)")
+    reopen(journey, keeper, lambda drawn: labelled(drawn, THIRD))
+    journey.screen("reconciled", volatile=("chat.row.turn-end",))
+
+    # The desk loses power back to a checkpoint: the phone's replica is
+    # Reset, and its rows stay on screen until the rebuilt chat swaps in.
+    journey.request({"Checkpoint": {"host": "desk"}})
+    journey.request({"Rewind": {"host": "desk", "cuts": []}})
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        drawn = journey.elements()
+        if not (labelled(drawn, FIRST) and labelled(drawn, THIRD)):
+            raise RuntimeError("rows left the screen during the Reset")
+        time.sleep(0.05)
+    journey.actions.append("the rows stayed on screen through the Reset")
+    # A restored drive has no running processes: the agent reads exited.
+    reopen(journey, keeper, lambda drawn: labelled(drawn, THIRD) and labelled(drawn, "Exited"))
+    journey.screen("after-reset", volatile=("chat.row.turn-end",))
+    return [
+        "opened again with the desk out of reach, the app painted the cached chat from its own store, "
+        "without the turn it never received, and would not send",
+        "the draft typed while out of reach was kept",
+        "when the desk came back the missed turn appeared once, and only then was the draft ready to send",
+        f"the kept draft reached the desk once and was answered",
+        control,
+        "rows stayed on screen through the desk's rewind and Reset, and the chat reads the agent exited",
     ]
 
 
@@ -620,6 +710,7 @@ STORIES = {
     "keep-authority": keep_authority,
     "manage-agent": manage_agent,
     "attachment-or-review": attachment_or_review,
+    "leave-and-recover": leave_and_recover,
 }
 
 

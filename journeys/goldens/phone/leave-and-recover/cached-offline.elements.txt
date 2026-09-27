@@ -1,0 +1,95 @@
+shell |  | agents | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | Nothing needs you · 0 running | 60,105,209,16
+home.exceptions | Sign in to reach your agents from anywhere | Sign in to reach your agents from anywhere | 18,137,366,44
+home.row.<decision-pty> | decision-pty, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,70
+home.row.<decision-pty>.age.volatile | <volatile>
+home.row.<decision-pty>.detail.volatile | <volatile>
+home.row.<reviewer> | reviewer, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,292,366,70
+home.row.<reviewer>.age.volatile | <volatile>
+home.row.<reviewer>.detail.volatile | <volatile>
+home.row.<keeper> | keeper, Remember this recovery turn., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,362,366,91
+home.row.<keeper>.age.volatile | <volatile>
+home.row.<keeper>.detail.volatile | <volatile>
+home.row.<decision-codex> | decision-codex, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,454,366,70
+home.row.<decision-codex>.age.volatile | <volatile>
+home.row.<decision-codex>.detail.volatile | <volatile>
+home.row.<decision-sdk> | decision-sdk, desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,524,366,70
+home.row.<decision-sdk>.age.volatile | <volatile>
+home.row.<decision-sdk>.detail.volatile | <volatile>
+chat |  | keeper | 0,62,402,778
+chat.row.prompt | Remember this recovery turn. |  | 18,132,366,40
+chat.row.boundary | Started |  | 18,184,366,16
+chat.row.prose | The recovery state is safely stored. | final | 18,211,366,20
+chat.prose.render |  | rendered | 18,211,366,20
+chat.row.turn-end | Worked <t> · $0.00 |  | 18,243,157,16
+chat.header | desk · away | detached | 18,64,147,54
+chat.back | Back |  | 16,68,42,46
+chat.title | keeper | keeper | 51,72,102,38
+chat.more | More |  | 344,69,44,44
+chat.field | desk is out of reach · your draft is kept | Pick up where we left off. | 26,755,350,20
+chat.attach | Attach |  | 26,783,37,36
+chat.dictate | Dictate | idle | 55,781,33,40
+chat.clear | Clear |  | 73,782,38,37
+chat.model | claude-fake-1 · Default |  | 111,784,114,34
+chat.send | Send |  | 342,784,34,34 (disabled)
+hosts |  | 1 offline | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 1 offline | 18,105,65,16
+hosts.row.<desk> | desk, offline, its agents’ state is unknown | offline | 18,159,366,64
+hosts.caption.offline |  | Agents on an offline host report their state as unknown. | 18,231,293,37
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,354,366,46
+hosts.caption.devices |  |  | 18,408,320,18
+you |  | none | 0,62,402,778
+you.title |  | You | 18,62,46,40
+you.add | Add Account |  | 18,142,366,46
+you.signIn | Sign In |  | 18,206,366,44
+you.signIn.caption |  |  | 18,258,296,18
+you.appearance |  | system | 18,317,366,50
+you.appearance.light | Light | not chosen | 200,319,56,46
+you.appearance.dark | Dark | not chosen | 256,319,49,46
+you.appearance.system | System | chosen | 305,319,63,46
+you.identity | <volatile>
+you.support | Contact Support |  | 18,453,366,46
+you.report | Report a Problem |  | 18,499,366,46
+you.dump | Export Diagnostics |  | 18,545,366,46
+you.help.caption |  |  | 18,599,354,31
+ | Back |  | 16,68,42,46
+ | keeper, desk · away |  | 51,72,102,38
+ | More |  | 344,69,44,44
+ | Remember this recovery turn. |  | 139,132,245,40
+ | Started |  | 18,184,366,16
+ | The recovery state is safely stored. |  | 18,211,366,20
+ | Worked <t> · $0.00 |  | 45,243,130,16
+ | Attach |  | 26,783,37,36
+ | Dictate |  | 55,781,33,40
+ | Clear |  | 73,783,38,37
+ | claude-fake-1, Default |  | 111,784,114,34
+ | Send |  | 342,784,34,34 (disabled)
+ | Hosts |  | 18,72,69,32
+ | 1 offline |  | 18,105,65,16
+ | OFFLINE |  | 20,137,49,14
+ | desk, offline, its agents’ state is unknown |  | 18,159,366,64
+ | Agents on an offline host report their state as unknown. |  | 18,231,293,37
+ | THIS PHONE |  | 20,286,70,14
+ | Identity, amux-iphone-1 · <key> |  | 18,308,366,46
+ | Paired Devices, 1 |  | 18,354,366,46
+ | Revoking a device ends its access immediately. |  | 18,408,320,18
+ | You |  | 18,70,46,32
+ | ACCOUNTS |  | 20,120,56,14
+ | Add Account |  | 18,142,366,46
+ | Sign In |  | 18,206,366,44
+ | Sign in to reach your agents from anywhere |  | 18,258,296,18
+ | THIS PHONE |  | 20,294,70,14
+ | Appearance |  | 32,332,90,20
+ | Light |  | 200,319,56,46
+ | Dark |  | 256,319,49,46
+ | System |  | 305,319,63,46
+ | Identity, <key> |  | 18,367,366,46
+ | HELP |  | 20,430,28,14
+ | Contact Support |  | 18,453,366,46
+ | Report a Problem |  | 18,499,366,46
+ | Export Diagnostics |  | 18,545,366,46
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31
