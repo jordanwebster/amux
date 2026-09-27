@@ -193,8 +193,9 @@
     {
       "id": "reach-host",
       "stage": 15,
-      "clients": ["terminal"],
+      "clients": ["terminal", "phone"],
       "topology": "journeys/topologies/terminal-reach.json",
+      "phone_topology": "journeys/topologies/phone-reach.json",
       "claim": "A laptop that has never paired finds a desk on its network: the hosts overlay lists it as found, not paired, with the command that pairs it, and `amux peers` names it by the desk's own host id. Six digits the desk printed, typed once into `amux pair desk`, pair the two and name the desk by that id, and the desk lists the laptop as paired. The client that was running all along shows the desk online and direct, opens the desk's agent, and sends one prompt the desk records once and answers; the person leaves and the client exits cleanly."
     },
     {

@@ -1,3 +1,21 @@
+2026-09-27 — **The phone's journeys run on a Python driver through the app's door.**
+scripts/journeys/phone.py mirrors the terminal driver: it serves a topology
+with `testnet serve`, installs the debug app fresh on the leased simulator,
+launches it with its door, the net's discovery scope, loopback direct links
+and (when the net has one) the served relay, and acts only by tap, type,
+paste, pair and appearance. Screens are the display's PNG compared with
+`xtask golden diff` under the pinned simulator's chrome masks, a mask for
+every surface a view reports as volatile (a fleet row's age and place) or a
+story names (a fresh key, a countdown), and a channel tolerance of 12 for
+the glass the render server resolves a few levels apart per presentation;
+beside each PNG the door's element geometry, with ids named as the topology
+named them. The capture waits for the display to hold still. The shared
+reach-host story runs on the phone against its own topology: the app's
+browser finds the desk, the PIN the desk printed goes in on the keypad, the
+confirm card names the desk and its key, and the desk's agent answers a
+prompt it holds once. `scripts/ios-journey.py` is rebuilt on the driver and
+its XCUITest runner is gone.
+
 2026-09-27 — **A served host can put itself on the real local network for the phone to find.**
 A topology host with `"bonjour": true` (and `lan`) advertises its loopback
 listener through the system's mDNS responder (`dns-sd -P`), with the same

@@ -506,6 +506,8 @@
       {"literal": "\"person\"", "context": "Image(systemName: \"person\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"?\"", "context": "return letters.isEmpty ? \"?\" : String(letters).uppercased()", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row, state), value: state.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
+      {"literal": "\"home.row.\\(row.id).age.volatile\"", "context": ".reported(\"home.row.\\(row.id).age.volatile\")", "reason": "Stable driving identifier for a surface a compared screenshot masks, not a displayed label.", "count": 1},
+      {"literal": "\"home.row.\\(row.id).detail.volatile\"", "context": ".reported(\"home.row.\\(row.id).detail.volatile\")", "reason": "Stable driving identifier for a surface a compared screenshot masks, not a displayed label.", "count": 1},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 2},
       {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},

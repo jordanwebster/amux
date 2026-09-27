@@ -661,6 +661,8 @@ struct AgentRowView: View {
                 Text(row.age(at: now))
                     .designFont(.caption, design)
                     .foregroundStyle(design.inkFaint.color)
+                    // An age moves with the clock: a compared screenshot masks it.
+                    .reported("home.row.\(row.id).age.volatile")
                 if state.needsYou { NeedsYouDot() }
             }
             if let headline = row.headline {
@@ -723,6 +725,9 @@ struct AgentRowView: View {
                     Text(detail)
                         .truncationMode(state.word != nil && state.elaboration != nil
                                         ? .tail : .middle)
+                        // Often a working directory, which a test network puts
+                        // under a scratch path: a compared screenshot masks it.
+                        .reported("home.row.\(row.id).detail.volatile")
                     Spacer(minLength: 0)
                     if let host, showsHost { Text(host) }
                 }

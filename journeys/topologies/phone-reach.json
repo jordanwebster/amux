@@ -1,0 +1,17 @@
+{
+  "scope": "phone-reach",
+  "hosts": [
+    {"name": "desk", "lan": true, "bonjour": true}
+  ],
+  "agents": [
+    {
+      "name": "desk-work",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["The desk is reachable."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

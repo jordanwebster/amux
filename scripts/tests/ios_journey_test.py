@@ -1,295 +1,139 @@
-"""What a journey does with a test run that never reached the app."""
+"""The phone journey driver's pure parts: what a launch is told, what a
+compared screen masks and records, and how the stories read what they see."""
 
-import contextlib
 import importlib
-import json
-import os
 from pathlib import Path
 import sys
-import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-# Importing the journey script resolves the pinned device at import time, and
-# refuses to name one this process was not leased. Nothing below boots or talks
-# to a simulator, so a name is all that is wanted: stand one in for the import.
-with patch.object(sys, "dont_write_bytecode", True), \
-        patch.dict(os.environ, {"WT_LEASE_IPHONE": "amux-iphone-1"}):
-    journeys = importlib.import_module("ios-journey")
+from journeys import phone  # noqa: E402
+
+with patch.object(sys, "dont_write_bytecode", True):
+    stories = importlib.import_module("ios-journey")
+
+DESK = "d6e6b93c-114e-4d20-b29a-6fac10bfb78d"
+AGENT = "082210b9-b56d-4557-b77b-5303f1eca198"
 
 
-KILLED = """{"testNodes": [{"name": "AmuxUITests-Runner (1269) encountered an error",
-  "children": [{"name": "Early unexpected exit, operation never finished
-  bootstrapping (Underlying Error: Test crashed with signal kill while
-  preparing to run tests.)"}]}]}"""
-
-REFUSED = """{"testNodes": [{"name": "OnrampTests", "children": [
-  {"name": "JourneyCase.swift:509: the tab bar has no Hosts tab"}]}]}"""
-
-
-class ReusingTheBuiltTestBundle(unittest.TestCase):
-    def test_the_ui_test_bundle_is_built_for_later_test_runs(self):
-        with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / "build.log"
-            calls = []
-
-            def run(arguments, **kwargs):
-                calls.append((arguments, kwargs))
-                return SimpleNamespace(returncode=0)
-
-            with patch.object(journeys.subprocess, "run", run), \
-                    patch.object(journeys.time, "monotonic", side_effect=[4.0, 6.5]):
-                elapsed = journeys.build_for_testing("phone", log)
-
-            arguments, kwargs = calls[0]
-            self.assertEqual(arguments[0:2], ["xcodebuild", "build-for-testing"])
-            self.assertIn("AmuxUITests", arguments)
-            self.assertIn("id=phone", arguments)
-            self.assertEqual(kwargs["timeout"], 1800)
-            self.assertEqual(elapsed, 2.5)
-            self.assertEqual(log.read_text(), "AmuxUITests: built for testing in 2.5s\n")
-
-    def test_each_selected_test_runs_without_building_and_keeps_its_environment(self):
-        launched = []
-
-        class Process:
-            def __init__(self, arguments, **kwargs):
-                launched.append((arguments, kwargs))
-
-            def wait(self, timeout):
-                self.timeout = timeout
-                return 0
-
-            def poll(self):
-                return 0
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            environment = {"TEST_RUNNER_AMUX_ACTS": "sign-in,subscribe"}
-            with patch.object(journeys.subprocess, "Popen", Process):
-                returned, details = journeys.run_once(
-                    "phone", "AmuxUITests/AccountTests", root / "test.log",
-                    root / "test.xcresult", environment, None)
-
-        arguments, kwargs = launched[0]
-        self.assertEqual(arguments[0:2], ["xcodebuild", "test-without-building"])
-        self.assertIn("AmuxUITests/AccountTests", arguments)
-        self.assertEqual(kwargs["env"], environment)
-        self.assertEqual((returned, details), (0, ""))
+def element(identifier, x=0.0, y=0.0, width=10.0, height=10.0, label=None, value=None, enabled=True):
+    return {
+        "identifier": identifier,
+        "label": label,
+        "value": value,
+        "enabled": enabled,
+        "frame": {"x": x, "y": y, "width": width, "height": height},
+    }
 
 
-class JourneyCompletionOutput(unittest.TestCase):
-    def test_timing_does_not_change_the_exact_pass_line_the_verifier_reads(self):
-        plan = {"id": "short", "claim": "one short journey", "topology": "topology"}
-        with tempfile.TemporaryDirectory() as directory, \
-                patch.object(sys, "argv", ["ios-journey.py", "short"]), \
-                patch.object(journeys, "OUTPUT", Path(directory)), \
-                patch.object(journeys, "declared", lambda: [plan]), \
-                patch.object(journeys.ios_simulators, "ready", lambda _: "phone"), \
-                patch.object(journeys, "build_for_testing", lambda *_: 1.0), \
-                patch.object(journeys, "runner", lambda _: contextlib.nullcontext({
-                    "cloud_url": "https://cloud.test", "relay": "relay",
-                })), \
-                patch.dict(journeys.JOURNEYS,
-                           {"short": lambda *_: None}, clear=True), \
-                patch("builtins.print") as printed:
-            journeys.main()
-
-        lines = [call.args[0] for call in printed.call_args_list]
-        self.assertTrue(any(line.startswith("short: journey took ") for line in lines))
-        self.assertIn("short: passed", lines)
-
-
-class RunningTheTestAgain(unittest.TestCase):
-    def perform(self, runs: list[tuple[int, str]]) -> tuple[int, list[str]]:
-        """Performs one test whose runs return `runs` in order.
-
-        Answers how many runs were spent and what the journey said about them.
-        """
-        spent = 0
-
-        def run_once(*_arguments):
-            nonlocal spent
-            spent += 1
-            return runs[spent - 1]
-
-        with tempfile.TemporaryDirectory() as directory:
-            journey = journeys.Journey("onramp", Path(directory))
-            with patch.object(journeys, "run_once", run_once), \
-                    patch.object(journeys, "test_container", lambda _: Path(directory)), \
-                    patch("builtins.print"):
-                try:
-                    journeys.perform(journey, "udid", "AmuxUITests/OnrampTests", {})
-                except SystemExit:
-                    pass
-            return spent, journey.lines
-
-    def test_a_runner_the_simulator_killed_is_run_again(self):
-        spent, said = self.perform([(65, KILLED), (0, "")])
-        self.assertEqual(spent, 2)
-        self.assertTrue(any("force-quit" in line for line in said), said)
-        self.assertFalse(any(line.startswith("FAILED") for line in said), said)
-
-    def test_a_refused_expectation_is_the_answer_and_stands(self):
-        spent, said = self.perform([(65, REFUSED), (0, "")])
-        self.assertEqual(spent, 1)
-        self.assertTrue(any(line.startswith("FAILED") for line in said), said)
-
-    def test_a_runner_killed_twice_is_reported_rather_than_run_forever(self):
-        spent, said = self.perform([(65, KILLED), (65, KILLED)])
-        self.assertEqual(spent, 2)
-        self.assertTrue(any(line.startswith("FAILED") for line in said), said)
-
-    def test_a_passing_run_is_not_repeated(self):
-        spent, said = self.perform([(0, "")])
-        self.assertEqual(spent, 1)
-        self.assertEqual(len(said), 1)
-        self.assertIn("AmuxUITests/OnrampTests passed in", said[0])
-
-
-class ComparingReachedScreens(unittest.TestCase):
-    def compare(self, *, update: bool = False, wrong: bool = False):
-        room = tempfile.TemporaryDirectory()
-        root = Path(room.name)
-        captures = {"first": root / "first.png", "second": root / "second.png"}
-        for label, path in captures.items():
-            path.write_bytes(label.encode())
-        baselines = root / "baselines"
-        golden = baselines / "conversation"
-        golden.mkdir(parents=True)
-        for label in captures:
-            (golden / f"{label}.png").write_bytes(f"old-{label}".encode())
-        journey = journeys.Journey(
-            "conversation", root / "evidence", expect_wrong=wrong)
-        environment = {"UPDATE_JOURNEY_GOLDENS": "1"} if update else {}
-        run = patch.object(
-            journeys.subprocess, "run",
-            return_value=journeys.subprocess.CompletedProcess([], 0, "same\n", ""))
-        with patch.object(journeys, "JOURNEY_GOLDENS", baselines), \
-                patch.dict(os.environ, environment, clear=True), run as called:
-            journeys.compare_reached_screens(journey, captures)
-        return room, root, captures, baselines, called
-
-    def test_each_capture_uses_the_existing_phone_comparator_and_masks(self):
-        room, root, captures, baselines, called = self.compare()
-        self.addCleanup(room.cleanup)
-        self.assertEqual(called.call_count, 2)
-        first = called.call_args_list[0].args[0]
-        self.assertEqual(first[first.index("--expected") + 1],
-                         str(baselines / "conversation/first.png"))
-        self.assertEqual(first[first.index("--actual") + 1], str(captures["first"]))
-        self.assertEqual(first[first.index("--simulator") + 1], "golden")
-        self.assertTrue((root / "evidence/goldens/first/comparison.txt").is_file())
-
-    def test_update_is_explicit_and_replaces_only_journey_baselines(self):
-        room, _root, captures, baselines, _called = self.compare(update=True)
-        self.addCleanup(room.cleanup)
-        self.assertEqual((baselines / "conversation/first.png").read_bytes(),
-                         captures["first"].read_bytes())
-        self.assertEqual((baselines / "conversation/second.png").read_bytes(),
-                         captures["second"].read_bytes())
-
-    def test_negative_check_compares_a_frame_with_the_other_baseline(self):
-        room, _root, captures, baselines, called = self.compare(wrong=True)
-        self.addCleanup(room.cleanup)
-        first = called.call_args_list[0].args[0]
-        self.assertEqual(first[first.index("--expected") + 1],
-                         str(baselines / "conversation/second.png"))
-        self.assertEqual(first[first.index("--actual") + 1], str(captures["first"]))
-
-
-class ChoosingJourneyArguments(unittest.TestCase):
-    def test_the_negative_check_is_an_explicit_option(self):
+class Launching(unittest.TestCase):
+    def test_a_launch_names_its_door_scope_found_machines_and_loopback_links(self):
+        arguments = phone.launch_arguments({"hosts": []}, "phone-reach", [DESK], 4711)
         self.assertEqual(
-            journeys.chosen_acts(["--expect-wrong", "conversation"]),
-            (["conversation"], [], True))
+            arguments,
+            [
+                "-amux-door-port", "4711",
+                "-amux-element-geometry",
+                "-amux-discovery-scope", "phone-reach",
+                "-amux-discover-only", DESK,
+                "-amux-lan-bind", "127.0.0.1:0",
+            ],
+        )
 
-    def test_ordinary_arguments_do_not_expect_a_wrong_screen(self):
+    def test_a_net_with_a_relay_hands_the_launch_its_cloud_and_carrier(self):
+        ready = {"cloud_url": "http://127.0.0.1:9", "relay_tcp": "127.0.0.1:8"}
+        arguments = phone.launch_arguments(ready, "", [], 1)
+        self.assertIn("-amux-scripted-cloud", arguments)
+        self.assertEqual(arguments[arguments.index("-amux-relay") + 1], "http://127.0.0.1:9")
+        self.assertEqual(arguments[arguments.index("-amux-relay-tcp") + 1], "127.0.0.1:8")
+
+
+class ComparingScreens(unittest.TestCase):
+    def test_volatile_surfaces_and_named_elements_are_masked_in_pixels(self):
+        elements = [
+            element(f"home.row.{AGENT}", 0, 100, 390, 60),
+            element(f"home.row.{AGENT}.age.volatile", 340.2, 104, 30.5, 14),
+            element("pair-confirm.fingerprint", 16, 300, 358, 40),
+        ]
         self.assertEqual(
-            journeys.chosen_acts(["hosts", "--act", "agents-started"]),
-            (["hosts"], ["agents-started"], False))
+            phone.volatile_masks(elements, ("pair-confirm.fingerprint",)),
+            ["1020,312,93,42", "48,900,1074,120"],
+        )
+        self.assertEqual(phone.volatile_masks(elements), ["1020,312,93,42"])
 
-    def test_the_phone_driver_ignores_terminal_only_manifest_rows(self):
-        manifest = {"journeys": [
-            {"id": "phone", "clients": ["phone"]},
-            {"id": "terminal", "clients": ["terminal"]},
-        ]}
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "manifest.json"
-            path.write_text(json.dumps(manifest))
-            with patch.object(journeys, "MANIFEST", path):
-                self.assertEqual(journeys.declared(), [manifest["journeys"][0]])
+    def test_a_tab_behind_a_pushed_page_masks_nothing(self):
+        elements = [element("hosts.fact.identity", 0, 10, 1, 1), element("chat.row.turn-end", 0, 20, 1, 1)]
+        named = ("hosts.fact.identity", "chat.row.turn-end")
+        self.assertEqual(phone.volatile_masks(elements, named, screen="chat"), ["0,60,3,3"])
+        self.assertEqual(len(phone.volatile_masks(elements, named, screen="hosts")), 2)
 
-
-class WhereARememberedFleetIsFiled(unittest.TestCase):
-    """A seeded fleet has to land in the file this phone's runtime will open.
-
-    The profile a fleet is filed under is the installation's to make, so a
-    journey reads it back out of the record a run left. Filing under anything
-    else seeds a file nothing opens, and the phone starts every launch having
-    forgotten what it remembers.
-    """
-
-    def test_a_seed_launch_writes_the_real_profile_store_with_its_standing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            data = Path(directory)
-            cache = data / "Library/Caches/amux"
-            profile = journeys.INVENTED_PROFILE
-            identity = journeys.invented("agent")
-            fleet = journeys.remembered_fleet([{
-                "id": identity, "name": "Remembered", "host": "desktop",
-                "directory": "/work", "minutes": 7,
-                "attention": {"attention": "working"},
-            }], {"desktop": journeys.invented("desktop")})
-            calls = []
-
-            def run(arguments, **_kwargs):
-                calls.append(arguments)
-                if "launch" in arguments:
-                    seed = json.loads((cache / "journey-seed.json").read_text())
-                    self.assertEqual(seed["agents"][0]["id"], identity)
-                    self.assertEqual(seed["agents"][0]["last_activity"],
-                                     seed["standings"][identity]["last_activity"])
-                    self.assertEqual(seed["standings"][identity]["attention"],
-                                     {"attention": "working"})
-                    store = cache / "store" / f"{profile}.sqlite" / "store.sqlite"
-                    store.parent.mkdir(parents=True)
-                    store.touch()
-                    (cache / "journey-seed-result.json").write_text('{"ok": true}')
-
-            with patch.object(journeys, "container", lambda _: data), \
-                    patch.object(journeys.subprocess, "run", run):
-                paths = journeys.seed_cache("udid", fleet, profile)
-            self.assertEqual(paths, [cache / "store" / f"{profile}.sqlite" / "store.sqlite"])
-            self.assertIn("journey-store", calls[0])
-            self.assertIn("terminate", calls[-1])
-            self.assertFalse((cache / "fleet" / f"{profile}.json").exists())
-
-    def test_the_account_is_answered_with_its_own_profile(self):
+    def test_geometry_names_ids_and_drops_volatile_words(self):
+        elements = [
+            element(f"home.row.{AGENT}", 0, 100.4, 390, 60, label="desk-work, Idle, desk, 34s ago", value="idle"),
+            element(f"home.row.{AGENT}.age.volatile", 340, 104, 30, 14),
+            element("hosts.fact.identity", 16, 500, 358, 44, label="Identity, amux-iphone-1 · af8c…5013"),
+            element("chat.send", 350, 700, 44, 44, label="Send", enabled=False),
+            element("home.row.11111111-2222-3333-4444-555555555555", 0, 0, 1, 1),
+        ]
+        drawn = phone.geometry(elements, ("hosts.fact.identity",), {AGENT: "desk-work"})
         self.assertEqual(
-            journeys.filed_under({"": "phone", "journey-phone": "signed-in"}, "journey-phone"),
-            "signed-in")
+            drawn.splitlines(),
+            [
+                "home.row.<desk-work> | desk-work, Idle, desk, <age> | idle | 0,100,390,60",
+                "home.row.<desk-work>.age.volatile | <volatile> | 340,104,30,14",
+                "hosts.fact.identity | <volatile> | 16,500,358,44",
+                "chat.send | Send |  | 350,700,44,44 (disabled)",
+                "home.row.<id> |  |  | 0,0,1,1",
+            ],
+        )
 
-    def test_an_account_nobody_recorded_falls_back_to_the_phone(self):
-        self.assertEqual(journeys.filed_under({"": "phone"}, "journey-phone"), "phone")
+    def test_scratch_paths_keep_their_width(self):
+        self.assertEqual(
+            phone.normalize("/tmp/aj-Ab3dE9_x/testnetC80HLF/desk/work"),
+            "/tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work",
+        )
 
-    def test_a_record_of_nothing_is_nothing(self):
-        self.assertIsNone(journeys.filed_under({}, "journey-phone"))
+    def test_keys_made_fresh_each_install_are_masked(self):
+        whole = " ".join(["d326", "50ce", "ef5c", "7836"] * 4)
+        self.assertEqual(phone.normalize(f"Fingerprint | {whole}"), "Fingerprint | <key>")
+        self.assertEqual(phone.normalize("Identity, amux-iphone-1 · 9ab9…c45d"), "Identity, amux-iphone-1 · <key>")
 
-    def test_a_cache_no_run_has_written_is_nothing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.object(journeys, "container", lambda _: Path(directory)):
-                self.assertIsNone(journeys.installed_profile("udid"))
+    def test_durations_and_countdowns_are_masked(self):
+        self.assertEqual(phone.normalize("Worked 1ms · $0.00"), "Worked <t> · $0.00")
+        self.assertEqual(phone.normalize("expires in 4m. 1m 4s, 1.2s"), "expires in <t>. <t>, <t>")
+        self.assertEqual(phone.normalize("5 minutes of work"), "5 minutes of work")
 
-    def test_the_record_a_run_left_is_read_back(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fleet = Path(directory) / "Library/Caches/amux/fleet"
-            fleet.mkdir(parents=True)
-            (fleet / "profiles.json").write_text('{"": "p", "journey-phone": "q"}')
-            with patch.object(journeys, "container", lambda _: Path(directory)):
-                self.assertEqual(journeys.installed_profile("udid"), "q")
+    def test_repeated_names_are_kept_in_drawing_order(self):
+        named = phone.by_name([element("chat.row.prompt", label="one"), element("chat.row.prompt", label="two")])
+        self.assertEqual(list(named), ["chat.row.prompt", "chat.row.prompt#2"])
+        self.assertEqual(named["chat.row.prompt#2"]["label"], "two")
+
+
+class ReadingWhatIsSeen(unittest.TestCase):
+    def test_the_pin_a_machine_prints_is_read_as_six_digits(self):
+        self.assertEqual(stories.pin_of("Pairing PIN: 619 138\n"), "619138")
+        self.assertIsNone(stories.pin_of("Ctrl+C closes it.\n"))
+
+    def test_a_paired_host_is_recognised_by_id_and_name_and_a_wrong_name_fails(self):
+        drawn = {f"hosts.row.{DESK}": {"label": "desk, reachable on this network"}}
+        stories.trusted_as(drawn, DESK, "desk")
+        with self.assertRaises(RuntimeError):
+            stories.trusted_as(drawn, DESK, "laptop")
+        with self.assertRaises(RuntimeError):
+            stories.trusted_as({}, DESK, "desk")
+
+    def test_a_prompt_the_host_holds_twice_is_not_reflected_once(self):
+        chat = {"items": [{"text": "hi"}, {"text": "hi"}, {"text": "other"}]}
+        with self.assertRaises(RuntimeError):
+            stories.reflected_once(chat, "hi")
+        stories.reflected_once(chat, "other")
+
+    def test_every_phone_story_written_is_declared_for_the_phone(self):
+        for name in stories.STORIES:
+            declared = phone.story(name)
+            topology = phone.ROOT / declared.get("phone_topology", declared["topology"])
+            self.assertTrue(topology.exists(), topology)
 
 
 if __name__ == "__main__":
