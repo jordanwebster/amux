@@ -816,6 +816,10 @@ pub struct OfferedModel {
     /// says.
     #[prost(string, optional, tag = "5")]
     pub default_effort: ::core::option::Option<::prost::alloc::string::String>,
+    /// The model id an alias stands for, as the agent reports its model;
+    /// empty when the provider does not say.
+    #[prost(string, tag = "6")]
+    pub resolved_model: ::prost::alloc::string::String,
 }
 impl ::prost::Name for OfferedModel {
     const NAME: &'static str = "OfferedModel";
@@ -2349,6 +2353,12 @@ pub struct ClaudePtySnapshot {
     pub sign_in: ::core::option::Option<SignIn>,
     #[prost(message, optional, tag = "11")]
     pub background_processes: ::core::option::Option<BackgroundProcesses>,
+    /// What the same Claude binary's headless initialize answer offers,
+    /// asked by the agent process at each launch; empty until it answers.
+    #[prost(message, repeated, tag = "12")]
+    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
+    #[prost(message, repeated, tag = "13")]
+    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
 }
 impl ::prost::Name for ClaudePtySnapshot {
     const NAME: &'static str = "ClaudePtySnapshot";
@@ -2362,7 +2372,7 @@ impl ::prost::Name for ClaudePtySnapshot {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudePtyInput {
-    #[prost(oneof = "claude_pty_input::Of", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "claude_pty_input::Of", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
     pub of: ::core::option::Option<claude_pty_input::Of>,
 }
 /// Nested message and enum types in `ClaudePtyInput`.
@@ -2383,6 +2393,11 @@ pub mod claude_pty_input {
         Withdraw(super::WithdrawQueued),
         #[prost(message, tag = "7")]
         SendNow(super::SendQueuedNow),
+        /// Typed as `/model <name>` and `/effort <level>` between turns.
+        #[prost(message, tag = "8")]
+        Model(super::SetModel),
+        #[prost(message, tag = "9")]
+        Effort(super::SetEffort),
     }
 }
 impl ::prost::Name for ClaudePtyInput {

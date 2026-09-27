@@ -1,3 +1,17 @@
+2026-09-27 — **Terminal Claude takes a model and an effort from either client.**
+Its snapshot gains the models and commands a headless run of the same
+binary offers, handed to the interpreter as an agent fact. A model or
+effort change is typed as `/model <name>` or `/effort <level>`, the
+ordinary prompt program, only between turns (a sentence says to wait for
+the turn otherwise), and a value that is not one word is refused: bare,
+either command opens a picker no program can read. The command's own
+transcript rows reflect the change, and the next assistant row names the
+new model. The settings view offers terminal Claude's models, efforts and
+every command (it runs the terminal-only ones), and its mode as the current
+value beside the cycle action, never a pick. Offered models now carry the
+id each alias resolves to, so the view marks the alias for the model the
+agent reports instead of listing that id as outside the offer.
+
 2026-09-27 — **Each agent's snapshot says what it offers, and a settings view reads it.**
 Headless Claude's initialize answer already listed its models (each with
 its effort levels) and slash commands; the interpreter now keeps them in

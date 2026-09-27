@@ -106,6 +106,11 @@ fn claude_pty_session() -> Vec<Event> {
         hook(value)
     };
     vec![
+        // A person's own command can say anything in its description.
+        fact(
+            Channel::Agent,
+            json!({ "type": "offered", "models": [{ "value": "sonnet", "displayName": "Sonnet", "description": "Sonnet 5", "supportedEffortLevels": ["low", "high"] }], "commands": [{ "name": "deploy", "description": format!("Deploy with {GITHUB_TOKEN}"), "argumentHint": "" }] }),
+        ),
         with(
             json!({ "hook_event_name": "SessionStart", "source": "startup", "model": "claude-opus-5-5", "env": env() }),
         ),

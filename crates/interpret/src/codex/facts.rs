@@ -376,6 +376,7 @@ impl State {
                         .filter_map(|effort| opt_text(effort, "reasoningEffort"))
                         .collect(),
                     default_effort: opt_text(model, "defaultReasoningEffort"),
+                    resolved_model: text(model, "model").to_owned(),
                 }),
         );
         match opt_text(page, "nextCursor") {

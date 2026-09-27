@@ -1,23 +1,23 @@
 ## 0 initial
-snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? models=[] commands=0 context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.251"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<MACHINE_PATH>"
 item boundary:1 boundary final at=1788071366223 text="" BOUNDARY_KIND_STARTED session=956edc62-b611-4cbf-ba84-1f7d80eaad0b version=2.1.251 keymap=claude-2.1
-snapshot IDLE queue=[] working_on=- at=1788071366223 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1788071366223 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=? models=[] commands=0 context=? tasks=? background=?
 ## 6 recorded 4: fact Transcript type=permission-mode
-snapshot IDLE queue=[] working_on=- at=1788071366274 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1788071366274 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits models=[] commands=0 context=? tasks=? background=?
 ## 11 recorded 9: fact Transcript type=user uuid=39337fdb-9345-4a06-8c99-f3c77149bb54
 item 39337fdb-9345-4a06-8c99-f3c77149bb54 prompt final at=1788071366377 text="Reply exactly MODE_CYCLED and nothing else."
-snapshot WORKING queue=[] working_on=- at=1788071366377 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1788071366377 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits models=[] commands=0 context=? tasks=? background=?
 ## 23 recorded 21: fact Hook hook_event_name=Stop
-snapshot WORKING queue=[] working_on=- at=1788071367676 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits context=? tasks=? background=0
+snapshot WORKING queue=[] working_on=- at=1788071367676 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits models=[] commands=0 context=? tasks=? background=0
 ## 25 recorded 23: fact Transcript type=assistant uuid=5c3fdbef-8193-4e56-83b9-c4d59e5c0a0d
 item 5c3fdbef-8193-4e56-83b9-c4d59e5c0a0d thinking final at=1788071367781 text=""
-snapshot WORKING queue=[] working_on=- at=1788071367713 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits context=34299 tasks=? background=0
+snapshot WORKING queue=[] working_on=- at=1788071367713 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits models=[] commands=0 context=34299 tasks=? background=0
 ## 27 recorded 25: fact Transcript type=assistant uuid=a1aba222-b555-481f-8574-af659a4fd17a
 item a1aba222-b555-481f-8574-af659a4fd17a message final at=1788071367785 text="MODE_CYCLED"
 ## 29 recorded 27: fact Transcript type=system subtype=turn_duration uuid=eb5d3245-1be1-46b6-86bf-d3f11ec93752
 item turn:1 turn final at=1788071367824 text="" #1 TURN_OUTCOME_COMPLETED started=1788071366379
-snapshot IDLE queue=[] working_on=- at=1788071367714 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits context=34299 tasks=? background=0
+snapshot IDLE queue=[] working_on=- at=1788071367714 asks=[] session=956edc62-b611-4cbf-ba84-1f7d80eaad0b model=claude-haiku-4-5-20251001 mode=acceptEdits models=[] commands=0 context=34299 tasks=? background=0
 turn_end 1 last=a1aba222-b555-481f-8574-af659a4fd17a

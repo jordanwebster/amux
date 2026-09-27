@@ -21,8 +21,7 @@
   model  opus[1m] "Opus (1M context)" efforts=[low,medium,high,xhigh,max]
   model  claude-fable-5[1m] "Fable" efforts=[low,medium,high,xhigh,max]
   model  sonnet "Sonnet" efforts=[low,medium,high,xhigh,max]
-  model  haiku "Haiku" efforts=[]
-  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  model* haiku "Haiku" efforts=[]
   mode* Claude("default")
   mode  Claude("acceptEdits")
   mode  Claude("plan")

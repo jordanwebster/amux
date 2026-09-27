@@ -57,7 +57,10 @@ impl InputWhat {
                 Some(pty::Of::Withdraw(w)) => withdraw(w),
                 Some(pty::Of::SendNow(n)) => send_now(n),
                 Some(pty::Of::Interrupt(_)) => InputWhat::Interrupt,
-                Some(pty::Of::Key(_) | pty::Of::Clear(_)) | None => InputWhat::Other,
+                Some(
+                    pty::Of::Key(_) | pty::Of::Clear(_) | pty::Of::Model(_) | pty::Of::Effort(_),
+                )
+                | None => InputWhat::Other,
             },
             Some(Of::ClaudeSdk(input)) => match &input.of {
                 Some(sdk::Of::Prompt(p)) => prompt(p),

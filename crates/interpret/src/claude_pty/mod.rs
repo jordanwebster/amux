@@ -41,6 +41,17 @@
 //!   turn a prompt sent through amux began can land before that prompt's
 //!   row. Items only hooks have reported so far are held until the row
 //!   lands, so the prompt is drawn above the calls it caused.
+//!
+//! What the agent offers comes from Claude, never from a client catalogue.
+//! Terminal Claude lists nothing on its screen a program could read, so at
+//! each launch the agent process runs the same binary once headless and
+//! hands on its initialize answer: the models, each with its effort levels,
+//! and the slash commands, terminal-only ones included, since this Claude
+//! runs them. Model and effort change by typing `/model <name>` and
+//! `/effort <level>` between turns; the command's own transcript rows are
+//! the change's reflection, and the next assistant row names the model.
+//! Nothing reports the effort. The permission mode changes only by cycling,
+//! since the cycle's order depends on how Claude was launched.
 
 mod facts;
 mod recording;
@@ -54,8 +65,8 @@ use serde_json::Value;
 use wire::{
     AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, Boundary, BoundaryKind,
     ClaudeAnswer, ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName,
-    Step, SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input,
-    claude_pty_item, input, permission_answer, plan_answer,
+    OfferedCommand, OfferedModel, PromptInput, Step, SubagentProgress, ToolCall, ToolDecision,
+    claude_answer, claude_pty_input, claude_pty_item, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
@@ -214,6 +225,42 @@ pub fn trust_dialog_fact() -> Vec<u8> {
     br#"{"type":"trust_dialog"}"#.to_vec()
 }
 
+/// The request the agent process writes to the same Claude binary run once
+/// headless, to learn what it offers.
+pub const OFFER_REQUEST: &str =
+    r#"{"type":"control_request","request_id":"agent-offer","request":{"subtype":"initialize"}}"#;
+
+/// The fact the agent process sends for a line of the headless run's
+/// output, when it is the successful answer to [`OFFER_REQUEST`]: the
+/// models and commands it lists. None for any other line.
+pub fn offered_fact(line: &[u8]) -> Option<Vec<u8>> {
+    let line: Value = serde_json::from_slice(line).ok()?;
+    let response = line.get("response")?;
+    if line.get("type")?.as_str()? != "control_response"
+        || response.get("request_id")?.as_str()? != "agent-offer"
+        || response.get("subtype")?.as_str()? != "success"
+    {
+        return None;
+    }
+    let body = response.get("response")?;
+    let list = |key: &str| {
+        body.get(key)
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()))
+    };
+    serde_json::to_vec(&serde_json::json!({
+        "type": "offered",
+        "models": list("models"),
+        "commands": list("commands"),
+    }))
+    .ok()
+}
+
+/// Why a model or effort change is refused while Claude is busy: typed into
+/// a running turn it would queue behind it, and typed over a menu it would
+/// answer the menu.
+pub const BETWEEN_TURNS: &str = "Terminal Claude changes its model and effort only between turns: wait for this turn to finish.";
+
 /// What the interpreter knows about the Claude process and its session.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Provider {
@@ -227,6 +274,11 @@ struct Provider {
     relaunched: bool,
     model: Option<String>,
     permission_mode: Option<String>,
+    /// What the headless run of the same binary offered at this launch.
+    #[serde(with = "serde_pb::msgs")]
+    models: Vec<OfferedModel>,
+    #[serde(with = "serde_pb::msgs")]
+    commands: Vec<OfferedCommand>,
 }
 
 /// A tool call as it stands, whichever of hook or row reported it first.
@@ -481,6 +533,8 @@ impl State {
             permission_mode: self.provider.permission_mode.clone(),
             provider_session: self.provider.session.clone(),
             background_processes: Some(background_processes),
+            models: self.provider.models.clone(),
+            commands: self.provider.commands.clone(),
             ..unknown::claude_pty()
         }
         .encode_to_vec()
@@ -967,6 +1021,35 @@ impl State {
                 _ => self.shared.reject(emit, &id, reason::UNSUPPORTED),
             },
             claude_pty_input::Of::Answer(answer) => self.answer(emit, &id, answer),
+            claude_pty_input::Of::Model(model) => self.setting(emit, &id, "/model", model.model),
+            claude_pty_input::Of::Effort(effort) => {
+                self.setting(emit, &id, "/effort", effort.effort)
+            }
+        }
+    }
+
+    /// A model or effort change, typed as Claude's own command with the
+    /// value as its argument (bare, the command opens a picker no program
+    /// can read), and only between turns. It goes as a prompt does, so the
+    /// command's transcript rows reflect it.
+    fn setting(&mut self, emit: &mut Emit, id: &[u8], command: &str, value: Option<String>) {
+        let Some(value) = value.filter(|value| {
+            !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+        }) else {
+            return self.shared.reject(emit, id, reason::UNSUPPORTED);
+        };
+        if self.shared.is_busy() || !self.shared.asks().is_empty() {
+            return self.shared.reject(emit, id, BETWEEN_TURNS);
+        }
+        let prompt = PromptInput {
+            text: format!("{command} {value}"),
+            attachments: Vec::new(),
+        };
+        if let Some(entry) = self.shared.admit_prompt(emit, id, prompt, human()) {
+            emit.effect(Effect::Terminal(TerminalInput::Prompt {
+                text: entry.text,
+                attachments: entry.attachments,
+            }));
         }
     }
 
@@ -1169,6 +1252,9 @@ impl Interpreter for ClaudePty {
         // The new process's transcript is followed anew, from wherever the
         // agent process last read it.
         state.provider.transcript = None;
+        // The new process's offer is asked anew.
+        state.provider.models.clear();
+        state.provider.commands.clear();
         state.resume()
     }
 
@@ -1340,11 +1426,13 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] session={} model={} mode={} context={} tasks={} background={}",
+            "asks=[{}] session={} model={} mode={} models=[{}] commands={} context={} tasks={} background={}",
             describe_asks(&snapshot.asks),
             snapshot.provider_session.as_deref().unwrap_or("?"),
             snapshot.model.as_deref().unwrap_or("?"),
             snapshot.permission_mode.as_deref().unwrap_or("?"),
+            crate::claude_common::describe_models(&snapshot.models),
+            crate::claude_common::describe_commands(&snapshot.commands),
             if context.known {
                 context.used_tokens.to_string()
             } else {

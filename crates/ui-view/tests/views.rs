@@ -908,6 +908,7 @@ fn offered(value: &str, efforts: &[&str], default: Option<&str>) -> wire::Offere
         description: String::new(),
         efforts: efforts.iter().map(|effort| (*effort).into()).collect(),
         default_effort: default.map(Into::into),
+        resolved_model: format!("id-{value}"),
     }
 }
 
@@ -1080,17 +1081,61 @@ fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
 }
 
 #[test]
-fn terminal_claude_refuses_every_setting() {
+fn terminal_claude_offers_models_and_commands_and_cycles_its_mode() {
     let view = settings_of(
         Kind::ClaudePty,
         wire::ClaudePtySnapshot {
-            permission_mode: Some("default".into()),
+            model: Some("id-sonnet".into()),
+            permission_mode: Some("acceptEdits".into()),
+            models: vec![
+                offered("default", &["low", "high"], None),
+                offered("sonnet", &["low", "medium", "high"], None),
+            ],
+            commands: vec![command("compact"), command("config")],
             ..Default::default()
         }
         .encode_to_vec(),
     );
-    assert!(view.model_refusal.is_some());
-    assert!(view.effort_refusal.is_some());
+    let current: Vec<&str> = view
+        .models
+        .iter()
+        .filter(|model| model.current)
+        .map(|model| model.value.as_str())
+        .collect();
+    assert_eq!(
+        current,
+        ["sonnet"],
+        "the reported id marks the alias that resolves to it"
+    );
+    assert_eq!(
+        view.efforts
+            .iter()
+            .map(|effort| effort.value.as_str())
+            .collect::<Vec<_>>(),
+        ["low", "medium", "high"],
+        "nothing reports the effort, so none is current"
+    );
+    assert!(view.efforts.iter().all(|effort| !effort.current));
+    assert_eq!(
+        view.commands
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>(),
+        ["compact", "config"],
+        "terminal Claude runs its terminal-only commands"
+    );
+    assert_eq!(
+        view.modes
+            .iter()
+            .map(|mode| (mode.value.clone(), mode.current))
+            .collect::<Vec<_>>(),
+        [(ModeValue::Claude("acceptEdits".into()), true)],
+        "the current mode alone: there is no pick"
+    );
+    assert!(view.cycle_mode);
+    assert_eq!((&view.model_refusal, &view.effort_refusal), (&None, &None));
     assert!(view.mode_refusal.is_some());
-    assert!(view.modes[0].current);
+
+    let sdk = settings_of(Kind::ClaudeSdk, Vec::new());
+    assert!(!sdk.cycle_mode, "headless Claude picks its mode");
 }

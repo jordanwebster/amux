@@ -1,30 +1,30 @@
 ## 0 initial
-snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? context=? tasks=? background=?
+snapshot STARTING queue=[] working_on=- at=0 asks=[] session=? model=? mode=? models=[] commands=0 context=? tasks=? background=?
 ## 1 fact {"channel":"agent","json":{"keymap":"claude-2.1","type":"launch","version":"2.1.283"}}
 ## 3 recorded 1: fact Hook hook_event_name=SessionStart
 effect follow "<TRANSCRIPT_1>"
 item boundary:1 boundary final at=1790489156302 text="" BOUNDARY_KIND_STARTED session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d version=2.1.283 keymap=claude-2.1
-snapshot IDLE queue=[] working_on=- at=1790489156302 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=? context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790489156302 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=? models=[] commands=0 context=? tasks=? background=?
 ## 7 recorded 5: fact Transcript type=permission-mode
-snapshot IDLE queue=[] working_on=- at=1790489156499 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790489156499 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
 ## 13 recorded 11: fact Transcript type=user uuid=8633ad29-e7db-475f-9f54-cf9aa908e195
 item 8633ad29-e7db-475f-9f54-cf9aa908e195 prompt final at=1790489156610 text="Use the Bash tool to run exactly: printf denied > denied.txt. Then stop."
-snapshot WORKING queue=[] working_on=- at=1790489156601 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790489156601 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
 ## 39 recorded 37: fact Hook hook_event_name=PreToolUse tool_use_id=toolu_01CDE89AMC7xR2jvcSMh2RsT
 item toolu_01CDE89AMC7xR2jvcSMh2RsT tool final at=1790489158528 text="" Bash TOOL_STATE_RUNNING input="{\"command\":\"printf denied > denied.txt\",\"description\":\"Write…"
 ## 41 recorded 39: fact Hook hook_event_name=PermissionRequest
-snapshot NEEDS_YOU queue=[] working_on=- at=1790489158563 asks=[ask:1->toolu_01CDE89AMC7xR2jvcSMh2RsT permission:Bash/session <MACHINE_PATH> deny-stops] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=? tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1790489158563 asks=[ask:1->toolu_01CDE89AMC7xR2jvcSMh2RsT permission:Bash/session <MACHINE_PATH> deny-stops] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=? tasks=? background=?
 ## 43 recorded 41: fact Transcript type=assistant uuid=4dea177e-44ea-4480-a62d-76946d9fab36
 item 4dea177e-44ea-4480-a62d-76946d9fab36 thinking final at=1790489158499 text=""
-snapshot NEEDS_YOU queue=[] working_on=- at=1790489160471 asks=[ask:1->toolu_01CDE89AMC7xR2jvcSMh2RsT permission:Bash/session <MACHINE_PATH> deny-stops] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=36224 tasks=? background=?
+snapshot NEEDS_YOU queue=[] working_on=- at=1790489160471 asks=[ask:1->toolu_01CDE89AMC7xR2jvcSMh2RsT permission:Bash/session <MACHINE_PATH> deny-stops] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=36224 tasks=? background=?
 ## 47 recorded 45: fact Transcript type=user uuid=517eb65b-46bc-474f-8915-f00d50ac6d10
 item toolu_01CDE89AMC7xR2jvcSMh2RsT tool final at=1790489158528 text="" Bash TOOL_STATE_DENIED decision=DECISION_OUTCOME_DENIED elsewhere ended=1790489158889 input="{\"command\":\"printf denied > denied.txt\",\"description\":\"Write…" out="The user doesn't want to proceed with this tool use. The too…"
-snapshot WORKING queue=[] working_on=- at=1790489160473 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=36224 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790489160473 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=36224 tasks=? background=?
 ## 50 recorded 48: fact Transcript type=user uuid=cbcedc43-9485-480d-a7d7-7914fab141d9
 item cbcedc43-9485-480d-a7d7-7914fab141d9 interruption final at=1790489158889 text=""
 item turn:1 turn final at=1790489158889 text="" #1 TURN_OUTCOME_INTERRUPTED started=1790489156601
-snapshot IDLE queue=[] working_on=- at=1790489160497 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=36224 tasks=? background=?
+snapshot IDLE queue=[] working_on=- at=1790489160497 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=36224 tasks=? background=?
 turn_end 1 last=-
 ## 60 recorded 58: fact Transcript type=user uuid=bb9829a2-d4d0-4aa9-8f30-f3fbe430ccbc
 item bb9829a2-d4d0-4aa9-8f30-f3fbe430ccbc prompt final at=1790489160756 text="Use a read-only command instead"
-snapshot WORKING queue=[] working_on=- at=1790489160726 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default context=36224 tasks=? background=?
+snapshot WORKING queue=[] working_on=- at=1790489160726 asks=[] session=2a54dccf-53c0-484d-b8f8-c543cdb95c1d model=claude-haiku-4-5-20251001 mode=default models=[] commands=0 context=36224 tasks=? background=?

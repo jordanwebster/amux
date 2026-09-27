@@ -209,6 +209,7 @@ fn the_offered_models_and_commands_ride_on_the_session_state() {
         description: "Efficient".into(),
         efforts: vec!["low".into(), "high".into()],
         default_effort: None,
+        resolved_model: "claude-sonnet-5".into(),
     }];
     let commands = vec![wire::OfferedCommand {
         name: "stripe:test-cards".into(),
@@ -229,6 +230,13 @@ fn the_offered_models_and_commands_ride_on_the_session_state() {
         ..Default::default()
     };
     let state = decode_snapshot(Kind::Codex, &codex.encode_to_vec());
+    assert_eq!((&state.models, &state.commands), (&models, &commands));
+    let pty = wire::ClaudePtySnapshot {
+        models: models.clone(),
+        commands: commands.clone(),
+        ..Default::default()
+    };
+    let state = decode_snapshot(Kind::ClaudePty, &pty.encode_to_vec());
     assert_eq!((&state.models, &state.commands), (&models, &commands));
     let empty = decode_snapshot(Kind::Codex, &[]);
     assert!(empty.models.is_empty() && empty.commands.is_empty());

@@ -38,10 +38,5 @@
 == settings
   model* reported claude-haiku-4-5-20251001 "" efforts=[]
   mode* Claude("default")
-  mode  Claude("acceptEdits")
-  mode  Claude("plan")
-  mode  Claude("auto")
-  mode  Claude("bypassPermissions") stops_asking
-  refused model: Terminal Claude changes its model only in its own terminal.
-  refused effort: Terminal Claude changes its effort only in its own terminal.
+  mode: cycle to the next
   refused mode: Terminal Claude changes mode only by cycling through its modes.

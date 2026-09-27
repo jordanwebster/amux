@@ -75,6 +75,7 @@ goldens! {
     rows_no_recording_shows => "rows",
     recorded_steer_send_now => "recorded_steer_send_now",
     a_dialog_no_hook_can_answer_opens_an_unanswerable_ask => "unanswerable",
+    model_and_effort_are_typed_between_turns_and_the_offer_rides_the_snapshot => "settings",
 }
 
 #[test]

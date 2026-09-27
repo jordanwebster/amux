@@ -4,17 +4,16 @@ use prost::Message as _;
 use serde_json::{Value, json};
 use wire::claude_sdk_item::Kind;
 use wire::{
-    BoundaryKind, DecisionOutcome, FormAsk, HealthState, LinkAsk, OfferedCommand, OfferedModel,
-    PermissionAsk, PlanAsk, SignIn, SignInState, TaskState as WireTaskState, ToolServer,
-    ToolServerHealth, ToolServerStatus, ToolState, Turn, TurnOutcome, UsageLimits, UsageState,
-    UsageWindow,
+    BoundaryKind, DecisionOutcome, FormAsk, HealthState, LinkAsk, PermissionAsk, PlanAsk, SignIn,
+    SignInState, TaskState as WireTaskState, ToolServer, ToolServerHealth, ToolServerStatus,
+    ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow,
 };
 
 use super::{AskMeta, AskShape, Request, State, TaskState, Tool, ToolDecisionState, item_body};
 use crate::claude_common::{
     PLAN_TOOL, QUESTION_TOOL, TASK_TOOLS, apply_task_tool, compact_json, content_text,
-    question_ask, result_images, scope_choices, split_tool_name, text, tool_class,
-    without_image_bytes,
+    offered_commands, offered_models, question_ask, result_images, scope_choices, split_tool_name,
+    text, tool_class, without_image_bytes,
 };
 use crate::{Channel, Effect, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
@@ -1027,10 +1026,10 @@ impl State {
                     self.shared.provider_started();
                 }
                 if let Some(models) = body.get("models").and_then(Value::as_array) {
-                    self.models = models.iter().map(offered_model).collect();
+                    self.models = offered_models(models);
                 }
                 if let Some(commands) = body.get("commands").and_then(Value::as_array) {
-                    self.commands = commands.iter().map(offered_command).collect();
+                    self.commands = offered_commands(commands);
                 }
                 if let Some(account) = body.get("account") {
                     self.sign_in = Some(SignIn {
@@ -1068,42 +1067,6 @@ impl State {
                 }
             }
         }
-    }
-}
-
-/// A model the initialize response lists.
-fn offered_model(model: &Value) -> OfferedModel {
-    OfferedModel {
-        value: text(model, "value").to_owned(),
-        display_name: text(model, "displayName").to_owned(),
-        description: text(model, "description").to_owned(),
-        efforts: model
-            .get("supportedEffortLevels")
-            .and_then(Value::as_array)
-            .map(|levels| {
-                levels
-                    .iter()
-                    .filter_map(|level| level.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        // Claude names no default effort per model.
-        default_effort: None,
-    }
-}
-
-/// A command the initialize response lists. A plugin's command is named
-/// `plugin:command`; the plugin is its source.
-fn offered_command(command: &Value) -> OfferedCommand {
-    let name = text(command, "name");
-    OfferedCommand {
-        name: name.to_owned(),
-        description: text(command, "description").to_owned(),
-        argument_hint: text(command, "argumentHint").to_owned(),
-        source: name
-            .split_once(':')
-            .map(|(plugin, _)| plugin.to_owned())
-            .unwrap_or_default(),
     }
 }
 

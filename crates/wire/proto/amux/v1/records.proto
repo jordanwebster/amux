@@ -425,6 +425,9 @@ message OfferedModel {
   // The effort the model runs at when none is chosen, when the provider
   // says.
   optional string default_effort = 5;
+  // The model id an alias stands for, as the agent reports its model;
+  // empty when the provider does not say.
+  string resolved_model = 6;
 }
 
 // A command or skill the provider offers this session, typed as a prompt

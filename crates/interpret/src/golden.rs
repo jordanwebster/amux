@@ -731,11 +731,17 @@ pub fn claude_pty_input(input_id: Vec<u8>, input: &FixtureInput) -> Option<Input
         FixtureInput::Key { name } => Of::Key(Key {
             key: KeyName::from_str_name(&format!("KEY_NAME_{}", name.to_uppercase()))? as i32,
         }),
+        FixtureInput::Model { model } => Of::Model(wire::SetModel {
+            model: model.clone(),
+        }),
+        FixtureInput::Effort { effort } => Of::Effort(wire::SetEffort {
+            effort: effort.clone(),
+        }),
         FixtureInput::AgentMessage { .. }
         | FixtureInput::Raw { .. }
-        | FixtureInput::Model { .. }
-        | FixtureInput::Mode { .. }
-        | FixtureInput::Effort { .. } => return None,
+        | FixtureInput::Mode { .. } => {
+            return None;
+        }
     };
     Some(Input {
         input_id,

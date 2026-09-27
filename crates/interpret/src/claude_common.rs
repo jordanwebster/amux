@@ -572,3 +572,50 @@ pub(crate) fn describe_models(models: &[OfferedModel]) -> String {
 pub(crate) fn describe_commands(commands: &[OfferedCommand]) -> String {
     commands.len().to_string()
 }
+
+/// The models an initialize answer lists, as headless Claude answers it.
+pub(crate) fn offered_models(models: &[Value]) -> Vec<OfferedModel> {
+    models.iter().map(offered_model).collect()
+}
+
+/// The commands an initialize answer lists.
+pub(crate) fn offered_commands(commands: &[Value]) -> Vec<OfferedCommand> {
+    commands.iter().map(offered_command).collect()
+}
+
+/// A model the initialize response lists.
+fn offered_model(model: &Value) -> OfferedModel {
+    OfferedModel {
+        value: text(model, "value").to_owned(),
+        display_name: text(model, "displayName").to_owned(),
+        description: text(model, "description").to_owned(),
+        efforts: model
+            .get("supportedEffortLevels")
+            .and_then(Value::as_array)
+            .map(|levels| {
+                levels
+                    .iter()
+                    .filter_map(|level| level.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        // Claude names no default effort per model.
+        default_effort: None,
+        resolved_model: text(model, "resolvedModel").to_owned(),
+    }
+}
+
+/// A command the initialize response lists. A plugin's command is named
+/// `plugin:command`; the plugin is its source.
+fn offered_command(command: &Value) -> OfferedCommand {
+    let name = text(command, "name");
+    OfferedCommand {
+        name: name.to_owned(),
+        description: text(command, "description").to_owned(),
+        argument_hint: text(command, "argumentHint").to_owned(),
+        source: name
+            .split_once(':')
+            .map(|(plugin, _)| plugin.to_owned())
+            .unwrap_or_default(),
+    }
+}

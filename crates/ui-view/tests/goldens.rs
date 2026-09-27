@@ -289,6 +289,9 @@ fn describe_settings(out: &mut String, state: &SessionState) {
             }
         );
     }
+    if view.cycle_mode {
+        let _ = writeln!(out, "  mode: cycle to the next");
+    }
     for command in &view.commands {
         let _ = writeln!(
             out,

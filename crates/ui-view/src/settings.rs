@@ -32,7 +32,8 @@ const CODEX_PRESETS: &[(&str, &str, &str)] = &[
 
 /// Claude commands that open an interactive screen of Claude's own
 /// terminal, or change a setting this view offers directly: typed into a
-/// headless agent they do nothing useful.
+/// headless agent they do nothing useful. Terminal Claude runs them all, so
+/// its list keeps them.
 const TERMINAL_ONLY_COMMANDS: &[&str] = &[
     "agents",
     "auto-mode-setup",
@@ -66,7 +67,12 @@ pub struct SettingsView {
     pub models: Vec<ModelChoice>,
     /// The current model's efforts, then a reported effort outside them.
     pub efforts: Vec<EffortChoice>,
+    /// The modes to pick from; for a kind that only cycles, the current
+    /// mode alone.
     pub modes: Vec<ModeChoice>,
+    /// The mode changes by cycling to the next (the cycle key), never by a
+    /// pick: offered beside the current mode.
+    pub cycle_mode: bool,
     pub commands: Vec<CommandView>,
     /// Why the model cannot change from here, when it cannot.
     pub model_refusal: Option<String>,
@@ -135,8 +141,8 @@ pub struct CommandView {
 fn refusals(kind: Kind) -> [Option<&'static str>; 3] {
     match kind {
         Kind::ClaudePty => [
-            Some("Terminal Claude changes its model only in its own terminal."),
-            Some("Terminal Claude changes its effort only in its own terminal."),
+            None,
+            None,
             Some("Terminal Claude changes mode only by cycling through its modes."),
         ],
         Kind::ClaudeSdk => [
@@ -152,16 +158,31 @@ pub fn settings(state: &SessionState) -> SettingsView {
     let kind = state.kind();
     let agent = state.agent_state();
     let current_model = agent.model.as_deref();
+    // The agent reports a model by its id; the offer names it by an alias
+    // that resolves to that id, and several aliases may: the one named
+    // exactly wins, else the first that resolves to it.
+    let current = current_model.and_then(|current| {
+        let offered = &agent.models;
+        offered
+            .iter()
+            .position(|model| model.value == current)
+            .or_else(|| {
+                offered
+                    .iter()
+                    .position(|model| model.resolved_model == current)
+            })
+    });
     let mut models: Vec<ModelChoice> = agent
         .models
         .iter()
-        .map(|model| ModelChoice {
+        .enumerate()
+        .map(|(index, model)| ModelChoice {
             value: model.value.clone(),
             display_name: model.display_name.clone(),
             description: model.description.clone(),
             efforts: model.efforts.clone(),
             default_effort: model.default_effort.clone(),
-            current: current_model == Some(model.value.as_str()),
+            current: current == Some(index),
             reported: false,
         })
         .collect();
@@ -204,9 +225,8 @@ pub fn settings(state: &SessionState) -> SettingsView {
         });
     }
     let modes = modes(kind, agent.mode.as_deref(), agent.sandbox.as_deref());
-    let terminal_only = |name: &str| {
-        matches!(kind, Kind::ClaudePty | Kind::ClaudeSdk) && TERMINAL_ONLY_COMMANDS.contains(&name)
-    };
+    let terminal_only =
+        |name: &str| kind == Kind::ClaudeSdk && TERMINAL_ONLY_COMMANDS.contains(&name);
     let commands = agent
         .commands
         .iter()
@@ -224,6 +244,7 @@ pub fn settings(state: &SessionState) -> SettingsView {
         models,
         efforts,
         modes,
+        cycle_mode: kind == Kind::ClaudePty,
         commands,
         model_refusal,
         effort_refusal,
@@ -232,10 +253,21 @@ pub fn settings(state: &SessionState) -> SettingsView {
 }
 
 /// The kind's mode set with the reported mode marked; a reported mode
-/// outside the set is added after it.
+/// outside the set is added after it. Terminal Claude's is the reported
+/// mode alone: the order its cycle takes depends on how it was launched,
+/// so no other mode can be reached by a known number of steps.
 fn modes(kind: Kind, mode: Option<&str>, sandbox: Option<&str>) -> Vec<ModeChoice> {
     match kind {
-        Kind::ClaudePty | Kind::ClaudeSdk => {
+        Kind::ClaudePty => mode
+            .map(|mode| ModeChoice {
+                value: ModeValue::Claude(mode.to_owned()),
+                current: true,
+                reported: !CLAUDE_MODES.contains(&mode),
+                stops_asking: mode == CLAUDE_STOPS_ASKING,
+            })
+            .into_iter()
+            .collect(),
+        Kind::ClaudeSdk => {
             let mut modes: Vec<ModeChoice> = CLAUDE_MODES
                 .iter()
                 .map(|name| ModeChoice {

@@ -72,6 +72,8 @@ pub fn claude_pty() -> ClaudePtySnapshot {
         servers: Some(tool_server_health()),
         sign_in: Some(sign_in()),
         background_processes: Some(background_processes()),
+        models: Vec::new(),
+        commands: Vec::new(),
     }
 }
 
