@@ -45,6 +45,8 @@
 //! | `OpenGate` | `Net::open_gate` |
 //! | `Inventory` | `Net::observe_inventory + observe_until(CaughtUp)` |
 //! | `Block` | `Net::assert_block_invariant` |
+//! | `Chat` | `Net::observe + observe_until(CaughtUp)` |
+//! | `ProviderInput` | `Net::provider_input` |
 //! | `Shutdown` | `Net::shutdown + closes the control socket` |
 //! <!-- door-capabilities:end -->
 

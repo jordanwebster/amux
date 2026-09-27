@@ -177,11 +177,25 @@
       "claim": "A person sends one prompt through the real terminal client to a Claude PTY session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host independently records the prompt and decision."
     },
     {
+      "id": "conversation-decision-claude-sdk",
+      "stage": 15,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "A person sends one prompt through the real terminal client to a headless Claude session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host records the prompt once and the provider receives exactly one allow."
+    },
+    {
+      "id": "conversation-decision-codex",
+      "stage": 15,
+      "clients": ["terminal"],
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "A person sends one prompt through the real terminal client to a Codex session, sees that exact prompt reflected once, answers one permission request once, and sees the turn finish; the host records the prompt once and the provider receives exactly one allow."
+    },
+    {
       "id": "leave-and-recover",
       "stage": 15,
       "clients": ["terminal"],
       "topology": "journeys/topologies/terminal-stories.json",
-      "claim": "A real terminal run creates cached fleet and chat state, a fresh client paints it while the daemon is offline with an unavailable composer, and the same chat reconciles when the daemon returns without losing or duplicating its rows."
+      "claim": "A real first run on one host makes its replica of another host's agent; with the origin out of reach a fresh client paints the cached chat from its own store with the host away and the composer waiting, keeps a draft, appends the origin's new turn once when the link returns, keeps its rows on screen through a Reset until the rebuilt transcript swaps in, and reconnects by itself when its own daemon restarts, sending the kept draft."
     },
     {
       "id": "reach-host",

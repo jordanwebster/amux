@@ -1,27 +1,50 @@
 {
-  "cloud_url": "https://amux.sh",
-  "users": ["personal"],
-  "daemons": [
-    {
-      "name": "terminal-host",
-      "user": "personal",
-      "installation": true,
-      "repository_roots": ["../.."]
-    }
-  ],
-  "paired": [],
+  "hosts": [{"name": "desk"}, {"name": "laptop"}],
+  "links": [{"a": "desk", "b": "laptop"}],
   "agents": [
     {
-      "name": "decision-agent",
-      "daemon": "terminal-host",
-      "working_dir": "../..",
-      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+      "name": "decision-pty",
+      "host": "desk",
+      "kind": "claude_pty",
+      "script": {"steps": [
+        {"ask": {"permission": {"name": "Bash", "class": "consequential", "input": {"command": "deploy --check"}, "outcome": {"output": "deploy check: ok"}}}},
+        {"text": {"chunks": ["The deploy check passed."]}},
+        "turn_end"
+      ]}
     },
     {
-      "name": "recovery-agent",
-      "daemon": "terminal-host",
-      "working_dir": "../..",
-      "provider": {"Claude": {"script": "../scripts/answers.json"}}
+      "name": "decision-sdk",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"ask": {"permission": {"name": "Bash", "class": "consequential", "input": {"command": "deploy --check"}, "outcome": {"output": "deploy check: ok"}}}},
+        {"text": {"chunks": ["The deploy check passed."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "decision-codex",
+      "host": "desk",
+      "kind": "codex",
+      "script": {"steps": [
+        {"ask": {"permission": {"class": "consequential", "input": {"command": "deploy --check"}, "outcome": {"output": "deploy check: ok"}}}},
+        {"text": {"chunks": ["The deploy check passed."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "keeper",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Remember this recovery turn.",
+      "script": {"steps": [
+        {"text": {"chunks": ["The recovery state is safely stored."]}},
+        "turn_end",
+        {"text": {"chunks": ["A second turn arrived while you were away."]}},
+        "turn_end",
+        {"text": {"chunks": ["Back after the restart."]}},
+        "turn_end"
+      ]}
     }
   ]
 }

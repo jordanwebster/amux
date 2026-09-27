@@ -1,4 +1,4 @@
-  decision-pty · claude @ desk                                             claude-fake-1 · default · needs you
+  decision-sdk · claude sdk @ desk                                         claude-fake-1 · default · needs you
 
 
 
@@ -16,19 +16,19 @@
 
 
 
+▎   Check the deployment once.
 
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 ▌ ▸ Running deploy --check                                                                             running
 
-▎   Check the deployment once.
-
 
   ● Wants to run a command
     $ deploy --check
   › 1. Allow once
-    2. Allow access to /private/tmp/aj-xxxxxxxx/testnetxxxxxx/desk/work for this session
-    3. Deny and stop…
-    4. Stop the turn
+    2. Always allow Bash in this project
+    3. Deny…
+    4. Deny and stop…
+    5. Stop the turn
     ↑↓/1-9 select · enter confirm · f open · ctrl+x stop
 

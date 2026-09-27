@@ -755,6 +755,11 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
             host: "a".into(),
             agent: "x".into(),
         },
+        Control::Chat {
+            host: "a".into(),
+            agent: "x".into(),
+        },
+        Control::ProviderInput { agent: "x".into() },
         Control::Shutdown,
     ];
     let mut verbs: Vec<&str> = samples.iter().map(Control::verb).collect();

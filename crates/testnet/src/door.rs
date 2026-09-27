@@ -86,6 +86,13 @@ pub enum Control {
         host: String,
         agent: String,
     },
+    Chat {
+        host: String,
+        agent: String,
+    },
+    ProviderInput {
+        agent: String,
+    },
     Shutdown,
 }
 
@@ -113,6 +120,8 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
         "Net::observe_inventory + observe_until(CaughtUp)",
     ),
     ("Block", "Net::assert_block_invariant"),
+    ("Chat", "Net::observe + observe_until(CaughtUp)"),
+    ("ProviderInput", "Net::provider_input"),
     ("Shutdown", "Net::shutdown + closes the control socket"),
 ];
 
@@ -135,6 +144,8 @@ impl Control {
             Self::OpenGate { .. } => "OpenGate",
             Self::Inventory { .. } => "Inventory",
             Self::Block { .. } => "Block",
+            Self::Chat { .. } => "Chat",
+            Self::ProviderInput { .. } => "ProviderInput",
             Self::Shutdown => "Shutdown",
         }
     }
@@ -440,6 +451,36 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
             net.assert_block_invariant(&host, &agent).await?;
             json!("holds")
         }
+        Control::Chat { host, agent } => {
+            // Everything the host holds of the chat: a tail long enough for
+            // any journey, read to its first CaughtUp.
+            let mut chat = net.observe(&host, &agent, 1_000).await?;
+            let events = chat
+                .observe_until(observe::caught_up, observe::PATIENCE)
+                .await?;
+            let mut items: Vec<Value> = Vec::new();
+            let mut phase = Value::Null;
+            for event in events {
+                match &event.of {
+                    Some(wire::session_event::Of::Item(item)) => {
+                        items.retain(|held| held["key"] != item.key.as_str());
+                        items.push(json!({
+                            "key": item.key,
+                            "order": item.order,
+                            "text": item.text,
+                            "input_id": item.input_id.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                        }));
+                    }
+                    Some(wire::session_event::Of::Snapshot(snapshot)) => {
+                        phase = json!(snapshot.phase().as_str_name());
+                    }
+                    _ => {}
+                }
+            }
+            items.sort_by_key(|item| item["order"].as_u64());
+            json!({ "items": items, "phase": phase })
+        }
+        Control::ProviderInput { agent } => json!({ "lines": net.provider_input(&agent)? }),
         Control::Shutdown => unreachable!("the connection handles shutdown"),
     })
 }

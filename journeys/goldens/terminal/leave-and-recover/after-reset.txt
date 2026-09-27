@@ -1,10 +1,4 @@
-  keeper · claude sdk @ desk                                                    claude-fake-1 · default · idle
-
-
-
-
-
-
+  keeper · claude sdk @ desk               claude-fake-1 · default · exited · exited while the daemon was away
 
 
 
@@ -29,6 +23,12 @@
 
     Worked <t> · $0.00
 
+▎   Keep this draft through the outage.
 
-▎ Keep this draft through the outage.
-  enter send · ctrl+j newline · ctrl+v attach
+    Back after the restart.
+
+    Worked <t> · $0.00
+
+
+▎ keeper has exited · type to resume it with a message
+  enter resume with this message · ctrl+j newline

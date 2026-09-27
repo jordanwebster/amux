@@ -1,3 +1,22 @@
+2026-09-27 — **Terminal journeys run on the new client through `testnet serve`.**
+`scripts/journeys/terminal.py` is rebuilt: it serves a topology with
+`testnet serve`, launches the real `amux` against one host's install in a
+private tmux server at 110×34, waits on frames, sends keys, and captures
+text plus a style map parsed from tmux's escape output (a legend names each
+style), masking only the run's scratch paths, relative ages and measured
+durations. Two new door verbs give independent observations: `Chat` (what
+a host holds of an agent's chat, read to CaughtUp) and `ProviderInput`
+(what a headless Claude or Codex provider was sent). The stories so far:
+conversation-decision for terminal Claude, headless Claude and Codex (the
+prompt reflected once on the host, a wrong expectation rejected by the
+same check, Allow once taken from the card, the reply and idle on the
+host, exactly one allow at the provider for the stdio kinds), and
+leave-and-recover (a laptop's replica painted from its store with the desk
+away and a draft kept, the desk's new turn appended once when the link
+returns, the laptop's daemon restarted under the open chat and the draft
+sent, then rows kept on screen through the desk's rewind and Reset). The
+old terminal goldens for stories not yet rebuilt are removed.
+
 2026-09-27 — **`just shot -- render vocabulary` draws the terminal goldens as PNGs.**
 The shot crate is a workspace member again, reduced to what the new client
 needs: it rasterizes every `tui::vocabulary` component in light and dark

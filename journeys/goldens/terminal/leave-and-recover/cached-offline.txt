@@ -1,0 +1,34 @@
+  keeper · claude sdk @ desk                                 claude-fake-1 · default · desk away · not current
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▎   Remember this recovery turn.
+
+  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+    The recovery state is safely stored.
+
+    Worked <t> · $0.00
+
+
+▎ Keep this draft through the outage.
+  draft kept · sending waits
