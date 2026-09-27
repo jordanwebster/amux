@@ -31,7 +31,9 @@ pub fn caption(entry: &HostEntry) -> String {
     if entry.presence() == Presence::Online && !via.is_empty() {
         parts.push(via.to_owned());
     }
-    if entry.signed_in == Some(false) {
+    // Signing in matters only for reaching a host through the relay.
+    let relay = entry.presence() != Presence::Online || entry.via() == HostVia::Relay;
+    if relay && entry.signed_in == Some(false) {
         parts.push("not signed in".into());
     }
     if let Some(error) = entry.last_dial_error.as_ref().filter(|e| !e.is_empty()) {

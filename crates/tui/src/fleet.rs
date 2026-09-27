@@ -475,7 +475,7 @@ impl FleetView {
             Attention::Exited => (
                 card.exit_cause
                     .as_ref()
-                    .filter(|cause| !cause.is_empty())
+                    .filter(|cause| !cause.is_empty() && *cause != "exited")
                     .map(|cause| format!("exited · {cause}"))
                     .unwrap_or_else(|| "exited".into()),
                 theme.muted(),

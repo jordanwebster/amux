@@ -822,7 +822,9 @@ fn header(state: &SessionState, width: usize, theme: Theme) -> Line<'static> {
     let (words, style) = match (state.composer(), state.phase()) {
         (_, PhaseView::Exited { cause }) => (
             match cause {
-                Some(cause) if !cause.is_empty() => format!("exited · {cause}"),
+                Some(cause) if !cause.is_empty() && cause != "exited" => {
+                    format!("exited · {cause}")
+                }
                 _ => "exited".to_owned(),
             },
             theme.muted(),
