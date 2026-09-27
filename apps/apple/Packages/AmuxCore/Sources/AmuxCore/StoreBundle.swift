@@ -2,6 +2,14 @@ import AmuxValues
 import Foundation
 import Observation
 
+/// A chat session a bundle holds open: the runtime's, or one a test hands in.
+public protocol OpenChat: ChatSource {
+    var id: UInt64 { get }
+    func close()
+}
+
+extension Chat: OpenChat {}
+
 /// Everything one account's screens draw, over the runtime that serves it.
 ///
 /// The runtime wakes this once per turn for however much changed; the
@@ -21,11 +29,19 @@ public final class StoreBundle {
     /// The runtime serving this account, while it runs.
     @ObservationIgnored public private(set) var runtime: Runtime?
     /// Open chats by the id the runtime's wake names them with.
-    @ObservationIgnored private var chats: [UInt64: (chat: Chat, woke: @MainActor () -> Void)] = [:]
-    /// The chats pages hold, by agent.
-    @ObservationIgnored private var models: [AgentKey: (chat: Chat, model: ChatModel)] = [:]
+    @ObservationIgnored private var chats: [UInt64: (chat: OpenChat, woke: @MainActor () -> Void)] = [:]
+    /// The chat sessions held open, by agent: every agent that needs the
+    /// person, every chat a page shows, and chats viewed within the
+    /// retention.
+    @ObservationIgnored private var models: [AgentKey: (chat: OpenChat, model: ChatModel)] = [:]
     /// The agents whose chat a page shows.
     @ObservationIgnored private var shown: Set<AgentKey> = []
+    /// When a page last stopped showing each chat.
+    @ObservationIgnored private var viewed: [AgentKey: Date] = [:]
+    /// How long a chat nobody shows stays open after it was last viewed.
+    @ObservationIgnored public let sessionRetention: Duration
+    /// Opens a session; the runtime's unless a test hands one in.
+    @ObservationIgnored private let opener: (@MainActor (AgentKey) throws(RuntimeFailure) -> OpenChat)?
     @ObservationIgnored public let now: @MainActor () -> Date
     /// Told how many machines this account has paired and how many of its
     /// agents need the person, each time the fleet is read.
@@ -33,9 +49,15 @@ public final class StoreBundle {
     /// Whether a re-read of a relay link still coming up is scheduled.
     @ObservationIgnored private var settling = false
 
-    public init(account: AccountId, clock: @escaping @MainActor () -> Date = { Date() }) {
+    public init(
+        account: AccountId, clock: @escaping @MainActor () -> Date = { Date() },
+        sessionRetention: Duration = StoreBundle.sessionRetention,
+        opener: (@MainActor (AgentKey) throws(RuntimeFailure) -> OpenChat)? = nil
+    ) {
         self.account = account
         self.now = clock
+        self.sessionRetention = sessionRetention
+        self.opener = opener
         self.fleet = FleetStore(now: clock())
         self.hosts = HostsStore(clock: clock)
         self.pairing = PairingStore(clock: clock)
@@ -68,6 +90,7 @@ public final class StoreBundle {
         newAgent.remember(fleet.rows)
         saw?(fleet.machines.filter(\.trusted).count, fleet.rows.filter(\.needsYou).count)
         applied += 1
+        keepSessions()
         if hostsMoved {
             Task { await refreshAccount() }
             if hosts.readingDevices || hosts.roster == nil { Task { await refreshRoster() } }
@@ -106,25 +129,35 @@ public final class StoreBundle {
 
     // MARK: - Chats
 
+    /// A viewed chat stays open this long after its page leaves: long
+    /// enough that going back to it is instant, short enough that the
+    /// sessions a phone holds follow what the person is looking at.
+    public static let sessionRetention: Duration = .seconds(300)
+
     /// Opens an agent's chat and routes its wakes to `woke`.
     public func openChat(
         _ agent: AgentKey, woke: @escaping @MainActor () -> Void
-    ) throws(RuntimeFailure) -> Chat {
-        guard let runtime else { throw RuntimeFailure("nothing is running for this account") }
-        let chat = try runtime.openChat(agent)
+    ) throws(RuntimeFailure) -> OpenChat {
+        let chat: OpenChat
+        if let opener {
+            chat = try opener(agent)
+        } else {
+            guard let runtime else { throw RuntimeFailure("nothing is running for this account") }
+            chat = try runtime.openChat(agent)
+        }
         chats[chat.id] = (chat, woke)
         fleet.opened(agent, at: now())
         return chat
     }
 
-    public func closeChat(_ chat: Chat) {
+    public func closeChat(_ chat: OpenChat) {
         chats.removeValue(forKey: chat.id)
         chat.close()
     }
 
     /// The chat a page shows, opened the first time it is asked for and kept
-    /// until ``leave(_:)``: a child's chat pushed on top keeps the parent's
-    /// draft and place.
+    /// while a page shows it: a child's chat pushed on top keeps the
+    /// parent's draft and place.
     public func chat(_ agent: AgentKey) throws(RuntimeFailure) -> ChatModel {
         shown.insert(agent)
         return try model(agent)
@@ -138,18 +171,48 @@ public final class StoreBundle {
         return model
     }
 
-    /// The page showing this chat is gone: close it.
+    /// Whether a session is open on an agent's chat, shown or not.
+    public func holds(_ agent: AgentKey) -> Bool { models[agent] != nil }
+
+    /// The page showing this chat is gone. The session stays for the
+    /// retention, so coming back to it is instant, then closes.
     public func leave(_ agent: AgentKey) {
         shown.remove(agent)
-        guard let open = models.removeValue(forKey: agent) else { return }
-        closeChat(open.chat)
+        viewed[agent] = now()
+        Task { [weak self, retention = sessionRetention] in
+            try? await Task.sleep(for: retention)
+            self?.keepSessions()
+        }
+    }
+
+    /// Which chat sessions exist, after every read of the fleet. Every
+    /// agent whose entry says it needs the person gets one, so its chat is
+    /// already current when its page opens; a shown chat keeps its own; a
+    /// chat viewed within the retention keeps its own; nothing else is
+    /// opened or kept, because the runtime keeps every listed agent's rows
+    /// current without a session.
+    func keepSessions() {
+        for row in fleet.rows where row.needsYou && models[row.id] == nil {
+            _ = try? model(row.id)
+        }
+        let at = now()
+        let retention = Double(sessionRetention.components.seconds)
+            + Double(sessionRetention.components.attoseconds) / 1e18
+        for (agent, open) in models where !shown.contains(agent) {
+            if fleet.row(agent)?.needsYou == true { continue }
+            if let last = viewed[agent], at.timeIntervalSince(last) < retention { continue }
+            models.removeValue(forKey: agent)
+            viewed.removeValue(forKey: agent)
+            closeChat(open.chat)
+        }
     }
 
     /// Brings one agent's chat current, for a push that woke the app in the
     /// background: the ordinary open, which asks the agent's host for what
     /// this phone missed, then a wait for it to catch up. Nothing else is
-    /// brought current. A chat no page shows is closed again; its rows stay
-    /// in the store, so tapping the notification opens it at once.
+    /// brought current. Afterwards the chat is kept or closed like any
+    /// other; its rows stay in the store, so tapping the notification opens
+    /// it at once.
     @discardableResult
     public func warm(_ agent: AgentKey, within limit: Duration = .seconds(25)) async -> Bool {
         guard let model = try? model(agent) else { return false }
@@ -158,9 +221,7 @@ public final class StoreBundle {
             try? await Task.sleep(for: .milliseconds(100))
         }
         let current = model.frame?.caughtUp == true
-        if !shown.contains(agent), let open = models.removeValue(forKey: agent) {
-            closeChat(open.chat)
-        }
+        keepSessions()
         return current
     }
 
@@ -170,6 +231,7 @@ public final class StoreBundle {
         chats.removeAll()
         models.removeAll()
         shown.removeAll()
+        viewed.removeAll()
     }
 
     // MARK: - Pairing

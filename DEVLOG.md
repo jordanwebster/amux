@@ -1,3 +1,10 @@
+2026-09-27 — **The phone keeps chat sessions by what the person needs.**
+After every read of the fleet the phone opens a chat session for each
+agent that needs the person, so its chat is current before its page opens,
+keeps a chat open while a page shows it and for five minutes after, and
+opens nothing else: the runtime keeps every listed agent's rows current
+without a session.
+
 2026-09-27 — **Dictation is back in the phone composer.**
 The mic beside the plus dictates on the device only, asking for speech
 recognition and then the microphone. What is heard streams into the end

@@ -331,7 +331,7 @@ final class DoorHost {
             let chat = try stores.openChat(row.id) {}
             defer { stores.closeChat(chat) }
             return .conversation(ConversationReading(
-                agent: agent, frame: chat.frame(), rows: chat.rows(for: chat.keys()),
+                agent: agent, frame: chat.frame(), rows: chat.rows(for: chat.keys(), options: nil),
                 ask: chat.askCard()))
         } catch {
             return .error(error.description)
