@@ -332,7 +332,7 @@ private struct ChatPage: View {
         Group {
             if let model {
                 ChatScreen(
-                    model: model, subject: subject, family: stores.runtime?.family(agent),
+                    model: model, subject: subject, family: stores.profile?.family(agent),
                     actions: act)
             } else {
                 ZStack(alignment: .topLeading) {

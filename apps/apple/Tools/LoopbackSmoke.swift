@@ -96,9 +96,20 @@ private func smoke() throws {
         throw fail(3, "the runtime did not start: \(reason)")
     }
     defer { amux_runtime_stop(runtime) }
+    // A fresh installation has one profile, nobody signed in on it.
+    let listed = try read(amux_runtime_profiles(runtime)) as? [[String: Any]] ?? []
+    guard let id = listed.first?["id"] as? String else {
+        throw fail(3, "the installation lists no profile")
+    }
+    guard let profile = id.withCString({ amux_profile_open(runtime, $0, woke, nil, &error) }) else {
+        let reason = error.map { String(cString: $0) } ?? "no reason"
+        if let error { amux_string_free(error) }
+        throw fail(3, "the profile did not open: \(reason)")
+    }
+    defer { amux_profile_close(profile) }
 
     let pending = try ask("pairing") { callback, context in
-        json(["Link": link]).withCString { amux_runtime_begin_pair(runtime, $0, callback, context) }
+        json(["Link": link]).withCString { amux_profile_begin_pair(profile, $0, callback, context) }
     }
     guard let pending = pending as? [String: Any], let token = pending["token"] else {
         throw fail(5, "pairing answered no token: \(pending)")
@@ -107,18 +118,18 @@ private func smoke() throws {
         throw fail(5, "the link reached \(pending["name"] ?? "nobody"), not \(machine)")
     }
     let paired = try ask("confirming") { callback, context in
-        json(token).withCString { amux_runtime_confirm_pair(runtime, $0, callback, context) }
+        json(token).withCString { amux_profile_confirm_pair(profile, $0, callback, context) }
     }
 
     let host = try until("\(machine) online and trusted") { () -> [String: Any]? in
-        let hosts = try read(amux_fleet_hosts(runtime)) as? [[String: Any]] ?? []
+        let hosts = try read(amux_fleet_hosts(profile)) as? [[String: Any]] ?? []
         return hosts.first {
             $0["name"] as? String == machine && $0["trusted"] as? Bool == true
                 && $0["presence"] as? String == "Online"
         }
     }
     let names = try until("\(agent) in the fleet") { () -> [String]? in
-        let rows = try read(amux_fleet_rows(runtime, nil)) as? [[String: Any]] ?? []
+        let rows = try read(amux_fleet_rows(profile, nil)) as? [[String: Any]] ?? []
         let names = rows.compactMap { ($0["card"] as? [String: Any])?["name"] as? String }
         return names.contains(agent) ? names.sorted() : nil
     }

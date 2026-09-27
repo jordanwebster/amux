@@ -41,8 +41,7 @@
       {"literal": "\"\\(agent) in the fleet\"", "context": "return await until(seconds, \"\\(agent) in the fleet\") {", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"this build's door does not \\(Self.verb(request))\"", "context": "return .error(\"this build's door does not \\(Self.verb(request))\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"nothing to sign in with\"", "context": "return .error(\"nothing to sign in with\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
-      {"literal": "\"\\(user)@example.com\"", "context": "id: AccountId(user), email: \"\\(user)@example.com\", displayName: user)", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
-      {"literal": "\"cli\"", "context": "installation, cloud: cloud, client: \"cli\", refreshToken: token) {", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
+      {"literal": "\"cli\"", "context": "account, cloud: cloud, client: \"cli\", refreshToken: token) {", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"nothing is running\"", "context": "guard let stores, stores.pair(link: link) else { return .error(\"nothing is running\") }", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"no host named \\(host)\"", "context": "guard let stores, let id = HostId(host) else { return .error(\"no host named \\(host)\") }", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"the code was not six digits\"", "context": "guard stores.pair(digits: pin) else { return .error(\"the code was not six digits\") }", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
@@ -345,8 +344,9 @@
       {"literal": "\"Err\"", "context": "case err = \"Err\"", "reason": "Bridge JSON key or literal, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift": [
-      {"literal": "\"installations\"", "context": "support.appendingPathComponent(\"installations\", isDirectory: true)", "reason": "File or directory name on disk, not interface copy.", "count": 1},
-      {"literal": "\"runtime.log\"", "context": "forReadingFrom: directory(of: running).appendingPathComponent(\"runtime.log\"))", "reason": "File or directory name on disk, not interface copy.", "count": 1},
+      {"literal": "\"installation\"", "context": "support.appendingPathComponent(\"installation\", isDirectory: true)", "reason": "File or directory name on disk, not interface copy.", "count": 1},
+      {"literal": "\"installations\"", "context": "at: support.appendingPathComponent(\"installations\", isDirectory: true))", "reason": "File or directory name on disk, not interface copy.", "count": 1},
+      {"literal": "\"runtime.log\"", "context": "forReadingFrom: directory.appendingPathComponent(\"runtime.log\"))", "reason": "File or directory name on disk, not interface copy.", "count": 1},
       {"literal": "\"runtime.log\"", "context": "logPath: directory.appendingPathComponent(\"runtime.log\").path,", "reason": "File or directory name on disk, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift": [

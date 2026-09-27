@@ -243,20 +243,16 @@ final class DoorHost {
     }
 
     /// Signs the launch's account in to the served network's relay, the way
-    /// the app keeps a sign-in: the account goes on screen and its
-    /// installation is bound with the relay's own login.
+    /// the app keeps a sign-in: its profile is bound with the relay's own
+    /// login and the account goes on screen.
     private func signIn(user: String, relay: String, token: String) async -> DoorReply {
         guard let composition, let cloud = URL(string: relay) else {
             return .error("nothing to sign in with")
         }
-        let account = SignedInAccount(
-            id: AccountId(user), email: "\(user)@example.com", displayName: user)
-        let installation = composition.accounts.installation(for: account.id)
-        composition.accounts.add(
-            account, entitlement: .active(grant: .granted, renews: nil),
-            installation: installation)
+        let account = AccountId(user)
+        composition.accounts.entitlement(.active(grant: .granted, renews: nil), for: account)
         switch await composition.runtime.bind(
-            installation, cloud: cloud, client: "cli", refreshToken: token) {
+            account, cloud: cloud, client: "cli", refreshToken: token) {
         case .success: return .ack
         case .failure(let why): return .error(why.description)
         }

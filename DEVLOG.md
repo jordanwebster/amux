@@ -1,3 +1,27 @@
+2026-09-27 — **The phone is one installation with one profile per account, as the desktop is.**
+Each account used to be an installation of its own, and switching account
+stopped the running one and started the other's. Now the embedded daemon's
+profile registry does the work it does on a desktop: the signed-out phone
+holds one unbound profile, which the first sign-in binds by id with
+adoption, keeping what it paired; a further account is a profile the
+registry creates at its sign-in; signing out is the registry's logout, so
+the profile keeps its account's address and signing back in binds it again;
+removing an account deletes its profile, after creating a fresh unbound one
+when it was the last. Switching account opens the other profile's fleet
+without stopping anything, pauses the previous bound profile's relay link and
+resumes the selected one, so one relay link is live; only the profile on
+screen lists every agent's source, and only in the foreground. The bridge
+splits into the installation (`amux_runtime_*`: the profile list and its
+wake, create, delete, bind, sign-out, pause, resume, per-profile source
+policy, bearer and entitlement, the trusting-profile lookup, discovery handed
+to every profile) and a profile handle (`amux_profile_*` with the fleet and
+chats over it). The daemon's profile description gains the account's subject,
+which is how the app maps its accounts to profiles; the app remembers only
+the account on screen and, per account, what it last listed and what the
+account service last said. The per-account installation directories are
+deleted at start. The coordinator's tests bind against an account service
+served on loopback.
+
 2026-09-27 — **The phone's composer offers the agent's commands and turns a long paste into one attachment.**
 A draft that is exactly a leading "/word" lists up to five of the agent's
 commands above the composer, matched by prefix or by prefix after a plugin's

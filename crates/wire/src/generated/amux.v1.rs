@@ -5276,6 +5276,10 @@ pub struct ProfileInfo {
     pub tier: i32,
     #[prost(enumeration = "RelayCarrier", tag = "14")]
     pub relay_carrier: i32,
+    /// The bound account's subject at its service, which stays after a
+    /// sign-out; empty when unbound. What tells two profiles' accounts apart.
+    #[prost(string, tag = "15")]
+    pub account_subject: ::prost::alloc::string::String,
 }
 impl ::prost::Name for ProfileInfo {
     const NAME: &'static str = "ProfileInfo";

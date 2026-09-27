@@ -682,6 +682,9 @@ message ProfileInfo {
   optional string minimum_version = 12;
   Tier tier = 13;
   RelayCarrier relay_carrier = 14;
+  // The bound account's subject at its service, which stays after a
+  // sign-out; empty when unbound. What tells two profiles' accounts apart.
+  string account_subject = 15;
 }
 message ListProfilesRequest {}
 message ListProfilesResponse { repeated ProfileInfo profiles = 1; }

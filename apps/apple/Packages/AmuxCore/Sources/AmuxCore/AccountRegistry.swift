@@ -1,3 +1,4 @@
+import AmuxValues
 import Foundation
 import Observation
 
@@ -13,22 +14,22 @@ public struct AccountEntry: Sendable, Equatable, Identifiable, Codable {
     public var hosts: Int?
     /// How many of its agents needed the person when last on screen.
     public var attention: Int?
-    /// The directory under the app's support directory that holds this
-    /// account's installation: its key, the machines it trusts, its store.
-    public var installation: String
+    /// The profile of this phone's installation that holds this account:
+    /// its key, the machines it trusts, its store.
+    public var profile: String
 
     public var id: AccountId { account.id }
 
     public init(
         account: SignedInAccount, signedIn: Bool = true, entitlement: Entitlement = .none,
-        hosts: Int? = nil, attention: Int? = nil, installation: String = UUID().uuidString
+        hosts: Int? = nil, attention: Int? = nil, profile: String = ""
     ) {
         self.account = account
         self.signedIn = signedIn
         self.entitlement = entitlement
         self.hosts = hosts
         self.attention = attention
-        self.installation = installation
+        self.profile = profile
     }
 
     /// The second line an account row shows.
@@ -51,14 +52,15 @@ public enum FleetGate: Sendable, Equatable {
     case unsubscribed
 }
 
-/// Every account on this phone, which one is on screen, and where each one's
-/// installation lives.
+/// Every account on this phone and which one is on screen.
 ///
-/// An account's installation is a profile of the shared runtime with its own
-/// key, trust and store; only the one on screen runs. A phone nobody has
-/// signed in on runs an installation of its own, which the first sign-in
-/// takes over — so the machines paired before there was an account are that
-/// account's — and a fresh one takes its place if every account is removed.
+/// The accounts are the profiles of this phone's one installation, as its
+/// registry lists them: one per account signed in to, which stays tied to
+/// its account after a sign-out. A phone nobody is signed in on shows the
+/// profile nobody has signed in on, which the first sign-in takes over — so
+/// the machines paired before there was an account are that account's.
+/// What is remembered here is only which account is on screen and, per
+/// account, what it last listed and what the account service last said.
 @MainActor
 @Observable
 public final class AccountRegistry {
@@ -66,20 +68,33 @@ public final class AccountRegistry {
     public private(set) var selected: AccountId?
     /// The stores of the account on screen.
     public private(set) var stores: StoreBundle?
-    /// The installation a phone nobody is signed in on runs.
-    public private(set) var signedOutInstallation = UUID().uuidString
+    /// The profile nobody has signed in on, if there is one.
+    public private(set) var unbound: String?
     /// Answers for an account that is not on screen, dropped.
     public private(set) var dropped = 0
-    /// Told when the account on screen changes, before `changed`.
+    /// Told when what is on screen changes, before `changed`.
     @ObservationIgnored public var switching: (@MainActor (AccountId?) -> Void)?
     @ObservationIgnored public var changed: (@MainActor () -> Void)?
     @ObservationIgnored private let file: URL?
     public private(set) var persistenceFailed = false
+    /// What each account last listed and what the account service last
+    /// said, by account.
+    @ObservationIgnored private var seen: [AccountId: Seen] = [:]
+
+    private struct Seen: Codable, Equatable {
+        var hosts: Int?
+        var attention: Int?
+        var entitlement: Entitlement = .none
+    }
 
     private struct Remembered: Codable {
-        var accounts: [AccountEntry]
         var selected: AccountId?
-        var signedOutInstallation: String?
+        var seen: [Keyed]
+    }
+
+    private struct Keyed: Codable {
+        var account: AccountId
+        var seen: Seen
     }
 
     public init(file: URL? = nil) {
@@ -89,9 +104,8 @@ public final class AccountRegistry {
             persist()
             return
         }
-        accounts = saved.accounts
-        if let installation = saved.signedOutInstallation { signedOutInstallation = installation }
-        selected = saved.selected.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
+        selected = saved.selected
+        seen = Dictionary(saved.seen.map { ($0.account, $0.seen) }) { first, _ in first }
         stores = selected.map(bundle)
     }
 
@@ -100,9 +114,9 @@ public final class AccountRegistry {
         do {
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try AmuxJSON.encoder.encode(Remembered(
-                accounts: accounts, selected: selected,
-                signedOutInstallation: signedOutInstallation))
+            let keyed = seen.map { Keyed(account: $0.key, seen: $0.value) }
+                .sorted { $0.account.value < $1.account.value }
+            try AmuxJSON.encoder.encode(Remembered(selected: selected, seen: keyed))
                 .write(to: file, options: .atomic)
             persistenceFailed = false
         } catch {
@@ -114,10 +128,11 @@ public final class AccountRegistry {
         accounts.first { $0.id == selected }
     }
 
-    /// The installation that runs now: the selected account's, or the
-    /// signed-out phone's.
-    public var installation: String {
-        selectedAccount?.installation ?? signedOutInstallation
+    /// The profile on screen: the selected account's, or the one nobody has
+    /// signed in on.
+    public var profile: String? {
+        guard let selected else { return unbound }
+        return accounts.first { $0.id == selected }?.profile
     }
 
     /// What the relay will carry for the account on screen: the link's own
@@ -133,66 +148,38 @@ public final class AccountRegistry {
         }
     }
 
-    /// Where a sign-in for `account` binds: its own installation when it is
-    /// already here, the signed-out phone's when nobody is on screen — the
-    /// first sign-in adopts what was paired before — or a new one.
-    public func installation(for account: AccountId) -> String {
-        if let known = accounts.first(where: { $0.id == account }) { return known.installation }
-        if selected == nil { return signedOutInstallation }
-        return UUID().uuidString
-    }
-
-    /// Keeps a signed-in account and puts it on screen.
-    ///
-    /// A new account goes on screen at once: its installation has to run to
-    /// be bound, and whoever added it wants to see it.
-    public func add(
-        _ account: SignedInAccount, entitlement: Entitlement = .none, installation: String
-    ) {
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
-            accounts[index].account = account
-            accounts[index].signedIn = true
-            accounts[index].entitlement = entitlement
-        } else {
-            if installation == signedOutInstallation {
-                signedOutInstallation = UUID().uuidString
-            }
-            accounts.append(AccountEntry(
-                account: account, entitlement: entitlement, installation: installation))
+    /// Takes the installation's profile list as it is now. An account whose
+    /// profile is gone leaves the screen for the first signed-in account,
+    /// then any account, then the profile nobody has signed in on.
+    public func show(_ profiles: [ProfileView]) {
+        let before = profile
+        accounts = profiles.filter { !$0.subject.isEmpty }.map { view in
+            let id = AccountId(view.subject)
+            let seen = seen[id] ?? Seen()
+            return AccountEntry(
+                account: SignedInAccount(
+                    id: id, email: view.account.email,
+                    displayName: view.account.name.isEmpty ? nil : view.account.name),
+                signedIn: view.account.binding != .signedOut,
+                entitlement: seen.entitlement, hosts: seen.hosts, attention: seen.attention,
+                profile: view.id)
         }
-        if selected != account.id {
-            select(account.id)
+        unbound = profiles.first { $0.subject.isEmpty }?.id
+        // Nothing was on screen yet, or what was is gone.
+        if selected.map({ id in !accounts.contains { $0.id == id } }) ?? (unbound == nil) {
+            place(next())
+        } else if profile != before {
+            switching?(selected)
+            changed?()
         } else {
-            persist()
             changed?()
         }
     }
 
-    /// Leaves an account; its installation keeps running on screen, signed
-    /// out, and still reaches the machines on this network.
-    public func signOut(_ id: AccountId) {
-        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
-        accounts[index].signedIn = false
-        accounts[index].entitlement = .none
-        persist()
-        changed?()
-    }
-
-    /// Takes an account off this phone and answers the installation to
-    /// delete. The screen moves to the first signed-in account, then any
-    /// account, then the signed-out phone.
-    @discardableResult
-    public func forget(_ id: AccountId) -> String? {
-        guard let entry = accounts.first(where: { $0.id == id }) else { return nil }
-        accounts.removeAll { $0.id == id }
-        if selected == id {
-            let next = accounts.first(where: \.signedIn)?.id ?? accounts.first?.id
-            place(next)
-        } else {
-            persist()
-            changed?()
-        }
-        return entry.installation
+    /// Where the screen goes when the account on it leaves.
+    private func next(leaving: AccountId? = nil) -> AccountId? {
+        let left = accounts.filter { $0.id != leaving }
+        return left.first(where: \.signedIn)?.id ?? left.first?.id
     }
 
     public func select(_ id: AccountId) {
@@ -200,18 +187,28 @@ public final class AccountRegistry {
         place(id)
     }
 
+    /// Takes an account off the screen before its profile is deleted.
+    public func leave(_ id: AccountId) {
+        guard selected == id else { return }
+        place(next(leaving: id))
+    }
+
     private func place(_ id: AccountId?) {
-        selected = id
-        stores = id.map(bundle)
-        persist()
-        switching?(id)
+        if selected != id {
+            selected = id
+            stores = id.map(bundle)
+            persist()
+        }
+        switching?(selected)
         changed?()
     }
 
     public func entitlement(_ entitlement: Entitlement, for id: AccountId) {
-        guard let index = accounts.firstIndex(where: { $0.id == id }),
-              accounts[index].entitlement != entitlement else { return }
-        accounts[index].entitlement = entitlement
+        guard seen[id, default: Seen()].entitlement != entitlement else { return }
+        seen[id, default: Seen()].entitlement = entitlement
+        if let index = accounts.firstIndex(where: { $0.id == id }) {
+            accounts[index].entitlement = entitlement
+        }
         persist()
         changed?()
     }
@@ -228,11 +225,13 @@ public final class AccountRegistry {
 
     /// What the account on screen lists, remembered for when it is not.
     public func saw(hosts: Int, attention: Int, for id: AccountId) {
-        guard let index = accounts.firstIndex(where: { $0.id == id }),
-              accounts[index].hosts != hosts || accounts[index].attention != attention
-        else { return }
-        accounts[index].hosts = hosts
-        accounts[index].attention = attention
+        guard seen[id]?.hosts != hosts || seen[id]?.attention != attention else { return }
+        seen[id, default: Seen()].hosts = hosts
+        seen[id, default: Seen()].attention = attention
+        if let index = accounts.firstIndex(where: { $0.id == id }) {
+            accounts[index].hosts = hosts
+            accounts[index].attention = attention
+        }
         persist()
     }
 

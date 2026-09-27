@@ -2,7 +2,7 @@ import AmuxValues
 import Foundation
 import Observation
 
-/// A chat session a bundle holds open: the runtime's, or one a test hands in.
+/// A chat session a bundle holds open: the profile's, or one a test hands in.
 public protocol OpenChat: ChatSource {
     var id: UInt64 { get }
     func close()
@@ -10,11 +10,11 @@ public protocol OpenChat: ChatSource {
 
 extension Chat: OpenChat {}
 
-/// Everything one account's screens draw, over the runtime that serves it.
+/// Everything one account's screens draw, over the profile that serves it.
 ///
-/// The runtime wakes this once per turn for however much changed; the
+/// The profile wakes this once per turn for however much changed; the
 /// bundle takes the changes and reads the fleet and hosts again. Acts go
-/// to the runtime and their answers land in the store the screen draws.
+/// to the profile and their answers land in the store the screen draws.
 @MainActor
 @Observable
 public final class StoreBundle {
@@ -26,9 +26,9 @@ public final class StoreBundle {
     /// How many times the fleet was read, for a driver waiting on one.
     public private(set) var applied = 0
 
-    /// The runtime serving this account, while it runs.
-    @ObservationIgnored public private(set) var runtime: Runtime?
-    /// Open chats by the id the runtime's wake names them with.
+    /// The profile serving this account, while it is on screen.
+    @ObservationIgnored public private(set) var profile: Profile?
+    /// Open chats by the id the profile's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: OpenChat, woke: @MainActor () -> Void)] = [:]
     /// The chat sessions held open, by agent: every agent that needs the
     /// person, every chat a page shows, and chats viewed within the
@@ -40,7 +40,7 @@ public final class StoreBundle {
     @ObservationIgnored private var viewed: [AgentKey: Date] = [:]
     /// How long a chat nobody shows stays open after it was last viewed.
     @ObservationIgnored public let sessionRetention: Duration
-    /// Opens a session; the runtime's unless a test hands one in.
+    /// Opens a session; the profile's unless a test hands one in.
     @ObservationIgnored private let opener: (@MainActor (AgentKey) throws(RuntimeFailure) -> OpenChat)?
     @ObservationIgnored public let now: @MainActor () -> Date
     /// Told how many machines this account has paired and how many of its
@@ -64,18 +64,18 @@ public final class StoreBundle {
         self.newAgent = NewAgentStore()
     }
 
-    /// Starts drawing from a runtime, or stops when it is gone.
-    public func attach(_ runtime: Runtime?) {
-        self.runtime = runtime
-        guard runtime != nil else { return }
+    /// Starts drawing from a profile, or stops when it is gone.
+    public func attach(_ profile: Profile?) {
+        self.profile = profile
+        guard profile != nil else { return }
         read(hostsMoved: true)
     }
 
-    /// The runtime moved: the fleet when `chat` is 0, else that chat.
+    /// The profile moved: the fleet when `chat` is 0, else that chat.
     public func woke(_ chat: UInt64) {
         if chat == 0 {
-            guard let runtime else { return }
-            let changes = runtime.takeFleetChanges()
+            guard let profile else { return }
+            let changes = profile.takeFleetChanges()
             read(hostsMoved: changes.hosts)
         } else {
             chats[chat]?.woke()
@@ -83,9 +83,9 @@ public final class StoreBundle {
     }
 
     private func read(hostsMoved: Bool) {
-        guard let runtime else { return }
-        let views = runtime.hosts()
-        fleet.show(runtime.fleetRows(expanding: Array(fleet.expanded)), hosts: views)
+        guard let profile else { return }
+        let views = profile.hosts()
+        fleet.show(profile.fleetRows(expanding: Array(fleet.expanded)), hosts: views)
         hosts.show(views)
         newAgent.remember(fleet.rows)
         saw?(fleet.machines.filter(\.trusted).count, fleet.rows.filter(\.needsYou).count)
@@ -99,7 +99,7 @@ public final class StoreBundle {
 
     /// Reads the account and its relay link again.
     public func refreshAccount() async {
-        guard let runtime, case .success(let account) = await runtime.account() else { return }
+        guard let profile, case .success(let account) = await profile.account() else { return }
         hosts.show(account)
         fleet.relay(account.relay)
         // The relay link settles without the host list moving, so while it
@@ -109,7 +109,7 @@ public final class StoreBundle {
         settling = true
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            guard let self, self.runtime === runtime else { return }
+            guard let self, self.profile === profile else { return }
             self.settling = false
             await self.refreshAccount()
         }
@@ -117,7 +117,7 @@ public final class StoreBundle {
 
     /// Reads this phone's identity and the machines it trusts again.
     public func refreshRoster() async {
-        guard let runtime, case .success(let roster) = await runtime.roster() else { return }
+        guard let profile, case .success(let roster) = await profile.roster() else { return }
         hosts.show(roster)
     }
 
@@ -142,8 +142,8 @@ public final class StoreBundle {
         if let opener {
             chat = try opener(agent)
         } else {
-            guard let runtime else { throw RuntimeFailure("nothing is running for this account") }
-            chat = try runtime.openChat(agent)
+            guard let profile else { throw RuntimeFailure("nothing is running for this account") }
+            chat = try profile.openChat(agent)
         }
         chats[chat.id] = (chat, woke)
         fleet.opened(agent, at: now())
@@ -225,7 +225,7 @@ public final class StoreBundle {
         return current
     }
 
-    /// Closes every chat, before the runtime under them stops.
+    /// Closes every chat, before the profile under them closes.
     public func closeChats() {
         for open in chats.values { open.chat.close() }
         chats.removeAll()
@@ -248,29 +248,29 @@ public final class StoreBundle {
     /// Reaches the machine a pairing link names.
     @discardableResult
     public func pair(link: String) -> Bool {
-        guard runtime != nil else { return false }
+        guard profile != nil else { return false }
         pairing.open()
         begin(.link(link), relayOnly: false)
         return true
     }
 
     private func begin(_ request: PairRequest, relayOnly: Bool) {
-        guard let runtime else { return }
+        guard let profile else { return }
         let attempt = pairing.checking()
         // A machine only the relay can reach is refused on an account that
         // does not buy the relay; said as such rather than as a wrong code.
         let unsubscribed = relayOnly && hosts.account?.pro == false
         Task {
-            let reached = await runtime.beginPair(request)
+            let reached = await profile.beginPair(request)
             pairing.reached(reached, attempt: attempt, relayOnly: unsubscribed)
         }
     }
 
     public func confirmPairing(_ pending: PendingPair) {
-        guard let runtime else { return }
+        guard let profile else { return }
         let attempt = pairing.checking()
         Task {
-            let paired = await runtime.confirmPair(pending)
+            let paired = await profile.confirmPair(pending)
             pairing.paired(paired, attempt: attempt)
             await refreshRoster()
         }
@@ -278,16 +278,16 @@ public final class StoreBundle {
 
     public func abandonPairing(_ pending: PendingPair) {
         pairing.abandoned()
-        guard let runtime else { return }
-        Task { _ = await runtime.abandonPair(pending) }
+        guard let profile else { return }
+        Task { _ = await profile.abandonPair(pending) }
     }
 
-    /// Stops trusting a machine at once; the row leaves when the runtime
+    /// Stops trusting a machine at once; the row leaves when the profile
     /// confirms.
     public func revoke(_ host: HostId) {
-        guard let runtime else { return }
+        guard let profile else { return }
         Task {
-            _ = await runtime.unpair(host)
+            _ = await profile.unpair(host)
             await refreshRoster()
         }
     }
@@ -314,12 +314,12 @@ public final class StoreBundle {
 
     private func listDirectories(on host: HostId, matching query: String) {
         let asked = newAgent.asking()
-        guard let runtime else {
+        guard let profile else {
             newAgent.listed(.failure(RuntimeFailure("nothing is running")), asked: asked)
             return
         }
         Task {
-            let listed = await runtime.directories(
+            let listed = await profile.directories(
                 on: host, matching: query, limit: NewAgentStore.limit)
             newAgent.listed(listed, asked: asked)
         }
@@ -327,9 +327,9 @@ public final class StoreBundle {
 
     @discardableResult
     public func startAgent() -> Bool {
-        guard let request = newAgent.request, let runtime else { return false }
+        guard let request = newAgent.request, let profile else { return false }
         newAgent.starts()
-        Task { newAgent.started(await runtime.createAgent(request)) }
+        Task { newAgent.started(await profile.createAgent(request)) }
         return true
     }
 
@@ -337,27 +337,27 @@ public final class StoreBundle {
 
     public func rename(_ name: String, of agent: AgentKey) async -> Result<Nothing, RuntimeFailure> {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let runtime else {
+        guard !trimmed.isEmpty, let profile else {
             return .failure(RuntimeFailure("a name cannot be empty"))
         }
-        return await runtime.act(.rename(trimmed), on: agent)
+        return await profile.act(.rename(trimmed), on: agent)
     }
 
     public func stop(_ agent: AgentKey) async -> Result<Nothing, RuntimeFailure> {
-        guard let runtime else { return .failure(RuntimeFailure("nothing is running")) }
-        return await runtime.act(.stop, on: agent)
+        guard let profile else { return .failure(RuntimeFailure("nothing is running")) }
+        return await profile.act(.stop, on: agent)
     }
 
     public func delete(_ agent: AgentKey) async -> Result<Nothing, RuntimeFailure> {
-        guard let runtime else { return .failure(RuntimeFailure("nothing is running")) }
-        return await runtime.act(.delete, on: agent)
+        guard let profile else { return .failure(RuntimeFailure("nothing is running")) }
+        return await profile.act(.delete, on: agent)
     }
 
     // MARK: - Diagnostics
 
     /// Writes a dump of this account's profile and answers its directory.
     public func dump(reason: String) async -> Result<URL, RuntimeFailure> {
-        guard let runtime else { return .failure(RuntimeFailure("nothing is running")) }
-        return await runtime.dump(reason: reason).map { URL(fileURLWithPath: $0) }
+        guard let profile else { return .failure(RuntimeFailure("nothing is running")) }
+        return await profile.dump(reason: reason).map { URL(fileURLWithPath: $0) }
     }
 }

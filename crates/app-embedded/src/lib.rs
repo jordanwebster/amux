@@ -1,39 +1,46 @@
-//! The daemon's profile runtime, hosted in the phone's own process.
+//! The daemon, hosted in the phone's own process.
 //!
 //! The phone runs no agents, but it is a host like any other to the
-//! machines it pairs with: it has its own identity and trust, its own store
-//! of replica rows, direct links on the local network and a relay link once
-//! an account is bound. Its chats read that store through the same client
-//! service the terminal dials over a socket, called in process here; no
-//! client opens the store.
+//! machines it pairs with. It is one installation with one profile per
+//! account, exactly as a desktop is: each profile has its own identity and
+//! trust, its own store of replica rows, direct links on the local network
+//! and a relay link once an account is bound. The daemon's profile registry
+//! creates, binds, signs out, pauses and deletes them; every call here names
+//! the profile it is for. Chats read a profile's store through the same
+//! client service the terminal dials over a socket, called in process here;
+//! no client opens the store.
 //!
-//! Which replica agents keep a source open is switchable: every listed
-//! agent while the app is in front of somebody, and only the ones a chat
-//! asks for when a push wakes it in the background.
+//! Which replica agents keep a source open is switchable per profile: every
+//! listed agent for the profile in front of somebody, and only the ones a
+//! chat asks for otherwise.
 
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use app_runtime::values::{
     AccountBinding, AccountView, Bearer, Found, Identity, PairedPeer, PendingPair, RelayLink,
     Roster,
 };
-pub use app_runtime::values::{PairRequest, StartConfig};
+pub use app_runtime::values::{PairRequest, ProfileView, StartConfig};
 use client::{Client, Clock, InProcess, SystemClock};
+use futures_util::{Stream, StreamExt};
+pub use node::ProfileId;
 use node::{
     ClientApi, CloudOptions, Daemon, DiscoveryFactory, EdgeOptions, FrontDoor, LanOptions,
-    ProfileId, ProfileRuntime, SourcePolicy, StartError, StartOptions,
+    ProfileRuntime, SourcePolicy, StartError, StartOptions,
 };
 use sha2::{Digest, Sha256};
 use tonic::Request;
 use wire::profile_service_server::ProfileService as _;
 use wire::{
-    BeginPairRequest, BindProfileRequest, HostVia, Intent, ListProfilesRequest, Observed,
-    PeerEntry, PeerRef, PeerVia, PendingPairRequest, ProfileBeginPairRequest, ProfileInfo,
-    ProfileOperation, ProfilePendingPairRequest, ProfileRequest, ProfileUnpairRequest, Tier,
-    begin_pair_request, peer_ref,
+    BeginPairRequest, BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, HostVia,
+    Intent, ListProfilesRequest, Observed, PeerEntry, PeerRef, PeerVia, PendingPairRequest,
+    ProfileBeginPairRequest, ProfileInfo, ProfileOperation, ProfilePendingPairRequest,
+    ProfileRequest, ProfileUnpairRequest, Tier, WatchProfilesRequest, WatchProfilesResponse,
+    begin_pair_request, peer_ref, watch_profiles_response,
 };
 
 /// What a test or a driving build changes about the network edge.
@@ -62,33 +69,58 @@ impl Default for EdgeOverrides {
 pub enum EmbeddedError {
     #[error(transparent)]
     Start(#[from] StartError),
-    #[error("the installation hosts no profile")]
-    NoProfile,
+    #[error("the installation hosts no profile {0}")]
+    NoProfile(ProfileId),
     #[error("{}", .0.message())]
     Refused(#[from] tonic::Status),
     #[error(transparent)]
     Link(#[from] node::QrPairingError),
     #[error("{0}")]
     Account(#[from] node::AuthError),
-    #[error("this device's profile is not listed")]
-    NoInfo,
     #[error("{0}")]
     Relay(String),
 }
 
-/// One installation with its one profile, in process.
+/// One installation with every profile it hosts, in process.
 pub struct EmbeddedRuntime {
-    // Held for its shutdown; it is not shared between threads while held.
+    // Held for its shutdown and to find a profile's runtime.
     daemon: Mutex<Option<Daemon>>,
     door: FrontDoor,
     data_dir: PathBuf,
-    profile: ProfileId,
-    runtime: Arc<ProfileRuntime>,
     clock: Arc<dyn Clock>,
 }
 
+/// A change to the profile list, as the registry announces it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileEvent {
+    Upserted(ProfileView),
+    Removed(String),
+    /// Everything that was already there has been announced.
+    CaughtUp,
+}
+
+/// The registry's changes, from a snapshot of every profile on.
+pub struct ProfileEvents(
+    Pin<Box<dyn Stream<Item = Result<WatchProfilesResponse, tonic::Status>> + Send>>,
+);
+
+impl ProfileEvents {
+    /// The next change, or none once the daemon stops or the watch falls
+    /// too far behind, when the list has to be read again.
+    pub async fn next(&mut self) -> Option<ProfileEvent> {
+        let event = self.0.next().await?.ok()?.event?;
+        Some(match event {
+            watch_profiles_response::Event::Upserted(info) => {
+                ProfileEvent::Upserted(profile_view(&info))
+            }
+            watch_profiles_response::Event::RemovedId(id) => ProfileEvent::Removed(id),
+            watch_profiles_response::Event::CaughtUp(_) => ProfileEvent::CaughtUp,
+        })
+    }
+}
+
 impl EmbeddedRuntime {
-    /// Starts the installation under `config.data_dir`, creating its
+    /// Starts the installation under `config.data_dir`, creating its first
     /// profile on first start.
     pub async fn start(config: &StartConfig) -> Result<EmbeddedRuntime, EmbeddedError> {
         Self::start_with(config, EdgeOverrides::default(), Arc::new(SystemClock)).await
@@ -125,63 +157,229 @@ impl EmbeddedRuntime {
             edge,
         };
         let daemon = node::start(options, None).await?;
-        let runtime = daemon
-            .profiles()
-            .into_iter()
-            .next()
-            .ok_or(EmbeddedError::NoProfile)?;
-        let profile = runtime.profile();
         Ok(EmbeddedRuntime {
             door: daemon.front_door(),
             data_dir: daemon.data_dir().to_owned(),
             daemon: Mutex::new(Some(daemon)),
-            profile,
-            runtime,
             clock,
         })
     }
 
-    /// The client service in process, as the chats and the fleet call it.
-    pub fn client(&self) -> Arc<dyn Client> {
-        Arc::new(InProcess::new(ClientApi::new(&self.runtime, None)))
+    fn runtime(&self, profile: ProfileId) -> Result<Arc<ProfileRuntime>, EmbeddedError> {
+        self.daemon
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .and_then(|daemon| daemon.profile(profile))
+            .ok_or(EmbeddedError::NoProfile(profile))
+    }
+
+    fn edge(&self, profile: ProfileId) -> Result<Arc<node::Edge>, EmbeddedError> {
+        self.runtime(profile)?
+            .edge()
+            .ok_or(EmbeddedError::NoProfile(profile))
+    }
+
+    // --- the registry ------------------------------------------------------
+
+    /// Every profile, oldest first.
+    pub async fn profiles(&self) -> Result<Vec<ProfileView>, EmbeddedError> {
+        Ok(self
+            .door()
+            .list_profiles(Request::new(ListProfilesRequest {}))
+            .await?
+            .into_inner()
+            .profiles
+            .iter()
+            .map(profile_view)
+            .collect())
+    }
+
+    /// One profile as the registry lists it.
+    pub async fn profile(&self, profile: ProfileId) -> Result<ProfileView, EmbeddedError> {
+        self.profiles()
+            .await?
+            .into_iter()
+            .find(|view| view.id == profile.to_string())
+            .ok_or(EmbeddedError::NoProfile(profile))
+    }
+
+    /// Every profile as it is now, then each change as it happens.
+    pub async fn watch_profiles(&self) -> Result<ProfileEvents, EmbeddedError> {
+        Ok(ProfileEvents(
+            self.door()
+                .watch_profiles(Request::new(WatchProfilesRequest {}))
+                .await?
+                .into_inner(),
+        ))
+    }
+
+    /// A new profile nobody has signed in on.
+    pub async fn create_profile(&self, label: Option<&str>) -> Result<ProfileView, EmbeddedError> {
+        let info = self
+            .door()
+            .create_profile(Request::new(CreateProfileRequest {
+                operation_id: operation(),
+                label: label.map(str::to_owned),
+            }))
+            .await?
+            .into_inner();
+        Ok(profile_view(&info))
+    }
+
+    /// Deletes a profile: its key, the machines it trusts and its store.
+    /// The installation keeps at least one.
+    pub async fn delete_profile(&self, profile: ProfileId) -> Result<(), EmbeddedError> {
+        let revision = self
+            .door()
+            .list_profiles(Request::new(ListProfilesRequest {}))
+            .await?
+            .into_inner()
+            .profiles
+            .into_iter()
+            .find(|info| info.id == profile.to_string())
+            .ok_or(EmbeddedError::NoProfile(profile))?
+            .revision;
+        self.door()
+            .delete_profile(Request::new(DeleteProfileRequest {
+                operation_id: operation(),
+                profile_id: profile.to_string(),
+                confirm_revision: revision,
+            }))
+            .await?;
+        Ok(())
+    }
+
+    /// Binds a profile to an account with the refresh token the app's
+    /// sign-in obtained; the relay link comes up from there. Named, the
+    /// profile is adopted even when it paired machines before; unnamed,
+    /// the registry picks the profile already bound to that account, else
+    /// one that holds nothing, else a new one. `client_id` is the OAuth
+    /// client the token was issued to, which is the only one it refreshes
+    /// under.
+    pub async fn bind(
+        &self,
+        profile: Option<ProfileId>,
+        cloud_url: &str,
+        client_id: &str,
+        refresh_token: &str,
+    ) -> Result<ProfileView, EmbeddedError> {
+        let info = self
+            .door()
+            .bind_profile(Request::new(BindProfileRequest {
+                operation_id: operation(),
+                profile_id: profile.map(|profile| profile.to_string()),
+                cloud_url: cloud_url.to_owned(),
+                staged_refresh_token: refresh_token.to_owned(),
+                adopt_non_pristine: profile.is_some(),
+                client_id: client_id.to_owned(),
+            }))
+            .await?
+            .into_inner();
+        Ok(profile_view(&info))
+    }
+
+    /// Signs a profile out: its relay link goes down and its refresh token
+    /// is forgotten, but it stays tied to its account.
+    pub async fn sign_out(&self, profile: ProfileId) -> Result<ProfileView, EmbeddedError> {
+        let info = self
+            .door()
+            .logout_profile(Request::new(ProfileOperation {
+                operation_id: operation(),
+                profile_id: profile.to_string(),
+            }))
+            .await?
+            .into_inner();
+        Ok(profile_view(&info))
+    }
+
+    /// Holds a bound profile's relay link down; its direct links and its
+    /// store stay.
+    pub async fn pause(&self, profile: ProfileId) -> Result<ProfileView, EmbeddedError> {
+        let info = self
+            .door()
+            .pause_profile(Request::new(ProfileOperation {
+                operation_id: operation(),
+                profile_id: profile.to_string(),
+            }))
+            .await?
+            .into_inner();
+        Ok(profile_view(&info))
+    }
+
+    /// Lets a paused profile's relay link come up again.
+    pub async fn resume(&self, profile: ProfileId) -> Result<ProfileView, EmbeddedError> {
+        let info = self
+            .door()
+            .resume_profile(Request::new(ProfileOperation {
+                operation_id: operation(),
+                profile_id: profile.to_string(),
+            }))
+            .await?
+            .into_inner();
+        Ok(profile_view(&info))
+    }
+
+    /// The first profile, oldest first, whose trust store holds `host_id`.
+    pub async fn trusting(&self, host_id: &[u8]) -> Result<Option<ProfileId>, EmbeddedError> {
+        let Ok(host) = node::HostId::from_slice(host_id) else {
+            return Ok(None);
+        };
+        for view in self.profiles().await? {
+            let Ok(profile) = view.id.parse::<ProfileId>() else {
+                continue;
+            };
+            if self.edge(profile).is_ok_and(|edge| edge.is_trusted(host)) {
+                return Ok(Some(profile));
+            }
+        }
+        Ok(None)
+    }
+
+    // --- one profile ---------------------------------------------------------
+
+    /// A profile's client service in process, as its chats and fleet call it.
+    pub fn client(&self, profile: ProfileId) -> Result<Arc<dyn Client>, EmbeddedError> {
+        let runtime = self.runtime(profile)?;
+        Ok(Arc::new(InProcess::new(ClientApi::new(&runtime, None))))
     }
 
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
     }
 
-    pub fn runtime(&self) -> &Arc<ProfileRuntime> {
-        &self.runtime
+    /// A profile's host id, as its peers pin it.
+    pub fn host_id(&self, profile: ProfileId) -> Result<Vec<u8>, EmbeddedError> {
+        Ok(self.runtime(profile)?.host().as_bytes().to_vec())
     }
 
-    /// This device's host id, as its peers pin it.
-    pub fn host_id(&self) -> Vec<u8> {
-        self.runtime.host().as_bytes().to_vec()
+    /// `Listed`: every listed agent keeps a source, for the profile in
+    /// front of somebody. `OnDemand`: only the agents a chat asks for.
+    pub fn set_source_policy(
+        &self,
+        profile: ProfileId,
+        policy: SourcePolicy,
+    ) -> Result<(), EmbeddedError> {
+        self.runtime(profile)?.set_source_policy(policy);
+        Ok(())
     }
 
-    /// `Listed` in the foreground: every listed agent keeps a source.
-    /// `OnDemand` when a push wakes the app in the background: only the
-    /// agents a chat asks for.
-    pub fn set_source_policy(&self, policy: SourcePolicy) {
-        self.runtime.set_source_policy(policy);
-    }
-
-    pub fn source_policy(&self) -> SourcePolicy {
-        self.runtime.source_policy()
+    pub fn source_policy(&self, profile: ProfileId) -> Result<SourcePolicy, EmbeddedError> {
+        Ok(self.runtime(profile)?.source_policy())
     }
 
     fn door(&self) -> &FrontDoor {
         &self.door
     }
 
-    fn profile_id(&self) -> String {
-        self.profile.to_string()
-    }
-
     /// Reaches a machine by the PIN its person reads out or the link its QR
     /// code carries, and authenticates it; nothing is trusted until the
     /// attempt is confirmed.
-    pub async fn begin_pair(&self, request: &PairRequest) -> Result<PendingPair, EmbeddedError> {
+    pub async fn begin_pair(
+        &self,
+        profile: ProfileId,
+        request: &PairRequest,
+    ) -> Result<PendingPair, EmbeddedError> {
         let pairing = match request {
             PairRequest::Pin {
                 host_id,
@@ -207,7 +405,7 @@ impl EmbeddedRuntime {
             .door()
             .begin_pair(Request::new(ProfileBeginPairRequest {
                 operation_id: operation(),
-                profile_id: self.profile_id(),
+                profile_id: profile.to_string(),
                 pairing: Some(pairing),
             }))
             .await?
@@ -230,12 +428,16 @@ impl EmbeddedRuntime {
     }
 
     /// Trusts the machine an attempt reached.
-    pub async fn confirm_pair(&self, token: &[u8]) -> Result<PeerEntry, EmbeddedError> {
+    pub async fn confirm_pair(
+        &self,
+        profile: ProfileId,
+        token: &[u8],
+    ) -> Result<PeerEntry, EmbeddedError> {
         Ok(self
             .door()
             .confirm_pair(Request::new(ProfilePendingPairRequest {
                 operation_id: operation(),
-                profile_id: self.profile_id(),
+                profile_id: profile.to_string(),
                 pairing: Some(PendingPairRequest {
                     token: token.to_vec(),
                 }),
@@ -247,11 +449,15 @@ impl EmbeddedRuntime {
     }
 
     /// Turns away the machine an attempt reached, telling it so.
-    pub async fn abandon_pair(&self, token: &[u8]) -> Result<(), EmbeddedError> {
+    pub async fn abandon_pair(
+        &self,
+        profile: ProfileId,
+        token: &[u8],
+    ) -> Result<(), EmbeddedError> {
         self.door()
             .abandon_pair(Request::new(ProfilePendingPairRequest {
                 operation_id: operation(),
-                profile_id: self.profile_id(),
+                profile_id: profile.to_string(),
                 pairing: Some(PendingPairRequest {
                     token: token.to_vec(),
                 }),
@@ -261,16 +467,20 @@ impl EmbeddedRuntime {
     }
 
     /// Pairs in one step, trusting whoever the secret reaches.
-    pub async fn pair(&self, request: &PairRequest) -> Result<PeerEntry, EmbeddedError> {
-        let pending = self.begin_pair(request).await?;
-        self.confirm_pair(&pending.token).await
+    pub async fn pair(
+        &self,
+        profile: ProfileId,
+        request: &PairRequest,
+    ) -> Result<PeerEntry, EmbeddedError> {
+        let pending = self.begin_pair(profile, request).await?;
+        self.confirm_pair(profile, &pending.token).await
     }
 
-    /// This device and the machines it trusts, sorted by name.
-    pub async fn roster(&self) -> Result<Roster, EmbeddedError> {
+    /// A profile's identity and the machines it trusts, sorted by name.
+    pub async fn roster(&self, profile: ProfileId) -> Result<Roster, EmbeddedError> {
         let request = || {
             Request::new(ProfileRequest {
-                profile_id: self.profile_id(),
+                profile_id: profile.to_string(),
             })
         };
         let identity = self
@@ -304,12 +514,9 @@ impl EmbeddedRuntime {
     }
 
     /// Hands over the whole set the phone's own browser found on the local
-    /// network; only the system may browse there.
+    /// network to every profile; only the system may browse there.
     pub fn discovered(&self, found: Vec<Found>) {
-        let Some(edge) = self.runtime.edge() else {
-            return;
-        };
-        let found = found
+        let found: Vec<_> = found
             .into_iter()
             .filter_map(|found| {
                 Some(node::harness::Advertisement {
@@ -325,28 +532,29 @@ impl EmbeddedRuntime {
                 })
             })
             .collect();
-        edge.hand_over_discovered(found);
+        let profiles = self
+            .daemon
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .map(Daemon::profiles)
+            .unwrap_or_default();
+        for runtime in profiles {
+            if let Some(edge) = runtime.edge() {
+                edge.hand_over_discovered(found.clone());
+            }
+        }
     }
 
-    /// The account the profile is bound to, and its relay link.
-    pub async fn account(&self) -> Result<AccountView, EmbeddedError> {
-        let info = self
-            .door()
-            .list_profiles(Request::new(ListProfilesRequest {}))
-            .await?
-            .into_inner()
-            .profiles
-            .into_iter()
-            .find(|info| info.id == self.profile_id())
-            .ok_or(EmbeddedError::NoInfo)?;
-        Ok(account_view(&info))
+    /// The account a profile is bound to, and its relay link.
+    pub async fn account(&self, profile: ProfileId) -> Result<AccountView, EmbeddedError> {
+        Ok(self.profile(profile).await?.account)
     }
 
     /// A bearer for the account service, refreshed by the profile when it
     /// is about to expire.
-    pub async fn access_token(&self) -> Result<Bearer, EmbeddedError> {
-        let edge = self.runtime.edge().ok_or(EmbeddedError::NoProfile)?;
-        let token = edge.access_token().await?;
+    pub async fn access_token(&self, profile: ProfileId) -> Result<Bearer, EmbeddedError> {
+        let token = self.edge(profile)?.access_token().await?;
         Ok(Bearer {
             bearer: token.bearer,
             expires_at_ms: token.expires_at.and_then(|at| {
@@ -360,9 +568,9 @@ impl EmbeddedRuntime {
     /// Asks the account service again what the account buys, over the
     /// relay link, so a purchase lifts the relay's tier now rather than at
     /// the link's next scheduled refresh.
-    pub async fn refresh_entitlement(&self) -> Result<(), EmbeddedError> {
-        let edge = self.runtime.edge().ok_or(EmbeddedError::NoProfile)?;
-        edge.refresh_entitlement()
+    pub async fn refresh_entitlement(&self, profile: ProfileId) -> Result<(), EmbeddedError> {
+        self.edge(profile)?
+            .refresh_entitlement()
             .await
             .map(|_| ())
             .map_err(EmbeddedError::Relay)
@@ -370,11 +578,11 @@ impl EmbeddedRuntime {
 
     /// Stops trusting a paired machine, telling it so where it can be
     /// reached.
-    pub async fn unpair(&self, host_id: &[u8]) -> Result<(), EmbeddedError> {
+    pub async fn unpair(&self, profile: ProfileId, host_id: &[u8]) -> Result<(), EmbeddedError> {
         self.door()
             .unpair(Request::new(ProfileUnpairRequest {
                 operation_id: operation(),
-                profile_id: self.profile_id(),
+                profile_id: profile.to_string(),
                 peer: Some(PeerRef {
                     identifier: Some(peer_ref::Identifier::HostId(host_id.to_vec())),
                 }),
@@ -382,41 +590,6 @@ impl EmbeddedRuntime {
             }))
             .await?;
         Ok(())
-    }
-
-    /// Binds the profile to an account with the refresh token the app's
-    /// sign-in obtained; the relay link comes up from there.
-    /// `client_id` is the OAuth client the token was issued to, which is
-    /// the only one it refreshes under.
-    pub async fn sign_in(
-        &self,
-        cloud_url: &str,
-        client_id: &str,
-        refresh_token: &str,
-    ) -> Result<ProfileInfo, EmbeddedError> {
-        Ok(self
-            .door()
-            .bind_profile(Request::new(BindProfileRequest {
-                operation_id: operation(),
-                profile_id: Some(self.profile_id()),
-                cloud_url: cloud_url.to_owned(),
-                staged_refresh_token: refresh_token.to_owned(),
-                adopt_non_pristine: true,
-                client_id: client_id.to_owned(),
-            }))
-            .await?
-            .into_inner())
-    }
-
-    pub async fn sign_out(&self) -> Result<ProfileInfo, EmbeddedError> {
-        Ok(self
-            .door()
-            .logout_profile(Request::new(ProfileOperation {
-                operation_id: operation(),
-                profile_id: self.profile_id(),
-            }))
-            .await?
-            .into_inner())
     }
 
     /// Where reports are written.
@@ -427,7 +600,6 @@ impl EmbeddedRuntime {
     /// Stops serving and flushes the store; the installation is marked
     /// clean.
     pub async fn shutdown(self) -> io::Result<()> {
-        drop(self.runtime);
         let daemon = self
             .daemon
             .into_inner()
@@ -445,6 +617,15 @@ fn fingerprint(pubkey: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn profile_view(info: &ProfileInfo) -> ProfileView {
+    ProfileView {
+        id: info.id.clone(),
+        label: info.label.clone(),
+        subject: info.account_subject.clone(),
+        account: account_view(info),
+    }
 }
 
 fn account_view(info: &ProfileInfo) -> AccountView {

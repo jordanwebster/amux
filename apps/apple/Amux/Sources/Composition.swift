@@ -98,7 +98,7 @@ final class Composition {
         Task { await cloud.lend(from: lend) }
         let route = { router.top?.name ?? router.tab.rawValue }
         let dump: () -> Task<Result<URL, PartAbsent>, Never>? = { [weak runtime] in
-            guard let running = runtime?.runtime else { return nil }
+            guard let running = runtime?.profile else { return nil }
             return Task {
                 switch await running.dump(reason: "report") {
                 case .success(let directory): .success(URL(fileURLWithPath: directory))
@@ -203,22 +203,20 @@ final class Composition {
                 }
             }
         // Leaving an account. It stays listed with Sign In beside it, and its
-        // installation keeps running signed out: the machines on this network
-        // are still reachable.
+        // profile stays, signed out: the machines on this network are still
+        // reachable.
         case .signOutAccount(let id):
-            accounts.signOut(id)
             Task { [cloud, runtime] in
                 try? await cloud.forgetSession(id)
-                if accounts.selected == id { _ = await runtime.runtime?.signOut() }
-                await runtime.stores.refreshAccount()
+                await runtime.signOut(id)
             }
         case .removeAccount(let id):
             removal.ask(id)
         case .cancelRemoval:
             removal.dismiss()
-        // Taking an account off this phone: its installation — its key, the
-        // machines it paired, what it held — is deleted once nothing runs
-        // from it. The account on amux.sh is untouched.
+        // Taking an account off this phone: its profile — its key, the
+        // machines it paired, what it held — is deleted. The account on
+        // amux.sh is untouched.
         case .confirmRemoval:
             guard let id = removal.account else { break }
             removal.dismiss()
@@ -244,20 +242,18 @@ final class Composition {
     }
 
     private func forget(_ id: AccountId) {
-        guard let installation = accounts.forget(id) else { return }
-        runtime.delete(installation: installation)
+        Task { [runtime] in await runtime.remove(id) }
     }
 
-    /// Keeps an account that signed in: puts it on screen and binds its
-    /// installation with the sign-in's refresh token, which the profile
-    /// spends from then on.
+    /// Keeps an account that signed in: binds its profile with the
+    /// sign-in's refresh token, which the profile spends from then on, and
+    /// puts it on screen.
     private func keep(_ account: SignedInAccount) async -> CloudError? {
         guard let handover = await cloud.handOver(account.id) else { return .unauthenticated }
         let entitlement = try? await cloud.entitlement(account.id)
-        let installation = accounts.installation(for: account.id)
-        accounts.add(account, entitlement: entitlement ?? .none, installation: installation)
+        accounts.entitlement(entitlement ?? .none, for: account.id)
         let bound = await runtime.bind(
-            installation, cloud: handover.cloud, client: handover.client,
+            account.id, cloud: handover.cloud, client: handover.client,
             refreshToken: handover.refreshToken)
         switch bound {
         case .success: return nil
@@ -288,7 +284,7 @@ final class Composition {
         paywall.entitled(accepted)
         // The relay link learns what the account buys only when it next
         // renews its credential; a purchase should not wait minutes for it.
-        if let running = runtime.runtime, case .success = await running.refreshEntitlement() {
+        if await runtime.refreshEntitlement(for: id) {
             await accounts.stores?.refreshAccount()
         }
         return true
@@ -336,8 +332,9 @@ extension Composition: RouteLoader {
     }
 }
 
-/// Where this app keeps things between launches: each account's installation
-/// under the support directory, beside the list of accounts.
+/// Where this app keeps things between launches: the installation, with a
+/// profile per account, under the support directory, beside what is
+/// remembered about the accounts.
 enum AppFiles {
     static let support = directory(.applicationSupportDirectory)
 

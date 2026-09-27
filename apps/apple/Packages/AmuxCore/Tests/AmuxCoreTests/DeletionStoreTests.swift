@@ -60,10 +60,9 @@ final class DeletionStoreTests: XCTestCase {
     private let ada = SignedInAccount(id: AccountId("ada"), email: "ada@example.com")
     private let portal = URL(string: "https://billing.test/session/1")!
 
-    private func registry(_ accounts: SignedInAccount...) -> AccountRegistry {
-        let registry = AccountRegistry()
-        for account in accounts { registry.add(account, installation: account.id.value) }
-        return registry
+    /// The accounts taken off the phone, in order.
+    private final class Forgotten {
+        var accounts: [AccountId] = []
     }
 
     func testNothingConfirmsUntilTheAccountsOwnAddressIsTyped() {
@@ -90,14 +89,14 @@ final class DeletionStoreTests: XCTestCase {
 
     func testADeletionThatGoesThroughTakesTheAccountOffThePhone() async {
         let store = DeletionStore(asking: ada.id, typed: ada.email)
-        let accounts = registry(ada)
+        let forgotten = Forgotten()
         let cloud = OneDeletion(answer: .success(.deleted))
 
-        let outcome = await store.delete(with: cloud, forgetting: { accounts.forget($0) })
+        let outcome = await store.delete(with: cloud, forgetting: { forgotten.accounts.append($0) })
 
         XCTAssertEqual(outcome, .deleted)
         XCTAssertEqual(store.phase, .deleted)
-        XCTAssertEqual(accounts.accounts.count, 0)
+        XCTAssertEqual(forgotten.accounts, [ada.id])
         XCTAssertEqual(cloud.asked.last?.0, ada.id)
         XCTAssertEqual(cloud.asked.last?.1, ada.email)
         // The question is over, and nothing is left holding an address.
@@ -110,15 +109,15 @@ final class DeletionStoreTests: XCTestCase {
     /// screen can send somebody there, and what was typed survives the trip.
     func testADeletionBlockedByRenewalKeepsTheAccountAndNamesWhereBillingIs() async {
         let store = DeletionStore(asking: ada.id, typed: ada.email)
-        let accounts = registry(ada)
+        let forgotten = Forgotten()
         let cloud = OneDeletion(
             answer: .success(.blockedByRenewal(source: .web, manageURL: portal)))
 
-        let outcome = await store.delete(with: cloud, forgetting: { accounts.forget($0) })
+        let outcome = await store.delete(with: cloud, forgetting: { forgotten.accounts.append($0) })
 
         XCTAssertEqual(outcome, .blockedByRenewal(source: .web, manageURL: portal))
         XCTAssertEqual(store.phase, .blocked(source: .web, manageURL: portal))
-        XCTAssertEqual(accounts.accounts.map(\.id), [ada.id])
+        XCTAssertEqual(forgotten.accounts, [])
         XCTAssertEqual(store.account, ada.id)
         XCTAssertEqual(store.typed, ada.email)
     }
@@ -129,25 +128,25 @@ final class DeletionStoreTests: XCTestCase {
         let store = DeletionStore(
             asking: ada.id, typed: ada.email,
             phase: .blocked(source: .web, manageURL: portal))
-        let accounts = registry(ada)
+        let forgotten = Forgotten()
         let cloud = OneDeletion(answer: .success(.deleted))
 
-        await store.delete(with: cloud, forgetting: { accounts.forget($0) })
+        await store.delete(with: cloud, forgetting: { forgotten.accounts.append($0) })
 
         XCTAssertEqual(store.phase, .deleted)
-        XCTAssertEqual(accounts.accounts.count, 0)
+        XCTAssertEqual(forgotten.accounts, [ada.id])
     }
 
     func testARefusalIsSaidInTheAccountServicesOwnWords() async {
         let store = DeletionStore(asking: ada.id, typed: "bo@example.com")
-        let accounts = registry(ada)
+        let forgotten = Forgotten()
         let cloud = OneDeletion(
             answer: .failure(.refused("that is not this account's address")))
 
-        await store.delete(with: cloud, forgetting: { accounts.forget($0) })
+        await store.delete(with: cloud, forgetting: { forgotten.accounts.append($0) })
 
         XCTAssertEqual(store.phase, .failed("that is not this account's address"))
-        XCTAssertEqual(accounts.accounts.map(\.id), [ada.id])
+        XCTAssertEqual(forgotten.accounts, [])
     }
 
     func testChangingYourMindLeavesNothingBehind() {

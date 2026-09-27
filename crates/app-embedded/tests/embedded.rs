@@ -1,15 +1,17 @@
 //! The embedded runtime against served hosts: it pairs with a desk by the
 //! PIN the desk shows, holds the desk's agents as replica rows a chat reads
 //! in process, switches its source policy, and signs in to an account whose
-//! relay links it to the account's hosts.
+//! relay links it to the account's hosts. Every account is a profile of the
+//! one installation, which the daemon's registry creates, binds, pauses and
+//! deletes.
 
 #![cfg(unix)]
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, StartConfig};
-use app_runtime::values::Draft;
+use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileId, StartConfig};
+use app_runtime::values::{AccountBinding, Draft, RelayLink};
 use app_runtime::{AppRuntime, Wake};
 use client::SystemClock;
 use model::AgentKey;
@@ -58,16 +60,23 @@ fn loopback() -> EdgeOverrides {
     }
 }
 
-async fn app(embedded: &EmbeddedRuntime) -> AppRuntime {
+async fn app(embedded: &EmbeddedRuntime, profile: ProfileId) -> AppRuntime {
     let wake = Arc::new(|_: Wake| {});
     AppRuntime::open(
-        embedded.client(),
+        embedded.client(profile).unwrap(),
         Arc::new(SystemClock),
-        embedded.host_id(),
+        embedded.host_id(profile).unwrap(),
         wake,
     )
     .await
     .unwrap()
+}
+
+/// The one profile a fresh installation has.
+async fn only_profile(embedded: &EmbeddedRuntime) -> ProfileId {
+    let profiles = embedded.profiles().await.unwrap();
+    assert_eq!(profiles.len(), 1, "{profiles:?}");
+    profiles[0].id.parse().unwrap()
 }
 
 async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
@@ -157,31 +166,59 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
         EmbeddedRuntime::start_with(&config(dir.path()), loopback(), Arc::new(SystemClock))
             .await
             .unwrap();
+    let phone = only_profile(&embedded).await;
 
     let desk = net.host("desk").unwrap();
     let (pin, addrs) = pairing_pin(&net).await;
     let wrong = embedded
-        .pair(&PairRequest::Pin {
-            host_id: desk.host_id.as_bytes().to_vec(),
-            pin: "000000".into(),
-            addrs: addrs.clone(),
-        })
+        .pair(
+            phone,
+            &PairRequest::Pin {
+                host_id: desk.host_id.as_bytes().to_vec(),
+                pin: "000000".into(),
+                addrs: addrs.clone(),
+            },
+        )
         .await;
     assert!(
         wrong.is_err() || pin == "000000",
         "a wrong PIN pairs: {wrong:?}"
     );
     let peer = embedded
-        .pair(&PairRequest::Pin {
-            host_id: desk.host_id.as_bytes().to_vec(),
-            pin: pin.clone(),
-            addrs: addrs.clone(),
-        })
+        .pair(
+            phone,
+            &PairRequest::Pin {
+                host_id: desk.host_id.as_bytes().to_vec(),
+                pin: pin.clone(),
+                addrs: addrs.clone(),
+            },
+        )
         .await
         .unwrap();
     assert_eq!(peer.name, "desk");
+    // The profile that paired the desk is the one that trusts it; a
+    // profile made since trusts nothing.
+    let other: ProfileId = embedded
+        .create_profile(None)
+        .await
+        .unwrap()
+        .id
+        .parse()
+        .unwrap();
+    assert_eq!(
+        embedded.trusting(desk.host_id.as_bytes()).await.unwrap(),
+        Some(phone)
+    );
+    assert_eq!(embedded.trusting(&[7; 16]).await.unwrap(), None);
+    assert_ne!(
+        embedded.host_id(other).unwrap(),
+        embedded.host_id(phone).unwrap()
+    );
+    assert!(embedded.roster(other).await.unwrap().peers.is_empty());
+    embedded.delete_profile(other).await.unwrap();
+    assert_eq!(embedded.profiles().await.unwrap().len(), 1);
 
-    let app = app(&embedded).await;
+    let app = app(&embedded, phone).await;
     converse(&app, &net).await;
     let hosts = app.hosts();
     assert!(
@@ -191,12 +228,22 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
     assert!(hosts.iter().any(|host| host.local && host.name == "phone"));
 
     // In the background only the chats asked for keep a source.
-    assert_eq!(embedded.source_policy(), SourcePolicy::Listed);
-    embedded.set_source_policy(SourcePolicy::OnDemand);
-    assert_eq!(embedded.source_policy(), SourcePolicy::OnDemand);
-    embedded.set_source_policy(SourcePolicy::Listed);
+    assert_eq!(embedded.source_policy(phone).unwrap(), SourcePolicy::Listed);
+    embedded
+        .set_source_policy(phone, SourcePolicy::OnDemand)
+        .unwrap();
+    assert_eq!(
+        embedded.source_policy(phone).unwrap(),
+        SourcePolicy::OnDemand
+    );
+    embedded
+        .set_source_policy(phone, SourcePolicy::Listed)
+        .unwrap();
 
-    embedded.unpair(desk.host_id.as_bytes()).await.unwrap();
+    embedded
+        .unpair(phone, desk.host_id.as_bytes())
+        .await
+        .unwrap();
     eventually("the desk to leave the trusted hosts", || {
         !app.hosts()
             .iter()
@@ -204,7 +251,111 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
     })
     .await;
 
+    // The installation keeps at least one profile.
+    assert!(embedded.delete_profile(phone).await.is_err());
+
     drop(app);
+    embedded.shutdown().await.unwrap();
+    net.shutdown().await.unwrap();
+}
+
+/// Waits until a profile's relay link says `wanted`.
+async fn relay_link(embedded: &EmbeddedRuntime, profile: ProfileId, wanted: RelayLink) {
+    tokio::time::timeout(PATIENCE, async {
+        while embedded.account(profile).await.unwrap().relay != wanted {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the relay link never said {wanted:?}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_account_is_a_profile_and_only_the_resumed_one_holds_a_relay_link() {
+    let net = Net::start(Topology::new().relay(&["ada", "bob"]).host_decl(HostDecl {
+        name: "desk".into(),
+        account: Some("ada".into()),
+        ..HostDecl::default()
+    }))
+    .await
+    .unwrap();
+    let relay = net.relay().unwrap();
+    let gate = relay.gate().await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config(dir.path());
+    config.lan = false;
+    let embedded = EmbeddedRuntime::start_with(
+        &config,
+        EdgeOverrides {
+            cloud: relay.cloud_options(&gate),
+            ..loopback()
+        },
+        Arc::new(SystemClock),
+    )
+    .await
+    .unwrap();
+    let mut events = embedded.watch_profiles().await.unwrap();
+    let ada = only_profile(&embedded).await;
+    embedded
+        .bind(Some(ada), relay.url(), "mobile", &Relay::login("ada"))
+        .await
+        .unwrap();
+    relay_link(&embedded, ada, RelayLink::Connected).await;
+
+    // A second account signs in: the registry makes it a profile of its
+    // own, and the watch announces it.
+    let bob = embedded
+        .bind(None, relay.url(), "mobile", &Relay::login("bob"))
+        .await
+        .unwrap();
+    assert_eq!(bob.subject, "bob");
+    let bob: ProfileId = bob.id.parse().unwrap();
+    assert_ne!(bob, ada);
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            match events.next().await {
+                Some(app_embedded::ProfileEvent::Upserted(view)) if view.subject == "bob" => break,
+                Some(_) => {}
+                None => panic!("the watch ended"),
+            }
+        }
+    })
+    .await
+    .expect("the watch announced bob's profile");
+    relay_link(&embedded, bob, RelayLink::Connected).await;
+
+    // Pausing ada leaves bob's the only relay link; resuming brings it back.
+    let paused = embedded.pause(ada).await.unwrap();
+    assert_eq!(paused.account.binding, AccountBinding::Paused);
+    relay_link(&embedded, ada, RelayLink::Off).await;
+    assert_eq!(
+        embedded.account(bob).await.unwrap().relay,
+        RelayLink::Connected
+    );
+    embedded.resume(ada).await.unwrap();
+    relay_link(&embedded, ada, RelayLink::Connected).await;
+
+    // Signing out keeps the profile tied to its account, and signing back
+    // in finds it again.
+    let out = embedded.sign_out(bob).await.unwrap();
+    assert_eq!(out.account.binding, AccountBinding::SignedOut);
+    assert_eq!(out.subject, "bob");
+    assert_eq!(out.account.email, "bob@example.com");
+    // A signed-out profile has no relay link to pause.
+    relay_link(&embedded, bob, RelayLink::Off).await;
+    let again = embedded
+        .bind(None, relay.url(), "mobile", &Relay::login("bob"))
+        .await
+        .unwrap();
+    assert_eq!(again.id, bob.to_string());
+    assert_eq!(embedded.profiles().await.unwrap().len(), 2);
+
+    // Removing an account deletes its profile.
+    embedded.delete_profile(bob).await.unwrap();
+    let left = embedded.profiles().await.unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].subject, "ada");
+
     embedded.shutdown().await.unwrap();
     net.shutdown().await.unwrap();
 }
@@ -238,51 +389,55 @@ async fn a_phone_signed_in_to_the_account_reaches_its_hosts_over_the_relay() {
     )
     .await
     .unwrap();
+    let phone = only_profile(&embedded).await;
     let before = relay.refreshed_as().len();
-    let info = embedded
-        .sign_in(relay.url(), "mobile", &Relay::login("ada"))
+    // The first sign-in names the profile the phone had before any account.
+    let bound = embedded
+        .bind(Some(phone), relay.url(), "mobile", &Relay::login("ada"))
         .await
         .unwrap();
-    assert_eq!(info.account_name.is_empty(), info.email.is_empty());
+    assert_eq!(bound.id, phone.to_string());
+    assert_eq!(bound.subject, "ada");
+    assert_eq!(
+        bound.account.name.is_empty(),
+        bound.account.email.is_empty()
+    );
     // The token refreshes as the client that obtained it.
     assert_eq!(relay.refreshed_as()[before..], ["mobile"]);
-    let account = embedded.account().await.unwrap();
-    assert_eq!(
-        account.binding,
-        app_runtime::values::AccountBinding::SignedIn
-    );
+    let account = embedded.account(phone).await.unwrap();
+    assert_eq!(account.binding, AccountBinding::SignedIn);
     assert_eq!(account.email, "ada@example.com");
-    assert_eq!(embedded.access_token().await.unwrap().bearer, "access-ada");
-    eventually("the relay link", || {
-        matches!(
-            embedded.runtime().edge().map(|edge| edge.observed()),
-            Some(node::Observed::Connected { .. })
-        )
-    })
-    .await;
-    assert_eq!(embedded.account().await.unwrap().pro, Some(true));
+    assert_eq!(
+        embedded.access_token(phone).await.unwrap().bearer,
+        "access-ada"
+    );
+    relay_link(&embedded, phone, RelayLink::Connected).await;
+    assert_eq!(embedded.account(phone).await.unwrap().pro, Some(true));
     // What the account buys changes (a purchase, or here a lapse) and the
     // phone asks at once rather than waiting for the link's next refresh.
     relay.set_tier("ada", node::harness::Tier::Free);
-    embedded.refresh_entitlement().await.unwrap();
-    assert_eq!(embedded.account().await.unwrap().pro, Some(false));
+    embedded.refresh_entitlement(phone).await.unwrap();
+    assert_eq!(embedded.account(phone).await.unwrap().pro, Some(false));
     relay.set_tier("ada", node::harness::Tier::Pro);
-    embedded.refresh_entitlement().await.unwrap();
-    assert_eq!(embedded.account().await.unwrap().pro, Some(true));
+    embedded.refresh_entitlement(phone).await.unwrap();
+    assert_eq!(embedded.account(phone).await.unwrap().pro, Some(true));
     // The account lists its hosts; pairing is what makes one trusted. The
     // desk listens on no local network: the pairing goes over the relay.
     let (pin, _) = pairing_pin(&net).await;
     let desk = net.host("desk").unwrap();
     embedded
-        .pair(&PairRequest::Pin {
-            host_id: desk.host_id.as_bytes().to_vec(),
-            pin,
-            addrs: Vec::new(),
-        })
+        .pair(
+            phone,
+            &PairRequest::Pin {
+                host_id: desk.host_id.as_bytes().to_vec(),
+                pin,
+                addrs: Vec::new(),
+            },
+        )
         .await
         .unwrap();
 
-    let app = app(&embedded).await;
+    let app = app(&embedded, phone).await;
     converse(&app, &net).await;
 
     drop(app);

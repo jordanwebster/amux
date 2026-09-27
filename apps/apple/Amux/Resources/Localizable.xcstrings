@@ -10261,6 +10261,18 @@
         }
       }
     },
+    "the profile did not open": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/Runtime.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the profile did not open"
+          }
+        }
+      }
+    },
     "the provider returned an error": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
       "extractionState": "manual",
@@ -10429,18 +10441,6 @@
         }
       }
     },
-    "this account’s installation did not start": {
-      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "this account’s installation did not start"
-          }
-        }
-      }
-    },
     "this agent’s transcript": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift.",
       "extractionState": "manual",
@@ -10473,6 +10473,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "this app starts Claude through the SDK only"
+          }
+        }
+      }
+    },
+    "this phone’s runtime did not start": {
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this phone’s runtime did not start"
           }
         }
       }

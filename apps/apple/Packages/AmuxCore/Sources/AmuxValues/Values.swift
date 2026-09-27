@@ -2702,6 +2702,31 @@ public enum Presence: String, Codable, Hashable, Sendable, CaseIterable {
     case away = "Away"
 }
 
+/// One of this device's profiles, one per account it signed in to, and the
+/// one nobody has signed in on.
+public struct ProfileView: Codable, Hashable, Sendable {
+    public var id: String
+    public var label: String
+    /// The bound account's subject at its service, kept after a sign-out;
+    /// empty for a profile nobody has signed in on.
+    public var subject: String
+    public var account: AccountView
+
+    public init(id: String, label: String, subject: String, account: AccountView) {
+        self.id = id
+        self.label = label
+        self.subject = subject
+        self.account = account
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case subject
+        case account
+    }
+}
+
 public struct QuestionView: Codable, Hashable, Sendable {
     public var header: String
     public var question: String

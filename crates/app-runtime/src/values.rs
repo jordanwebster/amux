@@ -342,6 +342,18 @@ pub struct Found {
     pub scope: String,
 }
 
+/// One of this device's profiles, one per account it signed in to, and the
+/// one nobody has signed in on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProfileView {
+    pub id: String,
+    pub label: String,
+    /// The bound account's subject at its service, kept after a sign-out;
+    /// empty for a profile nobody has signed in on.
+    pub subject: String,
+    pub account: AccountView,
+}
+
 /// The account this device's profile is bound to, as the account screens
 /// show it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

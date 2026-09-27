@@ -5,8 +5,17 @@ import XCTest
 
 @MainActor
 final class AccountRegistryTests: XCTestCase {
-    private func account(_ name: String) -> SignedInAccount {
-        SignedInAccount(id: AccountId(name), email: "\(name)@example.com", displayName: name)
+    /// A profile as the installation lists it: nobody's when `subject` is
+    /// empty, else that account's.
+    private func profile(
+        _ id: String, _ subject: String = "", _ binding: AccountBinding = .signedIn
+    ) -> ProfileView {
+        ProfileView(
+            id: id, label: subject.isEmpty ? "default" : subject, subject: subject,
+            account: AccountView(
+                binding: subject.isEmpty ? .unbound : binding,
+                email: subject.isEmpty ? "" : "\(subject)@example.com", name: subject,
+                relay: .off, pro: nil))
     }
 
     private func file() -> URL {
@@ -14,104 +23,139 @@ final class AccountRegistryTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("accounts.json")
     }
 
-    func testTheFirstSignInAdoptsTheSignedOutPhonesInstallation() {
+    func testAPhoneNobodySignedInOnShowsTheProfileNobodySignedInOn() {
         let registry = AccountRegistry()
-        let signedOut = registry.installation
+        registry.show([profile("p0")])
         XCTAssertNil(registry.selected)
-        let ada = account("ada")
-        XCTAssertEqual(registry.installation(for: ada.id), signedOut)
-        registry.add(ada, installation: registry.installation(for: ada.id))
-        XCTAssertEqual(registry.selected, ada.id)
-        XCTAssertEqual(registry.installation, signedOut, "ada runs what the phone paired before")
-        XCTAssertNotEqual(registry.signedOutInstallation, signedOut, "the phone gets a fresh one")
+        XCTAssertTrue(registry.accounts.isEmpty)
+        XCTAssertEqual(registry.unbound, "p0")
+        XCTAssertEqual(registry.profile, "p0")
+        XCTAssertNil(registry.stores)
+        XCTAssertEqual(registry.gate, .signedOut)
     }
 
-    func testAnotherAccountGetsItsOwnInstallationAndGoesOnScreen() {
+    func testTheFirstSignInTakesOverTheProfileNobodySignedInOn() {
         let registry = AccountRegistry()
-        let ada = account("ada")
-        registry.add(ada, installation: registry.installation(for: ada.id))
-        let bob = account("bob")
-        let installation = registry.installation(for: bob.id)
-        XCTAssertNotEqual(installation, registry.installation)
+        registry.show([profile("p0")])
         var switched: [AccountId?] = []
         registry.switching = { switched.append($0) }
-        registry.add(bob, installation: installation)
-        XCTAssertEqual(registry.selected, bob.id)
-        XCTAssertEqual(registry.installation, installation)
-        XCTAssertEqual(switched, [bob.id])
-        XCTAssertEqual(registry.stores?.account, bob.id)
+        registry.show([profile("p0", "ada")])
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        XCTAssertEqual(registry.profile, "p0", "ada keeps what the phone paired before")
+        XCTAssertNil(registry.unbound)
+        XCTAssertEqual(registry.selectedAccount?.account.email, "ada@example.com")
+        XCTAssertEqual(registry.selectedAccount?.name, "ada")
+        XCTAssertEqual(registry.stores?.account, AccountId("ada"))
+        XCTAssertEqual(switched, [AccountId("ada")])
     }
 
-    func testSigningBackInKeepsTheAccountsInstallation() {
+    func testAnotherAccountGetsItsOwnProfileAndGoesOnScreenWhenSelected() {
         let registry = AccountRegistry()
-        let ada = account("ada")
-        registry.add(ada, installation: registry.installation(for: ada.id))
-        let installation = registry.installation
-        registry.signOut(ada.id)
+        registry.show([profile("p0", "ada")])
+        var switched: [AccountId?] = []
+        registry.switching = { switched.append($0) }
+        registry.show([profile("p0", "ada"), profile("p1", "bob")])
+        XCTAssertEqual(registry.selected, AccountId("ada"), "a new profile does not take the screen")
+        XCTAssertEqual(switched, [])
+        registry.select(AccountId("bob"))
+        XCTAssertEqual(registry.selected, AccountId("bob"))
+        XCTAssertEqual(registry.profile, "p1")
+        XCTAssertEqual(registry.stores?.account, AccountId("bob"))
+        XCTAssertEqual(switched, [AccountId("bob")])
+    }
+
+    func testASignedOutAccountStaysOnScreenAndListed() {
+        let registry = AccountRegistry()
+        registry.show([profile("p0", "ada")])
+        registry.show([profile("p0", "ada", .signedOut)])
+        XCTAssertEqual(registry.selected, AccountId("ada"), "a signed-out account stays on screen")
         XCTAssertEqual(registry.selectedAccount?.signedIn, false)
-        XCTAssertEqual(registry.selected, ada.id, "a signed-out account stays on screen")
-        XCTAssertEqual(registry.installation(for: ada.id), installation)
-        registry.add(ada, installation: registry.installation(for: ada.id))
+        XCTAssertEqual(registry.selectedAccount?.line, "Signed out")
+        XCTAssertEqual(registry.profile, "p0")
+        // A paused profile is still signed in: only its relay link is down.
+        registry.show([profile("p0", "ada", .paused)])
         XCTAssertEqual(registry.selectedAccount?.signedIn, true)
-        XCTAssertEqual(registry.installation, installation)
     }
 
-    func testForgettingTheAccountOnScreenMovesToASignedInOneAndAnswersItsInstallation() {
+    func testLeavingTheAccountOnScreenMovesToASignedInOneThenAnyThenNobody() {
         let registry = AccountRegistry()
-        let ada = account("ada")
-        let bob = account("bob")
-        let cid = account("cid")
-        registry.add(ada, installation: "ada-dir")
-        registry.add(bob, installation: "bob-dir")
-        registry.add(cid, installation: "cid-dir")
-        registry.signOut(ada.id)
-        XCTAssertEqual(registry.forget(cid.id), "cid-dir")
-        XCTAssertEqual(registry.selected, bob.id, "the first signed-in account")
-        XCTAssertEqual(registry.forget(bob.id), "bob-dir")
-        XCTAssertEqual(registry.selected, ada.id, "then any account")
-        XCTAssertEqual(registry.forget(ada.id), "ada-dir")
-        XCTAssertNil(registry.selected, "then the signed-out phone")
+        registry.show([
+            profile("p0", "ada", .signedOut), profile("p1", "bob"), profile("p2", "cid"),
+        ])
+        registry.select(AccountId("cid"))
+        registry.leave(AccountId("cid"))
+        XCTAssertEqual(registry.selected, AccountId("bob"), "the first signed-in account")
+        registry.show([profile("p0", "ada", .signedOut), profile("p1", "bob")])
+        registry.leave(AccountId("bob"))
+        XCTAssertEqual(registry.selected, AccountId("ada"), "then any account")
+        registry.show([profile("p0", "ada", .signedOut)])
+        registry.leave(AccountId("ada"))
+        XCTAssertNil(registry.selected, "then nobody")
         XCTAssertNil(registry.stores)
+    }
+
+    func testRemovingTheOnlyAccountLeavesAFreshProfileNobodySignedInOn() {
+        let registry = AccountRegistry()
+        registry.show([profile("p0", "ada")])
+        // The installation keeps one profile: a fresh one comes first.
+        registry.show([profile("p0", "ada"), profile("p1")])
+        XCTAssertEqual(registry.profile, "p0")
+        registry.leave(AccountId("ada"))
+        XCTAssertEqual(registry.profile, "p1")
+        registry.show([profile("p1")])
+        XCTAssertNil(registry.selected)
+        XCTAssertTrue(registry.accounts.isEmpty)
+        XCTAssertEqual(registry.profile, "p1")
+    }
+
+    func testAnAccountWhoseProfileIsGoneLeavesTheScreen() {
+        let registry = AccountRegistry()
+        registry.show([profile("p0", "ada"), profile("p1", "bob")])
+        XCTAssertEqual(registry.selected, AccountId("ada"))
+        registry.show([profile("p1", "bob")])
+        XCTAssertEqual(registry.selected, AccountId("bob"))
+        XCTAssertEqual(registry.profile, "p1")
     }
 
     func testTheGateReadsTheLinkThenTheSavedEntitlement() {
         let registry = AccountRegistry()
         XCTAssertEqual(registry.gate, .signedOut)
-        let ada = account("ada")
-        registry.add(
-            ada, entitlement: .active(grant: .purchased(.web), renews: nil), installation: "a")
+        registry.show([profile("p0", "ada")])
+        registry.entitlement(.active(grant: .purchased(.web), renews: nil), for: AccountId("ada"))
         XCTAssertEqual(registry.gate, .ready)
         registry.stores?.hosts.show(AccountView(
             binding: .signedIn, email: "", name: "", relay: .connected, pro: false))
         XCTAssertEqual(registry.gate, .unsubscribed, "the link's word outranks the saved one")
-        registry.signOut(ada.id)
+        registry.show([profile("p0", "ada", .signedOut)])
         XCTAssertEqual(registry.gate, .signedOut)
     }
 
     func testTheRegistrySurvivesARelaunch() {
         let file = file()
         let first = AccountRegistry(file: file)
-        let signedOut = first.signedOutInstallation
-        first.add(account("ada"), installation: "ada-dir")
+        first.show([profile("p0", "ada"), profile("p1", "bob")])
         first.saw(hosts: 2, attention: 1, for: AccountId("ada"))
+        first.entitlement(.active(grant: .granted, renews: nil), for: AccountId("ada"))
+        first.select(AccountId("bob"))
         let again = AccountRegistry(file: file)
-        XCTAssertEqual(again.selected, AccountId("ada"))
-        XCTAssertEqual(again.installation, "ada-dir")
-        XCTAssertEqual(again.selectedAccount?.line, "2 hosts")
-        XCTAssertEqual(again.selectedAccount?.attention, 1)
-        XCTAssertEqual(again.signedOutInstallation, signedOut, "ada was not the first on this phone")
+        XCTAssertEqual(again.selected, AccountId("bob"), "the account on screen")
+        XCTAssertEqual(again.stores?.account, AccountId("bob"))
+        // Which accounts there are is the installation's to say.
+        XCTAssertTrue(again.accounts.isEmpty)
+        again.show([profile("p0", "ada"), profile("p1", "bob")])
+        XCTAssertEqual(again.selected, AccountId("bob"))
+        XCTAssertEqual(again.profile, "p1")
+        let ada = again.accounts.first { $0.id == AccountId("ada") }
+        XCTAssertEqual(ada?.line, "2 hosts")
+        XCTAssertEqual(ada?.attention, 1)
+        XCTAssertEqual(ada?.entitlement, .active(grant: .granted, renews: nil))
+        XCTAssertEqual(ada?.profile, "p0")
         XCTAssertFalse(again.persistenceFailed)
-    }
-
-    func testTheSignedOutPhoneKeepsItsInstallationAcrossLaunches() {
-        let file = file()
-        let first = AccountRegistry(file: file)
-        XCTAssertEqual(AccountRegistry(file: file).installation, first.installation)
     }
 
     func testALateAnswerForAnAccountNotOnScreenIsDropped() {
         let registry = AccountRegistry()
-        registry.add(account("ada"), installation: "a")
+        registry.show([profile("p0", "ada")])
         XCTAssertEqual(registry.accept(1, for: AccountId("ada")), 1)
         XCTAssertNil(registry.accept(1, for: AccountId("bob")))
         XCTAssertEqual(registry.dropped, 1)
@@ -120,14 +164,17 @@ final class AccountRegistryTests: XCTestCase {
     func testAnAccountRemembersWhatItListedWhenItGoesOffScreen() {
         let file = file()
         let registry = AccountRegistry(file: file)
-        registry.add(account("ada"), installation: "a")
+        let both = [profile("p0", "ada"), profile("p1", "bob")]
+        registry.show(both)
         registry.stores?.saw?(2, 1)
-        registry.add(account("bob"), installation: "b")
+        registry.select(AccountId("bob"))
         registry.stores?.saw?(0, 0)
-        let ada = AccountRegistry(file: file).accounts.first { $0.id == AccountId("ada") }
+        let again = AccountRegistry(file: file)
+        again.show(both)
+        let ada = again.accounts.first { $0.id == AccountId("ada") }
         XCTAssertEqual(ada?.line, "2 hosts")
         XCTAssertEqual(ada?.attention, 1)
-        let bob = AccountRegistry(file: file).accounts.first { $0.id == AccountId("bob") }
+        let bob = again.accounts.first { $0.id == AccountId("bob") }
         XCTAssertEqual(bob?.line, "bob@example.com", "nothing paired yet reads as the address")
     }
 }

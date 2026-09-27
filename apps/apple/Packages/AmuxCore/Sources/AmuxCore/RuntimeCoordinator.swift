@@ -2,13 +2,16 @@ import AmuxValues
 import Foundation
 import Observation
 
-/// Runs the installation of the account on screen and keeps its stores fed.
+/// Runs this phone's installation and keeps the stores of the account on
+/// screen fed from its profile.
 ///
-/// One runtime per process. Switching account stops the one running and
-/// starts the other's; removing an account deletes its installation once
-/// nothing runs from it. Starting reads this phone's own store before any
-/// network is dialled, so the first frame after a launch is what the phone
-/// last held.
+/// One installation per process, with one profile per account, as a
+/// desktop has. The profile on screen is the only one whose fleet is open,
+/// the only one whose every listed agent keeps a source while the app is in
+/// front of somebody, and the only bound one whose relay link runs: every
+/// other bound profile is paused. Switching account never stops the
+/// installation. Starting reads this phone's own store before any network is
+/// dialled, so the first frame after a launch is what the phone last held.
 @MainActor
 @Observable
 public final class RuntimeCoordinator {
@@ -34,9 +37,12 @@ public final class RuntimeCoordinator {
     public typealias Starter = @Sendable (StartConfig, @escaping @Sendable (UInt64) -> Void)
         throws(RuntimeFailure) -> Runtime
 
+    /// The installation, once started.
     public private(set) var runtime: Runtime?
-    /// The installation the running runtime serves.
-    public private(set) var running: String?
+    /// The fleet of the profile on screen.
+    public private(set) var profile: Profile?
+    /// The installation's profiles as last read.
+    public private(set) var profiles: [ProfileView] = []
     /// Why the runtime is not running, when it failed to start.
     public private(set) var failure: String?
     /// A failure to open the store stops the whole app: nothing it holds is
@@ -64,17 +70,18 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private let support: URL
     @ObservationIgnored private let options: Options
     @ObservationIgnored private let starter: Starter
-    @ObservationIgnored private var generation = 0
     @ObservationIgnored private var active = true
     @ObservationIgnored private var found: [FoundHost] = []
     @ObservationIgnored private var permission: LocalNetworkPermission = .unknown
     @ObservationIgnored private var fed: StoreBundle?
+    /// Which opening of a profile the wakes belong to.
+    @ObservationIgnored private var opening = 0
     @ObservationIgnored private var waiting: [CheckedContinuation<Runtime?, Never>] = []
-    /// The start under way, which the next one waits for: two runtimes may
-    /// not hold one installation, and a start that lost its place stops the
-    /// runtime it started before the next begins.
     @ObservationIgnored private var starting: Task<Void, Never>?
-    @ObservationIgnored private var inFlight = false
+    /// Which start a started runtime answers; one a stop overtook is stopped.
+    @ObservationIgnored private var launch = 0
+    /// Profiles with a pause or resume in flight, so a second is not sent.
+    @ObservationIgnored private var steering: Set<String> = []
 
     public init(
         registry: AccountRegistry, support: URL, deviceName: String,
@@ -89,85 +96,66 @@ public final class RuntimeCoordinator {
         self.signedOutStores = signedOut
         self.options = options
         self.starter = starter
-        registry.switching = { [weak self] _ in self?.restart() }
+        registry.switching = { [weak self] _ in self?.place() }
     }
 
     /// The stores on screen.
     public var stores: StoreBundle { registry.stores ?? signedOutStores }
 
-    /// Where an installation lives.
-    public func directory(of installation: String) -> URL {
-        support.appendingPathComponent("installations", isDirectory: true)
-            .appendingPathComponent(installation, isDirectory: true)
+    /// Where the installation lives: every profile's key, trust and store.
+    public var directory: URL {
+        support.appendingPathComponent("installation", isDirectory: true)
     }
 
+    /// Starts the installation, if it is not running or starting.
     public func start() {
-        guard runtime == nil, !inFlight else { return }
-        restart()
-    }
-
-    /// Stops what runs and starts the installation on screen.
-    public func restart() {
-        stop()
-        generation += 1
-        let expected = generation
-        let installation = registry.installation
-        let stores = stores
-        let directory = directory(of: installation)
+        guard runtime == nil, starting == nil else { return }
+        // Before one installation held every account, each had a directory
+        // of its own here; nothing reads them now.
+        try? FileManager.default.removeItem(
+            at: support.appendingPathComponent("installations", isDirectory: true))
+        let directory = directory
         let config = StartConfig(
             dataDir: directory.path, deviceName: deviceName,
             discoveryScope: options.discoveryScope, lan: true, lanBind: options.lanBind,
             logPath: directory.appendingPathComponent("runtime.log").path,
             relayTcp: options.relayTCP, tail: nil)
         let starter = starter
-        let previous = starting
-        inFlight = true
+        launch += 1
+        let expected = launch
         starting = Task.detached {
-            await previous?.value
             let started: Result<Runtime, RuntimeFailure>
             do {
                 try FileManager.default.createDirectory(
                     at: directory, withIntermediateDirectories: true)
-                started = .success(try starter(config) { chat in
-                    Task { @MainActor [weak self] in
-                        guard self?.generation == expected else { return }
-                        stores.woke(chat)
-                    }
+                started = .success(try starter(config) { _ in
+                    Task { @MainActor [weak self] in self?.profilesMoved() }
                 })
             } catch let failure as RuntimeFailure {
                 started = .failure(failure)
             } catch {
                 started = .failure(RuntimeFailure(error.localizedDescription))
             }
-            await self.started(started, generation: expected, installation: installation,
-                               stores: stores)
+            await self.started(started, launch: expected)
         }
     }
 
-    private func started(
-        _ result: Result<Runtime, RuntimeFailure>, generation expected: Int,
-        installation: String, stores: StoreBundle
-    ) {
-        if expected == generation { inFlight = false }
+    private func started(_ result: Result<Runtime, RuntimeFailure>, launch expected: Int) {
+        guard expected == launch else {
+            if case .success(let runtime) = result { runtime.stop() }
+            return
+        }
+        starting = nil
         switch result {
         case .success(let runtime):
-            guard expected == generation else {
-                runtime.stop()
-                return
-            }
             self.runtime = runtime
-            running = installation
             failure = nil
             storeFailure = nil
-            runtime.setSourcePolicy(listed: active)
             if !found.isEmpty { runtime.discovered(found.map(\.found)) }
-            stores.hosts.sawLocalNetwork(permission)
-            stores.attach(runtime)
-            fed = stores
+            profilesMoved()
             Signposts.emit(.reconciled)
             answer(runtime)
         case .failure(let reason):
-            guard expected == generation else { return }
             failure = reason.description
             storeFailure = reason.description
             answer(nil)
@@ -180,52 +168,172 @@ public final class RuntimeCoordinator {
         for waiter in answered { waiter.resume(returning: runtime) }
     }
 
-    /// The runtime serving `installation` once it has started, or nil when
-    /// it failed or another took its place.
-    public func started(_ installation: String) async -> Runtime? {
-        if running == installation, let runtime { return runtime }
-        let runtime = await withCheckedContinuation { waiting.append($0) }
-        return running == installation ? runtime : nil
+    /// The installation once it has started, or nil when it failed.
+    public func started() async -> Runtime? {
+        if let runtime { return runtime }
+        guard starting != nil else { return nil }
+        return await withCheckedContinuation { waiting.append($0) }
     }
 
-    /// Binds the account on screen to a sign-in's refresh token; its profile
-    /// spends the token from then on and brings the relay link up.
-    public func bind(
-        _ installation: String, cloud: URL, client: String, refreshToken: String
-    ) async -> Result<Nothing, RuntimeFailure> {
-        guard let runtime = await started(installation) else {
-            return .failure(RuntimeFailure("this account’s installation did not start"))
+    /// Reads the profile list again, and puts the one on screen in front.
+    public func profilesMoved() {
+        guard let runtime else { return }
+        let listed = runtime.profiles()
+        let added = Set(listed.map(\.id)).subtracting(profiles.map(\.id))
+        profiles = listed
+        // A profile made since the browser last reported has not been told
+        // what is on the network.
+        if !added.isEmpty, !found.isEmpty { runtime.discovered(found.map(\.found)) }
+        registry.show(listed)
+        place()
+    }
+
+    /// Opens the fleet of the profile on screen when it is not the one open,
+    /// then leaves every other profile on demand and paused.
+    private func place() {
+        guard let runtime, let id = registry.profile else { return }
+        let stores = stores
+        if profile?.id != id || fed !== stores {
+            close()
+            opening += 1
+            let expected = opening
+            do {
+                let opened = try runtime.open(id) { chat in
+                    Task { @MainActor [weak self] in
+                        guard self?.opening == expected else { return }
+                        stores.woke(chat)
+                    }
+                }
+                profile = opened
+                fed = stores
+                stores.hosts.sawLocalNetwork(permission)
+                stores.attach(opened)
+            } catch {
+                failure = error.description
+            }
         }
-        let bound = await runtime.signIn(cloud: cloud, client: client, refreshToken: refreshToken)
-        await stores.refreshAccount()
-        return bound
+        steer()
     }
 
-    /// Stops the runtime, closing every chat on it first.
-    public func stop() {
-        generation += 1
-        inFlight = false
+    /// Only the profile on screen lists every agent's source, and only in
+    /// front of somebody; only it, of the bound profiles, keeps its relay
+    /// link, so one link is live.
+    private func steer() {
+        guard let runtime else { return }
+        let onScreen = registry.profile
+        for view in profiles {
+            let shown = view.id == onScreen
+            runtime.setSourcePolicy(view.id, listed: shown && active)
+            let binding = view.account.binding
+            if shown, binding == .paused {
+                steer(view.id) { await runtime.resume($0) }
+            } else if !shown, binding == .signedIn {
+                steer(view.id) { await runtime.pause($0) }
+            }
+        }
+    }
+
+    private func steer(
+        _ id: String, _ act: @escaping @Sendable (String) async -> Result<ProfileView, RuntimeFailure>
+    ) {
+        guard steering.insert(id).inserted else { return }
+        Task {
+            _ = await act(id)
+            steering.remove(id)
+            profilesMoved()
+            await stores.refreshAccount()
+        }
+    }
+
+    /// Closes the fleet on screen, and every chat on it first.
+    private func close() {
+        opening += 1
         fed?.closeChats()
         fed?.attach(nil)
         fed = nil
+        profile?.close()
+        profile = nil
+    }
+
+    /// Binds an account that signed in with its refresh token, and puts it
+    /// on screen; its profile spends the token from then on and brings the
+    /// relay link up. An account this phone knows binds its own profile; the
+    /// first account takes over the profile nobody signed in on, keeping
+    /// what it paired; any other gets a profile of its own.
+    public func bind(
+        _ account: AccountId, cloud: URL, client: String, refreshToken: String
+    ) async -> Result<Nothing, RuntimeFailure> {
+        guard let runtime = await started() else {
+            return .failure(RuntimeFailure("this phone’s runtime did not start"))
+        }
+        let known = registry.accounts.first { $0.id == account }?.profile
+        let target = known ?? (registry.selected == nil ? registry.unbound : nil)
+        let bound = await runtime.bind(
+            target, cloud: cloud, client: client, refreshToken: refreshToken)
+        guard case .success(let view) = bound else {
+            return bound.map { _ in Nothing() }
+        }
+        profilesMoved()
+        registry.select(AccountId(view.subject))
+        await stores.refreshAccount()
+        return .success(Nothing())
+    }
+
+    /// Signs an account out; its profile stays, tied to the account and
+    /// still reaching the machines on this network.
+    public func signOut(_ account: AccountId) async {
+        guard let runtime = await started(),
+              let entry = registry.accounts.first(where: { $0.id == account }) else { return }
+        let paused = profiles.first { $0.id == entry.profile }?.account.binding == .paused
+        _ = await runtime.signOut(entry.profile)
+        // A paused profile reads as paused whether or not it is signed in.
+        if paused { _ = await runtime.resume(entry.profile) }
+        profilesMoved()
+        await stores.refreshAccount()
+    }
+
+    /// Takes an account off this phone: its profile — its key, the machines
+    /// it paired, what it held — is deleted. The installation keeps one
+    /// profile at least, so removing the last account leaves a fresh one
+    /// nobody has signed in on.
+    public func remove(_ account: AccountId) async {
+        guard let runtime = await started(),
+              let entry = registry.accounts.first(where: { $0.id == account }) else { return }
+        if profiles.count == 1 {
+            _ = await runtime.createProfile()
+            profilesMoved()
+        }
+        registry.leave(account)
+        _ = await runtime.deleteProfile(entry.profile)
+        profilesMoved()
+    }
+
+    /// Stops the installation, closing the fleet and every chat on it first.
+    public func stop() {
+        close()
+        launch += 1
+        starting = nil
+        answer(nil)
         runtime?.stop()
         runtime = nil
-        running = nil
+        profiles = []
+        steering = []
     }
 
     /// Starts again after the store failed to open.
     public func relaunch() {
         storeFailure = nil
-        restart()
+        stop()
+        start()
     }
 
-    /// In front of somebody, every listed agent keeps a source open and the
-    /// browser runs. Put away, only the chats a push opens keep one, and the
-    /// browser stops and forgets what it found.
+    /// In front of somebody, every listed agent of the profile on screen
+    /// keeps a source open and the browser runs. Put away, only the chats a
+    /// push opens keep one, and the browser stops and forgets what it found.
     public func setActive(_ active: Bool) {
         guard self.active != active else { return }
         self.active = active
-        runtime?.setSourcePolicy(listed: active)
+        steer()
         if active {
             discovery?.start()
             start()
@@ -235,7 +343,7 @@ public final class RuntimeCoordinator {
     }
 
     /// Brings one agent's chat current for a push. In the background the
-    /// runtime is put under the on-demand policy first, so the chat's own
+    /// profile is put under the on-demand policy first, so the chat's own
     /// open is the only source that runs; coming to the foreground lists
     /// every agent again.
     public func warm(
@@ -243,40 +351,46 @@ public final class RuntimeCoordinator {
     ) async -> Bool {
         if inBackground { setActive(false) }
         start()
-        guard await started(registry.installation) != nil else { return false }
+        guard await started() != nil, profile != nil else { return false }
         return await stores.warm(agent, within: limit)
     }
 
-    /// What the browser found, handed over whole, and to any runtime started
-    /// later.
+    /// What the browser found, handed over whole to every profile, and to
+    /// any runtime started later.
     public func discovered(_ hosts: [FoundHost]) {
         found = hosts
         runtime?.discovered(hosts.map(\.found))
     }
 
-    /// A bearer for the account on screen, borrowed from its runtime, which
-    /// alone holds the account's refresh token.
+    /// A bearer for an account, borrowed from its profile, which alone holds
+    /// the account's refresh token.
     public func bearer(for account: AccountId) async -> String? {
-        guard registry.selected == account, let runtime,
-              case .success(let bearer) = await runtime.accessToken() else { return nil }
+        guard let runtime,
+              let entry = registry.accounts.first(where: { $0.id == account }),
+              case .success(let bearer) = await runtime.accessToken(entry.profile)
+        else { return nil }
         return bearer.bearer
     }
 
-    /// The tail of the running installation's log, for a report.
+    /// Asks the account service what an account buys now, over its
+    /// profile's relay link.
+    @discardableResult
+    public func refreshEntitlement(for account: AccountId) async -> Bool {
+        guard let runtime,
+              let entry = registry.accounts.first(where: { $0.id == account }),
+              case .success = await runtime.refreshEntitlement(entry.profile)
+        else { return false }
+        return true
+    }
+
+    /// The tail of the installation's log, for a report.
     public func logTail(bytes: Int = 64 * 1024) -> String? {
-        guard let running,
-              let handle = try? FileHandle(
-                forReadingFrom: directory(of: running).appendingPathComponent("runtime.log"))
+        guard let handle = try? FileHandle(
+            forReadingFrom: directory.appendingPathComponent("runtime.log"))
         else { return nil }
         defer { try? handle.close() }
         let end = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: end > UInt64(bytes) ? end - UInt64(bytes) : 0)
         return (try? handle.readToEnd()).map { String(decoding: $0, as: UTF8.self) }
-    }
-
-    /// Deletes an installation nothing runs from.
-    public func delete(installation: String) {
-        guard installation != running else { return }
-        try? FileManager.default.removeItem(at: directory(of: installation))
     }
 }
