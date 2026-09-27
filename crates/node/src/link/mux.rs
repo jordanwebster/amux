@@ -187,6 +187,10 @@ impl LinkCarrier for MuxCarrier {
         });
     }
 
+    fn close_reason(&self) -> Option<pb::LinkCloseReason> {
+        *self.closed.borrow()
+    }
+
     fn closed(&self) -> BoxFuture<'_, pb::LinkCloseReason> {
         Box::pin(async move {
             let mut closed = self.closed.subscribe();

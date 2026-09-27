@@ -640,9 +640,6 @@ impl Edge {
                 .map_err(|_| Status::internal("trust store lock is poisoned"))? = staged;
             (host, removed)
         };
-        self.connections
-            .send_link_close_to_host(host, wire::LinkCloseReason::UserRevoked)
-            .await;
         self.connections.close_host_access(host).await;
         audit::trust_remove(host, &removed.name, removed.paired_at, Utc::now(), &reason);
         Ok(peer_entry_to_wire(host, &removed))

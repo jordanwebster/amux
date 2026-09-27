@@ -50,6 +50,11 @@ pub trait LinkCarrier: Send + Sync + 'static {
     fn accept_stream(&self) -> BoxFuture<'_, Option<(pb::StreamPreface, ByteStream)>>;
     fn close(&self, reason: pb::LinkCloseReason);
     fn closed(&self) -> BoxFuture<'_, pb::LinkCloseReason>;
+    /// Why the connection closed, if it has: read at once, for a link
+    /// whose control stream ended before [`LinkCarrier::closed`] said so.
+    fn close_reason(&self) -> Option<pb::LinkCloseReason> {
+        None
+    }
 }
 
 pub(super) struct ControlWrite {

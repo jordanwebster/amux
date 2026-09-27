@@ -109,6 +109,11 @@ pub(crate) enum LinkCloseRequest {
     OutgoingQueueFull,
     TrustReplaced,
     Superseded,
+    /// This host no longer trusts the peer: the link closes saying
+    /// USER_REVOKED, in the close message and as the connection's own
+    /// close code, so the peer learns it even when closing the connection
+    /// drops the message.
+    Revoked,
 }
 
 /// A link the registry accepted.
@@ -367,9 +372,13 @@ impl LinkRegistry {
         counted.into_iter().collect()
     }
 
-    /// Requests closure of every link to `host_id` and waits until they are
-    /// gone from the registry.
-    pub async fn close_host(&self, host_id: HostId) -> Vec<LinkId> {
+    /// Requests closure of every link to `host_id`, for `request`, and waits
+    /// until they are gone from the registry.
+    pub(crate) async fn close_host(
+        &self,
+        host_id: HostId,
+        request: LinkCloseRequest,
+    ) -> Vec<LinkId> {
         let closing = {
             let state = self.state.read().await;
             state
@@ -377,7 +386,7 @@ impl LinkRegistry {
                 .iter()
                 .filter(|(_, writer)| writer.host.id == host_id)
                 .map(|(link, writer)| {
-                    let _ = writer.close_tx.try_send(LinkCloseRequest::TrustReplaced);
+                    let _ = writer.close_tx.try_send(request);
                     (*link, writer.closed.clone())
                 })
                 .collect::<Vec<_>>()
@@ -552,26 +561,6 @@ impl LinkRegistry {
             state
                 .writers
                 .values()
-                .map(|writer| writer.tx.clone())
-                .collect::<Vec<_>>()
-        };
-        let message = link_close_message(reason);
-        for outgoing_tx in outgoing {
-            try_send_or_spawn(outgoing_tx, message.clone());
-        }
-    }
-
-    pub(crate) async fn send_link_close_to_host(
-        &self,
-        host_id: HostId,
-        reason: pb::LinkCloseReason,
-    ) {
-        let outgoing = {
-            let state = self.state.read().await;
-            state
-                .writers
-                .values()
-                .filter(|writer| writer.host.id == host_id)
                 .map(|writer| writer.tx.clone())
                 .collect::<Vec<_>>()
         };

@@ -714,6 +714,11 @@ async fn run_established(
                     Some(LinkCloseRequest::OutgoingQueueFull) => tonic::Status::resource_exhausted("link outgoing queue full"),
                     Some(LinkCloseRequest::TrustReplaced) => tonic::Status::permission_denied("peer trust was replaced"),
                     Some(LinkCloseRequest::Superseded) => tonic::Status::unavailable("direct link superseded"),
+                    Some(LinkCloseRequest::Revoked) => {
+                        let _ = write_message(&mut sink, &link_close(wire::pb::LinkCloseReason::UserRevoked)).await;
+                        close_reason = wire::pb::LinkCloseReason::UserRevoked;
+                        tonic::Status::permission_denied("peer trust was revoked")
+                    }
                     None => tonic::Status::unavailable("link closed"),
                 });
                 break;
@@ -731,6 +736,13 @@ async fn run_established(
         }
     }
 
+    // A connection the peer closed saying USER_REVOKED is its word, whether
+    // its close message was read first, the connection's end was seen
+    // first, or the control stream simply ended with it. This side has not
+    // closed the carrier yet, so any reason it gives is the peer's.
+    if carrier.close_reason() == Some(wire::pb::LinkCloseReason::UserRevoked) {
+        ctx.routing.revocations().note(peer_host.id);
+    }
     // Drain control messages already queued before closing, most importantly
     // the protocol close emitted for an invalid inbound frame.
     while let Ok(message) = out_rx.try_recv() {

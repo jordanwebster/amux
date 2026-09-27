@@ -10,7 +10,8 @@ use tonic::transport::Channel;
 use crate::HostId;
 use crate::link::{ChannelClass, ChannelError, ChannelKey, ChannelPool};
 use crate::routing::{
-    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, Route, RoutingCore, RoutingEvent,
+    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, LinkCloseRequest, Route, RoutingCore,
+    RoutingEvent,
 };
 use crate::transport::{TrustedPeerConnections, pairing_channel_from_io};
 
@@ -181,23 +182,15 @@ impl ConnectionManager {
         }
     }
 
-    pub(crate) async fn send_link_close_to_host(
-        &self,
-        peer: HostId,
-        reason: wire::pb::LinkCloseReason,
-    ) {
-        self.channels
-            .link_registry()
-            .send_link_close_to_host(peer, reason)
-            .await;
-    }
-
     pub(crate) async fn teardown_host(&self, peer: HostId) {
         self.routing.begin_replacement(peer).await;
         self.routing.remove_host(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
-        self.channels.link_registry().close_host(peer).await;
+        self.channels
+            .link_registry()
+            .close_host(peer, LinkCloseRequest::TrustReplaced)
+            .await;
         self.remove_host_runtime_state(peer).await;
     }
 
@@ -207,15 +200,21 @@ impl ConnectionManager {
     /// connection survives, but the peer stays reachable for pairing, the way
     /// any other machine on the account is before it is ever paired.
     ///
+    /// The links close first, saying USER_REVOKED, while nothing else has
+    /// cut them: that is how the peer learns it is no longer trusted.
+    ///
     /// Closing ends with the host admitted again: its key has already left
     /// the trust store, so nothing of it gets back in unless it is paired
     /// again, and then its new streams must not be closed as they arrive.
     pub(crate) async fn close_host_access(&self, peer: HostId) {
         self.routing.revocations().clear(peer);
+        self.channels
+            .link_registry()
+            .close_host(peer, LinkCloseRequest::Revoked)
+            .await;
         self.routing.remove_direct_links(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
-        self.channels.link_registry().close_host(peer).await;
         self.remove_host_runtime_state(peer).await;
         self.trusted_connections.finish_host_replacement(peer);
     }

@@ -327,6 +327,15 @@ impl LinkCarrier for QuicCarrier {
         );
     }
 
+    fn close_reason(&self) -> Option<pb::LinkCloseReason> {
+        let noted = *self.closed.borrow();
+        noted.or_else(|| {
+            self.connection
+                .close_reason()
+                .map(close_reason_from_connection)
+        })
+    }
+
     fn closed(&self) -> BoxFuture<'_, pb::LinkCloseReason> {
         Box::pin(async move {
             let mut closed = self.closed.subscribe();
