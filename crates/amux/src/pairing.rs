@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use tonic::transport::Channel;
 use uuid::Uuid;
 use wire::client_service_client::ClientServiceClient;
@@ -26,7 +24,6 @@ use wire::{
 type Door = ProfileServiceClient<Channel>;
 
 /// The link a pairing QR code carries, which the phone opens.
-const PAIR_LINK: &str = "amux://pair?payload=";
 /// How often a waiting pairing mode asks whether it is still open.
 const PAIRING_POLL: Duration = Duration::from_secs(1);
 
@@ -180,10 +177,7 @@ fn pair_link(started: &StartPairingResponse, secret: &[u8]) -> Result<String> {
     let json =
         node::encode_qr_pairing_invitation(host, &addrs, started.cloud_url.as_deref(), secret)
             .context("encoding the pairing invitation")?;
-    Ok(format!(
-        "{PAIR_LINK}{}",
-        URL_SAFE_NO_PAD.encode(json.as_bytes())
-    ))
+    Ok(node::pair_link(&json))
 }
 
 fn terminal_qr(payload: &str) -> Result<String> {
@@ -240,15 +234,7 @@ pub async fn pair(
 
 /// Pairs with the host whose QR code's link this is.
 pub async fn pair_with_link(door: Door, profile: &ProfileInfo, link: &str) -> Result<()> {
-    let encoded = link
-        .trim()
-        .strip_prefix(PAIR_LINK)
-        .ok_or_else(|| anyhow!("a pairing link starts with {PAIR_LINK}"))?;
-    let json = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .context("the pairing link's payload")?;
-    let json = std::str::from_utf8(&json).context("the pairing link's payload")?;
-    let invitation = node::parse_qr_pairing_payload(json).context("the pairing link's payload")?;
+    let invitation = node::parse_pair_link(link).context("the pairing link")?;
     confirm(
         door,
         profile,
@@ -711,9 +697,7 @@ mod tests {
             .iter()
             .find_map(|line| line.strip_prefix("Pairing link: "))
             .unwrap();
-        let encoded = link.strip_prefix(PAIR_LINK).unwrap();
-        let json = URL_SAFE_NO_PAD.decode(encoded).unwrap();
-        let parsed = node::parse_qr_pairing_payload(std::str::from_utf8(&json).unwrap()).unwrap();
+        let parsed = node::parse_pair_link(link).unwrap();
         assert_eq!(parsed.host_id, host);
         assert_eq!(parsed.secret, vec![9; 32]);
         assert_eq!(parsed.addrs, vec!["10.0.0.2:7420".parse().unwrap()]);

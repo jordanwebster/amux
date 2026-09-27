@@ -21,6 +21,8 @@ struct Model {
     state: FleetState,
     trace: Ring<FleetState, FleetMsg>,
     changed: BTreeSet<AgentKey>,
+    /// A host was listed, changed or removed since the last take.
+    hosts_changed: bool,
     ended: Option<RpcError>,
 }
 
@@ -48,9 +50,17 @@ impl Inner {
         let Model { state, trace, .. } = &mut *model;
         trace.record(state, at_ms, TraceEvent::Msg(msg.clone()));
         let connection = matches!(msg, FleetMsg::Connection(_));
+        let host = matches!(
+            &msg,
+            FleetMsg::Event(event) if matches!(
+                event.of,
+                Some(inventory_event::Of::Host(_) | inventory_event::Of::HostRemoved(_))
+            )
+        );
         let keys = state.update(msg);
-        let moved = connection || !keys.is_empty();
+        let moved = connection || host || !keys.is_empty();
         model.changed.extend(keys);
+        model.hosts_changed |= host;
         drop(model);
         if moved {
             self.changed.send_replace(());
@@ -106,6 +116,7 @@ impl Fleet {
                 trace: Ring::new(state.clone()),
                 state,
                 changed: BTreeSet::new(),
+                hosts_changed: false,
                 ended: None,
             }),
             changed,
@@ -153,6 +164,11 @@ impl Fleet {
         std::mem::take(&mut self.inner.model().changed)
             .into_iter()
             .collect()
+    }
+
+    /// Whether a host was listed, changed or removed since the last call.
+    pub fn take_hosts_changed(&self) -> bool {
+        std::mem::take(&mut self.inner.model().hosts_changed)
     }
 
     /// Set when the runtime refused to serve the inventory again.

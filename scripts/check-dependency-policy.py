@@ -36,13 +36,21 @@ ALLOWED_LOCAL = {
     # The version stamp a release tool can rewrite in a built binary; the
     # xtask shares it without building the daemon.
     "version-stamp": set(),
-    "xtask": {"version-stamp"},
+    # The Swift mirrors of the view values are generated from their
+    # definitions, so the generator reads them.
+    "xtask": {"app-runtime", "model", "ui-view", "version-stamp"},
     # The seam both clients call the local runtime through: the local socket
     # and the shared clock trait come from the agent directory contract.
     "client": {"agent-dir", "wire"},
     "ui-state": {"model", "wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
     "ui-runtime": {"client", "ui-state", "wire"},
+    # The phone's chats and fleet over the local runtime, with no node.
+    "app-runtime": {"client", "model", "ui-runtime", "ui-state", "ui-view", "wire"},
+    # The daemon's profile runtime hosted in the phone's process.
+    "app-embedded": {"app-runtime", "client", "node", "wire"},
+    # The C ABI over both.
+    "app-ffi": {"app-embedded", "app-runtime", "client", "model", "node", "ui-view"},
     # The terminal client composes the views over the drivers' state.
     "tui": {"attachments", "client", "ui-runtime", "ui-state", "ui-view", "wire"},
     # Replays a dump bundle's three pure stages: facts through the
@@ -83,6 +91,8 @@ SUPPORT_ALLOWED_LOCAL = {
     # A stand-in amux binary that runs the real supervisor, so the
     # supervisor tests exec and roll back the shipped code.
     "fake-amux": {"agent-dir", "node"},
+    # Renders the terminal client's named states to PNG for review.
+    "shot": {"tui"},
 }
 
 def local_edges(package: dict[str, object]) -> set[str]:

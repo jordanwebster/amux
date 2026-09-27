@@ -58,6 +58,7 @@ pub use edge::{
     Observed, RelayCarrier, RelayIdentity, RelayQuic, UDP_BLOCKED_MEMORY, mdns_discovery,
 };
 pub use forward::{ForwardError, HostNameError, Owner};
+pub use front_door::FrontDoor;
 pub use generation::{Generation, boot_id};
 pub use grpc::{ClientApi, status};
 pub use install::{
@@ -68,7 +69,8 @@ pub use link::{PeerChannel, PeerClient, TRUST_REVOKED};
 pub use outbox::{DrainReport, HttpSender, NoopSender, Push, PushError, PushFuture, PushSender};
 pub use pairing::PairingAdmin;
 pub use pairing::qr::{
-    QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, parse_qr_pairing_payload,
+    PAIR_LINK, QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, pair_link,
+    parse_pair_link, parse_qr_pairing_payload,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_target,

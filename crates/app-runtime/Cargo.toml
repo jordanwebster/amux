@@ -1,33 +1,24 @@
 [package]
 name = "app-runtime"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
-description = "Account sessions, presentation projection, fleet cache and the frame-coalesced event queue any rich amux client reuses"
+description = "The phone's chats and fleet over the local runtime: session and fleet drivers with changes gathered for the host's next turn"
 publish = false
 
-[features]
-default = ["bundled"]
-bundled = ["store/bundled"]
-# Writes remembered states into a store so a driving build can open them.
-debug-tools = []
-
 [dependencies]
-artifacts = { workspace = true }
 client = { workspace = true }
 model = { workspace = true }
-store = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
-chrono = { workspace = true }
-futures-util = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true }
-uuid = { workspace = true }
+ui-view = { workspace = true }
+wire = { workspace = true }
 
 [dev-dependencies]
-fold = { workspace = true }
-postcard = { workspace = true }
-rusqlite = { workspace = true }
-tempfile = { workspace = true }
+provider-fakes = { workspace = true }
+serde_json = { workspace = true }
+testnet = { workspace = true }

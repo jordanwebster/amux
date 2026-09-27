@@ -3,10 +3,12 @@
 
 use std::collections::HashSet;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use ui_state::{AgentKey, Attention, FleetState};
 use wire::{Agent, Kind, Presence};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FleetCard {
     pub agent: AgentKey,
     pub name: String,
@@ -23,7 +25,7 @@ pub struct FleetCard {
     pub family_attention: Attention,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FleetRow {
     pub card: FleetCard,
     /// Zero for a family's head.
@@ -108,7 +110,7 @@ fn push(
 /// A powered-off host and a signed-out machine look the same from here, so
 /// the cause is only ever a fact about this machine, never a claim about
 /// the host.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum Away {
     /// Nothing more is known than that the host is away.
     #[default]
@@ -152,7 +154,7 @@ pub fn fleet_card(fleet: &FleetState, agent_id: &[u8]) -> Option<FleetCard> {
 }
 
 /// A chat's family: its parent, its children, and how loud the family is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FamilyHeader {
     pub parent: Option<FleetCard>,
     pub children: Vec<FleetCard>,

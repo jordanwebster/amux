@@ -428,6 +428,12 @@ impl Daemon {
             .map(|hosted| hosted.runtime.clone())
     }
 
+    /// The front door's services in process: profiles, pairing, peers and
+    /// accounts, for an embedder that serves no socket.
+    pub fn front_door(&self) -> crate::FrontDoor {
+        crate::FrontDoor::new(Arc::downgrade(&self.installation))
+    }
+
     /// What the startup sweep found, per profile.
     pub fn sweep(&self, profile: ProfileId) -> Option<&SweepReport> {
         self.sweep.get(&profile)

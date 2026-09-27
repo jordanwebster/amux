@@ -333,6 +333,7 @@ impl ::prost::Name for Attachment {
 }
 /// Content-addressed bytes in the owning agent's directory. The name belongs
 /// to the reference, not the bytes.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BlobRef {
     /// SHA-256 of the bytes.
@@ -1613,6 +1614,7 @@ impl ::prost::Name for Rejected {
         "/amux.v1.Rejected".into()
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum EnvelopeKind {
@@ -1786,6 +1788,7 @@ impl DecisionOutcome {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum BoundaryKind {
@@ -1833,6 +1836,7 @@ impl BoundaryKind {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SendState {
@@ -2065,6 +2069,7 @@ impl ToolServerStatus {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SignInState {
@@ -6235,6 +6240,7 @@ impl Trust {
         }
     }
 }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Presence {
@@ -6300,6 +6306,7 @@ impl HostVia {
     }
 }
 /// The kind is the interpreter.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Kind {

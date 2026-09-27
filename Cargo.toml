@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
-# The wire was rewritten to its final schema; crates built on the old wire
-# (or whose tests were) are out of the members list until they are rebuilt on
-# the new one or deleted: app-embedded, app-ffi, app-runtime,
-# node-test-support, shot.
+# node-test-support was built on the old wire and is out of the members list
+# until it is rebuilt on the new one or deleted.
 members = [
     "crates/agent",
+    "crates/app-embedded",
+    "crates/app-ffi",
+    "crates/app-runtime",
     "crates/agent-dir",
     "crates/amux",
     "crates/attachments",
@@ -37,9 +38,6 @@ members = [
     "crates/xtask",
 ]
 exclude = [
-    "crates/app-embedded",
-    "crates/app-ffi",
-    "crates/app-runtime",
     "crates/node-test-support",
 ]
 

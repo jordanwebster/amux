@@ -1409,7 +1409,11 @@ fn strips() -> Vec<(&'static str, &'static str, Strip)> {
                 mode: Some("plan".into()),
                 usage: Some(UsageView {
                     blocked: false,
-                    windows: vec![("5-hour".into(), 91.0, Some(3_600_000))],
+                    windows: vec![ui_view::UsageWindowView {
+                        name: "5-hour".into(),
+                        used_percent: 91.0,
+                        resets_at_ms: Some(3_600_000),
+                    }],
                     credits: None,
                 }),
                 failed_servers: vec![
@@ -1446,7 +1450,11 @@ fn strips() -> Vec<(&'static str, &'static str, Strip)> {
                 effort: Some("medium".into()),
                 usage: Some(UsageView {
                     blocked: true,
-                    windows: vec![("weekly".into(), 100.0, Some(86_400_000))],
+                    windows: vec![ui_view::UsageWindowView {
+                        name: "weekly".into(),
+                        used_percent: 100.0,
+                        resets_at_ms: Some(86_400_000),
+                    }],
                     credits: Some("$4.20".into()),
                 }),
                 working_on: Some("Update the relay tests".into()),

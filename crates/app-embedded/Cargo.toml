@@ -1,39 +1,24 @@
 [package]
 name = "app-embedded"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
-description = "Owns a provider-free embedded node installation and its relay link for a rich client"
+description = "The daemon's profile runtime hosted in the phone's process: its store, replica rows, pairing and relay link"
 publish = false
-
-[features]
-default = []
-bundled = ["app-runtime/bundled"]
-# Driving affordances a test harness needs and a shipping build must not
-# carry: a plaintext loopback relay, this runtime's tracing written to the
-# log a report reads, and the served test network as a development
-# dependency of this crate's own suite.
-debug-tools = ["dep:tracing-subscriber"]
 
 [dependencies]
 app-runtime = { workspace = true }
 client = { workspace = true }
 node = { workspace = true }
-async-trait = { workspace = true }
-futures-util = { workspace = true }
-reqwest = { workspace = true }
-serde = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tonic = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
 
 [dev-dependencies]
-store = { workspace = true }
-app-embedded = { path = ".", features = ["debug-tools"] }
 model = { workspace = true }
-serde_json = { workspace = true }
+provider-fakes = { workspace = true }
 tempfile = { workspace = true }
 testnet = { workspace = true }
+tokio = { workspace = true }
 ui-runtime = { workspace = true }
-ui-state = { workspace = true }
-uuid = { workspace = true }

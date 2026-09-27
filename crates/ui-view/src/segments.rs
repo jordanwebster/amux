@@ -1,11 +1,13 @@
 //! Text with attachments at their positions, for rows and the composer.
 
 use attachments::PLACEHOLDER;
+use schemars::JsonSchema;
+use serde::Serialize;
 use wire::{Attachment, BlobRef};
 
 /// A run of text or one attachment, in reading order. Each placeholder in
 /// the text is the next attachment, so attachments keep their positions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum Segment {
     Text(String),
     Attachment(AttachmentView),
@@ -13,7 +15,7 @@ pub enum Segment {
 
 /// What a chip or placeholder shows before any bytes arrive: the
 /// reference's name, type and size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum AttachmentView {
     Image(BlobRef),
     File(BlobRef),

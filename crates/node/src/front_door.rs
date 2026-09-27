@@ -89,7 +89,7 @@ pub(crate) fn info(hosted: &Hosted) -> ProfileInfo {
 /// Serves the profile and installation services on the front door until
 /// the task is aborted.
 pub(crate) fn serve(listener: LocalListener, installation: Weak<Installation>) -> JoinHandle<()> {
-    let door = FrontDoor { installation };
+    let door = FrontDoor::new(installation);
     tokio::spawn(async move {
         let served = tonic::transport::Server::builder()
             .add_service(ProfileServiceServer::new(door.clone()))
@@ -102,9 +102,17 @@ pub(crate) fn serve(listener: LocalListener, installation: Weak<Installation>) -
     })
 }
 
+/// The profile and installation services, served on the front door's
+/// socket or called in process by an embedder that serves no sockets.
 #[derive(Clone)]
-struct FrontDoor {
+pub struct FrontDoor {
     installation: Weak<Installation>,
+}
+
+impl FrontDoor {
+    pub(crate) fn new(installation: Weak<Installation>) -> FrontDoor {
+        FrontDoor { installation }
+    }
 }
 
 pub(crate) fn failed(code: ErrorCode, message: impl Into<String>) -> Status {

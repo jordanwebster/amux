@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 prost = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 

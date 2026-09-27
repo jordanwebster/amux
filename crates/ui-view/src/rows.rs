@@ -4,6 +4,8 @@
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::Value;
 use ui_state::{Held, ItemBody, Key, SessionState};
 use wire::{
@@ -17,7 +19,7 @@ use crate::segments::{Segment, segments};
 /// How many lines of a command's output a row carries.
 pub const OUTPUT_HEAD_LINES: usize = 3;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Row {
     pub id: Key,
     pub order: u64,
@@ -36,7 +38,7 @@ pub struct Row {
     pub parent: Option<Key>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RunInfo {
     pub newest: Key,
     pub oldest: Key,
@@ -75,7 +77,7 @@ impl Default for ChatOptions<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum RowKind {
     Prompt {
         text: Vec<Segment>,
@@ -190,7 +192,7 @@ pub enum RowKind {
     Hidden,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum AskRow {
     /// A Claude AskUserQuestion call: its questions, then what was picked
     /// and typed for each, read from the tool's recorded result.
@@ -251,7 +253,7 @@ pub enum AskRow {
 }
 
 /// How an ask that is the work closed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum Resolution {
     Open,
     /// Answered, sent, opened or granted.
@@ -265,7 +267,7 @@ pub enum Resolution {
 
 /// One question's answer: the picked options, a typed answer, or a secret
 /// answer that reads "answered (hidden)".
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct AnswerView {
     /// "(Recommended)" lifted off, as on the card.
     pub picked: Vec<String>,
@@ -274,7 +276,7 @@ pub struct AnswerView {
 }
 
 /// What an access grant granted, and for how long.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Granted {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -282,7 +284,7 @@ pub struct Granted {
     pub for_session: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum PlanVerdict {
     Open,
     Approved,
@@ -290,7 +292,7 @@ pub enum PlanVerdict {
     Dismissed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum ToolStateView {
     Pending,
     Running,
@@ -300,7 +302,7 @@ pub enum ToolStateView {
     Cancelled,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum ExploreVerb {
     Read,
     Search,
@@ -309,7 +311,7 @@ pub enum ExploreVerb {
     WebSearch,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FileRow {
     pub path: String,
     pub change: FileChangeView,
@@ -317,7 +319,7 @@ pub struct FileRow {
     pub removed: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum FileChangeView {
     Edited,
     Created { lines: u32 },
@@ -327,7 +329,7 @@ pub enum FileChangeView {
 
 /// A permission decision: allowed or denied, with scope and note when the
 /// provider says them, and where it was answered.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Decision {
     pub outcome: DecisionView,
     pub scope: Option<String>,
@@ -336,7 +338,7 @@ pub struct Decision {
     pub elsewhere: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum DecisionView {
     Allowed,
     Denied,

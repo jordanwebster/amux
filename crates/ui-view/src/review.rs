@@ -1,9 +1,11 @@
 //! The review document: files, counts and hunks parsed from a diff's patch,
 //! with the person's comments placed on their lines.
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use wire::{Diff, ReviewComment};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ReviewDoc {
     pub base: String,
     pub head: String,
@@ -12,7 +14,7 @@ pub struct ReviewDoc {
     pub removed: u32,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ReviewFile {
     pub path: String,
     /// Set for a rename or copy.
@@ -26,7 +28,7 @@ pub struct ReviewFile {
     pub comments: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum FileStatus {
     #[default]
     Modified,
@@ -35,13 +37,13 @@ pub enum FileStatus {
     Renamed,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Hunk {
     pub header: String,
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct DiffLine {
     pub kind: LineKind,
     pub old_line: Option<u32>,
@@ -50,7 +52,7 @@ pub struct DiffLine {
     pub comments: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum LineKind {
     Context,
     Added,

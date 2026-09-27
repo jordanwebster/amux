@@ -1,40 +1,35 @@
 [package]
 name = "app-ffi"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
-description = "C ABI over the shared app runtime and the embedded node owner"
+description = "The C ABI the phone calls: the embedded runtime, its chats and fleet, with view values as JSON"
 publish = false
 
 [lib]
 crate-type = ["staticlib", "rlib"]
 
 [features]
-default = ["bundled"]
-bundled = ["app-runtime/bundled"]
-debug-tools = ["app-embedded/debug-tools", "app-runtime/debug-tools"]
+default = []
+# Affordances a driving build carries and a shipping build must not.
+debug-tools = []
 
 [dependencies]
 app-embedded = { workspace = true }
 app-runtime = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true }
-uuid = { workspace = true }
-
-[dev-dependencies]
-app-ffi = { path = ".", features = ["debug-tools"] }
-async-trait = { workspace = true }
-chrono = { workspace = true }
 client = { workspace = true }
 model = { workspace = true }
 node = { workspace = true }
-rusqlite = { workspace = true }
-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+ui-view = { workspace = true }
+
+[dev-dependencies]
+provider-fakes = { workspace = true }
 tempfile = { workspace = true }
 testnet = { workspace = true }
-ui-runtime = { workspace = true }
-ui-state = { workspace = true }
+wire = { workspace = true }
 
 [build-dependencies]
 cbindgen = { version = "0.29", default-features = false }

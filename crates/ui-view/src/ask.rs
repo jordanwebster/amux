@@ -2,13 +2,15 @@
 //! the subject verbatim, the body variant, and choices stated as outcomes.
 
 use prost::Message as _;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ui_state::{InputState, OpenAsk, SessionState};
 use wire::{ClaudeAnswer, CodexAnswer, Decision as CodexDecision, ask, claude_answer, codex_ask};
 
 use crate::rows::{AnswerView, patch_counts};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct AskCard {
     pub kind: wire::Kind,
     /// What an answer names.
@@ -30,7 +32,7 @@ pub struct AskCard {
 
 /// Where the card is after the person acts. Stop is always in the menu:
 /// it is the interrupt, and the agent stays.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum CardState {
     Open,
     /// Shrunk to one line until the agent confirms.
@@ -43,7 +45,7 @@ pub enum CardState {
     Dismissed,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub enum AskBody {
     Command {
         command: String,
@@ -92,7 +94,7 @@ pub enum AskBody {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct QuestionView {
     pub header: String,
     pub question: String,
@@ -104,7 +106,7 @@ pub struct QuestionView {
     pub secret: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct OptionView {
     /// "(Recommended)" lifted out into `recommended`.
     pub label: String,
@@ -114,16 +116,17 @@ pub struct OptionView {
 }
 
 /// One choice, stated as what happens, with the answer it sends.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Choice {
     pub outcome: ChoiceOutcome,
     pub primary: bool,
     /// The person may add a note that goes back to the agent.
     pub takes_note: bool,
+    #[serde(skip)]
     pub answer: Answer,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum ChoiceOutcome {
     AllowOnce,
     /// "Always allow cargo test in this project": what, and for how long.
@@ -158,7 +161,7 @@ pub enum ChoiceOutcome {
     GrantForSession,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum Scope {
     Session,
     /// This project, for this person.
@@ -171,6 +174,8 @@ pub enum Scope {
 }
 
 /// The answer body a choice sends; [`answer_input`] puts it in an input.
+/// It stays on this side of the phone bridge: the phone names a choice by
+/// its position and the answer is rebuilt here.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
     Claude(ClaudeAnswer),
@@ -772,7 +777,7 @@ fn codex(ask: &wire::CodexAsk) -> (AskBody, Vec<Choice>) {
 }
 
 /// One question's answer as the person gave it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Pick {
     Options(Vec<u32>),
     Other(String),

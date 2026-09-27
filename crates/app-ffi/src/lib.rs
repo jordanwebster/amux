@@ -1,836 +1,1122 @@
-//! The C ABI over the shared app runtime and the embedded node owner.
+//! The C ABI the phone calls.
 //!
-//! Everything here is pointer lifetime rules, JSON in and out, and one worker
-//! thread. What the runtime does with a command and how the node is started
-//! belong to the two crates underneath; nothing in either of them knows a C
-//! type exists.
+//! One [`AmuxRuntime`] hosts the embedded profile runtime and the app
+//! runtime's fleet on a Rust thread pool of its own; each open chat is an
+//! [`AmuxChat`]. View values cross as JSON whose Swift mirrors are generated
+//! from the Rust definitions (`cargo run -p xtask -- swift-types`), so the
+//! two sides share one definition of every value.
+//!
+//! Rows are handed out by item key. A chat's id sequence changes only at
+//! its two edges, newer keys above the newest the host holds and older ones
+//! below its oldest, until a change batch says `reloaded`; there is no slot
+//! identity to keep in step.
+//!
+//! Threads: every function may be called from the main thread. Reads return
+//! at once. Acts that wait on the agent take a callback, called once on a
+//! worker thread with a JSON result the callback borrows until it returns.
+//! The wake is called on a worker thread whenever the fleet (chat id 0) or a
+//! chat moved, at most once until the host takes that one's changes; the
+//! host schedules the take on its main thread's next turn and returns.
+//!
+//! Every returned string is the caller's to free with `amux_string_free`,
+//! and every byte buffer with `amux_bytes_free`. A null return means the
+//! call failed; the reason goes to the log.
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
 
-use app_embedded::{Embedded, StartConfig};
-use app_runtime::command::CommandDto;
-use app_runtime::projection::Event;
-use app_runtime::{
-    Control, DisconnectReason, OpId, RelayConnection, Sink, Token, TokenError, compose,
-};
-use serde::Deserialize;
-use tokio::sync::mpsc;
+use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, StartConfig};
+use app_runtime::values::{ActOutcome, Draft, RowOptions};
+use app_runtime::{AppRuntime, Chat, Wake};
+use model::{AgentKey, Key};
+use node::SourcePolicy;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use ui_view::Pick;
 
-/// A borrowed, NUL-terminated UTF-8 JSON array, valid only during the callback.
-/// Callbacks run serially on a Rust worker, may precede start's return, and
-/// must return promptly. Copy the bytes before scheduling UI work. Do not stop
-/// the runtime from its callback; stop joins this worker.
-pub type EventCallback = unsafe extern "C" fn(events_json: *const c_char, ctx: *mut c_void);
+// The tests drive real agent processes, which run on Unix.
+#[cfg(all(test, unix))]
+mod tests;
 
-/// Opaque runtime ownership. Every call using a handle must finish before stop.
-pub struct Handle {
-    commands: mpsc::UnboundedSender<Control>,
-    worker: Option<JoinHandle<()>>,
+/// Called with a chat's id when it moved, or 0 when the fleet did.
+pub type AmuxWake = extern "C" fn(context: *mut c_void, chat: u64);
+
+/// Called once with an act's JSON result, borrowed until it returns.
+pub type AmuxCallback = extern "C" fn(context: *mut c_void, json: *const c_char);
+
+/// Bytes the caller frees with `amux_bytes_free`.
+#[repr(C)]
+pub struct AmuxBytes {
+    pub data: *mut u8,
+    pub len: usize,
 }
 
-struct Callback {
-    function: EventCallback,
-    context: usize,
+/// The embedded runtime and its fleet.
+pub struct AmuxRuntime {
+    // Dropped last: every task below runs on it.
+    tokio: Option<tokio::runtime::Runtime>,
+    embedded: Option<Arc<EmbeddedRuntime>>,
+    app: Option<Arc<AppRuntime>>,
+    tail: u32,
 }
 
-impl Sink for Callback {
-    fn send(&self, events: &[Event]) {
-        if let Some(bytes) = serde_json::to_string(events)
-            .ok()
-            .and_then(|s| CString::new(s).ok())
-        {
-            // The caller keeps its context alive until stop has joined this worker.
-            unsafe { (self.function)(bytes.as_ptr(), self.context as *mut c_void) };
-        }
+/// One open chat.
+pub struct AmuxChat {
+    chat: Arc<Chat>,
+    handle: tokio::runtime::Handle,
+}
+
+/// A host context pointer handed back on another thread.
+#[derive(Clone, Copy)]
+struct Context(*mut c_void);
+
+// SAFETY: the pointer is the host's and only ever handed back to the
+// host's own callback, which the host wrote to be called from any thread.
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
+
+impl AmuxRuntime {
+    fn handle(&self) -> tokio::runtime::Handle {
+        self.tokio.as_ref().expect("running").handle().clone()
+    }
+
+    fn app(&self) -> &Arc<AppRuntime> {
+        self.app.as_ref().expect("running")
+    }
+
+    fn embedded(&self) -> &Arc<EmbeddedRuntime> {
+        self.embedded.as_ref().expect("running")
+    }
+
+    /// Runs `act` on the pool and hands its JSON result to the callback.
+    fn spawn<T, F>(&self, callback: AmuxCallback, context: *mut c_void, act: F)
+    where
+        T: Serialize,
+        F: Future<Output = T> + Send + 'static,
+    {
+        spawn_on(&self.handle(), callback, context, act);
     }
 }
 
-/// Returns the bridge version as a NUL-terminated UTF-8 string.
-/// The pointer remains valid for the process lifetime; do not free or modify it.
-#[unsafe(no_mangle)]
-pub extern "C" fn amux_app_version() -> *const c_char {
-    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+fn spawn_on<T, F>(
+    handle: &tokio::runtime::Handle,
+    callback: AmuxCallback,
+    context: *mut c_void,
+    act: F,
+) where
+    T: Serialize,
+    F: Future<Output = T> + Send + 'static,
+{
+    let context = Context(context);
+    handle.spawn(async move {
+        let result = act.await;
+        let text = json(&result).unwrap_or_else(|| CString::new("null").unwrap());
+        let context = context;
+        callback(context.0, text.as_ptr());
+    });
 }
 
-/// Returns the build of this library as a NUL-terminated UTF-8 string: the
-/// version alone, or the version with `+debug-tools` when the library was
-/// built with the driving tools compiled in. The suffix is a literal only the
-/// debug-tools build contains, so an application binary can be inspected for
-/// it to prove which of the two libraries it linked.
-/// The pointer remains valid for the process lifetime; do not free or modify it.
+/// Starts the runtime with a pool of its own; blocks until the store is
+/// open and the fleet has caught up with it.
+pub fn start(
+    config: &StartConfig,
+    overrides: EdgeOverrides,
+    wake: AmuxWake,
+    context: *mut c_void,
+) -> Result<Box<AmuxRuntime>, String> {
+    let tokio = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("amux")
+        .enable_all()
+        .build()
+        .map_err(|error| format!("starting the runtime's threads: {error}"))?;
+    let context = Context(context);
+    let (embedded, app) = tokio.block_on(async {
+        let embedded =
+            EmbeddedRuntime::start_with(config, overrides, Arc::new(client::SystemClock))
+                .await
+                .map_err(|error| error.to_string())?;
+        let host_wake = Arc::new(move |moved: Wake| {
+            let context = context;
+            let chat = match moved {
+                Wake::Fleet => 0,
+                Wake::Chat(id) => id,
+            };
+            wake(context.0, chat);
+        });
+        let app = AppRuntime::open(
+            embedded.client(),
+            embedded.clock(),
+            embedded.host_id(),
+            host_wake,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok::<_, String>((embedded, app))
+    })?;
+    Ok(Box::new(AmuxRuntime {
+        tokio: Some(tokio),
+        embedded: Some(Arc::new(embedded)),
+        app: Some(Arc::new(app)),
+        tail: config.tail,
+    }))
+}
+
+fn overrides(config: &StartConfig) -> EdgeOverrides {
+    let mut overrides = EdgeOverrides::default();
+    // A driving build may keep direct links on loopback, so a simulator
+    // run never listens on the machine's network.
+    if cfg!(feature = "debug-tools")
+        && let Some(bind) = config.lan_bind
+    {
+        overrides.lan_bind = bind;
+    }
+    overrides
+}
+
+// --- strings and JSON ------------------------------------------------------
+
+fn json<T: Serialize>(value: &T) -> Option<CString> {
+    let text = serde_json::to_string(value).ok()?;
+    CString::new(text).ok()
+}
+
+fn owned<T: Serialize>(value: &T) -> *mut c_char {
+    json(value).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// Reads a NUL-terminated UTF-8 string.
+///
+/// # Safety
+/// `text` is null or points to a NUL-terminated string that lives for the
+/// call.
+unsafe fn text<'a>(text: *const c_char) -> Option<&'a str> {
+    if text.is_null() {
+        return None;
+    }
+    // SAFETY: the caller's contract above.
+    unsafe { CStr::from_ptr(text) }.to_str().ok()
+}
+
+/// # Safety
+/// As for [`text`].
+unsafe fn parse<T: DeserializeOwned>(value: *const c_char) -> Option<T> {
+    // SAFETY: the caller's contract.
+    serde_json::from_str(unsafe { text(value) }?).ok()
+}
+
+/// Runs a call, turning a panic into the failure value rather than letting
+/// it unwind into the host.
+fn guard<T>(failed: T, call: impl FnOnce() -> T) -> T {
+    catch_unwind(AssertUnwindSafe(call)).unwrap_or(failed)
+}
+
+/// # Safety
+/// `runtime` is null or a live pointer from `amux_runtime_start`.
+unsafe fn live_runtime<'a>(runtime: *const AmuxRuntime) -> Option<&'a AmuxRuntime> {
+    // SAFETY: the caller's contract.
+    unsafe { runtime.as_ref() }
+}
+
+/// # Safety
+/// `chat` is null or a live pointer from `amux_session_open`.
+unsafe fn held_chat<'a>(chat: *const AmuxChat) -> Option<&'a AmuxChat> {
+    // SAFETY: the caller's contract.
+    unsafe { chat.as_ref() }
+}
+
+/// Runs a read on a chat inside its runtime, so a read that starts a fetch
+/// can spawn it.
+///
+/// # Safety
+/// As for [`held_chat`].
+unsafe fn read<T: Serialize>(chat: *const AmuxChat, read: impl FnOnce(&Chat) -> T) -> *mut c_char {
+    guard(std::ptr::null_mut(), || {
+        // SAFETY: the caller's contract.
+        let Some(open) = (unsafe { held_chat(chat) }) else {
+            return std::ptr::null_mut();
+        };
+        let _entered = open.handle.enter();
+        owned(&read(&open.chat))
+    })
+}
+
+// --- the runtime -----------------------------------------------------------
+
+/// This build's version, as a static string.
 #[unsafe(no_mangle)]
-pub extern "C" fn amux_app_build() -> *const c_char {
-    static BUILD: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
-    BUILD
-        .get_or_init(|| CString::new(app_embedded::build()).expect("a version has no NUL"))
+pub extern "C" fn amux_version() -> *const c_char {
+    static VERSION: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            let mut version = node::version().to_owned();
+            if cfg!(feature = "debug-tools") {
+                version.push_str("+debug-tools");
+            }
+            CString::new(version).unwrap()
+        })
         .as_ptr()
 }
 
-/// Returns the fleet one account's store on this device remembers, as an owned
-/// JSON array of one Fleet event, or `{"error":STRING}` when an existing store
-/// cannot be used; free it with amux_app_free. A missing store is a fleet with
-/// no rows. NULL means the arguments were not readable strings.
-///
-/// The application draws this before it has a connection, so the answer is the
-/// same one the running library delivers first: every card marked as awaiting
-/// its machine, which also keeps every send gate closed, and the fleet as a
-/// whole unreconciled. Reading it needs no runtime and no network, so a cold
-/// launch can put rows on screen in its first frame and start the connection
-/// afterwards; the application marks the call as the store-read span of its
-/// launch.
-///
-/// The account has to be named because what a device remembers belongs to the
-/// account that saw it: a launch that opens on a second account must draw that
-/// account's machines and not the ones the first account left behind. An empty
-/// account asks for what this device remembers with nobody signed in.
+/// Starts the runtime from a `StartConfig` as JSON. Blocks until the store
+/// is open and the fleet has caught up. Null on failure, with the reason in
+/// `error` when it is not null, which the caller frees.
 ///
 /// # Safety
-/// cache_dir and account must be readable NUL-terminated UTF-8 strings for
-/// this call.
+/// `config` is a NUL-terminated string; `error` is null or writable. The
+/// wake may be called from any thread until `amux_runtime_stop` returns.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_cached_fleet(
-    cache_dir: *const c_char,
-    account: *const c_char,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let directory = std::path::Path::new(unsafe { read_string(cache_dir) }?);
-        let account = unsafe { read_string(account) }?;
-        let result = blocking(app_runtime::cache::read_account_cached_fleet(
-            directory, account,
-        ))?;
-        match result {
-            Ok(fleet) => owned(&[fleet]),
-            Err(error) => owned(&serde_json::json!({"error": error})),
+pub unsafe extern "C" fn amux_runtime_start(
+    config: *const c_char,
+    wake: AmuxWake,
+    context: *mut c_void,
+    error: *mut *mut c_char,
+) -> *mut AmuxRuntime {
+    let started = guard(
+        Err("the runtime panicked while starting".to_owned()),
+        || {
+            // SAFETY: the caller's contract.
+            let config: StartConfig = unsafe { parse(config) }
+                .ok_or_else(|| "the start configuration is not a StartConfig".to_owned())?;
+            start(&config, overrides(&config), wake, context)
+        },
+    );
+    match started {
+        Ok(runtime) => Box::into_raw(runtime),
+        Err(reason) => {
+            if !error.is_null() {
+                // SAFETY: the caller's contract.
+                unsafe {
+                    *error = CString::new(reason).map_or(std::ptr::null_mut(), CString::into_raw)
+                };
+            }
+            std::ptr::null_mut()
         }
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Starts asynchronously, returning NULL for invalid configuration or failure
-/// to create the worker. Later failures arrive as Connection events.
-///
-/// # Safety
-/// config_json must be a readable NUL-terminated UTF-8 string for this call.
-/// on_events and ctx must remain valid until amux_app_stop returns.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_start(
-    config_json: *const c_char,
-    on_events: EventCallback,
-    ctx: *mut c_void,
-) -> *mut Handle {
-    catch_unwind(AssertUnwindSafe(|| {
-        let config: StartConfig =
-            serde_json::from_str(unsafe { read_string(config_json) }?).ok()?;
-        config.endpoint().ok()?;
-        let (commands, receive) = mpsc::unbounded_channel();
-        let callback = Callback {
-            function: on_events,
-            context: ctx as usize,
-        };
-        let worker = std::thread::Builder::new()
-            .name("amux-app".into())
-            .spawn(move || {
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    let executor = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|e| e.to_string())?;
-                    executor.block_on(serve(config, receive, &callback))
-                }));
-                match result {
-                    Ok(Ok(())) => {}
-                    // The worker is gone, so the device is offline and stays
-                    // that way. The screen is told which kind of offline that
-                    // is; the error itself goes out as a diagnostic, because
-                    // it is a sentence for a log and not for a home screen.
-                    Ok(Err(detail)) => callback.send(&[
-                        Event::Invariant { detail },
-                        Event::connection(&RelayConnection::Disconnected {
-                            reason: DisconnectReason::Stopped,
-                        }),
-                    ]),
-                    Err(_) => callback.send(&[Event::Invariant {
-                        detail: "app worker panicked".into(),
-                    }]),
-                }
-            })
-            .ok()?;
-        Some(Box::into_raw(Box::new(Handle {
-            commands,
-            worker: Some(worker),
-        })))
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// The worker: open the embedded node, run the queue until told to stop, and
-/// stop only what this worker started.
-async fn serve(
-    config: StartConfig,
-    commands: mpsc::UnboundedReceiver<Control>,
-    callback: &Callback,
-) -> Result<(), String> {
-    // One request channel for every account, and one counter, so a request
-    // identifier means the same thing whichever account raised it and a reply
-    // can be routed by that identifier alone.
-    let (requests, token_requests) = mpsc::channel(1);
-    let mut embedded = Embedded::open(&config, requests).await?;
-    // Opening is what deletes a removed account's profile and caches, so this
-    // is where the application learns which removals it may stop asking for.
-    // One that would not delete is not named, and the next start is asked for
-    // it again.
-    let forgotten = std::mem::take(&mut embedded.forgotten);
-    if !forgotten.is_empty() {
-        callback.send(&[Event::Forgotten {
-            accounts: forgotten,
-        }]);
     }
-    let served = app_runtime::run(
-        &mut embedded.sessions,
-        config.frame_interval(),
-        commands,
-        token_requests,
-        callback,
-    )
-    .await;
-    // Dropping the executor after this future cancels and drains all owned
-    // transport tasks, including in-flight connection and token work.
-    let _ = tokio::time::timeout(Duration::from_secs(1), embedded.shutdown()).await;
-    served
 }
 
-/// Stops network work, cancels outstanding token requests, and joins the worker.
-/// No callbacks can occur after return. NULL is accepted.
+/// Stops the runtime: flushes the store and joins its threads. Close every
+/// chat first.
 ///
 /// # Safety
-/// The handle must be a live pointer returned by start, used once here, with
-/// no concurrent calls. This function must not run from an event callback.
+/// `runtime` is null or from `amux_runtime_start`, and not used again.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_stop(handle: *mut Handle) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if handle.is_null() {
+pub unsafe extern "C" fn amux_runtime_stop(runtime: *mut AmuxRuntime) {
+    if runtime.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract.
+    let mut runtime = unsafe { Box::from_raw(runtime) };
+    guard((), || {
+        let tokio = runtime.tokio.take().expect("running");
+        tokio.block_on(async {
+            drop(runtime.app.take());
+            // An act still in flight holds the embedded runtime; dropped
+            // with it, the store is left for the next start's recovery.
+            if let Some(embedded) = runtime.embedded.take().and_then(Arc::into_inner) {
+                let _ = embedded.shutdown().await;
+            }
+        });
+        tokio.shutdown_timeout(std::time::Duration::from_secs(5));
+    });
+}
+
+/// `listed` in the foreground: every listed agent keeps a source. Not
+/// `listed` when a push woke the app in the background: only the chats
+/// that open keep one.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_set_source_policy(runtime: *const AmuxRuntime, listed: bool) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        if let Some(runtime) = unsafe { live_runtime(runtime) } {
+            runtime.embedded().set_source_policy(if listed {
+                SourcePolicy::Listed
+            } else {
+                SourcePolicy::OnDemand
+            });
+        }
+    });
+}
+
+#[derive(Serialize)]
+enum Answered<T> {
+    Ok(T),
+    Err(String),
+}
+
+impl<T, E: std::fmt::Display> From<Result<T, E>> for Answered<T> {
+    fn from(result: Result<T, E>) -> Self {
+        match result {
+            Ok(value) => Answered::Ok(value),
+            Err(error) => Answered::Err(error.to_string()),
+        }
+    }
+}
+
+/// Writes a dump of the profile with the fleet's and every open chat's
+/// part; the callback gets `{"Ok": "<bundle directory>"}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; `reason` is a NUL-terminated
+/// string or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_dump(
+    runtime: *const AmuxRuntime,
+    reason: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
             return;
-        }
-        let mut handle = unsafe { Box::from_raw(handle) };
-        let _ = handle.commands.send(Control::Stop);
-        if let Some(worker) = handle.worker.take() {
-            let _ = worker.join();
-        }
-    }));
+        };
+        // SAFETY: the caller's contract.
+        let reason = unsafe { text(reason) }.unwrap_or_default().to_owned();
+        let app = runtime.app().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(app.dump(&reason).await)
+        });
+    });
 }
 
-/// Enqueues a shared UI command or {"command":"subscribe","agent":"UUID"}
-/// (also "unsubscribe"). Returns an owned operation UUID string; free it with
-/// amux_app_free. Invalid JSON produces an asynchronous OpResult error.
-/// NULL means the handle, string pointer, or worker is unavailable.
+/// Pairs with a machine by a `PairRequest` as JSON; the callback gets
+/// `{"Ok": {"host_id": [..], "name": ..}}` or `{"Err": ..}`.
 ///
 /// # Safety
-/// handle must be live and command_json readable and NUL-terminated for this
-/// call. Neither pointer may race stop. The input bytes are copied before return.
+/// `runtime` is from `amux_runtime_start`; `request` is a NUL-terminated
+/// string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_dispatch(
-    handle: *mut Handle,
-    command_json: *const c_char,
+pub unsafe extern "C" fn amux_runtime_pair(
+    runtime: *const AmuxRuntime,
+    request: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    #[derive(Serialize)]
+    struct Paired {
+        host_id: Vec<u8>,
+        name: String,
+    }
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let request: Option<PairRequest> = unsafe { parse(request) };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(request) = request else {
+                return Answered::Err("the request is not a PairRequest".into());
+            };
+            Answered::from(embedded.pair(&request).await.map(|peer| Paired {
+                host_id: peer.host_id,
+                name: peer.name,
+            }))
+        });
+    });
+}
+
+/// Stops trusting a paired machine, by its host id as a JSON byte array.
+///
+/// # Safety
+/// As for `amux_runtime_pair`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_unpair(
+    runtime: *const AmuxRuntime,
+    host_id: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let host_id: Option<Vec<u8>> = unsafe { parse(host_id) };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            let Some(host_id) = host_id else {
+                return Answered::Err("the host id is not a byte array".into());
+            };
+            Answered::from(embedded.unpair(&host_id).await)
+        });
+    });
+}
+
+/// Binds the profile to an account with the refresh token the app's
+/// sign-in obtained; the relay link comes up from there.
+///
+/// # Safety
+/// As for `amux_runtime_pair`; both strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_sign_in(
+    runtime: *const AmuxRuntime,
+    cloud_url: *const c_char,
+    refresh_token: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        // SAFETY: the caller's contract.
+        let url = unsafe { text(cloud_url) }.unwrap_or_default().to_owned();
+        // SAFETY: the caller's contract.
+        let token = unsafe { text(refresh_token) }
+            .unwrap_or_default()
+            .to_owned();
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.sign_in(&url, &token).await.map(|_| ()))
+        });
+    });
+}
+
+/// Signs the profile out of its account.
+///
+/// # Safety
+/// As for `amux_runtime_pair`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_runtime_sign_out(
+    runtime: *const AmuxRuntime,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return;
+        };
+        let embedded = runtime.embedded().clone();
+        runtime.spawn(callback, context, async move {
+            Answered::from(embedded.sign_out().await.map(|_| ()))
+        });
+    });
+}
+
+// --- the fleet -------------------------------------------------------------
+
+/// # Safety
+/// As for [`live_runtime`].
+unsafe fn fleet_read<T: Serialize>(
+    runtime: *const AmuxRuntime,
+    read: impl FnOnce(&AppRuntime) -> T,
 ) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { handle.as_ref() }?;
-        let json = unsafe { read_string(command_json) }?;
-        let command = serde_json::from_str(json).map_err(|e| format!("invalid command: {e}"));
-        unsafe { dispatch(handle, command) }
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
+    guard(std::ptr::null_mut(), || {
+        // SAFETY: the caller's contract.
+        let Some(runtime) = (unsafe { live_runtime(runtime) }) else {
+            return std::ptr::null_mut();
+        };
+        owned(&read(runtime.app()))
+    })
 }
 
-/// Sends one command to the worker under a fresh operation id and returns
-/// that id as an owned string.
-unsafe fn dispatch(handle: &Handle, command: Result<CommandDto, String>) -> Option<*mut c_char> {
-    let op = OpId(uuid::Uuid::new_v4());
-    let result = CString::new(op.0.to_string()).ok()?;
-    handle
-        .commands
-        .send(Control::Dispatch { op, command })
-        .ok()?;
-    Some(result.into_raw())
-}
-
-/// Updates callback cadence to the display's requested interval in nanoseconds.
-/// Zero or intervals above one second are ignored. Changes take effect relative
-/// to the last callback, including when a batch is already pending.
+/// The fleet as `[FleetRow]`, expanded under the roots whose agent ids
+/// `expand` lists (a JSON array of byte arrays, or null).
 ///
 /// # Safety
-/// handle must be live for this call and may not race stop.
+/// `runtime` is from `amux_runtime_start`; `expand` is null or a
+/// NUL-terminated string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_set_frame_interval(handle: *mut Handle, interval_ns: u64) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if (1..=1_000_000_000).contains(&interval_ns)
-            && let Some(handle) = unsafe { handle.as_ref() }
-        {
-            let _ = handle
-                .commands
-                .send(Control::FrameInterval(Duration::from_nanos(interval_ns)));
-        }
-    }));
+pub unsafe extern "C" fn amux_fleet_rows(
+    runtime: *const AmuxRuntime,
+    expand: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let expand: Vec<Vec<u8>> = unsafe { parse(expand) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe { fleet_read(runtime, |app| app.fleet_rows(&expand)) }
 }
 
-/// Says whether the app is in front of somebody.
-///
-/// Going away severs this device's link to the relay at once and stops it
-/// dialling: a phone in a pocket is not a client with a network problem, and
-/// leaving the socket for the system to freeze would leave every machine it
-/// was watching holding a link nobody is reading. Coming back dials
-/// immediately and the ordinary reconciliation follows.
+/// One agent's `FleetCard`, or null JSON when it is not listed.
 ///
 /// # Safety
-/// handle must be live for this call and may not race stop.
+/// `runtime` is from `amux_runtime_start`; `agent` is an `AgentKey` as a
+/// NUL-terminated JSON string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_set_active(handle: *mut Handle, active: bool) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if let Some(handle) = unsafe { handle.as_ref() } {
-            let _ = handle.commands.send(Control::Active(active));
-        }
-    }));
+pub unsafe extern "C" fn amux_fleet_card(
+    runtime: *const AmuxRuntime,
+    agent: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let Some(agent) = (unsafe { parse::<AgentKey>(agent) }) else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the caller's contract.
+    unsafe { fleet_read(runtime, |app| app.fleet_card(&agent)) }
 }
 
-/// Hands the bridge every machine the platform's browser has resolved on this
-/// network, as a JSON array of `{"host":UUID,"name":…,"version":N,"addrs":[…]}`.
-///
-/// The whole set each time, not a change to it: a browser reports what it can
-/// currently see, and a machine that has gone is a machine missing from the
-/// set rather than an event of its own. Handing over an empty array is how the
-/// app says it can see nothing — the browser stopped, or the person refused
-/// the local network — and the machines found earlier stop being offered.
-///
-/// Only the phone browses. Nothing in this library asks the system for the
-/// network, because on iOS only the system may, so what this device has found
-/// is exactly what was last handed to it.
+/// The `FamilyHeader` over an agent's chat, or null JSON.
 ///
 /// # Safety
-/// handle must be live and found_json readable and NUL-terminated for this
-/// call. Neither pointer may race stop.
+/// As for `amux_fleet_card`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_discovered(handle: *mut Handle, found_json: *const c_char) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { handle.as_ref() }?;
-        let json = unsafe { read_string(found_json) }?;
-        let found: Vec<FoundHostDto> = serde_json::from_str(json).ok()?;
-        let found = found
-            .into_iter()
-            .filter_map(|host| host.into_found())
-            .collect();
-        handle.commands.send(Control::Discovered(found)).ok()
-    }));
+pub unsafe extern "C" fn amux_fleet_family(
+    runtime: *const AmuxRuntime,
+    agent: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let Some(agent) = (unsafe { parse::<AgentKey>(agent) }) else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: the caller's contract.
+    unsafe { fleet_read(runtime, |app| app.family_header(&agent)) }
 }
 
-/// One machine as the platform's browser resolved it.
-#[derive(serde::Deserialize)]
-struct FoundHostDto {
-    host: String,
-    name: String,
-    /// The protocol version the advertisement's own record claims.
-    version: u32,
-    addrs: Vec<String>,
+/// Every host in the fleet as `[HostView]`, this device first.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_fleet_hosts(runtime: *const AmuxRuntime) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { fleet_read(runtime, AppRuntime::hosts) }
 }
 
-impl FoundHostDto {
-    /// The advertisement, or nothing where what was resolved cannot be dialled:
-    /// an identity that is not a host id, or no address at all.
-    fn into_found(self) -> Option<app_runtime::FoundHost> {
-        let addrs: Vec<std::net::SocketAddr> = self
-            .addrs
-            .iter()
-            .filter_map(|addr| addr.parse().ok())
-            .collect();
-        if addrs.is_empty() {
-            return None;
+/// The fleet's `FleetChanges` since the last take; the next change wakes
+/// the host again.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_fleet_take_changes(runtime: *const AmuxRuntime) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { fleet_read(runtime, AppRuntime::take_fleet_changes) }
+}
+
+// --- a chat ----------------------------------------------------------------
+
+/// Opens a chat on a fleet agent, named by its `AgentKey` as JSON, with
+/// `tail` rows (the configured tail when zero). Blocks until the snapshot
+/// and the rows this device holds are applied, so the first read is
+/// correct even with the agent's host away. Null on failure, with the
+/// reason in `error` when it is not null.
+///
+/// # Safety
+/// `runtime` is from `amux_runtime_start`; `agent` is a NUL-terminated
+/// string; `error` is null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_open(
+    runtime: *const AmuxRuntime,
+    agent: *const c_char,
+    tail: u32,
+    error: *mut *mut c_char,
+) -> *mut AmuxChat {
+    let opened = guard(Err("opening the chat panicked".to_owned()), || {
+        // SAFETY: the caller's contract.
+        let runtime = unsafe { live_runtime(runtime) }.ok_or("no runtime")?;
+        // SAFETY: the caller's contract.
+        let agent: AgentKey = unsafe { parse(agent) }.ok_or("the agent is not an AgentKey")?;
+        let tail = if tail == 0 { runtime.tail } else { tail };
+        let handle = runtime.handle();
+        let chat = handle
+            .block_on(runtime.app().open_chat(&agent, tail))
+            .map_err(|error| error.to_string())?;
+        Ok(AmuxChat { chat, handle })
+    });
+    match opened {
+        Ok(chat) => Box::into_raw(Box::new(chat)),
+        Err(reason) => {
+            if !error.is_null() {
+                // SAFETY: the caller's contract.
+                unsafe {
+                    *error = CString::new(reason).map_or(std::ptr::null_mut(), CString::into_raw)
+                };
+            }
+            std::ptr::null_mut()
         }
-        Some(app_runtime::FoundHost {
-            host: self.host.parse().ok()?,
-            name: self.name,
-            version: self.version,
-            addrs,
+    }
+}
+
+/// The id the wake names this chat by.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_id(chat: *const AmuxChat) -> u64 {
+    // SAFETY: the caller's contract.
+    unsafe { held_chat(chat) }.map_or(0, |open| open.chat.id())
+}
+
+/// Closes a chat. Its wake stops; a callback already running still runs.
+///
+/// # Safety
+/// `chat` is null or from `amux_session_open`, and not used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_close(chat: *mut AmuxChat) {
+    if !chat.is_null() {
+        // SAFETY: the caller's contract.
+        let open = unsafe { Box::from_raw(chat) };
+        let _entered = open.handle.enter();
+        drop(open);
+    }
+}
+
+/// The held window's keys, oldest first: `[String]`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_keys(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::keys) }
+}
+
+/// Keys newer than `newest`, oldest first; null JSON when `newest` is not
+/// held, and the host reads every key again.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `newest` is a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_new_keys_above(
+    chat: *const AmuxChat,
+    newest: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let newest = unsafe { text(newest) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.keys_above(&newest)) }
+}
+
+/// Keys older than `oldest`, oldest first; null JSON when `oldest` is not
+/// held.
+///
+/// # Safety
+/// As for `amux_session_new_keys_above`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_new_keys_below(
+    chat: *const AmuxChat,
+    oldest: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let oldest = unsafe { text(oldest) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.keys_below(&oldest)) }
+}
+
+/// `[Row]` for these keys (a JSON array of strings), in order, skipping
+/// keys not held; `options` is a `RowOptions` as JSON, or null.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; the strings are NUL-terminated or
+/// null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_rows_for(
+    chat: *const AmuxChat,
+    keys: *const c_char,
+    options: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let keys: Vec<Key> = unsafe { parse(keys) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    let options: RowOptions = unsafe { parse(options) }.unwrap_or_default();
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, |chat| chat.rows_for(&keys, &options)) }
+}
+
+/// The head `AskCard`, or null JSON.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_ask_card(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::ask_card) }
+}
+
+/// The session `Strip`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_strip(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::strip) }
+}
+
+/// The `ChatFrame`: phase, composer, activity, queue and outbox.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_frame(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::frame) }
+}
+
+/// The chat's `ChatChanges` since the last take; the next change wakes the
+/// host again.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_take_changes(chat: *const AmuxChat) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    unsafe { read(chat, Chat::take_changes) }
+}
+
+/// Runs an act on the chat's pool and hands its JSON result back.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+unsafe fn act<T, F, Fut>(
+    chat: *const AmuxChat,
+    callback: AmuxCallback,
+    context: *mut c_void,
+    act: F,
+) where
+    T: Serialize,
+    F: FnOnce(Arc<Chat>) -> Fut,
+    Fut: Future<Output = T> + Send + 'static,
+{
+    guard((), || {
+        // SAFETY: the caller's contract.
+        let Some(open) = (unsafe { held_chat(chat) }) else {
+            return;
+        };
+        spawn_on(&open.handle, callback, context, act(open.chat.clone()));
+    });
+}
+
+/// Sends a `Draft` as JSON; the callback gets a `SendOutcome`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `draft` is a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_send(
+    chat: *const AmuxChat,
+    draft: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let draft: Option<Draft> = unsafe { parse(draft) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            match draft {
+                Some(draft) => Answered::Ok(chat.send(&draft).await),
+                None => Answered::Err("the draft is not a Draft".into()),
+            }
         })
     }
 }
 
-/// Freezes the shared reducer model as owned JSON; free with amux_app_free.
-/// Returns NULL for an unavailable worker or a five-second timeout.
+/// Answers the head ask, named by its key, with the choice at `index` on
+/// its card; `note` goes back with a choice that takes one. The callback
+/// gets an `ActOutcome`.
 ///
 /// # Safety
-/// handle must be live and may not race stop. Do not call from an event callback:
-/// this function waits for the worker that delivers callbacks.
+/// `chat` is from `amux_session_open`; the strings are NUL-terminated or
+/// null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_snapshot(handle: *mut Handle) -> *mut c_char {
-    unsafe { snapshot(handle, Control::Snapshot) }
-}
-
-/// Freezes recorder checkpoint/message lines and obtains the embedded daemon's
-/// JSON dump. The result has msgs, daemon and daemon_absent_reason fields.
-/// A failed or timed-out dump is null with its reason; msgs remains available.
-/// Free the owned result with amux_app_free.
-///
-/// In every build, not only the one with the driving tools: a person reporting
-/// a problem from an installed app sends these records to their own account,
-/// and the recorder they come from runs in every build anyway, because a
-/// release panic report is written from it. It reads what this device already
-/// holds and changes nothing, so it is no way to drive the app.
-///
-/// # Safety
-/// handle must be live and may not race stop. Never call from an event callback.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_report_snapshot(handle: *mut Handle) -> *mut c_char {
-    unsafe { snapshot(handle, Control::ReportSnapshot) }
-}
-
-/// What this device's link to the relay has done, as owned JSON
-/// `{"attempts":N,"shortened":M}`; free it with amux_app_free. NULL means
-/// the handle or the worker was unavailable.
-///
-/// `attempts` is every dial since the runtime started. `shortened` is how many
-/// of them happened early because somebody asked, which is the only
-/// unambiguous evidence a Retry Now reached the connection: a dial at a relay
-/// that is not there arrives nowhere to be counted, and the connection dials
-/// on its own schedule anyway, so an attempt alone cannot tell a press apart
-/// from the backoff coming round.
-///
-/// Debug-tools builds only.
-///
-/// # Safety
-/// handle must be live and may not race stop. Never call from an event callback.
-#[cfg(feature = "debug-tools")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_relay_attempts(handle: *mut Handle) -> *mut c_char {
-    unsafe { snapshot(handle, Control::RelayAttempts) }
-}
-
-/// Reports one result on the shell edge of the account most recently switched
-/// away from, as a task that was still running for it would. Returns owned
-/// JSON `{"reported":true}`, or false when no account has been left yet.
-///
-/// Debug-tools builds only. Switching accounts cannot recall work already in
-/// flight, and what a driver has to be able to prove is that such work is
-/// refused rather than folded into the account the person moved to. There is
-/// no way to produce it from outside the process.
-///
-/// # Safety
-/// handle must be live and may not race stop. Never call from an event callback.
-#[cfg(all(debug_assertions, feature = "debug-tools"))]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_late_from_previous(handle: *mut Handle) -> *mut c_char {
-    unsafe { snapshot(handle, Control::LateFromPrevious) }
-}
-
-/// How many results belonging to an earlier account this runtime has refused,
-/// and which edges of the shell they came from, as owned JSON
-/// `{"dropped":n,"kinds":["Inventory",…]}`. Debug-tools builds only.
-///
-/// # Safety
-/// handle must be live and may not race stop. Never call from an event callback.
-#[cfg(all(debug_assertions, feature = "debug-tools"))]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_late_results(handle: *mut Handle) -> *mut c_char {
-    unsafe { snapshot(handle, Control::LateResults) }
-}
-
-/// Pairs this device with the host a QR pairing payload names, over the relay
-/// this runtime is already connected to. Returns owned JSON `{"host":"…"}` for
-/// a peer now trusted, or `{"error":"…"}`; free it with amux_app_free. NULL
-/// means the handle or the worker was unavailable, or the handshake did not
-/// finish inside a minute.
-///
-/// Debug-tools builds only, and a harness affordance rather than the product
-/// path: a person pairs a device by reading a code or following a link, and the
-/// screens that do that carry their own confirmation step. A driver proving
-/// what a paired device shows needs the trust without the screens, and needs it
-/// before those screens exist.
-///
-/// # Safety
-/// handle must be live and payload readable and NUL-terminated for this call.
-/// Neither may race stop. Never call from an event callback.
-#[cfg(feature = "debug-tools")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_pair_qr(
-    handle: *mut Handle,
-    payload: *const c_char,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { handle.as_ref() }?;
-        let payload = unsafe { read_string(payload) }?.to_owned();
-        let (send, receive) = std::sync::mpsc::sync_channel(1);
-        handle
-            .commands
-            .send(Control::PairLinkNow {
-                payload,
-                reply: send,
-            })
-            .ok()?;
-        let json = receive.recv_timeout(Duration::from_secs(60)).ok()??;
-        Some(CString::new(json).ok()?.into_raw())
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Folds a report's `msgs.jsonl` into the model it recorded and projects that
-/// model as the event batch a running runtime would have delivered. Returns
-/// owned JSON `{"events":[…]}`, or `{"error":"…"}` when the file cannot be
-/// read or replayed; free it with amux_app_free.
-///
-/// Nothing is connected, nothing is started and no effect the recording asked
-/// for is carried out. Debug-tools builds only.
-///
-/// # Safety
-/// path must be a readable NUL-terminated UTF-8 string for this call.
-#[cfg(feature = "debug-tools")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_replay_report(path: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let path = unsafe { read_string(path) }?;
-        let json = match compose::replay_report(std::path::Path::new(path)) {
-            Ok(events) => serde_json::json!({ "events": events }),
-            Err(error) => serde_json::json!({ "error": error }),
-        };
-        owned(&json)
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Replaces an account's store with one remembering the hosts, agents,
-/// removals and conversation rows `remembered_json` describes, written through
-/// the store and runtime a phone uses. Returns owned JSON `{"ok":true}`, or
-/// `{"error":"…"}`; free it with amux_app_free. Debug-tools builds only.
-///
-/// # Safety
-/// cache_dir, account and remembered_json must be readable NUL-terminated
-/// UTF-8 strings for this call.
-#[cfg(feature = "debug-tools")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_seed_store(
-    cache_dir: *const c_char,
-    account: *const c_char,
-    remembered_json: *const c_char,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let directory = unsafe { read_string(cache_dir) }?;
-        let account = unsafe { read_string(account) }?;
-        let remembered = unsafe { read_string(remembered_json) }?;
-        let json = match serde_json::from_str(remembered) {
-            Ok(remembered) => match blocking(app_runtime::seed::seed(
-                std::path::Path::new(directory),
-                account,
-                remembered,
-            ))? {
-                Ok(()) => serde_json::json!({ "ok": true }),
-                Err(error) => serde_json::json!({ "error": error }),
-            },
-            Err(error) => serde_json::json!({ "error": error.to_string() }),
-        };
-        owned(&json)
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Opens one conversation of an account's store the way a phone does before
-/// anything has connected, and returns what its runtime projects as owned JSON
-/// `{"events":[…]}`, or `{"error":"…"}`; free it with amux_app_free.
-/// Debug-tools builds only.
-///
-/// # Safety
-/// cache_dir, account and agent must be readable NUL-terminated UTF-8 strings
-/// for this call.
-#[cfg(feature = "debug-tools")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_cached_chat(
-    cache_dir: *const c_char,
-    account: *const c_char,
-    agent: *const c_char,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let directory = unsafe { read_string(cache_dir) }?;
-        let account = unsafe { read_string(account) }?;
-        let agent = unsafe { read_string(agent) }?.parse().ok()?;
-        let json = match blocking(app_runtime::seed::cached_chat(
-            std::path::Path::new(directory),
-            account,
-            agent,
-        ))? {
-            Ok(events) => serde_json::json!({ "events": events }),
-            Err(error) => serde_json::json!({ "error": error }),
-        };
-        owned(&json)
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Runs a future to completion from a synchronous caller.
-///
-/// A caller already inside an async runtime cannot block on another one from
-/// its own thread; the future then runs on a thread of its own.
-fn blocking<F: std::future::Future + Send>(future: F) -> Option<F::Output>
-where
-    F::Output: Send,
-{
-    let run = || {
-        let executor = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?;
-        Some(executor.block_on(future))
-    };
-    match tokio::runtime::Handle::try_current() {
-        Ok(_) => std::thread::scope(|scope| scope.spawn(run).join().ok().flatten()),
-        Err(_) => run(),
-    }
-}
-
-unsafe fn snapshot(
-    handle: *mut Handle,
-    control: impl FnOnce(std::sync::mpsc::SyncSender<Option<String>>) -> Control,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { handle.as_ref() }?;
-        let (send, receive) = std::sync::mpsc::sync_channel(1);
-        handle.commands.send(control(send)).ok()?;
-        let json = receive.recv_timeout(Duration::from_secs(5)).ok()??;
-        Some(CString::new(json).ok()?.into_raw())
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Turns a written review into the token a composer holds: the canonical
-/// attachment element to put in the message, and the artifact reference that
-/// pins its frozen patch for whoever reads it.
-///
-/// Returns owned JSON `{"element":"…","attachment":{…}}`; free it with
-/// amux_app_free. NULL means the request was not the document, artifact and
-/// comments this needs.
-///
-/// # Safety
-/// review_json must be a readable NUL-terminated UTF-8 string for this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_review_element(review_json: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let json = unsafe { read_string(review_json) }?;
-        let token: compose::ReviewToken = serde_json::from_str(json).ok()?;
-        owned(&compose::review_element(token))
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// The command a picked file becomes, or nothing where the description of it
-/// was not readable.
-///
-/// Separate from the FFI entry so the bytes a command carries can be held
-/// against what was picked without a live handle.
-fn picked_command(request_json: &str, bytes: Vec<u8>) -> Option<app_runtime::Command> {
-    let picked: compose::PickedAttachment = serde_json::from_str(request_json).ok()?;
-    Some(compose::picked_command(picked, bytes))
-}
-
-/// Stores a picked file's bytes on the agent's host, returning an owned
-/// operation UUID string; free it with amux_app_free. NULL means the
-/// handle, the JSON, or the worker was unavailable.
-///
-/// The bytes travel here rather than inside a dispatched command for two
-/// reasons: a command is JSON, and a photograph spelled as a JSON array of
-/// numbers is four times its own size; and every dispatched command is written
-/// into the local replay recording, which is not a place for somebody's
-/// photograph. What the recording keeps is the artifact, never its contents.
-///
-/// # Safety
-/// handle must be live and request_json readable and NUL-terminated for this
-/// call; bytes must point at len readable bytes. No pointer may race stop.
-/// Everything is copied before return.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_attach(
-    handle: *mut Handle,
-    request_json: *const c_char,
-    bytes: *const u8,
-    len: usize,
-) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { handle.as_ref() }?;
-        let json = unsafe { read_string(request_json) }?;
-        let bytes = match len {
-            0 => Vec::new(),
-            _ => {
-                if bytes.is_null() {
-                    return None;
-                }
-                unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec()
-            }
-        };
-        let command = picked_command(json, bytes)?;
-        unsafe { dispatch(handle, Ok(CommandDto::Shared(command))) }
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Spells one artifact attachment as the canonical element a message carries
-/// it in, as owned JSON `{"element":"…"}`; free it with amux_app_free.
-/// NULL means the request was not an artifact identity, kind, name and size.
-///
-/// # Safety
-/// request_json must be a readable NUL-terminated UTF-8 string for this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_attachment_element(request_json: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let json = unsafe { read_string(request_json) }?;
-        let request: compose::AttachmentRequest = serde_json::from_str(json).ok()?;
-        owned(&serde_json::json!({ "element": compose::attachment_element(request) }))
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Routes a paste by size, as owned JSON; free it with amux_app_free.
-/// `{"prose":"…"}` is text short enough to read in place; `{"element":"…",
-/// "lines":n,"name":"…"}` is a paste long enough to bury the sentence around
-/// it, which becomes one atomic Text attachment. NULL means the text was not
-/// readable.
-///
-/// # Safety
-/// text must be a readable NUL-terminated UTF-8 string for this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_paste(text: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let text = unsafe { read_string(text) }?;
-        owned(&compose::paste(text))
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Splits message text into prose and the attachment elements it carries, as
-/// owned JSON; free it with amux_app_free. NULL means the text was not
-/// readable.
-///
-/// # Safety
-/// text must be a readable NUL-terminated UTF-8 string for this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_attachments(text: *const c_char) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let text = unsafe { read_string(text) }?;
-        owned(&compose::attachments(text))
-    }))
-    .ok()
-    .flatten()
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// Releases a string returned by this library. NULL is accepted.
-///
-/// # Safety
-/// The pointer must be an owned string returned by this library, freed once,
-/// and not the borrowed version or callback string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_free(string: *mut c_char) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        if !string.is_null() {
-            drop(unsafe { CString::from_raw(string) });
-        }
-    }));
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TokenReply {
-    token: Option<String>,
-    expires_at: Option<u64>,
-    /// What the account service said this account buys, where the reply that
-    /// carried the token said. The bearer is opaque to this library, so this
-    /// is the only place a tier can come from; absent is treated as free.
-    tier: Option<app_runtime::Tier>,
-    error: Option<String>,
-}
-
-/// Answers one TokenRequest with {"token":"…","expires_at":unix_seconds,
-/// "tier":"free"|"pro"} (expiry and tier are optional) or {"error":"…"}.
-/// Malformed replies fail that request; unknown, duplicate and expired request
-/// IDs are ignored.
-///
-/// # Safety
-/// handle must be live and token_json must be readable and NUL-terminated for
-/// this call. The bytes are copied before return. Neither pointer may race stop.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_app_token_reply(
-    handle: *mut Handle,
-    request_id: u64,
-    token_json: *const c_char,
+pub unsafe extern "C" fn amux_session_answer(
+    chat: *const AmuxChat,
+    ask_key: *const c_char,
+    index: u32,
+    note: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
 ) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        let Some(handle) = (unsafe { handle.as_ref() }) else {
-            return;
+    // SAFETY: the caller's contract.
+    let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let note = unsafe { text(note) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            chat.answer_choice(&ask_key, index as usize, &note).await
+        })
+    }
+}
+
+/// Answers the head question ask with one `Pick` per question, as a JSON
+/// array, and the optional note. The callback gets an `ActOutcome`.
+///
+/// # Safety
+/// As for `amux_session_answer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_answer_questions(
+    chat: *const AmuxChat,
+    ask_key: *const c_char,
+    picks: *const c_char,
+    note: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let picks: Option<Vec<Pick>> = unsafe { parse(picks) };
+    // SAFETY: the caller's contract.
+    let note = unsafe { text(note) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            match picks {
+                Some(picks) => chat.answer_questions(&ask_key, &picks, &note).await,
+                None => ActOutcome::Rejected("the picks are not a list of Pick".into()),
+            }
+        })
+    }
+}
+
+/// An input id as a JSON byte array.
+///
+/// # Safety
+/// `id` is null or a NUL-terminated string.
+unsafe fn input_id(id: *const c_char) -> Vec<u8> {
+    // SAFETY: the caller's contract.
+    unsafe { parse(id) }.unwrap_or_default()
+}
+
+/// Takes a queued prompt back out of the queue. The callback gets an
+/// `ActOutcome`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `input_id` is a NUL-terminated
+/// JSON byte array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_withdraw(
+    chat: *const AmuxChat,
+    input_id: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let id = unsafe { self::input_id(input_id) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            chat.withdraw(&id).await
+        })
+    }
+}
+
+/// Steers a queued prompt into the running turn.
+///
+/// # Safety
+/// As for `amux_session_withdraw`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_send_now(
+    chat: *const AmuxChat,
+    input_id: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let id = unsafe { self::input_id(input_id) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            chat.send_now(&id).await
+        })
+    }
+}
+
+/// Sends a not-confirmed input again under a new id; the callback gets a
+/// `SendOutcome`, or null JSON when the input is not held.
+///
+/// # Safety
+/// As for `amux_session_withdraw`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_resend(
+    chat: *const AmuxChat,
+    input_id: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let id = unsafe { self::input_id(input_id) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            chat.resend(&id).await
+        })
+    }
+}
+
+/// Forgets a not-confirmed input.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `input_id` is a NUL-terminated JSON
+/// byte array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_discard(chat: *const AmuxChat, input_id: *const c_char) {
+    // SAFETY: the caller's contract.
+    let id = unsafe { self::input_id(input_id) };
+    // SAFETY: the caller's contract.
+    let _ = unsafe { read(chat, |chat| chat.discard(&id)) };
+}
+
+/// Stops the agent's turn; the agent stays.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_interrupt(
+    chat: *const AmuxChat,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            chat.interrupt().await
+        })
+    }
+}
+
+/// The exited composer's one tap: resumes the agent with a `Draft` as its
+/// first prompt. The callback gets an `ActOutcome`; on anything but Done
+/// the draft stays the composer's.
+///
+/// # Safety
+/// As for `amux_session_send`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_resume(
+    chat: *const AmuxChat,
+    draft: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let draft: Option<Draft> = unsafe { parse(draft) };
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            match draft {
+                Some(draft) => chat.resume_with(&draft).await,
+                None => ActOutcome::Rejected("the draft is not a Draft".into()),
+            }
+        })
+    }
+}
+
+/// Asks for up to `n` rows older than the oldest held; the callback gets a
+/// `PageOutcome`, and the new keys arrive below the oldest.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_page_older(
+    chat: *const AmuxChat,
+    n: u32,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            chat.page_older(n).await
+        })
+    }
+}
+
+/// Stores bytes to attach to a prompt; the callback gets
+/// `{"Ok": BlobRef}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `data` points to `len` bytes; the
+/// strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_put_blob(
+    chat: *const AmuxChat,
+    data: *const u8,
+    len: usize,
+    name: *const c_char,
+    mime: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    let bytes = if data.is_null() {
+        Vec::new()
+    } else {
+        // SAFETY: the caller's contract.
+        unsafe { std::slice::from_raw_parts(data, len) }.to_vec()
+    };
+    // SAFETY: the caller's contract.
+    let name = unsafe { text(name) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let mime = unsafe { text(mime) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            Answered::from(chat.put_blob(&name, &mime, bytes).await)
+        })
+    }
+}
+
+/// An attachment's bytes, by its hash as a JSON byte array, once fetched.
+/// Empty until then: asking starts the fetch, and the rows that show it
+/// change when it lands.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`; `hash` is a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_blob(
+    chat: *const AmuxChat,
+    hash: *const c_char,
+) -> AmuxBytes {
+    let empty = AmuxBytes {
+        data: std::ptr::null_mut(),
+        len: 0,
+    };
+    // SAFETY: the caller's contract.
+    let hash: Vec<u8> = unsafe { parse(hash) }.unwrap_or_default();
+    guard(empty, || {
+        // SAFETY: the caller's contract.
+        let Some(open) = (unsafe { held_chat(chat) }) else {
+            return AmuxBytes {
+                data: std::ptr::null_mut(),
+                len: 0,
+            };
         };
-        let reply = unsafe { read_string(token_json) }
-            .and_then(|s| serde_json::from_str::<TokenReply>(s).ok());
-        let reply = match reply {
-            Some(TokenReply {
-                token: Some(bearer),
-                expires_at,
-                tier,
-                error: None,
-            }) if !bearer.is_empty() => {
-                let expiry = expires_at
-                    .map(|secs| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(secs)));
-                match expiry {
-                    Some(None) => Err(TokenError::Provider("invalid token expiry".into())),
-                    _ => Ok(Token {
-                        bearer,
-                        expires_at: expiry.flatten(),
-                        tier,
-                    }),
+        let _entered = open.handle.enter();
+        match open.chat.blob(&hash) {
+            Some(bytes) => {
+                let boxed: Box<[u8]> = bytes.to_vec().into_boxed_slice();
+                let len = boxed.len();
+                AmuxBytes {
+                    data: Box::into_raw(boxed).cast(),
+                    len,
                 }
             }
-            Some(TokenReply {
-                error: Some(error), ..
-            }) => Err(TokenError::Provider(error)),
-            _ => Err(TokenError::Provider("invalid token reply".into())),
-        };
-        let _ = handle
-            .commands
-            .send(Control::TokenReply { request_id, reply });
-    }));
+            None => AmuxBytes {
+                data: std::ptr::null_mut(),
+                len: 0,
+            },
+        }
+    })
 }
 
-unsafe fn read_string<'a>(pointer: *const c_char) -> Option<&'a str> {
-    if pointer.is_null() {
-        return None;
+// --- freeing ---------------------------------------------------------------
+
+/// # Safety
+/// `text` is null or a string this library returned, freed once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_string_free(text: *mut c_char) {
+    if !text.is_null() {
+        // SAFETY: the caller's contract.
+        drop(unsafe { CString::from_raw(text) });
     }
-    unsafe { CStr::from_ptr(pointer) }.to_str().ok()
 }
 
-/// A value as an owned C string the caller frees with amux_app_free.
-fn owned<T: serde::Serialize>(value: &T) -> Option<*mut c_char> {
-    Some(
-        CString::new(serde_json::to_string(value).ok()?)
-            .ok()?
-            .into_raw(),
-    )
+/// # Safety
+/// `bytes` came from this library, freed once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_bytes_free(bytes: AmuxBytes) {
+    if !bytes.data.is_null() {
+        // SAFETY: the caller's contract: this is the boxed slice we leaked.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(bytes.data, bytes.len)) });
+    }
 }
-
-#[cfg(test)]
-mod tests;

@@ -20,6 +20,17 @@ pub trait Clock: Send + Sync + 'static {
     fn sleep_until(&self, at_ms: i64) -> Sleep;
 }
 
+/// A shared clock is the clock it shares.
+impl<C: Clock + ?Sized> Clock for Arc<C> {
+    fn now_ms(&self) -> i64 {
+        (**self).now_ms()
+    }
+
+    fn sleep_until(&self, at_ms: i64) -> Sleep {
+        (**self).sleep_until(at_ms)
+    }
+}
+
 /// The wall clock.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemClock;

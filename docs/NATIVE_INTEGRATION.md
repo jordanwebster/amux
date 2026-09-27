@@ -6,29 +6,28 @@ attach to a daemon that is already running.
 
 | Crate | Owns | May depend on | Must not depend on |
 | --- | --- | --- | --- |
-| `app-runtime` | Account-scoped sessions, the projection from reducer state to typed presentation values, the fleet cache, and the frame-coalesced event queue | `model`, `settings`, `client`, `ui-state`, `ui-runtime`, `artifacts` | `node`, anything provider-specific, any platform SDK |
-| `app-embedded` | Starting, credentialing and stopping a provider-free `node::Installation`, holding the relay link, and handing clients to `app-runtime` | `node`, `client`, `app-runtime` | provider crates, test infrastructure |
-| `app-ffi` | The C ABI: exported symbols, JSON in and out, callbacks, opaque handles, cancellation, foreign lifetime rules; the `staticlib` crate type; the `cbindgen` build script | `app-runtime`, `app-embedded` | anything else |
+| `app-runtime` | The chats and fleet over the local runtime: session and fleet drivers, views asked for by row key, and changes gathered until the host's next turn | `model`, `client`, `ui-state`, `ui-view`, `ui-runtime`, `wire` | `node`, anything provider-specific, any platform SDK |
+| `app-embedded` | The daemon's profile runtime hosted in process: its store and replica rows, identity, pairing, relay link and switchable source policy | `node`, `client`, `app-runtime`, `wire` | provider crates, test infrastructure |
+| `app-ffi` | The C ABI: exported symbols, JSON in and out, callbacks, opaque handles; the `staticlib` crate type; the `cbindgen` build script | `app-runtime`, `app-embedded` and the value crates | anything else |
 
 The one rule that matters: nothing in `app-runtime` imports `node`. A desktop
-app that attaches to a running daemon uses `app-runtime` and `app-ffi`
-without `app-embedded`. Presentation values are plain Rust and JSON; no
-SwiftUI, UIKit, AppKit or C pointer types appear outside `app-ffi`.
-`just dependency-policy` enforces the edges in the table.
+app that attaches to a running daemon uses `app-runtime` over a gRPC client
+without `app-embedded`. Values are plain Rust serialized as JSON; their Swift
+mirrors are generated from the Rust definitions (`cargo run -p xtask --
+swift-types`, with `--check` failing on drift), and no SwiftUI, UIKit, AppKit
+or C pointer types appear outside `app-ffi`. `just dependency-policy`
+enforces the edges in the table.
 
 Ownership rules the code keeps:
 
-- Every operation carries its account. A reply cannot be credited to the
-  wrong account.
-- Sessions, views and subscriptions are independently owned handles. Closing
-  a view cancels its own subscriptions and pending work, nothing else.
-- Closing every view never stops a daemon the app attached to. Only
-  `app-embedded` stops an installation, and only the one it created.
+- Chats are independently owned handles. Closing one cancels its own stream
+  and wake, nothing else.
+- Only `app-embedded` stops an installation, and only the one it started.
 - Rust never talks to the identity service on behalf of a rich client. The
-  platform's own account client obtains connect tokens; `app-embedded`
-  receives tokens through a callback and connects to the relay it is told
-  to use.
-- The exported symbol prefix is `amux_app_`. The bridge is not phone-shaped.
+  platform's own account client obtains a refresh token; `app-embedded`
+  binds the profile with it and the relay link comes up from there.
+- No client opens the store: the chats read it through the client service,
+  called in process.
 
 ## Seams instead of test builds
 
@@ -43,12 +42,10 @@ injection point that is always compiled and ordinary to call:
 - A provider session is built `from_sources`; `agent-runtime` exposes hidden,
   always-compiled adapters that let a harness supply a scripted Claude PTY or
   SDK session, or a recorded Codex session, in place of a real process.
-- The relay's presentation values, `model::RelayConnection` and
-  `model::DisconnectReason`, live in `model`, so the projection reads them
-  without a daemon dependency. A plaintext loopback relay is an ordinary
-  `node::RelayEndpoint` constructor; `app-embedded` allows it only behind its
-  `debug-tools` feature, which is never a default and is the only place a
-  driving affordance is switched on.
+- `app-embedded` takes edge overrides (where the relay link dials, discovery,
+  where direct links listen) that a test fills in; the phone build passes
+  none. `app-ffi`'s `debug-tools` feature, never a default, lets a driving
+  build keep direct links on loopback.
 
 The harness the phone is tested against is the `testnet` crate: a declared
 topology of real daemons, one fake relay, one fake identity service and
@@ -90,20 +87,19 @@ Each item is a test or a recipe in the tree, not a claim.
 
 1. `just ci` and every `just ios` verification recipe pass on macOS; the
    platform CI matrix passes.
-2. Starting and stopping an embedded installation repeatedly, including a
-   failure during startup and a stop while callbacks are in flight, yields
-   exactly one terminal callback per owned handle
-   (`app-ffi`: `every_handle_ends_exactly_once_however_it_is_stopped`).
-3. Attaching to an external daemon and closing every view leaves the daemon
-   serving another client (`app-embedded`: `tests/attach.rs`).
-4. Two accounts with two independently owned views: closing one or changing
-   its selection neither cancels the other nor routes an operation to the
-   wrong account (`app-embedded`: `tests/views.rs`).
+2. The C ABI pairs with a served desk by PIN, lists its agents from this
+   device's own rows, reads a chat's rows by key, answers a permission by
+   choice position and a question with picks, pages older rows below the
+   oldest held, and writes a dump (`app-ffi`: `the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi`).
+3. However many updates land between the host's turns, it is woken once and
+   takes every changed key together (`app-runtime`: `tests/runtime.rs`).
+4. A signed-in phone pairs with a host through the relay and reads its
+   agents there (`app-embedded`: `tests/embedded.rs`).
 5. Build times on an Apple silicon development Mac, measured after the
    merge, are recorded in `DEVLOG.md`; the Swift-only path shows no cargo
    invocation.
 6. `just ios graph-check` proves `cargo tree -p app-ffi -e normal` contains
-   no provider crate, no `agent-runtime`, no `pty-host` and no test
+   no provider crate, no agent host, no `pty-host` and no test
    infrastructure, with and without `debug-tools`.
 
 ## Explicitly not required

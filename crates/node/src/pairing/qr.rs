@@ -1,8 +1,13 @@
 use std::net::SocketAddr;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use crate::HostId;
+
+/// What a pairing link starts with; the rest is the invitation, base64.
+pub const PAIR_LINK: &str = "amux://pair?payload=";
 
 const QR_SECRET_LEN: usize = 32;
 
@@ -19,6 +24,12 @@ pub struct QrPairingPayload {
 
 #[derive(Debug, thiserror::Error)]
 pub enum QrPairingError {
+    #[error("a pairing link starts with {PAIR_LINK}")]
+    NotALink,
+    #[error("the pairing link's payload is not base64: {0}")]
+    Base64(#[from] base64::DecodeError),
+    #[error("the pairing link's payload is not text")]
+    NotText,
     #[error("failed to decode QR pairing payload: {0}")]
     Json(#[from] serde_json::Error),
     #[error("QR pairing host_id {value} is invalid: {source}")]
@@ -62,6 +73,25 @@ pub fn encode_qr_pairing_invitation(
         cloud_url: cloud_url.map(ToOwned::to_owned),
     };
     Ok(serde_json::to_string(&payload)?)
+}
+
+/// The link a QR code shows for an invitation.
+pub fn pair_link(invitation_json: &str) -> String {
+    format!(
+        "{PAIR_LINK}{}",
+        URL_SAFE_NO_PAD.encode(invitation_json.as_bytes())
+    )
+}
+
+/// The invitation a pairing link carries.
+pub fn parse_pair_link(link: &str) -> Result<QrPairingPayload, QrPairingError> {
+    let encoded = link
+        .trim()
+        .strip_prefix(PAIR_LINK)
+        .ok_or(QrPairingError::NotALink)?;
+    let json = URL_SAFE_NO_PAD.decode(encoded)?;
+    let json = std::str::from_utf8(&json).map_err(|_| QrPairingError::NotText)?;
+    parse_qr_pairing_payload(json)
 }
 
 pub fn parse_qr_pairing_payload(payload: &str) -> Result<QrPairingPayload, QrPairingError> {

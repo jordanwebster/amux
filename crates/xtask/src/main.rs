@@ -19,10 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("golden") => golden::main(),
         Some("replay") => replay::main(),
         Some("ios-verify") => ios_verify::run(),
+        Some("swift-types") => {
+            xtask::swift_types::main(&std::env::args().skip(2).collect::<Vec<_>>())
+        }
         Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|restamp FROM TO [VERSION]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|restamp FROM TO [VERSION]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }
@@ -48,6 +51,17 @@ fn restamp(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     println!("{} reports {version}", to.display());
     Ok(())
 }
+
+/// Wire types a view value holds.
+const VIEW_VALUES: &[&str] = &[
+    "amux.v1.BlobRef",
+    "amux.v1.BoundaryKind",
+    "amux.v1.EnvelopeKind",
+    "amux.v1.Kind",
+    "amux.v1.Presence",
+    "amux.v1.SendState",
+    "amux.v1.SignInState",
+];
 
 /// Regenerates the committed protobuf code under
 /// `crates/wire/src/generated/` from `crates/wire/proto/`.
@@ -77,6 +91,14 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
     // such as the dump redactor, find the descriptor of a generated type.
     let mut config = tonic_prost_build::Config::new();
     config.enable_type_names();
+    // The wire values the chat views carry to the phone serialize, with
+    // schemas, so the Swift mirrors are generated from these definitions.
+    for path in VIEW_VALUES {
+        config.type_attribute(
+            path,
+            "#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]",
+        );
+    }
     tonic_prost_build::configure()
         // Keep generated clients, but omit tonic's transport convenience
         // constructors. Otherwise `RoutingService.Connect` collides with the

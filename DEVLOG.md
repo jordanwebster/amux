@@ -1,3 +1,26 @@
+2026-09-27 — **The phone bridge is rebuilt on the session model.**
+The three app crates are back in the workspace, rewritten. `app-embedded`
+hosts the daemon's profile runtime in the phone's process (its own store of
+replica rows, identity, direct links, pairing by PIN or link, sign-in and
+the relay link, and the source policy that narrows to the chats asked for
+when a push wakes the app); the node's front door is now callable in
+process for it, and pairing links are parsed in one place. `app-runtime`
+hosts the session and fleet drivers over the in-process client and gathers
+what they change until the host's next turn: the host is woken once, takes
+every changed key together and fetches only those rows. Rows go out by item
+key, so the phone's id sequence only grows at its two edges; the old
+position-based feed and its projection schema are gone. `app-ffi` is a new
+C ABI over both, JSON in and out, with answers named by choice position or
+question picks so no provider answer body reaches Swift. The Swift mirrors
+of every value it carries are generated from the Rust definitions by
+`cargo run -p xtask -- swift-types` into the `AmuxValues` target, and
+`--check` fails on drift; a round trip of real rows, ask cards, frames and
+fleet values through the generated Swift came back identical. For that, the
+view values and the handful of wire enums they hold serialize with schemas,
+and the usage-limit windows became a named struct instead of a tuple.
+`just ios rust` builds the simulator XCFramework from the new crate; the
+Swift app itself still calls the old ABI until it is rebuilt on this one.
+
 2026-09-27 — **Discovery spec waits for the stored address.**
 A direct dialler stores the address that worked once its link is
 established, a moment after routing already names the link, so the

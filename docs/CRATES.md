@@ -31,10 +31,10 @@ subscriptions, effects and report resources, and `tui` owns terminal input
 and rendering. TUI fixtures live inside `tui` and compile only for its tests
 or explicit fixture consumers; they are not a separate package.
 
-The app layer is what a rich client reuses: `app-runtime` owns account
-sessions, the projection to presentation values, the fleet cache and the
-frame-coalesced event queue over `client`, `ui-state` and `ui-runtime`;
-`app-embedded` owns a provider-free `node::Installation` and its relay link;
+The app layer is what a rich client reuses: `app-runtime` hosts the chats
+and fleet over `client`, `ui-runtime` and `ui-view`, handing views out by row
+key and gathering changes for the host's next turn; `app-embedded` hosts the
+daemon's profile runtime in process with its store, pairing and relay link;
 `app-ffi` is the C ABI over both. `app-runtime` never depends on `node`, so a
 desktop app attaching to a running daemon uses it without `app-embedded`.
 [Native integration](NATIVE_INTEGRATION.md) owns the layer's rules.

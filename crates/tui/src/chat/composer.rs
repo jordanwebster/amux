@@ -71,7 +71,7 @@ pub fn strip_line(strip: &Strip, width: usize, theme: Theme) -> Option<Line<'sta
         let near = usage
             .windows
             .iter()
-            .map(|(name, used, _)| format!("{name} {used:.0}%"))
+            .map(|window| format!("{} {:.0}%", window.name, window.used_percent))
             .collect::<Vec<_>>()
             .join(" · ");
         parts.push((format!("Near the usage limit · {near}"), theme.warn()));

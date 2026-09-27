@@ -1,6 +1,8 @@
 //! Around the composer: the session strip, the composer's mode and tokens,
 //! the queued prompts and this client's unconfirmed inputs.
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use ui_state::{Activity, Composer, InputState, InputWhat, SessionState, Waiting};
 use wire::{Attachment, SignInState, TaskListStatus, UsageState};
 
@@ -11,7 +13,7 @@ use crate::segments::{Segment, segments};
 pub const CONTEXT_STRIP_PERCENT: u64 = 80;
 
 /// The facts strip: each field is None when there is nothing to show.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, JsonSchema)]
 pub struct Strip {
     pub tasks: Option<TasksView>,
     pub context: Option<ContextView>,
@@ -29,7 +31,7 @@ pub struct Strip {
     pub working_on: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct TasksView {
     pub done: u32,
     pub total: u32,
@@ -37,7 +39,7 @@ pub struct TasksView {
     pub current: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ContextView {
     pub used_tokens: u64,
     pub window_tokens: Option<u64>,
@@ -46,21 +48,30 @@ pub struct ContextView {
     pub in_strip: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct UsageView {
     pub blocked: bool,
-    pub windows: Vec<(String, f64, Option<i64>)>,
+    pub windows: Vec<UsageWindowView>,
     pub credits: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One rate-limit window: its name, how much of it is used, and when it
+/// resets.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct UsageWindowView {
+    pub name: String,
+    pub used_percent: f64,
+    pub resets_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ServerView {
     pub name: String,
     pub error: String,
     pub needs_auth: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SignInView {
     pub state: SignInState,
     pub account: String,
@@ -117,12 +128,10 @@ pub fn session_strip(state: &SessionState) -> Strip {
                 .usage
                 .windows
                 .iter()
-                .map(|window| {
-                    (
-                        window.name.clone(),
-                        window.used_percent,
-                        window.resets_at_ms,
-                    )
+                .map(|window| UsageWindowView {
+                    name: window.name.clone(),
+                    used_percent: window.used_percent,
+                    resets_at_ms: window.resets_at_ms,
                 })
                 .collect(),
             credits: agent.usage.credits.clone(),
@@ -170,7 +179,7 @@ pub fn session_strip(state: &SessionState) -> Strip {
 
 /// The composer as the chat draws it: Send, Resume for an exited agent,
 /// or waiting while drafting continues; with the activity line inside it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ComposerView {
     pub mode: Composer,
     pub activity: Option<Activity>,
@@ -197,7 +206,7 @@ pub fn composer_tokens(draft: &str, attachments: &[Attachment]) -> Vec<Segment> 
 }
 
 /// A queued prompt under the composer.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct QueuedRow {
     pub input_id: Vec<u8>,
     pub text: Vec<Segment>,
@@ -241,14 +250,14 @@ pub fn queue_rows(state: &SessionState) -> Vec<QueuedRow> {
 
 /// This client's prompts not yet in the transcript or the queue: sending,
 /// not confirmed (resend or discard), or rejected with the reason.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct OutboxRow {
     pub input_id: Vec<u8>,
     pub text: Vec<Segment>,
     pub state: OutboxState,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub enum OutboxState {
     Sending,
     NotConfirmed,
