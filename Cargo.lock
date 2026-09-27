@@ -499,6 +499,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.2.0"
+dependencies = [
+ "agent-dir",
+ "async-trait",
+ "futures-util",
+ "hyper-util",
+ "prost",
+ "provider-fakes",
+ "testnet",
+ "thiserror 2.0.20",
+ "tokio",
+ "tonic",
+ "tower",
+ "wire",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3537,6 +3555,23 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ui-runtime"
+version = "0.5.0"
+dependencies = [
+ "async-trait",
+ "client",
+ "futures-util",
+ "provider-fakes",
+ "tempfile",
+ "testnet",
+ "thiserror 2.0.20",
+ "tokio",
+ "ui-state",
+ "uuid",
+ "wire",
+]
 
 [[package]]
 name = "ui-state"

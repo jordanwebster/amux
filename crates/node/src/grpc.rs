@@ -520,12 +520,18 @@ pub(crate) fn incoming(
 }
 
 /// Serves the client service on a listener until the task is aborted,
-/// which drops the listener and removes its socket.
+/// which drops the listener and removes its socket, and closes every
+/// connection it accepted.
 pub(crate) fn serve_client(listener: LocalListener, api: ClientApi) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // The signal never fires; asking for graceful shutdown at all is
+        // what ties each accepted connection to this future. Without it a
+        // connection outlives the abort, and a client on it is answered
+        // "no longer running" by a dead runtime instead of redialling the
+        // socket, where a restarted runtime may already be listening.
         let served = tonic::transport::Server::builder()
             .add_service(wire::client_service_server(api))
-            .serve_with_incoming(incoming(listener))
+            .serve_with_incoming_shutdown(incoming(listener), std::future::pending::<()>())
             .await;
         if let Err(error) = served {
             tracing::warn!(%error, "a client socket stopped serving");

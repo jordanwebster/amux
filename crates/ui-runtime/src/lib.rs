@@ -1,71 +1,75 @@
-//! Resource-owning execution shell for [`ui_state`].
+//! The session and fleet drivers: the only place an amux chat does I/O.
+//!
+//! A [`Session`] owns one chat's Subscribe stream and feeds it into the pure
+//! `ui_state::SessionState`; a [`Fleet`] does the same for the inventory.
+//! Both call the local runtime through a [`client::Client`], reconnect on
+//! their own clock, and keep a bounded trace for dumps. Nothing is
+//! persisted: every open rebuilds from the runtime's rows.
 
-#[cfg(test)]
-mod test_allocator {
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+mod fleet;
+pub mod inputs;
+mod session;
+pub mod trace;
 
-    pub(crate) struct CountingAllocator;
+use std::io;
+use std::path::{Component, Path};
 
-    static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+pub use fleet::{Fleet, FleetGuard};
+pub use session::{Changes, InputError, PageError, Sent, Session, StateGuard};
+pub use trace::{DriverEvent, DriverTrace, TRACE_EVENTS, TraceEvent, Traced};
 
-    unsafe impl GlobalAlloc for CountingAllocator {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            // SAFETY: this allocator delegates every operation to the system
-            // allocator with the caller's unchanged layout.
-            let pointer = unsafe { System.alloc(layout) };
-            if !pointer.is_null() {
-                LIVE_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
-            }
-            pointer
+/// The first wait before reconnecting to the local runtime.
+pub const RECONNECT_FIRST_MS: i64 = 250;
+/// The longest wait between reconnects: a daemon update takes a few
+/// seconds, and a client should be back soon after.
+pub const RECONNECT_MAX_MS: i64 = 5_000;
+
+/// Reconnect waits: doubling from the first to the longest, and back to the
+/// first once a stream has caught up.
+#[derive(Debug)]
+struct Backoff {
+    next: i64,
+}
+
+impl Default for Backoff {
+    fn default() -> Backoff {
+        Backoff {
+            next: RECONNECT_FIRST_MS,
         }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
-            // SAFETY: `pointer` was returned by the system allocator for this
-            // layout and has not been deallocated yet.
-            unsafe { System.dealloc(pointer, layout) };
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-            // SAFETY: this forwards the allocation and layouts unchanged.
-            let replacement = unsafe { System.realloc(pointer, layout, size) };
-            if !replacement.is_null() {
-                if size >= layout.size() {
-                    LIVE_BYTES.fetch_add(size - layout.size(), Ordering::Relaxed);
-                } else {
-                    LIVE_BYTES.fetch_sub(layout.size() - size, Ordering::Relaxed);
-                }
-            }
-            replacement
-        }
-    }
-
-    pub(crate) fn live_bytes() -> usize {
-        LIVE_BYTES.load(Ordering::SeqCst)
     }
 }
 
-#[cfg(test)]
-#[global_allocator]
-static TEST_ALLOCATOR: test_allocator::CountingAllocator = test_allocator::CountingAllocator;
+impl Backoff {
+    fn next_ms(&mut self) -> i64 {
+        let wait = self.next;
+        self.next = (self.next * 2).min(RECONNECT_MAX_MS);
+        wait
+    }
 
-mod recorder;
-pub mod report;
-mod runtime;
-mod store_worker;
+    fn reset(&mut self) {
+        self.next = RECONNECT_FIRST_MS;
+    }
+}
 
-pub use recorder::{
-    DEFAULT_RECORDER_CAPACITY, DEFAULT_RECORDER_MAX_BYTES, MSGS_SCHEMA_VERSION, Recorder,
-    RecorderSnapshot, ReplayError, replay_msgs,
-};
-pub use runtime::{
-    AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ChatRetentionReport,
-    ConnectFailure, ConnectFuture, Connector, Generation, HostEventStream, HostEventStreamFuture,
-    HostInventory, LateResult, MAX_STREAM_BATCH, MsgTap, ProfileDirectory, ProfileEntry,
-    ReportExtras, ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions,
-    RuntimeRetentionReport, ShellEdge, StoreRecovery, execute_put, execute_put_then_send,
-    phone_store_open_failure_message, store_failure_message, store_open_failure_message,
-    write_panic_report,
-};
-pub use store_worker::LOCAL_HOST_VIEW;
+/// Writes a client's dump part into a bundle directory the daemon wrote.
+/// Names are relative paths inside the bundle; any other is refused.
+pub fn write_part(bundle: &Path, part: &wire::DumpPart) -> io::Result<()> {
+    for file in &part.files {
+        let name = Path::new(&file.name);
+        let inside = name
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+        if !inside {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("a dump part names {:?}, outside its bundle", file.name),
+            ));
+        }
+        let path = bundle.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, &file.contents)?;
+    }
+    Ok(())
+}

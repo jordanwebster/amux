@@ -1,33 +1,22 @@
 [package]
 name = "ui-runtime"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 license.workspace = true
-description = "Resource-owning effect runtime for amux UI state"
+description = "The session and fleet drivers: the only place an amux chat does I/O"
 publish = false
-
-[features]
-default = []
-bundled = ["store/bundled"]
 
 [dependencies]
 client = { workspace = true }
-artifacts = { workspace = true }
-chrono = { workspace = true }
 futures-util = { workspace = true }
-model = { workspace = true }
-rusqlite = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-store = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tracing = { workspace = true }
 ui-state = { workspace = true }
 uuid = { workspace = true }
+wire = { workspace = true }
 
 [dev-dependencies]
-agent-runtime = { workspace = true }
-node = { workspace = true }
-testnet = { workspace = true }
+async-trait = { workspace = true }
+provider-fakes = { workspace = true }
 tempfile = { workspace = true }
+testnet = { workspace = true }

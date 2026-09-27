@@ -1,0 +1,245 @@
+//! The drivers against a real node in process, running a real agent on a
+//! fake provider, through both clients: the in-process call the phone makes
+//! and gRPC over the profile socket the terminal dials.
+
+#![cfg(unix)]
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use client::{Client, GrpcClient, InProcess, SystemClock};
+use provider_fakes::script::Step;
+use testnet::{AgentDecl, FakeKind, Net, Topology};
+use ui_runtime::{Fleet, Session};
+use ui_state::{Connection, InputState};
+use wire::ListProfilesRequest;
+
+const PATIENCE: Duration = Duration::from_secs(20);
+
+fn text(text: &str) -> Step {
+    Step::Text {
+        chunks: vec![text.to_owned()],
+    }
+}
+
+fn topology() -> Topology {
+    let mut steps = Vec::new();
+    for turn in ["one", "two", "three", "four"] {
+        steps.push(text(&format!("turn {turn}")));
+        steps.push(Step::TurnEnd);
+    }
+    steps.push(text("reply to the session"));
+    steps.push(Step::TurnEnd);
+    Topology::new().host("desk").agent(
+        AgentDecl::new("worker", "desk")
+            .kind(FakeKind::ClaudeSdk)
+            .steps(steps)
+            .prompt("go"),
+    )
+}
+
+async fn grpc(net: &Net) -> GrpcClient {
+    let profiles = net
+        .front_door("desk")
+        .await
+        .unwrap()
+        .list_profiles(ListProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .profiles;
+    GrpcClient::connect(profiles[0].socket_path.as_ref())
+        .await
+        .expect("the profile socket answers")
+}
+
+async fn until<T>(
+    what: &str,
+    mut changed: tokio::sync::watch::Receiver<()>,
+    mut check: impl FnMut() -> Option<T>,
+) -> T {
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(found) = check() {
+                return found;
+            }
+            changed.changed().await.expect("the driver is open");
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("never saw {what}"))
+}
+
+fn says(session: &Session, wanted: &str) -> bool {
+    session
+        .state()
+        .transcript()
+        .iter()
+        .any(|held| held.item.text.contains(wanted))
+}
+
+/// The trace one line per event, items by key and revision.
+fn compact(trace: &ui_runtime::DriverTrace<ui_state::SessionState, ui_state::Msg>) -> String {
+    use ui_runtime::TraceEvent;
+    use ui_state::Msg;
+    use wire::session_event::Of;
+    let mut out = String::new();
+    for traced in &trace.events {
+        let line = match &traced.event {
+            TraceEvent::Driver(event) => format!("driver  {event:?}"),
+            TraceEvent::Msg(Msg::Event(event)) => match &event.of {
+                Some(Of::Item(item)) => format!(
+                    "item    {} order {} revision {} {:?}",
+                    item.key, item.order, item.revision, item.text
+                ),
+                Some(Of::Snapshot(snapshot)) => format!(
+                    "snapshot revision {} queue {}",
+                    snapshot.revision,
+                    snapshot.queue.len()
+                ),
+                Some(Of::Append(append)) => {
+                    format!("append  {} -> revision {}", append.key, append.revision)
+                }
+                Some(other) => format!("marker  {other:?}"),
+                None => "empty".into(),
+            },
+            TraceEvent::Msg(Msg::Send(input)) => {
+                format!("send    {:?}", ui_state::InputWhat::of(input))
+            }
+            TraceEvent::Msg(Msg::Sent(_, outcome)) => format!("sent    {outcome:?}"),
+            TraceEvent::Msg(other) => format!("msg     {other:?}"),
+        };
+        out.push_str(&format!("{:>3} {line}\n", traced.seq));
+    }
+    out
+}
+
+/// The fleet lists the agent, a session opens on it, a prompt lands and
+/// is answered, and history pages in from below.
+async fn drive(client: Arc<dyn Client>, net: &Net) {
+    let fleet = Fleet::open(client.clone(), SystemClock).await.unwrap();
+    assert!(fleet.state().caught_up());
+    let worker = net.agent("worker").unwrap().id;
+    let agent = fleet
+        .state()
+        .find(worker.as_bytes())
+        .cloned()
+        .expect("the fleet lists the worker");
+
+    // The first turn is written before the session sends anything.
+    let session = Session::open(client, agent, 2, SystemClock).await.unwrap();
+    until("the first turn", session.changed(), || {
+        (session.state().caught_up() && says(&session, "turn one")).then_some(())
+    })
+    .await;
+    for turn in ["two", "three", "four"] {
+        let sent = session
+            .send_prompt(&format!("next {turn}"), Vec::new())
+            .await;
+        until("the prompt to settle", session.changed(), || {
+            (session.state().input_state(&sent.id) == Some(InputState::Settled)).then_some(())
+        })
+        .await;
+        until("the turn's reply", session.changed(), || {
+            says(&session, &format!("turn {turn}")).then_some(())
+        })
+        .await;
+    }
+    let sent = session.send_prompt("and now?", Vec::new()).await;
+    until("the reply to the session", session.changed(), || {
+        (says(&session, "reply to the session")
+            && session.state().input_state(&sent.id) == Some(InputState::Settled))
+        .then_some(())
+    })
+    .await;
+
+    // The window started two rows from the head; page it down to order one.
+    let mut pages = 0;
+    while session.state().transcript().has_older() {
+        session
+            .page_older(3)
+            .await
+            .expect("an own agent's history pages");
+        pages += 1;
+        assert!(pages < 50, "paging never reached the first row");
+    }
+    assert_eq!(session.state().oldest_order(), Some(1));
+    assert!(says(&session, "turn one"), "paged in from below");
+    let trace = session.trace();
+    assert_eq!(trace.replay(), *session.state());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_and_the_fleet_run_in_process_against_a_real_node() {
+    let net = Net::start(topology()).await.unwrap();
+    let client: Arc<dyn Client> = Arc::new(InProcess::new(net.client("desk").unwrap()));
+    drive(client, &net).await;
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_and_the_fleet_run_over_the_profile_socket_against_a_real_node() {
+    let net = Net::start(topology()).await.unwrap();
+    let client: Arc<dyn Client> = Arc::new(grpc(&net).await);
+    drive(client, &net).await;
+    net.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_over_the_socket_reconnects_across_a_daemon_restart() {
+    let mut net = Net::start(
+        Topology::new().host("desk").agent(
+            AgentDecl::new("worker", "desk")
+                .kind(FakeKind::ClaudeSdk)
+                .steps(vec![
+                    text("before"),
+                    Step::TurnEnd,
+                    text("after the restart"),
+                    Step::TurnEnd,
+                ])
+                .prompt("go"),
+        ),
+    )
+    .await
+    .unwrap();
+    let client: Arc<dyn Client> = Arc::new(grpc(&net).await);
+    let fleet = Fleet::open(client.clone(), SystemClock).await.unwrap();
+    let worker = net.agent("worker").unwrap().id;
+    let agent = fleet.state().find(worker.as_bytes()).cloned().unwrap();
+    let session = Session::open(client, agent, 40, SystemClock).await.unwrap();
+    until("the first turn", session.changed(), || {
+        (session.state().caught_up() && says(&session, "before")).then_some(())
+    })
+    .await;
+
+    net.kill_daemon("desk").await.unwrap();
+    until("the session to notice", session.changed(), || {
+        (session.state().connection() == Connection::Reconnecting).then_some(())
+    })
+    .await;
+    until("the fleet to notice", fleet.changed(), || {
+        (fleet.state().connection() == Connection::Reconnecting).then_some(())
+    })
+    .await;
+    net.restart_daemon("desk").await.unwrap();
+    until("the session to catch up again", session.changed(), || {
+        let state = session.state();
+        (state.connection() == Connection::Live && state.caught_up()).then_some(())
+    })
+    .await;
+    until("the fleet to catch up again", fleet.changed(), || {
+        (fleet.state().caught_up() && fleet.state().find(worker.as_bytes()).is_some()).then_some(())
+    })
+    .await;
+    let sent = session.send_prompt("still there?", Vec::new()).await;
+    until("the reply after the restart", session.changed(), || {
+        (says(&session, "after the restart")
+            && session.state().input_state(&sent.id) == Some(InputState::Settled))
+        .then_some(())
+    })
+    .await;
+    println!("{}", compact(&session.trace()));
+    session.close();
+    fleet.close();
+    net.shutdown().await.unwrap();
+}

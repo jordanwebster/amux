@@ -1,1942 +1,330 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
+//! The one seam both amux clients call their local runtime through.
+//!
+//! A client never opens a store and never talks to another host: it calls
+//! the profile's client service on its own machine, which answers from its
+//! rows and reaches origins itself. On the desktop that service is the
+//! daemon behind the profile's local socket ([`GrpcClient`]); on the phone
+//! it is the same runtime hosted in process ([`InProcess`]). Both implement
+//! [`Client`], so the session and fleet drivers above them are written once.
+
+use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll};
 
-use bytes::Bytes;
-use chrono::{DateTime, Utc};
-use futures_util::Stream;
-use model::{
-    Agent, AgentEvent, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
-    DebugFormat, DiffBase, DiffResponse, HostEntry, HostEvent, HostId, HostTrustStatus, HostVia,
-    PeerIdentifier, ProfileId, ProtocolError, SendInputRequest, SendMessageRequest,
-    SessionCloseReason, SetAgentStatusRequest, ShutdownReason, SshPairingPeer,
-    SubscribeSessionEvent, SubscribeSessionRequest,
+pub use agent_dir::{Clock, ManualClock, SystemClock};
+use async_trait::async_trait;
+use futures_util::{Stream, StreamExt as _};
+use prost::Message as _;
+use tonic::{Code, Request, Status};
+use wire::client_service_client::ClientServiceClient;
+use wire::client_service_server::ClientService;
+use wire::{
+    Agent, BlobRef, CreateAgentRequest, DeleteAgentRequest, DeleteAgentResponse, Diff, DiffRequest,
+    DumpRequest, DumpResponse, Empty, Envelope, ErrorCode, FetchRequest, FetchResponse,
+    GetBlobRequest, GetBlobResponse, GetRequest, InventoryEvent, Item, ListRepositoriesRequest,
+    ListRepositoriesResponse, PutBlobRequest, RenameAgentRequest, ResolveAgentRequest,
+    ResumeAgentRequest, SendInputRequest, SendInputResponse, SendMessageResponse, SessionEvent,
+    StopAgentRequest, SubscribeRequest,
 };
-use thiserror::Error;
-use tokio::sync::Mutex as AsyncMutex;
-use tonic::transport::Channel;
-use uuid::Uuid;
-use wire::{self, protocol_error_from_status_details};
 
-const SHUTDOWN_REASON_METADATA_KEY: &str = "amux-shutdown-reason";
+/// A server stream. An `Err` item or the end of the stream both mean the
+/// stream is over; only the first says the transport failed.
+pub type EventStream<T> = Pin<Box<dyn Stream<Item = Result<T, RpcError>> + Send>>;
 
-const PAIRING_PUBKEY_LEN: usize = 32;
-const MAX_PAIRING_NAME_BYTES: usize = 256;
-
-mod connect;
-mod front_door;
-mod profile;
-
-mod method {
-    pub(super) const CLIENT_LIST_HOSTS_NAME: &str = "/amux.v1.ClientService/ListHosts";
-    pub(super) const CLIENT_LIST_AGENTS_NAME: &str = "/amux.v1.ClientService/ListAgents";
-    pub(super) const CLIENT_SUBSCRIBE_HOSTS_NAME: &str = "/amux.v1.ClientService/SubscribeHosts";
-    pub(super) const CLIENT_SUBSCRIBE_AGENTS_NAME: &str = "/amux.v1.ClientService/SubscribeAgents";
-    pub(super) const CLIENT_CREATE_NAME: &str = "/amux.v1.ClientService/CreateAgent";
-    pub(super) const CLIENT_RENAME_NAME: &str = "/amux.v1.ClientService/RenameAgent";
-    pub(super) const CLIENT_DELETE_NAME: &str = "/amux.v1.ClientService/DeleteAgent";
-    pub(super) const CLIENT_SEND_MESSAGE_NAME: &str = "/amux.v1.ClientService/SendMessage";
-    pub(super) const CLIENT_SEND_INPUT_NAME: &str = "/amux.v1.ClientService/SendInput";
-    pub(super) const CLIENT_PUT_ARTIFACT_NAME: &str = "/amux.v1.ClientService/PutArtifact";
-    pub(super) const CLIENT_GET_ARTIFACT_NAME: &str = "/amux.v1.ClientService/GetArtifact";
-    pub(super) const CLIENT_DIFF_NAME: &str = "/amux.v1.ClientService/Diff";
-    pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
-        "/amux.v1.ClientService/SubscribeSession";
-    pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
-    #[cfg(test)]
-    pub(super) const PROFILE_START_PAIRING_NAME: &str = "/amux.v1.ProfileService/StartPairing";
-}
-
-pub use connect::ConnectError;
-#[cfg(unix)]
-pub use connect::connect_socket;
-pub use front_door::FrontDoorClient;
-pub use profile::ProfileAdminClient;
-pub mod installation_rpc {
-    pub use wire::{
-        BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
-        InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
-        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RelayCarrier,
-        RenameProfileRequest, ResumeAllRequest, SuspendAllRequest, SuspendReason, Tier,
-        WatchProfilesRequest, WatchProfilesResponse, watch_profiles_response,
-    };
-}
-
-#[derive(Debug, Error)]
-pub enum ClientError {
-    #[error(transparent)]
-    Protocol(#[from] ProtocolError),
-    #[error("server shutdown: {0}")]
-    ServerShutdown(ShutdownReason),
-    #[error("failed to encode {method} request: {message}")]
-    Encode {
-        method: &'static str,
-        message: String,
-    },
-    #[error("failed to decode {method} response: {message}")]
-    Decode {
-        method: &'static str,
-        message: String,
-    },
-    #[error("unexpected response to {method}: {message}")]
-    Unexpected {
-        method: &'static str,
-        message: String,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeleteAgentSummary {
-    pub removed_children: Vec<Agent>,
-    pub unreachable_children: Vec<Agent>,
-}
-
-pub struct SubscribeSessionClient {
-    inner: ClientServiceResponseStream<wire::SubscribeSessionResponse>,
-    done: bool,
-    received_encoded_bytes: u64,
-}
-
-pub type SessionStream = SubscribeSessionClient;
-
-pub struct HostEventStream {
-    inner: ClientServiceResponseStream<wire::SubscribeHostsResponse>,
-    done: bool,
-}
-
-pub struct AgentEventStream {
-    inner: ClientServiceResponseStream<wire::SubscribeAgentsResponse>,
-    done: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PairingStart {
-    pub identity: SshPairingPeer,
-    pub ttl_seconds: u64,
-    pub addrs: Vec<SocketAddr>,
-    pub cloud_url: Option<String>,
-    pub secret: PairingSecret,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PairingSecret {
-    Pin(String),
-    QrSecret(Vec<u8>),
-}
-
-/// Authenticated display identity awaiting an explicit trust decision.
-/// Dropping this value never grants trust; the host expires the attempt.
-pub struct PendingPeer {
-    pub host_id: HostId,
-    pub name: String,
-    pub fingerprint: String,
-    pub expires_at: DateTime<Utc>,
-    pub via: PeerVia,
-    #[doc(hidden)]
-    pub token: Vec<u8>,
-}
-
-impl std::fmt::Debug for PendingPeer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PendingPeer")
-            .field("host_id", &self.host_id)
-            .field("name", &self.name)
-            .field("fingerprint", &self.fingerprint)
-            .field("expires_at", &self.expires_at)
-            .field("via", &self.via)
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum PairingError {
-    /// Every secret failure is this one opaque code, spelled as the protocol
-    /// spells it on the wire so a reader meets one word, not two.
-    #[error("INVALID_PIN")]
-    InvalidPin,
-    #[error("pairing target was not found")]
-    NotFound,
-    #[error("a subscription is required for relay pairing")]
-    PaymentRequired,
-    #[error("SELF_PAIRING")]
-    SelfPairing,
-    #[error("Expired")]
-    Expired,
-    #[error("Abandoned")]
-    Abandoned,
-    /// The attempt never reached a verdict: the relay or host was unreachable,
-    /// or the daemon failed internally. The message is the host's own words, so
-    /// a client can show it without translating a code.
-    #[error("{0}")]
+/// Why a call did not return its answer.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum RpcError {
+    /// The runtime could not be reached, or the connection failed before
+    /// the answer arrived: whether the call took effect is unknown.
+    #[error("the local runtime is not answering: {0}")]
     Transport(String),
+    /// The runtime answered, with an error.
+    #[error("{}", .0.message)]
+    Refused(wire::Error),
 }
 
-impl From<ClientError> for PairingError {
-    fn from(error: ClientError) -> Self {
-        Self::Transport(error.to_string())
-    }
-}
-
-#[doc(hidden)]
-pub fn status_to_pairing_error(error: tonic::Status) -> PairingError {
-    if protocol_error_from_status_details(&error) == Some(ProtocolError::PaymentRequired) {
-        return PairingError::PaymentRequired;
-    }
-    match error.code() {
-        tonic::Code::NotFound => PairingError::NotFound,
-        tonic::Code::Unavailable | tonic::Code::Internal => {
-            PairingError::Transport(error.message().to_string())
-        }
-        tonic::Code::FailedPrecondition if error.message().contains("SUBSCRIPTION") => {
-            PairingError::PaymentRequired
-        }
-        tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => {
-            PairingError::SelfPairing
-        }
-        tonic::Code::DeadlineExceeded => PairingError::Expired,
-        _ => PairingError::InvalidPin,
-    }
-}
-
-/// How a pairing attempt reached, or would reach, the other device.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PeerVia {
-    Direct,
-    Relay,
-    Ssh,
-}
-
-/// A host discovery found that this profile could pair with, and the route
-/// that would carry the attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PairingCandidate {
-    pub host: HostEntry,
-    pub via: PeerVia,
-    pub addrs: Vec<SocketAddr>,
-}
-
-/// This device's public identity, read without entering pairing mode.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeviceIdentity {
-    pub host_id: HostId,
-    pub name: String,
-    /// SHA256 of the device public key, encoded as lowercase hexadecimal.
-    pub fingerprint: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PeerEntry {
-    pub host_id: uuid::Uuid,
-    pub name: String,
-    pub pubkey: Vec<u8>,
-    pub fingerprint: String,
-    pub paired_at: DateTime<Utc>,
-    pub reachabilities: Vec<PeerReachability>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PeerReachability {
-    Cloud,
-    Ssh { target: String, profile: ProfileId },
-    Direct { addrs: Vec<SocketAddr> },
-}
-
-struct ClientServiceResponseStream<T> {
-    stream: tonic::Streaming<T>,
-}
-
-impl SubscribeSessionClient {
-    /// Encoded protobuf bytes received on this subscription, including each
-    /// gRPC message's five-byte compression flag and length prefix.
-    pub fn received_encoded_bytes(&self) -> u64 {
-        self.received_encoded_bytes
-    }
-
-    pub async fn recv(&mut self) -> Result<SubscribeSessionEvent, ClientError> {
-        if self.done {
-            return Err(stream_already_done_error(
-                method::CLIENT_SUBSCRIBE_SESSION_NAME,
-            ));
-        }
-        let response = recv_client_service_subscribe_session_response(&mut self.inner).await;
-        let event = response.and_then(|response| {
-            self.received_encoded_bytes = self
-                .received_encoded_bytes
-                .saturating_add(grpc_message_bytes(&response));
-            client_service_session_response_to_event(response)
-        });
-        if session_event_stream_item_is_terminal(&event) {
-            self.done = true;
-        }
-        event
-    }
-}
-
-impl Stream for SubscribeSessionClient {
-    type Item = Result<SubscribeSessionEvent, ClientError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        if this.done {
-            return Poll::Ready(None);
-        }
-        match Pin::new(&mut this.inner.stream).poll_next(cx) {
-            Poll::Ready(Some(Ok(response))) => {
-                this.received_encoded_bytes = this
-                    .received_encoded_bytes
-                    .saturating_add(grpc_message_bytes(&response));
-                let result = client_service_session_response_to_event(response);
-                if session_event_stream_item_is_terminal(&result) {
-                    this.done = true;
-                }
-                Poll::Ready(Some(result))
+impl RpcError {
+    /// The error's code, when the runtime answered.
+    pub fn code(&self) -> Option<ErrorCode> {
+        match self {
+            RpcError::Transport(_) => None,
+            RpcError::Refused(error) => {
+                Some(ErrorCode::try_from(error.code).unwrap_or(ErrorCode::Unspecified))
             }
-            Poll::Ready(Some(Err(status))) => {
-                this.done = true;
-                Poll::Ready(Some(Err(status_to_client_error(status))))
+        }
+    }
+
+    pub fn is_transport(&self) -> bool {
+        matches!(self, RpcError::Transport(_))
+    }
+}
+
+impl From<Status> for RpcError {
+    /// The runtime puts its whole error in the status details; a status
+    /// without one came from the transport, or from a service that is no
+    /// longer running, and says nothing about whether the call landed.
+    fn from(status: Status) -> RpcError {
+        if let Ok(error) = wire::Error::decode(status.details())
+            && error.code != ErrorCode::Unspecified as i32
+        {
+            return RpcError::Refused(error);
+        }
+        let code = match status.code() {
+            Code::Unavailable
+            | Code::Unknown
+            | Code::Cancelled
+            | Code::DeadlineExceeded
+            | Code::Internal
+            | Code::Aborted => return RpcError::Transport(status.message().to_owned()),
+            Code::InvalidArgument | Code::OutOfRange => ErrorCode::InvalidArgument,
+            Code::NotFound => ErrorCode::NotFound,
+            Code::AlreadyExists => ErrorCode::AlreadyExists,
+            Code::PermissionDenied => ErrorCode::PermissionDenied,
+            Code::Unauthenticated => ErrorCode::Unauthenticated,
+            Code::FailedPrecondition => ErrorCode::FailedPrecondition,
+            Code::ResourceExhausted => ErrorCode::ResourceExhausted,
+            Code::Unimplemented => ErrorCode::Unimplemented,
+            Code::DataLoss => ErrorCode::DataLoss,
+            Code::Ok => ErrorCode::Unspecified,
+        };
+        RpcError::Refused(wire::Error {
+            code: code as i32,
+            message: status.message().to_owned(),
+            details: Vec::new(),
+        })
+    }
+}
+
+/// The client service as a client calls it. Every method is the service
+/// call of the same name.
+#[async_trait]
+pub trait Client: Send + Sync + 'static {
+    async fn subscribe_inventory(&self) -> Result<EventStream<InventoryEvent>, RpcError>;
+    async fn resolve_agent(&self, request: ResolveAgentRequest) -> Result<Agent, RpcError>;
+    async fn subscribe(
+        &self,
+        request: SubscribeRequest,
+    ) -> Result<EventStream<SessionEvent>, RpcError>;
+    async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, RpcError>;
+    async fn get(&self, request: GetRequest) -> Result<Item, RpcError>;
+    async fn send_input(&self, request: SendInputRequest) -> Result<SendInputResponse, RpcError>;
+    async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent, RpcError>;
+    async fn rename_agent(&self, request: RenameAgentRequest) -> Result<Agent, RpcError>;
+    async fn stop_agent(&self, request: StopAgentRequest) -> Result<(), RpcError>;
+    async fn resume_agent(&self, request: ResumeAgentRequest) -> Result<Agent, RpcError>;
+    async fn delete_agent(
+        &self,
+        request: DeleteAgentRequest,
+    ) -> Result<DeleteAgentResponse, RpcError>;
+    async fn send_message(&self, envelope: Envelope) -> Result<SendMessageResponse, RpcError>;
+    async fn put_blob(&self, request: PutBlobRequest) -> Result<BlobRef, RpcError>;
+    async fn get_blob(&self, request: GetBlobRequest) -> Result<GetBlobResponse, RpcError>;
+    async fn diff(&self, request: DiffRequest) -> Result<Diff, RpcError>;
+    async fn list_repositories(
+        &self,
+        request: ListRepositoriesRequest,
+    ) -> Result<ListRepositoriesResponse, RpcError>;
+    async fn dump(&self, request: DumpRequest) -> Result<DumpResponse, RpcError>;
+}
+
+/// One implementation of [`Client`] per way of reaching the service:
+/// `$call!(self, method, request)` makes the service call and yields its
+/// `Result<Response<_>, Status>`.
+macro_rules! client_impl {
+    (impl[$($generics:tt)*] Client for $ty:ty, $call:ident) => {
+        #[async_trait]
+        impl<$($generics)*> Client for $ty {
+            async fn subscribe_inventory(&self) -> Result<EventStream<InventoryEvent>, RpcError> {
+                Ok(events($call!(self, subscribe_inventory, Empty {}).await?.into_inner()))
             }
-            Poll::Ready(None) => {
-                this.done = true;
-                Poll::Ready(Some(Err(stream_ended_error(
-                    method::CLIENT_SUBSCRIBE_SESSION_NAME,
-                ))))
+
+            async fn resolve_agent(&self, request: ResolveAgentRequest) -> Result<Agent, RpcError> {
+                Ok($call!(self, resolve_agent, request).await?.into_inner())
             }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
 
-impl HostEventStream {
-    pub async fn recv(&mut self) -> Result<HostEvent, ClientError> {
-        if self.done {
-            return Err(stream_already_done_error(
-                method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-            ));
-        }
-        let event = recv_host_event(&mut self.inner).await;
-        if result_is_terminal(&event) {
-            self.done = true;
-        }
-        event
-    }
-}
-
-impl Stream for HostEventStream {
-    type Item = Result<HostEvent, ClientError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        poll_response_stream(
-            &mut this.inner,
-            &mut this.done,
-            method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-            client_service_host_response_to_host_event,
-            cx,
-            result_is_terminal,
-        )
-    }
-}
-
-impl AgentEventStream {
-    pub async fn recv(&mut self) -> Result<AgentEvent, ClientError> {
-        if self.done {
-            return Err(stream_already_done_error(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-            ));
-        }
-        let event = recv_agent_event(&mut self.inner).await;
-        if result_is_terminal(&event) {
-            self.done = true;
-        }
-        event
-    }
-}
-
-impl Stream for AgentEventStream {
-    type Item = Result<AgentEvent, ClientError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        poll_response_stream(
-            &mut this.inner,
-            &mut this.done,
-            method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-            |response| {
-                Ok(
-                    client_service_agent_response_to_agent_event(response)?.unwrap_or(
-                        AgentEvent::SnapshotComplete {
-                            host_id: Uuid::nil(),
-                            through_revision: 0,
-                        },
-                    ),
-                )
-            },
-            cx,
-            result_is_terminal,
-        )
-    }
-}
-
-fn poll_response_stream<T, U>(
-    stream: &mut ClientServiceResponseStream<T>,
-    done: &mut bool,
-    method: &'static str,
-    map: impl FnOnce(T) -> Result<U, ClientError>,
-    cx: &mut Context<'_>,
-    is_terminal: impl FnOnce(&Result<U, ClientError>) -> bool,
-) -> Poll<Option<Result<U, ClientError>>> {
-    if *done {
-        return Poll::Ready(None);
-    }
-
-    match Pin::new(&mut stream.stream).poll_next(cx) {
-        Poll::Ready(Some(Ok(response))) => {
-            let result = map(response);
-            if is_terminal(&result) {
-                *done = true;
+            async fn subscribe(
+                &self,
+                request: SubscribeRequest,
+            ) -> Result<EventStream<SessionEvent>, RpcError> {
+                Ok(events($call!(self, subscribe, request).await?.into_inner()))
             }
-            Poll::Ready(Some(result))
+
+            async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, RpcError> {
+                Ok($call!(self, fetch, request).await?.into_inner())
+            }
+
+            async fn get(&self, request: GetRequest) -> Result<Item, RpcError> {
+                Ok($call!(self, get, request).await?.into_inner())
+            }
+
+            async fn send_input(
+                &self,
+                request: SendInputRequest,
+            ) -> Result<SendInputResponse, RpcError> {
+                Ok($call!(self, send_input, request).await?.into_inner())
+            }
+
+            async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent, RpcError> {
+                Ok($call!(self, create_agent, request).await?.into_inner())
+            }
+
+            async fn rename_agent(&self, request: RenameAgentRequest) -> Result<Agent, RpcError> {
+                Ok($call!(self, rename_agent, request).await?.into_inner())
+            }
+
+            async fn stop_agent(&self, request: StopAgentRequest) -> Result<(), RpcError> {
+                $call!(self, stop_agent, request).await?;
+                Ok(())
+            }
+
+            async fn resume_agent(&self, request: ResumeAgentRequest) -> Result<Agent, RpcError> {
+                Ok($call!(self, resume_agent, request).await?.into_inner())
+            }
+
+            async fn delete_agent(
+                &self,
+                request: DeleteAgentRequest,
+            ) -> Result<DeleteAgentResponse, RpcError> {
+                Ok($call!(self, delete_agent, request).await?.into_inner())
+            }
+
+            async fn send_message(
+                &self,
+                envelope: Envelope,
+            ) -> Result<SendMessageResponse, RpcError> {
+                Ok($call!(self, send_message, envelope).await?.into_inner())
+            }
+
+            async fn put_blob(&self, request: PutBlobRequest) -> Result<BlobRef, RpcError> {
+                Ok($call!(self, put_blob, request).await?.into_inner())
+            }
+
+            async fn get_blob(&self, request: GetBlobRequest) -> Result<GetBlobResponse, RpcError> {
+                Ok($call!(self, get_blob, request).await?.into_inner())
+            }
+
+            async fn diff(&self, request: DiffRequest) -> Result<Diff, RpcError> {
+                Ok($call!(self, diff, request).await?.into_inner())
+            }
+
+            async fn list_repositories(
+                &self,
+                request: ListRepositoriesRequest,
+            ) -> Result<ListRepositoriesResponse, RpcError> {
+                Ok($call!(self, list_repositories, request).await?.into_inner())
+            }
+
+            async fn dump(&self, request: DumpRequest) -> Result<DumpResponse, RpcError> {
+                Ok($call!(self, dump, request).await?.into_inner())
+            }
         }
-        Poll::Ready(Some(Err(status))) => {
-            *done = true;
-            Poll::Ready(Some(Err(status_to_client_error(status))))
-        }
-        Poll::Ready(None) => {
-            *done = true;
-            Poll::Ready(Some(Err(stream_ended_error(method))))
-        }
-        Poll::Pending => Poll::Pending,
-    }
-}
-
-fn stream_already_done_error(method: &'static str) -> ClientError {
-    ClientError::Unexpected {
-        method,
-        message: "stream already ended".to_string(),
-    }
-}
-
-fn stream_ended_error(method: &'static str) -> ClientError {
-    ClientError::Unexpected {
-        method,
-        message: "stream ended".to_string(),
-    }
-}
-
-fn result_is_terminal<T>(result: &Result<T, ClientError>) -> bool {
-    result.is_err()
-}
-
-fn session_event_stream_item_is_terminal(
-    result: &Result<SubscribeSessionEvent, ClientError>,
-) -> bool {
-    match result {
-        Ok(SubscribeSessionEvent::Closed { .. }) | Err(_) => true,
-        Ok(_) => false,
-    }
-}
-
-async fn recv_client_service_subscribe_session_response(
-    inner: &mut ClientServiceResponseStream<wire::SubscribeSessionResponse>,
-) -> Result<wire::SubscribeSessionResponse, ClientError> {
-    let response = inner
-        .stream
-        .message()
-        .await
-        .map_err(status_to_client_error)?;
-    response.ok_or_else(|| ClientError::Unexpected {
-        method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-        message: "session event stream ended before SessionClosed".to_string(),
-    })
-}
-
-async fn recv_host_event(
-    inner: &mut ClientServiceResponseStream<wire::SubscribeHostsResponse>,
-) -> Result<HostEvent, ClientError> {
-    recv_client_service_host_event(inner).await
-}
-
-async fn recv_agent_event(
-    inner: &mut ClientServiceResponseStream<wire::SubscribeAgentsResponse>,
-) -> Result<AgentEvent, ClientError> {
-    recv_client_service_agent_event(inner).await
-}
-
-fn grpc_message_bytes(message: &impl prost::Message) -> u64 {
-    u64::try_from(message.encoded_len())
-        .unwrap_or(u64::MAX)
-        .saturating_add(5)
-}
-
-async fn recv_client_service_host_event(
-    stream: &mut ClientServiceResponseStream<wire::SubscribeHostsResponse>,
-) -> Result<HostEvent, ClientError> {
-    let response = stream
-        .stream
-        .message()
-        .await
-        .map_err(status_to_client_error)?;
-    let Some(response) = response else {
-        return Err(ClientError::Unexpected {
-            method: method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-            message: "host event stream ended".to_string(),
-        });
     };
-    client_service_host_response_to_host_event(response)
 }
 
-async fn recv_client_service_agent_event(
-    stream: &mut ClientServiceResponseStream<wire::SubscribeAgentsResponse>,
-) -> Result<AgentEvent, ClientError> {
-    let response = stream
-        .stream
-        .message()
-        .await
-        .map_err(status_to_client_error)?;
-    let Some(response) = response else {
-        return Err(ClientError::Unexpected {
-            method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-            message: "agent event stream ended".to_string(),
-        });
-    };
-    Ok(
-        client_service_agent_response_to_agent_event(response)?.unwrap_or(
-            AgentEvent::SnapshotComplete {
-                host_id: Uuid::nil(),
-                through_revision: 0,
-            },
-        ),
-    )
+fn events<T, S>(stream: S) -> EventStream<T>
+where
+    S: Stream<Item = Result<T, Status>> + Send + 'static,
+{
+    Box::pin(stream.map(|item| item.map_err(RpcError::from)))
 }
 
-/// Operation-oriented client for the local amux RPC surface.
+/// The daemon's client service over a profile's local socket.
+///
+/// The channel redials the socket on the next call after the connection
+/// drops, so a client outlives a daemon restart; a stream open at the time
+/// ends, and its reader subscribes again.
 #[derive(Clone)]
-pub struct Client {
-    inner: Arc<AsyncMutex<wire::client_service_client::ClientServiceClient<Channel>>>,
-    closed: Arc<AtomicBool>,
+pub struct GrpcClient {
+    service: ClientServiceClient<tonic::transport::Channel>,
 }
 
-impl Client {
-    /// Open a client on a ClientService socket the caller already knows.
-    /// The installation front door reports one socket per profile, so a UI
-    /// can bind a profile without reading that profile's config file.
-    #[cfg(unix)]
-    pub async fn connect_socket(path: &std::path::Path) -> Result<Self, ConnectError> {
-        Ok(Self::from_channel(connect::connect_socket(path).await?))
-    }
-
-    #[cfg(not(unix))]
-    pub async fn connect_socket(_path: &std::path::Path) -> Result<Self, ConnectError> {
-        Err(ConnectError::Unsupported)
-    }
-
-    pub fn from_channel(channel: Channel) -> Self {
-        Self {
-            inner: Arc::new(AsyncMutex::new(wire::client_service_client(channel))),
-            closed: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub fn disconnect(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-    }
-}
-
-impl Client {
-    pub async fn create_agent(&self, request: CreateAgentRequest) -> Result<Agent, ClientError> {
-        self.ensure_open()?;
-        let request = client_create_request_to_wire(request)?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .create_agent(request)
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        agent_response_to_agent(method::CLIENT_CREATE_NAME, response.agent)
-    }
-
-    pub async fn rename_agent(
-        &self,
-        identifier: impl Into<AgentIdentifier>,
-        name: String,
-    ) -> Result<Agent, ClientError> {
-        self.ensure_open()?;
-        let identifier = identifier.into();
-        let response = self
-            .inner
-            .lock()
-            .await
-            .rename_agent(wire::ClientRenameAgentRequest {
-                agent: Some(agent_ref(identifier)),
-                name,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        agent_response_to_agent(method::CLIENT_RENAME_NAME, response.agent)
-    }
-
-    pub async fn delete_agent(
-        &self,
-        identifier: impl Into<AgentIdentifier>,
-    ) -> Result<(), ClientError> {
-        self.delete_agent_with_summary(identifier).await.map(|_| ())
-    }
-
-    /// Delete a direct child on behalf of an authenticated agent.
-    pub async fn delete_child_agent(
-        &self,
-        identifier: impl Into<AgentIdentifier>,
-        caller_agent_id: Uuid,
-    ) -> Result<(), ClientError> {
-        self.delete_agent_with_summary_for_caller(identifier, Some(caller_agent_id))
-            .await
-            .map(|_| ())
-    }
-
-    pub async fn delete_agent_with_summary(
-        &self,
-        identifier: impl Into<AgentIdentifier>,
-    ) -> Result<DeleteAgentSummary, ClientError> {
-        self.delete_agent_with_summary_for_caller(identifier, None)
-            .await
-    }
-
-    async fn delete_agent_with_summary_for_caller(
-        &self,
-        identifier: impl Into<AgentIdentifier>,
-        caller_agent_id: Option<Uuid>,
-    ) -> Result<DeleteAgentSummary, ClientError> {
-        self.ensure_open()?;
-        let identifier = identifier.into();
-        let response = self
-            .inner
-            .lock()
-            .await
-            .delete_agent(wire::ClientDeleteAgentRequest {
-                agent: Some(agent_ref(identifier)),
-                caller_agent_id: caller_agent_id.map(|id| id.as_bytes().to_vec()),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let decode = |agents: Vec<wire::Agent>| {
-            agents
-                .into_iter()
-                .map(|agent| {
-                    wire::agent_from_wire(agent).map_err(|error| ClientError::Decode {
-                        method: method::CLIENT_DELETE_NAME,
-                        message: error.to_string(),
-                    })
-                })
-                .collect::<Result<Vec<_>, ClientError>>()
-        };
-        Ok(DeleteAgentSummary {
-            removed_children: decode(response.removed_children)?,
-            unreachable_children: decode(response.unreachable_children)?,
-        })
-    }
-
-    pub async fn subscribe_session(
-        &self,
-        request: SubscribeSessionRequest,
-    ) -> Result<SessionStream, ClientError> {
-        self.ensure_open()?;
-        let protocol = wire::session_args_to_client_wire(&request.args);
-        let response = self
-            .inner
-            .lock()
-            .await
-            .subscribe_session(wire::ClientSubscribeSessionRequest {
-                agent: Some(agent_ref(request.agent)),
-                protocol: Some(protocol),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let session = SubscribeSessionClient {
-            inner: ClientServiceResponseStream { stream: response },
-            done: false,
-            received_encoded_bytes: 0,
-        };
-        Ok(session)
-    }
-
-    pub async fn send_input(&self, request: SendInputRequest) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        let event = wire::session_input_to_client_wire(&request.input).map_err(|error| {
-            ClientError::Encode {
-                method: method::CLIENT_SEND_INPUT_NAME,
-                message: error.to_string(),
-            }
-        })?;
-        self.inner
-            .lock()
-            .await
-            .send_input(wire::ClientSendInputRequest {
-                agent: Some(agent_ref(request.agent)),
-                input_id: request.input_id,
-                pin: request.pin,
-                event: Some(event),
-            })
-            .await
-            .map_err(status_to_client_error)?;
-        Ok(())
-    }
-
-    pub async fn put_artifact(
-        &self,
-        agent: AgentIdentifier,
-        kind: ArtifactKind,
-        name: &str,
-        mime: &str,
-        bytes: Vec<u8>,
-    ) -> Result<ArtifactRef, ClientError> {
-        self.put_artifact_inner(agent, kind, name, mime, bytes, false)
-            .await
-    }
-
-    /// Stores an artifact produced by the calling managed agent. Unlike a
-    /// draft attachment put, this pins and publishes the artifact immediately
-    /// so a following reply mention can be rendered from the stream alone.
-    pub async fn put_artifact_by_agent(
-        &self,
-        caller: Uuid,
-        kind: ArtifactKind,
-        name: &str,
-        mime: &str,
-        bytes: Vec<u8>,
-    ) -> Result<ArtifactRef, ClientError> {
-        self.put_artifact_inner(AgentIdentifier::Id(caller), kind, name, mime, bytes, true)
-            .await
-    }
-
-    async fn put_artifact_inner(
-        &self,
-        agent: AgentIdentifier,
-        kind: ArtifactKind,
-        name: &str,
-        mime: &str,
-        bytes: Vec<u8>,
-        agent_attach: bool,
-    ) -> Result<ArtifactRef, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .put_artifact(wire::ClientPutArtifactRequest {
-                agent: Some(agent_ref(agent)),
-                kind: wire::artifact_kind_to_wire(kind) as i32,
-                name: name.to_string(),
-                mime: mime.to_string(),
-                bytes,
-                agent_attach,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let artifact = response.artifact.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_PUT_ARTIFACT_NAME,
-            message: "missing PutArtifactResponse.artifact".to_string(),
-        })?;
-        wire::artifact_ref_from_wire(artifact).map_err(|error| ClientError::Decode {
-            method: method::CLIENT_PUT_ARTIFACT_NAME,
-            message: error.to_string(),
-        })
-    }
-
-    pub async fn get_artifact(
-        &self,
-        agent: AgentIdentifier,
-        id: &ArtifactId,
-    ) -> Result<(ArtifactRef, Vec<u8>), ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .get_artifact(wire::ClientGetArtifactRequest {
-                agent: Some(agent_ref(agent)),
-                id: id.to_string(),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let artifact = response.artifact.ok_or_else(|| ClientError::Decode {
-            method: method::CLIENT_GET_ARTIFACT_NAME,
-            message: "missing GetArtifactResponse.artifact".to_string(),
-        })?;
-        let artifact =
-            wire::artifact_ref_from_wire(artifact).map_err(|error| ClientError::Decode {
-                method: method::CLIENT_GET_ARTIFACT_NAME,
-                message: error.to_string(),
-            })?;
-        Ok((artifact, response.bytes))
-    }
-
-    /// List recent projects and Git repositories declared by the selected host.
-    pub async fn list_repositories(
-        &self,
-        request: model::ListRepositoriesRequest,
-    ) -> Result<model::ListRepositoriesResponse, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .list_repositories(wire::ClientListRepositoriesRequest {
-                host_id: request.host.as_bytes().to_vec(),
-                query: request.query,
-                limit: request.limit,
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        response.try_into().map_err(|message| ClientError::Decode {
-            method: "/amux.v1.ClientService/ListRepositories",
-            message,
-        })
-    }
-
-    pub async fn diff(
-        &self,
-        agent: AgentIdentifier,
-        base: DiffBase,
-    ) -> Result<DiffResponse, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .diff(wire::ClientDiffRequest {
-                agent: Some(agent_ref(agent)),
-                base: Some(wire::diff_base_to_wire(&base)),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        wire::diff_response_from_wire(response).map_err(|error| ClientError::Decode {
-            method: method::CLIENT_DIFF_NAME,
-            message: error.to_string(),
-        })
-    }
-
-    pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .send_message(wire::ClientSendMessageRequest {
-                to: Some(agent_ref(request.to)),
-                text: request.text,
-                context: request.context.map(|id| id.as_bytes().to_vec()),
-                from_agent_id: request.from_agent_id.map(|id| id.as_bytes().to_vec()),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        uuid_from_wire_bytes(
-            method::CLIENT_SEND_MESSAGE_NAME,
-            "SendMessageResponse.envelope_id",
-            response.envelope_id,
-        )
-    }
-
-    pub async fn set_agent_status(
-        &self,
-        request: SetAgentStatusRequest,
-    ) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        self.inner
-            .lock()
-            .await
-            .set_agent_status(wire::ClientSetAgentStatusRequest {
-                agent: Some(agent_ref(request.agent)),
-                working_on: request.working_on,
-            })
-            .await
-            .map_err(status_to_client_error)?;
-        Ok(())
-    }
-
-    pub async fn list_agents(&self) -> Result<Vec<Agent>, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .list_agents(wire::ListAgentsRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        response
-            .agents
-            .into_iter()
-            .map(|agent| wire_agent_to_agent(method::CLIENT_LIST_AGENTS_NAME, agent))
-            .collect()
-    }
-
-    pub async fn list_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .list_hosts(wire::ListHostsRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        response
-            .hosts
-            .into_iter()
-            .map(|host| host_entry_from_wire(method::CLIENT_LIST_HOSTS_NAME, host))
-            .collect()
-    }
-
-    pub async fn subscribe_hosts(&self) -> Result<HostEventStream, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .subscribe_hosts(wire::SubscribeHostsRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        Ok(HostEventStream {
-            inner: ClientServiceResponseStream { stream: response },
-            done: false,
-        })
-    }
-
-    pub async fn subscribe_agents(&self) -> Result<AgentEventStream, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .subscribe_agents(wire::SubscribeAgentsRequest {})
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        Ok(AgentEventStream {
-            inner: ClientServiceResponseStream { stream: response },
-            done: false,
-        })
-    }
-
-    pub async fn debug_dump(&self, format: DebugFormat) -> Result<String, ClientError> {
-        self.debug_dump_verbose(false, format).await
-    }
-
-    pub async fn debug_dump_verbose(
-        &self,
-        verbose: bool,
-        format: DebugFormat,
-    ) -> Result<String, ClientError> {
-        self.ensure_open()?;
-        let response = self
-            .inner
-            .lock()
-            .await
-            .debug(wire::DebugRequest {
-                verbose,
-                format: debug_format_to_wire(format),
-            })
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        Ok(response.dump)
-    }
-
-    pub async fn handle_hook(
-        &self,
-        payload: Bytes,
-        env: HashMap<String, String>,
-    ) -> Result<(), ClientError> {
-        self.ensure_open()?;
-        let (agent_id, external) = hook_target_from_payload(&payload)?;
-        self.inner
-            .lock()
-            .await
-            .handle_hook(wire::HandleHookRequest {
-                agent_id: agent_id.as_bytes().to_vec(),
-                payload: payload.to_vec(),
-                external,
-                env,
-            })
-            .await
-            .map_err(status_to_client_error)?;
-        Ok(())
-    }
-
-    fn ensure_open(&self) -> Result<(), ClientError> {
-        if self.closed.load(Ordering::SeqCst) {
-            return Err(ClientError::Protocol(ProtocolError::Unreachable {
-                message: "ClientService connection is closed".to_string(),
-            }));
-        }
-        Ok(())
-    }
-}
-
-#[doc(hidden)]
-pub fn client_create_request_to_wire(
-    request: CreateAgentRequest,
-) -> Result<wire::ClientCreateAgentRequest, ClientError> {
-    let agent = match request.agent_type {
-        model::AgentType::Claude { driver } => {
-            wire::client_create_agent_request::Agent::Claude(wire::ClaudeCreateConfig {
-                working_dir: path_to_wire_string(
-                    method::CLIENT_CREATE_NAME,
-                    "ClientCreateAgentRequest.working_dir",
-                    &request.working_dir,
-                )?,
-                args: request.args,
-                initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
-                driver: wire::claude_driver_to_wire(driver) as i32,
-            })
-        }
-        model::AgentType::Codex {
-            model,
-            approval_policy,
-            sandbox_policy,
-            resume_thread_id,
-        } => {
-            if !request.args.is_empty() {
-                return Err(ClientError::Encode {
-                    method: method::CLIENT_CREATE_NAME,
-                    message: "Codex agents take no argv; CreateAgentRequest.args must be empty"
-                        .to_string(),
-                });
-            }
-            wire::client_create_agent_request::Agent::Codex(wire::CodexCreateConfig {
-                cwd: path_to_wire_string(
-                    method::CLIENT_CREATE_NAME,
-                    "ClientCreateAgentRequest.cwd",
-                    &request.working_dir,
-                )?,
-                model,
-                approval_policy,
-                sandbox_policy,
-                resume_thread_id,
-            })
-        }
-        #[cfg(any(debug_assertions, test))]
-        model::AgentType::TestAgent { command } => {
-            wire::client_create_agent_request::Agent::TestAgent(wire::TestAgentCreateConfig {
-                command,
-                working_dir: path_to_wire_string(
-                    method::CLIENT_CREATE_NAME,
-                    "ClientCreateAgentRequest.working_dir",
-                    &request.working_dir,
-                )?,
-                initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
-            })
-        }
-        #[cfg(not(any(debug_assertions, test)))]
-        model::AgentType::TestAgent { .. } => {
-            return Err(ClientError::Encode {
-                method: method::CLIENT_CREATE_NAME,
-                message: "the development test agent is unavailable in this build".to_string(),
-            });
-        }
-    };
-
-    Ok(wire::ClientCreateAgentRequest {
-        agent_id: request.agent_id.as_bytes().to_vec(),
-        name: request.name,
-        host_id: request.host_id.map(|host_id| host_id.as_bytes().to_vec()),
-        parent: request.parent.map(|parent| wire::AgentParent {
-            agent_id: parent.agent_id.as_bytes().to_vec(),
-            host_id: parent.host_id.as_bytes().to_vec(),
-        }),
-        initial_prompt: request.initial_prompt,
-        agent: Some(agent),
-    })
-}
-
-fn terminal_size_to_wire(size: model::TerminalSize) -> wire::TerminalSize {
-    wire::TerminalSize {
-        rows: u32::from(size.rows),
-        cols: u32::from(size.cols),
-    }
-}
-
-fn path_to_wire_string(
-    method: &'static str,
-    field: &'static str,
-    path: &std::path::Path,
-) -> Result<String, ClientError> {
-    path.to_str()
-        .map(str::to_string)
-        .ok_or_else(|| ClientError::Encode {
-            method,
-            message: format!("{field} must be valid UTF-8"),
-        })
-}
-
-#[doc(hidden)]
-pub fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
-    let identifier = match identifier {
-        AgentIdentifier::Id(agent_id) => {
-            wire::agent_ref::Identifier::AgentId(agent_id.as_bytes().to_vec())
-        }
-        AgentIdentifier::Name(name) => wire::agent_ref::Identifier::Name(name),
-    };
-    wire::AgentRef {
-        identifier: Some(identifier),
-    }
-}
-
-#[doc(hidden)]
-pub fn peer_ref(identifier: PeerIdentifier) -> wire::PeerRef {
-    let identifier = match identifier {
-        PeerIdentifier::Id(host_id) => {
-            wire::peer_ref::Identifier::HostId(host_id.as_bytes().to_vec())
-        }
-        PeerIdentifier::Name(name) => wire::peer_ref::Identifier::Name(name),
-    };
-    wire::PeerRef {
-        identifier: Some(identifier),
-    }
-}
-
-fn agent_response_to_agent(
-    method: &'static str,
-    agent: Option<wire::Agent>,
-) -> Result<Agent, ClientError> {
-    let agent = agent.ok_or_else(|| ClientError::Decode {
-        method,
-        message: "missing Agent response field".to_string(),
-    })?;
-    wire_agent_to_agent(method, agent)
-}
-
-fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent, ClientError> {
-    wire::agent_from_wire(agent).map_err(|error| ClientError::Decode {
-        method,
-        message: error.to_string(),
-    })
-}
-
-#[doc(hidden)]
-pub use model::public_key_fingerprint;
-
-#[doc(hidden)]
-pub fn peer_entry_from_wire(
-    method: &'static str,
-    peer: wire::PeerEntry,
-) -> Result<PeerEntry, ClientError> {
-    let host_id = uuid_from_wire_bytes(method, "PeerEntry.host_id", peer.host_id)?;
-    if peer.pubkey.len() != PAIRING_PUBKEY_LEN {
-        return Err(ClientError::Decode {
-            method,
-            message: format!(
-                "PeerEntry.pubkey must be 32 bytes, got {}",
-                peer.pubkey.len()
-            ),
-        });
-    }
-    let paired_at =
-        DateTime::<Utc>::from_timestamp_millis(peer.paired_at_unix_ms).ok_or_else(|| {
-            ClientError::Decode {
-                method,
-                message: format!(
-                    "PeerEntry.paired_at_unix_ms is out of range: {}",
-                    peer.paired_at_unix_ms
-                ),
-            }
-        })?;
-    let reachabilities = peer
-        .reachabilities
-        .into_iter()
-        .map(|reachability| peer_reachability_from_wire(method, reachability))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(PeerEntry {
-        host_id,
-        name: peer.name,
-        fingerprint: public_key_fingerprint(&peer.pubkey),
-        pubkey: peer.pubkey,
-        paired_at,
-        reachabilities,
-    })
-}
-
-fn peer_reachability_from_wire(
-    method: &'static str,
-    reachability: wire::PeerReachability,
-) -> Result<PeerReachability, ClientError> {
-    match reachability.kind.ok_or_else(|| ClientError::Decode {
-        method,
-        message: "PeerReachability.kind is missing".to_string(),
-    })? {
-        wire::peer_reachability::Kind::Cloud(_) => Ok(PeerReachability::Cloud),
-        wire::peer_reachability::Kind::SshTarget(target) => {
-            Ok(PeerReachability::Ssh {
-                profile: ProfileId(target.profile_id.parse().map_err(|error| {
-                    ClientError::Decode {
-                        method,
-                        message: format!(
-                            "PeerReachability.ssh_target.profile_id is invalid: {error}"
-                        ),
-                    }
-                })?),
-                target: target.target,
-            })
-        }
-        wire::peer_reachability::Kind::Direct(direct) => {
-            let addrs = direct
-                .addrs
-                .into_iter()
-                .map(|addr| addr.parse::<SocketAddr>())
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| ClientError::Decode {
-                    method,
-                    message: format!("PeerReachability.direct.addrs is invalid: {error}"),
-                })?;
-            Ok(PeerReachability::Direct { addrs })
-        }
-    }
-}
-
-fn client_service_session_response_to_event(
-    response: wire::SubscribeSessionResponse,
-) -> Result<SubscribeSessionEvent, ClientError> {
-    let event = response.event.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-        message: "missing SubscribeSessionResponse event".to_string(),
-    })?;
-    let event = match event {
-        wire::subscribe_session_response::Event::Opened(opened) => SubscribeSessionEvent::Opened {
-            replay: opened
-                .replay
-                .map(wire::replay_facts_from_wire)
-                .transpose()
-                .map_err(|error| ClientError::Decode {
-                    method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-                    message: error.to_string(),
-                })?,
-        },
-        wire::subscribe_session_response::Event::Output(output) => SubscribeSessionEvent::Output(
-            wire::session_output_from_wire(output).map_err(|error| ClientError::Decode {
-                method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-                message: error.to_string(),
-            })?,
-        ),
-        wire::subscribe_session_response::Event::ReplayComplete(_) => {
-            SubscribeSessionEvent::ReplayComplete
-        }
-        wire::subscribe_session_response::Event::Closed(closed) => SubscribeSessionEvent::Closed {
-            reason: client_service_session_close_reason(closed)?,
-        },
-    };
-    Ok(event)
-}
-
-fn client_service_session_close_reason(
-    closed: wire::SessionClosed,
-) -> Result<SessionCloseReason, ClientError> {
-    let reason = closed.reason.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-        message: "missing SessionClosed reason".to_string(),
-    })?;
-    match reason {
-        wire::session_closed::Reason::AgentDeleted(_) => Ok(SessionCloseReason::AgentDeleted),
-        wire::session_closed::Reason::AgentExited(exited) => Ok(SessionCloseReason::AgentExited {
-            exit_code: exited.exit_code,
-        }),
-        wire::session_closed::Reason::HostUnreachable(_) => Ok(SessionCloseReason::HostUnreachable),
-        wire::session_closed::Reason::Reset(_) => Ok(SessionCloseReason::Reset),
-        wire::session_closed::Reason::InternalError(error) => {
-            Ok(SessionCloseReason::InternalError {
-                detail: error.detail,
-            })
-        }
-    }
-}
-
-#[doc(hidden)]
-pub fn host_entry_from_wire(
-    method: &'static str,
-    host: wire::HostEntry,
-) -> Result<HostEntry, ClientError> {
-    let id = uuid_from_wire_bytes(method, "HostEntry.host_id", host.host_id)?;
-    let trust_status = match wire::HostTrustStatus::try_from(host.trust_status).map_err(|_| {
-        ClientError::Decode {
-            method,
-            message: format!("invalid HostEntry.trust_status {}", host.trust_status),
-        }
-    })? {
-        wire::HostTrustStatus::Trusted => HostTrustStatus::Trusted,
-        wire::HostTrustStatus::UntrustedButOnline => HostTrustStatus::UntrustedButOnline,
-        wire::HostTrustStatus::Unspecified => {
-            return Err(ClientError::Decode {
-                method,
-                message: "HostEntry.trust_status is unspecified".to_string(),
-            });
-        }
-    };
-    if host.online && (host.version.is_none() || host.capabilities.is_none()) {
-        return Err(ClientError::Decode {
-            method,
-            message: "online HostEntry requires version and capabilities".to_string(),
-        });
-    }
-    if !host.online && (host.version.is_some() || host.capabilities.is_some()) {
-        return Err(ClientError::Decode {
-            method,
-            message: "non-online HostEntry must not include version or capabilities".to_string(),
-        });
-    }
-    if trust_status == HostTrustStatus::UntrustedButOnline && !host.online {
-        return Err(ClientError::Decode {
-            method,
-            message: "untrusted HostEntry must be online".to_string(),
-        });
-    }
-    let capabilities = host
-        .capabilities
-        .map(|capabilities| wire::capabilities_from_wire(Some(capabilities)))
-        .transpose()
-        .map_err(|error| ClientError::Decode {
-            method,
-            message: error.to_string(),
-        })?;
-    let via = match wire::HostVia::try_from(host.via).map_err(|_| ClientError::Decode {
-        method,
-        message: format!("invalid HostEntry.via {}", host.via),
-    })? {
-        wire::HostVia::Direct => HostVia::Direct,
-        wire::HostVia::Relay => HostVia::Relay,
-        wire::HostVia::Ssh => HostVia::Ssh,
-        wire::HostVia::Offline => HostVia::Offline,
-        wire::HostVia::Unspecified => {
-            return Err(ClientError::Decode {
-                method,
-                message: "HostEntry.via is unspecified".to_string(),
-            });
-        }
-    };
-    Ok(HostEntry {
-        id,
-        name: host.name,
-        online: host.online,
-        version: host.version,
-        capabilities,
-        trust_status,
-        last_dial_error: host.last_dial_error,
-        via,
-        signed_in: host.signed_in,
-        platform: host.platform,
-    })
-}
-
-#[doc(hidden)]
-pub fn client_service_host_response_to_host_event(
-    response: wire::SubscribeHostsResponse,
-) -> Result<HostEvent, ClientError> {
-    let event = response.event.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-        message: "missing SubscribeHostsResponse event".to_string(),
-    })?;
-    match event {
-        wire::subscribe_hosts_response::Event::HostUpdated(updated) => {
-            let host = updated.host.ok_or_else(|| ClientError::Decode {
-                method: method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-                message: "missing HostUpdated.host".to_string(),
-            })?;
-            let host = host_entry_from_wire(method::CLIENT_SUBSCRIBE_HOSTS_NAME, host)?;
-            Ok(HostEvent::HostUpdated { host })
-        }
-        wire::subscribe_hosts_response::Event::HostRemoved(removed) => Ok(HostEvent::HostRemoved {
-            id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-                "HostRemoved.host_id",
-                removed.host_id,
-            )?,
-        }),
-        wire::subscribe_hosts_response::Event::SnapshotComplete(_) => {
-            Ok(HostEvent::SnapshotComplete)
-        }
-    }
-}
-
-fn client_service_agent_response_to_agent_event(
-    response: wire::SubscribeAgentsResponse,
-) -> Result<Option<AgentEvent>, ClientError> {
-    let event = response.event.ok_or_else(|| ClientError::Decode {
-        method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-        message: "missing SubscribeAgentsResponse event".to_string(),
-    })?;
-    let event = match event {
-        wire::subscribe_agents_response::Event::AgentUp(up) => Some(AgentEvent::AgentUp {
-            agent: required_wire_agent(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentUp.agent",
-                up.agent,
-            )?,
-        }),
-        wire::subscribe_agents_response::Event::AgentUpdated(updated) => {
-            Some(AgentEvent::AgentUpdated {
-                agent: required_wire_agent(
-                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                    "AgentUpdated.agent",
-                    updated.agent,
-                )?,
-            })
-        }
-        wire::subscribe_agents_response::Event::AgentDown(down) => Some(AgentEvent::AgentDown {
-            host_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentDown.host_id",
-                down.host_id,
-            )?,
-            agent_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentDown.agent_id",
-                down.agent_id,
-            )?,
-            inventory_revision: down.inventory_revision,
-        }),
-        wire::subscribe_agents_response::Event::HostInventory(inventory) => {
-            Some(AgentEvent::HostInventory {
-                host_id: uuid_from_wire_bytes(
-                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                    "HostInventory.host_id",
-                    inventory.host_id,
-                )?,
-                agents: inventory
-                    .agents
-                    .into_iter()
-                    .map(|agent| {
-                        required_wire_agent(
-                            method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                            "HostInventory.agents",
-                            Some(agent),
-                        )
-                    })
-                    .collect::<Result<_, _>>()?,
-                through_revision: inventory.through_revision,
-            })
-        }
-        wire::subscribe_agents_response::Event::SnapshotComplete(snapshot) => {
-            Some(AgentEvent::SnapshotComplete {
-                host_id: uuid_from_wire_bytes(
-                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                    "SnapshotComplete.host_id",
-                    snapshot.host_id,
-                )?,
-                through_revision: snapshot.through_revision,
-            })
-        }
-        wire::subscribe_agents_response::Event::Summary(event) => Some(AgentEvent::Summary {
-            host_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentSummaryEvent.host_id",
-                event.host_id,
-            )?,
-            agent_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentSummaryEvent.agent_id",
-                event.agent_id,
-            )?,
-            envelope: wire::summary_from_wire(event.envelope.ok_or_else(|| {
-                ClientError::Decode {
-                    method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                    message: "missing AgentSummaryEvent.envelope".into(),
+impl GrpcClient {
+    /// Connects to the client socket at `path`.
+    pub async fn connect(path: &Path) -> Result<GrpcClient, RpcError> {
+        let path = path.to_owned();
+        let channel = tonic::transport::Endpoint::from_static("http://amux.local")
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    agent_dir::local_socket::connect(&path)
+                        .await
+                        .map(hyper_util::rt::TokioIo::new)
                 }
-            })?)
-            .map_err(|error| ClientError::Decode {
-                method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                message: error.to_string(),
-            })?,
-        }),
-        wire::subscribe_agents_response::Event::Progress(event) => Some(AgentEvent::Progress {
-            host_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentProgressEvent.host_id",
-                event.host_id,
-            )?,
-            agent_id: uuid_from_wire_bytes(
-                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                "AgentProgressEvent.agent_id",
-                event.agent_id,
-            )?,
-            progress: wire::progress_from_wire(event.progress.ok_or_else(|| {
-                ClientError::Decode {
-                    method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                    message: "missing AgentProgressEvent.progress".into(),
-                }
-            })?)
-            .map_err(|error| ClientError::Decode {
-                method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                message: error.to_string(),
-            })?,
-        }),
+            }))
+            .await
+            .map_err(|error| RpcError::Transport(error.to_string()))?;
+        Ok(GrpcClient::new(channel))
+    }
+
+    pub fn new(channel: tonic::transport::Channel) -> GrpcClient {
+        GrpcClient {
+            service: wire::client_service_client(channel),
+        }
+    }
+}
+
+macro_rules! grpc_call {
+    ($client:expr, $name:ident, $request:expr) => {
+        $client.service.clone().$name($request)
     };
-    Ok(event)
 }
 
-fn required_wire_agent(
-    method: &'static str,
-    field: &'static str,
-    agent: Option<wire::Agent>,
-) -> Result<Agent, ClientError> {
-    let agent = agent.ok_or_else(|| ClientError::Decode {
-        method,
-        message: format!("missing {field}"),
-    })?;
-    wire::agent_from_wire(agent).map_err(|error| ClientError::Decode {
-        method,
-        message: error.to_string(),
-    })
+client_impl!(impl[] Client for GrpcClient, grpc_call);
+
+/// A client service hosted in this process, called directly: the phone's
+/// embedded runtime. Errors take the same shape they would over a socket.
+#[derive(Clone)]
+pub struct InProcess<S> {
+    service: S,
 }
 
-#[doc(hidden)]
-pub fn pairing_start_from_wire(
-    method: &'static str,
-    response: wire::StartPairingResponse,
-) -> Result<PairingStart, ClientError> {
-    let identity = response.identity.ok_or_else(|| ClientError::Decode {
-        method,
-        message: "missing StartPairingResponse.identity".to_string(),
-    })?;
-    let secret = match response.secret.ok_or_else(|| ClientError::Decode {
-        method,
-        message: "missing StartPairingResponse.secret".to_string(),
-    })? {
-        wire::start_pairing_response::Secret::Pin(pin) => PairingSecret::Pin(pin),
-        wire::start_pairing_response::Secret::QrSecret(secret) => PairingSecret::QrSecret(secret),
+impl<S: ClientService> InProcess<S> {
+    pub fn new(service: S) -> InProcess<S> {
+        InProcess { service }
+    }
+}
+
+macro_rules! in_process_call {
+    ($client:expr, $name:ident, $request:expr) => {
+        ClientService::$name(&$client.service, Request::new($request))
     };
-    Ok(PairingStart {
-        identity: pairing_identity_to_peer(method, identity)?,
-        ttl_seconds: response.ttl_seconds,
-        addrs: response
-            .addrs
-            .into_iter()
-            .map(|addr| {
-                addr.parse().map_err(|error| ClientError::Decode {
-                    method,
-                    message: format!("invalid StartPairingResponse.addrs entry: {error}"),
-                })
-            })
-            .collect::<Result<_, _>>()?,
-        cloud_url: response.cloud_url,
-        secret,
-    })
 }
 
-#[doc(hidden)]
-pub fn pairing_identity_from_wire(
-    method: &'static str,
-    identity: wire::PairingIdentity,
-) -> Result<(Uuid, Vec<u8>, String), ClientError> {
-    let peer = pairing_identity_to_peer(method, identity)?;
-    Ok((peer.host_id, peer.pubkey, peer.name))
-}
-
-fn pairing_identity_to_peer(
-    method: &'static str,
-    identity: wire::PairingIdentity,
-) -> Result<SshPairingPeer, ClientError> {
-    if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
-        return Err(ClientError::Decode {
-            method,
-            message: format!(
-                "PairingIdentity.pubkey must be {PAIRING_PUBKEY_LEN} bytes, got {}",
-                identity.pubkey.len()
-            ),
-        });
-    }
-    if identity.name.len() > MAX_PAIRING_NAME_BYTES {
-        return Err(ClientError::Decode {
-            method,
-            message: format!("PairingIdentity.name must be at most {MAX_PAIRING_NAME_BYTES} bytes"),
-        });
-    }
-    Ok(SshPairingPeer {
-        host_id: uuid_from_wire_bytes(method, "PairingIdentity.host_id", identity.host_id)?,
-        pubkey: identity.pubkey,
-        name: identity.name,
-    })
-}
-
-#[doc(hidden)]
-pub fn uuid_from_wire_bytes(
-    method: &'static str,
-    field: &'static str,
-    bytes: Vec<u8>,
-) -> Result<Uuid, ClientError> {
-    Uuid::from_slice(&bytes).map_err(|error| ClientError::Decode {
-        method,
-        message: format!("invalid {field}: {error}"),
-    })
-}
-
-#[doc(hidden)]
-pub fn status_to_client_error(status: tonic::Status) -> ClientError {
-    let message = status.message().to_string();
-    if status.code() == tonic::Code::Unavailable
-        && let Some(reason) = shutdown_reason_from_status_metadata(&status)
-    {
-        return ClientError::ServerShutdown(reason);
-    }
-    if let Some(error) = protocol_error_from_status_details(&status) {
-        return ClientError::Protocol(error);
-    }
-    let error = match status.code() {
-        tonic::Code::NotFound => ProtocolError::NoAgentFound,
-        tonic::Code::Unimplemented => ProtocolError::Unimplemented { message },
-        tonic::Code::Cancelled => ProtocolError::Cancelled { message },
-        tonic::Code::InvalidArgument => ProtocolError::InvalidArgument { message },
-        tonic::Code::AlreadyExists => ProtocolError::AlreadyExists { message },
-        tonic::Code::PermissionDenied => ProtocolError::PermissionDenied { message },
-        tonic::Code::FailedPrecondition => ProtocolError::FailedPrecondition { message },
-        tonic::Code::Unavailable => ProtocolError::Unreachable { message },
-        tonic::Code::Unauthenticated => ProtocolError::InvalidCredentials,
-        tonic::Code::ResourceExhausted => ProtocolError::ResourceExhausted { message },
-        _ => ProtocolError::ServerError { message },
-    };
-    ClientError::Protocol(error)
-}
-
-fn shutdown_reason_from_status_metadata(status: &tonic::Status) -> Option<ShutdownReason> {
-    status
-        .metadata()
-        .get(SHUTDOWN_REASON_METADATA_KEY)
-        .and_then(|value| value.to_str().ok())
-        .and_then(ShutdownReason::from_wire_value)
-}
-
-fn hook_target_from_payload(payload: &[u8]) -> Result<(Uuid, bool), ClientError> {
-    if let Ok(agent_id) = std::env::var("AMUX_AGENT_ID") {
-        return agent_id
-            .parse::<Uuid>()
-            .map(|agent_id| (agent_id, false))
-            .map_err(|error| ClientError::Encode {
-                method: method::CLIENT_HANDLE_HOOK_NAME,
-                message: format!("invalid AMUX_AGENT_ID: {error}"),
-            });
-    }
-
-    serde_json::from_slice::<serde_json::Value>(payload)
-        .map_err(|error| ClientError::Encode {
-            method: method::CLIENT_HANDLE_HOOK_NAME,
-            message: format!("invalid Claude hook payload: {error}"),
-        })
-        .and_then(|value| {
-            value
-                .get("session_id")
-                .and_then(|id| id.as_str())
-                .ok_or_else(|| ClientError::Encode {
-                    method: method::CLIENT_HANDLE_HOOK_NAME,
-                    message: "Claude hook payload missing session_id".to_string(),
-                })
-                .and_then(|id| {
-                    id.parse::<Uuid>().map_err(|error| ClientError::Encode {
-                        method: method::CLIENT_HANDLE_HOOK_NAME,
-                        message: format!("invalid Claude hook session_id: {error}"),
-                    })
-                })
-        })
-        .map(|agent_id| (agent_id, true))
-}
-
-#[doc(hidden)]
-pub fn debug_format_to_wire(format: DebugFormat) -> i32 {
-    match format {
-        DebugFormat::Yaml => wire::DebugFormat::Yaml as i32,
-        DebugFormat::Json => wire::DebugFormat::Json as i32,
-    }
-}
+client_impl!(impl[S: ClientService] Client for InProcess<S>, in_process_call);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn client_decodes_opening_replay_facts() {
-        let event = client_service_session_response_to_event(wire::SubscribeSessionResponse {
-            event: Some(wire::subscribe_session_response::Event::Opened(
-                wire::SessionOpened {
-                    replay: Some(wire::ReplayFacts {
-                        retained_from: 12,
-                        through: 20,
-                        selected_from: 16,
-                        reset_at: 9,
-                        outcome: Some(wire::replay_facts::Outcome::Truncated(wire::Truncated {
-                            missing_after: 15,
-                        })),
-                    }),
-                },
-            )),
-        })
-        .unwrap();
-
-        assert_eq!(
-            event,
-            SubscribeSessionEvent::Opened {
-                replay: Some(model::ReplayFacts {
-                    retained_from: 12,
-                    through: 20,
-                    selected_from: 16,
-                    reset_at: 9,
-                    outcome: model::ReplayOutcome::Truncated { missing_after: 15 },
-                }),
-            }
-        );
+    fn status_with(error: &wire::Error, code: Code) -> Status {
+        Status::with_details(code, error.message.clone(), error.encode_to_vec().into())
     }
 
     #[test]
-    fn client_rejects_opening_replay_facts_without_an_outcome() {
-        let error = client_service_session_response_to_event(wire::SubscribeSessionResponse {
-            event: Some(wire::subscribe_session_response::Event::Opened(
-                wire::SessionOpened {
-                    replay: Some(wire::ReplayFacts {
-                        retained_from: 0,
-                        through: 0,
-                        selected_from: 0,
-                        reset_at: 0,
-                        outcome: None,
-                    }),
-                },
-            )),
-        })
-        .unwrap_err();
-
-        assert!(error.to_string().contains("ReplayFacts missing outcome"));
+    fn a_status_carrying_the_runtimes_error_is_that_error() {
+        let error = wire::Error {
+            code: ErrorCode::Unreachable as i32,
+            message: "older history is held by the agent's host".into(),
+            details: Vec::new(),
+        };
+        let rpc = RpcError::from(status_with(&error, Code::FailedPrecondition));
+        assert_eq!(rpc, RpcError::Refused(error));
+        assert_eq!(rpc.code(), Some(ErrorCode::Unreachable));
     }
 
     #[test]
-    fn client_decodes_every_session_close_reason() {
-        for (reason, expected) in [
-            (
-                wire::session_closed::Reason::AgentDeleted(wire::AgentDeleted {}),
-                SessionCloseReason::AgentDeleted,
-            ),
-            (
-                wire::session_closed::Reason::AgentExited(wire::AgentExited {
-                    exit_code: Some(17),
-                }),
-                SessionCloseReason::AgentExited {
-                    exit_code: Some(17),
-                },
-            ),
-            (
-                wire::session_closed::Reason::HostUnreachable(wire::HostUnreachable {}),
-                SessionCloseReason::HostUnreachable,
-            ),
-            (
-                wire::session_closed::Reason::Reset(wire::Reset {
-                    reason: "reset".into(),
-                }),
-                SessionCloseReason::Reset,
-            ),
-            (
-                wire::session_closed::Reason::InternalError(wire::InternalError {
-                    detail: "stream failed".into(),
-                }),
-                SessionCloseReason::InternalError {
-                    detail: "stream failed".into(),
-                },
-            ),
+    fn a_bare_status_is_a_transport_failure_only_when_it_says_nothing_about_the_call() {
+        for code in [
+            Code::Unavailable,
+            Code::Unknown,
+            Code::Cancelled,
+            Code::Internal,
         ] {
-            let event = client_service_session_response_to_event(wire::SubscribeSessionResponse {
-                event: Some(wire::subscribe_session_response::Event::Closed(
-                    wire::SessionClosed {
-                        reason: Some(reason),
-                    },
-                )),
-            })
-            .unwrap();
-            assert_eq!(event, SubscribeSessionEvent::Closed { reason: expected });
-        }
-    }
-
-    #[test]
-    fn client_create_request_encodes_each_claude_driver() {
-        for (driver, expected) in [
-            (model::ClaudeDriver::Pty, wire::ClaudeDriver::Pty),
-            (model::ClaudeDriver::Sdk, wire::ClaudeDriver::Sdk),
-        ] {
-            let request = client_create_request_to_wire(CreateAgentRequest {
-                agent_id: Uuid::from_u128(7),
-                host_id: None,
-                name: Some("claude".into()),
-                agent_type: model::AgentType::Claude { driver },
-                working_dir: "/tmp/work".into(),
-                terminal_size: None,
-                args: Vec::new(),
-                parent: None,
-                initial_prompt: None,
-            })
-            .unwrap();
-
-            let Some(wire::client_create_agent_request::Agent::Claude(config)) = request.agent
-            else {
-                panic!("expected Claude create config");
-            };
-            assert_eq!(
-                wire::ClaudeDriver::try_from(config.driver).unwrap(),
-                expected
+            assert!(
+                RpcError::from(Status::new(code, "connection reset")).is_transport(),
+                "{code:?}"
             );
         }
-    }
-
-    #[test]
-    fn client_create_request_encodes_codex_config() {
-        let request = client_create_request_to_wire(CreateAgentRequest {
-            agent_id: Uuid::from_u128(7),
-            host_id: None,
-            name: Some("codex".into()),
-            agent_type: model::AgentType::Codex {
-                model: Some("gpt-5.6-sol".into()),
-                approval_policy: Some("on-request".into()),
-                sandbox_policy: Some("workspace-write".into()),
-                resume_thread_id: Some("thread-7".into()),
-            },
-            working_dir: "/tmp/work".into(),
-            terminal_size: None,
-            args: Vec::new(),
-            parent: Some(model::AgentParent {
-                agent_id: Uuid::from_u128(8),
-                host_id: Uuid::from_u128(9),
-            }),
-            initial_prompt: Some("inspect the protocol".into()),
-        })
-        .unwrap();
-
-        let Some(wire::client_create_agent_request::Agent::Codex(config)) = request.agent else {
-            panic!("expected Codex create config");
-        };
-        assert_eq!(config.cwd, "/tmp/work");
-        assert_eq!(config.model.as_deref(), Some("gpt-5.6-sol"));
-        assert_eq!(config.approval_policy.as_deref(), Some("on-request"));
-        assert_eq!(config.sandbox_policy.as_deref(), Some("workspace-write"));
-        assert_eq!(config.resume_thread_id.as_deref(), Some("thread-7"));
-        assert_eq!(
-            request.parent,
-            Some(wire::AgentParent {
-                agent_id: Uuid::from_u128(8).as_bytes().to_vec(),
-                host_id: Uuid::from_u128(9).as_bytes().to_vec(),
-            })
-        );
-        assert_eq!(
-            request.initial_prompt.as_deref(),
-            Some("inspect the protocol")
-        );
-    }
-
-    #[test]
-    fn client_create_request_rejects_codex_args() {
-        let error = client_create_request_to_wire(CreateAgentRequest {
-            agent_id: Uuid::from_u128(7),
-            host_id: None,
-            name: Some("codex".into()),
-            agent_type: model::AgentType::Codex {
-                model: None,
-                approval_policy: None,
-                sandbox_policy: None,
-                resume_thread_id: None,
-            },
-            working_dir: "/tmp/work".into(),
-            terminal_size: None,
-            args: vec!["--model".into(), "gpt-5.6-sol".into()],
-            parent: None,
-            initial_prompt: None,
-        })
-        .unwrap_err();
-
-        assert!(error.to_string().contains("Codex agents take no argv"));
-        assert!(
-            error
-                .to_string()
-                .contains("CreateAgentRequest.args must be empty")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn client_create_request_rejects_non_utf8_working_dir() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
-        let error = client_create_request_to_wire(CreateAgentRequest {
-            agent_id: Uuid::new_v4(),
-            host_id: None,
-            name: None,
-            agent_type: model::AgentType::Claude {
-                driver: model::ClaudeDriver::Pty,
-            },
-            working_dir: OsString::from_vec(vec![0xff]).into(),
-            terminal_size: None,
-            args: Vec::new(),
-            parent: None,
-            initial_prompt: None,
-        })
-        .unwrap_err();
-
-        assert!(error.to_string().contains("must be valid UTF-8"));
-    }
-
-    #[test]
-    fn pairing_start_response_decodes_identity_transport_metadata_and_secret() {
-        let host_id = Uuid::from_u128(42);
-        let start = pairing_start_from_wire(
-            method::PROFILE_START_PAIRING_NAME,
-            wire::StartPairingResponse {
-                identity: Some(wire::PairingIdentity {
-                    expires_at_unix_ms: 0,
-                    host_id: host_id.as_bytes().to_vec(),
-                    pubkey: vec![7; 32],
-                    name: "laptop".to_string(),
-                }),
-                ttl_seconds: 300,
-                addrs: vec!["192.0.2.4:4242".to_string()],
-                cloud_url: Some("https://cloud.example".to_string()),
-                secret: Some(wire::start_pairing_response::Secret::Pin(
-                    "123456".to_string(),
-                )),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(start.identity.host_id, host_id);
-        assert_eq!(start.identity.pubkey, vec![7; 32]);
-        assert_eq!(start.identity.name, "laptop");
-        assert_eq!(start.ttl_seconds, 300);
-        assert_eq!(start.addrs, vec!["192.0.2.4:4242".parse().unwrap()]);
-        assert_eq!(start.cloud_url.as_deref(), Some("https://cloud.example"));
-        assert_eq!(start.secret, PairingSecret::Pin("123456".to_string()));
-    }
-
-    #[test]
-    fn pairing_start_response_rejects_invalid_address() {
-        let error = pairing_start_from_wire(
-            method::PROFILE_START_PAIRING_NAME,
-            wire::StartPairingResponse {
-                identity: Some(wire::PairingIdentity {
-                    expires_at_unix_ms: 0,
-                    host_id: Uuid::from_u128(42).as_bytes().to_vec(),
-                    pubkey: vec![7; 32],
-                    name: "laptop".to_string(),
-                }),
-                ttl_seconds: 300,
-                addrs: vec!["not-an-address".to_string()],
-                cloud_url: Some("https://cloud.example".to_string()),
-                secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("addrs"));
+        let refused = RpcError::from(Status::not_found("no such agent"));
+        assert_eq!(refused.code(), Some(ErrorCode::NotFound));
     }
 }

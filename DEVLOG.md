@@ -1,3 +1,25 @@
+2026-09-27 — **The client seam and the session and fleet drivers.**
+`crates/client` is now one `Client` trait over the whole client service,
+with a gRPC implementation over the profile's local socket and an
+in-process one over any `ClientService` (the phone's embedded runtime);
+both report a runtime's own error whole and anything else as a transport
+failure, whose effect is unknown. `crates/ui-runtime` is rebuilt as the only
+place a chat does I/O: `Session::open` subscribes with a tail and returns
+once the snapshot and held rows are applied; the pump re-tails at once
+after Lagged and reconnects with backoff on the session's clock after the
+stream ends; sends, withdraw, send-now steering, answers and interrupts go
+in the agent kind's own input arm, and an input lost with its connection
+stays not confirmed until the next catch-up settles it from the queue or
+the items, never resent; `page_older` reports an unreachable origin as an
+error; attachment bytes are fetched on first use; a bounded trace keeps the
+state its oldest segment began from so it replays to the current state, and
+it goes into the client's dump part. `Fleet` does the same over the
+inventory. The client store worker, message recorder, model checkpoints
+and resume point are gone. Writing the restart test found that a profile
+socket's connections outlived the daemon runtime that served them, so a
+client kept being told "no longer running" instead of redialling; the
+socket server now closes its connections when it stops.
+
 2026-09-27 — **Overlap tests: live agents across an update, a rollback's store, a LaunchAgent restart.**
 `crates/amux/tests/overlap.rs` drives the built binaries: agents a
 re-stamped previous build started keep their processes through

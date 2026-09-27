@@ -14,7 +14,9 @@ ALLOWED_LOCAL = {
     "wire": {"model"},
     "settings": {"model"},
     "artifacts": {"model"},
-    "client": {"model", "wire"},
+    # The seam both clients call the local runtime through: the local socket
+    # and the shared clock trait come from the agent directory contract.
+    "client": {"agent-dir", "wire"},
     "agent-dir": {"wire"},
     # The daemon reaches agent processes only through the directory contract,
     # never the agent crate, so the phone can host a runtime without a
@@ -28,7 +30,7 @@ ALLOWED_LOCAL = {
     "redaction": set(),
     "ui-state": {"wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
-    "ui-runtime": {"artifacts", "client", "model", "store", "ui-state"},
+    "ui-runtime": {"client", "ui-state", "wire"},
     # Report replay reconstructs canonical store-backed windows using the
     # provider folds, while ordinary rendering still consumes ui-state.
     "tui": {"fold", "ui-runtime", "ui-state"},
