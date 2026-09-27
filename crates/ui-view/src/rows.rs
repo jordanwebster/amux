@@ -431,9 +431,13 @@ fn run_expanded(state: &SessionState, order: u64, expanded: &HashSet<Key>) -> bo
     let Some(run) = transcript.run_at(order) else {
         return false;
     };
-    transcript
-        .range(run.oldest..=run.newest)
-        .any(|held| expanded.contains(&held.item.key))
+    // The expansion set is a handful of keys and a run can be thousands of
+    // calls long: look each key up rather than walking the run.
+    expanded.iter().any(|key| {
+        transcript
+            .get(key)
+            .is_some_and(|held| (run.oldest..=run.newest).contains(&held.item.order))
+    })
 }
 
 /// What a run's summary names: the newest member's subject.
