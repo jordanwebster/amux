@@ -48,6 +48,7 @@
 		26025AF6828EA2B84ADB18C8 /* components.row-command-light.png in Resources */ = {isa = PBXBuildFile; fileRef = DC616885FAC427581E1996CC /* components.row-command-light.png */; };
 		2765A1CA4F37288BE7C2941C /* components.row-command-denied-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 80BABFCC5A2E31FFB3A3AC9D /* components.row-command-denied-dark.png */; };
 		294F10DD3768EB55D0842C2C /* components.ask-questions-step-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = CA0907A74E48A2EB2AD590F5 /* components.ask-questions-step-dark.png */; };
+		2AB9F9F887627829BEBBB09D /* MenuSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F29C3D017EFCF2521645DAB /* MenuSource.swift */; };
 		2AD1B328ACBD4400B6438B17 /* components.row-slash-output-light.png in Resources */ = {isa = PBXBuildFile; fileRef = DEDEA60C06BAF8C68DF8D45D /* components.row-slash-output-light.png */; };
 		2B33D37BE105D726D9651DEC /* components.chat-changes-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 0BD5021F3FE99EA1720EEC9F /* components.chat-changes-light.png */; };
 		2B9C31952A79620723D1C2F5 /* components.row-subagent-done-light.png in Resources */ = {isa = PBXBuildFile; fileRef = 59101FEE4BF571E4449289EB /* components.row-subagent-done-light.png */; };
@@ -377,6 +378,7 @@
 		2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		2D67FA937AF3288820FA3464 /* Perturbation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Perturbation.swift; sourceTree = "<group>"; };
 		2DA38C20C8560FEE2BB88D9F /* Door.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Door.swift; sourceTree = "<group>"; };
+		2F29C3D017EFCF2521645DAB /* MenuSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuSource.swift; sourceTree = "<group>"; };
 		2F3A7B6C7E84ABD43275DF2C /* components.row-auto-review-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.row-auto-review-light.png"; sourceTree = "<group>"; };
 		311332D6E3B3B4E21025AAFD /* components.composer-thinking-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "components.composer-thinking-dark.png"; sourceTree = "<group>"; };
 		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
@@ -769,6 +771,7 @@
 				5CBBB924EED36840518D0268 /* DoorHost.swift */,
 				590B62F0B4C074AA2233FC70 /* DoorServer.swift */,
 				A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */,
+				2F29C3D017EFCF2521645DAB /* MenuSource.swift */,
 				2D67FA937AF3288820FA3464 /* Perturbation.swift */,
 				E8CE78DF417F5614935595CA /* VisibleTree.swift */,
 			);
@@ -1554,6 +1557,7 @@
 				82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */,
 				C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */,
 				344D301838279573239BD80D /* Judge.swift in Sources */,
+				2AB9F9F887627829BEBBB09D /* MenuSource.swift in Sources */,
 				A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */,
 				DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */,
 				B6D27C4537AD3B1E7AC14846 /* ReportFreeze.swift in Sources */,

@@ -1,3 +1,18 @@
+2026-09-27 — **The phone runs the keep-authority and manage-agent stories.**
+keep-authority: signed in to the desk's account, the phone pairs with the
+desk by the link it printed, over the relay only; a second account opens on
+its own empty fleet; the desk's agent answers through the relay; signed out,
+the hosts tab and the chat name the phone's sign-out and the draft is kept
+and cannot be sent; signed in again it sends once. manage-agent: New Agent
+creates a Claude agent on the desk (named after its directory) whose chat
+answers; the chat's menu renames it, stops it (exited on the desk with its
+history), a message from the exited composer resumes the same agent, and
+Delete removes it from the fleet and the desk. The app's driving door gains
+`choose`, which runs the item a person reads in a presented menu (the
+menu's rows cannot be activated from inside the process, so the item runs
+as the menu's own action and the menu is put away), and door queries now
+read every visible window, so a presented menu's items are listed.
+
 2026-09-27 — **A push for another account's host wakes that account on the phone.**
 A needs-you notification names only a host and an agent. The phone now asks
 its daemon which profile trusts that host: if it is an account off screen,

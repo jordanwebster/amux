@@ -7,6 +7,7 @@
       {"literal": "\"context-band\"", "context": "case contextBand = \"context-band\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\"no menu offers \\(label)\"", "context": "return .error(\"no menu offers \\(label)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the design has no colour token named \\(token)\"", "context": "return .error(\"the design has no colour token named \\(token)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no type size named \\(name)\"", "context": "return .error(\"no type size named \\(name)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -87,6 +88,9 @@
       {"literal": "\"sh.amux.door\"", "context": "let queue = DispatchQueue(label: \"sh.amux.door\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"unreadable request: \\(error)\"", "context": "write(.error(\"unreadable request: \\(error)\"), to: connection)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the door did not answer\"", "context": "private var value: DoorReply = .error(\"the door did not answer\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+    ],
+    "apps/apple/Amux/Debug/MenuSource.swift": [
+      {"literal": "\"performWithSender:target:\"", "context": "let perform = NSSelectorFromString(\"performWithSender:target:\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorWindow.swift": [
       {"literal": "\"capture failed: \\(error.localizedDescription)\"", "context": "return .error(\"capture failed: \\(error.localizedDescription)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
@@ -865,6 +869,7 @@
       {"literal": "\"query\"", "context": "case \"query\": self = .query", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"capture\"", "context": "case \"capture\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"tap\"", "context": "case \"tap\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"choose\"", "context": "case \"choose\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"type\"", "context": "case \"type\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"clear\"", "context": "case \"clear\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"paste\"", "context": "case \"paste\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -910,6 +915,7 @@
       {"literal": "\"query\"", "context": "try fields.encode(\"query\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"capture\"", "context": "try fields.encode(\"capture\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"tap\"", "context": "try fields.encode(\"tap\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"choose\"", "context": "try fields.encode(\"choose\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"type\"", "context": "try fields.encode(\"type\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"clear\"", "context": "try fields.encode(\"clear\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"paste\"", "context": "try fields.encode(\"paste\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

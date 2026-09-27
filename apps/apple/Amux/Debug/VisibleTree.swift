@@ -27,6 +27,20 @@ enum VisibleTree {
         return found
     }
 
+    /// Every accessibility element reading exactly `label`, depth-first.
+    @MainActor
+    static func labelled(_ label: String, in window: UIWindow) -> [NSObject] {
+        var found: [NSObject] = []
+        var seen = Set<ObjectIdentifier>()
+        func visit(_ node: NSObject) {
+            guard seen.insert(ObjectIdentifier(node)).inserted else { return }
+            if node.isAccessibilityElement, node.accessibilityLabel == label { found.append(node) }
+            for child in children(of: node) { visit(child) }
+        }
+        visit(window)
+        return found
+    }
+
     /// The smallest accessibility element whose frame holds `point`, in
     /// window coordinates. SwiftUI does not show an element's identifier to
     /// the process that drew it, so a control a screen declared is found

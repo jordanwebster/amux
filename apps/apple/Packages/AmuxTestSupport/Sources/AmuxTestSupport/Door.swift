@@ -130,6 +130,9 @@ public enum DoorRequest: Sendable, Equatable {
     /// app's container.
     case capture(path: String)
     case tap(identifier: String)
+    /// Activate the item reading `label` in what the system presented over
+    /// the app, a menu among them, whose items carry no names of their own.
+    case choose(label: String)
     case type(identifier: String, text: String)
     /// Empty a named field, through the field's own delete.
     ///
@@ -610,7 +613,7 @@ extension DoorRequest: Codable {
         case note, marks
         case motion, transparency
         case permission, tier
-        case bytes
+        case bytes, label
     }
 
     public init(from decoder: any Decoder) throws {
@@ -677,6 +680,8 @@ extension DoorRequest: Codable {
             self = .capture(path: try fields.decode(String.self, forKey: .path))
         case "tap":
             self = .tap(identifier: try fields.decode(String.self, forKey: .identifier))
+        case "choose":
+            self = .choose(label: try fields.decode(String.self, forKey: .label))
         case "type":
             self = .type(
                 identifier: try fields.decode(String.self, forKey: .identifier),
@@ -837,6 +842,9 @@ extension DoorRequest: Codable {
         case .tap(let identifier):
             try fields.encode("tap", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)
+        case .choose(let label):
+            try fields.encode("choose", forKey: .kind)
+            try fields.encode(label, forKey: .label)
         case .type(let identifier, let text):
             try fields.encode("type", forKey: .kind)
             try fields.encode(identifier, forKey: .identifier)

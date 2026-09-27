@@ -138,6 +138,7 @@ final class DoorHost {
         case .query: return query()
         case .capture(let path): return await capture(to: path)
         case .tap(let identifier): return tap(identifier)
+        case .choose(let label): return choose(label)
         case .type(let identifier, let text): return type(text, into: identifier)
         case .clear(let identifier): return clear(identifier)
         case .paste(let identifier, let text): return paste(text, into: identifier)
@@ -445,7 +446,8 @@ final class DoorHost {
                 enabled: $0.enabled)
         }
         let named = Set(declared.map(\.identifier))
-        let leaves = VisibleTree.elements(of: window).filter { !named.contains($0.identifier) }
+        let leaves = ([window] + DoorWindow.others).flatMap(VisibleTree.elements(of:))
+            .filter { !named.contains($0.identifier) }
         return .state(VisibleState(
             screen: composition?.router.top?.name ?? composition?.router.tab.rawValue ?? "none",
             typeSize: typeSize.doorName,
@@ -493,6 +495,20 @@ final class DoorHost {
             return .ack
         }
         return .error("\(identifier) did not activate")
+    }
+
+    /// A presented menu's rows cannot be activated from inside the process,
+    /// so the item is run as the menu's own action, found on the control
+    /// that presents the menu, and the menu is put away as a tap would.
+    private func choose(_ label: String) -> DoorReply {
+        let windows = [DoorWindow.current].compactMap { $0 } + DoorWindow.others
+        for window in windows {
+            guard let (button, action) = MenuSource.item(label, in: window) else { continue }
+            button.contextMenuInteraction?.dismissMenu()
+            MenuSource.run(action, from: button)
+            return .ack
+        }
+        return .error("no menu offers \(label)")
     }
 
     private func type(_ text: String, into identifier: String) -> DoorReply {
@@ -568,6 +584,9 @@ final class DoorHost {
 
     private func element(named identifier: String, in window: UIWindow) -> NSObject? {
         if let found = VisibleTree.find(identifier, in: window) { return found }
+        for other in DoorWindow.others {
+            if let found = VisibleTree.find(identifier, in: other) { return found }
+        }
         guard let declared = declared.first(where: { $0.identifier == identifier }) else {
             return nil
         }

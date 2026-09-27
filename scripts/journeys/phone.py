@@ -374,6 +374,15 @@ class PhoneJourney:
         self.app({"kind": "tap", "identifier": identifier})
         self.actions.append(f"tap {identifier}")
 
+    def choose(self, label: str) -> None:
+        """The item a person reads as `label` in a menu the app presented,
+        once the menu is drawn."""
+        self.wait(
+            lambda drawn: any(element.get("label") == label for element in drawn.values()), f"{label!r} presented"
+        )
+        self.app({"kind": "choose", "label": label})
+        self.actions.append(f"choose {label!r}")
+
     def type(self, identifier: str, text: str) -> None:
         self.app({"kind": "type", "identifier": identifier, "text": text})
         self.actions.append(f"type {text!r} into {identifier}")

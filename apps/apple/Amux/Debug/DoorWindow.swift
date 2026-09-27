@@ -11,6 +11,18 @@ enum DoorWindow {
         return windows.first(where: \.isKeyWindow) ?? windows.first
     }
 
+    /// The scene's other visible windows, topmost first: what the system
+    /// presents over the app, a menu among them, draws in a window of its
+    /// own.
+    @MainActor
+    static var others: [UIWindow] {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let key = current
+        return scenes.flatMap(\.windows)
+            .filter { $0 !== key && !$0.isHidden && $0.alpha > 0 }
+            .sorted { $0.windowLevel > $1.windowLevel }
+    }
+
     /// The first text input inside a view, which is what a SwiftUI text field
     /// actually is once it has been laid out.
     @MainActor

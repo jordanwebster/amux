@@ -239,6 +239,123 @@ def conversation_decision(journey: PhoneJourney, agent: str, provider_logs: bool
     return assertions
 
 
+LIVE, EXITED = 1, 2
+HELLO = "Say hello."
+BACK = "Welcome back."
+READY = "Ready when you are."
+
+
+def listed(agents: list[dict], agent_id: str) -> dict | None:
+    return next((agent for agent in agents if agent["id"] == agent_id), None)
+
+
+def lifecycle(agents: list[dict], agent_id: str, name: str | None, state: int) -> None:
+    """The host lists `agent_id` under `name` in lifecycle `state`."""
+    agent = listed(agents, agent_id)
+    if agent is None or agent.get("name") != name or agent["lifecycle"] != state:
+        raise RuntimeError(f"the desk lists {agent!r}, not {name!r} in lifecycle {state}")
+
+
+def reopen(journey: PhoneJourney, agent_id: str, ready) -> dict:
+    """Leaves the chat for the fleet and opens it again, so it is read with
+    the keyboard down."""
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn and f"home.row.{agent_id}" in drawn, "the fleet")
+    journey.tap(f"home.row.{agent_id}")
+    return journey.wait(lambda drawn: "chat.field" in drawn and ready(drawn), "the chat again")
+
+
+def replies(drawn: dict, text: str) -> int:
+    return sum(text in (element.get("label") or "") for name, element in drawn.items() if name.startswith("chat.row"))
+
+
+def manage_agent(journey: PhoneJourney) -> list[str]:
+    desk = journey.host_id("desk")
+    journey.launch()
+    pair_by_code(journey, "desk")
+    before = {agent["id"] for agent in journey.wait_inventory("desk", lambda agents: True, "inventory-before")}
+
+    # Created from the fleet: Claude on the desk, whose chat opens.
+    journey.tap("tab.agents")
+    journey.tap("home.newAgent")
+    drawn = journey.wait_for("new-agent")
+    if drawn.get(f"new-agent.host.{desk}", {}).get("value") != "chosen":
+        journey.tap(f"new-agent.host.{desk}")
+    drawn = journey.wait(lambda drawn: drawn.get("new-agent.directory", {}).get("value"), "a directory chosen")
+    # Unnamed, an agent is called after the directory it starts in.
+    named = Path(drawn["new-agent.directory"]["value"]).name
+    journey.tap("new-agent.start")
+    created = journey.wait_inventory("desk", lambda agents: len({a["id"] for a in agents} - before) == 1, "created")
+    (agent_id,) = {agent["id"] for agent in created} - before
+    lifecycle(created, agent_id, named, LIVE)
+    journey.wait_for("chat.field")
+    send(journey, HELLO)
+    journey.wait(lambda drawn: replies(drawn, READY) == 1 and "chat.row.turn-end" in drawn, "the first reply")
+    reopen(journey, agent_id, lambda drawn: replies(drawn, READY) == 1)
+    journey.screen("created", volatile=("chat.row.turn-end",))
+
+    # Renamed from the chat's menu: the desk lists the same agent under it.
+    journey.tap("chat.more")
+    journey.choose("Rename")
+    journey.wait_for("chat.rename.field")
+    journey.app({"kind": "clear", "identifier": "chat.rename.field"})
+    journey.type("chat.rename.field", "helper")
+    journey.tap("chat.rename.confirm")
+    renamed = journey.wait_inventory(
+        "desk", lambda agents: (listed(agents, agent_id) or {}).get("name") == "helper", "renamed"
+    )
+    lifecycle(renamed, agent_id, "helper", LIVE)
+    journey.wait(lambda drawn: drawn.get("chat.title", {}).get("value") == "helper", "the new name on the phone")
+
+    # Stopped: exited on the desk with its history kept, and resumable.
+    journey.tap("chat.more")
+    journey.choose("Stop Agent")
+    stopped = journey.wait_inventory(
+        "desk", lambda agents: (listed(agents, agent_id) or {}).get("lifecycle") == EXITED, "stopped"
+    )
+    lifecycle(stopped, agent_id, "helper", EXITED)
+    control = negative_control(lifecycle, stopped, agent_id, "helper", LIVE)
+    kept = journey.request({"Chat": {"host": "desk", "agent": agent_id}}, "history-kept")
+    reflected_once(kept, HELLO)
+    if not any(READY in item["text"] for item in kept["items"]):
+        raise RuntimeError(f"the stopped agent's history lost its reply: {kept!r}")
+    journey.wait(lambda drawn: labelled(drawn, "Exited"), "the chat saying it exited")
+    reopen(journey, agent_id, lambda drawn: labelled(drawn, "Exited") and replies(drawn, READY) == 1)
+    journey.screen("exited-and-resumable")
+
+    # Resumed from the exited composer: the same identity, live again.
+    journey.type("chat.field", BACK)
+    journey.wait(lambda drawn: drawn.get("chat.resume", {}).get("enabled") is True, "a message ready to resume with")
+    journey.tap("chat.resume")
+    resumed = journey.wait_inventory(
+        "desk", lambda agents: (listed(agents, agent_id) or {}).get("lifecycle") == LIVE, "resumed"
+    )
+    lifecycle(resumed, agent_id, "helper", LIVE)
+    chat = journey.wait_chat("desk", agent_id, lambda chat: len(prompts(chat, BACK)) == 1 and chat["phase"] == "IDLE", "resumed-chat")
+    reflected_once(chat, HELLO)
+    reflected_once(chat, BACK)
+    journey.wait(lambda drawn: replies(drawn, READY) == 2, "the resumed reply")
+    reopen(journey, agent_id, lambda drawn: replies(drawn, READY) == 2 and "chat.row.turn-end" in drawn)
+    journey.screen("resumed", volatile=("chat.row.turn-end",))
+
+    # Deleted, explicitly: gone from the fleet and from the desk.
+    journey.tap("chat.more")
+    journey.choose("Delete Agent")
+    journey.wait_for("chat.delete.confirm")
+    journey.tap("chat.delete.confirm")
+    journey.wait(lambda drawn: "chat.field" not in drawn and f"home.row.{agent_id}" not in drawn, "the fleet without it")
+    journey.wait_inventory("desk", lambda agents: listed(agents, agent_id) is None, "deleted")
+    journey.screen("deleted")
+    return [
+        "New Agent on the desk created a Claude agent the desk lists under its directory's name, and its chat answered",
+        "Rename from the chat's menu: the desk lists the same id as helper",
+        "Stop Agent: the desk lists it exited, with its prompt and reply kept",
+        control,
+        "a message from the exited composer resumed the same id, and each prompt is in the desk's chat once",
+        "Delete Agent: gone from the fleet and from the desk",
+    ]
+
+
 def never_received(chat: dict, text: str) -> None:
     if prompts(chat, text):
         raise RuntimeError(f"the desk received {text!r} while access was lost")
@@ -372,6 +489,7 @@ STORIES = {
     "conversation-decision-claude-sdk": lambda j: conversation_decision(j, "decision-sdk", True),
     "conversation-decision-codex": lambda j: conversation_decision(j, "decision-codex", True),
     "keep-authority": keep_authority,
+    "manage-agent": manage_agent,
 }
 
 
