@@ -46,6 +46,7 @@ fn config(dir: &std::path::Path) -> StartConfig {
         discovery_scope: String::new(),
         lan: true,
         lan_bind: None,
+        relay_tcp: None,
         tail: 50,
     }
 }

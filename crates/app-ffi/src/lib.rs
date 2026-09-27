@@ -172,6 +172,10 @@ fn overrides(config: &StartConfig) -> EdgeOverrides {
     {
         overrides.lan_bind = bind;
     }
+    // And may dial a served test relay's plaintext carrier.
+    if cfg!(feature = "debug-tools") {
+        overrides.cloud.relay_tcp = config.relay_tcp;
+    }
     overrides
 }
 

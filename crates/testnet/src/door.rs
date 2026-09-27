@@ -211,6 +211,13 @@ pub struct Readiness {
     pub gates: PathBuf,
     pub hosts: Vec<ReadyHost>,
     pub agents: Vec<ReadyAgent>,
+    /// The account service a client signs in to, when the topology has a
+    /// relay: a refresh token `refresh-<account>` is its login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_url: Option<String>,
+    /// The relay's plaintext TCP carrier, for a client outside the net.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_tcp: Option<SocketAddr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -338,6 +345,8 @@ fn readiness(net: &Net, control: SocketAddr) -> Result<Readiness, NetError> {
                 kind: agent.kind,
             })
             .collect(),
+        cloud_url: net.relay().ok().map(|relay| relay.url().to_owned()),
+        relay_tcp: net.relay().ok().map(|relay| relay.tcp()),
     })
 }
 

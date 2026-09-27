@@ -20,10 +20,14 @@ public final class RuntimeCoordinator {
         /// Where direct links listen instead of every interface, as
         /// `ip:port`. Only a driving build's library reads it.
         public var lanBind: String?
+        /// A served test relay's plaintext carrier, as `ip:port`. Only a
+        /// driving build's library reads it.
+        public var relayTCP: String?
 
-        public init(discoveryScope: String = "", lanBind: String? = nil) {
+        public init(discoveryScope: String = "", lanBind: String? = nil, relayTCP: String? = nil) {
             self.discoveryScope = discoveryScope
             self.lanBind = lanBind
+            self.relayTCP = relayTCP
         }
     }
 
@@ -113,7 +117,8 @@ public final class RuntimeCoordinator {
         let config = StartConfig(
             dataDir: directory.path, deviceName: deviceName,
             discoveryScope: options.discoveryScope, lan: true, lanBind: options.lanBind,
-            logPath: directory.appendingPathComponent("runtime.log").path, tail: nil)
+            logPath: directory.appendingPathComponent("runtime.log").path,
+            relayTcp: options.relayTCP, tail: nil)
         let starter = starter
         let previous = starting
         inFlight = true

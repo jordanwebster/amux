@@ -32,6 +32,11 @@ pub struct StartConfig {
     /// driving build reads it, to keep a simulator run on loopback.
     #[serde(default)]
     pub lan_bind: Option<SocketAddr>,
+    /// Dial the relay's TCP carrier here in plaintext, instead of where the
+    /// account service names it. Only a driving build reads it, to reach a
+    /// served test relay.
+    #[serde(default)]
+    pub relay_tcp: Option<SocketAddr>,
     /// How many rows a chat opens with.
     #[serde(default = "default_tail")]
     pub tail: u32,

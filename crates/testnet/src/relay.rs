@@ -157,6 +157,12 @@ impl Relay {
         &self.url
     }
 
+    /// The relay's plaintext TCP carrier, which a client outside the net
+    /// dials instead of where the account service names it.
+    pub fn tcp(&self) -> SocketAddr {
+        self.tcp
+    }
+
     /// The refresh token a person signing in as `account` hands the daemon.
     pub fn login(account: &str) -> String {
         format!("refresh-{account}")

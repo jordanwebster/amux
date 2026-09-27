@@ -108,6 +108,7 @@ impl Phone {
             discovery_scope: String::new(),
             lan: true,
             lan_bind: None,
+            relay_tcp: None,
             tail: 50,
         };
         let (wake_sender, wakes) = mpsc::channel();

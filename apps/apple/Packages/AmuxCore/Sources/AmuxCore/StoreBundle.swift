@@ -23,6 +23,8 @@ public final class StoreBundle {
     /// Open chats by the id the runtime's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: Chat, woke: @MainActor () -> Void)] = [:]
     @ObservationIgnored public let now: @MainActor () -> Date
+    /// Whether a re-read of a relay link still coming up is scheduled.
+    @ObservationIgnored private var settling = false
 
     public init(account: AccountId, clock: @escaping @MainActor () -> Date = { Date() }) {
         self.account = account
@@ -69,6 +71,17 @@ public final class StoreBundle {
         guard let runtime, case .success(let account) = await runtime.account() else { return }
         hosts.show(account)
         fleet.relay(account.relay)
+        // The relay link settles without the host list moving, so while it
+        // is still coming up it is read again until it says where it landed.
+        guard account.relay == .connecting || account.relay == .retrying,
+              !settling else { return }
+        settling = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, self.runtime === runtime else { return }
+            self.settling = false
+            await self.refreshAccount()
+        }
     }
 
     /// Reads this phone's identity and the machines it trusts again.

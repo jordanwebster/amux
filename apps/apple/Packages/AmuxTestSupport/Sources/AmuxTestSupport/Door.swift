@@ -1112,6 +1112,10 @@ public enum Door {
     /// so a simulator run never listens on the Mac's network.
     public static let lanBindArgument = "amux-lan-bind"
 
+    /// A served test relay's plaintext carrier, as `ip:port`, which a driven
+    /// launch dials instead of where the test account service names it.
+    public static let relayTCPArgument = "amux-relay-tcp"
+
     /// What the ready file holds.
     public struct Ready: Codable, Sendable, Equatable {
         public let port: UInt16
