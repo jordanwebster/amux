@@ -33,6 +33,10 @@
 //!   amux closes it cancelled; that call's result, a row from a later
 //!   assistant message, and the facts that close every ask close it
 //!   dismissed.
+//! - Rows are read by polling and hooks arrive at once, so a hook of the
+//!   turn a prompt sent through amux began can land before that prompt's
+//!   row. Items only hooks have reported so far are held until the row
+//!   lands, so the prompt is drawn above the calls it caused.
 
 mod facts;
 mod recording;
@@ -338,6 +342,24 @@ struct Slash {
     output: Option<String>,
 }
 
+/// How long an item only hooks reported waits for the row of the prompt
+/// that caused it. The transcript is read every few tens of milliseconds,
+/// so a row this late is not coming soon: better drawn out of order than
+/// not at all.
+const HOLD_LIMIT_MS: i64 = 2_000;
+
+/// An item held back until the prompt that caused it is reflected.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct HeldItem {
+    /// When it was first held.
+    since_ms: i64,
+    key: String,
+    text: String,
+    #[serde(with = "serde_pb::item_body")]
+    body: Vec<u8>,
+    at_ms: i64,
+}
+
 /// Everything the Claude PTY interpreter holds; its checkpoint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct State {
@@ -357,6 +379,9 @@ pub struct State {
     slash: Option<Slash>,
     /// The running turn began with a local command, not a model request.
     local_turn: bool,
+    /// Items only hooks have reported, held while a prompt sent through
+    /// amux awaits its row, in the order they were first reported.
+    held: Vec<HeldItem>,
 }
 
 fn item_body(kind: claude_pty_item::Kind) -> Vec<u8> {
@@ -386,6 +411,7 @@ impl State {
             agents: BTreeMap::new(),
             slash: None,
             local_turn: false,
+            held: Vec::new(),
         }
     }
 
@@ -412,8 +438,22 @@ impl State {
                 running,
             },
         };
+        // An ask points at no item until its item is emitted.
+        let asks = self
+            .shared
+            .asks()
+            .open_asks()
+            .iter()
+            .map(|ask| match self.is_held(&ask.item_key) {
+                true => Ask {
+                    item_key: String::new(),
+                    ..ask.clone()
+                },
+                false => ask.clone(),
+            })
+            .collect();
         ClaudePtySnapshot {
-            asks: self.shared.asks().open_asks().to_vec(),
+            asks,
             tasks: Some(tasks),
             context: Some(context),
             model: self.provider.model.clone(),
@@ -430,6 +470,7 @@ impl State {
     /// Emits a tool call's item if it is drawn and changed since the last
     /// emission.
     fn emit_tool(&mut self, emit: &mut Emit, id: &str) {
+        let held = self.is_held(id);
         let Some(tool) = self.tools.get_mut(id) else {
             return;
         };
@@ -445,12 +486,13 @@ impl State {
                 ),
             );
             let body = item_body(claude_pty_item::Kind::AgentMessage(message));
-            if body == tool.emitted {
+            if body == tool.emitted && !held {
                 return;
             }
+            let unseen = tool.emitted.is_empty() && tool.message_id.is_none();
             tool.emitted = body.clone();
             let at_ms = tool.at_ms;
-            return self.shared.item(
+            return self.put(
                 emit,
                 ItemDraft {
                     key: id.to_owned(),
@@ -460,6 +502,7 @@ impl State {
                     complete: true,
                     ..Default::default()
                 },
+                unseen,
             );
         }
         let body = item_body(claude_pty_item::Kind::Tool(ToolCall {
@@ -482,12 +525,13 @@ impl State {
             exit_code: None,
             ended_at_ms: tool.ended_at_ms,
         }));
-        if body == tool.emitted {
+        if body == tool.emitted && !held {
             return;
         }
+        let unseen = tool.emitted.is_empty() && tool.message_id.is_none();
         tool.emitted = body.clone();
         let at_ms = tool.at_ms;
-        self.shared.item(
+        self.put(
             emit,
             ItemDraft {
                 key: id.to_owned(),
@@ -496,7 +540,63 @@ impl State {
                 complete: true,
                 ..Default::default()
             },
+            unseen,
         );
+    }
+
+    /// Emits an item, or holds it when it is `unseen` (never emitted, and
+    /// reported by hooks alone) and a prompt sent through amux has not been
+    /// reflected yet: that prompt began the turn the hooks belong to, and
+    /// its row is still on the way. An item already emitted has its place.
+    fn put(&mut self, emit: &mut Emit, draft: ItemDraft, unseen: bool) {
+        let held = self.held.iter().position(|held| held.key == draft.key);
+        let hold = (unseen || held.is_some()) && !self.shared.awaiting_reflection().is_empty();
+        if !hold {
+            if let Some(index) = held {
+                self.held.remove(index);
+            }
+            return self.shared.item(emit, draft);
+        }
+        let item = HeldItem {
+            since_ms: held.map_or(self.shared.now_ms(), |index| self.held[index].since_ms),
+            key: draft.key,
+            text: draft.text,
+            body: draft.body,
+            at_ms: draft.at_ms.unwrap_or_else(|| self.shared.now_ms()),
+        };
+        match held {
+            Some(index) => self.held[index] = item,
+            None => self.held.push(item),
+        }
+    }
+
+    fn is_held(&self, key: &str) -> bool {
+        self.held.iter().any(|held| held.key == key)
+    }
+
+    /// Emits the held items once no prompt awaits its row, or once the
+    /// oldest has waited out the hold limit.
+    fn release_held(&mut self, emit: &mut Emit) {
+        let waited_out = self
+            .held
+            .first()
+            .is_some_and(|held| self.shared.now_ms() - held.since_ms >= HOLD_LIMIT_MS);
+        if !self.shared.awaiting_reflection().is_empty() && !waited_out {
+            return;
+        }
+        for held in std::mem::take(&mut self.held) {
+            self.shared.item(
+                emit,
+                ItemDraft {
+                    key: held.key,
+                    text: held.text,
+                    body: held.body,
+                    at_ms: Some(held.at_ms),
+                    complete: true,
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     // --- asks ------------------------------------------------------------
@@ -576,11 +676,12 @@ impl State {
             return;
         };
         let item = ask_item::opened(wire::ask_item::Ask::Unanswerable(unanswerable.clone()));
+        let unseen = closed.is_none();
         let item = match closed {
             Some(closed) => ask_item::close(item, closed),
             None => item,
         };
-        self.shared.item(
+        self.put(
             emit,
             ItemDraft {
                 key: ask.item_key.clone(),
@@ -589,6 +690,7 @@ impl State {
                 complete: true,
                 ..Default::default()
             },
+            unseen,
         );
     }
 
@@ -984,6 +1086,7 @@ impl Interpreter for ClaudePty {
             Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
             Event::StopRequested(_) => {}
         }
+        state.release_held(&mut emit);
         if let Some(entry) = state.shared.next_queued() {
             emit.effect(Effect::Terminal(TerminalInput::Prompt {
                 text: entry.text,

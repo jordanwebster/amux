@@ -1,3 +1,17 @@
+2026-09-27 — **Terminal Claude's prompt is drawn above the call it caused.**
+Hooks reach the agent at once while the transcript is read by polling, so
+the hook announcing a turn's first tool call could land before the row of
+the prompt amux sent to start that turn; items are ordered by first commit,
+and the served chat showed `Ran deploy --check` above `Check the deployment
+once.`. The claude_pty interpreter now holds items only hooks have reported
+(tool calls, a tool server's dialog) while a prompt it submitted awaits its
+row, emits them right after that row, and masks an open ask's pointer to a
+held item until then. A row that has not landed two seconds after the first
+held hook releases them anyway, so a lost row never hides a call. Fixture
+`hook_before_prompt_row` covers a call, a dialog and the bounded wait; the
+served ask-escape frame and the terminal Claude journey goldens now show
+the prompt first.
+
 2026-09-27 — **A message the daemon lost the answer to is not confirmed, not "not sent".**
 When the laptop's daemon handed a message to its agent and died before the
 agent acknowledged it, the daemon answered `ABORTED` ("the agent's answer

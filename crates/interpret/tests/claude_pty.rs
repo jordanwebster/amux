@@ -64,6 +64,7 @@ goldens! {
     hook_before_row_and_row_before_hook_yield_one_tool_call => "hook_row_order",
     asks_open_on_the_hook_and_close_only_on_facts => "ask_rules",
     a_late_row_for_amuxs_own_prompt_leaves_the_ask_open => "late_prompt_row",
+    a_prompt_row_behind_its_hooks_still_comes_first => "hook_before_prompt_row",
     answers_through_amux_become_terminal_inputs => "answers",
     semantic_inputs_become_effects => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",

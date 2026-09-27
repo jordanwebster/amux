@@ -111,6 +111,10 @@ fn claude_pty_session() -> Vec<Event> {
         ),
         prompt_input::<ClaudePty>("p1"),
         with(json!({ "hook_event_name": "UserPromptSubmit", "prompt": prompt() })),
+        fact(
+            Channel::Transcript,
+            json!({ "type": "user", "uuid": "u1", "timestamp": "2027-01-15T08:00:00.010Z", "sessionId": SESSION, "origin": { "kind": "human" }, "promptSource": "typed", "message": { "role": "user", "content": prompt() } }),
+        ),
         with(
             json!({ "hook_event_name": "PreToolUse", "tool_use_id": "t1", "tool_name": "Bash", "tool_input": { "command": command() } }),
         ),

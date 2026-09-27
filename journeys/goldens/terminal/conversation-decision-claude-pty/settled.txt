@@ -20,10 +20,10 @@
 
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+▎   Check the deployment once.
+
   ✔ Ran deploy --check                                                                           <t> · allowed
     deploy check: ok
-
-▎   Check the deployment once.
 
     The deploy check passed.
 

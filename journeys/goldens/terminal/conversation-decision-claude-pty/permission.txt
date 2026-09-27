@@ -19,9 +19,9 @@
 
   ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-▌ ▸ Running deploy --check                                                                             running
-
 ▎   Check the deployment once.
+
+▌ ▸ Running deploy --check                                                                             running
 
 
   ● Wants to run a command
