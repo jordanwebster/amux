@@ -617,7 +617,12 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
     net.discovery()
         .announce(advert(&net, "desk", first, "home"));
     until_via(&net, "phone", "desk", HostVia::Direct).await;
-    assert_eq!(stored_addrs(&net, "phone", "desk"), vec![first.to_string()]);
+    // The dialler stores an address once its link is established, just
+    // after routing already names the link.
+    until("the phone to store the desk's address", || async {
+        stored_addrs(&net, "phone", "desk") == vec![first.to_string()]
+    })
+    .await;
     println!("the desk found at {first}: the phone dialled it at once and stored the address");
 
     // The desk stops and withdraws, and comes back on another port while
@@ -640,10 +645,10 @@ async fn discovery_advertises_a_listener_and_finds_a_paired_host_at_its_new_addr
         started.elapsed() < Duration::from_secs(2),
         "the found address was dialled before the stale one timed out"
     );
-    assert_eq!(
-        stored_addrs(&net, "phone", "desk"),
-        vec![second.to_string()]
-    );
+    until("the phone to store the desk's new address", || async {
+        stored_addrs(&net, "phone", "desk") == vec![second.to_string()]
+    })
+    .await;
     peer_inventory_hosts(&edge(&net, "phone"), desk)
         .await
         .expect("the phone calls the desk at its new address");

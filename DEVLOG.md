@@ -1,3 +1,9 @@
+2026-09-27 — **Discovery spec waits for the stored address.**
+A direct dialler stores the address that worked once its link is
+established, a moment after routing already names the link, so the
+discovery case read the stale address now and then under load. It now
+waits for the record.
+
 2026-09-27 — **An unpaired peer learns it is no longer trusted, every time.**
 Under load a host that unpaired a peer often left the peer thinking the
 host was merely offline, or failing its reopen as a bare transport error.
