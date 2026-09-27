@@ -535,6 +535,11 @@ impl Session {
         tokio::spawn(self.inner.clone().fetch_blob(hash.to_vec()));
     }
 
+    /// The agent's working-tree diff and its patch, for a review page.
+    pub async fn working_tree_review(&self) -> Result<(wire::Diff, String), RpcError> {
+        crate::review::working_tree_review(self.inner.client.as_ref(), &self.inner.agent_id).await
+    }
+
     /// Stores bytes to attach to a prompt.
     pub async fn put_blob(
         &self,

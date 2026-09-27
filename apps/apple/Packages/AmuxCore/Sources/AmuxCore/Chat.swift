@@ -197,6 +197,13 @@ public final class Chat: ChatSource, @unchecked Sendable {
         }
     }
 
+    /// The agent's working-tree diff as its host froze it, with its patch.
+    public func review() async -> Result<FrozenReview, RuntimeFailure> {
+        await act(FrozenReview.self) { live, callback, context in
+            amux_session_review(live, callback, context)
+        }
+    }
+
     /// Stores an attachment's bytes, answering the reference a draft carries.
     public func putBlob(
         _ data: Data, name: String, mime: String

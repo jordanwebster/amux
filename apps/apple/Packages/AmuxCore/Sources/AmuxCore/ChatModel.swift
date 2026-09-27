@@ -26,6 +26,15 @@ public protocol ChatSource: AnyObject, Sendable {
     func pageOlder(_ rows: UInt32) async -> PageOutcome?
     func putBlob(_ data: Data, name: String, mime: String) async -> Result<BlobRef, RuntimeFailure>
     func blob(_ hash: [UInt8]) -> Data?
+    func review() async -> Result<FrozenReview, RuntimeFailure>
+}
+
+/// An agent's uncommitted changes as the chat header counts them.
+public struct WorkingChanges: Equatable, Sendable {
+    public var review: FrozenReview
+    public var files: Int
+    public var added: UInt32
+    public var removed: UInt32
 }
 
 /// One row of the list, held by its key. A cell observes only its own row,
@@ -99,6 +108,12 @@ public final class ChatModel {
     public private(set) var sending = false
     /// What went wrong with the last thing the person did, until the next.
     public private(set) var notice: String?
+    /// The agent's uncommitted changes, when it has any: what the header's
+    /// changes chip counts and the review page opens on.
+    public private(set) var changes: WorkingChanges?
+    /// The review being written on this agent's changes, kept while the
+    /// chat is open so leaving the page loses no comment.
+    public private(set) var reviewing: ReviewModel?
 
     /// - Parameter loadingHintAfter: how long an empty chat waits before
     ///   saying it is loading; zero says so from the first frame.
@@ -223,9 +238,30 @@ public final class ChatModel {
     }
 
     private func readSession() {
+        let before = frame
         frame = source.frame()
         ask = source.askCard()
         strip = source.strip()
+        if Self.changesMayHaveMoved(from: before, to: frame) { refreshChanges() }
+    }
+
+    /// The working tree is asked about once the chat is current, and again
+    /// each time a turn ends, which is when an agent's edits settle.
+    static func changesMayHaveMoved(from before: ChatFrame?, to after: ChatFrame?) -> Bool {
+        guard let after, after.caughtUp else { return false }
+        guard let before, before.caughtUp else { return true }
+        return before.phase == .working && after.phase != .working
+    }
+
+    /// Asks the agent's machine for its working-tree diff again.
+    public func refreshChanges() {
+        Task { [weak self] in
+            guard let self, case .success(let review) = await self.source.review() else { return }
+            let doc = ReviewModel.document(review, comments: [])
+            self.changes = doc.files.isEmpty
+                ? nil
+                : WorkingChanges(review: review, files: doc.files.count, added: doc.added, removed: doc.removed)
+        }
     }
 
     private func waitForRows(_ delay: Duration) {
@@ -368,6 +404,28 @@ public final class ChatModel {
             case .failure(let failure): notice = failure.description
             }
         }
+    }
+
+    /// The review page's model for the changes the chip counted: the one
+    /// already being written when it is on the same patch, else a new one.
+    public func review(of changes: WorkingChanges) -> ReviewModel {
+        if let reviewing, reviewing.review.diff.patch?.hash == changes.review.diff.patch?.hash {
+            return reviewing
+        }
+        let review = ReviewModel(review: changes.review)
+        reviewing = review
+        return review
+    }
+
+    /// Puts a written review into the draft as one token, replacing the
+    /// token of an earlier review of the same patch.
+    public func attach(_ review: ReviewModel) {
+        let patch = review.review.diff.patch?.hash
+        attachments.removeAll { attachment in
+            if case .review(let diff, _) = attachment { return diff.patch?.hash == patch }
+            return false
+        }
+        attachments.append(review.attachment)
     }
 
     public func removeAttachment(at index: Int) {

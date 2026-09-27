@@ -53,6 +53,8 @@ public enum ChatAction: Equatable, Sendable {
     case copyAddress
     /// A parent or child in this chat's family.
     case open(AgentKey)
+    /// The agent's uncommitted changes, from the header's changes chip.
+    case review
 }
 
 /// What the chat has open over itself; one at a time.
@@ -196,6 +198,26 @@ public struct ChatScreen: View {
                     "chat.header", label: placeLine,
                     value: detached ? "detached" : (subject.reachable ? "live" : "away"))
                 Spacer(minLength: 6)
+                if let changes = model.changes {
+                    Button {
+                        putDown += 1
+                        actions(.review)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(verbatim: "+\(changes.added)").foregroundStyle(design.added.color)
+                            Text(verbatim: "−\(changes.removed)").foregroundStyle(design.removed.color)
+                        }
+                        .designFont(.monoSmall, design)
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .frosted(Capsule(), as: .glass)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .accessibilityLabel(ChatWords.changes(
+                        files: changes.files, added: changes.added, removed: changes.removed))
+                    .accessibilityHint("Opens the review")
+                    .identified("chat.changes", label: "+\(changes.added) −\(changes.removed)", value: "shown")
+                }
                 overflow
             }
             if let family, family.parent != nil || !family.children.isEmpty {

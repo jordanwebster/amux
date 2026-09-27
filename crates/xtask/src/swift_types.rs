@@ -54,6 +54,7 @@ pub fn definitions() -> Map<String, Value> {
         app_runtime::values::ChatFrame,
         app_runtime::values::RowOptions,
         app_runtime::values::Draft,
+        app_runtime::values::FrozenReview,
         app_runtime::values::SendOutcome,
         app_runtime::values::ActOutcome,
         app_runtime::values::PageOutcome,

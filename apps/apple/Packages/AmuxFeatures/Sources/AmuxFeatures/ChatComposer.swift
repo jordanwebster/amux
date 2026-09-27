@@ -158,6 +158,7 @@ extension DraftAttachment {
         case .image(let blob): .image(blob)
         case .file(let blob): .file(blob)
         case .text(let name, let text): .text(name: name, lines: UInt32(text.split(separator: "\n").count))
+        case .review(let diff, let comments): .review(comments: UInt32(comments.count), patch: diff.patch)
         }
     }
 }

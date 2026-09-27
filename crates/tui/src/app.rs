@@ -16,9 +16,8 @@ use ui_runtime::{Fleet, InputError, Session, inputs};
 use ui_state::{AgentKey, Composer, InputOutcome, PhaseView};
 use ui_view::family_header;
 use wire::{
-    Agent, Attachment, CreateAgentRequest, DeleteAgentRequest, Diff, DiffBase, DiffRequest,
-    GetBlobRequest, RenameAgentRequest, SendInputResponse, StopAgentRequest, StopMode, diff_base,
-    send_input_response,
+    Agent, Attachment, CreateAgentRequest, DeleteAgentRequest, Diff, RenameAgentRequest,
+    SendInputResponse, StopAgentRequest, StopMode, send_input_response,
 };
 
 use crate::chat::layout::PAGE;
@@ -489,7 +488,9 @@ impl App {
                 self.notice("reading the working tree…", Tone::Info);
                 self.spawn(async move {
                     Some(
-                        match working_tree_review(client.as_ref(), &agent_id).await {
+                        match ui_runtime::review::working_tree_review(client.as_ref(), &agent_id)
+                            .await
+                        {
                             Ok((_, patch)) if patch.trim().is_empty() => AppEvent::Notice(
                                 "no changes in the working tree".into(),
                                 Tone::Info,
@@ -872,35 +873,6 @@ impl App {
             self.chat_effect(ChatEffect::Page(n));
         }
     }
-}
-
-/// Asks the agent's host for its working-tree diff and fetches the patch
-/// the diff names.
-pub(crate) async fn working_tree_review(
-    client: &dyn Client,
-    agent_id: &[u8],
-) -> Result<(Diff, String), client::RpcError> {
-    let diff = client
-        .diff(DiffRequest {
-            agent_id: agent_id.to_vec(),
-            base: Some(DiffBase {
-                base: Some(diff_base::Base::WorkingTree(wire::Empty {})),
-            }),
-        })
-        .await?;
-    let patch = match &diff.patch {
-        Some(blob) => {
-            let fetched = client
-                .get_blob(GetBlobRequest {
-                    agent_id: agent_id.to_vec(),
-                    hash: blob.hash.clone(),
-                })
-                .await?;
-            String::from_utf8_lossy(&fetched.bytes).into_owned()
-        }
-        None => String::new(),
-    };
-    Ok((diff, patch))
 }
 
 fn help_lines(leader: char, width: usize, theme: Theme) -> Vec<Line<'static>> {

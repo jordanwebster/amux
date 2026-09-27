@@ -16,6 +16,10 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     var resumed: [Draft] = []
     var withdrawn: [[UInt8]] = []
     var interrupts = 0
+    /// The working-tree diff the machine answers with, and how often it was
+    /// asked for.
+    var working: FrozenReview?
+    var reviews = 0
 
     init(rows: [Row], frame: ChatFrame) {
         ordered = rows
@@ -86,6 +90,12 @@ private final class FakeChat: ChatSource, @unchecked Sendable {
     }
 
     func blob(_ hash: [UInt8]) -> Data? { nil }
+
+    func review() async -> Result<FrozenReview, RuntimeFailure> {
+        reviews += 1
+        guard let working else { return .failure(RuntimeFailure("no machine")) }
+        return .success(working)
+    }
 }
 
 private func row(_ id: String, _ order: UInt64, _ text: String = "", run: RunInfo? = nil) -> Row {
@@ -293,6 +303,70 @@ final class ChatModelTests: XCTestCase {
         model.toggle("c")
         XCTAssertFalse(model.isExpanded("c"))
         XCTAssertTrue(model.expanded.isEmpty)
+    }
+
+    func testTheWorkingTreeIsAskedAboutOnceCurrentAndAgainWhenATurnEnds() async {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame(caughtUp: false))
+        source.working = ReviewFixtures.frozen
+        let model = ChatModel(source: source)
+        await settle()
+        XCTAssertEqual(source.reviews, 0, "nothing is asked before the chat is current")
+        XCTAssertNil(model.changes)
+
+        source.current = frame(phase: .working)
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(source.reviews, 1, "caught up: the chip is counted once")
+        XCTAssertEqual(model.changes?.files, 3)
+        XCTAssertEqual(model.changes?.added, 4)
+        XCTAssertEqual(model.changes?.removed, 2)
+
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(source.reviews, 1, "a turn still running changes nothing")
+
+        source.current = frame(phase: .idle)
+        source.pending = ChatChanges(keys: [], reloaded: false, session: true)
+        model.woke()
+        await settle()
+        XCTAssertEqual(source.reviews, 2, "the turn ended: the edits settled")
+    }
+
+    func testAnAgentWithNoChangesShowsNoChip() async {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        source.working = FrozenReview(diff: ReviewFixtures.frozen.diff, patch: "")
+        let model = ChatModel(source: source)
+        await settle()
+        XCTAssertEqual(source.reviews, 1)
+        XCTAssertNil(model.changes)
+    }
+
+    func testAnAttachedReviewIsOneDraftTokenThatSendsWithItsPatch() async {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        source.working = ReviewFixtures.frozen
+        let model = ChatModel(source: source)
+        await settle()
+        let changes = try! XCTUnwrap(model.changes)
+        let review = model.review(of: changes)
+        XCTAssertTrue(review === model.review(of: changes), "the review being written is kept")
+        review.begin(at: ReviewLine(file: 0, hunk: 0, line: 1))
+        review.comment("Keep the old name.")
+        model.attach(review)
+        review.begin(at: ReviewLine(file: 1, hunk: 0, line: 0))
+        review.comment("Say why.")
+        model.attach(review)
+        XCTAssertEqual(model.attachments.count, 1, "a second attach replaces the first token")
+        guard case .review(let diff, let comments)? = model.attachments.first else {
+            return XCTFail("the draft holds no review")
+        }
+        XCTAssertEqual(diff, ReviewFixtures.frozen.diff)
+        XCTAssertEqual(comments.map(\.text), ["Keep the old name.", "Say why."])
+
+        model.send()
+        await settle()
+        XCTAssertEqual(source.sent.first?.attachments, [.review(diff: ReviewFixtures.frozen.diff, comments: comments)])
     }
 
     func testAPushPayloadNamesTheAgentAndItsHost() {

@@ -12,7 +12,7 @@ use wire::{BlobRef, send_input_response};
 
 use crate::coalesce::{Coalescer, WakeFn};
 use crate::values::{
-    ActOutcome, ChatChanges, ChatFrame, Draft, PageOutcome, RowOptions, SendOutcome,
+    ActOutcome, ChatChanges, ChatFrame, Draft, FrozenReview, PageOutcome, RowOptions, SendOutcome,
 };
 
 /// An open chat. Row ids are item keys and never move, so the host's id
@@ -270,6 +270,12 @@ impl Chat {
             Err(PageError::OriginUnreachable) => PageOutcome::OriginUnreachable,
             Err(PageError::Rpc(error)) => PageOutcome::Failed(error.to_string()),
         }
+    }
+
+    /// The agent's working-tree diff and its patch, frozen for a review.
+    pub async fn review(&self) -> Result<FrozenReview, client::RpcError> {
+        let (diff, patch) = self.session.working_tree_review().await?;
+        Ok(FrozenReview { diff, patch })
     }
 
     /// Stores bytes to attach to a prompt.

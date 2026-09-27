@@ -1,3 +1,17 @@
+2026-09-27 — **The phone reviews an agent's changes again.**
+The chat header shows the agent's uncommitted changes as "+N −M", asked of
+its machine once the chat is current and again at every turn end. The chip
+opens a review page drawn from the runtime's own review document: files in
+the patch's order with their counts, hunks, folding, a file list, and an
+edge wheel for jumping between files. Holding a line and dragging selects
+lines in one file; a comment goes on the line the selection ends on, and
+"Attach Review" puts the review into the draft as one token that sends
+with the frozen diff naming its patch. The terminal and the phone now ask
+for the working-tree diff through one ui-runtime function. The strip above
+the composer wraps instead of cutting each fact to a few letters, the
+loopback smoke pairs bare Swift with a served machine on the rebuilt
+bridge, and the test catalogue describes today's suites.
+
 2026-09-27 — **The debug door drives the phone chat.**
 Attach, send, wait until sendable and wait for a reply act on the chat a
 page would open, so phone journeys can write to agents again. A door tap

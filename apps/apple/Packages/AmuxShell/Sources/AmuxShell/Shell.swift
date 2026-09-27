@@ -207,6 +207,8 @@ public struct Shell: View {
         switch route {
         case .conversation(let agent):
             ChatPage(agent: agent, router: router, stores: stores)
+        case .changes(let agent):
+            ChangesPage(agent: agent, router: router, stores: stores)
         case .newAgent:
             NewAgentPage(router: router, stores: stores)
         case .pairByCode(let host):
@@ -257,6 +259,53 @@ private struct ShellTabBar: View {
                     value: isSelected ? "selected" : "not selected")
             }
         }
+    }
+}
+
+/// An agent's uncommitted changes, pushed over its chat from the changes
+/// chip. It reviews the diff the chip counted, which the host froze, and
+/// keeps its comments on the chat so leaving and coming back loses none.
+private struct ChangesPage: View {
+    let agent: AgentKey
+    let router: Router
+    let stores: StoreBundle
+    @State private var chat: ChatModel?
+    @State private var review: ReviewModel?
+
+    var body: some View {
+        Group {
+            if let chat, let review {
+                ReviewPage(model: review, agent: name(chat)) { action in
+                    switch action {
+                    case .back: router.pop()
+                    case .attach:
+                        chat.attach(review)
+                        router.pop()
+                    }
+                }
+            } else {
+                ZStack(alignment: .topLeading) {
+                    Ground()
+                    VStack(alignment: .leading, spacing: 14) {
+                        BackLink(String(localized: "Chat"), identifier: "review.back") { router.pop() }
+                        Explain(String(localized: "This agent has no uncommitted changes."))
+                            .identified("review.empty")
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                }
+                .toolbar(.hidden, for: .navigationBar)
+            }
+        }
+        .onAppear {
+            guard chat == nil, let model = try? stores.chat(agent) else { return }
+            chat = model
+            review = model.changes.map(model.review(of:))
+        }
+    }
+
+    private func name(_ chat: ChatModel) -> String {
+        stores.fleet.row(agent)?.name ?? chat.frame?.name ?? agent.description
     }
 }
 
@@ -355,6 +404,7 @@ private struct ChatPage: View {
             }
         case .copyAddress: copy(subject.address)
         case .open(let other): router.open(.conversation(other))
+        case .review: router.open(.changes(agent))
         }
     }
 

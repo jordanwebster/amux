@@ -16,6 +16,9 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     public private(set) var sent: [Draft] = []
     /// What asking for older rows comes to.
     public var paged: PageOutcome = .arrived(0)
+    /// What asking for the working-tree diff comes to; nil answers that the
+    /// machine could not be asked.
+    public var working: FrozenReview?
 
     public init(
         rows: [Row], frame: ChatFrame, card: AskCard? = nil, strip: Strip = ScriptedChat.strip(),
@@ -158,4 +161,11 @@ public final class ScriptedChat: ChatSource, @unchecked Sendable {
     }
 
     public func blob(_ hash: [UInt8]) -> Data? { lock.withLock { images[hash] } }
+
+    public func review() async -> Result<FrozenReview, RuntimeFailure> {
+        guard let working = lock.withLock({ working }) else {
+            return .failure(RuntimeFailure("the machine could not be asked"))
+        }
+        return .success(working)
+    }
 }

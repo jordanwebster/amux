@@ -27,7 +27,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use app_embedded::{EdgeOverrides, EmbeddedRuntime, PairRequest, StartConfig};
-use app_runtime::values::{ActOutcome, AgentAct, Draft, Found, NewAgent, RowOptions};
+use app_runtime::values::{ActOutcome, AgentAct, Draft, Found, FrozenReview, NewAgent, RowOptions};
 use app_runtime::{AppRuntime, Chat, Wake};
 use model::{AgentKey, Key};
 use node::SourcePolicy;
@@ -1360,6 +1360,46 @@ pub unsafe extern "C" fn amux_session_page_older(
             chat.page_older(n).await
         })
     }
+}
+
+/// Asks the agent's host for its working-tree diff and the patch it names;
+/// the callback gets `{"Ok": FrozenReview}` or `{"Err": ..}`.
+///
+/// # Safety
+/// `chat` is from `amux_session_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_review(
+    chat: *const AmuxChat,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, |chat| async move {
+            Answered::from(chat.review().await)
+        })
+    }
+}
+
+/// The review page's document: a `FrozenReview`'s patch parsed into files
+/// and hunks, with `comments` (a JSON array of `ReviewComment`) placed on
+/// their lines. Null when either argument does not parse.
+///
+/// # Safety
+/// The strings are NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_review_doc(
+    review: *const c_char,
+    comments: *const c_char,
+) -> *mut c_char {
+    // SAFETY: the caller's contract.
+    let review: Option<FrozenReview> = unsafe { parse(review) };
+    // SAFETY: the caller's contract.
+    let comments: Option<Vec<_>> = unsafe { parse(comments) };
+    guard(std::ptr::null_mut(), || match (review, comments) {
+        (Some(review), Some(comments)) => owned(&review.doc(&comments)),
+        _ => std::ptr::null_mut(),
+    })
 }
 
 /// Stores bytes to attach to a prompt; the callback gets

@@ -876,6 +876,43 @@ public enum Away: String, Codable, Hashable, Sendable, CaseIterable {
     case revoked = "Revoked"
 }
 
+public enum Base: Codable, Hashable, Sendable {
+    case workingTree(Empty)
+    case branch(String)
+
+    private enum Tag: String, CodingKey {
+        case workingTree = "WorkingTree"
+        case branch = "Branch"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let _container = try decoder.container(keyedBy: Tag.self)
+        guard _container.allKeys.count == 1, let _tag = _container.allKeys.first else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "a Base names exactly one variant"))
+        }
+        switch _tag {
+        case .workingTree:
+            self = .workingTree(try _container.decode(Empty.self, forKey: .workingTree))
+        case .branch:
+            self = .branch(try _container.decode(String.self, forKey: .branch))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case .workingTree(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .workingTree)
+        case .branch(let _value):
+            var _container = encoder.container(keyedBy: Tag.self)
+            try _container.encode(_value, forKey: .branch)
+        }
+    }
+}
+
 /// A bearer for the account service, borrowed from the profile, which alone
 /// spends the refresh token.
 public struct Bearer: Codable, Hashable, Sendable {
@@ -1449,6 +1486,41 @@ public enum DecisionView: String, Codable, Hashable, Sendable, CaseIterable {
     case dismissed = "Dismissed"
 }
 
+/// A diff generated on the owning host. The patch is a text/x-diff blob;
+/// files, counts and per-file identity are parsed from its index lines.
+public struct Diff: Codable, Hashable, Sendable {
+    public var head: String
+    public var base: DiffBase?
+    public var mergeBase: String?
+    public var patch: BlobRef?
+
+    public init(head: String, base: DiffBase?, mergeBase: String?, patch: BlobRef?) {
+        self.head = head
+        self.base = base
+        self.mergeBase = mergeBase
+        self.patch = patch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case head
+        case base
+        case mergeBase = "merge_base"
+        case patch
+    }
+}
+
+public struct DiffBase: Codable, Hashable, Sendable {
+    public var base: Base?
+
+    public init(base: Base?) {
+        self.base = base
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case base
+    }
+}
+
 public struct DiffLine: Codable, Hashable, Sendable {
     public var kind: LineKind
     public var text: String
@@ -1534,16 +1606,24 @@ public enum DraftAttachment: Codable, Hashable, Sendable {
     case image(BlobRef)
     case file(BlobRef)
     case text(name: String, text: String)
+    /// Comments on a frozen diff, sent with the diff that names its patch.
+    case review(diff: Diff, comments: [ReviewComment])
 
     private enum Tag: String, CodingKey {
         case image = "Image"
         case file = "File"
         case text = "Text"
+        case review = "Review"
     }
 
     private enum TextKeys: String, CodingKey {
         case name
         case text
+    }
+
+    private enum ReviewKeys: String, CodingKey {
+        case diff
+        case comments
     }
 
     public init(from decoder: any Decoder) throws {
@@ -1565,6 +1645,12 @@ public enum DraftAttachment: Codable, Hashable, Sendable {
             self = .text(
                 name: try _fields.decode(String.self, forKey: .name),
                 text: try _fields.decode(String.self, forKey: .text))
+        case .review:
+            let _fields = try _container.nestedContainer(
+                keyedBy: ReviewKeys.self, forKey: .review)
+            self = .review(
+                diff: try _fields.decode(Diff.self, forKey: .diff),
+                comments: try _fields.decode([ReviewComment].self, forKey: .comments))
         }
     }
 
@@ -1581,7 +1667,18 @@ public enum DraftAttachment: Codable, Hashable, Sendable {
             var _fields = _container.nestedContainer(keyedBy: TextKeys.self, forKey: .text)
             try _fields.encode(name, forKey: .name)
             try _fields.encode(text, forKey: .text)
+        case .review(let diff, let comments):
+            var _container = encoder.container(keyedBy: Tag.self)
+            var _fields = _container.nestedContainer(keyedBy: ReviewKeys.self, forKey: .review)
+            try _fields.encode(diff, forKey: .diff)
+            try _fields.encode(comments, forKey: .comments)
         }
+    }
+}
+
+public struct Empty: Codable, Hashable, Sendable {
+
+    public init() {
     }
 }
 
@@ -1828,6 +1925,23 @@ public struct Found: Codable, Hashable, Sendable {
         case version
         case addrs
         case scope
+    }
+}
+
+/// An agent's working-tree diff as its host froze it for a review page, and
+/// the patch it names.
+public struct FrozenReview: Codable, Hashable, Sendable {
+    public var diff: Diff
+    public var patch: String
+
+    public init(diff: Diff, patch: String) {
+        self.diff = diff
+        self.patch = patch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case diff
+        case patch
     }
 }
 
@@ -2519,6 +2633,29 @@ public enum Resolution: String, Codable, Hashable, Sendable, CaseIterable {
     case declined = "Declined"
     /// Closed by a fact that did not say how.
     case dismissed = "Dismissed"
+}
+
+public struct ReviewComment: Codable, Hashable, Sendable {
+    public var path: String
+    /// New-side line; zero comments on the file as a whole.
+    public var line: UInt32
+    /// Old-side line for a comment on a removed line.
+    public var oldLine: UInt32
+    public var text: String
+
+    public init(path: String, line: UInt32, oldLine: UInt32, text: String) {
+        self.path = path
+        self.line = line
+        self.oldLine = oldLine
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case line
+        case oldLine = "old_line"
+        case text
+    }
 }
 
 public struct ReviewDoc: Codable, Hashable, Sendable {

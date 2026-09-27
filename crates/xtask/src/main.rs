@@ -56,10 +56,15 @@ fn restamp(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 const VIEW_VALUES: &[&str] = &[
     "amux.v1.BlobRef",
     "amux.v1.BoundaryKind",
+    "amux.v1.Diff",
+    "amux.v1.DiffBase",
+    "amux.v1.DiffBase.base",
+    "amux.v1.Empty",
     "amux.v1.EnvelopeKind",
     "amux.v1.HostVia",
     "amux.v1.Kind",
     "amux.v1.Presence",
+    "amux.v1.ReviewComment",
     "amux.v1.SendState",
     "amux.v1.SignInState",
 ];

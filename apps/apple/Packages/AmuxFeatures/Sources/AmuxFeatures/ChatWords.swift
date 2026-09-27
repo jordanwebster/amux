@@ -322,6 +322,41 @@ public enum ChatWords {
         }
     }
 
+    // MARK: - Review
+
+    public static func files(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 file") : String(localized: "\(count) files")
+    }
+
+    public static func comments(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 comment") : String(localized: "\(count) comments")
+    }
+
+    /// "4 files, 18 added, 28 removed": the counts as a sentence to hear.
+    public static func changes(files: Int, added: UInt32, removed: UInt32) -> String {
+        String(localized: "\(Self.files(files)), \(added) added, \(removed) removed")
+    }
+
+    public static func attachReview(_ count: Int) -> String {
+        count == 1
+            ? String(localized: "Attach Review · 1 comment")
+            : String(localized: "Attach Review · \(count) comments")
+    }
+
+    /// "Added line 12, Refused(String),": a diff line as VoiceOver reads it.
+    public static func spoken(_ line: DiffLine) -> String {
+        let text = line.text.trimmingCharacters(in: .whitespaces)
+        switch line.kind {
+        case .added: return String(localized: "Added line \(line.newLine ?? 0), \(text)")
+        case .removed: return String(localized: "Removed line \(line.oldLine ?? 0), \(text)")
+        case .context: return String(localized: "Line \(line.newLine ?? line.oldLine ?? 0), \(text)")
+        }
+    }
+
+    public static func commentOn(lines: Int) -> String {
+        lines == 1 ? String(localized: "Comment on 1 line") : String(localized: "Comment on \(lines) lines")
+    }
+
     // MARK: - The strip
 
     /// The facts strip's parts, in order; each only while it is true.

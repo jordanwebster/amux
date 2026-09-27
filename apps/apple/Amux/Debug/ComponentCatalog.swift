@@ -17,6 +17,7 @@ struct ComponentExample: Identifiable {
         case asks = "Asks"
         case composer = "Composer"
         case chat = "Chat"
+        case review = "Review"
     }
 
     let id: String
@@ -53,7 +54,7 @@ struct ComponentExample: Identifiable {
 /// row kind, every ask card, the composer's states and the chat's own.
 @MainActor
 enum ComponentCatalog {
-    static let examples: [ComponentExample] = rows + asks + composer + chat
+    static let examples: [ComponentExample] = rows + asks + composer + chat + review
 
     static func example(id: String) -> ComponentExample? {
         examples.first { $0.id == id }
@@ -382,6 +383,10 @@ enum ComponentCatalog {
                 context: ContextView(usedTokens: 16_447, inStrip: false, percent: 6, windowTokens: 258_400),
                 model: "gpt-5.6-luna", effort: "high", mode: "on-request",
                 failedServers: [ServerView(name: "docs", error: "connection refused", needsAuth: false)])),
+            composer("review-token", height: 200, frame: ScriptedChat.frame(phase: .idle),
+                     draft: "Please address these before the next run.") {
+                $0.attach(F.writtenReview())
+            },
             composer("strip-trouble", height: 220, frame: ScriptedChat.frame(), strip: ScriptedChat.strip(
                 model: "gpt-5", usage: UsageView(blocked: false, windows: [UsageWindowView(name: "5h", usedPercent: 91, resetsAtMs: nil)], credits: nil),
                 failedServers: [ServerView(name: "github", error: "exited", needsAuth: false)])),
@@ -445,10 +450,68 @@ enum ComponentCatalog {
             chat("family", chat: {
                 ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame(phase: .working))
             }, family: F.family),
+            chat("changes", readiness: ("chat.changes", "shown"), chat: {
+                let source = ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame(phase: .idle))
+                source.working = F.review
+                return source
+            }),
             chat("rename", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .rename),
             chat("delete", chat: { ScriptedChat(rows: F.conversation, frame: ScriptedChat.frame()) }, showing: .delete),
         ]
     }()
+}
+
+extension ComponentCatalog {
+    // MARK: - Review
+
+    private static func review(
+        _ id: String, height: CGFloat = 844, writing: Bool = false,
+        setUp: @escaping @MainActor (ReviewModel) -> Void = { _ in }
+    ) -> ComponentExample {
+        ComponentExample(id: "review.\(id)", family: .review, canvas: CGSize(width: 390, height: height)) {
+            CatalogReview(setUp: setUp) { model in
+                ReviewPage(model: model, agent: "refactor-auth", writing: writing) { _ in }
+            }
+        }
+    }
+
+    fileprivate static let review: [ComponentExample] = {
+        typealias F = CatalogFixtures
+        return [
+            review("page") { F.comment($0) },
+            review("selection") { model in
+                model.begin(at: ReviewLine(file: 0, hunk: 0, line: 2))
+                model.extend(to: ReviewLine(file: 0, hunk: 0, line: 4))
+            },
+            review("comment", writing: true) { model in
+                model.begin(at: ReviewLine(file: 0, hunk: 0, line: 2))
+                model.extend(to: ReviewLine(file: 0, hunk: 0, line: 4))
+            },
+            review("folded") { model in
+                F.comment(model)
+                model.toggle(file: 0)
+                model.toggle(file: 1)
+            },
+            ComponentExample(id: "review.files", family: .review, canvas: CGSize(width: 390, height: 420)) {
+                CatalogReview(setUp: F.comment) { model in ReviewFileList(model: model) { _ in } }
+            },
+        ]
+    }()
+}
+
+/// Holds one review's model for as long as the example is drawn.
+private struct CatalogReview<Content: View>: View {
+    @State private var model = ReviewModel(review: CatalogFixtures.review)
+    let setUp: @MainActor (ReviewModel) -> Void
+    let content: (ReviewModel) -> Content
+
+    init(setUp: @escaping @MainActor (ReviewModel) -> Void, @ViewBuilder content: @escaping (ReviewModel) -> Content) {
+        self.setUp = setUp
+        self.content = content
+        setUp(_model.wrappedValue)
+    }
+
+    var body: some View { content(model) }
 }
 
 /// Holds one scripted chat's model for as long as the example is drawn.
@@ -476,6 +539,70 @@ enum CatalogFixtures {
             context.fill(CGRect(x: 18, y: 16, width: 36, height: 36))
         }
     }()
+
+    /// An agent's working tree: a changed file, another of the same name,
+    /// and a new file.
+    static let reviewPatch = """
+        diff --git a/crates/amux-ui/src/pairing/errors.rs b/crates/amux-ui/src/pairing/errors.rs
+        index 1111111..2222222 100644
+        --- a/crates/amux-ui/src/pairing/errors.rs
+        +++ b/crates/amux-ui/src/pairing/errors.rs
+        @@ -8,11 +8,10 @@ use crate::codes::Code;
+         /// Why a pairing did not happen.
+         pub enum PairError {
+             Expired,
+        -    Refused,
+        -    Unknown,
+        -    Busy,
+        +    Refused(String),
+        +    Busy { retry_after_ms: u64 },
+         }
+         
+         impl PairError {
+        -    pub fn message(&self) -> &str {
+        +    pub fn message(&self) -> String {
+                 match self {
+        diff --git a/crates/amux-ui/tests/errors.rs b/crates/amux-ui/tests/errors.rs
+        index 3333333..4444444 100644
+        --- a/crates/amux-ui/tests/errors.rs
+        +++ b/crates/amux-ui/tests/errors.rs
+        @@ -1,4 +1,5 @@
+         use amux_ui::pairing::PairError;
+        +use amux_ui::pairing::describe;
+         
+         #[test]
+         fn every_error_has_one_string() {
+        diff --git a/docs/PAIRING.md b/docs/PAIRING.md
+        new file mode 100644
+        index 0000000..5555555
+        --- /dev/null
+        +++ b/docs/PAIRING.md
+        @@ -0,0 +1,3 @@
+        +# Pairing
+        +
+        +A refused pairing now says why.
+
+        """
+
+    static let review = FrozenReview(
+        diff: Diff(
+            head: "4f2a9c1", base: DiffBase(base: .workingTree(Empty())), mergeBase: nil,
+            patch: BlobRef(hash: [5, 5, 5], name: "patch", mime: "text/x-diff", size: UInt64(reviewPatch.utf8.count))),
+        patch: reviewPatch)
+
+    /// Two comments: one on a changed line, one on a new file's line.
+    static func comment(_ model: ReviewModel) {
+        model.begin(at: ReviewLine(file: 0, hunk: 0, line: 5))
+        model.comment("Say what refused it, not only that it was refused.")
+        model.begin(at: ReviewLine(file: 2, hunk: 0, line: 2))
+        model.comment("Link the error table here.")
+    }
+
+    static func writtenReview() -> ReviewModel {
+        let model = ReviewModel(review: review)
+        comment(model)
+        return model
+    }
 
     static let photo = BlobRef(hash: [7, 7, 7], name: "screen.jpg", mime: "image/jpeg", size: 184_320)
     static let log = BlobRef(hash: [8, 8, 8], name: "pairing.log", mime: "text/plain", size: 12_288)

@@ -138,6 +138,11 @@ pub enum DraftAttachment {
         name: String,
         text: String,
     },
+    /// Comments on a frozen diff, sent with the diff that names its patch.
+    Review {
+        diff: wire::Diff,
+        comments: Vec<wire::ReviewComment>,
+    },
 }
 
 impl DraftAttachment {
@@ -150,8 +155,27 @@ impl DraftAttachment {
                 name: name.clone(),
                 text: text.clone(),
             }),
+            DraftAttachment::Review { diff, comments } => Of::Review(wire::Review {
+                diff: Some(diff.clone()),
+                comments: comments.clone(),
+            }),
         };
         wire::Attachment { of: Some(of) }
+    }
+}
+
+/// An agent's working-tree diff as its host froze it for a review page, and
+/// the patch it names.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FrozenReview {
+    pub diff: wire::Diff,
+    pub patch: String,
+}
+
+impl FrozenReview {
+    /// The page's document, with `comments` placed on their lines.
+    pub fn doc(&self, comments: &[wire::ReviewComment]) -> ui_view::ReviewDoc {
+        ui_view::review_doc(&self.diff, &self.patch, comments)
     }
 }
 
