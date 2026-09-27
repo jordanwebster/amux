@@ -20,6 +20,9 @@ pub fn main() -> i32 {
     if crate::claude::answered_version(&args) {
         return 0;
     }
+    if args.iter().any(|arg| arg == "-p" || arg == "--print") {
+        return headless(&args);
+    }
     let mode = match crate::mode_from_env() {
         Ok(mode) => mode,
         Err(error) => {
@@ -42,6 +45,78 @@ pub fn main() -> i32 {
         Mode::Script(script) => runtime.block_on(engine::run(script, Args::parse(&args))),
     }
 }
+
+/// The same binary run headless, as a host runs terminal Claude's to learn
+/// what it offers: it answers `initialize` the way fake-claude-sdk does,
+/// from the script's models and commands, and exits when its input closes.
+/// Played back, it plays the recording's `headless` process, and a
+/// recording without one answers nothing.
+fn headless(args: &[String]) -> i32 {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a tokio runtime");
+    runtime.block_on(async {
+        let input = tokio::io::BufReader::new(tokio::io::stdin());
+        if let Some(selector) = std::env::var_os(crate::PLAYBACK_ENV) {
+            let (dir, _) = playback::parse_selector(&selector.to_string_lossy());
+            let Ok(process) = playback::process(&dir, HEADLESS) else {
+                return 0;
+            };
+            return match crate::lines::play(&process, input, tokio::io::stdout()).await {
+                Ok(code) => code.unwrap_or(0),
+                Err(error) => {
+                    eprintln!("fake-claude-pty: {error}");
+                    DRIFT_EXIT
+                }
+            };
+        }
+        let script = match crate::mode_from_env() {
+            Ok(Mode::Script(script)) => script,
+            Ok(Mode::Playback(_)) => return 0,
+            Err(error) => {
+                eprintln!("fake-claude-pty: {error}");
+                return DRIFT_EXIT;
+            }
+        };
+        let parsed = Args::parse(args);
+        let model = parsed
+            .model
+            .clone()
+            .or_else(|| script.model.clone())
+            .unwrap_or_else(|| "claude-fake-1".into());
+        let models = crate::script::OfferedModel::offered(&script.models, &model);
+        let mode = parsed.permission_mode.as_deref().unwrap_or("default");
+        let mut out = crate::lines::Out::new(tokio::io::stdout());
+        let mut lines = tokio::io::AsyncBufReadExt::lines(input);
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(frame) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if frame["type"] != "control_request" || frame["request"]["subtype"] != "initialize" {
+                continue;
+            }
+            let answer = serde_json::json!({
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": frame["request_id"],
+                    "response": crate::sdk::initialize_answer(&models, &script.commands, mode),
+                    "pending_permission_requests": [],
+                    "pending_user_dialog_requests": [],
+                },
+            });
+            if out.send(&answer).await.is_err() {
+                return 0;
+            }
+        }
+        0
+    })
+}
+
+/// The transport of a terminal recording's headless run: the same binary
+/// asked what it offers.
+pub const HEADLESS: &str = "headless";
 
 /// Run each hook command for the payload's event with the payload on
 /// stdin, one after another, waiting for each so the host sees payloads in

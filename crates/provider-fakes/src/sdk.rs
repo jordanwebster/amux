@@ -378,31 +378,7 @@ impl Engine {
     }
 
     fn initialize(&self) -> Value {
-        json!({
-            "commands": self.commands.iter().map(|command| json!({
-                "name": command.name,
-                "description": command.description,
-                "argumentHint": command.argument_hint,
-            })).collect::<Vec<_>>(),
-            "agents": [],
-            "account": {},
-            "models": self.models.iter().map(|model| {
-                let mut offered = json!({
-                    "value": model.value,
-                    "displayName": model.display_name(),
-                    "description": model.description,
-                });
-                // Claude leaves the field out for a model that takes no effort.
-                if !model.efforts.is_empty() {
-                    offered["supportedEffortLevels"] = json!(model.efforts);
-                }
-                offered
-            }).collect::<Vec<_>>(),
-            "output_style": "default",
-            "available_output_styles": ["default"],
-            "current_permission_mode": self.mode,
-            "fast_mode_state": "off",
-        })
+        initialize_answer(&self.models, &self.commands, &self.mode)
     }
 
     fn init_frame(&self) -> Value {
@@ -1162,4 +1138,39 @@ pub fn sidecar(name: &str, input: &Value, output: &str) -> Value {
         }),
         _ => json!(output),
     }
+}
+
+/// What headless Claude answers `initialize` with, for these offered models
+/// and commands and this permission mode. Terminal Claude run with `-p`
+/// answers the same.
+pub fn initialize_answer(
+    models: &[OfferedModel],
+    commands: &[OfferedCommand],
+    mode: &str,
+) -> Value {
+    json!({
+        "commands": commands.iter().map(|command| json!({
+            "name": command.name,
+            "description": command.description,
+            "argumentHint": command.argument_hint,
+        })).collect::<Vec<_>>(),
+        "agents": [],
+        "account": {},
+        "models": models.iter().map(|model| {
+            let mut offered = json!({
+                "value": model.value,
+                "displayName": model.display_name(),
+                "description": model.description,
+            });
+            // Claude leaves the field out for a model that takes no effort.
+            if !model.efforts.is_empty() {
+                offered["supportedEffortLevels"] = json!(model.efforts);
+            }
+            offered
+        }).collect::<Vec<_>>(),
+        "output_style": "default",
+        "available_output_styles": ["default"],
+        "current_permission_mode": mode,
+        "fast_mode_state": "off",
+    })
 }

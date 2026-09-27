@@ -618,3 +618,48 @@ async fn exit_ends_the_process_with_its_code() {
     let status = tokio::time::timeout(DEADLINE, exit.wait()).await.unwrap();
     assert_eq!(status.exit_code(), 5);
 }
+
+/// Run headless, as a host runs it to learn what terminal Claude offers,
+/// the fake answers `initialize` the way fake-claude-sdk does, with a frame
+/// of the headless corpus's shape, and exits when its input closes, having
+/// written no transcript.
+#[tokio::test]
+async fn run_headless_it_answers_initialize_with_the_scripted_offer() {
+    let mut host = support::Host::spawn(
+        Kind::ClaudeSdk,
+        env!("CARGO_BIN_EXE_fake-claude-pty"),
+        &[
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+        ],
+        json!({
+            "steps": [{"text": {"chunks": ["never said"]}}],
+            "models": [{"value": "sonnet", "efforts": ["low", "high"]}],
+            "commands": [{"name": "deploy", "description": "Ship it"}],
+        }),
+        &[],
+    )
+    .await;
+    host.send(
+        json!({"type": "control_request", "request_id": "agent-offer",
+                     "request": {"subtype": "initialize"}}),
+    )
+    .await;
+    let answer = host.next().await;
+    assert_eq!(answer["response"]["request_id"], "agent-offer");
+    let offered = &answer["response"]["response"];
+    assert_eq!(
+        offered["models"],
+        json!([{"value": "sonnet", "displayName": "sonnet", "description": "",
+                "supportedEffortLevels": ["low", "high"]}])
+    );
+    assert_eq!(
+        offered["commands"],
+        json!([{"name": "deploy", "description": "Ship it", "argumentHint": ""}])
+    );
+    assert_eq!(host.close().await, 0);
+}

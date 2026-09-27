@@ -250,6 +250,99 @@ fn a_terminal_claude_agent_types_through_its_keymap_and_hears_its_hooks() {
     });
 }
 
+/// Terminal Claude's offer comes from the same binary run once headless:
+/// its models and commands reach the snapshot without a prompt, and a model
+/// change is typed as Claude's own command.
+#[test]
+fn terminal_claude_offers_what_its_headless_run_answers() {
+    terminal_test(async {
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            models: vec![provider_fakes::OfferedModel {
+                value: "sonnet".into(),
+                display_name: Some("Sonnet".into()),
+                description: "Everyday".into(),
+                efforts: vec!["low".into(), "high".into()],
+                default_effort: None,
+            }],
+            commands: vec![provider_fakes::OfferedCommand {
+                name: "deploy".into(),
+                description: "Ship it".into(),
+                argument_hint: String::new(),
+            }],
+            ..Setup::sdk()
+        })
+        .await;
+        let _daemon = agent.dial().await;
+        agent
+            .wait("the offer", |log| {
+                log.offered() == (vec!["sonnet".to_owned()], vec!["deploy".to_owned()])
+            })
+            .await;
+        agent.ready().await;
+        assert!(
+            agent.provider_input().is_empty(),
+            "the headless run logs nothing a test reads as the terminal's input"
+        );
+    });
+}
+
+/// A headless run that never answers leaves the offer empty and holds up
+/// neither readiness nor the first prompt: the turn ends while it still runs.
+#[cfg(unix)]
+#[test]
+fn a_silent_offer_holds_up_nothing() {
+    terminal_test(async {
+        let root = tempfile::tempdir().unwrap();
+        let pid = root.path().join("headless.pid");
+        let wrapper = root.path().join("claude");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = -p ]; then echo $$ > '{}'; exec sleep 600; fi\nexec '{}' \"$@\"\n",
+                pid.display(),
+                fakes().join("fake-claude-pty").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &wrapper,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let agent = Agent::start(Setup {
+            kind: "claude_pty",
+            command: Some(wrapper.display().to_string()),
+            steps: vec![
+                Step::Text {
+                    chunks: vec!["answered".into()],
+                },
+                Step::TurnEnd,
+            ],
+            ..Setup::sdk()
+        })
+        .await;
+        let mut daemon = agent.dial().await;
+        agent.ready().await;
+        assert_eq!(daemon.prompt(b"p1", "go").await, Verdict::Accepted);
+        agent
+            .wait("the turn ends", |log| log.turn_ends() == 1)
+            .await;
+        let pid = std::fs::read_to_string(&pid).expect("the headless run started");
+        assert!(
+            std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .status()
+                .unwrap()
+                .success(),
+            "the headless run is still waiting to answer"
+        );
+        assert_eq!(agent.log().offered(), (Vec::new(), Vec::new()));
+        daemon.stop(StopMode::Graceful).await;
+        assert_eq!(agent.exit().await, ExitCause::Stopped);
+    });
+}
+
 fn held_turn() -> Vec<Step> {
     vec![
         Step::Text {
