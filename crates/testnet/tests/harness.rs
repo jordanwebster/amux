@@ -726,6 +726,22 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
             a: "a".into(),
             b: "b".into(),
         },
+        Control::Trust {
+            a: "a".into(),
+            b: "b".into(),
+        },
+        Control::Untrust {
+            a: "a".into(),
+            b: "b".into(),
+        },
+        Control::SetTier {
+            account: "a".into(),
+            tier: testnet::TierDecl::Free,
+        },
+        Control::SignIn {
+            host: "a".into(),
+            account: "b".into(),
+        },
         Control::KillDaemon { host: "a".into() },
         Control::StopDaemon { host: "a".into() },
         Control::RestartDaemon { host: "a".into() },

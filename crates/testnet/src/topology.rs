@@ -73,6 +73,9 @@ pub struct HostDecl {
     /// The relay account this host's profile signs in to at start.
     #[serde(default)]
     pub account: Option<String>,
+    /// What agents a client starts on this host play; none plays nothing.
+    #[serde(default)]
+    pub script: Option<Script>,
 }
 
 /// Two hosts that trust each other, linked in process over a loopback

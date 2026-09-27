@@ -1,5 +1,11 @@
 {
-  "hosts": [{"name": "desk"}, {"name": "laptop"}],
+  "hosts": [
+    {
+      "name": "desk",
+      "script": {"steps": [{"text": {"chunks": ["Ready when you are."]}}, "turn_end"]}
+    },
+    {"name": "laptop"}
+  ],
   "links": [{"a": "desk", "b": "laptop"}],
   "agents": [
     {
@@ -43,6 +49,15 @@
         {"text": {"chunks": ["A second turn arrived while you were away."]}},
         "turn_end",
         {"text": {"chunks": ["Back after the restart."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "reviewer",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["I read the review."]}},
         "turn_end"
       ]}
     }

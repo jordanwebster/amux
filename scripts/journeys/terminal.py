@@ -282,6 +282,32 @@ class TerminalJourney:
             time.sleep(0.2)
         raise RuntimeError(f"timed out waiting for {description}; {host} holds {last!r}")
 
+    def inventory(self, host: str, label: str | None = None) -> list[dict]:
+        reply = self.request({"Inventory": {"host": host}}, label)
+        assert isinstance(reply, dict)
+        return reply["agents"]
+
+    def wait_inventory(
+        self,
+        host: str,
+        predicate: Callable[[list[dict]], bool],
+        description: str,
+        timeout: float = 60.0,
+    ) -> list[dict]:
+        deadline = time.monotonic() + timeout
+        last: list[dict] = []
+        while time.monotonic() < deadline:
+            last = door(self.ready["control"], {"Inventory": {"host": host}})["agents"]
+            if predicate(last):
+                self.observations[description] = last
+                self.actions.append(f"observed at {host}: {description}")
+                return last
+            time.sleep(0.2)
+        raise RuntimeError(f"timed out waiting for {description}; {host} lists {last!r}")
+
+    def host_id(self, host: str) -> str:
+        return next(item["host_id"] for item in self.ready["hosts"] if item["name"] == host)
+
     def provider_input(self, agent: str, label: str) -> list[str]:
         reply = self.request({"ProviderInput": {"agent": agent}}, label)
         assert isinstance(reply, dict)
@@ -361,6 +387,12 @@ class TerminalJourney:
     def type(self, pane: str, value: str) -> None:
         self.tmux("send-keys", "-t", pane, "-l", value)
         self.actions.append(f"{pane}: type {value!r}")
+
+    def paste(self, pane: str, value: str) -> None:
+        """A bracketed paste, as a terminal delivers one."""
+        self.tmux("set-buffer", "-b", "journey", value)
+        self.tmux("paste-buffer", "-p", "-d", "-b", "journey", "-t", pane)
+        self.actions.append(f"{pane}: paste {len(value.splitlines())} lines")
 
     def select_agent(self, pane: str, agent: str) -> str:
         """Moves the fleet's selection onto `agent`."""

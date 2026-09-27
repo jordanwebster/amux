@@ -40,7 +40,7 @@ use crate::gate::UdpGate;
 use crate::invariant::{self, BlockViolation};
 use crate::observe::{self, InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
 use crate::relay::Relay;
-use crate::topology::{AgentDecl, FakeKind, HostDecl, Topology, TopologyError, link_key};
+use crate::topology::{AgentDecl, FakeKind, HostDecl, TierDecl, Topology, TopologyError, link_key};
 
 /// The extension of the file beside an agent's script that its provider
 /// logs every line it reads to.
@@ -256,6 +256,9 @@ impl Net {
         }
         for decl in &topology.hosts {
             net.create_host(decl)?;
+            if let Some(script) = &decl.script {
+                net.write_script(&format!("{}.host", decl.name), script.clone())?;
+            }
             net.start_host(&decl.name).await?;
         }
         for decl in &topology.hosts {
@@ -784,7 +787,8 @@ impl Net {
     }
 
     /// What a host's agents start with. With an agent, its fake and its
-    /// script; without, the host's defaults, which play nothing.
+    /// script; without, the host's defaults: the host's declared script, or
+    /// nothing.
     fn launch(&self, host: &HostInfo, agent: Option<(FakeKind, &Path)>) -> Launch {
         let mut launch = Launch {
             install_path: self.binaries.amux(),
@@ -808,6 +812,15 @@ impl Net {
                 .to_string_lossy()
                 .into_owned(),
         );
+        let host_script = self.hosts[&host.name].decl.script.is_some().then(|| {
+            self.root
+                .path()
+                .join("scripts")
+                .join(format!("{}.host.json", host.name))
+        });
+        let agent = agent.or(host_script
+            .as_deref()
+            .map(|script| (FakeKind::ClaudeSdk, script)));
         if let Some((kind, script)) = agent {
             if kind == FakeKind::ClaudePty {
                 launch.claude_command = self.binaries.fake(kind).to_string_lossy().into_owned();
@@ -995,6 +1008,30 @@ impl Net {
         })
         .await?;
         Ok(self.ack(format!("{host} signed in to {account}")))
+    }
+
+    /// Changes what `account` has bought, and has each of its hosts that is
+    /// up ask for its entitlement at once, as the host where a purchase or
+    /// a cancellation happened does.
+    pub async fn set_tier(&self, account: &str, tier: TierDecl) -> Result<Ack, NetError> {
+        self.relay()?.set_tier(account, tier.into());
+        let signed_in: Vec<String> = self
+            .hosts
+            .values()
+            .filter(|host| host.decl.account.as_deref() == Some(account))
+            .map(|host| host.info.name.clone())
+            .filter(|name| self.is_up(name))
+            .collect();
+        for host in &signed_in {
+            self.edge(host)?
+                .refresh_entitlement()
+                .await
+                .map_err(|error| NetError::Host {
+                    host: host.clone(),
+                    error,
+                })?;
+        }
+        Ok(self.ack(format!("{account} is on {tier:?}")))
     }
 
     /// Takes UDP away from the host's way to the relay, or gives it back:
@@ -1217,6 +1254,18 @@ impl Net {
     /// host or one holding its replica, and records it.
     pub async fn observe(&self, host: &str, agent: &str, tail: u32) -> Result<Observer, NetError> {
         let id = self.agent(agent)?.id;
+        self.observe_id(host, agent, id, tail).await
+    }
+
+    /// [`Net::observe`] for any agent the host holds, declared or not:
+    /// one a client created is known only by its id.
+    pub async fn observe_id(
+        &self,
+        host: &str,
+        agent: &str,
+        id: Uuid,
+        tail: u32,
+    ) -> Result<Observer, NetError> {
         let mut subscription = self.runtime(host)?.subscribe(id.as_bytes(), tail).await?;
         let (sender, incoming) = mpsc::unbounded_channel();
         let reader = tokio::spawn(async move {

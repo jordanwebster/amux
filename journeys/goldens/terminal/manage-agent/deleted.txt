@@ -1,0 +1,34 @@
+  amux · 5 agents                                                                                      2 hosts
+
+▌ ○ decision-pty                  claude @ desk             idle                                      <age>   
+  ○ reviewer                      claude sdk @ desk         idle                                      <age>   
+  ○ keeper                        claude sdk @ desk         Remember this recovery turn.              <age>   
+  ○ decision-codex                codex @ desk              idle                                      <age>   
+  ○ decision-sdk                  claude sdk @ desk         idle                                      <age>   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  deleted

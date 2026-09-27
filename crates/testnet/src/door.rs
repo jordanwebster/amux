@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::net::{ClockMode, JournalCut, Net, NetError, NetOptions};
 use crate::observe;
-use crate::topology::{AgentDecl, FakeKind, Topology};
+use crate::topology::{AgentDecl, FakeKind, TierDecl, Topology};
 
 /// A request to the door.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -43,6 +43,22 @@ pub enum Control {
     Link {
         a: String,
         b: String,
+    },
+    Trust {
+        a: String,
+        b: String,
+    },
+    Untrust {
+        a: String,
+        b: String,
+    },
+    SetTier {
+        account: String,
+        tier: TierDecl,
+    },
+    SignIn {
+        host: String,
+        account: String,
     },
     KillDaemon {
         host: String,
@@ -102,6 +118,10 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
     ("Sever", "Net::sever_link"),
     ("Restore", "Net::restore_link"),
     ("Link", "Net::link_up"),
+    ("Trust", "Net::trust"),
+    ("Untrust", "Net::untrust"),
+    ("SetTier", "Net::set_tier"),
+    ("SignIn", "Net::sign_in"),
     ("KillDaemon", "Net::kill_daemon"),
     ("StopDaemon", "Net::stop_daemon"),
     (
@@ -120,7 +140,10 @@ pub const CAPABILITIES: &[(&str, &str)] = &[
         "Net::observe_inventory + observe_until(CaughtUp)",
     ),
     ("Block", "Net::assert_block_invariant"),
-    ("Chat", "Net::observe + observe_until(CaughtUp)"),
+    (
+        "Chat",
+        "Net::observe or Net::observe_id + observe_until(CaughtUp)",
+    ),
     ("ProviderInput", "Net::provider_input"),
     ("Shutdown", "Net::shutdown + closes the control socket"),
 ];
@@ -132,6 +155,10 @@ impl Control {
             Self::Sever { .. } => "Sever",
             Self::Restore { .. } => "Restore",
             Self::Link { .. } => "Link",
+            Self::Trust { .. } => "Trust",
+            Self::Untrust { .. } => "Untrust",
+            Self::SetTier { .. } => "SetTier",
+            Self::SignIn { .. } => "SignIn",
             Self::KillDaemon { .. } => "KillDaemon",
             Self::StopDaemon { .. } => "StopDaemon",
             Self::RestartDaemon { .. } => "RestartDaemon",
@@ -404,6 +431,10 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
             net.host(&b)?;
             json!({ "up": net.link_up(&a, &b).await })
         }
+        Control::Trust { a, b } => value(net.trust(&a, &b).await?),
+        Control::Untrust { a, b } => value(net.untrust(&a, &b).await?),
+        Control::SetTier { account, tier } => value(net.set_tier(&account, tier).await?),
+        Control::SignIn { host, account } => value(net.sign_in(&host, &account).await?),
         Control::KillDaemon { host } => value(net.kill_daemon(&host).await?),
         Control::StopDaemon { host } => value(net.stop_daemon(&host).await?),
         Control::RestartDaemon { host } => {
@@ -454,7 +485,13 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
         Control::Chat { host, agent } => {
             // Everything the host holds of the chat: a tail long enough for
             // any journey, read to its first CaughtUp.
-            let mut chat = net.observe(&host, &agent, 1_000).await?;
+            // An agent a client created has no declared name: its id.
+            let mut chat = match Uuid::parse_str(&agent) {
+                Ok(id) if net.agent(&agent).is_err() => {
+                    net.observe_id(&host, &agent, id, 1_000).await?
+                }
+                _ => net.observe(&host, &agent, 1_000).await?,
+            };
             let events = chat
                 .observe_until(observe::caught_up, observe::PATIENCE)
                 .await?;
@@ -468,7 +505,8 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
                             "key": item.key,
                             "order": item.order,
                             "text": item.text,
-                            "input_id": item.input_id.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                            "input_id": hex(&item.input_id),
+                            "attachments": item.attachments.iter().map(attachment).collect::<Vec<_>>(),
                         }));
                     }
                     Some(wire::session_event::Of::Snapshot(snapshot)) => {
@@ -483,4 +521,42 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
         Control::ProviderInput { agent } => json!({ "lines": net.provider_input(&agent)? }),
         Control::Shutdown => unreachable!("the connection handles shutdown"),
     })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// An attachment as a journey checks it: what it is, its name, and the
+/// bytes or the hash that identify its content.
+fn attachment(attachment: &wire::Attachment) -> Value {
+    use wire::attachment::Of;
+    let blob = |kind: &str, blob: &wire::BlobRef| {
+        json!({
+            "kind": kind,
+            "name": blob.name,
+            "mime": blob.mime,
+            "size": blob.size,
+            "hash": hex(&blob.hash),
+        })
+    };
+    match &attachment.of {
+        Some(Of::Image(image)) => blob("image", image),
+        Some(Of::File(file)) => blob("file", file),
+        Some(Of::Text(text)) => json!({ "kind": "text", "name": text.name, "text": text.text }),
+        Some(Of::Review(review)) => {
+            let patch = review.diff.as_ref().and_then(|diff| diff.patch.as_ref());
+            json!({
+                "kind": "review",
+                "patch": patch.map(|patch| hex(&patch.hash)),
+                "comments": review.comments.iter().map(|comment| json!({
+                    "path": comment.path,
+                    "line": comment.line,
+                    "old_line": comment.old_line,
+                    "text": comment.text,
+                })).collect::<Vec<_>>(),
+            })
+        }
+        None => json!({ "kind": "none" }),
+    }
 }

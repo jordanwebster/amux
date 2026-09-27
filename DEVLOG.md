@@ -1,3 +1,24 @@
+2026-09-27 — **The six shared stories run on the terminal client.**
+`just journey terminal <story>` now covers reach-host (the unpaired laptop
+finds the desk, `amux peers` names it by its host id, the PIN the desk
+printed pairs them, the running client's overlay shows it direct, and the
+desk records the prompt sent to its agent), the three conversation-decision
+runs, leave-and-recover, manage-agent (create, rename, stop with history
+kept, resume the same id from the exited composer, delete, each checked in
+the desk's inventory), attachment-or-review (text, a pasted token, text and
+a review with a comment, received on the desk in that order, with the patch
+bytes found on the desk's disk under their hash, and the chat reopened) and
+keep-authority (a second profile's empty fleet; on the relay-only route a
+sign-out holds a message the desk never receives, and signing in sends it
+once). Each story rejects a deliberately wrong expectation with the same
+check. The door gains `Trust`, `Untrust`, `SetTier` and `SignIn`, `Chat`
+accepts an agent id for agents a client created, and chat items carry their
+attachments; a host may declare the script its clients' new agents play.
+The old manifest entries on the retired topology format (find-and-pair,
+authority-boundaries, agent-lifecycle, second-attach) are gone; CI runs the
+eight stories. Open: the keep-authority screens say the desk is away rather
+than that the laptop is signed out.
+
 2026-09-27 — **The terminal takes a pasted block as one token however its lines end.**
 Terminals deliver a bracketed paste's line breaks as carriage returns, so a
 twelve-line paste counted as one line and went into the draft as text. The

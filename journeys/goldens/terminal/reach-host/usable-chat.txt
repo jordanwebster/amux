@@ -1,0 +1,34 @@
+  desk-work · claude sdk @ desk                                                 claude-fake-1 · default · idle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▎   Hello from the laptop.
+
+  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+    The desk is reachable.
+
+    Worked <t> · $0.00
+
+
+▎ Message desk-work
+  enter send · ctrl+j newline · ctrl+v attach · ? help

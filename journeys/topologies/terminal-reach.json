@@ -1,0 +1,17 @@
+{
+  "hosts": [
+    {"name": "desk", "lan": true, "discovery": true},
+    {"name": "laptop", "lan": true, "discovery": true}
+  ],
+  "agents": [
+    {
+      "name": "desk-work",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["The desk is reachable."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

@@ -33,6 +33,10 @@
 //! | `Sever` | `Net::sever_link` |
 //! | `Restore` | `Net::restore_link` |
 //! | `Link` | `Net::link_up` |
+//! | `Trust` | `Net::trust` |
+//! | `Untrust` | `Net::untrust` |
+//! | `SetTier` | `Net::set_tier` |
+//! | `SignIn` | `Net::sign_in` |
 //! | `KillDaemon` | `Net::kill_daemon` |
 //! | `StopDaemon` | `Net::stop_daemon` |
 //! | `RestartDaemon` | `Net::kill_daemon when running + Net::restart_daemon` |
@@ -45,7 +49,7 @@
 //! | `OpenGate` | `Net::open_gate` |
 //! | `Inventory` | `Net::observe_inventory + observe_until(CaughtUp)` |
 //! | `Block` | `Net::assert_block_invariant` |
-//! | `Chat` | `Net::observe + observe_until(CaughtUp)` |
+//! | `Chat` | `Net::observe or Net::observe_id + observe_until(CaughtUp)` |
 //! | `ProviderInput` | `Net::provider_input` |
 //! | `Shutdown` | `Net::shutdown + closes the control socket` |
 //! <!-- door-capabilities:end -->

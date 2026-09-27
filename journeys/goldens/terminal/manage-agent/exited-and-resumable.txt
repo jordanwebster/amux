@@ -1,0 +1,34 @@
+  helper · claude sdk @ desk                                        claude-fake-1 · default · exited · stopped
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▎   Say hello.
+
+  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Ready when you are.
+
+    Worked <t> · $0.00
+
+  ── ended · stopped ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+▎ helper has exited · type to resume it with a message
+  enter resume with this message · ctrl+j newline

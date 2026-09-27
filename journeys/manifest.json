@@ -163,13 +163,6 @@
       "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
     },
     {
-      "id": "find-and-pair",
-      "stage": 15,
-      "clients": ["terminal"],
-      "topology": "journeys/topologies/terminal-onramp.json",
-      "claim": "A terminal that trusts nothing and nobody is signed in on, and one machine on the same network holding work. The terminal lists that machine as found but not paired, and says in the listing itself what would pair with it; the hosts overlay shows the same machine as a candidate rather than somewhere to go. Six digits the machine issued, typed once, turn it into a trusted peer named with its host id, and the same listing and the same overlay say so without the terminal being restarted. The work on that machine then opens from this terminal and the machine independently records the prompt it was sent — so what pairing bought is not a row in a table but reachable work."
-    },
-    {
       "id": "conversation-decision-claude-pty",
       "stage": 15,
       "clients": ["terminal"],
@@ -199,31 +192,31 @@
     },
     {
       "id": "reach-host",
-      "stage": 16,
+      "stage": 15,
       "clients": ["terminal"],
-      "topology": "journeys/topologies/terminal-migration.json",
-      "claim": "The real terminal client reaches a second host over the declared network, opens its work, delivers one prompt, and renders the reply that host produced."
+      "topology": "journeys/topologies/terminal-reach.json",
+      "claim": "A laptop that has never paired finds a desk on its network: the hosts overlay lists it as found, not paired, with the command that pairs it, and `amux peers` names it by the desk's own host id. Six digits the desk printed, typed once into `amux pair desk`, pair the two and name the desk by that id, and the desk lists the laptop as paired. The client that was running all along shows the desk online and direct, opens the desk's agent, and sends one prompt the desk records once and answers; the person leaves and the client exits cleanly."
     },
     {
-      "id": "authority-boundaries",
-      "stage": 16,
+      "id": "keep-authority",
+      "stage": 15,
       "clients": ["terminal"],
-      "topology": "journeys/topologies/terminal-migration.json",
-      "claim": "A remote agent stays visible when relay entitlement is lost, the terminal refuses a write while access is unavailable, and restoring entitlement re-establishes the relay route and exposes the work again."
+      "topology": "journeys/topologies/terminal-authority.json",
+      "claim": "Two machines signed in to one account reach each other only through the relay. A second profile on the laptop opens on its own empty fleet. On the default profile the desk's agent answers a prompt; the laptop then signs out, the desk goes away on screen, and a message written then is held on the laptop and never reaches the desk. Signed in again, the chat is current and the held message reaches the desk once."
     },
     {
-      "id": "agent-lifecycle",
-      "stage": 16,
+      "id": "manage-agent",
+      "stage": 15,
       "clients": ["terminal"],
-      "topology": "journeys/topologies/terminal-migration.json",
-      "claim": "A real terminal agent is created and listed, its attached process is notified when the installation suspends, resume restores the same agent to the terminal fleet, and deletion removes it."
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "From the fleet a person creates a Claude agent on the desk and it answers; renames it and the desk lists the same agent under the new name; stops it and the desk lists it exited with its prompt and reply kept; resumes it from the exited composer with a message and the desk lists the same agent live again, each prompt held once; and deletes it, after which neither the fleet nor the desk has it."
     },
     {
-      "id": "second-attach",
-      "stage": 16,
+      "id": "attachment-or-review",
+      "stage": 15,
       "clients": ["terminal"],
-      "topology": "journeys/topologies/terminal-migration.json",
-      "claim": "Two real terminal clients attach to one agent, both receive its replay and subsequent output, one detaches without ending the session, and the remaining resized client can leave and reopen the same conversation."
+      "topology": "journeys/topologies/terminal-stories.json",
+      "claim": "On the laptop a person writes to an agent on the desk: text, a twelve-line paste that stands in the sentence as one token, more text, and a review of the diff the desk computed of the agent's working tree, with a comment on one changed line. The desk receives one prompt holding those four in that order, the paste's exact text and the comment on that line, and the review names a patch whose bytes on the desk's disk hash to that name and hold the edit. Opening the chat again shows the tokens as they were sent."
     },
     {
       "id": "survive-daemon",

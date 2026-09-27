@@ -1,0 +1,20 @@
+{
+  "relay": {"accounts": [{"name": "ada"}]},
+  "hosts": [
+    {"name": "desk", "account": "ada"},
+    {"name": "laptop", "account": "ada"}
+  ],
+  "agents": [
+    {
+      "name": "guarded",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["Only this account reaches me."]}},
+        "turn_end",
+        {"text": {"chunks": ["The relay carries us again."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

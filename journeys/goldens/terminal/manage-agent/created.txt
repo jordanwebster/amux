@@ -1,0 +1,34 @@
+  unnamed · claude sdk @ desk                                                   claude-fake-1 · default · idle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▎   Say hello.
+
+  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Ready when you are.
+
+    Worked <t> · $0.00
+
+
+▎ Message the agent
+  enter send · ctrl+j newline · ctrl+v attach · ? help
