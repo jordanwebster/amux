@@ -1,3 +1,15 @@
+2026-09-27 — **Terminal Claude's preview questions take no typed answer.**
+Claude 2.1.283 draws a question whose options carry previews side by side,
+with no `Type something.` row: a Something-else answer typed into it was
+lost and the question answered with its first option. The claude_pty
+interpreter now marks such questions (`QuestionShape.previews`), offers no
+Something else on them (`allow_other = false`, so the card drops the row)
+and refuses a typed answer to one. The agent also passed `previews: false`
+to the keymap for every question, so a pick on a preview question moved the
+cursor without the Enter that picks it; it now passes the question's shape.
+Verified live on 2.1.283: the Layout question's card lists Cards, Table and
+Stop the turn only, and Table reached Claude as Table.
+
 2026-09-27 — **A terminal Claude deny never presses a Yes.**
 The keymap typed 3 for Deny, No's digit on the menus first recorded. Claude
 2.1.283 in manual mode, on a model with auto mode, draws `1 Yes / 2 Yes,

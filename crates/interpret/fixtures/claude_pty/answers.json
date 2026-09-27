@@ -522,11 +522,33 @@
         }
       },
       "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
+      },
+      "note": "a typed answer to a question with previews: Claude draws those side by side with no row to type it in"
+    },
+    {
+      "input": {
+        "id": "a10",
+        "answer": {
+          "ask": "ask:5",
+          "answer": {
+            "selected": [
+              1,
+              [
+                0,
+                2
+              ]
+            ]
+          }
+        }
+      },
+      "expect": {
         "reply": "accepted",
         "asks": [],
         "effects": [
-          "terminal question [ of 2 other=\"Green\"] [0,2 of 3 multi]",
-          "reply a9 accepted"
+          "terminal question [1 of 2 previews] [0,2 of 3 multi]",
+          "reply a10 accepted"
         ]
       }
     },

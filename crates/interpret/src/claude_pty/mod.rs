@@ -123,6 +123,9 @@ pub enum PlanChoice {
 pub struct QuestionShape {
     pub options: u32,
     pub multi_select: bool,
+    /// Its options carry previews: Claude draws them side by side, with no
+    /// row for a typed answer.
+    pub previews: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,7 +157,7 @@ impl fmt::Display for TerminalInput {
                 for (shape, answer) in questions.iter().zip(answers) {
                     write!(
                         f,
-                        " [{} of {}{}{}]",
+                        " [{} of {}{}{}{}]",
                         answer
                             .selected
                             .iter()
@@ -163,6 +166,7 @@ impl fmt::Display for TerminalInput {
                             .join(","),
                         shape.options,
                         if shape.multi_select { " multi" } else { "" },
+                        if shape.previews { " previews" } else { "" },
                         answer
                             .other
                             .as_ref()
@@ -1021,7 +1025,8 @@ fn terminal_answer(
                 let picks = response.selected.len() + usize::from(response.other.is_some());
                 let fits = response.selected.iter().all(|index| *index < shape.options)
                     && picks > 0
-                    && (shape.multi_select || picks == 1);
+                    && (shape.multi_select || picks == 1)
+                    && !(shape.previews && response.other.is_some());
                 if !fits {
                     return None;
                 }

@@ -273,7 +273,12 @@ impl State {
         let (server, tool) = split_tool_name(name);
         let (body, shape) = match tool.as_str() {
             QUESTION_TOOL if server.is_empty() => {
-                let (question, questions) = question_ask(&input);
+                let (mut question, questions) = question_ask(&input);
+                // Claude draws a question with previews side by side, with
+                // no row for a typed answer, so none is offered there.
+                for (question, shape) in question.questions.iter_mut().zip(&questions) {
+                    question.allow_other = !shape.previews;
+                }
                 (
                     wire::ask::Body::Question(question),
                     AskShape::Question { questions },

@@ -244,6 +244,14 @@ pub(crate) fn question_ask(input: &Value) -> (QuestionAsk, Vec<QuestionShape>) {
                 .get("multiSelect")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            previews: question
+                .get("options")
+                .and_then(Value::as_array)
+                .is_some_and(|options| {
+                    options
+                        .iter()
+                        .any(|option| !text(option, "preview").is_empty())
+                }),
         })
         .collect();
     let questions = questions
@@ -270,7 +278,8 @@ pub(crate) fn question_ask(input: &Value) -> (QuestionAsk, Vec<QuestionShape>) {
                         .collect()
                 })
                 .unwrap_or_default(),
-            // Terminal Claude's form always offers a typed answer.
+            // Every question takes a typed answer; terminal Claude's side-by-side
+            // preview layout withdraws it.
             allow_other: true,
             secret: false,
         })

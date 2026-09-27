@@ -814,7 +814,11 @@ pointers. Findings:
   question-decline denial + interrupt artifacts (captured in a
   question_tabs pre-run). Every question carries TWO appended options:
   `Type something.` (Other) and `Chat about this` (new in 2.1.228 —
-  unmodeled; ask payloads should tolerate it).
+  unmodeled; ask payloads should tolerate it). A question whose options
+  carry previews is the exception (2.1.283): options and preview sit side
+  by side, a digit only moves the cursor and Enter picks, and there is **no
+  `Type something.` row** — only `n` for notes and `Chat about this` — so
+  amux offers no typed answer on such a question.
 - **Other flows**: single-select — digit(options+1) opens the inline
   editor, type + Enter commits (`question_other_single`); multi-select —
   Enter opens, type, Enter saves, **trailing Space checks the box**

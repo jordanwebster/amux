@@ -128,7 +128,7 @@ impl Keys {
                         .map(|shape| QuestionFact {
                             options: shape.options as usize,
                             multi_select: shape.multi_select,
-                            previews: false,
+                            previews: shape.previews,
                         })
                         .collect(),
                 };
@@ -212,4 +212,49 @@ pub fn typist(terminal: pty_host::PtyHandle) -> mpsc::UnboundedSender<Vec<KeySte
 /// interpreter reads its reflection the same way.
 pub fn pasted_message(text: &str) -> String {
     format!("<cross-session-message from=\"amux\">\n{text}\n</cross-session-message>")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use interpret::claude_pty::{QuestionChoice, QuestionShape};
+
+    use super::*;
+
+    fn keys() -> Keys {
+        let version = "2.1.283".parse().expect("a version");
+        let (resolved, keymap) =
+            keymap::resolve_session(&keymap::KeymapSources::default(), &version).expect("a keymap");
+        Keys {
+            version: version.to_string(),
+            resolved,
+            keymap,
+        }
+    }
+
+    /// Claude draws a question with previews side by side, where a digit
+    /// only moves the cursor: the pick is confirmed with Enter.
+    #[test]
+    fn a_pick_on_a_question_with_previews_is_confirmed_with_enter() {
+        let input = TerminalInput::Question {
+            questions: vec![QuestionShape {
+                options: 4,
+                multi_select: false,
+                previews: true,
+            }],
+            answers: vec![QuestionChoice {
+                selected: vec![2],
+                other: None,
+            }],
+        };
+        assert_eq!(
+            keys().steps(&input, "").expect("keys"),
+            [
+                KeyStep::Write(b"3".to_vec()),
+                KeyStep::Delay(Duration::from_millis(300)),
+                KeyStep::Write(b"\r".to_vec()),
+            ]
+        );
+    }
 }
