@@ -202,7 +202,7 @@ pub struct Edge {
     pair_mode: Arc<PairMode>,
     pending: admin::PendingPairs,
     reachability: ReachabilityLinkConnector,
-    discovery: Option<Arc<dyn Discovery>>,
+    discovery: Arc<dyn Discovery>,
     found: Arc<FoundHosts>,
     scope: String,
     lan_addr: Option<SocketAddr>,
@@ -317,12 +317,19 @@ impl Edge {
             ),
         };
 
-        let discovery = options
+        let platform = options
             .discovery
             .as_ref()
             .map(|factory| factory())
             .transpose()
             .map_err(EdgeError::Discovery)?;
+        // Without a browser of its own the edge is handed what one outside
+        // it found (the phone's system browses for the app). The handed set
+        // plays as discovery events, so a trusted host that comes back is
+        // dialled as one this edge found itself would be.
+        let handed = platform.is_none();
+        let discovery: Arc<dyn Discovery> =
+            platform.unwrap_or_else(|| Arc::new(crate::discovery::ScriptedDiscovery::new()));
         let found = Arc::new(FoundHosts::default());
         let reachability = ReachabilityLinkConnector::new(
             identity.clone(),
@@ -335,33 +342,30 @@ impl Edge {
         );
         reachability.configure(
             dir.to_owned(),
-            discovery
-                .clone()
-                .unwrap_or_else(|| Arc::new(crate::discovery::ScriptedDiscovery::new())),
+            discovery.clone(),
             found.clone(),
             quic_endpoint.clone(),
             options.discovery_scope.clone(),
         );
-        if let Some(discovery) = &discovery {
-            if let Some(addr) = lan_addr {
-                let addrs = if addr.ip().is_unspecified() {
-                    local_pairing_addrs(addr.port())
-                } else {
-                    vec![addr]
-                };
-                discovery
-                    .advertise(Advertisement {
-                        host_id: identity.host_id,
-                        name: options.host_name.clone(),
-                        version: crate::PROTOCOL_VERSION,
-                        addrs,
-                        scope: options.discovery_scope.clone(),
-                    })
-                    .map_err(|error| EdgeError::Discovery(error.to_string()))?;
-            }
-            tasks.push(reachability.spawn_dial_on_found(discovery.browse(), options.dial));
-            discovery.requery();
+        // A handed set is advertised nowhere: this edge has no advertiser.
+        if let Some(addr) = lan_addr.filter(|_| !handed) {
+            let addrs = if addr.ip().is_unspecified() {
+                local_pairing_addrs(addr.port())
+            } else {
+                vec![addr]
+            };
+            discovery
+                .advertise(Advertisement {
+                    host_id: identity.host_id,
+                    name: options.host_name.clone(),
+                    version: crate::PROTOCOL_VERSION,
+                    addrs,
+                    scope: options.discovery_scope.clone(),
+                })
+                .map_err(|error| EdgeError::Discovery(error.to_string()))?;
         }
+        tasks.push(reachability.spawn_dial_on_found(discovery.browse(), options.dial));
+        discovery.requery();
         if options.dial {
             tasks.extend(reachability.spawn_startup_links());
         }
@@ -456,9 +460,7 @@ impl Edge {
             .filter(|advert| advert.scope == self.scope)
             .collect::<Vec<_>>();
         self.reachability.hand_over_found(found.clone());
-        if let Some(discovery) = &self.discovery {
-            discovery.hand_over(found);
-        }
+        self.discovery.hand_over(found);
     }
 
     /// The hosts this profile trusts: host id, name and key.
@@ -769,9 +771,7 @@ impl Edge {
     }
 
     pub(crate) async fn stop(&self, reason: wire::LinkCloseReason) {
-        if let Some(discovery) = &self.discovery {
-            discovery.withdraw();
-        }
+        self.discovery.withdraw();
         self.channels
             .link_registry()
             .send_link_close_to_all(reason)
@@ -797,9 +797,7 @@ impl Edge {
 
 impl Drop for Edge {
     fn drop(&mut self) {
-        if let Some(discovery) = &self.discovery {
-            discovery.withdraw();
-        }
+        self.discovery.withdraw();
         self.shutdown.send_replace(true);
         for task in self.tasks.lock().unwrap().drain(..) {
             task.abort();

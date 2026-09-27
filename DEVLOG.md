@@ -1,3 +1,11 @@
+2026-09-28 — **The phone links to a paired machine again when its browser finds it back.**
+The phone's runtime has no browser of its own: the app's system browser
+hands it what it sees. That handed set only filled the list of found
+machines and never dialled, so a desk that went away (its daemon stopped)
+and came back stayed out of reach until the app was started again. An edge
+without its own browser now plays the handed set as discovery events, and a
+trusted machine found again is dialled like one it found itself.
+
 2026-09-27 — **The phone opens no chat session ahead of a tap.**
 The phone used to open a session for every agent that needed the person, so
 its chat was current before the page opened. The daemon already keeps every

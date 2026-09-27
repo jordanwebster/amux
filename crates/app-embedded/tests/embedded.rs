@@ -275,6 +275,68 @@ async fn a_phone_pairs_by_pin_and_reads_the_desks_agents_from_its_own_rows() {
     net.shutdown().await.unwrap();
 }
 
+/// Whether the phone reaches the desk right now.
+fn desk_online(app: &AppRuntime) -> bool {
+    app.hosts()
+        .iter()
+        .any(|host| host.name == "desk" && host.presence == wire::Presence::Online)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_links_to_its_desk_again_when_its_browser_finds_the_desk_back() {
+    let mut net = Net::start(
+        Topology::new()
+            .host_decl(HostDecl {
+                name: "desk".into(),
+                lan: true,
+                ..HostDecl::default()
+            })
+            .agent(worker()),
+    )
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let embedded =
+        EmbeddedRuntime::start_with(&config(dir.path()), loopback(), Arc::new(SystemClock))
+            .await
+            .unwrap();
+    let phone = only_profile(&embedded).await;
+    let desk = net.host("desk").unwrap().host_id;
+    let (pin, addrs) = pairing_pin(&net).await;
+    embedded
+        .pair(
+            phone,
+            &PairRequest::Pin {
+                host_id: desk.as_bytes().to_vec(),
+                pin,
+                addrs,
+            },
+        )
+        .await
+        .unwrap();
+    let app = app(&embedded, phone).await;
+    eventually("the desk online", || desk_online(&app)).await;
+
+    net.stop_daemon("desk").await.unwrap();
+    eventually("the desk out of reach", || !desk_online(&app)).await;
+    net.restart_daemon("desk").await.unwrap();
+    // The phone's own browser sees the desk advertise again and hands it
+    // over; nothing else tells the phone the desk is back.
+    let (_, addrs) = pairing_pin(&net).await;
+    embedded.discovered(vec![app_runtime::values::Found {
+        host_id: desk.as_bytes().to_vec(),
+        name: "desk".into(),
+        version: node::PROTOCOL_VERSION,
+        addrs,
+        scope: String::new(),
+    }]);
+    eventually("the desk online again", || desk_online(&app)).await;
+
+    drop(app);
+    embedded.shutdown().await.unwrap();
+    net.shutdown().await.unwrap();
+}
+
 /// Waits until a profile's relay link says `wanted`.
 async fn relay_link(embedded: &EmbeddedRuntime, profile: ProfileId, wanted: RelayLink) {
     tokio::time::timeout(PATIENCE, async {
