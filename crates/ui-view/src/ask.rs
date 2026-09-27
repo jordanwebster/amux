@@ -812,6 +812,23 @@ pub fn question_answer(card: &AskCard, picks: &[Pick], note: &str) -> Answer {
     }
 }
 
+/// A form's Submit carrying the person's field values, as the JSON object
+/// the tool server's schema describes. Any other answer comes back as it
+/// was.
+pub fn with_form_content(answer: &Answer, content_json: Vec<u8>) -> Answer {
+    let mut answer = answer.clone();
+    match &mut answer {
+        Answer::Claude(ClaudeAnswer {
+            of: Some(claude_answer::Of::Form(form)),
+        })
+        | Answer::Codex(CodexAnswer {
+            of: Some(wire::codex_answer::Of::Form(form)),
+        }) => form.content_json = content_json,
+        _ => {}
+    }
+    answer
+}
+
 /// The input that sends `answer` to the card's ask, in the card's kind's
 /// arm: an answer body under the ask's key, or for a Codex approval the
 /// decision on the request the card names. `note` goes back to the agent

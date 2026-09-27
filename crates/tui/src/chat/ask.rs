@@ -13,9 +13,8 @@ use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use ui_view::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, Pick, QuestionView, Scope,
-    answer_input, question_answer,
+    answer_input, question_answer, with_form_content,
 };
-use wire::{ClaudeAnswer, CodexAnswer, claude_answer, codex_answer};
 
 use crate::editor::Editor;
 use crate::text::{self, push, push_right};
@@ -759,17 +758,7 @@ fn with_content(answer: &Answer, fields: &[Field]) -> Answer {
         }
     }
     let bytes = serde_json::to_vec(&Value::Object(content)).unwrap_or_default();
-    let mut answer = answer.clone();
-    match &mut answer {
-        Answer::Claude(ClaudeAnswer {
-            of: Some(claude_answer::Of::Form(form)),
-        })
-        | Answer::Codex(CodexAnswer {
-            of: Some(codex_answer::Of::Form(form)),
-        }) => form.content_json = bytes,
-        _ => {}
-    }
-    answer
+    with_form_content(answer, bytes)
 }
 
 fn indent(text: impl Into<String>, style: Style, width: usize) -> Line<'static> {

@@ -1152,6 +1152,33 @@ pub unsafe extern "C" fn amux_session_answer(
     }
 }
 
+/// Submits the head form ask with the choice at `index` on its card and
+/// the person's field values, a JSON object as the form's schema describes
+/// it. The callback gets an `ActOutcome`.
+///
+/// # Safety
+/// As for `amux_session_answer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_session_answer_form(
+    chat: *const AmuxChat,
+    ask_key: *const c_char,
+    index: u32,
+    content: *const c_char,
+    callback: AmuxCallback,
+    context: *mut c_void,
+) {
+    // SAFETY: the caller's contract.
+    let ask_key = unsafe { text(ask_key) }.unwrap_or_default().to_owned();
+    // SAFETY: the caller's contract.
+    let content = unsafe { text(content) }.unwrap_or("{}").to_owned();
+    // SAFETY: the caller's contract.
+    unsafe {
+        act(chat, callback, context, move |chat| async move {
+            chat.answer_form(&ask_key, index as usize, &content).await
+        })
+    }
+}
+
 /// Answers the head question ask with one `Pick` per question, as a JSON
 /// array, and the optional note. The callback gets an `ActOutcome`.
 ///

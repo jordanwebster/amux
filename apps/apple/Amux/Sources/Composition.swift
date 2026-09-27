@@ -326,10 +326,14 @@ final class Composition {
 }
 
 extension Composition: RouteLoader {
-    // A chat page opens its chat when it appears and closes it when it goes,
-    // so there is nothing to start or stop on the way in or out.
+    // A chat page opens its chat when it first appears. It is closed when
+    // its page leaves the stack rather than when it disappears, so a child's
+    // chat pushed on top keeps the parent's draft and place.
     func load(_ route: Route) {}
-    func left(_ route: Route) {}
+
+    func left(_ route: Route) {
+        if case .conversation(let agent) = route { stores.leave(agent) }
+    }
 }
 
 /// Where this app keeps things between launches: each account's installation

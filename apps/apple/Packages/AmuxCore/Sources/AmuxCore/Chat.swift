@@ -8,7 +8,7 @@ import Foundation
 /// sequence of keys that only grows at its two edges, fetches the rows an
 /// update changed, and reads the keys again only when a change batch says
 /// the sequence was reloaded. Close it before the runtime stops.
-public final class Chat: @unchecked Sendable {
+public final class Chat: ChatSource, @unchecked Sendable {
     private let handle: OpaquePointer
     /// Held across every call into the library, so stopping waits for the
     /// calls in flight and none starts after it. Recursive, because a call
@@ -139,6 +139,18 @@ public final class Chat: @unchecked Sendable {
                     } else {
                         amux_session_answer_questions(live, ask, picks, nil, callback, context)
                     }
+                }
+            }
+        }
+    }
+
+    /// Submits a form ask by the position of its Submit on the card, with
+    /// the person's field values as a JSON object.
+    public func answerForm(_ ask: String, choice: Int, content: String) async -> ActOutcome? {
+        await value(ActOutcome.self) { live, callback, context in
+            ask.withCString { ask in
+                content.withCString {
+                    amux_session_answer_form(live, ask, UInt32(choice), $0, callback, context)
                 }
             }
         }

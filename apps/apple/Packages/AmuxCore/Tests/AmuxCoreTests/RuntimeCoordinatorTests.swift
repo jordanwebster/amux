@@ -96,6 +96,25 @@ final class RuntimeCoordinatorTests: XCTestCase {
         XCTAssertTrue(runtime.listsSources)
     }
 
+    func testAPushInTheBackgroundWarmsItsChatUnderTheOnDemandPolicy() async {
+        let registry = AccountRegistry()
+        let coordinator = coordinator(registry)
+        defer { coordinator.stop() }
+        coordinator.start()
+        guard let runtime = await coordinator.started(registry.installation) else {
+            return XCTFail("the runtime did not start")
+        }
+        XCTAssertTrue(runtime.listsSources)
+        // No machine is paired, so the named chat never catches up; what
+        // matters is the policy it was opened under and that it is closed.
+        let agent = AgentKey(host: HostId(UUID()), agent: UUID())
+        let current = await coordinator.warm(agent, inBackground: true, within: .milliseconds(300))
+        XCTAssertFalse(current)
+        XCTAssertFalse(runtime.listsSources, "a background wake opens only the chat it names")
+        coordinator.setActive(true)
+        XCTAssertTrue(runtime.listsSources, "the foreground lists every agent again")
+    }
+
     func testSwitchingAccountRunsTheOtherInstallation() async {
         let registry = AccountRegistry()
         let coordinator = coordinator(registry)

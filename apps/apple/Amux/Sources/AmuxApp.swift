@@ -1,9 +1,13 @@
 import AmuxCore
 import AmuxDesign
 import SwiftUI
+import UIKit
+import UserNotifications
 
 @main
 struct AmuxApp: App {
+    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
+
     init() {
         // First, before anything this app does: the mark that divides the
         // system's share of a launch from this app's.
@@ -33,5 +37,52 @@ struct AmuxApp: App {
         #else
         RootView().readingAssistiveSettings()
         #endif
+    }
+}
+
+/// Where the system hands the app what arrives while it is not on screen: a
+/// "needs you" notification that wakes it in the background, and the tap on
+/// one. It holds the app's composition, so a push that launches the app
+/// before any window exists still has the runtime to warm its chat with.
+@MainActor
+final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject,
+    UNUserNotificationCenterDelegate {
+    /// Built when first asked for: by the root view, or by a push.
+    lazy var composition = Composition()
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// Brings the chat the notification names current, and nothing else,
+    /// before the app is put away again.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification payload: [AnyHashable: Any]
+    ) async -> UIBackgroundFetchResult {
+        guard let agent = PushPayload.agent(payload) else { return .noData }
+        let background = application.applicationState == .background
+        let current = await composition.runtime.warm(agent, inBackground: background)
+        return current ? .newData : .failed
+    }
+
+    /// A tap on the notification opens the chat it names; coming to the
+    /// foreground lists every agent again.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+    ) async {
+        guard let agent = PushPayload.agent(response.notification.request.content.userInfo)
+        else { return }
+        await MainActor.run { composition.router.open(.conversation(agent)) }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list]
     }
 }

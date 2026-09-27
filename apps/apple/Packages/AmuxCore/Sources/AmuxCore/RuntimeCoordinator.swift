@@ -234,6 +234,19 @@ public final class RuntimeCoordinator {
         }
     }
 
+    /// Brings one agent's chat current for a push. In the background the
+    /// runtime is put under the on-demand policy first, so the chat's own
+    /// open is the only source that runs; coming to the foreground lists
+    /// every agent again.
+    public func warm(
+        _ agent: AgentKey, inBackground: Bool, within limit: Duration = .seconds(25)
+    ) async -> Bool {
+        if inBackground { setActive(false) }
+        start()
+        guard await started(registry.installation) != nil else { return false }
+        return await stores.warm(agent, within: limit)
+    }
+
     /// What the browser found, handed over whole, and to any runtime started
     /// later.
     public func discovered(_ hosts: [FoundHost]) {

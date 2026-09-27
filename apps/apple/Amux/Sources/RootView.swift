@@ -10,8 +10,8 @@ import SwiftUI
 /// performance suite asked to time; anything else, and any build a person
 /// installs, is the app itself.
 struct RootView: View {
-    @StateObject private var lifetime = CompositionLifetime()
-    private var composition: Composition { lifetime.value }
+    @EnvironmentObject private var delegate: AppDelegate
+    private var composition: Composition { delegate.composition }
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
@@ -71,12 +71,4 @@ struct RootView: View {
         .preferredColorScheme(composition.appearance?.colorScheme)
         .onOpenURL { composition.router.open($0) }
     }
-}
-
-/// StateObject defers construction until SwiftUI installs the root. A State
-/// initial value is evaluated again when the root is rebuilt, which would
-/// start another runtime and another purchase listener on every redraw.
-@MainActor
-private final class CompositionLifetime: ObservableObject {
-    let value = Composition()
 }

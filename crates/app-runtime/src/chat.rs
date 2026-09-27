@@ -154,6 +154,23 @@ impl Chat {
     /// Answers the head ask with its choice at `index`; `note` goes back
     /// with a choice that takes one.
     pub async fn answer_choice(&self, ask_key: &str, index: usize, note: &str) -> ActOutcome {
+        self.answer_with(ask_key, index, note, None).await
+    }
+
+    /// Submits the head form ask with its choice at `index` and the
+    /// person's field values as a JSON object.
+    pub async fn answer_form(&self, ask_key: &str, index: usize, content_json: &str) -> ActOutcome {
+        self.answer_with(ask_key, index, "", Some(content_json.as_bytes().to_vec()))
+            .await
+    }
+
+    async fn answer_with(
+        &self,
+        ask_key: &str,
+        index: usize,
+        note: &str,
+        content: Option<Vec<u8>>,
+    ) -> ActOutcome {
         let input = {
             let Some(card) = self.card_for(ask_key) else {
                 return moved_on();
@@ -161,7 +178,11 @@ impl Chat {
             let Some(choice) = card.choices.get(index) else {
                 return ActOutcome::Rejected(format!("the ask has no choice {index}"));
             };
-            ui_view::answer_input(&card, &choice.answer, note)
+            let answer = match content {
+                Some(content) => ui_view::with_form_content(&choice.answer, content),
+                None => choice.answer.clone(),
+            };
+            ui_view::answer_input(&card, &answer, note)
         };
         self.answer(input).await
     }
@@ -288,6 +309,8 @@ pub(crate) fn frame(state: &SessionState, now_ms: i64, ended: Option<String>) ->
         has_older: state.transcript().has_older(),
         queue: ui_view::queue_rows(state),
         outbox: ui_view::outbox_rows(state),
+        ask_input: ui_view::ask_card(state)
+            .and_then(|card| state.answering(&card.key).map(|sent| sent.id.clone())),
         ended,
     }
 }

@@ -1088,11 +1088,14 @@ public struct ChatFrame: Codable, Hashable, Sendable {
     public var hasOlder: Bool
     public var queue: [QueuedRow]
     public var outbox: [OutboxRow]
+    /// The input answering the head ask, which a card that was not
+    /// confirmed resends or discards.
+    public var askInput: [UInt8]?
     /// The runtime no longer serves this chat: the agent is gone.
     public var ended: String?
     public var waiting: Waiting?
 
-    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, queue: [QueuedRow], outbox: [OutboxRow], ended: String?, waiting: Waiting?) {
+    public init(agent: AgentKey, name: String, kind: Kind, phase: PhaseView, composer: ComposerView, connection: Connection, caughtUp: Bool, hasOlder: Bool, queue: [QueuedRow], outbox: [OutboxRow], askInput: [UInt8]?, ended: String?, waiting: Waiting?) {
         self.agent = agent
         self.name = name
         self.kind = kind
@@ -1103,6 +1106,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         self.hasOlder = hasOlder
         self.queue = queue
         self.outbox = outbox
+        self.askInput = askInput
         self.ended = ended
         self.waiting = waiting
     }
@@ -1118,6 +1122,7 @@ public struct ChatFrame: Codable, Hashable, Sendable {
         case hasOlder = "has_older"
         case queue
         case outbox
+        case askInput = "ask_input"
         case ended
         case waiting
     }

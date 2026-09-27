@@ -1,3 +1,30 @@
+2026-09-27 — **The phone's chat is rebuilt on the chat vocabulary.**
+A chat holds its row keys, which only grow at their two edges, reads a row
+by key when its cell is first drawn, and redraws only the cells an update
+names; a Reset's transcript is swapped in whole at the next catch-up. Every
+row kind the runtime hands over has a view: prompts with attachment chips
+and the "steered" mark, markdown prose, thinking, tool calls, file changes,
+commands with their output head and exit code, collapsed runs that open,
+subagents with their steps, background processes, images, slash output,
+decisions as meta on the call's row, asks that are the work resolved in
+place, and the session's footers and rules. The ask card docks where the
+composer was for every body: permissions with each scope as an outcome and
+deny with a note, questions one at a time with a review, previews,
+"Something else" and secret answers, a plan with the accept-edits switch,
+tool-server forms with native fields and link requests, Codex access
+grants, and the sending, rejected, not-confirmed and unanswerable states,
+with Stop always in its menu. The composer drafts at any time, attaches a
+photo or file through the runtime's blob store, sends only when caught up
+and live, resumes an exited agent with the draft, stops a running turn, and
+lists queued prompts (Withdraw, Send now) and unconfirmed ones (Resend,
+Discard). The facts strip, the activity line, the Detached header, the
+loading hint and away notice, "New activity" below a reader who scrolled
+up, and larger pages at a run that continues below all follow the
+vocabulary. A form's field values and the input answering the head ask
+cross the bridge. A "needs you" push that wakes the app in the background
+brings only its chat current under the on-demand source policy. The
+component snapshots cover every row kind, card and composer state.
+
 2026-09-27 — **The account cards on the You tab are no longer under the tab bar.**
 The delete and remove cards rise from the bottom of the You tab, and the
 floating tab bar was drawn over their Cancel and Delete buttons; it steps

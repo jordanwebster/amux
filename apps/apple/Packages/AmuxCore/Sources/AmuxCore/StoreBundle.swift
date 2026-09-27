@@ -22,6 +22,10 @@ public final class StoreBundle {
     @ObservationIgnored public private(set) var runtime: Runtime?
     /// Open chats by the id the runtime's wake names them with.
     @ObservationIgnored private var chats: [UInt64: (chat: Chat, woke: @MainActor () -> Void)] = [:]
+    /// The chats pages hold, by agent.
+    @ObservationIgnored private var models: [AgentKey: (chat: Chat, model: ChatModel)] = [:]
+    /// The agents whose chat a page shows.
+    @ObservationIgnored private var shown: Set<AgentKey> = []
     @ObservationIgnored public let now: @MainActor () -> Date
     /// Told how many machines this account has paired and how many of its
     /// agents need the person, each time the fleet is read.
@@ -118,10 +122,54 @@ public final class StoreBundle {
         chat.close()
     }
 
+    /// The chat a page shows, opened the first time it is asked for and kept
+    /// until ``leave(_:)``: a child's chat pushed on top keeps the parent's
+    /// draft and place.
+    public func chat(_ agent: AgentKey) throws(RuntimeFailure) -> ChatModel {
+        shown.insert(agent)
+        return try model(agent)
+    }
+
+    private func model(_ agent: AgentKey) throws(RuntimeFailure) -> ChatModel {
+        if let open = models[agent] { return open.model }
+        let chat = try openChat(agent) { [weak self] in self?.models[agent]?.model.woke() }
+        let model = ChatModel(source: chat)
+        models[agent] = (chat, model)
+        return model
+    }
+
+    /// The page showing this chat is gone: close it.
+    public func leave(_ agent: AgentKey) {
+        shown.remove(agent)
+        guard let open = models.removeValue(forKey: agent) else { return }
+        closeChat(open.chat)
+    }
+
+    /// Brings one agent's chat current, for a push that woke the app in the
+    /// background: the ordinary open, which asks the agent's host for what
+    /// this phone missed, then a wait for it to catch up. Nothing else is
+    /// brought current. A chat no page shows is closed again; its rows stay
+    /// in the store, so tapping the notification opens it at once.
+    @discardableResult
+    public func warm(_ agent: AgentKey, within limit: Duration = .seconds(25)) async -> Bool {
+        guard let model = try? model(agent) else { return false }
+        let deadline = ContinuousClock.now + limit
+        while model.frame?.caughtUp != true, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        let current = model.frame?.caughtUp == true
+        if !shown.contains(agent), let open = models.removeValue(forKey: agent) {
+            closeChat(open.chat)
+        }
+        return current
+    }
+
     /// Closes every chat, before the runtime under them stops.
     public func closeChats() {
         for open in chats.values { open.chat.close() }
         chats.removeAll()
+        models.removeAll()
+        shown.removeAll()
     }
 
     // MARK: - Pairing

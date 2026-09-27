@@ -77,6 +77,9 @@ pub struct ChatFrame {
     pub has_older: bool,
     pub queue: Vec<QueuedRow>,
     pub outbox: Vec<OutboxRow>,
+    /// The input answering the head ask, which a card that was not
+    /// confirmed resends or discards.
+    pub ask_input: Option<Vec<u8>>,
     /// The runtime no longer serves this chat: the agent is gone.
     pub ended: Option<String>,
 }

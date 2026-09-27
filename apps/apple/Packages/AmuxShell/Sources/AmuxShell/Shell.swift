@@ -260,79 +260,124 @@ private struct ShellTabBar: View {
     }
 }
 
-/// An agent's chat, open for as long as the page is: opening it starts the
-/// agent's stream on this phone and leaving by any route stops it.
-///
-/// It says whose chat it is and what the agent is doing; the rows, the asks
-/// and the composer are drawn by the chat screen built on the same session.
+/// An agent's chat. The page asks the account's stores for it, which keep
+/// it open until the page leaves the stack; photos and files are picked
+/// here, and everything that reaches the agent's lifecycle or the clipboard
+/// goes through the stores and the router.
 private struct ChatPage: View {
     let agent: AgentKey
     let router: Router
     let stores: StoreBundle
-    @Environment(\.design) private var design
-    @State private var open = OpenChat()
+    @State private var model: ChatModel?
+    @State private var failure: String?
+    @State private var picking: AttachChoice?
+    @State private var photo: PhotosPickerItem?
+    /// Whether the fleet has listed this agent since the page opened, so its
+    /// leaving the fleet reads as deleted rather than as not yet listed.
+    @State private var listed = false
 
     var body: some View {
-        ZStack {
-            Ground()
-            VStack(alignment: .leading, spacing: 14) {
-                BackLink("Agents", identifier: "chat.back") { router.pop() }
-                Text(open.frame?.name ?? stores.fleet.name(of: agent))
-                    .designFont(.screenTitle, design)
-                    .foregroundStyle(design.ink.color)
-                    .identified("chat.title", value: open.frame?.name ?? "")
-                Explain(open.failure ?? open.phase)
-                    .identified("chat.phase", value: open.failure ?? open.phase)
-                Spacer()
+        Group {
+            if let model {
+                ChatScreen(
+                    model: model, subject: subject, family: stores.runtime?.family(agent),
+                    actions: act)
+            } else {
+                ZStack(alignment: .topLeading) {
+                    Ground()
+                    VStack(alignment: .leading, spacing: 14) {
+                        BackLink("Agents", identifier: "chat.back") { router.pop() }
+                        Explain(failure ?? String(localized: "Opening this chat"))
+                            .identified("chat.failure", value: failure ?? "")
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                }
+                .toolbar(.hidden, for: .navigationBar)
             }
-            .padding(.horizontal, design.metrics.gutter)
-            .padding(.top, 10)
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .onAppear { open.open(agent, in: stores) }
-        .onDisappear { open.close(in: stores) }
-    }
-}
-
-/// The chat a page holds open, and what its frame says.
-@MainActor
-@Observable
-private final class OpenChat {
-    private(set) var frame: ChatFrame?
-    private(set) var failure: String?
-    @ObservationIgnored private var chat: Chat?
-
-    var phase: String {
-        switch frame?.phase {
-        case .starting?: "Starting"
-        case .idle?: "Idle"
-        case .working?: "Working"
-        case .needsYou?: "Needs you"
-        case .exited(let cause)?: ["Exited", cause].compactMap { $0 }.joined(separator: " · ")
-        case nil: "Opening"
+        .photosPicker(
+            isPresented: Binding(
+                get: { picking == .photo }, set: { if !$0 { picking = nil } }),
+            selection: $photo, matching: .images)
+        .fileImporter(
+            isPresented: Binding(get: { picking == .file }, set: { if !$0 { picking = nil } }),
+            allowedContentTypes: [.item]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            attach(file: url)
+        }
+        .onChange(of: photo) { _, item in
+            guard let item else { return }
+            photo = nil
+            Task { await attach(photo: item) }
+        }
+        .onAppear(perform: open)
+        .onChange(of: stores.fleet.row(agent) != nil) { _, present in
+            if present { listed = true } else if listed { router.pop() }
+        }
+        .onChange(of: model?.frame?.ended != nil) { _, ended in
+            if ended { router.pop() }
         }
     }
 
-    func open(_ agent: AgentKey, in stores: StoreBundle) {
-        guard chat == nil else { return }
+    private func open() {
+        guard model == nil else { return }
+        listed = stores.fleet.row(agent) != nil
         do {
-            chat = try stores.openChat(agent) { [weak self] in self?.woke() }
-            frame = chat?.frame()
+            model = try stores.chat(agent)
         } catch {
             failure = error.description
         }
     }
 
-    private func woke() {
-        guard let chat else { return }
-        let changes = chat.takeChanges()
-        if changes.session || changes.reloaded || !changes.keys.isEmpty { frame = chat.frame() }
+    private var subject: ChatSubject {
+        let row = stores.fleet.row(agent)
+        let host = stores.fleet.host(agent.hostId)
+        let name = row?.name ?? model?.frame?.name ?? agent.description
+        return ChatSubject(
+            name: name.isEmpty ? agent.description : name,
+            host: host?.name ?? row?.hostName ?? "",
+            directory: row?.workingDirectory ?? "",
+            presence: host?.local == true ? .online : (host?.presence ?? row?.hostPresence ?? .unspecified),
+            away: host?.away)
     }
 
-    func close(in stores: StoreBundle) {
-        guard let chat else { return }
-        stores.closeChat(chat)
-        self.chat = nil
+    private func act(_ action: ChatAction) {
+        switch action {
+        case .back: router.pop()
+        case .attach(let choice): picking = choice
+        case .rename(let name): Task { _ = await stores.rename(name, of: agent) }
+        case .stopAgent: Task { _ = await stores.stop(agent) }
+        case .delete:
+            Task {
+                if case .success = await stores.delete(agent) { router.pop() }
+            }
+        case .copyAddress: copy(subject.address)
+        case .open(let other): router.open(.conversation(other))
+        }
+    }
+
+    /// A photo as JPEG, the one image type every agent kind reads.
+    private func attach(photo item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+        #if canImport(UIKit)
+        let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.85) ?? data
+        #else
+        let jpeg = data
+        #endif
+        model?.attach(jpeg, name: "photo.jpg", mime: "image/jpeg", image: true)
+    }
+
+    private func attach(file url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { return }
+        let type = UTType(filenameExtension: url.pathExtension)
+        model?.attach(
+            data, name: url.lastPathComponent,
+            mime: type?.preferredMIMEType ?? "application/octet-stream",
+            image: type?.conforms(to: .image) ?? false)
     }
 }
 
