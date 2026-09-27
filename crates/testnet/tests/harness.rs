@@ -755,7 +755,7 @@ fn every_door_verb_maps_to_one_capability_and_the_crate_docs_list_the_same_map()
         },
         Control::Advance { ms: 1 },
         Control::Spawn {
-            agent: AgentDecl::new("x", "a"),
+            agent: Box::new(AgentDecl::new("x", "a")),
         },
         Control::Resume {
             agent: "x".into(),

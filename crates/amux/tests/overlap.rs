@@ -262,6 +262,7 @@ async fn the_previous_build_reopens_a_store_the_new_one_migrated_before_prepared
         .arg("daemon")
         .env("AMUX_CONFIG", &desk.config)
         .env(node::PIPE_ENV, format!("{},{}", ends[0], ends[1]))
+        .env(support::NO_DISCOVERY.0, support::NO_DISCOVERY.1)
         .env_remove("AMUX_LOG")
         .stdin(std::process::Stdio::null());
     // SAFETY: fcntl in the child before exec touches only its descriptors.
@@ -362,7 +363,7 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
         log: &log,
     };
     // The generated unit under a label of its own, with the fakes' script
-    // in its environment.
+    // and the scripted local network in its environment.
     let label = format!("sh.amux.supervise.test.{}", std::process::id());
     let plist = item
         .launch_agent()
@@ -370,10 +371,12 @@ async fn restarting_the_launch_agent_leaves_the_agent_running() {
         .replace(
             "\t\t<key>PATH</key>",
             &format!(
-                "\t\t<key>{}</key>\n\t\t<string>{}</string>\n\t\t<key>CLAUDE_CONFIG_DIR</key>\n\t\t<string>{}</string>\n\t\t<key>PATH</key>",
+                "\t\t<key>{}</key>\n\t\t<string>{}</string>\n\t\t<key>CLAUDE_CONFIG_DIR</key>\n\t\t<string>{}</string>\n\t\t<key>{}</key>\n\t\t<string>{}</string>\n\t\t<key>PATH</key>",
                 provider_fakes::SCRIPT_ENV,
                 desk.root.path().join("script.json").display(),
                 desk.root.path().join("claude").display(),
+                support::NO_DISCOVERY.0,
+                support::NO_DISCOVERY.1,
             ),
         );
     // launchd opens the log before amux runs, so its directory must exist,

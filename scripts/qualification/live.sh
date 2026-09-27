@@ -3,6 +3,9 @@
 # repo_root. Only this run's daemons and private tmux server are stopped.
 
 live_init() {
+  # Every daemon this run starts browses a scripted local network: real mDNS
+  # would have macOS ask for Local Network access.
+  export AMUX_TEST_DISCOVERY_MODE=disabled
   amux_bin=${AMUX_BIN:-"$repo_root/target/debug/amux"}
   case "$amux_bin" in
     /*) ;;

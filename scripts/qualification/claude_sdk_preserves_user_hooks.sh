@@ -8,6 +8,9 @@ set -eu
 
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd -P)
 amux_bin=${AMUX_BIN:-"$repo_root/target/debug/amux"}
+# A scripted local network: real mDNS would have macOS ask for Local Network
+# access.
+export AMUX_TEST_DISCOVERY_MODE=disabled
 evidence_arg=${1:-"$repo_root/.autopilot/evidence/live/user-hooks"}
 case "$evidence_arg" in
   /*) evidence_dir=$evidence_arg ;;

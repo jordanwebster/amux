@@ -20,6 +20,11 @@ use wire::client_service_client::ClientServiceClient;
 use wire::profile_service_client::ProfileServiceClient;
 use wire::{ListProfilesRequest, SubscribeRequest, session_event, subscribe_request};
 
+/// What every test daemon runs with: a scripted local network instead of
+/// real mDNS, which would have macOS ask for Local Network access once per
+/// rebuilt test binary.
+pub const NO_DISCOVERY: (&str, &str) = ("AMUX_TEST_DISCOVERY_MODE", "disabled");
+
 /// How long any one wait may take before it is a hang.
 pub const PATIENCE: Duration = Duration::from_secs(60);
 

@@ -123,6 +123,9 @@ impl Install {
                     .as_ref(),
             )
             .env("CLAUDE_CONFIG_DIR", self.root.path().join("claude"))
+            // Real mDNS would have macOS ask for Local Network access once
+            // per rebuilt test binary.
+            .env("AMUX_TEST_DISCOVERY_MODE", "disabled")
             .env_remove("AMUX_LOG")
             .stdin(Stdio::null())
             .kill_on_drop(true);
@@ -219,6 +222,7 @@ impl Drop for Install {
             let _ = std::process::Command::new(env!("CARGO_BIN_EXE_amux"))
                 .args(["server", "stop"])
                 .env("AMUX_CONFIG", &self.config)
+                .env("AMUX_TEST_DISCOVERY_MODE", "disabled")
                 .output();
         }
     }

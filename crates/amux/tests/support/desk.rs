@@ -115,6 +115,7 @@ impl Desk {
             .env("PATH", path)
             .env(SCRIPT_ENV, self.root.path().join("script.json"))
             .env("CLAUDE_CONFIG_DIR", self.root.path().join("claude"))
+            .env(super::NO_DISCOVERY.0, super::NO_DISCOVERY.1)
             .env_remove("AMUX_LOG")
             .stdin(Stdio::null())
             .kill_on_drop(true);
@@ -203,6 +204,7 @@ impl Drop for Desk {
         let _ = std::process::Command::new(self.amux_path())
             .args(["server", "stop"])
             .env("AMUX_CONFIG", &self.config)
+            .env(super::NO_DISCOVERY.0, super::NO_DISCOVERY.1)
             .env_remove("AMUX_LOG")
             .output();
         let _ = std::process::Command::new("pkill")

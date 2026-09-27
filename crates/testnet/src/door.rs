@@ -81,7 +81,7 @@ pub enum Control {
         ms: u64,
     },
     Spawn {
-        agent: AgentDecl,
+        agent: Box<AgentDecl>,
     },
     Resume {
         agent: String,
@@ -456,7 +456,7 @@ pub async fn dispatch(net: &mut Net, control: Control) -> Result<Value, NetError
         Control::Rewind { host, cuts } => value(net.rewind_host(&host, &cuts).await?),
         Control::Advance { ms } => value(net.advance(Duration::from_millis(ms))?),
         Control::Spawn { agent } => {
-            let spawned = net.spawn(agent).await?;
+            let spawned = net.spawn(*agent).await?;
             json!({ "id": Uuid::from_slice(&spawned.agent_id).unwrap_or_default() })
         }
         Control::Resume { agent, text } => {

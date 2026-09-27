@@ -408,7 +408,12 @@ impl Install {
             ),
         )
         .map_err(|error| error.to_string())?;
-        let mut env: Vec<(String, OsString)> = vec![("AMUX_CONFIG".into(), config.into())];
+        // A scripted local network: real mDNS would have macOS ask for Local
+        // Network access, and no scenario here is about discovery.
+        let mut env: Vec<(String, OsString)> = vec![
+            ("AMUX_CONFIG".into(), config.into()),
+            ("AMUX_TEST_DISCOVERY_MODE".into(), "disabled".into()),
+        ];
         env.extend(
             UPDATE_GUARDS
                 .iter()

@@ -269,7 +269,6 @@ async fn link_through_relay(quic: bool) -> RelayCarrier {
     let started = desk
         .command(&["server", "start"])
         .env("AMUX_CLOUD_TLS_CA", &cert_path)
-        .env("AMUX_TEST_DISCOVERY_MODE", "disabled")
         .output()
         .await
         .unwrap();

@@ -116,6 +116,7 @@ impl Install {
             .args(args)
             .env("AMUX_CONFIG", &self.config)
             .env("HOME", self.root.path().join("home"))
+            .env(support::NO_DISCOVERY.0, support::NO_DISCOVERY.1)
             .env_remove("AMUX_LOG")
             .env_remove("XDG_CONFIG_HOME")
             .stdin(Stdio::null());

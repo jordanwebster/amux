@@ -1,3 +1,13 @@
+2026-09-27 — **Test daemons stay off the real local network again.**
+Every test, qualification lane and live-capture script that starts an amux
+daemon sets `AMUX_TEST_DISCOVERY_MODE=disabled`, so debug daemons browse a
+scripted network instead of real mDNS. The rebuilt process tests had
+dropped the variable the old ones set, and macOS asked for Local Network
+access once per rebuilt test binary. The desk's commands, terminals and
+teardown, the process and supervise installs, the older-build daemon and
+the LaunchAgent's plist in the overlap tests all carry it; testnet's hosts
+run in-process on its scripted bus and never started a real daemon.
+
 2026-09-27 — **Terminal Claude takes a model and an effort from either client.**
 Its snapshot gains the models and commands a headless run of the same
 binary offers, handed to the interpreter as an agent fact. A model or
