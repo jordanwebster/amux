@@ -17,7 +17,7 @@ class TestsCatalogTest(unittest.TestCase):
         errors, cargo, swift = catalog.validate(catalog.load_catalog())
 
         self.assertEqual(errors, [])
-        self.assertIn(("testnet", "test", "spec"), cargo)
+        self.assertIn(("testnet", "test", "spec_network"), cargo)
         self.assertIn(("node", "lib", "node"), cargo)
         self.assertIn("AmuxUITests", swift)
 

@@ -24,7 +24,7 @@ BOUNDARIES = {
     "Many daemons",
     "Client model",
     "Store, effects, bridge",
-    "Projection",
+    "Views",
     "Native presentation",
     "System composition",
     "Journeys",
