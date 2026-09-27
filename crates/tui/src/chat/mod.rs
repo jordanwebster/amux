@@ -21,7 +21,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{ActivityKind, Composer, Key, PhaseView, SessionState, Waiting};
 use ui_view::{
-    AskCard, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows, ask_card,
+    AskCard, Away, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows, ask_card,
     chat_rows_for, composer, outbox_rows, queue_rows, session_strip,
 };
 use wire::{Attachment, attachment};
@@ -113,6 +113,9 @@ pub struct ChatView {
     pub review_open: bool,
     /// Whether the agent's own interface can be attached from here.
     pub attach: bool,
+    /// Why the agent's host is away when it is, kept current by the app
+    /// from the fleet.
+    pub away: Away,
     epoch: u64,
     opened_at_ms: i64,
     /// The last frame's layout, for scrolling and focus.
@@ -138,6 +141,7 @@ impl ChatView {
             review: None,
             review_open: false,
             attach,
+            away: Away::Plain,
             epoch: 0,
             opened_at_ms: now_ms,
             laid: Laid::default(),
@@ -666,7 +670,7 @@ impl ChatView {
             draw_reader(paint, area, reader, theme);
             return None;
         }
-        let mut top: Vec<Line<'static>> = vec![header(state, width, theme)];
+        let mut top: Vec<Line<'static>> = vec![header(state, self.away, width, theme)];
         if let Some(family) = family {
             top.push(family_line(family, width, theme));
         }
@@ -748,20 +752,20 @@ impl ChatView {
                 if footer.is_none() && card.state == CardState::Dismissed {
                     let (lines, at) = editor_lines(
                         &self.editor,
-                        &placeholder(&state.composer(), &name, &host),
+                        &placeholder(&state.composer(), &name, &host, self.away),
                         width,
                         theme,
                     );
                     cursor = Some((bottom.len() + at.0, at.1));
                     bottom.extend(lines);
-                    hint = composer_hint(state, &self.editor, width, theme);
+                    hint = composer_hint(state, &self.editor, self.away, width, theme);
                 }
             }
             None => {
                 bottom.push(Line::default());
                 let (mut lines, at) = editor_lines(
                     &self.editor,
-                    &placeholder(&state.composer(), &name, &host),
+                    &placeholder(&state.composer(), &name, &host, self.away),
                     width,
                     theme,
                 );
@@ -778,7 +782,7 @@ impl ChatView {
                             push(&mut line, row.hint(), theme.muted(), width);
                             line
                         }
-                        None => composer_hint(state, &self.editor, width, theme),
+                        None => composer_hint(state, &self.editor, self.away, width, theme),
                     };
                 }
             }
@@ -870,7 +874,7 @@ fn kind_word(kind: wire::Kind) -> &'static str {
 }
 
 /// "fix-auth · claude @ mbp          opus · high · default · working"
-fn header(state: &SessionState, width: usize, theme: Theme) -> Line<'static> {
+fn header(state: &SessionState, away: Away, width: usize, theme: Theme) -> Line<'static> {
     let agent = state.agent();
     let name = agent.name.clone().unwrap_or_else(|| "unnamed".into());
     let host = state
@@ -896,8 +900,12 @@ fn header(state: &SessionState, width: usize, theme: Theme) -> Line<'static> {
         ),
         (Composer::Disabled(Waiting::Detached), _) => (
             format!(
-                "{} away · not current",
-                if host.is_empty() { "host" } else { &host }
+                "{} away · {}",
+                if host.is_empty() { "host" } else { &host },
+                match away {
+                    Away::Plain => "not current",
+                    Away::SignedOut => "this machine is signed out",
+                }
             ),
             theme.warn(),
         ),
@@ -982,16 +990,18 @@ fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'stati
 fn composer_hint(
     state: &SessionState,
     editor: &Editor,
+    away: Away,
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
     let working = state.phase() == PhaseView::Working;
-    hint_line(&state.composer(), working, editor, width, theme)
+    hint_line(&state.composer(), away, working, editor, width, theme)
 }
 
 /// The keys under the composer, for its mode and draft.
 pub(crate) fn hint_line(
     composer: &Composer,
+    away: Away,
     working: bool,
     editor: &Editor,
     width: usize,
@@ -1004,6 +1014,9 @@ pub(crate) fn hint_line(
         }
         Composer::Send => "enter send · ctrl+j newline · ctrl+v attach",
         Composer::Resume => "enter resume with this message · ctrl+j newline",
+        Composer::Disabled(Waiting::Detached) if away == Away::SignedOut => {
+            "draft kept · sending waits until this machine signs in"
+        }
         Composer::Disabled(_) => "draft kept · sending waits",
     };
     let mut line = Line::from(Span::raw("  "));

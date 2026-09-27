@@ -104,6 +104,38 @@ fn push(
     }
 }
 
+/// Why a host is out of reach from here, as far as this machine can say.
+/// A powered-off host and a signed-out machine look the same from here, so
+/// the cause is only ever a fact about this machine, never a claim about
+/// the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Away {
+    /// Nothing more is known than that the host is away.
+    #[default]
+    Plain,
+    /// This machine is signed out of its account, so the relay carries
+    /// nothing for it; a host only the relay reaches is away until it signs
+    /// in again.
+    SignedOut,
+}
+
+/// Whether this machine is signed out of the account its profile is bound
+/// to. A profile that was never bound is not signed out.
+pub fn signed_out(fleet: &FleetState, local_host: &[u8]) -> bool {
+    fleet
+        .host(local_host)
+        .is_some_and(|entry| entry.signed_in == Some(false))
+}
+
+/// Why `host` is away, when it is.
+pub fn away(fleet: &FleetState, local_host: &[u8], host: &[u8]) -> Away {
+    if host != local_host && signed_out(fleet, local_host) {
+        Away::SignedOut
+    } else {
+        Away::Plain
+    }
+}
+
 pub fn fleet_card(fleet: &FleetState, agent_id: &[u8]) -> Option<FleetCard> {
     fleet.find(agent_id).map(|agent| card(fleet, agent))
 }

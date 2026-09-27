@@ -1,3 +1,18 @@
+2026-09-27 — **A signed-out machine names itself as the reason a host is away.**
+The daemon's own inventory entry now carries whether its profile is signed
+in to the account it is bound to (unset for a profile never bound, still
+signed in while paused), recomputed on every replication tick so signing
+out or in republishes it with no link changing. `ui_view::away` turns the
+fleet, the local host and an agent's host into the cause both clients
+word: plainly away, or away while this machine is signed out. The terminal
+chat header then reads `desk away · this machine is signed out`, the
+placeholder and the keys under the composer say sending waits until you
+sign in, and the hosts overlay marks this machine's row and every host not
+online with the same fact, dropping the peer's own stale "not signed in".
+It is worded as a fact about this machine because a powered-off desk and a
+signed-out laptop look the same from here. The keep-authority story checks
+the words in the chat and the overlay and its goldens are re-recorded.
+
 2026-09-27 — **A whole-frame golden of the ask escape, reached through served hosts.**
 `crates/tui/tests/frames.rs` spawns a terminal Claude on the desk whose
 script shows a tool server's sign-in dialog, observes its chat from the

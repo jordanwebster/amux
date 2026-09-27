@@ -487,10 +487,20 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     # a message written now is held, never sent.
     signed_out = journey.launch("logout", "laptop", "logout")
     journey.wait_terms(signed_out, "Signed default out", "AMUX_EXIT_0")
-    journey.wait_terms(pane, "desk away · not current", "sending waits")
+    # The reason named is this machine's sign-out, never a claim about the
+    # desk, and the hosts overlay says the same.
+    journey.wait_terms(pane, "desk away · this machine is signed out", "until you sign in again")
+    journey.keys(pane, "C-a", "s")
+    journey.wait(pane, lambda frame: frame.startswith("  amux ·"), "the fleet")
+    journey.keys(pane, "h")
+    journey.wait_terms(pane, "online · this machine is signed out", "offline · this machine is signed out")
+    journey.frame(pane, "blocked-hosts")
+    journey.keys(pane, "Escape")
+    journey.open_chat(pane, "guarded")
+    journey.wait_terms(pane, "desk away · this machine is signed out")
     journey.type(pane, held)
     journey.keys(pane, "Enter")
-    journey.wait_terms(pane, f"▎ {held}", "draft kept · sending waits")
+    journey.wait_terms(pane, f"▎ {held}", "draft kept · sending waits until this machine signs in")
     journey.frame(pane, "blocked")
     time.sleep(2)
     blocked = journey.chat("desk", "guarded", "while-signed-out")
@@ -510,7 +520,7 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     return [
         "a second profile on the laptop opened on its own empty fleet, knowing no desk",
         f"through the relay the desk received {asked!r} once and answered",
-        "signed out, the laptop showed the desk away and held the message; the desk never received it",
+        "signed out, the laptop named its own sign-out as the reason the desk was away, in the chat and the hosts overlay, and held the message; the desk never received it",
         control,
         f"signed in again, the chat was current and {held!r} reached the desk once and was answered",
         "the clients exited 0",

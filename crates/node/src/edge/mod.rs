@@ -597,6 +597,18 @@ impl Edge {
         &self.account
     }
 
+    /// Whether this profile is signed in to the account it is bound to:
+    /// None while it was never bound, so a profile that only ever worked
+    /// on its own network never reads as signed out. A paused connection
+    /// is still signed in; the person chose to stay off the relay.
+    pub fn account_signed_in(&self) -> Option<bool> {
+        match self.account.intent() {
+            wire::Intent::Bound | wire::Intent::Paused => Some(true),
+            wire::Intent::LoggedOut => Some(false),
+            wire::Intent::Unbound | wire::Intent::Unspecified => None,
+        }
+    }
+
     fn credentials(&self) -> Option<Arc<dyn CredentialProvider>> {
         if let Some(credentials) = &self.credentials_override {
             return Some(credentials.clone());

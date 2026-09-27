@@ -3,7 +3,7 @@
 
 use ratatui::text::{Line, Span};
 use ui_state::{Activity, ActivityKind, Composer, Waiting};
-use ui_view::{OutboxRow, OutboxState, QueuedRow, Segment, Strip, composer_tokens};
+use ui_view::{Away, OutboxRow, OutboxState, QueuedRow, Segment, Strip, composer_tokens};
 use wire::SignInState;
 
 use super::rows::chip;
@@ -204,14 +204,19 @@ impl TrayRow {
 }
 
 /// What the empty composer says, and whether it can send.
-pub fn placeholder(mode: &Composer, name: &str, host: &str) -> String {
+pub fn placeholder(mode: &Composer, name: &str, host: &str, away: Away) -> String {
     match mode {
         Composer::Send => format!("Message {name}"),
         Composer::Resume => format!("{name} has exited · type to resume it with a message"),
         Composer::Disabled(Waiting::CatchingUp) => "Catching up · your draft is kept".into(),
-        Composer::Disabled(Waiting::Detached) => {
-            format!("{host} is away · your draft is kept; sending waits until it is back")
-        }
+        Composer::Disabled(Waiting::Detached) => match away {
+            Away::Plain => {
+                format!("{host} is away · your draft is kept; sending waits until it is back")
+            }
+            Away::SignedOut => format!(
+                "{host} is away · this machine is signed out · your draft is kept; sending waits until you sign in again"
+            ),
+        },
         Composer::Disabled(Waiting::Reconnecting) => {
             "Reconnecting to amux · your draft is kept".into()
         }

@@ -743,6 +743,96 @@ fn detached_keeps_the_rows_and_disables_send() {
     assert_eq!(view.editor.text(), "still typing");
 }
 
+/// Signed out, this machine names itself as the reason a host is away:
+/// the header, the placeholder, the keys under the composer and both rows
+/// of the hosts overlay, never a claim about the host.
+#[test]
+fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
+    let mut fleet = FleetState::new();
+    let mut laptop = host(
+        b"laptop",
+        "laptop",
+        wire::Trust::Trusted,
+        wire::Presence::Online,
+    );
+    if let wire::inventory_event::Of::Host(entry) = &mut laptop {
+        entry.via = wire::HostVia::Unspecified as i32;
+        entry.signed_in = Some(false);
+    }
+    inventory(&mut fleet, laptop);
+    let mut desk = host(
+        b"host",
+        "desk",
+        wire::Trust::Trusted,
+        wire::Presence::Offline,
+    );
+    if let wire::inventory_event::Of::Host(entry) = &mut desk {
+        entry.signed_in = Some(true);
+    }
+    inventory(&mut fleet, desk);
+
+    let mut state = chat(replies(1, 5));
+    state.update(Msg::Host(fleet.host(b"host").unwrap().clone()));
+    state.update(event(session_event::Of::Detached(wire::Detached {})));
+    let mut view = ChatView::new(b"agent".to_vec(), 0, false);
+    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("desk away · this machine is signed out"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("desk is away · this machine is signed out · your draft is kept"),
+        "{screen}"
+    );
+    typed(&mut view, &state, "still there?");
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(
+        screen.contains("draft kept · sending waits until this machine signs in"),
+        "{screen}"
+    );
+
+    let screen: Vec<String> = crate::hosts::overlay_lines(&fleet, b"laptop", 100, theme())
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let screen = screen.join("\n");
+    assert!(
+        screen.contains("offline · this machine is signed out"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("online · this machine is signed out"),
+        "{screen}"
+    );
+    assert!(!screen.contains("not signed in"), "{screen}");
+
+    // Signed in again, the words are what they always were.
+    let mut signed_in = host(
+        b"laptop",
+        "laptop",
+        wire::Trust::Trusted,
+        wire::Presence::Online,
+    );
+    if let wire::inventory_event::Of::Host(entry) = &mut signed_in {
+        entry.via = wire::HostVia::Unspecified as i32;
+        entry.signed_in = Some(true);
+    }
+    inventory(&mut fleet, signed_in);
+    view.away = ui_view::away(&fleet, b"laptop", b"host");
+    let (buffer, _) = draw(&mut view, &state, 0, W, H, theme());
+    let screen = text(&buffer);
+    assert!(screen.contains("desk away · not current"), "{screen}");
+    assert!(!screen.contains("signed out"), "{screen}");
+}
+
 #[test]
 fn a_reset_keeps_the_rows_until_caught_up_then_shows_the_newest() {
     let mut state = chat(replies(1, 60));
@@ -824,7 +914,7 @@ fn the_hosts_overlay_draws_trusted_hosts_and_candidates() {
             wire::Presence::Online,
         ),
     );
-    let lines = crate::hosts::overlay_lines(&fleet, 100, theme());
+    let lines = crate::hosts::overlay_lines(&fleet, b"a", 100, theme());
     let screen: Vec<String> = lines
         .iter()
         .map(|line| {

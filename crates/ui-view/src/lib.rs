@@ -24,7 +24,10 @@ pub use composer::{
     ServerView, SignInView, Strip, TasksView, UsageView, composer, composer_tokens, outbox_rows,
     queue_rows, session_strip, waiting,
 };
-pub use fleet::{FamilyHeader, FleetCard, FleetRow, family_header, fleet_card, fleet_list};
+pub use fleet::{
+    Away, FamilyHeader, FleetCard, FleetRow, away, family_header, fleet_card, fleet_list,
+    signed_out,
+};
 pub use review::{DiffLine, FileStatus, Hunk, LineKind, ReviewDoc, ReviewFile, review_doc};
 pub use rows::{
     AnswerView, AskRow, ChatOptions, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow,

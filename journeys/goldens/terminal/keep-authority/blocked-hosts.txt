@@ -1,0 +1,34 @@
+  Hosts
+
+    ○ desk                  offline · this machine is signed out
+    ● laptop                online · this machine is signed out
+
+  esc close
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

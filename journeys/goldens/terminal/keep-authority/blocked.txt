@@ -1,4 +1,4 @@
-  guarded · claude sdk @ desk                                claude-fake-1 · default · desk away · not current
+  guarded · claude sdk @ desk                 claude-fake-1 · default · desk away · this machine is signed out
 
 
 
@@ -31,4 +31,4 @@
 
 
 ▎ Still there?
-  draft kept · sending waits
+  draft kept · sending waits until this machine signs in

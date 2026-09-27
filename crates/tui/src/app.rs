@@ -846,7 +846,14 @@ impl App {
         let now = now_ms();
         let page = match &mut self.chat {
             Some(chat) => {
-                let family = family_header(&self.fleet.state(), &chat.agent.agent);
+                let (family, away) = {
+                    let fleet = self.fleet.state();
+                    (
+                        family_header(&fleet, &chat.agent.agent),
+                        ui_view::away(&fleet, &self.config.local_host, &chat.agent.host),
+                    )
+                };
+                chat.view.away = away;
                 let state = chat.session.state();
                 chat.view
                     .draw(paint, area, &state, family.as_ref(), footer, now, theme)

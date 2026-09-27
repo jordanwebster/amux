@@ -823,3 +823,37 @@ fn unknown_renders_one_way() {
         assert_eq!(session_strip(&state), Strip::default());
     }
 }
+
+fn host_entry(host: &str, signed_in: Option<bool>) -> FleetMsg {
+    FleetMsg::Event(Box::new(wire::InventoryEvent {
+        of: Some(wire::inventory_event::Of::Host(wire::HostEntry {
+            host_id: host.as_bytes().to_vec(),
+            name: host.into(),
+            signed_in,
+            trust: wire::Trust::Trusted as i32,
+            presence: wire::Presence::Online as i32,
+            ..wire::HostEntry::default()
+        })),
+    }))
+}
+
+#[test]
+fn a_host_is_away_because_this_machine_signed_out_only_when_it_did() {
+    let mut fleet = FleetState::new();
+    fleet.update(host_entry("desk", Some(true)));
+    // A profile never bound to an account is not signed out.
+    fleet.update(host_entry("laptop", None));
+    assert!(!signed_out(&fleet, b"laptop"));
+    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Plain);
+
+    fleet.update(host_entry("laptop", Some(false)));
+    assert!(signed_out(&fleet, b"laptop"));
+    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::SignedOut);
+    // The machine's own agents are never away for it.
+    assert_eq!(away(&fleet, b"laptop", b"laptop"), Away::Plain);
+    // The desk's own sign-in says nothing about this machine.
+    assert_eq!(away(&fleet, b"desk", b"laptop"), Away::Plain);
+
+    fleet.update(host_entry("laptop", Some(true)));
+    assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Plain);
+}

@@ -24,14 +24,20 @@ use crate::serve::inventory;
 pub(crate) type HostSet = BTreeMap<Vec<u8>, HostEntry>;
 
 impl ProfileRuntime {
-    /// This host's entry: always trusted and online to itself.
+    /// This host's entry: always trusted and online to itself, and signed
+    /// in or out of its account as it is now, so a client can say a host
+    /// only the relay reaches is away because this machine signed out. The
+    /// replication manager recomputes it every tick, so signing out or in
+    /// republishes it without any link changing.
     pub fn host_entry(&self) -> HostEntry {
+        let edge = self.edge();
         HostEntry {
             host_id: self.host().as_bytes().to_vec(),
-            name: self
-                .edge()
+            name: edge
+                .as_ref()
                 .map(|edge| edge.host_name().to_owned())
                 .unwrap_or_default(),
+            signed_in: edge.as_ref().and_then(|edge| edge.account_signed_in()),
             generation: self.generation(),
             trust: Trust::Trusted as i32,
             presence: Presence::Online as i32,

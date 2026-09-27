@@ -278,7 +278,7 @@ impl FleetView {
         let width = usize::from(area.width);
         let height = usize::from(area.height);
         if matches!(self.overlay, Some(Overlay::Hosts)) {
-            let mut lines = hosts::overlay_lines(fleet, width, theme);
+            let mut lines = hosts::overlay_lines(fleet, &self.local_host, width, theme);
             lines.resize(height, Line::default());
             paint.render_widget(Paragraph::new(lines), area);
             return;

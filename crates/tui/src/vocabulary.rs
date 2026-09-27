@@ -15,7 +15,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ui_state::{Activity, ActivityKind, Composer, Waiting};
 use ui_view::{
-    AnswerView, AskBody, AskCard, AskRow, AttachmentView, CardState, Choice, ChoiceOutcome,
+    AnswerView, AskBody, AskCard, AskRow, AttachmentView, Away, CardState, Choice, ChoiceOutcome,
     ContextView, Decision, DecisionView, ExploreVerb, FileChangeView, FileRow, Granted, OptionView,
     OutboxRow, OutboxState, PlanVerdict, QuestionView, QueuedRow, Resolution, Row, RowKind,
     RunInfo, Scope, Segment, ServerView, SignInView, Strip, TasksView, ToolStateView, UsageView,
@@ -119,17 +119,17 @@ pub fn components(theme: Theme) -> Vec<Component> {
         "The tray under the feed: a queued prompt that can be sent now or withdrawn, a prompt that was sent but never confirmed, selected with resend and discard, a rejected one, and the keys the selected row takes.",
         tray(w, theme),
     );
-    for (name, shows, composer, draft) in composers() {
+    for (name, shows, composer, away, draft) in composers() {
         let mut editor = Editor::default();
         editor.set(draft, Vec::new());
         let (mut lines, _) = editor_lines(
             &editor,
-            &placeholder(&composer, "fixer", "studio"),
+            &placeholder(&composer, "fixer", "studio", away),
             w,
             theme,
         );
         lines.insert(0, Line::default());
-        lines.push(hint_line(&composer, false, &editor, w, theme));
+        lines.push(hint_line(&composer, away, false, &editor, w, theme));
         add(name, shows, lines);
     }
     out.push(Component {
@@ -1472,24 +1472,34 @@ fn tray(width: usize, theme: Theme) -> Vec<Line<'static>> {
     lines
 }
 
-fn composers() -> Vec<(&'static str, &'static str, Composer, &'static str)> {
+fn composers() -> Vec<(&'static str, &'static str, Composer, Away, &'static str)> {
     vec![
         (
             "composer_exited",
             "The exited composer: one Enter resumes the agent with the draft as its first prompt.",
             Composer::Resume,
+            Away::Plain,
             "Carry on from the failing test.",
         ),
         (
             "composer_exited_empty",
             "The exited composer before anything is typed.",
             Composer::Resume,
+            Away::Plain,
             "",
         ),
         (
             "composer_detached",
             "The composer while the agent's host is away: the draft is kept and sending waits.",
             Composer::Disabled(Waiting::Detached),
+            Away::Plain,
+            "",
+        ),
+        (
+            "composer_detached_signed_out",
+            "The composer while the agent's host is away and this machine is signed out of its account: the cause is this machine's, the draft is kept and sending waits until it signs in.",
+            Composer::Disabled(Waiting::Detached),
+            Away::SignedOut,
             "",
         ),
     ]

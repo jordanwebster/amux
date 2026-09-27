@@ -516,6 +516,60 @@ async fn an_untrusted_host_leaves_the_set_with_its_replicas() {
     net.shutdown().await.unwrap();
 }
 
+/// This host's own entry says whether its profile is signed in to its
+/// account: unset while it was never bound, and flipping with signing out
+/// and back in without any link changing, so a client can name the cause
+/// when a host only the relay reaches goes away.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_own_entry_carries_this_profiles_sign_in() {
+    let net = Net::start(Topology::new().relay(&["ada"]).host("laptop"))
+        .await
+        .unwrap();
+    let own = |events: &[InventoryEvent]| {
+        host_named(&net, &inventory_hosts(events), "laptop").map(|entry| entry.signed_in)
+    };
+    let mut fleet = net.observe_inventory("laptop").await.unwrap();
+    let opening = fleet
+        .observe_until(observe::inventory_caught_up, PATIENCE)
+        .await
+        .unwrap();
+    assert_eq!(own(opening), Some(None), "{}", fleet.transcript());
+
+    net.sign_in("laptop", "ada").await.unwrap();
+    fleet
+        .observe_until(|events| own(events) == Some(Some(true)), PATIENCE)
+        .await
+        .unwrap();
+
+    let profile = net.host("laptop").unwrap().profile;
+    net.front_door("laptop")
+        .await
+        .unwrap()
+        .logout_profile(wire::ProfileOperation {
+            profile_id: profile.to_string(),
+            ..wire::ProfileOperation::default()
+        })
+        .await
+        .unwrap();
+    fleet
+        .observe_until(|events| own(events) == Some(Some(false)), PATIENCE)
+        .await
+        .unwrap();
+    let mut reopened = net.observe_inventory("laptop").await.unwrap();
+    let opening = reopened
+        .observe_until(observe::inventory_caught_up, PATIENCE)
+        .await
+        .unwrap();
+    assert_eq!(own(opening), Some(Some(false)), "{}", reopened.transcript());
+
+    net.sign_in("laptop", "ada").await.unwrap();
+    fleet
+        .observe_until(|events| own(events) == Some(Some(true)), PATIENCE)
+        .await
+        .unwrap();
+    net.shutdown().await.unwrap();
+}
+
 fn queued(event: &SessionEvent, id: &[u8]) -> bool {
     matches!(&event.of, Some(session_event::Of::Snapshot(snapshot))
         if snapshot.queue.iter().any(|entry| entry.input_id == id))

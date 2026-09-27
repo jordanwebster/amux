@@ -19,8 +19,16 @@ fn route(entry: &HostEntry) -> &'static str {
     }
 }
 
-/// How a trusted host is reached now, in words.
-pub fn caption(entry: &HostEntry) -> String {
+/// How a trusted host is reached now, in words. `local` is this machine's
+/// own entry: while it is signed out, a host that is not online is away for
+/// that reason as far as anyone here can say, and the words name this
+/// machine rather than the host.
+pub fn caption(entry: &HostEntry, local: Option<&HostEntry>) -> String {
+    let here_signed_out = local.is_some_and(|local| local.signed_in == Some(false));
+    let here = local.is_some_and(|local| local.host_id == entry.host_id);
+    if here && here_signed_out {
+        return "online · this machine is signed out".to_owned();
+    }
     let mut parts = vec![match entry.presence() {
         Presence::Online => "online".to_owned(),
         Presence::Away => "away".to_owned(),
@@ -33,7 +41,9 @@ pub fn caption(entry: &HostEntry) -> String {
     }
     // Signing in matters only for reaching a host through the relay.
     let relay = entry.presence() != Presence::Online || entry.via() == HostVia::Relay;
-    if relay && entry.signed_in == Some(false) {
+    if here_signed_out && !here && entry.presence() != Presence::Online {
+        parts.push("this machine is signed out".into());
+    } else if relay && entry.signed_in == Some(false) {
         parts.push("not signed in".into());
     }
     if let Some(error) = entry.last_dial_error.as_ref().filter(|e| !e.is_empty()) {
@@ -53,7 +63,13 @@ fn shell_target(target: &str) -> String {
     }
 }
 
-pub fn overlay_lines(fleet: &FleetState, width: usize, theme: Theme) -> Vec<Line<'static>> {
+pub fn overlay_lines(
+    fleet: &FleetState,
+    local_host: &[u8],
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let local = fleet.host(local_host);
     let mut hosts: Vec<&HostEntry> = fleet.hosts().collect();
     hosts.sort_by(|a, b| {
         (a.trust() != Trust::Trusted)
@@ -107,7 +123,7 @@ pub fn overlay_lines(fleet: &FleetState, width: usize, theme: Theme) -> Vec<Line
             line.spans.push(Span::raw("  "));
         }
         let detail = if trusted {
-            caption(entry)
+            caption(entry, local)
         } else {
             let mut words = String::from("found");
             if let Some(platform) = entry.platform.as_ref().filter(|p| !p.is_empty()) {
