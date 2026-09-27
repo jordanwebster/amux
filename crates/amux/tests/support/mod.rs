@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod desk;
+pub mod term;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -1,5 +1,6 @@
 //! Releases overlapping on one machine, with the built binaries: agents of
 //! the previous build working on across an update to the build under test,
+//! a fleet of the previous build staying open through that update,
 //! a store the previous build created surviving a rollback before
 //! activation, and the generated LaunchAgent restarted under a running
 //! turn. The supervisor's own rules (rollback after K failed starts, the
@@ -15,7 +16,9 @@ use std::collections::BTreeMap;
 use std::io::BufRead as _;
 use std::path::Path;
 
+use provider_fakes::Step;
 use support::desk::{Desk, LONG_GRACE_SECS, lock_held, say};
+use support::term::Term;
 use support::{
     Channel, amux_binary, chat, client, count, created_id, gated_turn, texts, turns_journaled,
     until,
@@ -113,6 +116,99 @@ async fn agents_of_the_previous_build_work_on_after_an_update() {
     for name in agents.keys() {
         desk.run(&["stop", name, "--mode", "kill"]).await;
     }
+}
+
+/// A fleet started from the previous build stays open through an update to
+/// the build under test: it reconnects to the new daemon on its own, keeps
+/// the chat it had open with the turn that was running, says the running
+/// daemon is newer, and a prompt typed into it afterwards is answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tui_of_the_previous_build_works_on_after_an_update() {
+    let running = node::version();
+    let previous = version_stamp::previous(running).unwrap();
+    let channel = Channel::serve().await;
+    let gate_dir = tempfile::tempdir().unwrap();
+    let gate = gate_dir.path().join("gate");
+    let mut turns = gated_turn(&gate);
+    turns.extend([
+        Step::Text {
+            chunks: vec!["answered after the update".to_owned()],
+        },
+        Step::TurnEnd,
+    ]);
+    let desk = Desk::new(true, LONG_GRACE_SECS, &previous, channel.url(), turns);
+    let work = desk.work.to_string_lossy().into_owned();
+    desk.run(&["server", "start"]).await;
+    let agent = created_id(
+        &desk
+            .run(&[
+                "create",
+                "claude_sdk",
+                "--name",
+                "helper",
+                "--cwd",
+                &work,
+                "--prompt",
+                "first task",
+            ])
+            .await,
+    );
+
+    // The previous build's own binary, as the install had it before the
+    // update, opens the fleet and the chat mid-turn.
+    let tui = desk.root.path().join("previous-amux");
+    std::fs::copy(desk.amux_path(), &tui).unwrap();
+    let mut term = Term::run(&desk, &tui, &[], 30, 110);
+    term.shows("helper").await;
+    term.type_keys(b"\r").await;
+    term.shows("started").await;
+    term.shows("working").await;
+    let daemon = desk.daemon_pid();
+
+    channel.publish(running, std::fs::read(amux_binary()).unwrap());
+    let (updated, ()) = tokio::join!(desk.run(&["update"]), async {
+        // Drained while the update runs, so the terminal never backs up.
+        term.until("the old daemon goes", |_| desk.daemon_pid() != daemon)
+            .await;
+    });
+    assert!(
+        updated.contains(&format!("amux {running} is running.")),
+        "{updated}"
+    );
+    say(format!(
+        "-- amux update: daemon pid {daemon} -> {}; the {previous} fleet stays open",
+        desk.daemon_pid()
+    ));
+
+    // The same chat, live again under the new daemon: the running turn
+    // finishes into it.
+    std::fs::write(&gate, b"").unwrap();
+    term.shows("finished").await;
+    assert!(
+        term.contents().contains("first task"),
+        "{}",
+        term.contents()
+    );
+    term.type_keys(b"second task\r").await;
+    term.shows("answered after the update").await;
+    say(format!(
+        "-- the {previous} chat after the update:\n{}",
+        term.contents()
+    ));
+
+    // Back at the fleet it names the newer daemon.
+    term.type_keys(b"\x01s").await;
+    term.shows(&format!("amux {running} is running · restart to update"))
+        .await;
+    term.shows("? help").await;
+    say(format!("-- the {previous} fleet:\n{}", term.contents()));
+    term.type_keys(b"q").await;
+    term.exits().await;
+
+    let mut chats = client(&desk.socket).await;
+    let chat = chat(&mut chats, &agent).await;
+    assert_eq!(count(&chat, "answered after the update"), 1);
+    desk.run(&["stop", "helper", "--mode", "kill"]).await;
 }
 
 /// The build under test migrates a store the previous build created and is

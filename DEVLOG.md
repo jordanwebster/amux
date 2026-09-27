@@ -1,3 +1,12 @@
+2026-09-27 — **A fleet of the previous build stays open through an update.**
+A new system test starts the terminal client from a re-stamped previous
+build against a supervised install whose agent is mid-turn, then updates
+the install to the build under test. The client reconnects to the new
+daemon without help, keeps the open chat, shows the running turn finish,
+answers a prompt typed into it afterwards, and its fleet says the newer
+daemon is running and to restart. The attach tests' terminal harness moved
+into the shared test support so both suites drive amux in a real terminal.
+
 2026-09-27 — **The terminal review page is back.**
 From a chat that can send or resume, `<leader> r` asks the agent's host for
 its working-tree diff (untracked files included), fetches the patch blob

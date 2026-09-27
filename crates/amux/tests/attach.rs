@@ -11,12 +11,10 @@
 
 mod support;
 
-use std::time::Duration;
-
 use provider_fakes::Step;
-use pty_host::{PtyProcess, PtySize, PtySpawn};
 use support::desk::{Desk, LONG_GRACE_SECS, say};
-use support::{PATIENCE, chat, client, created_id, line_of, texts, until};
+use support::term::Term;
+use support::{chat, client, created_id, line_of, texts, until};
 
 /// The leader, Ctrl+A, and its two chords.
 const DETACH: &[u8] = b"\x01d";
@@ -25,140 +23,6 @@ const FLEET: &[u8] = b"\x01s";
 fn text(chunk: &str) -> Step {
     Step::Text {
         chunks: vec![chunk.to_owned()],
-    }
-}
-
-/// `amux attach <agent>` running in a terminal the test holds: everything
-/// it wrote, and the screen a terminal would show.
-struct Term {
-    process: PtyProcess,
-    output: tokio::sync::mpsc::Receiver<bytes::Bytes>,
-    written: Vec<u8>,
-    screen: vt100::Parser,
-}
-
-impl Term {
-    fn attach(desk: &Desk, agent: &str, rows: u16, cols: u16) -> Term {
-        let path = format!(
-            "{}:{}",
-            desk.bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let process = pty_host::spawn(PtySpawn {
-            command: desk.amux_path(),
-            args: vec!["attach".into(), agent.into()],
-            cwd: desk.work.clone(),
-            env: vec![
-                ("AMUX_CONFIG".into(), desk.config.clone().into()),
-                ("PATH".into(), path.into()),
-                ("TERM".into(), "xterm-256color".into()),
-            ],
-            env_remove: vec!["AMUX_LOG".into()],
-            size: PtySize { rows, cols },
-        })
-        .expect("amux attach starts in a terminal");
-        let output = process.handle.output();
-        Term {
-            process,
-            output,
-            written: Vec::new(),
-            screen: vt100::Parser::new(rows, cols, 0),
-        }
-    }
-
-    /// Answers the queries a terminal answers: the cursor position, which
-    /// the fleet's terminal library asks when it starts, and the device
-    /// attributes terminal Claude asks when it starts. Answers are typed
-    /// into amux, as a terminal types them.
-    async fn answer(&self, bytes: &[u8]) {
-        if bytes.windows(4).any(|window| window == b"\x1b[6n") {
-            let (row, col) = self.screen.screen().cursor_position();
-            self.type_keys(format!("\x1b[{};{}R", row + 1, col + 1).as_bytes())
-                .await;
-        }
-        if bytes.windows(3).any(|window| window == b"\x1b[c") {
-            self.type_keys(b"\x1b[?1;2c").await;
-        }
-    }
-
-    fn said(&self) -> String {
-        String::from_utf8_lossy(&self.written).into_owned()
-    }
-
-    fn contents(&self) -> String {
-        self.screen.screen().contents()
-    }
-
-    /// Reads until `done` holds of what the terminal shows.
-    async fn until(&mut self, what: &str, done: impl Fn(&Term) -> bool) {
-        let waited = tokio::time::timeout(PATIENCE, async {
-            while !done(self) {
-                match self.output.recv().await {
-                    Some(bytes) => {
-                        self.written.extend_from_slice(&bytes);
-                        self.screen.process(&bytes);
-                        self.answer(&bytes).await;
-                    }
-                    None => return false,
-                }
-            }
-            true
-        })
-        .await;
-        assert!(
-            waited == Ok(true),
-            "waiting for {what}; the terminal shows:\n{}\nand was written:\n{}",
-            self.contents(),
-            self.said()
-        );
-    }
-
-    /// Reads until the terminal has been written `text`.
-    async fn drawn(&mut self, text: &str) {
-        self.until(text, |term| term.said().contains(text)).await;
-    }
-
-    /// Reads until the screen shows `text` now.
-    async fn shows(&mut self, text: &str) {
-        self.until(text, |term| term.contents().contains(text))
-            .await;
-    }
-
-    async fn type_keys(&self, keys: &[u8]) {
-        self.process
-            .handle
-            .write(keys)
-            .await
-            .expect("typing reaches amux");
-    }
-
-    fn resize(&mut self, rows: u16, cols: u16) {
-        self.screen.set_size(rows, cols);
-        self.process
-            .handle
-            .resize(PtySize { rows, cols })
-            .expect("the terminal resizes");
-    }
-
-    /// Waits for amux to exit, reading what it says on the way out.
-    async fn exits(mut self) -> String {
-        let status = tokio::time::timeout(PATIENCE, async {
-            loop {
-                tokio::select! {
-                    Some(bytes) = self.output.recv() => self.written.extend_from_slice(&bytes),
-                    status = self.process.exit.wait() => break status,
-                }
-            }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("amux attach did not exit; it said:\n{}", self.said()));
-        while let Ok(Some(bytes)) =
-            tokio::time::timeout(Duration::from_millis(200), self.output.recv()).await
-        {
-            self.written.extend_from_slice(&bytes);
-        }
-        assert!(status.success(), "amux attach failed:\n{}", self.said());
-        self.said()
     }
 }
 
