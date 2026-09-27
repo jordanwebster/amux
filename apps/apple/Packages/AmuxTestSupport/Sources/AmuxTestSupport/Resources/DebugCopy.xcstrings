@@ -37,6 +37,30 @@
         }
       }
     },
+    "%@ saying %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Amux/Debug/DoorHost.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ saying %@"
+          }
+        }
+      }
+    },
+    "%@ taking a message": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Amux/Debug/DoorHost.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ taking a message"
+          }
+        }
+      }
+    },
     "-s": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -2361,6 +2385,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "no agent by that name"
+          }
+        }
+      }
+    },
+    "no agent named %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Amux/Debug/DoorHost.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no agent named %@"
+          }
+        }
+      }
+    },
+    "not base64": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/DoorHost.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not base64"
           }
         }
       }

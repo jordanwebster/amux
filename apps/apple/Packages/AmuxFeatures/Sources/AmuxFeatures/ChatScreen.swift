@@ -249,6 +249,7 @@ public struct ChatScreen: View {
             .padding(.top, 8)
         }
         .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollDismissesKeyboard(.interactively)
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)

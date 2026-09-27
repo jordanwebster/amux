@@ -853,7 +853,7 @@ struct QuestionCard: View {
                                 .foregroundStyle(design.inkFaint.color)
                         }
                     }
-                    if !option.description.isEmpty {
+                    if !option.description.isEmpty, option.description != option.label {
                         Text(option.description)
                             .designFont(.detail, design)
                             .foregroundStyle(design.inkMuted.color)

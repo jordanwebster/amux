@@ -160,9 +160,38 @@ final class DoorHost {
             }
         case .shutdown: return .ack
         case .open(let screen, let subject): return open(screen, about: subject)
+        case .attach(let agent, let kind, let name, let mime, let base64):
+            guard let data = Data(base64Encoded: base64) else { return .error("not base64") }
+            return chatting(agent) { model in
+                model.attach(data, name: name, mime: mime, image: kind == "image")
+                return .ack
+            }
+        case .send(let agent, let text):
+            return chatting(agent) { model in
+                model.draft = text
+                guard model.canSend else {
+                    return .sendAttempt(delivered: false, reason: model.frame?.waiting.map { "\($0)" })
+                }
+                model.send()
+                return .sendAttempt(delivered: true, reason: nil)
+            }
+        case .awaitSendable(let agent, let seconds):
+            guard let model = chat(agent) else { return .error("no agent named \(agent)") }
+            return await until(seconds, "\(agent) taking a message") {
+                model.frame?.caughtUp == true && model.frame?.composer.mode == .send
+            }
+        case .awaitReply(let agent, let saying, let seconds):
+            guard let model = chat(agent) else { return .error("no agent named \(agent)") }
+            return await until(seconds, "\(agent) saying \(saying)") {
+                model.ids.contains { id in
+                    guard case .prose(let text, _, _)? = model.cell(for: id).row?.kind else {
+                        return false
+                    }
+                    return ChatWords.text(of: text).contains(saying)
+                }
+            }
         case .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
-             .report, .uploaded, .replay, .move, .attach, .requestChanges, .watch,
-             .awaitSendable, .awaitReply, .send, .sendDraft:
+             .report, .uploaded, .replay, .move, .requestChanges, .watch, .sendDraft:
             return .error("this build's door does not \(Self.verb(request))")
         }
     }
@@ -276,6 +305,20 @@ final class DoorHost {
             try? await Task.sleep(for: .milliseconds(50))
         }
         return .ack
+    }
+
+    /// The chat a page holds for the agent a driver names, opened as the page
+    /// would open it.
+    private func chat(_ agent: String) -> ChatModel? {
+        guard let stores,
+              let row = stores.fleet.rows.first(where: { $0.name == agent || "\($0.id)" == agent })
+        else { return nil }
+        return try? stores.chat(row.id)
+    }
+
+    private func chatting(_ agent: String, _ body: (ChatModel) -> DoorReply) -> DoorReply {
+        guard let model = chat(agent) else { return .error("no agent named \(agent)") }
+        return body(model)
     }
 
     /// An agent's chat as the runtime holds it, opened for the reading and
@@ -448,7 +491,8 @@ final class DoorHost {
         if element.accessibilityActivate() { return .ack }
         if let declared = declared.first(where: { $0.identifier == identifier }),
            let under = VisibleTree.element(
-               at: CGPoint(x: declared.frame.midX, y: declared.frame.midY), in: window),
+               at: CGPoint(x: declared.frame.midX, y: declared.frame.midY), in: window,
+               saying: declared.label),
            under.accessibilityActivate() {
             return .ack
         }

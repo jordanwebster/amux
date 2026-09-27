@@ -31,23 +31,33 @@ enum VisibleTree {
     /// window coordinates. SwiftUI does not show an element's identifier to
     /// the process that drew it, so a control a screen declared is found
     /// again by where it was drawn.
+    ///
+    /// Retained screens that are not on show still hold elements at the same
+    /// points, so when the declaration names a label, an element saying it
+    /// is preferred over a smaller one that does not.
     @MainActor
-    static func element(at point: CGPoint, in window: UIWindow) -> NSObject? {
+    static func element(at point: CGPoint, in window: UIWindow, saying label: String? = nil) -> NSObject? {
         var best: (NSObject, CGFloat)?
+        var said: (NSObject, CGFloat)?
         var seen = Set<ObjectIdentifier>()
         func visit(_ node: NSObject) {
             guard seen.insert(ObjectIdentifier(node)).inserted else { return }
             if node.isAccessibilityElement {
                 let frame = window.convert(node.accessibilityFrame, from: nil)
                 let area = frame.width * frame.height
-                if frame.contains(point), area > 0, best.map({ area < $0.1 }) ?? true {
-                    best = (node, area)
+                if frame.contains(point), area > 0 {
+                    if best.map({ area < $0.1 }) ?? true { best = (node, area) }
+                    if let label, !label.isEmpty,
+                       node.accessibilityLabel?.contains(label) == true,
+                       said.map({ area < $0.1 }) ?? true {
+                        said = (node, area)
+                    }
                 }
             }
             for child in children(of: node) { visit(child) }
         }
         visit(window)
-        return best?.0
+        return said?.0 ?? best?.0
     }
 
     @MainActor
