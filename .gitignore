@@ -2,6 +2,9 @@
 # will have compiled files and executables
 target
 
+# SwiftPM build output from running a package's tests directly
+.build/
+
 
 docs/deployment.md
 notes/

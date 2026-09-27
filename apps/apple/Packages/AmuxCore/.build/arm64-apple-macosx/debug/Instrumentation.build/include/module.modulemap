@@ -1,3 +1,0 @@
-module Instrumentation {
-    header "/Users/jlw/.wt/trees/amux/rearchitect/apps/apple/Packages/AmuxCore/.build/arm64-apple-macosx/debug/Instrumentation.build/include/Instrumentation-Swift.h"
-}
