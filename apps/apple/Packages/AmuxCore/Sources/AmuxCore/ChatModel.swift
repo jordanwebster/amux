@@ -114,6 +114,8 @@ public final class ChatModel {
     /// The review being written on this agent's changes, kept while the
     /// chat is open so leaving the page loses no comment.
     public private(set) var reviewing: ReviewModel?
+    /// Dictation into the draft; the app's speech recogniser drives it.
+    public var dictation = DictationState()
 
     /// - Parameter loadingHintAfter: how long an empty chat waits before
     ///   saying it is loading; zero says so from the first frame.
@@ -342,6 +344,7 @@ public final class ChatModel {
 
     public func send() {
         guard canSend else { return }
+        dictation.stop()
         let sent = composed
         clearDraft()
         sending = true
@@ -363,6 +366,7 @@ public final class ChatModel {
     /// first prompt.
     public func resume() {
         guard canResume else { return }
+        dictation.stop()
         let sent = composed
         sending = true
         notice = nil
@@ -380,6 +384,11 @@ public final class ChatModel {
             }
             woke()
         }
+    }
+
+    /// The whole of what dictation has heard so far.
+    public func heard(_ text: String) {
+        dictation.receive(text, draft: &draft)
     }
 
     public func clearDraft() {

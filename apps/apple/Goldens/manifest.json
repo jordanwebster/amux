@@ -934,6 +934,7 @@
     },
     {
       "id": "dictation-denied",
+      "component_snapshots": ["composer.dictation-denied"],
       "stage": 8,
       "screen": "typing",
       "fixture": "dictation-denied",

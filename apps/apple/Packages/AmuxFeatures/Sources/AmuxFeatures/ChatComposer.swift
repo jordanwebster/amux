@@ -20,6 +20,8 @@ struct ComposerBox: View {
     let activity: Activity?
     let activitySubject: String?
     let attach: (AttachChoice) -> Void
+    /// Dictation's two acts: `.dictate` and `.dictationSettings`.
+    let dictate: (ChatAction) -> Void
     var focused: FocusState<Bool>.Binding
 
     var body: some View {
@@ -27,6 +29,7 @@ struct ComposerBox: View {
             if let activity {
                 ActivityLine(activity: activity, subject: activitySubject)
             }
+            if let sentence = model.dictation.sentence { dictationLine(sentence) }
             if !model.attachments.isEmpty || model.uploading > 0 { attachments }
             TextField(placeholder, text: $model.draft, axis: .vertical)
                 .lineLimit(1...8)
@@ -52,6 +55,17 @@ struct ComposerBox: View {
                 }
                 .accessibilityLabel("Attach")
                 .identified("chat.attach", label: "Attach")
+                Button { dictate(.dictate) } label: {
+                    Image(systemName: model.dictation.active ? "stop.circle.fill" : "mic")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(model.dictation.active ? design.accent.color : design.inkMuted.color)
+                        .thumbTarget(x: 8, y: 10)
+                }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel(dictationLabel)
+                .identified("chat.dictate", label: dictationLabel,
+                            value: model.dictation.active ? "listening" : "idle")
+                .reclaimingThumbTarget(x: 8, y: 10)
                 .reclaimingThumbTarget(x: 10, y: 10)
                 if !model.draft.isEmpty || !model.attachments.isEmpty {
                     Button { model.clearDraft() } label: {
@@ -79,6 +93,33 @@ struct ComposerBox: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .onDisappear { if model.dictation.active { model.dictation.stop() } }
+    }
+
+    private var dictationLabel: String {
+        model.dictation.active ? String(localized: "Stop Dictation") : String(localized: "Dictate")
+    }
+
+    /// What dictation is doing, and when it was refused, the way to Settings.
+    private func dictationLine(_ sentence: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(sentence)
+                .designFont(.caption, design)
+                .foregroundStyle(design.inkMuted.color)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.dictation.phase == .denied {
+                Button { dictate(.dictationSettings) } label: {
+                    Text("Open Settings")
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.accent.color)
+                        .thumbTarget(x: 4, y: 12)
+                }
+                .buttonStyle(.amuxControl)
+                .identified("chat.dictationSettings", label: String(localized: "Open Settings"))
+                .reclaimingThumbTarget(x: 4, y: 12)
+            }
+        }
+        .identified("chat.dictation", label: sentence, value: "\(model.dictation.phase)")
     }
 
     private var attachments: some View {

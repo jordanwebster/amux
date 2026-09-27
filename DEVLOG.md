@@ -1,3 +1,12 @@
+2026-09-27 — **Dictation is back in the phone composer.**
+The mic beside the plus dictates on the device only, asking for speech
+recognition and then the microphone. What is heard streams into the end
+of the draft, each new hypothesis replacing the words the last one wrote,
+and an edit by hand ends the session. A status line says it is getting
+ready, listening, refused (with Open Settings) or unavailable. Sending,
+leaving the chat, the app going to the background and the composer giving
+way to an ask all stop it.
+
 2026-09-27 — **The phone reviews an agent's changes again.**
 The chat header shows the agent's uncommitted changes as "+N −M", asked of
 its machine once the chat is current and again at every turn end. The chip

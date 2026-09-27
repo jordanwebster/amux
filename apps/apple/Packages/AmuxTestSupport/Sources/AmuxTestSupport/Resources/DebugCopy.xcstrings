@@ -805,6 +805,18 @@
         }
       }
     },
+    "Please": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Please"
+          }
+        }
+      }
+    },
     "Please address these before the next run.": {
       "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
       "extractionState": "manual",
@@ -2013,6 +2025,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "detached"
+          }
+        }
+      }
+    },
+    "dictation-denied": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dictation-denied"
+          }
+        }
+      }
+    },
+    "dictation-listening": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dictation-listening"
           }
         }
       }
@@ -3513,6 +3549,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "this session"
+          }
+        }
+      }
+    },
+    "tighten the retry path": {
+      "comment": "English app copy. Used in apps/apple/Amux/Debug/ComponentCatalog.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tighten the retry path"
           }
         }
       }

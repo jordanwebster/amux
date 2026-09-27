@@ -55,6 +55,10 @@ public enum ChatAction: Equatable, Sendable {
     case open(AgentKey)
     /// The agent's uncommitted changes, from the header's changes chip.
     case review
+    /// Start or stop dictating into the draft.
+    case dictate
+    /// Dictation was refused: open the app's page in Settings.
+    case dictationSettings
 }
 
 /// What the chat has open over itself; one at a time.
@@ -436,7 +440,7 @@ public struct ChatStanding: View {
                 activitySubject: activitySubject, attach: { choice in
                     focused = false
                     actions(.attach(choice))
-                }, focused: $focused)
+                }, dictate: { actions($0) }, focused: $focused)
         }
     }
 

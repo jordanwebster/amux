@@ -383,6 +383,16 @@ enum ComponentCatalog {
                 context: ContextView(usedTokens: 16_447, inStrip: false, percent: 6, windowTokens: 258_400),
                 model: "gpt-5.6-luna", effort: "high", mode: "on-request",
                 failedServers: [ServerView(name: "docs", error: "connection refused", needsAuth: false)])),
+            composer("dictation-denied", height: 240, frame: ScriptedChat.frame(phase: .idle),
+                     draft: "Also check the Windows path.") {
+                $0.dictation.prepare(speech: .denied, microphone: .notAsked, available: true)
+            },
+            composer("dictation-listening", height: 220, frame: ScriptedChat.frame(phase: .idle)) { model in
+                model.dictation.prepare(speech: .allowed, microphone: .allowed, available: true)
+                model.dictation.began(draft: "Please")
+                model.draft = "Please"
+                model.heard("tighten the retry path")
+            },
             composer("review-token", height: 200, frame: ScriptedChat.frame(phase: .idle),
                      draft: "Please address these before the next run.") {
                 $0.attach(F.writtenReview())

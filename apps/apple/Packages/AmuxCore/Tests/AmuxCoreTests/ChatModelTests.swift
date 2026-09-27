@@ -369,6 +369,23 @@ final class ChatModelTests: XCTestCase {
         XCTAssertEqual(source.sent.first?.attachments, [.review(diff: ReviewFixtures.frozen.diff, comments: comments)])
     }
 
+    func testDictationStreamsIntoTheDraftAndStopsOnSend() async {
+        let source = FakeChat(rows: [row("a", 1)], frame: frame())
+        let model = ChatModel(source: source)
+        model.draft = "Please"
+        model.dictation.prepare(speech: .allowed, microphone: .allowed, available: true)
+        model.dictation.began(draft: model.draft)
+        model.heard("run the")
+        model.heard("rerun the tests")
+        XCTAssertEqual(model.draft, "Please rerun the tests")
+        model.send()
+        XCTAssertFalse(model.dictation.active, "sending ends dictation")
+        await settle()
+        XCTAssertEqual(source.sent.map(\.text), ["Please rerun the tests"])
+        model.heard("late words")
+        XCTAssertEqual(model.draft, "", "nothing heard after the send lands in the next draft")
+    }
+
     func testAPushPayloadNamesTheAgentAndItsHost() {
         let host = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         let agent = UUID(uuidString: "66666666-7777-8888-9999-000000000000")!

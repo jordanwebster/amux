@@ -321,6 +321,9 @@ private struct ChatPage: View {
     @State private var failure: String?
     @State private var picking: AttachChoice?
     @State private var photo: PhotosPickerItem?
+    @State private var speech = SpeechDictation()
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     /// Whether the fleet has listed this agent since the page opened, so its
     /// leaving the fleet reads as deleted rather than as not yet listed.
     @State private var listed = false
@@ -368,6 +371,15 @@ private struct ChatPage: View {
         .onChange(of: model?.frame?.ended != nil) { _, ended in
             if ended { router.pop() }
         }
+        // Dictation stops when the chat ends it (a send, an edit, the
+        // composer going away), when the page leaves, and in the background.
+        .onChange(of: model?.dictation.active == true) { _, active in
+            if !active { speech.stop() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { speech.stop() }
+        }
+        .onDisappear { speech.stop() }
     }
 
     private func open() {
@@ -405,6 +417,10 @@ private struct ChatPage: View {
         case .copyAddress: copy(subject.address)
         case .open(let other): router.open(.conversation(other))
         case .review: router.open(.changes(agent))
+        case .dictate:
+            if let model { speech.toggle(model) }
+        case .dictationSettings:
+            if let settings = URL(string: UIApplication.openSettingsURLString) { openURL(settings) }
         }
     }
 

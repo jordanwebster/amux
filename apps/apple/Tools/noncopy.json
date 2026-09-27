@@ -1216,7 +1216,14 @@
       {"literal": "\"chat.outbox.\\(index).edit\"", "context": "small(String(localized: \"Edit\"), id: \"chat.outbox.\\(index).edit\") {", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"chat.strip\"", "context": ".identified(\"chat.strip\", label: parts.map(\\.text).joined(separator: \", \"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
       {"literal": "\"exclamationmark.circle\"", "context": "Image(systemName: \"exclamationmark.circle\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
-      {"literal": "\"chat.foot.\\(kind)\"", "context": ".identified(\"chat.foot.\\(kind)\", label: title, value: detail)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
+      {"literal": "\"chat.foot.\\(kind)\"", "context": ".identified(\"chat.foot.\\(kind)\", label: title, value: detail)", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"stop.circle.fill\"", "context": "Image(systemName: model.dictation.active ? \"stop.circle.fill\" : \"mic\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"mic\"", "context": "Image(systemName: model.dictation.active ? \"stop.circle.fill\" : \"mic\")", "reason": "SF Symbol name, not interface copy.", "count": 1},
+      {"literal": "\"chat.dictate\"", "context": ".identified(\"chat.dictate\", label: dictationLabel,", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"listening\"", "context": "value: model.dictation.active ? \"listening\" : \"idle\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.dictationSettings\"", "context": ".identified(\"chat.dictationSettings\", label: String(localized: \"Open Settings\"))", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"chat.dictation\"", "context": ".identified(\"chat.dictation\", label: sentence, value: \"\\(model.dictation.phase)\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1},
+      {"literal": "\"\\(model.dictation.phase)\"", "context": ".identified(\"chat.dictation\", label: sentence, value: \"\\(model.dictation.phase)\")", "reason": "Stable element identifier or state value, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift": [
       {"literal": "\"run\"", "context": "kind: \"run\", glyph: \"magnifyingglass\", verb: String(localized: \"Explored\"),", "reason": "SF Symbol name, not interface copy.", "count": 1},
