@@ -12,8 +12,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::io;
-use std::path::Path;
 use std::sync::OnceLock;
 
 use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
@@ -47,103 +45,23 @@ pub fn release_key() -> Option<[u8; 32]> {
     }
 }
 
-// The version lives in a fixed-size stamp behind a marker, so a test or a
-// release tool can re-stamp a copy of a built binary with another version
-// without rebuilding it: the previous release in an overlap test is the
-// build under test with a lower stamp.
-const STAMP_LEN: usize = 64;
-const MARK_LEN: usize = 16;
-const MARK: [u8; MARK_LEN] = *b"\0amux-stamp-v1\0\0";
-// The marker spelled backwards, so searching for it does not put a second
-// copy of it into the binary.
-const MARK_REVERSED: [u8; MARK_LEN] = *b"\0\x001v-pmats-xuma\0";
-
-const fn stamp(version: &str) -> [u8; STAMP_LEN] {
-    let mut out = [0u8; STAMP_LEN];
-    let mut i = 0;
-    while i < MARK_LEN {
-        out[i] = MARK[i];
-        i += 1;
-    }
-    let bytes = version.as_bytes();
-    assert!(
-        bytes.len() < STAMP_LEN - MARK_LEN,
-        "version too long to stamp"
-    );
-    let mut j = 0;
-    while j < bytes.len() {
-        out[MARK_LEN + j] = bytes[j];
-        j += 1;
-    }
-    out
-}
-
 #[used]
-static STAMP: [u8; STAMP_LEN] = stamp(env!("CARGO_PKG_VERSION"));
+static STAMP: [u8; version_stamp::LEN] = version_stamp::stamp(env!("CARGO_PKG_VERSION"));
 
-/// This binary's version, as stamped.
+/// This binary's version, as stamped; `version_stamp::restamp` makes a copy
+/// of a built binary report another.
 pub fn version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        // A volatile read, so the compiler reads the bytes a re-stamp
-        // changed rather than the constant it was built with.
+        // SAFETY: reading a static; volatile so the compiler reads the
+        // bytes a re-stamp changed rather than the constant it was built
+        // with.
         let stamp = unsafe { std::ptr::read_volatile(&STAMP) };
-        let body = &stamp[MARK_LEN..];
-        let end = body
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(body.len());
-        String::from_utf8_lossy(&body[..end]).into_owned()
+        version_stamp::read(&stamp)
     })
 }
 
-/// Copies the binary at `from` to `to` with `version` stamped in place of
-/// its own. On macOS the copy is signed again ad hoc, since the change
-/// invalidates the linker's signature.
-pub fn restamp(from: &Path, to: &Path, version: &str) -> io::Result<()> {
-    let mark: Vec<u8> = MARK_REVERSED.iter().rev().copied().collect();
-    let mut bytes = std::fs::read(from)?;
-    let mut found = bytes
-        .windows(MARK_LEN)
-        .enumerate()
-        .filter(|(_, window)| *window == mark.as_slice())
-        .map(|(at, _)| at);
-    let (Some(at), None) = (found.next(), found.next()) else {
-        return Err(io::Error::other(format!(
-            "{} does not hold exactly one version stamp",
-            from.display()
-        )));
-    };
-    if version.len() >= STAMP_LEN - MARK_LEN {
-        return Err(io::Error::other("version too long to stamp"));
-    }
-    let body = &mut bytes[at + MARK_LEN..at + STAMP_LEN];
-    body.fill(0);
-    body[..version.len()].copy_from_slice(version.as_bytes());
-    let _ = std::fs::remove_file(to);
-    std::fs::write(to, &bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(to, std::fs::Permissions::from_mode(0o755))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let status = std::process::Command::new("codesign")
-            .args(["--force", "--sign", "-"])
-            .arg(to)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()?;
-        if !status.success() {
-            return Err(io::Error::other(format!(
-                "codesign {} failed",
-                to.display()
-            )));
-        }
-    }
-    Ok(())
-}
+pub use version_stamp::restamp;
 
 /// A channel's manifest.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

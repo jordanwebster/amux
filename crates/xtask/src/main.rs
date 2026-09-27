@@ -19,13 +19,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("golden") => golden::main(),
         Some("replay") => replay::main(),
         Some("ios-verify") => ios_verify::run(),
+        Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|restamp FROM TO [VERSION]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }
     }
+}
+
+/// Copies the amux binary at FROM to TO stamped with VERSION, by default
+/// one just below its own, to play the previous release in overlap tests.
+fn restamp(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let (Some(from), Some(to)) = (args.first(), args.get(1)) else {
+        return Err("usage: xtask restamp FROM TO [VERSION]".into());
+    };
+    let (from, to) = (Path::new(from), Path::new(to));
+    let version = match args.get(2) {
+        Some(version) => version.clone(),
+        None => {
+            let own = version_stamp::read_file(from)?;
+            version_stamp::previous(&own).ok_or_else(|| {
+                format!("{own} has a prerelease; name the version to stamp")
+            })?
+        }
+    };
+    version_stamp::restamp(from, to, &version)?;
+    println!("{} reports {version}", to.display());
+    Ok(())
 }
 
 /// Regenerates the committed protobuf code under

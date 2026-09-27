@@ -5,23 +5,19 @@
 
 #![cfg(unix)]
 
+mod support;
+
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use node::release::{self, Manifest, Release};
+use node::release;
 use node::supervisor::SUPERVISOR_LOCK;
 use node::supervisor::login::LoginItem;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use support::{Channel, amux_binary};
 
 const PATIENCE: Duration = Duration::from_secs(60);
-/// The private half of the test release key debug builds trust.
-const TEST_SEED: [u8; 32] = [
-    0xfe, 0x91, 0xb0, 0xb9, 0x1e, 0xa7, 0x94, 0x55, 0xea, 0x7c, 0xb1, 0xa7, 0x83, 0xec, 0x33, 0x47,
-    0x28, 0x61, 0x70, 0x17, 0x17, 0xc9, 0x9b, 0x2a, 0xaa, 0x45, 0xe9, 0x43, 0xbb, 0xd6, 0x48, 0x12,
-];
 
 fn goldens() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens/login")
@@ -68,11 +64,6 @@ fn the_login_units_match_their_goldens() {
     assert!(unit.contains("\nRestart=on-failure\n"));
     assert!(!unit.contains("Restart=always"));
     assert!(task.contains("<LogonTrigger>") && task.contains("<RestartOnFailure>"));
-}
-
-/// The amux binary, built by cargo for this test.
-fn amux_binary() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_amux"))
 }
 
 /// A temporary install.
@@ -391,76 +382,6 @@ fn config_channel_sets_the_channel_and_keeps_the_rest() {
     assert!(!refused.status.success());
 }
 
-/// A fake channel: `/stable.json` and the artifacts it names.
-#[derive(Clone, Default)]
-struct Channel {
-    manifest: Arc<Mutex<String>>,
-    artifact: Arc<Mutex<Vec<u8>>>,
-    base: Arc<OnceLock<String>>,
-}
-
-impl Channel {
-    async fn serve() -> Self {
-        let channel = Self::default();
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        channel
-            .base
-            .set(format!("http://{}", listener.local_addr().unwrap()))
-            .unwrap();
-        let serving = channel.clone();
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let serving = serving.clone();
-                tokio::spawn(async move {
-                    let mut request = Vec::new();
-                    let mut buffer = [0; 1024];
-                    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                        match socket.read(&mut buffer).await {
-                            Ok(0) | Err(_) => return,
-                            Ok(count) => request.extend_from_slice(&buffer[..count]),
-                        }
-                    }
-                    let request = String::from_utf8_lossy(&request);
-                    let body = match request.split_whitespace().nth(1) {
-                        Some("/stable.json") => {
-                            serving.manifest.lock().unwrap().clone().into_bytes()
-                        }
-                        _ => serving.artifact.lock().unwrap().clone(),
-                    };
-                    let head = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    );
-                    let _ = socket.write_all(head.as_bytes()).await;
-                    let _ = socket.write_all(&body).await;
-                });
-            }
-        });
-        channel
-    }
-
-    fn publish(&self, version: &str, bytes: Vec<u8>) {
-        let sha256 = release::sha256_of(&bytes);
-        let manifest = Manifest {
-            rollout: None,
-            targets: [(
-                release::TARGET.to_owned(),
-                Release {
-                    version: version.to_owned(),
-                    url: format!("{}/amux-{version}", self.base.get().unwrap()),
-                    signature: release::sign(&TEST_SEED, release::TARGET, version, &sha256),
-                    sha256,
-                },
-            )]
-            .into(),
-        };
-        *self.manifest.lock().unwrap() = serde_json::to_string(&manifest).unwrap();
-        *self.artifact.lock().unwrap() = bytes;
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn update_says_updates_are_deploys_without_a_supervisor() {
     let install = Install::new(false, "");
@@ -488,7 +409,7 @@ async fn update_installs_the_channel_build_now_even_one_rolled_back_here() {
 
     let install = Install::with_binary(
         true,
-        &format!("releases_url: {}\n", channel.base.get().unwrap()),
+        &format!("releases_url: {}\n", channel.url()),
         installed.clone(),
     );
     install.amux(&["server", "start"]);

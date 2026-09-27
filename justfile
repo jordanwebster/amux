@@ -126,11 +126,24 @@ qualify NAME *ARGS:
 shot *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot {{desktop_features}} -- "$@"
 
-# Run one declared journey through its real client.
+# Run one declared journey through its real client. System journeys are the
+# built binaries on the fakes, printing their transcripts.
 journey CLIENT NAME:
-    test "{{CLIENT}}" = terminal
-    {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet --bins {{desktop_features}}
-    {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
+    #!/usr/bin/env sh
+    set -eu
+    case "{{CLIENT}}" in
+    terminal)
+        {{bounded}} 900 cargo build --locked -p amux -p provider-fakes -p testnet --bins {{desktop_features}}
+        {{bounded}} 600 scripts/python -B scripts/terminal-journey.py "{{NAME}}"
+        ;;
+    system)
+        {{bounded}} 1500 cargo test --locked -p amux --test system_journeys -- --exact --nocapture "$(echo "{{NAME}}" | tr - _)"
+        ;;
+    *)
+        echo "no {{CLIENT}} journeys: terminal or system" >&2
+        exit 2
+        ;;
+    esac
 
 # Generate and verify the complete TUI evidence bundle.
 tui-evidence *ARGS:

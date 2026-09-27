@@ -21,7 +21,10 @@ ALLOWED_LOCAL = {
     # provider in its graph.
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
-    "node": {"agent-dir", "interpret", "journal", "settings", "store", "wire"},
+    "node": {"agent-dir", "interpret", "journal", "settings", "store", "version-stamp", "wire"},
+    # The version stamp a release tool can rewrite in a built binary; the
+    # xtask shares it without building the daemon.
+    "version-stamp": set(),
     "redaction": set(),
     "ui-state": {"wire"},
     "ui-view": {"attachments", "ui-state", "wire"},

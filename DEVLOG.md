@@ -1,3 +1,18 @@
+2026-09-27 — **The survive-daemon journey, and builds that play the previous release.**
+`just journey system survive-daemon` tells the accepted story with the
+built binaries on the fakes: amux is installed as a build one version below
+the build under test; three agents, one of each kind, are mid-turn when the
+supervisor and daemon are killed; the agents finish their turns into their
+journals, outlive their grace and exit; `amux ls` starts amux again under
+its supervisor, which lists them exited while the daemon was away; the
+channel names the build under test and `amux update` installs and
+activates it; every finished turn is in the store and resuming each agent
+keeps its history. The version stamp moved into a dependency-free crate
+(`version-stamp`) so `cargo xtask restamp FROM TO [VERSION]` can make the
+previous release (by default `<version>-previous`, which semver orders
+first) without building the daemon. System journeys are Rust tests in
+`crates/amux/tests/system_journeys.rs`, one per manifest id.
+
 2026-09-27 — **Stop goes to the owner; login items, keep-awake and `amux update`.**
 Launch ownership now follows whether the install has a supervisor.
 `amux server start` starts `amux supervise` where it has one and the daemon

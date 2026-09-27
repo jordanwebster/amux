@@ -30,6 +30,7 @@ members = [
     "crates/testnet",
     "crates/ui-state",
     "crates/ui-view",
+    "crates/version-stamp",
     "crates/wire",
     "crates/xtask",
 ]
@@ -56,6 +57,7 @@ app-embedded = { path = "crates/app-embedded" }
 app-ffi = { path = "crates/app-ffi" }
 app-runtime = { path = "crates/app-runtime" }
 node = { path = "crates/node" }
+version-stamp = { path = "crates/version-stamp" }
 node-test-support = { path = "crates/node-test-support" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }

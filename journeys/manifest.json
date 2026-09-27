@@ -210,6 +210,11 @@
       "clients": ["terminal"],
       "topology": "journeys/topologies/terminal-migration.json",
       "claim": "Two real terminal clients attach to one agent, both receive its replay and subsequent output, one detaches without ending the session, and the remaining resized client can leave and reopen the same conversation."
+    },
+    {
+      "id": "survive-daemon",
+      "clients": ["system"],
+      "claim": "Three agents, one of each kind, are mid-turn when amux is killed; they finish their turns into their journals with no daemon, outlive their grace and exit. Any amux command starts amux again under its supervisor, which finds them exited; a newer build is installed under the supervisor and activated; every finished turn is in the store, and resuming the exited agents loses nothing."
     }
   ]
 }
