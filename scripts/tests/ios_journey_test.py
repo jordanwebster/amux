@@ -2,6 +2,7 @@
 compared screen masks and records, and how the stories read what they see."""
 
 import importlib
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -154,6 +155,38 @@ class ReadingWhatIsSeen(unittest.TestCase):
             self.assertIn("phone", declared["clients"], name)
             topology = phone.ROOT / declared.get("phone_topology", declared["topology"])
             self.assertTrue(topology.exists(), topology)
+
+
+class Selecting(unittest.TestCase):
+    NATIVE = ["account-sign-in", "purchase-restore", "report", "accessibility", "local-network", "push-wake"]
+
+    def test_native_runs_exactly_the_stories_declared_for_the_phone_alone(self):
+        self.assertEqual(stories.selected(["--native"]), self.NATIVE)
+        self.assertTrue(set(self.NATIVE) <= set(stories.STORIES))
+
+    def test_names_run_those_and_nothing_runs_every_story(self):
+        self.assertEqual(stories.selected(["reach-host"]), ["reach-host"])
+        self.assertEqual(stories.selected([]), list(stories.STORIES))
+        with self.assertRaises(SystemExit):
+            stories.selected(["--native", "reach-host"])
+
+    def test_every_retired_phone_journey_names_stories_that_carry_it(self):
+        manifest = json.loads(phone.MANIFEST.read_text())
+        declared = {item["id"] for item in manifest["journeys"]}
+        retired = manifest["retired_phone_journeys"]["journeys"]
+        self.assertTrue(retired)
+        for journey in retired:
+            # A story written again under its old name carries its own claim.
+            if journey["id"] in declared:
+                self.assertEqual(journey["carried_by"], [journey["id"]])
+            self.assertTrue(journey["how"])
+            for carrier in journey["carried_by"]:
+                self.assertIn(carrier, stories.STORIES, journey["id"])
+
+    def test_the_needs_you_push_carries_what_the_app_reads(self):
+        payload = json.loads(stories.NEEDS_YOU.read_text())
+        self.assertEqual(payload["aps"]["content-available"], 1)
+        self.assertEqual(set(payload["amux"]), {"host", "agent"})
 
 
 if __name__ == "__main__":

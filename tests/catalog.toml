@@ -728,7 +728,7 @@ swift = ["AmuxAppTests", "AmuxCoreTests", "AmuxDesignTests", "AmuxFeaturesTests"
 [[suite]]
 name = "phone-journeys"
 contract = "A person can complete every declared phone story through the real app and production amux path against a served topology."
-paths = ["scripts/journeys/phone.py", "scripts/ios-journey.py", "journeys/manifest.json", "journeys/topologies/phone-stories.json", "journeys/topologies/phone-reach.json", "journeys/topologies/phone-authority.json", "journeys/goldens/phone"]
+paths = ["scripts/journeys/phone.py", "scripts/ios-journey.py", "journeys/manifest.json", "journeys/topologies/phone-stories.json", "journeys/topologies/phone-reach.json", "journeys/topologies/phone-authority.json", "journeys/topologies/phone-accounts.json", "journeys/topologies/phone-purchase.json", "journeys/topologies/phone-accessible.json", "journeys/topologies/phone-push.json", "journeys/fixtures/needs-you.apns", "journeys/goldens/phone"]
 recipe = "just ios journey"
 boundary = "Journeys"
 oracle = "Declared acts, independent door and host observations, screenshots, exits, and teardown evidence."
@@ -740,7 +740,7 @@ lane = "journey"
 evidence = "target/ios/journeys"
 update = "UPDATE_JOURNEY_GOLDENS=1 just ios journey -- conversation-decision-claude-sdk"
 journey_manifest = "journeys/manifest.json"
-journeys = ["onramp", "home-coldstart", "home", "conversation", "asks", "review", "writing", "claude-sessions", "hosts-lifecycle", "hosts", "accounts", "reports", "accessibility", "production-startup", "free-tier", "signed-out", "profiles"]
+journeys = ["account-sign-in", "purchase-restore", "report", "accessibility", "local-network", "push-wake"]
 
 [[suite]]
 name = "terminal-journeys"

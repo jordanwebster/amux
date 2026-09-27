@@ -1,3 +1,26 @@
+2026-09-28 — **The phone's own stories run on the Python driver.**
+Five phone-only stories run against served nets with compared screens and
+the hosts' own records: account-sign-in (the hand-off to the scripted
+account service, whose handed-over session reaches a relay-only desk),
+purchase-restore (a relay-only link refused with the offer of a
+subscription, a purchase amux.sh could not confirm kept, then restored and
+recorded, after which the relay carries the pairing), report (a screenshot's
+offer, a refusal in the service's words, Retry sending the same report,
+which is read back where it left the app), accessibility (a permission
+answered at an accessibility text size) and local-network (refused, then
+granted after Settings ends the app, then a pairing link that starts the
+app). push-wake is written against journeys/fixtures/needs-you.apns and does
+not pass yet: `xcrun simctl push` never calls the app's remote-notification
+handler on this simulator. `just ios journey -- --native` runs the stories
+the manifest declares for the phone alone; the retired phone journeys are
+listed in the manifest with the stories that carry each claim, and their
+old-format topologies are deleted. A pairing link with no addresses, refused
+on an account without the relay, now offers the subscription as a refused
+code does, instead of calling the invitation bad. The scripted account
+service entitles an account once it takes a purchase, the driving door can
+write out the last report sent, and a push marks pushWoke, pushCurrent or
+pushBehind.
+
 2026-09-28 — **The phone's old XCUITest journeys are gone; the Python driver owns phone journeys.**
 Every phone story now runs through the app's door from Python against a
 served net, so the XCUITest journey suites and their shared case class are

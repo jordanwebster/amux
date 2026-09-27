@@ -1,0 +1,74 @@
+shell |  | hosts | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | Nothing paired yet | 60,105,130,16
+home.empty.firstRun |  | No agents yet | 18,161,162,32
+home.empty.explain |  |  | 18,201,291,18
+home.empty.howToPair |  |  | 18,237,360,37
+home.empty.signIn | Sign In |  | 18,292,366,44
+home.empty.signIn.caption |  |  | 18,344,296,18
+hosts |  | 0 reachable | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 0 reachable | 18,105,79,16
+hosts.localNetwork.refused |  | amux cannot see this network | 18,137,366,139
+hosts.localNetwork.settings | Open Settings |  | 18,231,141,44
+hosts.empty |  | No hosts yet | 18,293,360,113
+hosts.empty.howToPair |  |  | 18,370,360,37
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 0 | 0 | 18,493,366,46
+hosts.caption.devices |  |  | 18,547,320,18
+you |  | none | 0,62,402,778
+you.title |  | You | 18,62,46,40
+you.add | Add Account |  | 18,142,366,46
+you.signIn | Sign In |  | 18,206,366,44
+you.signIn.caption |  |  | 18,258,296,18
+you.appearance |  | system | 18,317,366,50
+you.appearance.light | Light | not chosen | 200,319,56,46
+you.appearance.dark | Dark | not chosen | 256,319,49,46
+you.appearance.system | System | chosen | 305,319,63,46
+you.identity | <volatile>
+you.support | Contact Support |  | 18,453,366,46
+you.report | Report a Problem |  | 18,499,366,46
+you.dump | Export Diagnostics |  | 18,545,366,46
+you.help.caption |  |  | 18,599,354,31
+tab.agents | Agents | not selected | 50,777,99,57
+tab.hosts | Hosts | selected | 151,777,99,57
+tab.you | You | not selected | 253,777,99,57
+ | Agents |  | 50,777,99,57
+ | Hosts |  | 151,777,99,57
+ | You |  | 253,777,99,57
+ | Hosts |  | 18,72,69,32
+ | 0 reachable |  | 18,105,79,16
+ | amux cannot see this network |  | 18,137,226,20
+ | Nobody let amux look at the network this phone is on, so no host on it can be found. Turn on Local Network for amux in Settings. |  | 18,166,366,55
+ | Open Settings |  | 18,231,141,44
+ | No hosts yet |  | 18,293,93,20
+ | Run amux on a computer on this network and it appears here. |  | 18,323,325,37
+ | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,370,360,37
+ | THIS PHONE |  | 20,425,70,14
+ | Identity, amux-iphone-1 · <key> |  | 18,447,366,46
+ | Paired Devices, 0 |  | 18,493,366,46
+ | Revoking a device ends its access immediately. |  | 18,547,320,18
+ | Agents, switch account |  | 60,65,104,46
+ | Nothing paired yet |  | 60,105,130,16
+ | No agents yet |  | 18,161,162,32
+ | Pair with a host and its agents appear here. |  | 18,201,291,18
+ | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,237,360,37
+ | Sign In |  | 18,292,366,44
+ | Sign in to reach your agents from anywhere |  | 18,344,296,18
+ | You |  | 18,70,46,32
+ | ACCOUNTS |  | 20,120,56,14
+ | Add Account |  | 18,142,366,46
+ | Sign In |  | 18,206,366,44
+ | Sign in to reach your agents from anywhere |  | 18,258,296,18
+ | THIS PHONE |  | 20,294,70,14
+ | Appearance |  | 32,332,90,20
+ | Light |  | 200,319,56,46
+ | Dark |  | 256,319,49,46
+ | System |  | 305,319,63,46
+ | Identity, <key> |  | 18,367,366,46
+ | HELP |  | 20,430,28,14
+ | Contact Support |  | 18,453,366,46
+ | Report a Problem |  | 18,499,366,46
+ | Export Diagnostics |  | 18,545,366,46
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31

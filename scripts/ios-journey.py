@@ -8,15 +8,19 @@ driven through the app's door the way a person drives it. Screens are
 compared with reviewed goldens under journeys/goldens/phone/<story>/
 (UPDATE_JOURNEY_GOLDENS=1 rewrites them) and the hosts are asked what they
 recorded. Results land in target/journeys/phone/<story>. With no story named,
-every story written here runs.
+every story written here runs; `--native` runs the phone's own stories, the
+ones the manifest declares for the phone alone.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 import hashlib
+import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -24,7 +28,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ios_simulators  # noqa: E402
-from journeys.phone import ROOT, DoorError, PhoneJourney, story  # noqa: E402
+from journeys.phone import BUNDLE_ID, MANIFEST, ROOT, DoorError, PhoneJourney, simctl, story  # noqa: E402
 
 SIMULATOR = "golden"
 
@@ -702,6 +706,482 @@ def keep_authority(journey: PhoneJourney) -> list[str]:
     ]
 
 
+# --- The phone's own stories -------------------------------------------------
+#
+# What only a phone does: signing in through the account service, buying and
+# restoring at the App Store, reporting a problem, being read at an
+# accessibility text size, the local-network permission and a pairing link
+# the system hands over, and a push that wakes the app while it is put away.
+
+RELAYED = "Are you there?"
+THROUGH_RELAY = "Reached through the relay."
+
+
+def relay_cloud(journey: PhoneJourney, **fields: object) -> dict:
+    """What the scripted account service answers: this account, whose relay
+    credential is the served relay's own login for it, at the served relay."""
+    relay = urlparse(journey.ready["cloud_url"])
+    account = fields.pop("account", "ada")
+    script = {
+        "account": account,
+        "email": f"{account}@example.com",
+        "token": f"refresh-{account}",
+        "relayHost": relay.hostname,
+        "relayPort": relay.port,
+    }
+    journey.app({"kind": "cloud", "cloud": script | fields})
+    journey.actions.append(f"the account service answers {script | fields}")
+    return script | fields
+
+
+def open_link(journey: PhoneJourney, link: str, cloud: dict | None = None) -> None:
+    """The app started by a link, as a code scanned with the camera starts
+    it. (`simctl openurl` would put the system's own Open in "Amux"? sheet
+    in front, which is outside the app and no door can press.) A scripted
+    account service is said again, for the launch to begin from it."""
+    extra = ["-amux-link", link]
+    if cloud is not None:
+        extra += ["-amux-cloud-script", json.dumps(cloud)]
+    journey.relaunch(*extra)
+    journey.actions.append("the app opened by the link")
+
+
+def pair_by_link(journey: PhoneJourney, link: str) -> None:
+    """The link put to the machine again, until the relay link that has just
+    re-read the account carries it."""
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            journey.pair(link)
+            return
+        except DoorError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(2)
+
+
+def calls(journey: PhoneJourney, label: str) -> dict:
+    reply = journey.app({"kind": "calls"})
+    journey.observations[label] = {"cloud": reply["cloud"], "store": reply["store"]}
+    return reply
+
+
+def sign_in(journey: PhoneJourney, photograph: bool = False) -> None:
+    """Sign In on the You tab, handed off to the account service's page and
+    back, and Done."""
+    journey.tap("tab.you")
+    journey.wait_for("you.signIn")
+    if photograph:
+        journey.screen("signed-out")
+    journey.tap("you.signIn")
+    journey.wait(lambda drawn: drawn.get("sign-in.continue", {}).get("enabled") is True, "the hand-off offered")
+    if photograph:
+        journey.screen("hand-off")
+    journey.tap("sign-in.continue")
+    journey.wait_for("sign-in.signed-in")
+    if photograph:
+        journey.screen("signed-in")
+    journey.tap("sign-in.continue")
+    journey.wait(
+        lambda drawn: drawn.get("you", {}).get("value") == "ada@example.com" and "sign-in" not in drawn,
+        "ada on the You tab",
+    )
+
+
+def round_trip(journey: PhoneJourney, agent: str, prompt: str, reply: str, host: str = "desk") -> str:
+    """Opens `agent`, sends `prompt` and waits for `reply` on the phone and
+    the host; the chat is opened again for its photograph."""
+    agent_id = open_agent(journey, agent)
+    send(journey, prompt)
+    journey.wait(lambda drawn: labelled(drawn, reply) and "chat.row.turn-end" in drawn, f"{reply!r} on the phone")
+    heard = journey.wait_chat(
+        host, agent, lambda chat: chat["phase"] == "IDLE" and len(prompts(chat, prompt)) == 1, f"{agent}-heard"
+    )
+    reflected_once(heard, prompt)
+    reopen(journey, agent_id, lambda drawn: labelled(drawn, reply) and "chat.row.turn-end" in drawn)
+    return agent_id
+
+
+def account_sign_in(journey: PhoneJourney) -> list[str]:
+    journey.launch()
+    relay_cloud(journey)
+    sign_in(journey, photograph=True)
+    asked = calls(journey, "account-service-calls")["cloud"]
+    for expected in ("signIn select", "handOver ada"):
+        if expected not in asked:
+            raise RuntimeError(f"the account service was never asked {expected!r}: {asked!r}")
+
+    # Signed in, the phone reaches the desk only through the relay the
+    # account service named: the desk has no network in common with it.
+    pair_through_the_relay(journey, "desk")
+    journey.tap("tab.hosts")
+    desk = journey.host_id("desk")
+    trusted_as(journey.wait_for(f"hosts.row.{desk}"), desk, "desk")
+    journey.screen("hosts")
+    round_trip(journey, "desk-work", RELAYED, THROUGH_RELAY)
+    journey.screen("reached", volatile=("chat.row.turn-end",))
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    return [
+        "signed out, the You tab offered Sign In; the hand-off named the account service and came back signed in as ada",
+        f"the account service was asked to sign in and to hand over ada's session: {asked!r}",
+        "the relay the hand-over named carried the pairing to the desk, which the phone lists by its own name",
+        f"through that relay the desk received {RELAYED!r} once and answered",
+    ]
+
+
+def purchase_restore(journey: PhoneJourney) -> list[str]:
+    desk = journey.host_id("desk")
+    journey.launch()
+    unpaid = relay_cloud(journey, entitlement="none")
+    sign_in(journey)
+
+    # Nothing bought: the relay carries nothing to the desk, so the link it
+    # printed, scanned with the camera, is answered with the offer of a
+    # subscription rather than called a bad invitation.
+    pairing, link = journey.pairing_link("desk")
+    open_link(journey, link, unpaid)
+    journey.wait_for("pair-confirm.subscribe")
+    journey.screen("needs-subscription")
+
+    # Bought at the App Store while amux.sh cannot be reached: the purchase
+    # is kept and the paywall says it is not confirmed.
+    journey.app({"kind": "store", "store": {"purchase": "bought", "restore": "nothingToRestore"}})
+    relay_cloud(journey, entitlement="none", recordPurchase="network")
+    journey.tap("pair-confirm.subscribe.buy")
+    journey.wait(
+        lambda drawn: "paywall.restore" in drawn and drawn.get("paywall.buy", {}).get("enabled") is True,
+        "the paywall with a plan to buy",
+    )
+    journey.screen("paywall")
+    journey.tap("paywall.buy")
+    journey.wait_for("paywall.unconfirmed")
+    journey.screen("unconfirmed")
+
+    # amux.sh answers again and takes it; Restore Purchases finds the
+    # subscription the App Store holds for this Apple Account and records it.
+    # The relay learns what the account bought from amux.sh.
+    relay_cloud(journey, entitlement="none")
+    journey.request({"SetTier": {"account": "ada", "tier": "pro"}})
+    journey.app({"kind": "store", "store": {"purchase": "bought", "restore": "bought"}})
+    journey.tap("paywall.restore")
+    journey.wait_for("paywall.subscribed")
+    journey.screen("restored")
+    record = calls(journey, "purchase-calls")
+    recorded = [call for call in record["cloud"] if call.startswith("recordPurchase")]
+    if len(recorded) != 2 or "restore" not in record["store"]:
+        raise RuntimeError(f"the purchase was not offered to amux.sh again by a restore: {record!r}")
+    journey.tap("paywall.buy")
+    journey.wait(lambda drawn: "paywall" not in drawn, "the paywall closed")
+
+    # The relay link reads what the account buys again, and the same
+    # invitation, still offered by the desk, pairs it through the relay.
+    pair_by_link(journey, link)
+    pairing.wait(timeout=30)
+    journey.wait_for("pair-confirm.done")
+    journey.screen("paired")
+    journey.tap("pair-confirm.done")
+    journey.wait_for("tab.hosts")
+    journey.tap("tab.hosts")
+    trusted_as(journey.wait_for(f"hosts.row.{desk}"), desk, "desk")
+    round_trip(journey, "desk-work", RELAYED, THROUGH_RELAY)
+    journey.screen("reached", volatile=("chat.row.turn-end",))
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    return [
+        "signed in with nothing bought, the link the desk printed was answered with the offer of a subscription",
+        "bought while amux.sh could not be reached, the paywall kept the purchase and said it was not confirmed",
+        f"Restore Purchases offered it to amux.sh again, which took it: store {record['store']!r}, account service {record['cloud']!r}",
+        f"subscribed, the same link paired the desk through the relay and the desk received {RELAYED!r} once and answered",
+    ]
+
+
+REPORT_NOTE = "The desk's agent is listed twice."
+REFUSED_UPLOAD = "amux.sh could not take this report"
+
+
+def app_data(journey: PhoneJourney) -> Path:
+    """The app's own data container, which a Mac reads directly."""
+    return Path(simctl("get_app_container", journey.udid, BUNDLE_ID, "data").strip())
+
+
+def report(journey: PhoneJourney) -> list[str]:
+    journey.launch()
+    journey.app({"kind": "connect", "relay": journey.ready["cloud_url"], "token": "refresh-ada", "user": "ada"})
+    pair_through_the_relay(journey, "desk")
+    agent = next(item["id"] for item in journey.ready["agents"] if item["name"] == "desk-work")
+    journey.tap("tab.agents")
+    journey.wait_for(f"home.row.{agent}")
+    journey.app({"kind": "cloud", "cloud": {"upload": "refused", "uploadReason": REFUSED_UPLOAD}})
+
+    # The system photographs the app, and the app offers to report what was
+    # on screen, over the frame it froze.
+    journey.app({"kind": "screenshot"})
+    journey.actions.append("the system took a screenshot")
+    journey.wait_for("report.prompt")
+    journey.screen("offer")
+    journey.tap("report.prompt")
+    journey.wait_for("report.screen", "report.note")
+    journey.type("report.note", REPORT_NOTE)
+    journey.wait(lambda drawn: drawn.get("report.note", {}).get("value") == REPORT_NOTE, "the note written")
+
+    # amux.sh turns it down in its own words; nothing written is lost. Sent
+    # once the keyboard has finished rising, so the page the refusal lands on
+    # rests at one place.
+    journey.app({"kind": "settle"})
+    journey.tap("report.send")
+    refusal = journey.wait_for("report.refusal")["report.refusal"]
+    if refusal.get("value") != REFUSED_UPLOAD:
+        raise RuntimeError(f"the refusal says {refusal!r}")
+    if journey.elements().get("report.note", {}).get("value") != REPORT_NOTE:
+        raise RuntimeError("the refusal lost the note")
+    journey.screen("refused")
+
+    # Retry hands over the same report, and it is taken.
+    journey.app({"kind": "cloud", "cloud": {"upload": "accepted", "receipt": "report-7"}})
+    journey.tap("report.send")
+    sent = journey.wait_for("report.sent")["report.sent"]
+    if sent.get("value") != "report-7":
+        raise RuntimeError(f"the receipt reads {sent!r}")
+    journey.screen("sent")
+    uploads = [call for call in calls(journey, "report-calls")["cloud"] if call.startswith("uploadReport")]
+    if len(uploads) != 2 or uploads[0] != uploads[1]:
+        raise RuntimeError(f"the retry did not hand over the same report: {uploads!r}")
+
+    # What left the phone, read where it crossed into the account service.
+    inside = app_data(journey) / "tmp" / "journey-report"
+    bundle = journey.app({"kind": "uploaded", "path": str(inside)})
+    header = json.loads(bundle["reportJSON"])
+    journey.observations["uploaded-report"] = {"parts": bundle["parts"], "report.json": header}
+    if REPORT_NOTE not in json.dumps(header):
+        raise RuntimeError(f"the report does not carry the note: {header!r}")
+    screen = inside / "frame.png"
+    if not screen.exists() or screen.stat().st_size == 0:
+        raise RuntimeError(f"the report carries no picture of the screen: {bundle['parts']!r}")
+    shutil.copyfile(screen, journey.output / "uploaded-frame.png")
+    # The dump inside it carries this phone's copy of the agent the desk
+    # lists, the one whose row the report froze.
+    if f"dump/agents/{agent}/row.pb" not in bundle["parts"]:
+        raise RuntimeError(f"the report's dump holds no copy of the desk's agent: {bundle['parts']!r}")
+    journey.wait_inventory(
+        "desk", lambda agents: any(item["id"] == agent for item in agents), "desk-lists-the-reported-agent"
+    )
+    journey.tap("report.cancel") if "report.cancel" in journey.elements() else None
+    return [
+        "a screenshot offered Report over the frozen frame; the report opened on it and took a note",
+        f"amux.sh refused the report in its own words ({REFUSED_UPLOAD!r}) and the note was kept",
+        f"Retry handed over the same report, {len(bundle['parts'])} parts both times, and came back with receipt report-7",
+        "the report that left the phone carries the note, the frozen screen and a dump holding the agent the desk lists",
+    ]
+
+
+ACCESSIBLE_SIZE = "accessibility3"
+
+
+def accessibility(journey: PhoneJourney) -> list[str]:
+    journey.launch()
+    journey.app({"kind": "dynamicType", "size": ACCESSIBLE_SIZE})
+    size = journey.query().get("typeSize")
+    if size != ACCESSIBLE_SIZE:
+        raise RuntimeError(f"the app says it draws at {size!r}")
+    pair_by_code(journey, "desk")
+    agent = open_agent(journey, "decision-sdk")
+    journey.screen("chat")
+    send(journey, PROMPT)
+    card = journey.wait(
+        lambda drawn: "ask" in drawn and labelled(drawn, "deploy --check") and labelled(drawn, "Allow once"),
+        "the permission card",
+    )
+    journey.screen("permission")
+    journey.tap(choice(card, "Allow once"))
+    journey.wait(lambda drawn: "ask" not in drawn and labelled(drawn, REPLY), "the settled turn")
+    settled = journey.wait_chat(
+        "desk",
+        "decision-sdk",
+        lambda chat: chat["phase"] == "IDLE" and any(REPLY in item["text"] for item in chat["items"]),
+        "turn-settled",
+    )
+    reflected_once(settled, PROMPT)
+    lines = journey.provider_input("decision-sdk", "provider-input")
+    allowed = [line for line in lines if "allow" in line.lower()]
+    if len(allowed) != 1:
+        raise RuntimeError(f"the provider did not receive one allow: {lines!r}")
+    reopen(journey, agent, lambda drawn: labelled(drawn, REPLY) and "chat.row.turn-end" in drawn)
+    # The command's row says how long it ran, which at this size is wide
+    # enough to move more than the comparison allows; the desk's record of
+    # the call is checked above.
+    journey.screen("settled", volatile=("chat.row.turn-end", "chat.row.command"))
+    return [
+        f"the app says it draws at {ACCESSIBLE_SIZE}",
+        "at that size the desk was paired on the keypad and the agent's chat opened",
+        f"the permission card offered Allow once, which was tapped; the desk holds {PROMPT!r} once and answered",
+        "the provider received exactly one allow",
+    ]
+
+
+def local_network(journey: PhoneJourney) -> list[str]:
+    desk = journey.host_id("desk")
+    # Refused, the system's browser finds nothing, which the launch stands in
+    # for by letting it report no machine.
+    journey.launch(found=[])
+
+    # Refused: the Hosts tab says so and where it is undone.
+    journey.app({"kind": "localNetwork", "permission": "denied"})
+    journey.actions.append("the system says the local network was refused")
+    journey.tap("tab.hosts")
+    drawn = journey.wait_for("hosts.localNetwork.refused", "hosts.localNetwork.settings")
+    if f"hosts.offer.{desk}" in drawn:
+        raise RuntimeError("the phone offers the desk with the local network refused")
+    journey.screen("refused")
+
+    # Turned on in Settings, which ends the app, and opened again: the desk
+    # is found and offered.
+    journey.relaunch()
+    journey.actions.append("the local network granted in Settings and the app opened again")
+    journey.tap("tab.hosts")
+    journey.wait(
+        lambda drawn: f"hosts.offer.{desk}" in drawn and "hosts.localNetwork.refused" not in drawn,
+        "the desk found",
+    )
+    journey.screen("granted")
+
+    # The link the desk printed, scanned with the camera, starts the app on
+    # the desk's name and key before anything is trusted.
+    pairing, link = journey.pairing_link("desk")
+    open_link(journey, link)
+    card = journey.wait_for("pair-confirm.trust", "pair-confirm.fingerprint")
+    if card["pair-confirm.name"].get("value") != "desk":
+        raise RuntimeError(f"the link reached {card['pair-confirm.name']!r}, not the desk")
+    journey.screen("link-confirm", volatile=("pair-confirm.fingerprint", "pair-confirm.expiry"))
+    journey.tap("pair-confirm.trust")
+    journey.wait_for("pair-confirm.done")
+    journey.tap("pair-confirm.done")
+    pairing.wait(timeout=30)
+    trusted_as(journey.wait_for(f"hosts.row.{desk}"), desk, "desk")
+    round_trip(journey, "desk-work", "Hello from the phone.", "The desk is reachable.")
+    journey.screen("reached", volatile=("chat.row.turn-end",))
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    return [
+        "with the local network refused the Hosts tab said so, offered Settings and listed no machine",
+        "granted, the phone's browser found the desk and offered it",
+        "the desk's amux://pair link started the app on the desk's name and key before trust, and paired it",
+        "the desk received 'Hello from the phone.' once and answered",
+    ]
+
+
+NEEDS_YOU = ROOT / "journeys/fixtures/needs-you.apns"
+# A push brings its chat current within this long, or gives up.
+WARM_LIMIT = 25
+
+
+def needs_you_push(journey: PhoneJourney, agent: str) -> Path:
+    """The committed needs-you payload, addressed to `agent` on the desk."""
+    payload = json.loads(NEEDS_YOU.read_text())
+    payload["amux"]["host"] = journey.host_id("desk")
+    payload["amux"]["agent"] = next(item["id"] for item in journey.ready["agents"] if item["name"] == agent)
+    built = journey.output / "needs-you.apns"
+    built.write_text(json.dumps(payload, indent=2) + "\n")
+    return built
+
+
+def back_to_fleet(journey: PhoneJourney) -> None:
+    """Back from a chat to the fleet, once the page has finished leaving."""
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+    journey.app({"kind": "settle"})
+
+
+def suspended(journey: PhoneJourney, within: float = 30) -> None:
+    """Until iOS has suspended the app put away: its door stops answering."""
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        try:
+            journey.app({"kind": "query"}, timeout=2)
+        except (OSError, TimeoutError):
+            journey.actions.append("the app suspended")
+            return
+        time.sleep(0.5)
+    raise RuntimeError(f"the app put away still answered after {within:.0f}s")
+
+
+def push_wake(journey: PhoneJourney) -> list[str]:
+    asker = next(item["id"] for item in journey.ready["agents"] if item["name"] == "asker")
+    bystander = next(item["id"] for item in journey.ready["agents"] if item["name"] == "bystander")
+    journey.launch()
+    pair_by_code(journey, "desk")
+    journey.tap("tab.agents")
+    journey.wait_for(f"home.row.{asker}", f"home.row.{bystander}")
+
+    # Put away. Both agents move on at the desk: one comes to need the
+    # person, the other answers.
+    simctl("launch", journey.udid, "com.apple.Preferences")
+    journey.actions.append("the app put away behind Settings")
+    suspended(journey)
+    journey.request({"Send": {"agent": "asker", "text": "Deploy it."}})
+    journey.request({"Send": {"agent": "bystander", "text": "Anything new?"}})
+    journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "NEEDS_YOU", "asker-needs-you")
+    journey.wait_chat(
+        "desk", "bystander",
+        lambda chat: chat["phase"] == "IDLE" and any("The logs are quiet." in item["text"] for item in chat["items"]),
+        "bystander-answered",
+    )
+
+    # The push names the asker. It wakes the app in the background, which
+    # brings that one chat current and nothing else.
+    simctl("push", journey.udid, BUNDLE_ID, str(needs_you_push(journey, "asker")))
+    journey.actions.append("xcrun simctl push needs-you.apns for the asker")
+    time.sleep(WARM_LIMIT + 5)
+
+    # With the desk gone, what the phone holds is what the push fetched.
+    journey.request({"StopDaemon": {"host": "desk"}})
+    simctl("launch", journey.udid, BUNDLE_ID)
+    journey.actions.append("the app brought back to the foreground")
+    marks = [mark["signpost"] for mark in journey.app({"kind": "signposts"})["marks"]]
+    woke = [mark for mark in marks if mark.startswith("push")]
+    journey.observations["push-signposts"] = woke
+    if woke != ["pushWoke", "pushCurrent"]:
+        raise RuntimeError(f"the push did not bring its chat current: the app marked {woke!r}")
+    journey.wait(lambda drawn: labelled(drawn, "desk is offline"), "the desk offline on the phone")
+    journey.tap(f"home.row.{asker}")
+    journey.wait(lambda drawn: "ask" in drawn and labelled(drawn, "deploy --prod"), "the asker's ask, fetched by the push")
+    journey.screen("warmed", volatile=("chat.row.turn-end",))
+    back_to_fleet(journey)
+    journey.tap(f"home.row.{bystander}")
+    drawn = journey.wait(lambda drawn: labelled(drawn, "Watching the logs.") and "chat.field" in drawn, "the bystander's chat")
+    if labelled(drawn, "The logs are quiet."):
+        raise RuntimeError("the bystander's chat was brought current by a push that named the asker")
+    journey.screen("not-warmed", volatile=("chat.row.turn-end",))
+    journey.tap("chat.back")
+    journey.wait(lambda drawn: "chat.field" not in drawn, "the fleet")
+
+    # In the foreground every agent is listed again: the desk back, the
+    # bystander's answer arrives, and the ask is answered from the phone.
+    journey.request({"RestartDaemon": {"host": "desk"}})
+    journey.tap(f"home.row.{bystander}")
+    journey.wait(lambda drawn: labelled(drawn, "The logs are quiet."), "the bystander current in the foreground", timeout=90)
+    back_to_fleet(journey)
+    journey.tap(f"home.row.{asker}")
+    card = journey.wait(lambda drawn: "ask" in drawn and labelled(drawn, "Allow once"), "the ask again")
+    journey.tap(choice(card, "Allow once"))
+    journey.wait(lambda drawn: labelled(drawn, "Deployed to production."), "the deploy reply")
+    journey.wait_chat(
+        "desk", "asker",
+        lambda chat: chat["phase"] == "IDLE" and any("Deployed to production." in item["text"] for item in chat["items"]),
+        "asker-answered",
+    )
+    reopen(journey, asker, lambda drawn: labelled(drawn, "Deployed to production.") and "chat.row.turn-end" in drawn)
+    journey.screen("answered", volatile=("chat.row.turn-end",))
+    journey.tap("chat.back")
+    return [
+        "put away, the desk's asker came to need the person and the bystander answered",
+        "a push built from journeys/fixtures/needs-you.apns woke the app, and with the desk stopped the asker's chat held the ask",
+        "the bystander's chat did not hold the answer it gave while the app was away: only the named chat was brought current",
+        "back in the foreground with the desk running again, the bystander caught up without being named",
+        "Allow once from the phone reached the desk, which finished the deploy",
+    ]
+
+
 STORIES = {
     "reach-host": reach_host,
     "conversation-decision-claude-pty": lambda j: conversation_decision(j, "decision-pty", False),
@@ -711,11 +1191,31 @@ STORIES = {
     "manage-agent": manage_agent,
     "attachment-or-review": attachment_or_review,
     "leave-and-recover": leave_and_recover,
+    "account-sign-in": account_sign_in,
+    "purchase-restore": purchase_restore,
+    "report": report,
+    "accessibility": accessibility,
+    "local-network": local_network,
+    "push-wake": push_wake,
 }
 
 
+def native() -> list[str]:
+    """The stories the manifest declares for the phone and no other client."""
+    manifest = json.loads(MANIFEST.read_text())
+    return [item["id"] for item in manifest["journeys"] if item.get("clients") == ["phone"]]
+
+
+def selected(arguments: list[str]) -> list[str]:
+    if arguments == ["--native"]:
+        return native()
+    if "--native" in arguments:
+        raise SystemExit("--native runs the phone's own stories and takes no story names")
+    return arguments or list(STORIES)
+
+
 def main() -> int:
-    wanted = sys.argv[1:] or list(STORIES)
+    wanted = selected(sys.argv[1:])
     unknown = [name for name in wanted if name not in STORIES]
     if unknown:
         print(f"no phone story written for {', '.join(unknown)}; one of {', '.join(STORIES)}", file=sys.stderr)

@@ -1,0 +1,75 @@
+shell |  | hosts | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | Nothing paired yet | 60,105,130,16
+home.empty.firstRun |  | No agents yet | 18,161,162,32
+home.empty.explain |  |  | 18,201,291,18
+home.offer.<desk> | desk, found, not paired | found | 18,259,366,64
+home.pair.<desk> | Pair with desk |  | 309,269,61,44
+home.empty.howToPair |  |  | 18,341,360,37
+home.empty.signIn | Sign In |  | 18,396,366,44
+home.empty.signIn.caption |  |  | 18,448,296,18
+hosts |  | 0 reachable | -78,-34,157,69
+hosts.title |  | Hosts | -60,-24,69,32
+hosts.subtitle |  | 0 reachable | -60,9,79,16
+hosts.offer.<desk> | desk, found, not paired | not paired | -60,63,121,190
+hosts.pair.<desk> | Pair with desk |  | 15,136,32,44
+hosts.caption.on-this-network |  | Run amux pair on one of these and enter the code it prints. | -60,261,121,73
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 0 | 0 | -60,459,121,104
+hosts.caption.devices |  |  | -60,572,104,73
+pair-confirm |  | desk | 0,62,402,778
+pair-confirm.title |  | Pair with desk? | 18,62,179,58
+pair-confirm.name | Host | desk | 32,201,338,38
+pair-confirm.fingerprint | <volatile>
+pair-confirm.expiry | <volatile>
+pair-confirm.trust | Pair |  | 18,708,366,44
+pair-confirm.abandon | Not Now |  | 18,762,366,44
+you |  | none | 0,62,402,778
+you.title |  | You | 18,62,46,40
+you.add | Add Account |  | 18,142,366,46
+you.signIn | Sign In |  | 18,206,366,44
+you.signIn.caption |  |  | 18,258,296,18
+you.appearance |  | system | 18,317,366,50
+you.appearance.light | Light | not chosen | 200,319,56,46
+you.appearance.dark | Dark | not chosen | 256,319,49,46
+you.appearance.system | System | chosen | 305,319,63,46
+you.identity | <volatile>
+you.support | Contact Support |  | 18,453,366,46
+you.report | Report a Problem |  | 18,499,366,46
+you.dump | Export Diagnostics |  | 18,545,366,46
+you.help.caption |  |  | 18,599,354,31
+ | Pair with desk? |  | 18,88,179,32
+ | Pair only with a machine you started pairing on. This is its key. |  | 18,126,346,39
+ | HOST, desk |  | 32,201,39,38
+ | FINGERPRINT, <key> |  | 32,252,336,54
+ | This invitation expires in <t>. |  | 18,332,194,18
+ | Pair |  | 18,708,366,44
+ | Not Now |  | 18,762,366,44
+ | Agents, switch account |  | 60,65,104,46
+ | Nothing paired yet |  | 60,105,130,16
+ | No agents yet |  | 18,161,162,32
+ | Pair with a host and its agents appear here. |  | 18,201,291,18
+ | ON THIS NETWORK |  | 20,237,105,14
+ | desk |  | 32,271,39,21
+ | found |  | 32,294,39,17
+ | Pair with desk |  | 309,269,61,44
+ | Run amux pair on a host on this network, or scan the code from amux pair --qr with the camera. |  | 18,341,360,37
+ | Sign In |  | 18,396,366,44
+ | Sign in to reach your agents from anywhere |  | 18,448,296,18
+ | You |  | 18,70,46,32
+ | ACCOUNTS |  | 20,120,56,14
+ | Add Account |  | 18,142,366,46
+ | Sign In |  | 18,206,366,44
+ | Sign in to reach your agents from anywhere |  | 18,258,296,18
+ | THIS PHONE |  | 20,294,70,14
+ | Appearance |  | 32,332,90,20
+ | Light |  | 200,319,56,46
+ | Dark |  | 256,319,49,46
+ | System |  | 305,319,63,46
+ | Identity, <key> |  | 18,367,366,46
+ | HELP |  | 20,430,28,14
+ | Contact Support |  | 18,453,366,46
+ | Report a Problem |  | 18,499,366,46
+ | Export Diagnostics |  | 18,545,366,46
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31

@@ -1,0 +1,15 @@
+{
+  "Simulator Target Bundle": "sh.amux.app",
+  "aps": {
+    "alert": {
+      "title": "asker needs you",
+      "body": "Wants to run deploy --prod"
+    },
+    "sound": "default",
+    "content-available": 1
+  },
+  "amux": {
+    "host": "HOST-ID",
+    "agent": "AGENT-ID"
+  }
+}

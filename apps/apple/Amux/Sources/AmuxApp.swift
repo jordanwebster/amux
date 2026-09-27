@@ -65,11 +65,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject,
         didReceiveRemoteNotification payload: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         guard let agent = PushPayload.agent(payload) else { return .noData }
+        Signposts.emit(.pushWoke)
         let background = application.applicationState == .background
         switch await composition.runtime.warm(agent, inBackground: background) {
-        case .current: return .newData
-        case .behind: return .failed
-        case .unknownHost: return .noData
+        case .current:
+            Signposts.emit(.pushCurrent)
+            return .newData
+        case .behind:
+            Signposts.emit(.pushBehind)
+            return .failed
+        case .unknownHost:
+            Signposts.emit(.pushBehind)
+            return .noData
         }
     }
 

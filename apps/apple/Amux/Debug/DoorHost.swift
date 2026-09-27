@@ -192,8 +192,9 @@ final class DoorHost {
                     return ChatWords.text(of: text).contains(saying)
                 }
             }
+        case .uploaded(let path): return writeUploaded(to: path)
         case .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
-             .report, .uploaded, .replay, .move, .requestChanges, .watch, .sendDraft:
+             .report, .replay, .move, .requestChanges, .watch, .sendDraft:
             return .error("this build's door does not \(Self.verb(request))")
         }
     }
@@ -334,6 +335,30 @@ final class DoorHost {
         } catch {
             return .error(error.description)
         }
+    }
+
+    /// The last report the scripted account service was handed, written part
+    /// by part into `path`: what a Send actually carried, read at the
+    /// boundary it left the app through.
+    private func writeUploaded(to path: String) -> DoorReply {
+        guard let bundle = cloud.uploaded.last else { return .error("no report was sent") }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        let manager = FileManager.default
+        do {
+            try? manager.removeItem(at: directory)
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            for part in bundle.parts {
+                guard let data = part.data else { continue }
+                let file = directory.appendingPathComponent(part.name)
+                try manager.createDirectory(
+                    at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: file)
+            }
+        } catch {
+            return .error("the report could not be written: \(error.localizedDescription)")
+        }
+        let header = bundle.part("report.json")?.data.flatMap { String(data: $0, encoding: .utf8) }
+        return .bundle(path: path, parts: bundle.parts.map(\.name), reportJSON: header)
     }
 
     private func accountsState() -> AccountsState {

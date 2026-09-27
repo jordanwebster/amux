@@ -403,7 +403,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
 echo "$*" >> calls
 [ "$*" != "$FAIL_RECIPE" ] || exit 1
 if [ "$*" = "ios journey" ]; then
-    for id in reach-host conversation-decision-claude-pty conversation-decision-claude-sdk conversation-decision-codex leave-and-recover manage-agent attachment-or-review keep-authority; do
+    for id in reach-host conversation-decision-claude-pty conversation-decision-claude-sdk conversation-decision-codex leave-and-recover manage-agent attachment-or-review keep-authority account-sign-in purchase-restore report accessibility local-network push-wake; do
         [ "$id" = "$SKIP_JOURNEY" ] || echo "$id: passed"
     done
 fi

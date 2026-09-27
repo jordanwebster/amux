@@ -89,6 +89,19 @@ final class ScriptedCloudTests: XCTestCase {
         XCTAssertTrue(cloud.calls.isEmpty)
     }
 
+    func testAPurchaseItTakesEntitlesTheAccountAndOneItRefusesDoesNot() async throws {
+        let refusing = ScriptedCloudService(
+            state: ScriptedCloudState(entitlement: .none, purchase: .refused("not this one")))
+        try? await refusing.recordPurchase(ada, signedTransaction: "signed.jws")
+        let stillNone = try await refusing.entitlement(ada)
+        XCTAssertEqual(stillNone, .none)
+
+        let cloud = ScriptedCloudService(state: .unsubscribed)
+        try await cloud.recordPurchase(ada, signedTransaction: "signed.jws")
+        let after = try await cloud.entitlement(ada)
+        XCTAssertEqual(after, .active(grant: .purchased(.appStore), renews: nil))
+    }
+
     /// What a report was is only answerable from the bundle itself: the names
     /// of its parts say nothing about the reason beside a part that is not
     /// there, and a retry has to be readable as the same bundle as the attempt

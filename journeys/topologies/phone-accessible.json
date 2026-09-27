@@ -1,0 +1,43 @@
+{
+  "scope": "phone-accessible",
+  "hosts": [
+    {
+      "name": "desk",
+      "lan": true,
+      "bonjour": true
+    }
+  ],
+  "agents": [
+    {
+      "name": "decision-sdk",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {
+        "steps": [
+          {
+            "ask": {
+              "permission": {
+                "name": "Bash",
+                "class": "consequential",
+                "input": {
+                  "command": "deploy --check"
+                },
+                "outcome": {
+                  "output": "deploy check: ok"
+                }
+              }
+            }
+          },
+          {
+            "text": {
+              "chunks": [
+                "The deploy check passed."
+              ]
+            }
+          },
+          "turn_end"
+        ]
+      }
+    }
+  ]
+}

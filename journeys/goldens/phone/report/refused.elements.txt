@@ -1,0 +1,85 @@
+shell |  | agents | 0,62,402,778
+home |  | ready | 0,62,402,778
+home.title |  | Agents | 18,72,86,32
+home.subtitle |  | Nothing needs you · 0 running | 18,105,209,16
+home.newAgent | New Agent |  | 345,74,44,44
+home.row.<desk-work> | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> | idle | 18,159,366,70
+home.row.<desk-work>.age.volatile | <volatile>
+home.row.<desk-work>.detail.volatile | <volatile>
+hosts |  | 1 reachable | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 1 reachable | 18,105,79,16
+hosts.row.<desk> | desk, reachable through the relay | through-the-relay | 18,159,366,64
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,310,366,46
+hosts.caption.devices |  |  | 18,363,320,18
+you |  | ada@example.com | 0,62,402,778
+you.title |  | You | 18,62,46,40
+account.ada@example.com | ada, 1 host | selected | 32,142,338,58
+you.add | Add Account |  | 18,201,366,46
+you.subscription | Relay | Included with this account | 18,287,366,46
+you.signOut | Sign Out |  | 18,333,366,46
+you.remove | Remove from This Phone |  | 18,380,366,46
+you.delete | Delete Account |  | 18,426,366,46
+you.appearance |  | system | 18,512,366,50
+you.appearance.light | Light | not chosen | 200,514,56,46
+you.appearance.dark | Dark | not chosen | 256,514,49,46
+you.appearance.system | System | chosen | 305,514,63,46
+you.identity | <volatile>
+you.support | Contact Support |  | 18,648,366,46
+you.report | Report a Problem |  | 18,694,366,46
+you.dump | Export Diagnostics |  | 18,740,366,46
+you.help.caption |  |  | 18,794,354,31
+tab.agents | Agents | selected | 50,777,99,57
+tab.hosts | Hosts | not selected | 151,777,99,57
+tab.you | You | not selected | 253,777,99,57
+report.screen |  | failed | 0,62,402,778
+report.cancel | Cancel |  | 17,59,68,46
+report.send | Retry |  | 338,59,51,46
+report.frame |  | 0 marked | 82,39,238,517
+report.note | What went wrong? | The desk's agent is listed twice. | 18,611,366,65
+report.refusal | The report was not sent. | amux.sh could not take this report | 18,732,366,92
+ | Cancel |  | 17,59,68,46
+ | Report |  | 188,72,52,20
+ | Retry |  | 338,59,51,46
+ | Drag a box around anything wrong. Each box takes a note. |  | 18,568,353,31
+ | Includes this screen and the available session and host records. |  | 18,688,366,31
+ | The report was not sent. |  | 32,746,182,20
+ | amux.sh could not take this report |  | 32,769,232,18
+ | Retry sends your saved report. |  | 32,792,208,18
+ | Agents |  | 50,777,99,57
+ | Hosts |  | 151,777,99,57
+ | You |  | 253,777,99,57
+ | Agents |  | 18,72,86,32
+ | Nothing needs you · 0 running |  | 18,105,209,16
+ | New Agent |  | 345,74,44,44
+ | AGENTS |  | 20,137,42,14
+ | desk-work, Idle, desk, /tmp/amux-phone-journey/net/desk/work, <age> |  | 18,159,366,70
+ | Hosts |  | 18,72,69,32
+ | 1 reachable |  | 18,105,79,16
+ | THROUGH THE RELAY |  | 20,137,119,14
+ | desk, reachable through the relay |  | 18,159,366,64
+ | THIS PHONE |  | 20,241,70,14
+ | Identity, amux-iphone-1 · <key> |  | 18,263,366,46
+ | Paired Devices, 1 |  | 18,310,366,45
+ | Revoking a device ends its access immediately. |  | 18,363,320,18
+ | You |  | 18,70,46,32
+ | ACCOUNTS |  | 20,120,56,14
+ | ada, 1 host |  | 32,142,338,58
+ | Add Account |  | 18,201,366,46
+ | ADA |  | 20,265,21,14
+ | Relay, Included with this account |  | 18,287,366,46
+ | Sign Out |  | 18,333,366,46
+ | Remove from This Phone |  | 18,380,366,46
+ | Delete Account |  | 18,426,366,46
+ | THIS PHONE |  | 20,489,70,14
+ | Appearance |  | 32,527,90,20
+ | Light |  | 200,514,56,46
+ | Dark |  | 256,514,49,46
+ | System |  | 305,514,63,46
+ | Identity, <key> |  | 18,562,366,46
+ | HELP |  | 20,626,28,14
+ | Contact Support |  | 18,648,366,46
+ | Report a Problem |  | 18,694,366,46
+ | Export Diagnostics |  | 18,740,366,46
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,794,346,31

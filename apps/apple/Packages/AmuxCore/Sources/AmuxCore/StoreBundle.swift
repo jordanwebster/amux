@@ -239,12 +239,15 @@ public final class StoreBundle {
         return true
     }
 
-    /// Reaches the machine a pairing link names.
+    /// Reaches the machine a pairing link names. A link that carries no
+    /// addresses reaches its machine only through the relay, so on an account
+    /// that does not buy the relay its refusal is the offer of a
+    /// subscription, as a code's is.
     @discardableResult
-    public func pair(link: String) -> Bool {
+    public func pair(link: String, relayOnly: Bool = false) -> Bool {
         guard profile != nil else { return false }
         pairing.open()
-        begin(.link(link), relayOnly: false)
+        begin(.link(link), relayOnly: relayOnly)
         return true
     }
 

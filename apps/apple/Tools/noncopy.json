@@ -78,7 +78,10 @@
       {"literal": "\"the running app has no page named \\(screen)\"", "context": "return .error(\"the running app has no page named \\(screen)\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"hosts\"", "context": "case \"hosts\":", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
       {"literal": "\"the pairing was refused: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\"", "context": "\"the pairing was refused: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
-      {"literal": "\"the machine was not trusted: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\"", "context": "\"the machine was not trusted: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1}
+      {"literal": "\"the machine was not trusted: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\"", "context": "\"the machine was not trusted: \\(stores.pairing.refusal ?? \"\\(stores.pairing.phase)\")\")", "reason": "Door reply or wire value for a driver, never drawn.", "count": 1},
+      {"literal": "\"no report was sent\"", "context": "guard let bundle = cloud.uploaded.last else { return .error(\"no report was sent\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"the report could not be written: \\(error.localizedDescription)\"", "context": "return .error(\"the report could not be written: \\(error.localizedDescription)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"report.json\"", "context": "let header = bundle.part(\"report.json\")?.data.flatMap { String(data: $0, encoding: .utf8) }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorServer.swift": [
       {"literal": "\"the driving door could not open: \\(error)\"", "context": "fatalError(\"the driving door could not open: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

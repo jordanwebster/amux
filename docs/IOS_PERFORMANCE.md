@@ -110,7 +110,8 @@ that is the part of a launch the store is answerable for.
 
 The app marks named moments — `processStart`, `firstCachedFrame`,
 `streamConnected`, `reconciled`, `sendTapped`, `echoCommitted`, `streamRow`,
-`transcriptCommit`, `idleTick` — in every build, debug and release alike, so a
+`transcriptCommit`, `idleTick`, and `pushWoke`, `pushCurrent` and
+`pushBehind` for a push that wakes the app — in every build, debug and release alike, so a
 timing is never a property of the build it was taken from. Instruments shows
 the same names on a timeline.
 

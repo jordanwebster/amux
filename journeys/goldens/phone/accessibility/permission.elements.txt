@@ -1,0 +1,80 @@
+shell |  | agents | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,165,68
+home.subtitle |  | 1 need you · 1 agent | 60,127,242,81
+home.newAgent | New Agent |  | 345,118,44,44
+home.row.<decision-sdk> | decision-sdk, Needs you, desk, /tmp/amux-phone-journey/net/desk/work, <age>, unread | needs-you | 18,271,366,114
+home.row.<decision-sdk>.age.volatile | <volatile>
+chat |  | decision-sdk | 0,62,402,778
+chat.row.prompt | Check the deployment once. |  | 18,139,366,106
+chat.row.boundary | Started |  | 18,257,366,40
+chat.row.command | Wants to run, deploy --check |  | 18,309,366,43
+chat.header | /t/a/n/d/work · desk | live | 18,64,298,98
+chat.back | Back |  | 16,90,42,46
+chat.title | decision-sdk | decision-sdk | 51,72,252,82
+chat.more | More |  | 344,91,44,44
+ask | Wants to run a command | open | 12,364,378,466
+ask.more | More |  | 345,408,41,30
+ask.subject | deploy --check |  | 28,478,261,40
+ask.choice.0 | Allow once |  | 28,530,346,65
+ask.choice.1 | Always allow Bash in this project |  | 28,603,346,65
+ask.choice.2 | Deny… |  | 28,676,346,65
+ask.choice.3 | Deny and stop… |  | 28,749,346,65
+hosts |  | 1 reachable | 0,62,402,778
+hosts.title |  | Hosts | 18,72,118,54
+hosts.subtitle |  | 1 reachable | 18,127,205,40
+hosts.row.<desk> | desk, reachable on this network | on-this-network | 18,230,366,108
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,473,366,69
+hosts.caption.devices |  |  | 18,550,347,78
+you |  | none | 0,62,402,778
+you.title |  | You | 18,62,78,62
+you.add | Add Account |  | 18,189,366,69
+you.signIn | Sign In |  | 18,276,366,65
+you.signIn.caption |  |  | 18,349,329,78
+you.appearance |  | system | 18,492,366,195
+you.appearance.light | Light | not chosen | 215,514,57,151
+you.appearance.dark | Dark | not chosen | 272,494,39,191
+you.appearance.system | System | chosen | 311,514,57,151
+you.identity | <volatile>
+you.support | Contact Support |  | 18,822,366,69
+you.report | Report a Problem |  | 18,892,366,112
+you.dump | Export Diagnostics |  | 18,1004,366,112
+you.help.caption |  |  | 18,1124,366,161
+ | Back |  | 16,90,42,46
+ | decision-sdk, /t/a/n/d/work · desk |  | 51,72,252,82
+ | More |  | 344,91,44,44
+ | Check the deployment once. |  | 67,139,317,106
+ | Started |  | 18,257,366,40
+ | Wants to run, deploy --check |  | 18,309,366,43
+ | Wants to run a command |  | 46,380,218,86
+ | More |  | 345,408,41,30
+ | deploy --check |  | 28,478,261,40
+ | Allow once |  | 28,530,346,65
+ | Always allow Bash in this project |  | 28,603,346,65
+ | Deny… |  | 28,676,346,65
+ | Deny and stop… |  | 28,749,346,65
+ | Hosts |  | 18,72,118,54
+ | 1 reachable |  | 18,127,205,40
+ | ON THIS NETWORK |  | 20,183,276,39
+ | desk, reachable on this network |  | 18,230,366,108
+ | THIS PHONE |  | 20,356,184,39
+ | Identity, amux-iphone-1 · <key> |  | 18,403,366,69
+ | Paired Devices, 1 |  | 18,473,366,69
+ | Revoking a device ends its access immediately. |  | 18,550,347,78
+ | You |  | 18,70,78,54
+ | ACCOUNTS |  | 20,142,147,39
+ | Add Account |  | 18,189,366,69
+ | Sign In |  | 18,276,366,65
+ | Sign in to reach your agents from anywhere |  | 18,349,329,78
+ | THIS PHONE |  | 20,445,184,39
+ | Appearance |  | 32,547,138,86
+ | Light |  | 215,515,57,151
+ | Dark |  | 272,494,39,191
+ | System |  | 311,515,57,151
+ | Identity, <key> |  | 18,688,366,69
+ | HELP |  | 20,775,74,39
+ | Contact Support |  | 18,822,366,69
+ | Report a Problem |  | 18,892,366,112
+ | Export Diagnostics |  | 18,1004,366,112
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,1124,358,161

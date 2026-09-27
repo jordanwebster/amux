@@ -1,168 +1,6 @@
 {
   "journeys": [
     {
-      "id": "onramp",
-      "stage": 4,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/onramp.json",
-      "acts": [
-        "first-run",
-        "found-host",
-        "code-entry",
-        "paired",
-        "withdrawn-and-back",
-        "permission-refused"
-      ],
-      "claim": "A phone with no account, no relay and no subscription, and one machine the runner is really running on its own network. The phone opens on nothing; the machine puts itself on the network and the phone offers it by name with one thing to do about it; six digits the machine printed reach the machine's own name and the whole of its key, and trusting it leaves the machine holding exactly one device and the phone reading what it is running — with nobody signed in throughout, so every byte of that arrived over a link this phone opened to an address a browser resolved. The machine then leaves the network, goodbye and all, and the phone says so; it comes back and the phone reaches it again without anybody pressing anything. And a phone whose owner refused to let it look at the network is told that is what happened, and where it is undone."
-    },
-    {
-      "id": "home-coldstart",
-      "stage": 5,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/two-hosts.json",
-      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every remembered row visible and nothing spinning, and a real connection to two hosts reconciles it. This launch is paired with neither machine, so neither host confirms the remembered agents and reconciliation leaves the list empty. The home journey separately proves a paired phone’s cached rows going solid in place as their hosts answer."
-    },
-    {
-      "id": "home",
-      "stage": 5,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/home-fleet.json",
-      "claim": "Six agents on two machines the runner is running, on a phone that pairs with both of them through the protocol itself: before it has reached anything the phone draws the ones it remembers, the request that needs an answer at the top, ahead of finished and recent work; a real connection reaches both machines and every remembered row is confirmed in place as its own machine answers for it, a turn emitted by one of them changes nothing about the order, and taking the relay away leaves every row on screen under the one line that says the phone is offline; a phone that remembers nothing shows the home empty; and opening the row at the top leads to its conversation, whose back chevron and the platform's edge swipe each come back to the same list."
-    },
-    {
-      "id": "conversation",
-      "stage": 6,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/conversation.json",
-      "claim": "A phone paired with the machine that holds them opens one of its agents and reads what it says: every kind of step the scripted provider can play arrives over the relay and is drawn, and the walk down the feed photographs each kind of row where a reader can actually read it — clear of the pill and the strips that float over the feed — a folded run of reads opens when it is pressed, a diff the host computed puts the changes chip on screen and it leads to the changes, and an agent that ends while somebody is reading it states its code and offers nowhere to write. Losing the machine says so where the composer will go, with a way to ask again. Three messages tried where the conversation will not take one — in the moment it opens and the layer is still catching up, while the machine is unreachable, and while the last one is unanswered — are refused on the phone with the reason on screen, and the host confirms it received only the single message that was allowed through."
-    },
-    {
-      "id": "asks",
-      "stage": 7,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/asks.json",
-      "claim": "Everything an agent can be waiting to be told, answered on the phone against a machine the runner is really running: a permission refused and another allowed, the standing grant the host itself offered taken by the name the host gave it, the agent's own question answered with one of the agent's own answers, a plan read out and approved and a second sent back with what should change, a plan judged earlier reopened onto the document that was judged, an agent this one started answered in its own conversation and the provider's own subagent saying why it has none, and a finished turn deferred and then read. A sentence started and never sent, and a feed scrolled back off its newest row, are both exactly as they were after a panel has been answered over them — including after the excursion to the child. The host is asked afterwards what it received, and every answer is exactly what was pressed."
-    },
-    {
-      "id": "review",
-      "stage": 7,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/review.json",
-      "claim": "A patch a real host froze across three files, taller than the phone, read and written about with a finger: the list every file heading opens reaching a file further down, that file folded away and opened again, the wheel down the right edge dragged to the last file and back to the first, ranges taken by holding a line and dragging, three remarks added and a fourth cancelled before it was said, and the whole review attached and sent with a remark about the change as a whole. The host received one message carrying that patch's identity, those ranges, what was said about each of them and the patch pinned to it — and nothing about the remark that was cancelled."
-    },
-    {
-      "id": "writing",
-      "stage": 8,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/writing.json",
-      "claim": "Writing to two agents the runner is really running. A paragraph typed over two lines; a long paste, a stored photograph, a stored file and a patch the machine computed each standing in that sentence as one token at the caret; one backspace taking a whole token entire, and one token taken from between two others and put in front of both — whole, as the one character it is in the sentence. That move goes through the field's own draft rather than a finger: the gesture that performs it on a device is the text view's own text drag, which the system begins from drawn text and no driver outside the process can start. One message sent, drawn before the machine answered for it and still one row once it had. One message held while a turn ran, replaced by a second, taken back into the field, and a third that survived the turn being stopped and was delivered when the turn ended — the machine's own account says it received exactly those two and nothing that was replaced or withdrawn. The cross empties the field and leaves the turn running; Stop is offered only where there is nothing to send, so no press does both. The address copied, a rename cancelled and then kept by the machine, a deletion cancelled and later confirmed. And on the session that offers them: a command raised by a slash, sent as a token and answered, and a model and an effort changed and read back off the chip the machine's own facts relabel."
-    },
-    {
-      "id": "claude-sessions",
-      "stage": 9,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/claude-sessions.json",
-      "claim": "New Agent creates Claude on the SDK driver, confirmed by the daemon inventory with no PTY agent created. The created SDK agent and pre-existing SDK and PTY agents open under their original identities, render through their own projections, and each round-trip a prompt observed by the host. A typed model change reaches the SDK session; the PTY gate refuses it with no extra input. A creation the host refuses leaves a designed failure state and creates nothing."
-    },
-    {
-      "id": "hosts-lifecycle",
-      "stage": 9,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/home-fleet.json",
-      "claim": "What this phone's link to two machines the runner is running does over time: a relay taken away and put back is recovered from with nobody pressing anything; each machine holds one connection however many conversations are open, and nothing is asked of them while the phone sits idle; pressing Retry Now reaches the link before the relay is back, which is the only thing that could have; putting the phone away releases the link so the machines see it leave, and bringing it back confirms the fleet again; and the conversation closed before any of it holds no stream after all of it."
-    },
-    {
-      "id": "hosts",
-      "stage": 9,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/hosts.json",
-      "acts": [
-        "link-before-sign-in",
-        "link-agreed-second-time",
-        "code-on-keypad",
-        "agents-started",
-        "key-revoked",
-        "disturbance",
-        "second-account"
-      ],
-      "claim": "Giving a phone machines to work on, and keeping two accounts apart, against three machines the runner is really running. A pairing link the launch itself carried lands on a phone nobody has signed in on, carries the machine's addresses on this network and so is put to it straight away with no account at all; the machine answers with its own name and the whole of its key and nothing is trusted by that; turned down it still holds no key, and the same invitation — the machine is still offering it — is opened again and agreed to. On the keypad, a code nobody issued and a code that has run out are refused in one sentence with the digits gone, and the code the machine printed leads to that machine's name and key before any trust is written. Three agents are started on one machine — from a directory it had been used in, from a repository it listed, and from a path typed by hand, with a path it refuses saying so and starting nothing — and the machine itself reports every one of them as Claude on the SDK driver, with no terminal Claude session appearing anywhere; the one the phone started opens as the SDK layer's own typed state and the one the topology seeded still opens as a transcript. One of a machine's agents is read and the stream it held is let go when the conversation is left by its back chevron; the machine's key, read whole on the phone, is then revoked and everything the machine was running leaves the fleet. The relay is taken away and put back and a machine restarted underneath, and the phone recovers with nobody pressing anything. And the second account on the same phone reaches only its own machine, pairs with it under an identity of its own, and sees none of the first account's."
-    },
-    {
-      "id": "accounts",
-      "stage": 10,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/accounts.json",
-      "acts": [
-        "unsigned-launch",
-        "sign-in",
-        "subscribe",
-        "second-account",
-        "switching",
-        "signed-out-account",
-        "delete",
-        "remove-from-phone",
-        "help-and-appearance"
-      ],
-      "claim": "One phone, one sitting, and everything a person does about the account it reaches its machines with. It opens on the real home, empty, with one thing to do and no account; the hand-off names where it is sending you and never asks for a password, and is refused in the account service's own words, cancelled without leaving anything to dismiss, and finished with nothing bought. Both subscriptions are pressed at the App Store: a sheet closed without buying leaves the same plan chosen, a refusal says what the store said, one left waiting for approval says nothing has been charged and stops offering to buy, restoring nothing says so, and the one that goes through is carried to the account service before it is finished with the store. A purchase amux.sh is never told about is kept and offered again; one it refuses reads differently; sent again and taken, what the account may do is read back rather than believed. Restoring on a phone with nothing bought takes the same road, and a purchase the store approves by itself reaches the account service with nobody pressing anything. A second account is added from the same page, keeps the phone where it was, and is honoured with the subscription it bought on the web — the screen says where it came from instead of selling a second one. Each account pairs with its own machine on a real relay under an identity of its own and sees only its own agents; with one on screen the other still says what it has waiting, from its own live subscription, and an answer that account's connection had already produced arriving after the switch is refused and changes nothing. An account signed out of stays listed with Sign In beside it; signing back in asks amux.sh for that account by its address, a sign-in that comes back as somebody else says who and adds nobody until told to, and the account comes back with a subscription that has since ended. Delete Account states what goes, refuses to unlock until the account's own address is typed, is refused while the subscription is still set to renew — naming the only place that can be stopped and keeping the address typed across the trip there — and then takes the account off the phone. Remove from This Phone says the amux.sh account stays, takes a signed-out account off from its row and the account on screen from its own section, signs each out of the phone, tells the runtime to delete its profile and caches, never asks amux.sh to delete anything, and leaves the phone signed out once the last one is gone. Light, Dark and System each redraw the whole app under the thumb, and Contact Support leaves for the web. Nothing here reaches a real account service or a real App Store: both are doubles handed to the app at launch, which is what makes a refused purchase, a purchase waiting for approval and a refused deletion states a finger can reach."
-    },
-    {
-      "id": "reports",
-      "stage": 11,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/reports.json",
-      "acts": [
-        "screenshot-thumbnail",
-        "screenshot-full-screen",
-        "annotate",
-        "send",
-        "from-help"
-      ],
-      "claim": "Reporting what went wrong on a phone paired with a machine the runner is really running, so the picture in every report is a screen that machine filled. The door stages the system screenshot notification and the app's own Report appears — a hundred points clear of the corner the system draws its thumbnail preview in, because no app is given that preview to attach anything to — and anywhere else on the screen turns it down and lets the frozen frame go. Full-screen preview coverage is staged by putting the app away and bringing it back; the same offer over the same frozen frame is still there. Taking it opens the report on the frame frozen when the offer appeared, with no share step, no sheet and nothing asked of Photos — the build asks for no access to the photo library at all, so what it draws cannot be the picture the system saved. Three rectangles are dragged onto the picture, each takes a note and one more is written about the whole thing. The account service turns the report down in its own words, nothing written is lost, and Retry hands over the same bundle again and comes back with a receipt. What left the phone is opened where it crossed that boundary: every part is declared present with the file beside it or absent with the reason, the rectangles and both notes are carried, and the frame is the whole screen in points with the scale it was drawn at. Report a Problem under Help does the same deliberately, with no offer in between, and its bundle names the page it was pressed on rather than the one the screenshot was taken on. Nothing here reaches amux.sh: the account service is a double the app is handed at launch, which is what makes a refused upload a state a finger can reach."
-    },
-    {
-      "id": "accessibility",
-      "stage": 12,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/accessibility.json",
-      "acts": [
-        "home",
-        "conversation",
-        "asks",
-        "writing",
-        "hosts",
-        "failures"
-      ],
-      "claim": "Everything a person mainly does with this app, done again with the accessibility settings on: VoiceOver running on the device and the whole app drawn at the largest text size a reader can ask for, against two machines the runner is really running. The app itself says it is in a VoiceOver session and says what size it is drawn at, so neither is taken on trust. At that size the fleet still lists its agents and every action it offers has a name to read out; a conversation still reads, and the patch its machine froze still gives up a range to a finger held on one line and dragged onto the next; a permission is refused and a plan approved with the panel's own controls, and the sheet that asks what should change is got out of without answering it; a token pasted into the message stands in the sentence as one character and one backspace takes the whole of it, and the card that renames the agent is opened and cancelled; the machines are listed; and a machine taken away while somebody is reading one of its agents says the same thing in light and in dark. What each screen drew, and how far the actions it is for sit from the bottom of the window, is written out beside the photographs."
-    },
-    {
-      "id": "production-startup",
-      "stage": 13,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/accounts.json",
-      "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Reinstalling the same build moves the app container while preserving its files. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
-    },
-    {
-      "id": "free-tier",
-      "stage": 14,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/free-tier.json",
-      "claim": "A phone signed in to an account that has never paid for the relay, against three machines the runner is really running. On its own network it pairs with one of them and runs its agent, which is what an account with nothing bought is entitled to and all it needs. Both machines then leave that network: the one signed in to this account is still visible to the relay, which will carry nothing to it, so the phone says it is away, keeps its agent on the list saying in words that nothing is arriving, and names it in the one line above the list; the machine signed in to nobody says that instead, because what is in the way is on the machine and no money moves it. Opening the away machine's agent shows the last thing it said with the offer where the composer would be, naming the machine it would reach. Six digits a third machine printed — a machine only the relay has ever seen — authenticate and still do not pair, and the keypad answers with the same offer rather than calling a correct code wrong. Then the account service starts saying the account is subscribed and the phone asks its own link to read that again: the machine is through the relay and its agent is live at once, and the offer of a tunnel is gone from the line above the list. The App Store is never reached and the account service is a double the app is handed at launch, which is what makes an unpaid account a state a finger can reach; the relay, the machines and the credential they are all admitted on are real."
-    },
-    {
-      "id": "signed-out",
-      "stage": 14,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/onramp.json",
-      "claim": "A phone nobody has signed in on, following the machine it paired with off its own network and back. Paired by the code that machine printed and reading what it runs, it is left with neither when the machine says goodbye and stops answering — and keeps all of it: the agents stay on the list as what they are, the machine reads offline, and the one line above the list offers an account as the thing that would reach it from somewhere else. The machine announces itself again, the phone reaches it with nobody pressing anything, and that offer goes away with the thing it was for: a phone that can reach everything it owns is never asked for an account. No account, no relay and no subscription exist anywhere in this story."
-    },
-    {
-      "id": "profiles",
-      "stage": 14,
-      "clients": ["phone"],
-      "topology": "journeys/topologies/profiles.json",
-      "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
-    },
-    {
       "id": "conversation-decision-claude-pty",
       "stage": 15,
       "clients": ["terminal", "phone"],
@@ -227,9 +65,163 @@
       "claim": "On the laptop a person writes to an agent on the desk: text, a twelve-line paste that stands in the sentence as one token, more text, and a review of the diff the desk computed of the agent's working tree, with a comment on one changed line. The desk receives one prompt holding those four in that order, the paste's exact text and the comment on that line, and the review names a patch whose bytes on the desk's disk hash to that name and hold the edit. Opening the chat again shows the tokens as they were sent."
     },
     {
+      "id": "account-sign-in",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-accounts.json",
+      "claim": "A phone nobody has signed in on offers Sign In on the You tab; the hand-off names the account service it sends the person to and comes back signed in, and the account service is asked to sign in and to hand over the account's session. That session's relay, and only it, carries the pairing to a machine that shares no network with the phone: the machine is listed under its own name, its agent opens, and the machine receives the prompt written on the phone exactly once and answers it."
+    },
+    {
+      "id": "purchase-restore",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-purchase.json",
+      "claim": "Signed in to an account that has bought nothing, the relay lists the account's machine and carries nothing to it, so a pairing link through the relay is refused. Bought at the App Store while amux.sh cannot be reached, the purchase is kept and the paywall says it is not confirmed; with amux.sh answering again, Restore Purchases offers the App Store's subscription to amux.sh, which takes it, and the paywall says the account is subscribed. The relay link then reads what the account buys, carries the pairing, and the machine receives the prompt written on the phone exactly once and answers it."
+    },
+    {
+      "id": "report",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-accounts.json",
+      "claim": "On a phone signed in and paired through the relay, the system's screenshot makes the app offer Report over the frame it froze; the report opens on that frame and takes a note. amux.sh refuses it in its own words and nothing written is lost; Retry hands over the same report and comes back with a receipt. The report that left the phone, read where it crossed into the account service, carries the note and the frozen screen, and the machine lists the agent that screen showed."
+    },
+    {
+      "id": "accessibility",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-accessible.json",
+      "claim": "The app, saying it draws at an accessibility text size, pairs with a machine on the keypad, opens a Claude agent and sends it a prompt; the permission card it raises is read and answered with Allow once at that size, the machine holds the prompt once and finishes the turn, and the provider receives exactly one allow."
+    },
+    {
+      "id": "local-network",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-reach.json",
+      "claim": "With the local network refused, the Hosts tab says so, offers the setting that undoes it and lists no machine; granted, the phone's own browser finds the machine on its network and offers it. The amux://pair link the machine printed, opened from outside the app as the system hands a scanned code over, names the machine before anything is trusted; trusted, the machine is listed under its own name and receives the prompt written on the phone exactly once and answers it."
+    },
+    {
+      "id": "push-wake",
+      "stage": 16,
+      "clients": ["phone"],
+      "topology": "journeys/topologies/phone-push.json",
+      "claim": "A phone paired with a machine running two agents is put away. At the machine one agent comes to need the person and the other answers a question. A push built from journeys/fixtures/needs-you.apns names the first; xcrun simctl push delivers it and it wakes the app in the background, which brings that one chat current and nothing else: with the machine stopped and the app brought back to the foreground, the named agent's chat holds its ask and the other agent's chat does not hold the answer it gave while the app was away. In the foreground, with the machine running again, the other agent catches up without being named, and the ask answered on the phone reaches the machine, which finishes the turn."
+    },
+    {
       "id": "survive-daemon",
       "clients": ["system"],
       "claim": "Three agents, one of each kind, are mid-turn when amux is killed; they finish their turns into their journals with no daemon, outlive their grace and exit. Any amux command starts amux again under its supervisor, which finds them exited; a newer build is installed under the supervisor and activated; every finished turn is in the store, and resuming the exited agents loses nothing."
     }
-  ]
+  ],
+  "retired_phone_journeys": {
+    "about": "Phone journeys written for the app before it ran on one runtime per profile. Each claim is carried by the stories named beside it.",
+    "journeys": [
+      {
+        "id": "onramp",
+        "carried_by": ["reach-host", "leave-and-recover", "local-network"],
+        "how": "Found by the phone's own browser and paired by the printed code with the machine's name and key before trust, with no account (reach-host); the machine away and reached again with nobody pressing anything (leave-and-recover); the local network refused, said so and where it is undone (local-network)."
+      },
+      {
+        "id": "home-coldstart",
+        "carried_by": ["leave-and-recover", "push-wake"],
+        "how": "The fleet and a chat drawn from the phone's own store before any host answers (leave-and-recover's fresh client with the origin away, push-wake's fleet with the machine stopped)."
+      },
+      {
+        "id": "home",
+        "carried_by": ["leave-and-recover", "push-wake", "reach-host"],
+        "how": "Remembered rows kept on screen with the host away and confirmed when it answers (leave-and-recover); every listed agent current again in the foreground (push-wake); a row opened to its chat and the back chevron returning to the fleet (reach-host)."
+      },
+      {
+        "id": "conversation",
+        "carried_by": [
+          "conversation-decision-claude-pty",
+          "conversation-decision-claude-sdk",
+          "conversation-decision-codex",
+          "leave-and-recover",
+          "attachment-or-review"
+        ],
+        "how": "A chat read and a prompt the host receives exactly once, per kind (conversation-decision stories); the host away said where the composer goes and a message held until it can be sent (leave-and-recover); the changes the host computed opened from the chat (attachment-or-review)."
+      },
+      {
+        "id": "asks",
+        "carried_by": [
+          "conversation-decision-claude-pty",
+          "conversation-decision-claude-sdk",
+          "conversation-decision-codex",
+          "accessibility",
+          "push-wake"
+        ],
+        "how": "A permission answered on the phone and the host and provider receiving exactly what was pressed, per kind (conversation-decision stories), at an accessibility size (accessibility) and after a push woke the app (push-wake). The other ask bodies are held by the chat's component snapshots."
+      },
+      {
+        "id": "review",
+        "carried_by": ["attachment-or-review"],
+        "how": "A patch the host computed read on the phone, a line selected and remarked on, and the review sent with the message; the host holds one prompt carrying the review."
+      },
+      {
+        "id": "writing",
+        "carried_by": ["attachment-or-review", "manage-agent", "leave-and-recover"],
+        "how": "A long paste standing in the sentence as one token and a review attached, one message the host receives once (attachment-or-review); an agent renamed, stopped and resumed from the chat's menu (manage-agent); a message written while the host is away held and delivered once (leave-and-recover)."
+      },
+      {
+        "id": "claude-sessions",
+        "carried_by": [
+          "manage-agent",
+          "conversation-decision-claude-sdk",
+          "conversation-decision-claude-pty"
+        ],
+        "how": "New Agent creates Claude on the machine and it answers (manage-agent); headless and terminal Claude sessions each open under their own identity and round-trip a prompt the host observes (conversation-decision stories)."
+      },
+      {
+        "id": "hosts-lifecycle",
+        "carried_by": ["leave-and-recover", "push-wake"],
+        "how": "A machine restarted underneath recovered with nobody pressing anything (leave-and-recover); put away, nothing is kept current but a pushed chat, and brought back every agent is listed again (push-wake)."
+      },
+      {
+        "id": "hosts",
+        "carried_by": [
+          "reach-host",
+          "local-network",
+          "manage-agent",
+          "keep-authority",
+          "leave-and-recover"
+        ],
+        "how": "The printed code reaching the machine's name and key before trust (reach-host); a pairing link handed over from outside the app (local-network); an agent started on the machine (manage-agent); a second account on its own profile that knows none of the first account's machines (keep-authority); a restart recovered from (leave-and-recover)."
+      },
+      {
+        "id": "accounts",
+        "carried_by": ["account-sign-in", "purchase-restore", "keep-authority"],
+        "how": "The hand-off to the account service and back signed in (account-sign-in); a purchase kept when amux.sh cannot confirm it and restored to the account (purchase-restore); a second account added on its own profile, signed out and back in (keep-authority)."
+      },
+      {
+        "id": "reports",
+        "carried_by": ["report"],
+        "how": "A screenshot's offer over the frozen frame, a note, a refusal in the account service's words, Retry sending the same report for a receipt, and the report read where it left the phone."
+      },
+      {
+        "id": "accessibility",
+        "carried_by": ["accessibility"],
+        "how": "A machine paired, a chat read and a permission answered with the app drawn at an accessibility text size it states itself; VoiceOver names and hit sizes are held by the accessibility audit."
+      },
+      {
+        "id": "production-startup",
+        "carried_by": ["account-sign-in"],
+        "how": "Signing in through the scripted account service starts the runtime at the relay the handed-over session names; after pairing, Hosts shows the machine and its agent answers."
+      },
+      {
+        "id": "free-tier",
+        "carried_by": ["purchase-restore"],
+        "how": "An account with nothing bought is refused a machine only the relay reaches; once amux.sh says it is subscribed, the link reads that again and the machine is reached through the relay."
+      },
+      {
+        "id": "signed-out",
+        "carried_by": ["reach-host", "leave-and-recover"],
+        "how": "Paired and reading a machine with no account anywhere (reach-host), and the machine going away and coming back with nobody pressing anything (leave-and-recover)."
+      },
+      {
+        "id": "profiles",
+        "carried_by": ["keep-authority"],
+        "how": "A second account on the phone is a profile of its own, with no machines and an empty fleet, beside the first; signing out keeps the account listed."
+      }
+    ]
+  }
 }

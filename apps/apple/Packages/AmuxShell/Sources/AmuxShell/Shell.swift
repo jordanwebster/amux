@@ -759,7 +759,9 @@ private struct PairConfirmationPage: View {
               asked.shouldAsk(stores.account)
         else { return }
         stores.pairing.open()
-        if stores.pair(link: invitation.link) { asked.asked(stores.account) }
+        if stores.pair(link: invitation.link, relayOnly: invitation.needsAnAccount) {
+            asked.asked(stores.account)
+        }
     }
 }
 

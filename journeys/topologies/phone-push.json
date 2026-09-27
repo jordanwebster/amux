@@ -1,0 +1,38 @@
+{
+  "scope": "phone-push",
+  "hosts": [
+    {"name": "desk", "lan": true, "bonjour": true}
+  ],
+  "agents": [
+    {
+      "name": "asker",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Get ready.",
+      "script": {"steps": [
+        {"text": {"chunks": ["Ready to deploy."]}},
+        "turn_end",
+        {"ask": {"permission": {
+          "name": "Bash",
+          "class": "consequential",
+          "input": {"command": "deploy --prod"},
+          "outcome": {"output": "deployed"}
+        }}},
+        {"text": {"chunks": ["Deployed to production."]}},
+        "turn_end"
+      ]}
+    },
+    {
+      "name": "bystander",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "prompt": "Get ready.",
+      "script": {"steps": [
+        {"text": {"chunks": ["Watching the logs."]}},
+        "turn_end",
+        {"text": {"chunks": ["The logs are quiet."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

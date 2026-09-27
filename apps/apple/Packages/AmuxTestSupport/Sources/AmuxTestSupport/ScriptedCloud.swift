@@ -232,7 +232,12 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         }
         await wait(state)
         switch state.purchase {
-        case .accepted: return
+        case .accepted:
+            // What the account service does with a purchase it takes: the
+            // account is entitled from then on, as bought in the App Store.
+            lock.withLock {
+                self.state.entitlement = .active(grant: .purchased(.appStore), renews: nil)
+            }
         case .refused(let reason): throw CloudError.refused(reason)
         case .offline: throw CloudError.network("offline")
         }

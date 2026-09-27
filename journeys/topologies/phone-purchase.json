@@ -1,0 +1,18 @@
+{
+  "scope": "phone-purchase",
+  "relay": {"accounts": [{"name": "ada", "tier": "free"}]},
+  "hosts": [
+    {"name": "desk", "account": "ada"}
+  ],
+  "agents": [
+    {
+      "name": "desk-work",
+      "host": "desk",
+      "kind": "claude_sdk",
+      "script": {"steps": [
+        {"text": {"chunks": ["Reached through the relay."]}},
+        "turn_end"
+      ]}
+    }
+  ]
+}

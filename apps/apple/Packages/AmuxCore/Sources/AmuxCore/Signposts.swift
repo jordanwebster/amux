@@ -50,6 +50,13 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     case transcriptCommit
     /// One display refresh the app asked for. An idle app asks for none.
     case idleTick
+    /// A push woke the app for the chat it names.
+    case pushWoke
+    /// The pushed chat caught up before the app was put away again.
+    case pushCurrent
+    /// The pushed chat was still behind when the wait for it ran out, or its
+    /// host is trusted by no profile on this phone.
+    case pushBehind
 }
 
 /// One emission: the signpost and when it happened.

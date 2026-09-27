@@ -301,18 +301,21 @@ class PhoneJourney:
 
     # --- the phone --------------------------------------------------------
 
-    def launch(self, *extra: str) -> None:
+    def launch(self, *extra: str, found: list[str] | None = None) -> None:
         """The debug app, installed fresh so no earlier run's identity or
         trust is on the phone, launched against this net."""
         simctl("terminate", self.udid, BUNDLE_ID, timeout=60) if self._running() else None
         subprocess.run(["xcrun", "simctl", "uninstall", self.udid, BUNDLE_ID], capture_output=True, timeout=120)
         simctl("install", self.udid, str(APP), timeout=300)
-        self.relaunch(*extra)
+        self.relaunch(*extra, found=found)
 
-    def relaunch(self, *extra: str) -> None:
-        """The same installation launched again, as a person reopens it."""
+    def relaunch(self, *extra: str, found: list[str] | None = None) -> None:
+        """The same installation launched again, as a person reopens it. Its
+        browser reports the machines named in `found`, every one of the net's
+        when nothing is said."""
         scope = self.topology.get("scope", "")
-        found = [host["host_id"] for host in self.ready["hosts"]]
+        if found is None:
+            found = [host["host_id"] for host in self.ready["hosts"]]
         self.port = free_port()
         arguments = launch_arguments(self.ready, scope, found, self.port) + list(extra)
         simctl("launch", "--terminate-running-process", self.udid, BUNDLE_ID, *arguments)

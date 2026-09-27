@@ -77,6 +77,12 @@ const REQUIRED_JOURNEYS: &[&str] = &[
     "manage-agent",
     "attachment-or-review",
     "keep-authority",
+    "account-sign-in",
+    "purchase-restore",
+    "report",
+    "accessibility",
+    "local-network",
+    "push-wake",
 ];
 
 fn check_journeys(manifest: &str) -> Result<(), Box<dyn Error>> {
