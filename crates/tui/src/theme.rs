@@ -436,11 +436,6 @@ impl Theme {
     // may paint from: naming a token here rather than a colour literal is
     // what makes a palette swap a data change and a token rename a compile
     // error. Every one of them has a caller.
-    /// The terminal background.
-    pub(crate) fn background(self) -> Style {
-        Style::default().bg(self.color(self.tokens.background))
-    }
-
     /// Body text.
     pub(crate) fn text(self) -> Style {
         Style::default().fg(self.color(self.tokens.text))
@@ -495,20 +490,10 @@ impl Theme {
         self.text().bg(self.color(self.tokens.panel))
     }
 
-    /// A header band: a filled strip across the page that names what is
-    /// under it. Loud enough to break a long document into parts, quiet
-    /// enough that the parts are still what a reader looks at.
-    pub(crate) fn panel_header(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.text))
-            .bg(self.color(self.tokens.panel))
-    }
-
-    /// Secondary words inside a header band.
-    pub(crate) fn panel_header_muted(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.muted))
-            .bg(self.color(self.tokens.panel))
+    /// The accent on the bare page: "needs you", an open ask's mark, the
+    /// composer's edge.
+    pub(crate) fn accent(self) -> Style {
+        Style::default().fg(self.color(self.tokens.accent))
     }
 
     /// The accent column down the left edge of a filled surface.
@@ -516,33 +501,6 @@ impl Theme {
         Style::default()
             .fg(self.color(self.tokens.accent))
             .bg(self.color(self.tokens.user_surface))
-    }
-
-    /// A rectangle someone drew on a captured screen. Only a build that
-    /// captures reports paints it.
-    pub(crate) fn mark(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.accent))
-            .bg(self.color(self.tokens.user_surface))
-            .add_modifier(Modifier::BOLD)
-    }
-
-    /// The cell the keyboard is pointing at while marking. It is the
-    /// inverse of [`Self::mark`] so that it reads as a cursor whether it
-    /// stands on plain screen or inside a rectangle already drawn.
-    pub(crate) fn mark_cursor(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.background))
-            .bg(self.color(self.tokens.accent))
-            .add_modifier(Modifier::BOLD)
-    }
-
-    /// The capture flow's prompt row, filled edge to edge so it reads as a
-    /// question about the screen rather than part of it.
-    pub(crate) fn report_prompt(self) -> Style {
-        Style::default()
-            .fg(self.color(self.tokens.text))
-            .bg(self.color(self.tokens.panel))
     }
 
     /// The bar marking the focused feed block.
@@ -576,23 +534,11 @@ impl Theme {
         Style::default().fg(self.color(self.tokens.diff_meta))
     }
 
-    /// The numbered diff gutter and the rules that run beside it. No
-    /// surface, so a gutter beside tinted rows is a margin of the page,
-    /// not a second column of a different colour.
-    pub(crate) fn gutter(self) -> Style {
-        Style::default().fg(self.color(self.tokens.gutter))
-    }
-
     /// Convert a rendered cell style into its semantic style-map class.
     pub fn classify(self, style: Style) -> char {
         let fg = style.fg;
         let bg = style.bg;
 
-        // The accent is a foreground everywhere else, so wearing it as a
-        // background is unambiguous — it is the marking cursor.
-        if bg == Some(self.color(self.tokens.accent)) {
-            return 'C';
-        }
         if fg == Some(self.color(self.tokens.accent))
             && bg == Some(self.color(self.tokens.user_surface))
         {
@@ -632,6 +578,7 @@ impl Theme {
         for (token, class) in [
             (self.tokens.muted, 'm'),
             (self.tokens.code, 'c'),
+            (self.tokens.accent, 'a'),
             (self.tokens.ok, 'o'),
             (self.tokens.warn, 'w'),
             (self.tokens.error, 'x'),
@@ -1323,34 +1270,20 @@ pub fn detect_color_mode(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
 
     use super::*;
-    use crate::fixtures::{NamedState, fixture};
-    use crate::{FrameContext, render};
+    use crate::fixtures::Named;
 
     const BASE16_SAMPLE: &str = include_str!("../tests/themes/base16-sample.yaml");
     const BASE24_SAMPLE: &str = include_str!("../tests/themes/base24-sample.yaml");
 
-    fn render_named(state: NamedState, theme: Theme) -> Buffer {
-        let fixture = fixture(state);
-        let backend = TestBackend::new(120, 40);
-        let mut terminal = Terminal::new(backend).expect("theme test terminal");
-        let context = FrameContext {
-            viewport: (120, 40),
-            theme,
-            now: fixture.now,
-        };
-        terminal
-            .draw(|frame| render(&fixture.model, &fixture.view, &context, frame))
-            .unwrap_or_else(|error| panic!("render {} theme proof: {error}", state.name()));
-        terminal.backend().buffer().clone()
+    fn render_named(state: Named, theme: Theme) -> Buffer {
+        state.render(theme)
     }
 
     fn render_claude_working(theme: Theme) -> Buffer {
-        render_named(NamedState::ClaudeWorking, theme)
+        render_named(Named::ClaudeWorking, theme)
     }
 
     #[test]
@@ -1373,7 +1306,6 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(theme.classify(Style::default()), '.');
         assert_eq!(theme.classify(theme.text()), '.');
-        assert_eq!(theme.classify(theme.background()), '.');
         assert_eq!(theme.classify(theme.muted()), 'm');
         assert_eq!(theme.classify(theme.emphasis()), 'e');
         assert_eq!(theme.classify(theme.italic()), 'i');
@@ -1389,7 +1321,7 @@ mod tests {
         assert_eq!(theme.classify(theme.diff_removed()), '-');
         assert_eq!(theme.classify(theme.diff_context()), '.');
         assert_eq!(theme.classify(theme.diff_meta()), 'M');
-        assert_eq!(theme.classify(theme.gutter()), 'G');
+        assert_eq!(theme.classify(theme.accent()), 'a');
     }
 
     #[test]
@@ -1822,9 +1754,9 @@ mod tests {
                 face => ansi_rgb(face),
             };
             for state in [
-                NamedState::ClaudeWorking,
-                NamedState::ClaudePermissionAsk,
-                NamedState::CodexApproval,
+                Named::ClaudeWorking,
+                Named::ClaudePermissionAsk,
+                Named::CodexApproval,
             ] {
                 let buffer = render_named(state, theme);
                 for cell in buffer.content() {

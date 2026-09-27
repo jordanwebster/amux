@@ -1,19 +1,17 @@
-//! Terminal markdown for assistant messages (`docs/CHAT.md` B2 scope):
-//! headings bold keeping their `#`, fenced code blocks, lists, inline
-//! emphasis/code, tables as preformatted blocks, URL-aware wrapping that
-//! never splits a link.
+//! Terminal markdown for agent replies: headings bold keeping their `#`,
+//! fenced code blocks, lists, inline emphasis/code, tables as preformatted
+//! blocks, URL-aware wrapping that never splits a link.
 //!
 //! Pure formatting: markdown source in, styled span rows out. Nothing here
-//! interprets content — the Model already decided everything (G2: views
-//! format, never decide). Wrapping is greedy by word; a word is never
-//! split unless it is longer than the whole line (URLs included — the
+//! interprets content. Wrapping is greedy by word; a word is never split unless it is longer than the whole line (URLs included — the
 //! unavoidable case), and code/table lines hard-wrap verbatim so their
 //! internal spacing survives.
 
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::render::{Theme, clip_to_width, str_width};
+use crate::text::{clip_to_width, str_width};
+use crate::theme::Theme;
 
 /// One styled run of text (pre-wrap).
 type Run = (String, Style);
@@ -43,7 +41,7 @@ pub(crate) fn markdown_rows(source: &str, width: usize, theme: Theme) -> Vec<Vec
             continue;
         }
         if trimmed.starts_with('|') {
-            // Markdown tables render as preformatted blocks in V1 (B2).
+            // Markdown tables render as preformatted blocks .
             rows.extend(hard_wrap(line, width, theme.text()));
             continue;
         }
@@ -60,24 +58,6 @@ pub(crate) fn markdown_rows(source: &str, width: usize, theme: Theme) -> Vec<Vec
             continue;
         }
         rows.extend(wrap_runs(&inline_runs(line, theme), width, 0));
-    }
-    rows
-}
-
-/// A paragraph of plain text (prompts, notices): newline-respecting,
-/// word-wrapped in one style.
-pub(crate) fn plain_rows(text: &str, width: usize, style: Style) -> Vec<Vec<Span<'static>>> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            rows.push(Vec::new());
-        } else {
-            rows.extend(wrap_runs(&[(line.to_string(), style)], width, 0));
-        }
-    }
-    if rows.is_empty() {
-        rows.push(Vec::new());
     }
     rows
 }
@@ -102,7 +82,7 @@ fn split_list_marker(line: &str) -> Option<(String, &str)> {
 }
 
 /// Inline `**bold**`, `*italic*`, and `` `code` `` runs; unmatched markers
-/// render literally. Deliberately single-level — B2's scope, nothing more.
+/// render literally. Deliberately single-level.
 fn inline_runs(text: &str, theme: Theme) -> Vec<Run> {
     let chars: Vec<char> = text.chars().collect();
     let mut runs: Vec<Run> = Vec::new();
@@ -155,7 +135,7 @@ fn find_pair(chars: &[char], from: usize) -> Option<usize> {
 }
 
 /// Greedy word wrap over styled runs. Words never split unless longer than
-/// a whole line — the URL-aware rule (B2): a link that fits any line is
+/// a whole line — the URL-aware rule: a link that fits any line is
 /// never broken. `hang` indents continuation rows (list items).
 fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span<'static>>> {
     let width = width.max(1);
@@ -345,11 +325,5 @@ mod tests {
     fn overlong_words_hard_split_as_the_last_resort() {
         let rows = markdown_rows("abcdefghij", 4, Theme::default());
         assert_eq!(text_of(&rows), vec!["abcd", "efgh", "ij"]);
-    }
-
-    #[test]
-    fn plain_rows_respect_newlines() {
-        let rows = plain_rows("one\n\ntwo three", 6, Style::default());
-        assert_eq!(text_of(&rows), vec!["one", "", "two", "three"]);
     }
 }

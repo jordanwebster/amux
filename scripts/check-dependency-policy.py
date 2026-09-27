@@ -32,7 +32,7 @@ ALLOWED_LOCAL = {
     # interpret only for the dump path's per-kind redactor: the one stated
     # exception to "the daemon interprets nothing".
     "node": {"agent-dir", "interpret", "journal", "settings", "store", "version-stamp", "wire"},
-    "amux": {"agent", "agent-dir", "claude", "node", "settings", "store", "wire"},
+    "amux": {"agent", "agent-dir", "claude", "client", "node", "settings", "store", "tui", "wire"},
     # The version stamp a release tool can rewrite in a built binary; the
     # xtask shares it without building the daemon.
     "version-stamp": set(),
@@ -43,6 +43,8 @@ ALLOWED_LOCAL = {
     "ui-state": {"model", "wire"},
     "ui-view": {"attachments", "ui-state", "wire"},
     "ui-runtime": {"client", "ui-state", "wire"},
+    # The terminal client composes the views over the drivers' state.
+    "tui": {"attachments", "client", "ui-runtime", "ui-state", "ui-view", "wire"},
     # Replays a dump bundle's three pure stages: facts through the
     # interpreter (the journal for comparison), records through the session
     # model, state through the views; and provider recordings for the

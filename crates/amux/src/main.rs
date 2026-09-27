@@ -8,6 +8,7 @@ mod profiles;
 mod server;
 mod setup;
 mod supervise;
+mod ui;
 mod verbs;
 
 use std::io::Read as _;
@@ -31,8 +32,9 @@ struct Cli {
     #[arg(long, global = true)]
     profile: Option<String>,
 
+    /// With none, the terminal client opens.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -182,7 +184,10 @@ enum Hooks {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match cli.command {
+    let Some(command) = cli.command else {
+        return report(open_ui(cli.config, cli.profile));
+    };
+    match command {
         Command::Agent { dir } => ExitCode::from(agent::main(dir).clamp(0, 255) as u8),
         Command::Hooks {
             provider: Hooks::Claude,
@@ -221,6 +226,16 @@ fn report(result: Result<()>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn open_ui(config_path: Option<PathBuf>, profile: Option<String>) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let config = connect::load_config(config_path.as_deref())?;
+        ui::run(&config, profile.as_deref()).await
+    })
 }
 
 fn run(command: Command, config_path: Option<PathBuf>, profile: Option<String>) -> Result<()> {

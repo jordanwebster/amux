@@ -1,73 +1,48 @@
 [package]
 name = "tui"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 license.workspace = true
-description = "amux chrome TUI: the fleet around raw attach"
+description = "amux terminal client: the fleet and the chat, composed from the view library"
 publish = false
 
 [features]
 default = []
-bundled = ["ui-runtime/bundled"]
+# Named frames over interpreter fixtures, for goldens and screenshots.
 fixtures = []
 
-# Rendering consumes pure UI state; the event loop uses ui-runtime for effects.
+# Views come from ui-view over the state ui-runtime's drivers keep; the TUI
+# owns layout, keys and ephemeral view state only.
 [dependencies]
+attachments = { workspace = true }
+client = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
-fold = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true, features = ["event-stream"] }
-tokio = { workspace = true }
-futures-util = { workspace = true }
-chrono = { workspace = true }
+ui-view = { workspace = true }
+wire = { workspace = true }
 anyhow = { workspace = true }
-tracing = { workspace = true }
-serde_json = { workspace = true }
-serde = { workspace = true }
-serde_yaml = { workspace = true }
-postcard = { workspace = true }
-thiserror = { workspace = true }
-base64 = "0.22"
 arboard = { workspace = true }
+base64 = "0.22"
+crossterm = { workspace = true, features = ["event-stream"] }
+futures-util = { workspace = true }
 png = { workspace = true }
+ratatui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 # Display-cell measurement for wrapping and border math — the same
 # versions ratatui itself renders with, so the two never disagree.
-unicode-width = "0.2"
 unicode-segmentation = "1"
-uuid = { workspace = true }
+unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
-gethostname = { workspace = true }
+async-trait = { workspace = true }
+interpret = { workspace = true }
+prost = { workspace = true }
 tempfile = { workspace = true }
-unicode-width = "0.2"
-vt100 = "0.15"
-
-[[test]]
-name = "backend_vocabulary"
-path = "tests/backend_vocabulary.rs"
-required-features = ["fixtures"]
-
-[[test]]
-name = "component_golden"
-path = "tests/component_golden.rs"
-required-features = ["fixtures"]
-
-[[test]]
-name = "perf"
-path = "tests/perf.rs"
-required-features = ["fixtures"]
-
-[[test]]
-name = "sdk_chat_golden"
-path = "tests/sdk_chat_golden.rs"
-required-features = ["fixtures"]
-
-[[test]]
-name = "switcher_frames"
-path = "tests/switcher_frames.rs"
-required-features = ["fixtures"]

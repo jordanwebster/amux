@@ -1,0 +1,223 @@
+//! Sessions built from the interpreter's recorded fixtures, committed the
+//! way the owning daemon commits them, and frames drawn from them: what
+//! the TUI's tests look at.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use interpret::claude_pty::ClaudePty;
+use interpret::claude_sdk::ClaudeSdk;
+use interpret::codex::Codex;
+use interpret::{Replayed, replay};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ui_state::{InputOutcome, Msg, SessionState};
+use wire::{Kind, SessionEvent, session_event};
+
+use crate::chat::ChatView;
+use crate::theme::Theme;
+
+/// Commits interpreter steps the way the owning daemon does: an order once
+/// per new key, a revision per record.
+#[derive(Clone, Default)]
+pub struct Committer {
+    pub revision: u64,
+    next_order: u64,
+    orders: HashMap<String, u64>,
+    revisions: HashMap<String, u64>,
+}
+
+impl Committer {
+    pub fn commit(&mut self, step: &wire::Step) -> Vec<SessionEvent> {
+        let event = |of| SessionEvent { of: Some(of) };
+        let mut out = Vec::new();
+        for item in &step.items {
+            self.revision += 1;
+            let order = *self.orders.entry(item.key.clone()).or_insert_with(|| {
+                self.next_order += 1;
+                self.next_order
+            });
+            self.revisions.insert(item.key.clone(), self.revision);
+            let mut item = item.clone();
+            item.order = order;
+            item.revision = self.revision;
+            out.push(event(session_event::Of::Item(item)));
+        }
+        for append in &step.appends {
+            self.revision += 1;
+            let base = self
+                .revisions
+                .insert(append.key.clone(), self.revision)
+                .unwrap_or(0);
+            let mut append = append.clone();
+            append.base_revision = base;
+            append.revision = self.revision;
+            out.push(event(session_event::Of::Append(append)));
+        }
+        if let Some(snapshot) = &step.snapshot {
+            self.revision += 1;
+            let mut snapshot = snapshot.clone();
+            snapshot.revision = self.revision;
+            out.push(event(session_event::Of::Snapshot(snapshot)));
+        }
+        out
+    }
+}
+
+pub fn agent(kind: Kind) -> wire::Agent {
+    wire::Agent {
+        agent_id: b"agent".to_vec(),
+        host_id: b"host".to_vec(),
+        kind: kind as i32,
+        name: Some("worker".into()),
+        lifecycle: wire::Lifecycle::Live as i32,
+        phase: wire::Phase::Idle as i32,
+        incarnation: 1,
+        ..wire::Agent::default()
+    }
+}
+
+pub fn caught_up(revision: u64) -> Msg {
+    Msg::Event(SessionEvent {
+        of: Some(session_event::Of::CaughtUp(wire::CaughtUp { revision })),
+    })
+}
+
+/// The session after each frame of one fixture, with its label and the
+/// newest item time: caught up after the first frame, as a live chat is.
+pub fn frames(kind: Kind, name: &str) -> Vec<(String, SessionState, i64)> {
+    let dir = match kind {
+        Kind::ClaudePty => "claude_pty",
+        Kind::ClaudeSdk => "claude_sdk",
+        _ => "codex",
+    };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../interpret/fixtures")
+        .join(dir)
+        .join(format!("{name}.json"));
+    let replayed: Vec<Replayed> = match kind {
+        Kind::ClaudePty => replay::<ClaudePty>(&path),
+        Kind::ClaudeSdk => replay::<ClaudeSdk>(&path),
+        _ => replay::<Codex>(&path),
+    }
+    .unwrap_or_else(|error| panic!("{dir}/{name}: {error}"));
+    let mut state = SessionState::new(agent(kind));
+    state.update(Msg::Connection(ui_state::Connection::Live));
+    let mut committer = Committer::default();
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (index, frame) in replayed.iter().enumerate() {
+        if let Some(input) = &frame.input {
+            state.update(Msg::Send(input.clone()));
+        }
+        for (id, verdict) in &frame.replies {
+            state.update(Msg::Sent(id.clone(), InputOutcome::Reply(verdict.clone())));
+        }
+        for event in committer.commit(&frame.step) {
+            state.update(Msg::Event(event));
+        }
+        if index == 0 {
+            state.update(caught_up(committer.revision));
+        }
+        at = frame
+            .step
+            .items
+            .iter()
+            .map(|item| item.at_ms)
+            .max()
+            .unwrap_or(at)
+            .max(at);
+        out.push((frame.label.clone(), state.clone(), at));
+    }
+    out
+}
+
+/// The first frame of a fixture where `pred` holds.
+pub fn frame_where(
+    kind: Kind,
+    name: &str,
+    pred: impl Fn(&SessionState) -> bool,
+) -> (SessionState, i64) {
+    frames(kind, name)
+        .into_iter()
+        .find(|(_, state, _)| pred(state))
+        .map(|(_, state, at)| (state, at))
+        .unwrap_or_else(|| panic!("{name}: no frame matches"))
+}
+
+/// A chat drawn at `width`x`height`.
+pub fn draw(
+    view: &mut ChatView,
+    state: &SessionState,
+    now_ms: i64,
+    width: u16,
+    height: u16,
+    theme: Theme,
+) -> (Buffer, Option<u32>) {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+    let mut page = None;
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            page = view.draw(frame, area, state, None, None, now_ms, theme);
+        })
+        .expect("draw");
+    (terminal.backend().buffer().clone(), page)
+}
+
+/// The buffer's text, one line per row, trailing blanks trimmed.
+pub fn text(buffer: &Buffer) -> String {
+    let area = buffer.area;
+    let mut out = String::new();
+    for y in 0..area.height {
+        let mut line = String::new();
+        for x in 0..area.width {
+            line.push_str(buffer[(x, y)].symbol());
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+/// The three frames every theme is held to: a turn at work, a permission
+/// ask, and a Codex approval.
+#[derive(Clone, Copy, Debug)]
+pub enum Named {
+    ClaudeWorking,
+    ClaudePermissionAsk,
+    CodexApproval,
+}
+
+impl Named {
+    pub fn name(self) -> &'static str {
+        match self {
+            Named::ClaudeWorking => "claude working",
+            Named::ClaudePermissionAsk => "claude permission ask",
+            Named::CodexApproval => "codex approval",
+        }
+    }
+
+    pub fn state(self) -> (SessionState, i64) {
+        match self {
+            Named::ClaudeWorking => frame_where(Kind::ClaudeSdk, "recorded_multi_turn", |state| {
+                state.phase() == ui_state::PhaseView::Working && state.transcript().len() > 2
+            }),
+            Named::ClaudePermissionAsk => {
+                frame_where(Kind::ClaudeSdk, "recorded_permission_callback", |state| {
+                    ui_view::ask_card(state).is_some()
+                })
+            }
+            Named::CodexApproval => frame_where(Kind::Codex, "recorded_approval_scopes", |state| {
+                ui_view::ask_card(state).is_some()
+            }),
+        }
+    }
+
+    pub fn render(self, theme: Theme) -> Buffer {
+        let (state, at) = self.state();
+        let mut view = ChatView::new(b"agent".to_vec(), at, false);
+        draw(&mut view, &state, at, 120, 40, theme).0
+    }
+}

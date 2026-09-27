@@ -1,3 +1,28 @@
+2026-09-27 — **The terminal client is rebuilt on the view library.**
+`crates/tui` is back in the workspace as a thin client over `ui-runtime`'s
+drivers: the fleet composes `fleet_list`, the chat composes `chat_rows`,
+`ask_card`, `session_strip`, the queue and outbox rows and
+`composer_tokens`, and the TUI owns only layout, keys and view state (the
+anchor, an expansion set keyed by item keys, the focused row, the draft, the
+card's picks). Each frame lays rows out from the anchor at the known width
+until the feed is full; fewer than a page of drawable held rows above the
+screen asks for an older page, and a collapsed run open below at the top
+asks for a page the run's size. The ask card draws every body variant with
+Stop (the Interrupt input) in its menu, notes for choices that take one,
+question steps with a review, form fields, and the unanswerable escape with
+Stop and the agent's own terminal. The composer takes a draft any time,
+sends only when caught up and live, attaches clipboard files and images
+through PutBlob, turns into Resume with the draft when the entry says
+exited, and lists queued prompts (send now, withdraw) and this client's
+unconfirmed or rejected ones (resend, discard, edit). Detached keeps the
+rows and says the host is away; a Reset keeps the rows until the swap, then
+shows the newest. The hosts overlay lists trusted hosts and candidates from
+the inventory. The old per-kind chat renderers, fold-based rows, grouping,
+remote terminal view, review page, report capture and screen replay are
+deleted. Bare `amux` opens the TUI on the selected profile. In ui-view, a
+run's expansion is decided from the expansion set instead of by walking the
+run.
+
 2026-09-27 — **The client's dump part carries structure, not content.**
 A session's and the fleet's part of a dump bundle used to be the Debug
 text of their model and trace, which held every item's text and body, the

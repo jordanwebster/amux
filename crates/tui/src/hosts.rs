@@ -1,118 +1,123 @@
-//! Host captions and the fleet's host inventory overlay.
+//! The hosts overlay: every trusted host whatever its presence, and every
+//! candidate discovery currently sees, straight from the inventory.
 
 use ratatui::text::{Line, Span};
-use ui_state::{HostEntry, HostTrustStatus, HostVia, Model};
+use ui_state::FleetState;
+use wire::{HostEntry, HostVia, Presence, Trust};
 
-use crate::render::{clip_to_width, push_span};
+use crate::text::push;
 use crate::theme::Theme;
 
-const LABEL_COL: usize = 4;
-const ROUTE_COL: usize = 32;
+const ROUTE_COL: usize = 28;
 
-/// The route wording shared by fleet rows and the host inventory.
-pub(crate) fn host_caption(model: &Model, entry: &HostEntry) -> String {
-    let route = route_label(model, entry);
-    let binding = if matches!(route, "offline" | "relay") && entry.signed_in == Some(false) {
-        ", not signed in"
-    } else {
-        ""
-    };
-    format!("{} ·{route}{binding}", entry.name)
-}
-
-fn route_label<'a>(model: &Model, entry: &'a HostEntry) -> &'a str {
-    match entry.via {
+fn route(entry: &HostEntry) -> &'static str {
+    match entry.via() {
         HostVia::Direct => "direct",
-        HostVia::Relay if model.host_is_away(entry.id) && entry.signed_in != Some(false) => "away",
         HostVia::Relay => "relay",
         HostVia::Ssh => "ssh",
-        HostVia::Offline => "offline",
+        HostVia::Unspecified => "",
     }
 }
 
-/// Every trusted host and every currently visible pairing candidate.
-pub(crate) fn hosts_overlay_lines(model: &Model, width: u16, theme: Theme) -> Vec<Line<'static>> {
-    let mut hosts = model.hosts().map(|state| &state.entry).collect::<Vec<_>>();
-    hosts.sort_unstable_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then(left.id.cmp(&right.id))
-    });
-
-    let mut lines = vec![line_at(
-        LABEL_COL,
-        "hosts".to_string(),
-        theme.emphasis(),
-        theme,
-    )];
-    lines.push(Line::from(Span::styled("│", theme.muted())));
-    if hosts.is_empty() {
-        lines.push(line_at(
-            LABEL_COL,
-            "no hosts known".to_string(),
-            theme.muted(),
-            theme,
-        ));
-        return lines;
+/// How a trusted host is reached now, in words.
+pub fn caption(entry: &HostEntry) -> String {
+    let mut parts = vec![match entry.presence() {
+        Presence::Online => "online".to_owned(),
+        Presence::Away => "away".to_owned(),
+        Presence::Offline => "offline".to_owned(),
+        Presence::Unspecified => "unknown".to_owned(),
+    }];
+    let via = route(entry);
+    if entry.presence() == Presence::Online && !via.is_empty() {
+        parts.push(via.to_owned());
     }
-
-    let content_width = usize::from(width).saturating_sub(ROUTE_COL + 2);
-    for entry in hosts {
-        let mut line = Line::from(Span::styled("│", theme.muted()));
-        push_span(
-            &mut line,
-            LABEL_COL,
-            clip_to_width(&entry.name, ROUTE_COL - LABEL_COL - 2).to_string(),
-            match entry.trust_status {
-                HostTrustStatus::Trusted => theme.text(),
-                HostTrustStatus::UntrustedButOnline => theme.muted(),
-            },
-        );
-        let detail = match entry.trust_status {
-            HostTrustStatus::Trusted => {
-                let caption = host_caption(model, entry);
-                caption
-                    .strip_prefix(&entry.name)
-                    .unwrap_or(&caption)
-                    .trim_start()
-                    .to_string()
-            }
-            HostTrustStatus::UntrustedButOnline => format!(
-                "{} · run amux pair {}",
-                match entry.via {
-                    HostVia::Direct => "found",
-                    HostVia::Relay => "seen through relay",
-                    HostVia::Ssh => "seen over SSH",
-                    HostVia::Offline => "offline",
-                },
-                shell_target(&entry.name)
-            ),
-        };
-        push_span(
-            &mut line,
-            ROUTE_COL,
-            clip_to_width(&detail, content_width).to_string(),
-            theme.muted(),
-        );
-        lines.push(line);
+    if entry.signed_in == Some(false) {
+        parts.push("not signed in".into());
     }
-    lines
-}
-
-fn line_at(col: usize, text: String, style: ratatui::style::Style, theme: Theme) -> Line<'static> {
-    let mut line = Line::from(Span::styled("│", theme.muted()));
-    push_span(&mut line, col, text, style);
-    line
+    if let Some(error) = entry.last_dial_error.as_ref().filter(|e| !e.is_empty()) {
+        parts.push(error.clone());
+    }
+    parts.join(" · ")
 }
 
 fn shell_target(target: &str) -> String {
     if target
         .chars()
-        .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
     {
-        target.to_string()
+        target.to_owned()
     } else {
         format!("'{}'", target.replace('\'', "'\\''"))
     }
+}
+
+pub fn overlay_lines(fleet: &FleetState, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut hosts: Vec<&HostEntry> = fleet.hosts().collect();
+    hosts.sort_by(|a, b| {
+        (a.trust() != Trust::Trusted)
+            .cmp(&(b.trust() != Trust::Trusted))
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then(a.host_id.cmp(&b.host_id))
+    });
+    let mut lines = vec![
+        Line::from(Span::styled("  Hosts", theme.emphasis())),
+        Line::default(),
+    ];
+    if hosts.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    No hosts known",
+            theme.muted(),
+        )));
+    }
+    let mut candidates = false;
+    for entry in hosts {
+        let trusted = entry.trust() == Trust::Trusted;
+        if !trusted && !candidates {
+            candidates = true;
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                "  Found nearby, not paired",
+                theme.muted(),
+            )));
+        }
+        let mut line = Line::from(Span::raw("    "));
+        let glyph = match (trusted, entry.presence()) {
+            (true, Presence::Online) => ("● ", theme.ok()),
+            (true, _) => ("○ ", theme.muted()),
+            (false, _) => ("+ ", theme.muted()),
+        };
+        push(&mut line, glyph.0, glyph.1, width);
+        let name = if entry.name.is_empty() {
+            "unnamed host"
+        } else {
+            &entry.name
+        };
+        push(
+            &mut line,
+            name,
+            if trusted { theme.text() } else { theme.muted() },
+            ROUTE_COL,
+        );
+        let used = crate::text::line_width(&line);
+        if used < ROUTE_COL {
+            line.spans.push(Span::raw(" ".repeat(ROUTE_COL - used)));
+        } else {
+            line.spans.push(Span::raw("  "));
+        }
+        let detail = if trusted {
+            caption(entry)
+        } else {
+            let mut words = String::from("found");
+            if let Some(platform) = entry.platform.as_ref().filter(|p| !p.is_empty()) {
+                words.push_str(&format!(" · {platform}"));
+            }
+            words.push_str(&format!(" · amux pair {}", shell_target(name)));
+            words
+        };
+        push(&mut line, detail, theme.muted(), width);
+        lines.push(line);
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled("  esc close", theme.muted())));
+    lines
 }

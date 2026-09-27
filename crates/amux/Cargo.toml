@@ -19,6 +19,7 @@ agent = { workspace = true }
 agent-dir = { workspace = true }
 anyhow = { workspace = true }
 claude = { workspace = true }
+client = { workspace = true }
 clap = { workspace = true }
 hyper-util = { workspace = true }
 node = { workspace = true }
@@ -30,6 +31,7 @@ tonic = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tui = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }
 

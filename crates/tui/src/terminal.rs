@@ -4,7 +4,7 @@
 //! Restore is RAII-backed with a process-global panic hook that restores
 //! before reporting — guaranteed on orderly exits, best-effort on unwind,
 //! and nothing survives SIGKILL. The byte-emitting halves are generic over
-//! `Write` so the tier-3 vt100 harness can assert the exact sequences.
+//! `Write` so a test can assert the exact sequences.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,11 +43,6 @@ static KITTY_SUPPORTED: OnceLock<bool> = OnceLock::new();
 /// stacks, so the pop must happen before leaving the alternate screen.
 static KITTY_PUSHED: AtomicBool = AtomicBool::new(false);
 
-/// The probe result, once a chrome session has run; false before.
-pub(crate) fn kitty_active() -> bool {
-    KITTY_SUPPORTED.get().copied().unwrap_or(false)
-}
-
 /// Bytes that put the terminal into chrome mode (alternate screen, hidden
 /// cursor, bracketed paste, and mouse capture. Bracketed paste prevents a
 /// pasted CR from submitting a partial prompt; mouse capture lets the
@@ -69,8 +64,7 @@ pub fn write_enter_chrome(out: &mut impl Write) -> io::Result<()> {
 /// Focus reporting and the style reset are more than the chrome itself
 /// sets: the same bytes put the terminal back after a raw passthrough,
 /// where the agent may have switched on anything. Every exit path —
-/// orderly, error, panic, signal — must emit these (the terminal-hygiene
-/// set, `docs/UI.md`).
+/// orderly, error, panic, signal — must emit these.
 pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
     crossterm::execute!(
         out,
@@ -145,10 +139,6 @@ pub fn install_panic_hook() {
             if CHROME_OWNS_TERMINAL.swap(false, Ordering::SeqCst) {
                 restore_now();
             }
-            // Best-effort Msg recording, deliberately AFTER restore: a report
-            // is worthless if writing it delays putting the terminal back
-            // and the report lands on a vanishing alternate screen.
-            ui_runtime::write_panic_report(&info.to_string());
             previous(info);
         }));
     });
@@ -168,8 +158,7 @@ impl TerminalGuard {
             return Err(error);
         }
         CHROME_OWNS_TERMINAL.store(true, Ordering::SeqCst);
-        // Kitty keyboard protocol, feature-detected (CHAT.md
-        // §Keybindings' kitty tier): probe once per process — the query
+        // Kitty keyboard protocol, feature-detected: probe once per process — the query
         // needs raw mode and rides crossterm's internal event reader —
         // then push the disambiguate flag each session so Ctrl+Enter and
         // Shift+Enter arrive distinguishable. Pushed on the alternate

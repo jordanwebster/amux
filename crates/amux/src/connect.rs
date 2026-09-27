@@ -137,16 +137,21 @@ pub async fn select(
         })
 }
 
+/// The client socket of the selected profile.
+pub async fn client_socket(config: &InstallationConfig, profile: Option<&str>) -> Result<PathBuf> {
+    let door = front_door(config).await?;
+    let selected = select(&mut profiles(door), profile).await?;
+    Ok(PathBuf::from(&selected.socket_path))
+}
+
 /// The client service of the selected profile.
 pub async fn client(
     config: &InstallationConfig,
     profile: Option<&str>,
 ) -> Result<ClientServiceClient<Channel>> {
-    let door = front_door(config).await?;
-    let selected = select(&mut profiles(door), profile).await?;
-    let socket = PathBuf::from(&selected.socket_path);
+    let socket = client_socket(config, profile).await?;
     let channel = channel(&socket)
         .await
-        .with_context(|| format!("connecting to profile {}", selected.label))?;
+        .with_context(|| format!("connecting to {}", socket.display()))?;
     Ok(wire::client_service_client(channel))
 }

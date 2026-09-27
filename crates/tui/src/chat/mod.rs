@@ -1,2507 +1,1013 @@
-//! Structured chat dispatch. The outer view owns exactly one native
-//! per-agent view; Claude and Codex keep their content, panels, and key
-//! semantics separate while sharing only proven terminal renderers.
+//! One open chat: the client's view state over a session, the keys that
+//! act on it, and the frame it draws.
+//!
+//! Everything here is ephemeral and the client's own: the anchor, the
+//! expansion set keyed by item keys, the focused row, the draft, the ask
+//! card's picks. Keys turn into [`ChatEffect`]s the event loop carries out
+//! against the session; nothing in this module does I/O.
 
-pub(crate) mod attach;
-pub(crate) mod attachments;
-pub(crate) mod blocks;
-pub(crate) mod claude;
-pub(crate) mod claude_sdk;
-pub(crate) mod claude_shared;
-mod codex;
-pub mod diff;
-pub(crate) mod frame;
-pub(crate) mod inline;
-mod queue;
-pub(crate) mod viewport;
+pub mod ask;
+pub mod composer;
+pub mod layout;
+pub mod rows;
 
-use std::cell::RefCell;
+use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
-pub use frame::PaintStats;
-use frame::{
-    CacheView, ChatFrameParts, ChatGeometry, FeedMetrics, FrameSpacing, PaintCache, PaintInputs,
-    PaintedBlock, compose_chat_frame, feed_metrics,
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::Frame as Paint;
+use ratatui::layout::{Position, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+use ui_state::{ActivityKind, Composer, Key, PhaseView, SessionState, Waiting};
+use ui_view::{
+    AskCard, CardState, ChatOptions, FamilyHeader, OutboxState, RowKind, ToolRows, ask_card,
+    chat_rows_for, composer, outbox_rows, queue_rows, session_strip,
 };
-use ratatui::text::Line;
-use serde::{Deserialize, Serialize};
-use ui_state::{
-    AgentId, AgentMessagePresentation, AgentMessageSender, Boundary, ChatState, Command,
-    FamilyNeed, Model, OpId, StructuredProtocol, Why, WindowItem, behind, message_digest,
-};
-use viewport::{FeedViewport, apply_scroll, move_focus, toggle_focused_run};
+use wire::{Attachment, attachment};
 
+use self::ask::{AskAction, AskUi};
+use self::composer::{
+    COMPOSER_LINES, TrayRow, activity_line, editor_lines, foot_cards, placeholder, strip_line,
+};
+use self::layout::{Anchor, Frame, Laid};
 use crate::clipboard::ClipboardContent;
-use crate::composer::Composer;
-use crate::render::{FrameContext, Theme};
-use crate::view::{QuitGuard, UiAction};
+use crate::editor::{Edit, Editor};
+use crate::text::{self, push, push_right};
+use crate::theme::Theme;
 
-/// Feed scroll state shared because both native screens have the same
-/// sticky-bottom terminal interaction, not because their feed entries share
-/// a representation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FeedScroll {
-    Following,
-    Paused {
-        top_line: usize,
-        entry_watermark: u64,
+/// How long an empty chat waits before saying it is loading.
+pub const LOADING_HINT_MS: i64 = 300;
+/// Feed lines one wheel notch scrolls.
+const WHEEL_LINES: isize = 3;
+
+/// What a key asks the event loop to do with the session.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChatEffect {
+    Prompt {
+        text: String,
+        attachments: Vec<Attachment>,
     },
+    /// The exited composer's one act: the draft is the new incarnation's
+    /// first prompt.
+    Resume {
+        text: String,
+        attachments: Vec<Attachment>,
+    },
+    Answer(wire::Input),
+    /// Stop: ends the turn; the agent stays live.
+    Interrupt,
+    /// Takes a queued prompt back; its words return to the composer.
+    Withdraw {
+        id: Vec<u8>,
+        text: String,
+        attachments: Vec<Attachment>,
+    },
+    SendNow {
+        id: Vec<u8>,
+    },
+    /// Sends an unconfirmed input again under a new id.
+    Resend {
+        id: Vec<u8>,
+    },
+    Discard {
+        id: Vec<u8>,
+    },
+    Page(u32),
+    /// Ctrl+V: read the clipboard and attach what it holds.
+    Paste,
+    /// Store these bytes and attach them at the cursor.
+    Attach {
+        name: String,
+        mime: String,
+        bytes: Vec<u8>,
+    },
+    Copy(String),
+    /// Hand the terminal to the agent's own interface.
+    RawAttach,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum AgentChatView {
-    Claude(claude::View),
-    ClaudeSdk(claude_sdk::View),
-    Codex(codex::View),
+/// A full-screen reader over a diff, a plan or arguments.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reader {
+    pub title: String,
+    pub text: String,
+    pub scroll: usize,
 }
 
-#[derive(Clone, Debug)]
-struct CachedFeedMetrics {
-    viewport: (u16, u16),
-    metrics: FeedMetrics,
-    blocks: Vec<PaintedBlock>,
-    following_geometry: ChatGeometry,
-    paused_geometry: ChatGeometry,
-}
-
-impl CachedFeedMetrics {
-    fn geometry(&self, paused: bool) -> ChatGeometry {
-        if paused {
-            self.paused_geometry
-        } else {
-            self.following_geometry
-        }
-    }
-}
-
-/// Renderer-local state for one structured chat. Native sub-state remains
-/// namespaced; dispatch is exhaustive at this one additive seam.
-#[derive(Debug, Serialize, Deserialize)]
+/// The client's state for one open chat.
+#[derive(Debug)]
 pub struct ChatView {
-    pub agent: AgentId,
-    pub(crate) viewport: FeedViewport,
-    inner: AgentChatView,
-    /// Metrics from the adapter blocks painted for the latest frame. Key
-    /// handling consumes this instead of walking and painting the feed a
-    /// second time merely to discover its scroll bounds.
-    ///
-    /// Skipped by serde like the paint cache below: both are derived from
-    /// the last paint, so a deserialized chat rebuilds them on its next
-    /// draw rather than carrying a frame's worth of geometry around. A
-    /// chat restored from bytes must therefore be drawn before its keys
-    /// are handled, exactly as a freshly opened one must.
-    #[serde(skip)]
-    feed_metrics: RefCell<Option<CachedFeedMetrics>>,
-    #[serde(skip)]
-    paint_cache: RefCell<PaintCache>,
-}
-
-impl Clone for ChatView {
-    fn clone(&self) -> Self {
-        Self {
-            agent: self.agent,
-            viewport: self.viewport.clone(),
-            inner: self.inner.clone(),
-            feed_metrics: RefCell::new(None),
-            paint_cache: RefCell::new(PaintCache::default()),
-        }
-    }
-}
-
-fn frame_parts(
-    model: &Model,
-    chat: &ChatView,
-    cache: &mut PaintCache,
-    ctx: &FrameContext,
-) -> ChatFrameParts {
-    match &chat.inner {
-        AgentChatView::Claude(view) => {
-            claude::claude_frame_parts(model, view, &chat.viewport, cache, ctx)
-        }
-        AgentChatView::ClaudeSdk(view) => {
-            claude_sdk::claude_sdk_frame_parts(model, view, &chat.viewport, cache, ctx)
-        }
-        AgentChatView::Codex(view) => {
-            codex::codex_frame_parts(model, view, &chat.viewport, cache, ctx)
-        }
-    }
+    pub agent_id: Vec<u8>,
+    pub anchor: Anchor,
+    pub expanded: HashSet<Key>,
+    pub focus: Option<Key>,
+    pub editor: Editor,
+    pub ask: AskUi,
+    /// The selected tray row while the tray has the keys.
+    pub tray: Option<usize>,
+    pub reader: Option<Reader>,
+    /// Whether the agent's own interface can be attached from here.
+    pub attach: bool,
+    epoch: u64,
+    opened_at_ms: i64,
+    /// The last frame's layout, for scrolling and focus.
+    laid: Laid,
+    feed: (usize, usize),
+    /// Rows arrived below while the reader was scrolled back.
+    new_below: bool,
+    seen_head: Option<u64>,
+    page_asked: Option<u64>,
 }
 
 impl ChatView {
-    /// Set expansion for a folded exploration run in this view instance.
-    ///
-    /// The identifier comes from the first canonical store entry in the run.
-    /// Keeping this operation on the view prevents fixture and client code
-    /// from depending on the renderer's private viewport representation.
-    #[doc(hidden)]
-    pub fn set_exploration_run_expanded(&mut self, run_id: u64, expanded: bool) {
-        let run = blocks::RunKey(run_id);
-        if expanded {
-            self.viewport.expanded.insert(run);
-        } else {
-            self.viewport.expanded.remove(&run);
-        }
-        self.feed_metrics.replace(None);
-        self.paint_cache.replace(PaintCache::default());
-    }
-
-    pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
-        let protocol = model.agent(agent)?.structured_protocol()?;
-        let inner = match protocol {
-            StructuredProtocol::ClaudePtyTranscript => {
-                AgentChatView::Claude(claude::View::open(agent, leader, kitty))
-            }
-            StructuredProtocol::Codex => {
-                AgentChatView::Codex(codex::View::open(agent, leader, kitty))
-            }
-            StructuredProtocol::ClaudeSdk => {
-                AgentChatView::ClaudeSdk(claude_sdk::View::open(agent, leader, kitty))
-            }
-        };
-        Some(Self {
-            agent,
-            viewport: FeedViewport::following(),
-            inner,
-            feed_metrics: RefCell::new(None),
-            paint_cache: RefCell::new(PaintCache::default()),
-        })
-    }
-
-    /// Whether the last paint's feed metrics are still cached. The
-    /// serde round-trip tests read it to prove the caches stay behind.
-    #[cfg(test)]
-    pub(crate) fn has_cached_metrics(&self) -> bool {
-        self.feed_metrics.borrow().is_some()
-    }
-
-    /// Deterministic constructors used by pure golden fixtures.
-    pub fn open_claude(agent: AgentId, leader: char, kitty: bool) -> Self {
-        Self {
-            agent,
-            viewport: FeedViewport::following(),
-            inner: AgentChatView::Claude(claude::View::open(agent, leader, kitty)),
-            feed_metrics: RefCell::new(None),
-            paint_cache: RefCell::new(PaintCache::default()),
+    pub fn new(agent_id: Vec<u8>, now_ms: i64, attach: bool) -> ChatView {
+        ChatView {
+            agent_id,
+            anchor: Anchor::Bottom,
+            expanded: HashSet::new(),
+            focus: None,
+            editor: Editor::default(),
+            ask: AskUi::default(),
+            tray: None,
+            reader: None,
+            attach,
+            epoch: 0,
+            opened_at_ms: now_ms,
+            laid: Laid::default(),
+            feed: (0, 0),
+            new_below: false,
+            seen_head: None,
+            page_asked: None,
         }
     }
 
-    pub fn open_codex(agent: AgentId, leader: char, kitty: bool) -> Self {
-        Self {
-            agent,
-            viewport: FeedViewport::following(),
-            inner: AgentChatView::Codex(codex::View::open(agent, leader, kitty)),
-            feed_metrics: RefCell::new(None),
-            paint_cache: RefCell::new(PaintCache::default()),
+    fn frame<'a>(&'a self, theme: Theme) -> Frame<'a> {
+        Frame {
+            anchor: &self.anchor,
+            expanded: &self.expanded,
+            focus: self.focus.as_ref(),
+            width: self.feed.0,
+            height: self.feed.1,
+            theme,
         }
     }
 
-    pub fn open_claude_sdk(agent: AgentId, leader: char, kitty: bool) -> Self {
-        Self {
-            agent,
-            viewport: FeedViewport::following(),
-            inner: AgentChatView::ClaudeSdk(claude_sdk::View::open(agent, leader, kitty)),
-            feed_metrics: RefCell::new(None),
-            paint_cache: RefCell::new(PaintCache::default()),
-        }
+    /// The card to draw, synced with this client's picks.
+    fn card(&mut self, state: &SessionState) -> Option<AskCard> {
+        let card = ask_card(state)?;
+        self.ask.sync(&card);
+        Some(card)
     }
 
-    pub fn composer_mut(&mut self) -> &mut Composer {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => &mut view.composer,
-            AgentChatView::Codex(view) => &mut view.composer,
-            AgentChatView::ClaudeSdk(view) => &mut view.composer,
-        }
+    fn tray_rows(state: &SessionState) -> Vec<TrayRow> {
+        let mut rows: Vec<TrayRow> = queue_rows(state).into_iter().map(TrayRow::Queued).collect();
+        rows.extend(outbox_rows(state).into_iter().map(TrayRow::Outbox));
+        rows
     }
 
-    pub fn quit_guard(&self) -> &QuitGuard {
-        match &self.inner {
-            AgentChatView::Claude(view) => &view.quit_guard,
-            AgentChatView::Codex(view) => &view.quit_guard,
-            AgentChatView::ClaudeSdk(view) => &view.quit_guard,
-        }
-    }
-
-    pub fn quit_guard_mut(&mut self) -> &mut QuitGuard {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => &mut view.quit_guard,
-            AgentChatView::Codex(view) => &mut view.quit_guard,
-            AgentChatView::ClaudeSdk(view) => &mut view.quit_guard,
-        }
-    }
-
-    pub fn set_help(&mut self, help: bool) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.help = help,
-            AgentChatView::Codex(view) => view.help = help,
-            AgentChatView::ClaudeSdk(view) => view.help = help,
-        }
-    }
-
-    pub fn set_kitty(&mut self, kitty: bool) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.kitty = kitty,
-            AgentChatView::Codex(view) => view.kitty = kitty,
-            AgentChatView::ClaudeSdk(view) => view.kitty = kitty,
-        }
-    }
-
-    pub fn set_scroll(&mut self, scroll: FeedScroll) {
-        self.viewport.scroll = scroll;
-    }
-
-    /// Current shared feed position, exposed for deterministic interaction
-    /// recordings without granting another mutation path around the reducer.
-    pub fn scroll(&self) -> &FeedScroll {
-        &self.viewport.scroll
-    }
-
-    /// The creation choices this Codex session was launched with, which
-    /// its header states beside the phase.
-    pub fn set_codex_configuration(&mut self, facts: Option<Vec<String>>) {
-        if let AgentChatView::Codex(view) = &mut self.inner {
-            view.configuration = facts.unwrap_or_default();
-            self.feed_metrics.get_mut().take();
-        }
-    }
-
-    pub fn paint_stats(&self) -> PaintStats {
-        self.paint_cache.borrow().stats()
-    }
-
-    pub fn feed_total_rows(&self) -> Option<usize> {
-        self.feed_metrics
-            .borrow()
-            .as_ref()
-            .map(|cached| cached.metrics.total_rows)
-    }
-
-    pub fn reconcile(&mut self, model: &Model) {
-        self.feed_metrics.get_mut().take();
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.reconcile(model),
-            AgentChatView::ClaudeSdk(view) => view.reconcile(model),
-            AgentChatView::Codex(view) => view.reconcile(model),
-        }
-    }
-
-    pub fn note_dispatched(&mut self, op: OpId, command: &Command) {
-        self.feed_metrics.get_mut().take();
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.note_dispatched(op, command),
-            AgentChatView::ClaudeSdk(view) => view.note_dispatched(op, command),
-            AgentChatView::Codex(view) => view.note_dispatched(op, command),
-        }
-    }
-
-    pub fn needs_tick(&self, model: &Model) -> bool {
-        if model
-            .chat(self.agent)
-            .is_some_and(|chat| chat.state == ChatState::CatchingUp)
-        {
+    /// Whether a text field has the keys and holds something, for Ctrl+C.
+    pub fn field_text(&self, state: &SessionState) -> bool {
+        if self.ask.editing() {
             return true;
         }
-        match &self.inner {
-            AgentChatView::Claude(view) => view.needs_tick(model),
-            AgentChatView::ClaudeSdk(view) => view.needs_tick(model),
-            AgentChatView::Codex(view) => view.needs_tick(model),
-        }
+        self.card_takes_keys(state).is_none() && self.tray.is_none() && !self.editor.is_empty()
     }
 
-    pub fn expire_quit_guard(&mut self, now: DateTime<Utc>) -> bool {
-        self.quit_guard_mut().expire(now)
+    /// Ctrl+C on a field with text: clears it as a kill.
+    pub fn kill_field(&mut self) -> bool {
+        self.ask.kill_field() || self.editor.kill_all()
     }
 
-    fn layout_for(
-        &self,
-        model: &Model,
-        viewport: (u16, u16),
-        now: DateTime<Utc>,
-        target_paused: bool,
-    ) -> (FeedMetrics, ChatGeometry) {
-        if let Some(cached) = self.feed_metrics.borrow().as_ref()
-            && cached.viewport == viewport
-        {
-            return (cached.metrics.clone(), cached.geometry(target_paused));
-        }
-
-        // An input can arrive before the first frame, including in tests.
-        // Build the same adapter parts once as a fallback, then retain the
-        // resulting metrics for every subsequent key until render or
-        // reconciliation refreshes them.
-        let ctx = FrameContext {
-            viewport,
-            theme: Theme::default(),
-            now,
-        };
-        let mut cache = self.paint_cache.borrow_mut();
-        let mut parts = frame_parts(model, self, &mut cache, &ctx);
-        install_store_feed(model, self, &mut parts, &mut cache, &ctx);
-        drop(cache);
-        let following_geometry = parts.geometry(viewport, false);
-        let paused_geometry = parts.geometry(viewport, true);
-        let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
-        let geometry = if target_paused {
-            paused_geometry
-        } else {
-            following_geometry
-        };
-        self.feed_metrics.replace(Some(CachedFeedMetrics {
-            viewport,
-            metrics: metrics.clone(),
-            blocks: parts.feed.blocks,
-            following_geometry,
-            paused_geometry,
-        }));
-        (metrics, geometry)
+    fn card_takes_keys(&self, state: &SessionState) -> Option<AskCard> {
+        let card = ask_card(state)?;
+        (card.state != CardState::Dismissed).then_some(card)
     }
 
-    fn metrics_for(&self, model: &Model, viewport: (u16, u16), now: DateTime<Utc>) -> FeedMetrics {
-        self.layout_for(model, viewport, now, true).0
-    }
-
-    fn pending_leader(&self) -> bool {
-        match &self.inner {
-            AgentChatView::Claude(view) => view.pending_leader,
-            AgentChatView::Codex(view) => view.pending_leader,
-            AgentChatView::ClaudeSdk(view) => view.pending_leader,
-        }
-    }
-
-    /// The review page, while it is the frame.
-    fn open_review_mut(&mut self) -> Option<&mut crate::review::ReviewView> {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.open_review_mut(),
-            AgentChatView::ClaudeSdk(view) => view.open_review_mut(),
-            // Only a Claude chat can draft a review.
-            AgentChatView::Codex(_) => None,
-        }
-    }
-
-    fn overlay_open(&self) -> bool {
-        match &self.inner {
-            AgentChatView::Claude(view) => view.overlay_open(),
-            AgentChatView::ClaudeSdk(view) => view.overlay_open(),
-            AgentChatView::Codex(view) => view.overlay_open(),
-        }
-    }
-
-    /// Read a text attachment in the fullscreen reader. All three chats
-    /// have one: a pasted attachment's words came with the message, so
-    /// nothing about reading them is provider-specific.
-    fn open_text_reader(&mut self, name: String, body: String) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.open_text_reader(name, body),
-            AgentChatView::ClaudeSdk(view) => view.open_text_reader(name, body),
-            AgentChatView::Codex(view) => view.open_text_reader(name, body),
-        }
-    }
-
-    /// Read a sent review in the fullscreen reader. Every chat has one:
-    /// the comments came with the message, so reading them back is not
-    /// provider-specific either.
-    fn open_review_reader(
-        &mut self,
-        header: ui_state::review::ReviewHeader,
-        comments: Vec<ui_state::review::ReviewComment>,
-    ) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.open_review_reader(header, comments),
-            AgentChatView::ClaudeSdk(view) => view.open_review_reader(header, comments),
-            AgentChatView::Codex(view) => view.open_review_reader(header, comments),
-        }
-    }
-
-    fn consume_shared_leader(&mut self) {
-        match &mut self.inner {
-            AgentChatView::Claude(view) => view.pending_leader = false,
-            AgentChatView::Codex(view) => view.pending_leader = false,
-            AgentChatView::ClaudeSdk(view) => view.pending_leader = false,
-        }
-        self.quit_guard_mut().disarm();
-    }
-
-    fn copy_text(&self) -> Option<String> {
-        let cached = self.feed_metrics.borrow();
-        let blocks = &cached.as_ref()?.blocks;
-        match self.viewport.focus {
-            Some(focused) => blocks
-                .iter()
-                .find(|block| block.key == focused)
-                .map(|block| block.copy_text.clone()),
-            None => blocks.last().map(|block| block.copy_text.clone()),
-        }
-    }
-}
-
-/// Open the attachment the feed's focus is on, if it is on one.
-///
-/// An image or a file leaves for the host's viewer through the runtime,
-/// which fetches and verifies the bytes first; pasted text is read here,
-/// because there is no file to hand anyone. A sent review opens the
-/// reader and asks for its diff in the same breath: the comments arrived
-/// with the message, the patch they hang on is an artifact on the
-/// agent's host that this viewer may never have seen.
-fn open_focused_attachment(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
-    let focus = chat.viewport.focus?;
-    let mention = attachments::focused_mention(model, chat.agent, focus)?;
-    match attachments::opening(&mention)? {
-        attachments::Opening::External(id) => Some(UiAction::Dispatch(Command::OpenAttachment {
-            agent: chat.agent,
-            id,
-        })),
-        attachments::Opening::Read { title, body } => {
-            chat.open_text_reader(title, body);
-            None
-        }
-        attachments::Opening::Review { header, comments } => {
-            let id = header.diff.clone();
-            chat.open_review_reader(*header, comments);
-            Some(UiAction::Dispatch(Command::FetchDiff {
-                agent: chat.agent,
-                id,
-            }))
-        }
-    }
-}
-
-pub fn handle_chat_key(
-    chat: &mut ChatView,
-    model: &Model,
-    key: KeyEvent,
-    viewport: (u16, u16),
-    now: DateTime<Utc>,
-) -> Option<UiAction> {
-    if key.kind == KeyEventKind::Release {
-        return None;
-    }
-
-    // Feed focus is shared frame state. The native handler owns the first
-    // leader press; once it is pending, these chords are consumed here so
-    // Claude and Codex cannot drift. Ctrl+arrows are the terminal-dependent
-    // convenience tier for the same movement. Native overlays own every key,
-    // so help can close on any press and Claude's reader keeps its Esc chain.
-    if !chat.overlay_open() {
-        let metrics = chat.metrics_for(model, viewport, now);
-        let leader_pending = chat.pending_leader();
-        if leader_pending {
+    /// One key. Ctrl+C and the leader are the app's and never reach here.
+    pub fn key(&mut self, state: &SessionState, key: KeyEvent, theme: Theme) -> Vec<ChatEffect> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if let Some(reader) = &mut self.reader {
             match key.code {
-                KeyCode::Char('k') => {
-                    chat.consume_shared_leader();
-                    move_focus(
-                        &mut chat.viewport,
-                        &metrics,
-                        -1,
-                        entry_watermark(model, chat.agent),
-                    );
-                    return None;
-                }
-                KeyCode::Char('j') => {
-                    chat.consume_shared_leader();
-                    move_focus(
-                        &mut chat.viewport,
-                        &metrics,
-                        1,
-                        entry_watermark(model, chat.agent),
-                    );
-                    return None;
-                }
-                KeyCode::Char('y') => {
-                    chat.consume_shared_leader();
-                    return chat.copy_text().map(UiAction::CopyToClipboard);
-                }
-                KeyCode::Char('o') => {
-                    chat.consume_shared_leader();
-                    // The chord opens what the focus is on: an
-                    // attachment row goes to the host's viewer or the
-                    // reader, an exploration run opens and shuts. One
-                    // chord, because the feed has one focus.
-                    if let Some(action) = open_focused_attachment(chat, model) {
-                        return Some(action);
-                    }
-                    let cached = chat.feed_metrics.get_mut();
-                    let blocks = cached
-                        .as_ref()
-                        .map(|cached| cached.blocks.as_slice())
-                        .unwrap_or_default();
-                    toggle_focused_run(&mut chat.viewport, blocks);
-                    return None;
-                }
+                KeyCode::Esc | KeyCode::Char('q') => self.reader = None,
+                KeyCode::Up | KeyCode::Char('k') => reader.scroll = reader.scroll.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => reader.scroll += 1,
+                KeyCode::PageUp => reader.scroll = reader.scroll.saturating_sub(self.feed.1.max(1)),
+                KeyCode::PageDown | KeyCode::Char(' ') => reader.scroll += self.feed.1.max(1),
+                KeyCode::Home | KeyCode::Char('g') => reader.scroll = 0,
+                KeyCode::End | KeyCode::Char('G') => reader.scroll = usize::MAX / 2,
                 _ => {}
             }
+            return vec![];
         }
-
-        if !leader_pending && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let delta = match key.code {
-                KeyCode::Up => Some(-1),
-                KeyCode::Down => Some(1),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                chat.quit_guard_mut().disarm();
-                move_focus(
-                    &mut chat.viewport,
-                    &metrics,
-                    delta,
-                    entry_watermark(model, chat.agent),
+        match key.code {
+            KeyCode::Char('x') if ctrl => {
+                return if state.phase() == PhaseView::Working || !state.open_asks().is_empty() {
+                    vec![ChatEffect::Interrupt]
+                } else {
+                    vec![]
+                };
+            }
+            KeyCode::PageUp => {
+                self.scroll(
+                    state,
+                    -(self.feed.1.saturating_sub(2).max(1) as isize),
+                    theme,
                 );
-                return None;
+                return vec![];
+            }
+            KeyCode::PageDown => {
+                self.scroll(state, self.feed.1.saturating_sub(2).max(1) as isize, theme);
+                return vec![];
+            }
+            KeyCode::End if ctrl => {
+                self.follow();
+                return vec![];
+            }
+            KeyCode::Home if ctrl => {
+                if let Some(oldest) = state.transcript().iter().next() {
+                    self.anchor = Anchor::Top {
+                        key: oldest.item.key.clone(),
+                        offset: 0,
+                    };
+                }
+                return vec![];
+            }
+            _ => {}
+        }
+        if let Some(card) = self.card_takes_keys(state) {
+            self.ask.sync(&card);
+            if key.code == KeyCode::Esc && !self.ask.editing() {
+                self.escape();
+                return vec![];
+            }
+            return match self.ask.key(&card, key, self.attach) {
+                AskAction::None => vec![],
+                AskAction::Attach => vec![ChatEffect::RawAttach],
+                AskAction::Answer(input) => vec![ChatEffect::Answer(*input)],
+                AskAction::Interrupt => vec![ChatEffect::Interrupt],
+                AskAction::Resend => state
+                    .answering(&card.key)
+                    .map(|sent| {
+                        vec![ChatEffect::Resend {
+                            id: sent.id.clone(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                AskAction::Discard => state
+                    .answering(&card.key)
+                    .map(|sent| {
+                        vec![ChatEffect::Discard {
+                            id: sent.id.clone(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                AskAction::Read { title, text } => {
+                    self.reader = Some(Reader {
+                        title,
+                        text,
+                        scroll: 0,
+                    });
+                    vec![]
+                }
+            };
+        }
+        if let Some(selected) = self.tray {
+            return self.tray_key(state, selected, key);
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.escape();
+                vec![]
+            }
+            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => self.submit(state),
+            KeyCode::Char('v') if ctrl => vec![ChatEffect::Paste],
+            KeyCode::Up if self.editor.on_first_line() && !Self::tray_rows(state).is_empty() => {
+                self.tray = Some(Self::tray_rows(state).len() - 1);
+                vec![]
+            }
+            _ => {
+                if self.editor.key(key) == Edit::Changed {
+                    self.focus = None;
+                }
+                vec![]
             }
         }
+    }
 
-        if !leader_pending && key.code == KeyCode::Esc && chat.viewport.focus.take().is_some() {
-            chat.quit_guard_mut().disarm();
+    fn tray_key(
+        &mut self,
+        state: &SessionState,
+        selected: usize,
+        key: KeyEvent,
+    ) -> Vec<ChatEffect> {
+        let rows = Self::tray_rows(state);
+        let Some(row) = rows.get(selected.min(rows.len().saturating_sub(1))) else {
+            self.tray = None;
+            return vec![];
+        };
+        match key.code {
+            KeyCode::Esc => self.tray = None,
+            KeyCode::Up => self.tray = Some(selected.saturating_sub(1)),
+            KeyCode::Down if selected + 1 >= rows.len() => self.tray = None,
+            KeyCode::Down => self.tray = Some(selected + 1),
+            _ => {
+                let effect = match (row, key.code) {
+                    (TrayRow::Queued(queued), KeyCode::Enter | KeyCode::Char('s'))
+                        if queued.can_send_now =>
+                    {
+                        Some(ChatEffect::SendNow {
+                            id: queued.input_id.clone(),
+                        })
+                    }
+                    (
+                        TrayRow::Queued(queued),
+                        KeyCode::Char('w') | KeyCode::Delete | KeyCode::Backspace,
+                    ) if queued.can_withdraw => {
+                        let entry = state
+                            .queue()
+                            .into_iter()
+                            .find(|row| row.entry.input_id == queued.input_id)
+                            .map(|row| (row.entry.text.clone(), row.entry.attachments.clone()));
+                        entry.map(|(text, attachments)| ChatEffect::Withdraw {
+                            id: queued.input_id.clone(),
+                            text,
+                            attachments,
+                        })
+                    }
+                    (TrayRow::Outbox(out), KeyCode::Char('r'))
+                        if out.state == OutboxState::NotConfirmed =>
+                    {
+                        Some(ChatEffect::Resend {
+                            id: out.input_id.clone(),
+                        })
+                    }
+                    (TrayRow::Outbox(out), KeyCode::Char('d'))
+                        if out.state != OutboxState::Sending =>
+                    {
+                        Some(ChatEffect::Discard {
+                            id: out.input_id.clone(),
+                        })
+                    }
+                    (TrayRow::Outbox(out), KeyCode::Char('e'))
+                        if matches!(out.state, OutboxState::Rejected(_)) =>
+                    {
+                        if let Some(sent) = state.inputs().get(&out.input_id)
+                            && let ui_state::InputWhat::Prompt { text, attachments } = &sent.what
+                        {
+                            self.editor.restore(text, attachments.clone());
+                        }
+                        Some(ChatEffect::Discard {
+                            id: out.input_id.clone(),
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(effect) = effect {
+                    if rows.len() <= 1 {
+                        self.tray = None;
+                    }
+                    return vec![effect];
+                }
+            }
+        }
+        vec![]
+    }
+
+    /// Enter in the composer: send when caught up and live, resume an
+    /// exited agent with the draft, and otherwise keep the draft.
+    fn submit(&mut self, state: &SessionState) -> Vec<ChatEffect> {
+        if self.editor.is_empty() {
+            return vec![];
+        }
+        match state.composer() {
+            Composer::Send if state.can_send() => {
+                let (text, attachments) = self.editor.take();
+                self.follow();
+                vec![ChatEffect::Prompt { text, attachments }]
+            }
+            Composer::Resume => {
+                let (text, attachments) = self.editor.take();
+                self.follow();
+                vec![ChatEffect::Resume { text, attachments }]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Esc, view-only: close the reader, clear focus, then follow the
+    /// newest row. It never answers and never interrupts.
+    fn escape(&mut self) {
+        if self.reader.take().is_some() {
+            return;
+        }
+        if self.focus.take().is_some() {
+            return;
+        }
+        self.follow();
+    }
+
+    pub fn follow(&mut self) {
+        self.anchor = Anchor::Bottom;
+        self.new_below = false;
+    }
+
+    fn scroll(&mut self, state: &SessionState, delta: isize, theme: Theme) {
+        let anchor = self.frame(theme).scrolled(state, &self.laid, delta);
+        if anchor == Anchor::Bottom {
+            self.new_below = false;
+        }
+        self.anchor = anchor;
+    }
+
+    pub fn mouse(&mut self, state: &SessionState, event: MouseEvent, theme: Theme) {
+        match event.kind {
+            MouseEventKind::ScrollUp => self.scroll(state, -WHEEL_LINES, theme),
+            MouseEventKind::ScrollDown => self.scroll(state, WHEEL_LINES, theme),
+            _ => {}
+        }
+    }
+
+    /// `<leader> k` / `<leader> j`: focus the older or newer drawn row and
+    /// keep it on screen.
+    pub fn move_focus(&mut self, state: &SessionState, older: bool, theme: Theme) {
+        let count = self.laid.blocks.len();
+        if count == 0 {
+            return;
+        }
+        let at = self
+            .focus
+            .as_ref()
+            .and_then(|key| self.laid.blocks.iter().position(|b| &b.key == key));
+        if at == Some(0) && older {
+            // The focused row is the top one: bring the row above it in
+            // and focus that.
+            let above =
+                self.frame(theme)
+                    .scrolled(state, &self.laid, -(self.laid.top_offset as isize) - 1);
+            if let Anchor::Top { key, .. } = &above {
+                self.focus = Some(key.clone());
+                self.anchor = Anchor::Top {
+                    key: key.clone(),
+                    offset: 0,
+                };
+            }
+            return;
+        }
+        let next = match (at, older) {
+            (None, _) => count - 1,
+            (Some(i), true) => i - 1,
+            (Some(i), false) => (i + 1).min(count - 1),
+        };
+        let key = self.laid.blocks[next].key.clone();
+        if next == 0 && self.laid.top_offset > 0 {
+            self.anchor = Anchor::Top {
+                key: key.clone(),
+                offset: 0,
+            };
+        }
+        self.focus = Some(key);
+    }
+
+    /// `<leader> o`: expand or collapse the focused row, or its run.
+    pub fn toggle_expanded(&mut self, state: &SessionState) {
+        let Some(key) = self.focus.clone() else {
+            return;
+        };
+        let transcript = state.transcript();
+        let run = transcript
+            .get(&key)
+            .and_then(|held| transcript.run_at(held.item.order));
+        match run {
+            Some(run) => {
+                let members: Vec<Key> = transcript
+                    .range(run.oldest..=run.newest)
+                    .map(|held| held.item.key.clone())
+                    .collect();
+                let open = members.iter().any(|member| self.expanded.contains(member));
+                if open {
+                    for member in &members {
+                        self.expanded.remove(member);
+                    }
+                    self.focus = Some(run.newest_key);
+                } else {
+                    self.expanded.insert(key);
+                }
+            }
+            None => {
+                if !self.expanded.remove(&key) {
+                    self.expanded.insert(key);
+                }
+            }
+        }
+    }
+
+    /// `<leader> y`: the focused row's words, or the newest row's.
+    pub fn copy_text(&self) -> Option<String> {
+        let block = match &self.focus {
+            Some(key) => self.laid.blocks.iter().find(|b| &b.key == key),
+            None => self.laid.blocks.last(),
+        }?;
+        let text: Vec<String> = block
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+                    .trim_start_matches(['▌', '▎'])
+                    .trim()
+                    .to_owned()
+            })
+            .collect();
+        Some(text.join("\n").trim().to_owned())
+    }
+
+    /// What Ctrl+V found: text follows the paste rules, an image or a file
+    /// is stored and attached.
+    pub fn paste(&mut self, content: ClipboardContent) -> Result<Option<ChatEffect>, String> {
+        match content {
+            ClipboardContent::Image { mime, bytes } => Ok(Some(ChatEffect::Attach {
+                name: "clipboard.png".into(),
+                mime,
+                bytes,
+            })),
+            ClipboardContent::Path(path) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                let bytes = std::fs::read(&path)
+                    .map_err(|error| format!("{name} could not be read: {error}"))?;
+                Ok(Some(ChatEffect::Attach {
+                    mime: mime_of(&name).to_owned(),
+                    name,
+                    bytes,
+                }))
+            }
+            ClipboardContent::Text(text) => {
+                self.editor.paste(&text);
+                Ok(None)
+            }
+            ClipboardContent::Empty => Ok(None),
+        }
+    }
+
+    /// A stored blob, attached at the cursor as an image or a file.
+    pub fn attach_blob(&mut self, blob: wire::BlobRef) {
+        let of = if blob.mime.starts_with("image/") {
+            attachment::Of::Image(blob)
+        } else {
+            attachment::Of::File(blob)
+        };
+        self.editor.insert_attachment(Attachment { of: Some(of) });
+    }
+
+    /// A page was asked for; another waits until the window grows.
+    pub fn page_sent(&mut self, state: &SessionState) {
+        self.page_asked = state.oldest_order();
+    }
+
+    /// Lays the chat out in `area` and paints it. Returns the page to ask
+    /// for, if the reader is within a page of the oldest held row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        &mut self,
+        paint: &mut Paint<'_>,
+        area: Rect,
+        state: &SessionState,
+        family: Option<&FamilyHeader>,
+        footer: Option<Line<'static>>,
+        now_ms: i64,
+        theme: Theme,
+    ) -> Option<u32> {
+        if state.epoch() != self.epoch {
+            // A Reset swapped the transcript in: scroll to the newest, the
+            // one whole-list reload.
+            self.epoch = state.epoch();
+            self.follow();
+            self.focus = None;
+            self.page_asked = None;
+        }
+        let width = usize::from(area.width);
+        if let Some(reader) = &mut self.reader {
+            draw_reader(paint, area, reader, theme);
             return None;
         }
-    }
-
-    let action = match &mut chat.inner {
-        AgentChatView::Claude(view) => claude::handle_chat_key(view, model, key, viewport, now),
-        AgentChatView::ClaudeSdk(view) => {
-            claude_sdk::handle_chat_key(view, model, key, viewport, now)
+        let mut top: Vec<Line<'static>> = vec![header(state, width, theme)];
+        if let Some(family) = family {
+            top.push(family_line(family, width, theme));
         }
-        AgentChatView::Codex(view) => codex::handle_chat_key(view, model, key, viewport, now),
+        top.push(Line::default());
+
+        let mut bottom: Vec<Line<'static>> = Vec::new();
+        let head = state.transcript().head();
+        if head != self.seen_head {
+            if self.anchor != Anchor::Bottom && self.seen_head.is_some() {
+                self.new_below = true;
+            }
+            self.seen_head = head;
+        }
+        if self.anchor != Anchor::Bottom {
+            let words = if self.new_below {
+                "↓ new activity below · pgdn or ctrl+end for the newest"
+            } else {
+                "↓ scrolled back · pgdn or ctrl+end for the newest"
+            };
+            let mut line = Line::from(Span::raw("  "));
+            push(&mut line, words, theme.muted(), width);
+            bottom.push(line);
+        }
+        let view = composer(state, now_ms);
+        if let Some(activity) = &view.activity {
+            let running = match &activity.kind {
+                ActivityKind::Running { key } => running_subject(state, key),
+                _ => None,
+            };
+            bottom.push(activity_line(activity, running.as_deref(), width, theme));
+        }
+        let strip = session_strip(state);
+        if let Some(line) = strip_line(&strip, width, theme) {
+            bottom.push(line);
+        }
+        bottom.extend(foot_cards(&strip, width, theme));
+        let tray = Self::tray_rows(state);
+        if let Some(selected) = self.tray {
+            if tray.is_empty() {
+                self.tray = None;
+            } else if selected >= tray.len() {
+                self.tray = Some(tray.len() - 1);
+            }
+        }
+        for (i, row) in tray.iter().enumerate() {
+            bottom.push(row.line(self.tray == Some(i), width, theme));
+        }
+
+        let name = state
+            .agent()
+            .name
+            .clone()
+            .unwrap_or_else(|| "the agent".into());
+        let host = state
+            .host()
+            .map(|host| host.name.clone())
+            .unwrap_or_else(|| "its host".into());
+        let mut cursor = None;
+        let card = self.card(state);
+        let mut hint = match &footer {
+            Some(footer) => footer.clone(),
+            None => Line::default(),
+        };
+        match &card {
+            Some(card) => {
+                let lines = self.ask.render(card, &name, self.attach, width, theme);
+                let cap = (usize::from(area.height) / 2).max(4);
+                let start = bottom.len() + 1;
+                let skip = lines.lines.len().saturating_sub(cap);
+                if let Some((row, col)) = lines.cursor.filter(|(row, _)| *row >= skip) {
+                    cursor = Some((start + row - skip, col));
+                }
+                bottom.push(Line::default());
+                // The card sits on the panel surface, edge to edge.
+                let panel = theme.panel();
+                bottom.extend(lines.lines.into_iter().skip(skip).map(|line| {
+                    let mut line = Line::from(
+                        line.spans
+                            .into_iter()
+                            .map(|span| Span::styled(span.content, panel.patch(span.style)))
+                            .collect::<Vec<_>>(),
+                    );
+                    text::fill(&mut line, panel, width);
+                    line
+                }));
+                if footer.is_none() && card.state == CardState::Dismissed {
+                    let (lines, at) = editor_lines(
+                        &self.editor,
+                        &placeholder(&state.composer(), &name, &host),
+                        width,
+                        theme,
+                    );
+                    cursor = Some((bottom.len() + at.0, at.1));
+                    bottom.extend(lines);
+                    hint = composer_hint(state, &self.editor, width, theme);
+                }
+            }
+            None => {
+                bottom.push(Line::default());
+                let (mut lines, at) = editor_lines(
+                    &self.editor,
+                    &placeholder(&state.composer(), &name, &host),
+                    width,
+                    theme,
+                );
+                let skip = (at.0 + 1).saturating_sub(COMPOSER_LINES);
+                lines = lines.into_iter().skip(skip).take(COMPOSER_LINES).collect();
+                if self.tray.is_none() {
+                    cursor = Some((bottom.len() + at.0 - skip, at.1));
+                }
+                bottom.extend(lines);
+                if footer.is_none() {
+                    hint = match self.tray.and_then(|i| tray.get(i)) {
+                        Some(row) => {
+                            let mut line = Line::from(Span::raw("  "));
+                            push(&mut line, row.hint(), theme.muted(), width);
+                            line
+                        }
+                        None => composer_hint(state, &self.editor, width, theme),
+                    };
+                }
+            }
+        }
+        bottom.push(hint);
+
+        let height = usize::from(area.height);
+        let feed_height = height.saturating_sub(top.len() + bottom.len());
+        self.feed = (width, feed_height);
+        let mut lines = top;
+        let top_len = lines.len();
+        if state.transcript().is_empty() {
+            lines.extend(empty_feed(
+                state,
+                feed_height,
+                now_ms - self.opened_at_ms,
+                width,
+                theme,
+            ));
+            self.laid = Laid::default();
+        } else {
+            let laid = self.frame(theme).layout(state);
+            lines.extend(laid.lines.iter().cloned());
+            self.laid = laid;
+        }
+        let bottom_start = lines.len();
+        lines.extend(bottom);
+        paint.render_widget(Paragraph::new(lines), area);
+        if let Some((row, col)) = cursor {
+            let y = area.y as usize + bottom_start + row;
+            let x = area.x as usize + col.min(width.saturating_sub(1));
+            if y < (area.y + area.height) as usize {
+                paint.set_cursor_position(Position::new(x as u16, y as u16));
+            }
+        }
+        let _ = top_len;
+        let page = if state.transcript().is_empty() {
+            state.transcript().has_older().then_some(layout::PAGE)
+        } else {
+            self.laid.page
+        };
+        match page {
+            Some(n) if self.page_asked != state.oldest_order() || self.page_asked.is_none() => {
+                Some(n)
+            }
+            _ => None,
+        }
+    }
+}
+
+fn mime_of(name: &str) -> &'static str {
+    let extension = name.rsplit('.').next().unwrap_or_default().to_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "txt" | "md" | "log" => "text/plain",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+/// What the activity line names while a tool runs: the call's subject.
+fn running_subject(state: &SessionState, key: &Key) -> Option<String> {
+    let opts = ChatOptions {
+        tools: ToolRows::ShowAll,
     };
-    let intent = match &mut chat.inner {
-        AgentChatView::Claude(view) => view.scroll_intent.take(),
-        AgentChatView::ClaudeSdk(view) => view.scroll_intent.take(),
-        AgentChatView::Codex(view) => view.scroll_intent.take(),
+    let row = chat_rows_for(state, std::slice::from_ref(key), &opts).pop()?;
+    Some(match row.kind {
+        RowKind::Command { command, .. } => text::first_line(&command).to_owned(),
+        RowKind::Explore { subject, .. } => subject,
+        RowKind::ToolCall { server, tool, .. } if server.is_empty() => tool,
+        RowKind::ToolCall { server, tool, .. } => format!("{server} · {tool}"),
+        RowKind::FileChange { files, .. } => {
+            files.first().map(|f| f.path.clone()).unwrap_or_default()
+        }
+        _ => return None,
+    })
+}
+
+fn kind_word(kind: wire::Kind) -> &'static str {
+    match kind {
+        wire::Kind::ClaudePty => "claude",
+        wire::Kind::ClaudeSdk => "claude sdk",
+        wire::Kind::Codex => "codex",
+        wire::Kind::Unspecified => "agent",
+    }
+}
+
+/// "fix-auth · claude @ mbp          opus · high · default · working"
+fn header(state: &SessionState, width: usize, theme: Theme) -> Line<'static> {
+    let agent = state.agent();
+    let name = agent.name.clone().unwrap_or_else(|| "unnamed".into());
+    let host = state
+        .host()
+        .map(|host| host.name.clone())
+        .unwrap_or_default();
+    let mut line = Line::from(Span::raw("  "));
+    push(&mut line, name, theme.emphasis(), width);
+    let mut about = format!(" · {}", kind_word(state.kind()));
+    if !host.is_empty() {
+        about.push_str(&format!(" @ {host}"));
+    }
+    push(&mut line, about, theme.muted(), width);
+    let (words, style) = match (state.composer(), state.phase()) {
+        (_, PhaseView::Exited { cause }) => (
+            match cause {
+                Some(cause) if !cause.is_empty() => format!("exited · {cause}"),
+                _ => "exited".to_owned(),
+            },
+            theme.muted(),
+        ),
+        (Composer::Disabled(Waiting::Detached), _) => (
+            format!(
+                "{} away · not current",
+                if host.is_empty() { "host" } else { &host }
+            ),
+            theme.warn(),
+        ),
+        (Composer::Disabled(Waiting::Reconnecting), _) => ("reconnecting".to_owned(), theme.warn()),
+        (Composer::Disabled(Waiting::CatchingUp), _) => ("catching up".to_owned(), theme.muted()),
+        (_, _) if state.reset_pending() => ("refreshing".to_owned(), theme.muted()),
+        (_, PhaseView::NeedsYou) => ("needs you".to_owned(), theme.accent()),
+        (_, PhaseView::Working) => ("working".to_owned(), theme.muted()),
+        (_, PhaseView::Idle) => ("idle".to_owned(), theme.muted()),
+        (_, PhaseView::Starting) => ("starting".to_owned(), theme.muted()),
     };
-    if let Some(intent) = intent {
-        let metrics = chat.metrics_for(model, viewport, now);
-        let was_following = matches!(chat.viewport.scroll, FeedScroll::Following);
-        apply_scroll(
-            &mut chat.viewport,
-            &metrics,
-            intent,
-            entry_watermark(model, chat.agent),
+    let strip = session_strip(state);
+    let facts: Vec<String> = [strip.model, strip.effort, strip.mode]
+        .into_iter()
+        .flatten()
+        .filter(|fact| !fact.is_empty())
+        .collect();
+    let mut right = facts.join(" · ");
+    let room = width.saturating_sub(text::line_width(&line) + 4);
+    if right.is_empty() || text::str_width(&right) + text::str_width(&words) + 3 > room {
+        right = words.clone();
+    } else {
+        right = format!("{right} · {words}");
+    }
+    let styled_words = right.ends_with(&words) && style != theme.muted();
+    if styled_words {
+        let prefix = right[..right.len() - words.len()].to_owned();
+        let total = text::str_width(&right);
+        let used = text::line_width(&line);
+        if used + 2 + total <= width {
+            line.spans.push(Span::raw(" ".repeat(width - used - total)));
+            line.spans.push(Span::styled(prefix, theme.muted()));
+            line.spans.push(Span::styled(words, style));
+        }
+    } else {
+        push_right(&mut line, &right, theme.muted(), width);
+    }
+    line
+}
+
+/// "↑ planner · 3 subagents · 1 needs you"
+fn family_line(family: &FamilyHeader, width: usize, theme: Theme) -> Line<'static> {
+    let mut parts = Vec::new();
+    if let Some(parent) = &family.parent {
+        parts.push(format!(
+            "↑ {}",
+            if parent.name.is_empty() {
+                "parent"
+            } else {
+                &parent.name
+            }
+        ));
+    }
+    let count = family.children.len();
+    if count > 0 {
+        parts.push(format!(
+            "{count} subagent{}",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
+    let waiting = family
+        .children
+        .iter()
+        .filter(|child| child.attention == ui_state::Attention::NeedsYou)
+        .count();
+    let mut line = Line::from(Span::raw("  "));
+    push(&mut line, parts.join(" · "), theme.muted(), width);
+    if waiting > 0 {
+        push(
+            &mut line,
+            format!(
+                " · {waiting} need{} you",
+                if waiting == 1 { "s" } else { "" }
+            ),
+            theme.accent(),
+            width,
         );
-        return action
-            .or_else(|| store_scroll_action(chat, model, intent, &metrics, was_following));
     }
-    action
+    line
 }
 
-fn store_scroll_action(
-    chat: &ChatView,
-    model: &Model,
-    intent: viewport::ScrollIntent,
-    metrics: &FeedMetrics,
-    was_following: bool,
-) -> Option<UiAction> {
-    let window = model.chat(chat.agent)?;
-    let at_oldest = match chat.viewport.scroll {
-        FeedScroll::Paused { top_line, .. } => top_line == 0,
-        FeedScroll::Following => metrics.max_top == 0,
-    };
-    let toward_older = match intent {
-        viewport::ScrollIntent::Oldest => true,
-        viewport::ScrollIntent::Rows(delta) | viewport::ScrollIntent::Page(delta) => delta < 0,
-        viewport::ScrollIntent::Follow => false,
-    };
-    if toward_older && at_oldest && window.first_page.is_some() {
-        return Some(UiAction::PageChatOlder(chat.agent));
-    }
-    let toward_tip = match intent {
-        viewport::ScrollIntent::Follow => true,
-        viewport::ScrollIntent::Rows(delta) | viewport::ScrollIntent::Page(delta) => delta > 0,
-        viewport::ScrollIntent::Oldest => false,
-    };
-    if toward_tip
-        && matches!(chat.viewport.scroll, FeedScroll::Following)
-        && (!was_following || matches!(intent, viewport::ScrollIntent::Follow))
-    {
-        return Some(UiAction::FollowChatTip(chat.agent));
-    }
-    None
-}
-
-/// Ctrl+V: attach whatever the clipboard holds.
-///
-/// The content is a parameter rather than read here, so the binding runs
-/// the same way in a test and in a recording as it does under a person's
-/// hands — a capture of pasting an image must not depend on what the
-/// recording machine's clipboard happened to hold.
-pub fn handle_chat_clipboard(chat: &mut ChatView, model: &Model, content: ClipboardContent) {
-    match &mut chat.inner {
-        AgentChatView::Claude(view) => claude::keys::attach_clipboard(view, model, content),
-        AgentChatView::ClaudeSdk(view) => claude_sdk::keys::attach_clipboard(view, model, content),
-        AgentChatView::Codex(view) => codex::keys::attach_clipboard(view, model, content),
-    }
-}
-
-pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
-    match &mut chat.inner {
-        AgentChatView::Claude(view) => claude::handle_chat_paste(view, model, text),
-        AgentChatView::ClaudeSdk(view) => claude_sdk::handle_chat_paste(view, model, text),
-        AgentChatView::Codex(view) => codex::handle_chat_paste(view, model, text),
-    }
-}
-
-/// Route wheel motion over the feed through the same reducer as paging.
-/// Mouse buttons, motion, and wheel events over any other chat region are
-/// deliberately inert; native selection remains the terminal's Shift
-/// override while capture is enabled.
-pub fn handle_chat_mouse(
-    chat: &mut ChatView,
-    model: &Model,
-    event: MouseEvent,
-    size: (u16, u16),
-) -> bool {
-    handle_chat_mouse_with_action(chat, model, event, size).0
-}
-
-pub(crate) fn handle_chat_mouse_with_action(
-    chat: &mut ChatView,
-    model: &Model,
-    event: MouseEvent,
-    size: (u16, u16),
-) -> (bool, Option<UiAction>) {
-    const NOTCH_ROWS: i32 = 3;
-    let rows = match event.kind {
-        MouseEventKind::ScrollUp => -NOTCH_ROWS,
-        MouseEventKind::ScrollDown => NOTCH_ROWS,
-        _ => return (false, None),
-    };
-
-    // The review page is the whole frame while it is open, so a notch
-    // anywhere on screen scrolls its body rather than the feed it hides.
-    // It scrolls without moving the cursor, exactly as its own scroll
-    // keys do.
-    if let Some(review) = chat.open_review_mut() {
-        review.resize(size.0, size.1);
-        let before = review.scroll();
-        review.handle_wheel(rows);
-        return (review.scroll() != before, None);
-    }
-
-    let intent = viewport::ScrollIntent::Rows(rows);
-    let (metrics, geometry) = chat.layout_for(
-        model,
-        size,
-        Utc::now(),
-        matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-    );
-    let row = event.row as usize;
-    if chat.overlay_open()
-        || row < geometry.feed_top
-        || row >= geometry.feed_top.saturating_add(geometry.feed_rows)
-    {
-        return (false, None);
-    }
-
-    let was_following = matches!(chat.viewport.scroll, FeedScroll::Following);
-    let moved = apply_scroll(
-        &mut chat.viewport,
-        &metrics,
-        intent,
-        entry_watermark(model, chat.agent),
-    );
-    let action = store_scroll_action(chat, model, intent, &metrics, was_following);
-    (moved, action)
-}
-
-pub(crate) fn build_chat_lines(
-    model: &Model,
-    chat: &ChatView,
-    ctx: &FrameContext,
-) -> Vec<Line<'static>> {
-    const MIN_WIDTH: usize = 24;
-    const MIN_HEIGHT: usize = 10;
-
-    let width = ctx.viewport.0 as usize;
-    let height = ctx.viewport.1 as usize;
-    if width < MIN_WIDTH || height < MIN_HEIGHT {
-        return vec![Line::from("amux: terminal too small")];
-    }
-    let mut cache = chat.paint_cache.borrow_mut();
-    cache.reset_stats();
-    let mut parts = frame_parts(model, chat, &mut cache, ctx);
-    install_store_feed(model, chat, &mut parts, &mut cache, ctx);
-    drop(cache);
-    let overlaid = parts.overlay.is_some();
-    let banner = parts.banner.is_some();
-    let following_geometry = parts.geometry(ctx.viewport, false);
-    let paused_geometry = parts.geometry(ctx.viewport, true);
-    let metrics = feed_metrics(&parts.feed, FrameSpacing::DEFAULT, &paused_geometry);
-    let blocks = parts.feed.blocks.clone();
-    chat.feed_metrics.replace(Some(CachedFeedMetrics {
-        viewport: ctx.viewport,
-        metrics,
-        blocks,
-        following_geometry,
-        paused_geometry,
-    }));
-
-    let mut lines = compose_chat_frame(parts, &chat.viewport, ctx.theme, ctx.viewport);
-    // The sticky diagnostic takes the header gap rather than reducing the
-    // feed, and stays off overlays whose rows are all content.
-    let row = 1 + usize::from(banner);
-    if !overlaid && lines.len() > row {
-        if model.has_invariant_warning() {
-            lines[row] = blocks::invariant_warning_row(width, ctx.theme);
-        } else if let Some(status) = store_status(model, chat.agent, ctx) {
-            lines[row] = status;
+fn composer_hint(
+    state: &SessionState,
+    editor: &Editor,
+    width: usize,
+    theme: Theme,
+) -> Line<'static> {
+    let words = match state.composer() {
+        Composer::Send if state.phase() == PhaseView::Working => {
+            "enter queue · ctrl+j newline · ↑ queued · ctrl+x stop"
         }
+        Composer::Send if editor.is_empty() => {
+            "enter send · ctrl+j newline · ctrl+v attach · ? help"
+        }
+        Composer::Send => "enter send · ctrl+j newline · ctrl+v attach",
+        Composer::Resume => "enter resume with this message · ctrl+j newline",
+        Composer::Disabled(_) => "draft kept · sending waits",
+    };
+    let mut line = Line::from(Span::raw("  "));
+    push(&mut line, words, theme.muted(), width);
+    line
+}
+
+fn empty_feed(
+    state: &SessionState,
+    height: usize,
+    waited_ms: i64,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::default(); height];
+    let away = matches!(state.composer(), Composer::Disabled(Waiting::Detached))
+        || state.host().is_some_and(|host| {
+            matches!(
+                host.presence(),
+                wire::Presence::Offline | wire::Presence::Away
+            )
+        });
+    let words = if away {
+        Some("Its host is away, and nothing of this chat is held here yet.")
+    } else if state.has_snapshot() && state.caught_up() {
+        Some("Nothing here yet.")
+    } else if waited_ms >= LOADING_HINT_MS {
+        Some("Loading…")
+    } else {
+        None
+    };
+    if let (Some(words), Some(line)) = (words, lines.get_mut(height / 2)) {
+        let mut centred = Line::from(Span::raw(" ".repeat(width.saturating_sub(words.len()) / 2)));
+        push(&mut centred, words, theme.muted(), width);
+        *line = centred;
     }
     lines
 }
 
-pub(crate) fn stable_block_key(prefix: u64, value: &str) -> frame::BlockKey {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    frame::BlockKey(prefix | (hash & 0x0fff_ffff_ffff_ffff))
-}
-
-fn boundary_label(boundary: Boundary) -> &'static str {
-    match boundary {
-        Boundary::Truncated | Boundary::Gap => "missing history",
-        Boundary::VersionGap => "history version changed",
-        Boundary::Evicted => "earlier history evicted",
-    }
-}
-
-fn install_store_feed(
-    model: &Model,
-    view: &ChatView,
-    parts: &mut ChatFrameParts,
-    cache: &mut PaintCache,
-    ctx: &FrameContext,
-) {
-    let agent = view.agent;
-    let Some(chat) = model.chat(agent) else {
-        return;
-    };
-    if chat.entries.is_empty() && chat.boundaries.is_empty() {
-        parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
-        return;
-    }
-
-    let (reports_open, leader, kitty) = match &view.inner {
-        AgentChatView::Claude(provider) => (provider.reports_open, provider.leader, provider.kitty),
-        AgentChatView::ClaudeSdk(provider) => {
-            (provider.reports_open, provider.leader, provider.kitty)
-        }
-        AgentChatView::Codex(provider) => (provider.reports_open, provider.leader, provider.kitty),
-    };
-    let history = chat.history();
-    let starts_truncated = matches!(
-        history.first(),
-        Some(WindowItem::Boundary(fold::BoundaryAt {
-            boundary: Boundary::Truncated,
-            ..
-        }))
+fn draw_reader(paint: &mut Paint<'_>, area: Rect, reader: &mut Reader, theme: Theme) {
+    let width = usize::from(area.width);
+    let height = usize::from(area.height).saturating_sub(3);
+    let body: Vec<String> = text::wrap(&reader.text, width.saturating_sub(4));
+    let max = body.len().saturating_sub(height);
+    reader.scroll = reader.scroll.min(max);
+    let mut lines = Vec::new();
+    let mut head = Line::from(Span::raw("  "));
+    push(&mut head, reader.title.clone(), theme.emphasis(), width);
+    let shown = format!(
+        "lines {}-{}/{}",
+        (reader.scroll + 1).min(body.len()),
+        (reader.scroll + height).min(body.len()),
+        body.len()
     );
-    let mut durable = Vec::with_capacity(history.len());
-    let mut cursor = 0;
-    while cursor < history.len() {
-        let entry = match history[cursor] {
-            WindowItem::Boundary(boundary) => {
-                // A leading truncation drives the frame's established
-                // retained-history row. Gaps, version changes, evictions, and
-                // boundaries inside the window remain visible dividers at
-                // their exact durable position.
-                if cursor == 0 && boundary.boundary == Boundary::Truncated {
-                    cursor += 1;
-                    continue;
-                }
-                let identity = format!(
-                    "{}:{:?}:{:?}",
-                    boundary.segment, boundary.before, boundary.boundary
-                );
-                let block_key = stable_block_key(0xe000_0000_0000_0000, &identity);
-                durable.push(
-                    cache
-                        .get_or_paint(
-                            block_key,
-                            boundary,
-                            PaintInputs {
-                                width: ctx.viewport.0 as usize,
-                                theme: ctx.theme,
-                                expanded: false,
-                            },
-                            || {
-                                blocks::paint_history_boundary(
-                                    block_key,
-                                    boundary_label(boundary.boundary),
-                                    ctx.theme,
-                                    ctx.viewport.0 as usize,
-                                )
-                            },
-                        )
-                        .clone(),
-                );
-                cursor += 1;
-                continue;
-            }
-            WindowItem::Entry(entry) => entry,
+    push_right(&mut head, &shown, theme.muted(), width);
+    lines.push(head);
+    lines.push(Line::from(Span::styled("─".repeat(width), theme.muted())));
+    for part in body.iter().skip(reader.scroll).take(height) {
+        let style = if part.starts_with("@@") {
+            theme.diff_meta()
+        } else if part.starts_with('+') {
+            theme.diff_added()
+        } else if part.starts_with('-') {
+            theme.diff_removed()
+        } else {
+            theme.text()
         };
-        if let Some((name, server)) = stored_mcp_server(entry) {
-            let mut servers = std::collections::BTreeMap::from([(name, server)]);
-            let mut next = cursor + 1;
-            while let Some(WindowItem::Entry(candidate)) = history.get(next).copied() {
-                let Some((name, server)) = stored_mcp_server(candidate) else {
-                    break;
-                };
-                servers.insert(name, server);
-                next += 1;
-            }
-            let (_, _, key) = entry.position();
-            let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-            durable.push(
-                cache
-                    .get_or_paint(
-                        block_key,
-                        &servers,
-                        PaintInputs {
-                            width: ctx.viewport.0 as usize,
-                            theme: ctx.theme,
-                            expanded: false,
-                        },
-                        || {
-                            codex::render::stored_mcp_block(
-                                block_key,
-                                servers.clone(),
-                                ctx.theme,
-                                ctx.viewport.0 as usize,
-                            )
-                        },
-                    )
-                    .clone(),
-            );
-            cursor = next;
-            continue;
-        }
-        if let Some(first) = stored_exploration(entry) {
-            let mut members = vec![entry];
-            let mut explorations = vec![first];
-            let mut next = cursor + 1;
-            while let Some(WindowItem::Entry(candidate)) = history.get(next).copied() {
-                let Some(exploration) = stored_exploration(candidate) else {
-                    break;
-                };
-                members.push(candidate);
-                explorations.push(exploration);
-                next += 1;
-            }
-            if members.len() > 1 {
-                let (_, _, key) = entry.position();
-                let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-                let run = blocks::RunKey(block_key.0);
-                let mut reads = 0;
-                let mut searches = 0;
-                let mut paths = Vec::new();
-                for exploration in &explorations {
-                    match &exploration.invocation {
-                        ui_state::claude::facts::ToolInvocation::Read { file_path } => {
-                            reads += 1;
-                            if let Some(path) = file_path.as_deref() {
-                                paths.push(path);
-                            }
-                        }
-                        ui_state::claude::facts::ToolInvocation::Query { .. } => searches += 1,
-                        _ => {}
-                    }
-                }
-                let summary = blocks::run_summary(reads, searches, &paths);
-                let member_blocks = members
-                    .iter()
-                    .filter_map(|entry| {
-                        paint_stored_entry(model, agent, entry, reports_open, leader, ctx)
-                    })
-                    .collect::<Vec<_>>();
-                let expanded = view.viewport.expanded.contains(&run);
-                let hint = crate::bindings::Effective::new(kitty, leader).fold_hint(expanded);
-                let content = (
-                    members
-                        .iter()
-                        .map(|entry| (*entry).clone())
-                        .collect::<Vec<_>>(),
-                    summary.clone(),
-                    hint.clone(),
-                );
-                durable.push(
-                    cache
-                        .get_or_paint(
-                            block_key,
-                            &content,
-                            PaintInputs {
-                                width: ctx.viewport.0 as usize,
-                                theme: ctx.theme,
-                                expanded,
-                            },
-                            || {
-                                blocks::paint_exploration_run(
-                                    block_key,
-                                    run,
-                                    &summary,
-                                    &member_blocks,
-                                    expanded,
-                                    &hint,
-                                    ctx.theme,
-                                    ctx.viewport.0 as usize,
-                                )
-                            },
-                        )
-                        .clone(),
-                );
-                cursor = next;
-                continue;
-            }
-        }
-        if let Some(painted) =
-            paint_stored_entry_cached(model, agent, entry, reports_open, leader, cache, ctx)
-        {
-            durable.push(painted);
-        }
-        push_stored_attachments(model, agent, entry, &mut durable, cache, ctx);
-        cursor += 1;
+        let mut line = Line::from(Span::raw("  "));
+        push(&mut line, part.clone(), style, width);
+        lines.push(line);
     }
-    push_pending_echoes(model, agent, &mut durable, cache, ctx);
-    cache.retain(&durable.iter().map(|block| block.key).collect::<Vec<_>>());
-    parts.feed.blocks = durable;
-    parts.feed.history_truncated = starts_truncated;
-    parts.feed.loading = matches!(chat.state, ChatState::Loading | ChatState::Reloading);
-}
-
-fn push_pending_echoes(
-    model: &Model,
-    agent: AgentId,
-    blocks: &mut Vec<PaintedBlock>,
-    cache: &mut PaintCache,
-    ctx: &FrameContext,
-) {
-    const ECHO_KEY_BASE: u64 = u64::MAX;
-    let width = ctx.viewport.0 as usize;
-    let mut push = |index: usize,
-                    text: &str,
-                    cache_content: &dyn std::fmt::Debug,
-                    attachment_index: &ui_state::AttachmentIndex| {
-        let key = frame::BlockKey(ECHO_KEY_BASE - index as u64);
-        let content = attachment_index.segments(text);
-        let words = attachments::words(attachment_index, &content);
-        let identity = format!("{cache_content:?}");
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    &identity,
-                    PaintInputs {
-                        width,
-                        theme: ctx.theme,
-                        expanded: false,
-                    },
-                    || blocks::paint_user_prompt(key, &words, true, ctx.theme, width),
-                )
-                .clone(),
-        );
-        for (position, attachment) in attachments::described(attachment_index, &content)
-            .iter()
-            .enumerate()
-        {
-            let attachment_key =
-                attachments::attachment_key(attachments::echo_owner(index), position);
-            blocks.push(
-                cache
-                    .get_or_paint(
-                        attachment_key,
-                        attachment,
-                        PaintInputs {
-                            width,
-                            theme: ctx.theme,
-                            expanded: false,
-                        },
-                        || {
-                            blocks::paint_attachment(
-                                attachment_key,
-                                attachment,
-                                blocks::Carrier::Person,
-                                ctx.theme,
-                                width,
-                            )
-                        },
-                    )
-                    .clone(),
-            );
-        }
-    };
-    if let Some(layer) = model.claude(agent) {
-        for (index, echo) in layer.pending_echoes().iter().enumerate() {
-            push(index, &echo.text, echo, layer.attachments());
-        }
-    } else if let Some(layer) = model.claude_sdk(agent)
-        && let Some(echo) = layer.pending_echo()
-    {
-        push(0, &echo.text, echo, layer.attachments());
+    while lines.len() < height + 2 {
+        lines.push(Line::default());
     }
-}
-
-struct StoredExploration {
-    invocation: ui_state::claude::facts::ToolInvocation,
-}
-
-fn stored_mcp_server(
-    entry: &ui_state::StoredDto,
-) -> Option<(String, ui_state::codex::McpServerStartup)> {
-    let ui_state::StoredDto::Codex(stored) = entry else {
-        return None;
-    };
-    if stored.entry.entry_kind() != Some(ui_state::StoredCodexEntryKind::McpStartup) {
-        return None;
-    }
-    let raw = stored
-        .entry
-        .details()
-        .and_then(|details| serde_json::from_slice::<serde_json::Value>(&details.0).ok())?;
-    let name = raw.get("name")?.as_str()?.to_string();
-    let status = match raw.get("status").and_then(serde_json::Value::as_str) {
-        Some("starting") => ui_state::codex::McpStartupStatus::Starting,
-        Some("failed") => ui_state::codex::McpStartupStatus::Failed,
-        Some("cancelled") => ui_state::codex::McpStartupStatus::Cancelled,
-        _ => ui_state::codex::McpStartupStatus::Ready,
-    };
-    Some((
-        name,
-        ui_state::codex::McpServerStartup {
-            status,
-            error: raw
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            failure_reason: raw
-                .get("failureReason")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-        },
-    ))
-}
-
-fn stored_exploration(entry: &ui_state::StoredDto) -> Option<StoredExploration> {
-    let invocation = match entry {
-        ui_state::StoredDto::Claude(stored) => {
-            let entry = ui_state::restored::claude::feed_entry(0, &stored.entry);
-            let ui_state::claude::FeedEntryKind::Tool(tool) = entry.kind else {
-                return None;
-            };
-            tool.invocation
-        }
-        ui_state::StoredDto::ClaudeSdk(stored) => {
-            let entry = ui_state::restored::claude_sdk::feed_entry(0, &stored.entry);
-            if entry.parent_tool_use_id.is_some() {
-                return None;
-            }
-            let ui_state::claude_sdk::FeedEntryKind::Tool(tool) = entry.kind else {
-                return None;
-            };
-            tool.invocation
-        }
-        ui_state::StoredDto::Codex(_) => return None,
-    };
-    invocation
-        .is_exploration()
-        .then_some(StoredExploration { invocation })
-}
-
-fn attachment_index(model: &Model, agent: AgentId) -> Option<&ui_state::AttachmentIndex> {
-    model
-        .claude(agent)
-        .map(|layer| layer.attachments())
-        .or_else(|| model.claude_sdk(agent).map(|layer| layer.attachments()))
-        .or_else(|| model.codex(agent).map(|layer| layer.attachments()))
-}
-
-fn paint_stored_entry(
-    model: &Model,
-    agent: AgentId,
-    entry: &ui_state::StoredDto,
-    reports_open: bool,
-    leader: char,
-    ctx: &FrameContext,
-) -> Option<PaintedBlock> {
-    let (_, _, key) = entry.position();
-    let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-    let message_view = MessageView::new(model, agent, reports_open, leader);
-    let empty = ui_state::AttachmentIndex::default();
-    let index = attachment_index(model, agent).unwrap_or(&empty);
-    match entry {
-        ui_state::StoredDto::Claude(stored) => Some(claude::stored_entry_block(
-            block_key,
-            &stored.entry,
-            index,
-            message_view,
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        )),
-        ui_state::StoredDto::ClaudeSdk(stored) => claude_sdk::stored_entry_block(
-            block_key,
-            &stored.entry,
-            claude_sdk::stored_entry_owner(model, agent, &stored.entry).as_deref(),
-            index,
-            message_view,
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        ),
-        ui_state::StoredDto::Codex(stored) => Some(codex::render::stored_entry_block(
-            block_key,
-            &stored.entry,
-            index,
-            message_view,
-            ctx.theme,
-            ctx.viewport.0 as usize,
-        )),
-    }
-}
-
-#[derive(PartialEq)]
-struct StoredPaintKey {
-    entry: ui_state::StoredDto,
-    content: Vec<ui_state::attachments::Segment>,
-    attribution: Option<String>,
-}
-
-#[derive(Clone, Copy)]
-struct StoredPaintKeyView<'a> {
-    entry: &'a ui_state::StoredDto,
-    content: &'a [ui_state::attachments::Segment],
-    attribution: Option<&'a str>,
-}
-
-impl PartialEq<StoredPaintKeyView<'_>> for StoredPaintKey {
-    fn eq(&self, other: &StoredPaintKeyView<'_>) -> bool {
-        &self.entry == other.entry
-            && self.content == other.content
-            && self.attribution.as_deref() == other.attribution
-    }
-}
-
-impl CacheView for StoredPaintKeyView<'_> {
-    type Owned = StoredPaintKey;
-
-    fn to_owned_key(self) -> Self::Owned {
-        StoredPaintKey {
-            entry: self.entry.clone(),
-            content: self.content.to_vec(),
-            attribution: self.attribution.map(str::to_string),
-        }
-    }
-}
-
-fn paint_stored_entry_cached(
-    model: &Model,
-    agent: AgentId,
-    entry: &ui_state::StoredDto,
-    reports_open: bool,
-    leader: char,
-    cache: &mut PaintCache,
-    ctx: &FrameContext,
-) -> Option<PaintedBlock> {
-    if let ui_state::StoredDto::ClaudeSdk(stored) = entry
-        && !claude_sdk::stored_entry_paints(&stored.entry)
-    {
-        return None;
-    }
-    let (_, _, key) = entry.position();
-    let block_key = stable_block_key(0xd000_0000_0000_0000, key.as_ref());
-    let empty = ui_state::AttachmentIndex::default();
-    let index = attachment_index(model, agent).unwrap_or(&empty);
-    let content = index.segments(entry.text().unwrap_or_default());
-    let attribution = match entry {
-        ui_state::StoredDto::ClaudeSdk(stored) => {
-            claude_sdk::stored_entry_owner(model, agent, &stored.entry)
-        }
-        _ => None,
-    };
-    Some(
-        cache
-            .get_or_paint_view(
-                block_key,
-                StoredPaintKeyView {
-                    entry,
-                    content: &content,
-                    attribution: attribution.as_deref(),
-                },
-                PaintInputs {
-                    width: ctx.viewport.0 as usize,
-                    theme: ctx.theme,
-                    expanded: reports_open,
-                },
-                || {
-                    paint_stored_entry(model, agent, entry, reports_open, leader, ctx)
-                        .expect("paintable stored entry")
-                },
-            )
-            .clone(),
-    )
-}
-
-fn push_stored_attachments(
-    model: &Model,
-    agent: AgentId,
-    entry: &ui_state::StoredDto,
-    blocks: &mut Vec<PaintedBlock>,
-    cache: &mut PaintCache,
-    ctx: &FrameContext,
-) {
-    if !matches!(entry.kind(), "prompt" | "message") {
-        return;
-    }
-    let Some(index) = attachment_index(model, agent) else {
-        return;
-    };
-    let content = index.segments(entry.text().unwrap_or_default());
-    let (_, _, key) = entry.position();
-    let owner = stable_block_key(0xd000_0000_0000_0000, key.as_ref()).0;
-    let carrier = if entry.kind() == "prompt" {
-        blocks::Carrier::Person
-    } else {
-        blocks::Carrier::Agent
-    };
-    for (position, attachment) in attachments::described(index, &content).iter().enumerate() {
-        let key = attachments::attachment_key(owner, position);
-        blocks.push(
-            cache
-                .get_or_paint(
-                    key,
-                    attachment,
-                    PaintInputs {
-                        width: ctx.viewport.0 as usize,
-                        theme: ctx.theme,
-                        expanded: false,
-                    },
-                    || {
-                        blocks::paint_attachment(
-                            key,
-                            attachment,
-                            carrier,
-                            ctx.theme,
-                            ctx.viewport.0 as usize,
-                        )
-                    },
-                )
-                .clone(),
-        );
-    }
-}
-
-fn store_status(model: &Model, agent: AgentId, ctx: &FrameContext) -> Option<Line<'static>> {
-    let chat = model.chat(agent)?;
-    let width = ctx.viewport.0 as usize;
-    const CATCH_UP_DELAY_MS: i64 = 500;
-    if chat.state == ChatState::CatchingUp
-        && chat.catching_up_since.is_some_and(|since| {
-            ctx.now.signed_duration_since(since).num_milliseconds() >= CATCH_UP_DELAY_MS
-        })
-    {
-        return Some(blocks::store_status_row(
-            "⟳",
-            "catching up from saved history…",
-            ctx.theme.muted(),
-            width,
-            ctx.theme,
-        ));
-    }
-    let progress = model
-        .agent(agent)
-        .and_then(|card| card.agent.progress.as_ref())
-        .or(chat.progress.as_ref());
-    behind(progress, chat.head_through()).then(|| {
-        blocks::store_status_row(
-            "↓",
-            "new activity available",
-            ctx.theme.warn(),
-            width,
-            ctx.theme,
-        )
-    })
-}
-
-/// Everything an agent-message row needs besides the message itself: who
-/// this chat belongs to (so a sender's host can be named only when it is
-/// somebody else's), whether completions are open, and the chord that
-/// changes that — the affordance has to name the key, so the two travel
-/// together.
-#[derive(Clone, Copy)]
-pub(crate) struct MessageView<'m> {
-    model: &'m Model,
-    agent: AgentId,
-    open: bool,
-    leader: char,
-}
-
-impl<'m> MessageView<'m> {
-    pub(crate) fn new(model: &'m Model, agent: AgentId, open: bool, leader: char) -> Self {
-        Self {
-            model,
-            agent,
-            open,
-            leader,
-        }
-    }
-
-    pub(crate) fn sender(&self, from: &str) -> String {
-        sender_marker(self.model, self.agent, Model::agent_message_sender(from))
-    }
-
-    /// The rows a message's body makes (U4). An ordinary message shows
-    /// everything it said — someone is talking to this agent. A
-    /// completion is a report from a child and closes to its first line,
-    /// stating what is behind the fold and how to open it, because a chat
-    /// that unrolls every finished child's last message stops being
-    /// readable at the exact moment several of them finish. An exit says
-    /// what little the envelope carried and offers nothing to open,
-    /// because there is nothing there.
-    pub(crate) fn body(&self, presentation: AgentMessagePresentation, text: &str) -> MessageBody {
-        match presentation {
-            AgentMessagePresentation::Inbound => MessageBody {
-                text: text.to_string(),
-                affordance: None,
-            },
-            AgentMessagePresentation::Notice => MessageBody {
-                text: message_digest(text).head.to_string(),
-                affordance: None,
-            },
-            AgentMessagePresentation::Finished if self.open => MessageBody {
-                text: text.to_string(),
-                affordance: (message_digest(text).hidden_lines > 0)
-                    .then(|| format!("⌃ close · C-{} m", self.leader)),
-            },
-            AgentMessagePresentation::Finished => {
-                let digest = message_digest(text);
-                MessageBody {
-                    text: digest.head.to_string(),
-                    affordance: match digest.hidden_lines {
-                        0 => None,
-                        1 => Some(format!("⌄ 1 more line · C-{} m", self.leader)),
-                        n => Some(format!("⌄ {n} more lines · C-{} m", self.leader)),
-                    },
-                }
-            }
-        }
-    }
-}
-
-/// A message body as it is being shown: what to render, and the one line
-/// that states what is not being rendered.
-pub(crate) struct MessageBody {
-    pub(crate) text: String,
-    pub(crate) affordance: Option<String>,
-}
-
-/// The directional glyph a message wears (U4): one per presentation, the
-/// same in both chats.
-pub(crate) fn message_glyph(
-    presentation: AgentMessagePresentation,
-    theme: crate::render::Theme,
-) -> (&'static str, ratatui::style::Style) {
-    match presentation {
-        AgentMessagePresentation::Finished => ("✔", theme.ok()),
-        AgentMessagePresentation::Notice => ("·", theme.muted()),
-        AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
-    }
-}
-
-/// Who a message came from, in words (U4): the sender's name, and the
-/// host only when it is not this agent's own. A chat row is for a person,
-/// and a person reading their own machine's name in every row learns
-/// nothing from it.
-///
-/// A host this inventory cannot name is left exactly as it arrived. An
-/// address nobody here can resolve is still the truth about where the
-/// message came from, and shortening it to the half we recognise would
-/// be inventing agreement.
-pub(crate) fn sender_marker(
-    model: &Model,
-    agent: AgentId,
-    sender: AgentMessageSender<'_>,
-) -> String {
-    let AgentMessageSender::Address { name, host, .. } = sender else {
-        return sender.raw().to_string();
-    };
-    if model
-        .agent(agent)
-        .is_some_and(|card| card.agent.host_id == host)
-    {
-        return name.to_string();
-    }
-    match model.host_name(host) {
-        Some(host_name) => format!("{name} @ {host_name}"),
-        None => sender.raw().to_string(),
-    }
-}
-
-/// The banner a child raises in its parent's chat (U1): who is waiting,
-/// what for, and — from the child's own layer — the one line that says
-/// which act is blocked.
-///
-/// Composed, never synthesized. Nothing is written into the parent's
-/// stream and nothing is stored, so the banner is a fact about right now:
-/// answering the ask anywhere, in the child's own chat or on another
-/// device, empties it on the next frame with nothing to clear. Only the
-/// loudest need is named; the rest are counted, because a chat that
-/// spends four rows on other agents' business is no longer this agent's
-/// chat.
-pub(crate) fn family_banner(model: &Model, agent: AgentId) -> Option<FamilyBanner> {
-    let needs = model.family_needs(agent);
-    let first = needs.first()?;
-    let name = first.card.display_name();
-    let mut text = match (first.why, ask_detail(model, first)) {
-        (Why::Permission, Some(detail)) => format!("{name} needs permission: {detail}"),
-        (Why::Permission, None) => format!("{name} needs permission"),
-        (Why::Question, Some(detail)) => format!("{name} has a question: {detail}"),
-        (Why::Question, None) => format!("{name} has a question"),
-        (Why::Finished, _) => format!("{name} finished"),
-    };
-    if needs.len() > 1 {
-        text.push_str(&format!(" · +{} more", needs.len() - 1));
-    }
-    Some(FamilyBanner {
-        child: first.agent(),
-        text,
-    })
-}
-
-/// The banner, before it is words: the need it names and the child that
-/// raised it. The parent's chat needs both — the words for the row, the
-/// child for the panel the row leads to (U2).
-pub(crate) struct FamilyBanner {
-    /// The child the loudest need belongs to: the one `<leader> a` docks.
-    pub(crate) child: AgentId,
-    text: String,
-}
-
-impl FamilyBanner {
-    /// The row as it reads. The chord that docks the child's own panel
-    /// here is named only when it would open one — a finished child
-    /// wants a person, not an answer, and a parent whose own ask holds
-    /// the bottom block has nowhere to put a guest (P10).
-    pub(crate) fn row(&self, answerable: bool, leader: char) -> String {
-        match answerable {
-            true => format!("{} · C-{leader} a answer", self.text),
-            false => self.text.clone(),
-        }
-    }
-}
-
-/// The child's layer decides what its own ask looks like; the parent's
-/// chat only decides that it is shown at all.
-fn ask_detail(model: &Model, need: &FamilyNeed<'_>) -> Option<String> {
-    match need.layer()? {
-        StructuredProtocol::ClaudePtyTranscript => claude::ask_detail(model, need.agent()),
-        StructuredProtocol::Codex => codex::ask_detail(model, need.agent()),
-        StructuredProtocol::ClaudeSdk => claude_sdk::ask_detail(model, need.agent()),
-    }
-}
-
-/// The next agent to show while cycling through a family (U3): the one
-/// after this chat's agent in family order, wrapping past the last back
-/// to the top row — so `into the children and back` is one repeated key
-/// rather than two.
-///
-/// Members the chrome cannot open are skipped rather than shown: a chat
-/// needs a structured protocol this build renders and a host that answers,
-/// and dropping the human onto a frame that can say nothing would be a
-/// worse answer than staying put. When nothing else in the family
-/// qualifies, the key does nothing at all.
-pub(crate) fn next_in_family(model: &Model, agent: AgentId) -> Option<AgentId> {
-    let root = model.family_root(agent)?;
-    let line: Vec<AgentId> = std::iter::once(root)
-        .chain(
-            model
-                .family_of(root)
-                .into_iter()
-                .map(|member| member.card.agent.id),
-        )
-        .collect();
-    let at = line.iter().position(|id| *id == agent)?;
-    line.iter()
-        .cycle()
-        .skip(at + 1)
-        .take(line.len() - 1)
-        .copied()
-        .find(|id| openable(model, *id))
-}
-
-fn openable(model: &Model, agent: AgentId) -> bool {
-    model.agent(agent).is_some_and(|card| {
-        card.structured_protocol().is_some() && model.host_online(card.agent.host_id)
-    })
-}
-
-/// Which of the family chords would do something in this chat right now
-/// — the input the `?` overlay derives its family rows from, so the
-/// overlay can never name a chord that is inert here (P10).
-pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::FamilyKeys {
-    crate::bindings::FamilyKeys {
-        cycle: next_in_family(model, agent).is_some(),
-        reports: has_closable_completion(model, agent),
-        answer: family_banner(model, agent)
-            .is_some_and(|banner| inline::can_open(model, agent, banner.child)),
-    }
-}
-
-/// Whether any completion in this chat has a body behind its first line
-/// — the exact condition under which `<leader> m` changes what is on
-/// screen. A completion that said one thing is already showing all of
-/// it, and a chat of those has nothing to open.
-fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
-    model.chat(agent).is_some_and(|chat| {
-        chat.entries
-            .iter()
-            .any(ui_state::StoredDto::has_foldable_completion)
-    })
-}
-
-/// The header's family marker (U3): how many agents this one has spawned,
-/// at any depth, and empty when it has spawned none. It is also the
-/// discoverable half of `<leader> n` — the count says there is somewhere
-/// to cycle to.
-pub(crate) fn subagent_marker(model: &Model, agent: AgentId) -> String {
-    match model.family_of(agent).len() {
-        0 => String::new(),
-        1 => " · ⋯ 1 subagent".to_string(),
-        n => format!(" · ⋯ {n} subagents"),
-    }
-}
-
-/// The shared terminal sentence for a typed amux send. Agent folds retain
-/// different native call types, but the outbound conversation row is one TUI
-/// idiom and must never choose a blank line as its visible summary.
-pub(crate) fn format_amux_send(to: Option<&str>, text: Option<&str>) -> String {
-    let target = to.unwrap_or("an agent");
-    match text.and_then(|text| text.lines().find(|line| !line.trim().is_empty())) {
-        Some(head) => format!("→ {target} · {}", head.trim()),
-        None => format!("→ {target}"),
-    }
-}
-
-pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
-    model.chat(agent).map_or(0, |chat| chat.content_revision)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::ops::Range;
-
-    use chrono::{DateTime, TimeDelta};
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
-    use ratatui::text::Line;
-    use serde_json::json;
-    use ui_state::{
-        Agent, AgentId, Attention, ClaudeCommand, Command, HostEntry, HostTrustStatus, Model, Msg,
-        OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
-    };
-    use uuid::Uuid;
-
-    use super::{
-        AgentChatView, ChatView, FeedScroll, build_chat_lines, entry_watermark, format_amux_send,
-    };
-    use crate::chat::blocks::RunKey;
-    use crate::chat::frame::{BlockKey, PaintedBlock};
-    use crate::render::{FrameContext, INVARIANT_WARNING, Theme, str_width};
-    use crate::view::{UiAction, ViewState, visible_rows};
-
-    fn at(seconds: i64) -> DateTime<chrono::Utc> {
-        DateTime::from_timestamp(1_754_697_600 + seconds, 0).expect("fixture timestamp")
-    }
-
-    fn a_host(online: bool) -> HostEntry {
-        HostEntry {
-            id: Uuid::from_u128(42),
-            name: "protocol-host".to_string(),
-            online,
-            version: None,
-            capabilities: None,
-            trust_status: HostTrustStatus::Trusted,
-            last_dial_error: None,
-            via: if online {
-                ui_state::HostVia::Direct
-            } else {
-                ui_state::HostVia::Offline
-            },
-            signed_in: Some(true),
-            platform: None,
-        }
-    }
-
-    fn model_with_protocol(protocol: &str) -> (Model, AgentId) {
-        let agent = Uuid::from_u128(41);
-        let host = Uuid::from_u128(42);
-        let mut model = Model::default();
-        for msg in [
-            Msg::Server(ServerMsg::Connected {
-                local_host_id: Some(host),
-            }),
-            Msg::Server(ServerMsg::HostUpserted { host: a_host(true) }),
-            Msg::Server(ServerMsg::AgentUpserted {
-                agent: Agent {
-                    id: agent,
-                    host_id: host,
-                    name: Some("protocol-test".to_string()),
-                    command: "test-agent".to_string(),
-                    working_dir: "/work".into(),
-                    kind: match protocol {
-                        ui_state::claude::PROTOCOL => ui_state::AgentKind::Claude {
-                            driver: ui_state::ClaudeDriver::Pty,
-                        },
-                        ui_state::codex::PROTOCOL => ui_state::AgentKind::Codex,
-                        _ => ui_state::AgentKind::TestAgent,
-                    },
-                    readonly: false,
-                    args: Vec::new(),
-                    created_at: at(0),
-                    last_activity: at(0),
-                    parent: None,
-                    working_on: None,
-                    summary: None,
-                    progress: None,
-                    inventory_revision: 0,
-                },
-            }),
-        ] {
-            update(&mut model, msg);
-        }
-        (model, agent)
-    }
-
-    fn idle_claude_model() -> (Model, AgentId) {
-        let (mut model, agent) = model_with_protocol(ui_state::claude::PROTOCOL);
-        for event in [
-            StreamMsg::Opened { truncated: false },
-            StreamMsg::ReplayComplete,
-        ] {
-            update(&mut model, Msg::Stream { agent, event });
-        }
-        (model, agent)
-    }
-
-    fn claude_plan_reader_model() -> (Model, AgentId) {
-        let (mut model, agent) = idle_claude_model();
-        update(
-            &mut model,
-            Msg::Stream {
-                agent,
-                event: StreamMsg::Batch {
-                    at: at(3),
-                    entries: vec![
-                        StreamEntry {
-                            seq: 1,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({"type": "amux.transcript_ready"}),
-                        },
-                        StreamEntry {
-                            seq: 2,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({
-                                "type": "user",
-                                "uuid": "dddddddd-0000-4000-8000-000000000001",
-                                "sessionId": "22222222-2222-4222-8222-222222222222",
-                                "timestamp": "2026-08-12T09:00:00.000Z",
-                                "message": {"role": "user", "content": "make a plan"},
-                                "origin": {"kind": "human"},
-                                "promptSource": "typed"
-                            }),
-                        },
-                        StreamEntry {
-                            seq: 3,
-                            published_at: at(3),
-                            activity_at: Some(at(3)),
-                            historical: false,
-                            payload: json!({
-                                "type": "hook.permission_request",
-                                "tool_name": "ExitPlanMode",
-                                "tool_input": {"plan": "# plan\n\n- step"},
-                                "permission_mode": "default"
-                            }),
-                        },
-                    ],
-                },
-            },
-        );
-        (model, agent)
-    }
-
-    /// A Claude chat whose one prompt carries an image attachment, with
-    /// the refs row that states its name and size.
-    fn image_prompt_model() -> (Model, AgentId, ui_state::DraftAttachment) {
-        let (mut model, agent) = idle_claude_model();
-        let image = ui_state::DraftAttachment::from_bytes(
-            ui_state::ArtifactKind::Image,
-            "screenshot.png",
-            "image/png",
-            vec![b'p'; 2048],
-        );
-        let element = ui_state::format_mention(&ui_state::Mention {
-            kind: ui_state::MentionKind::Image {
-                id: image.id.clone(),
-            },
-            name: image.name.clone(),
-            size: Some(image.size),
-            path: None,
-        });
-        crate::fixtures::install_store_rows_for(
-            &mut model,
-            agent,
-            StructuredProtocol::ClaudePtyTranscript,
-            vec![
-                json!({"type": "amux.transcript_ready"}),
-                json!({
-                    "type": "amux.attachments",
-                    "input_id": null,
-                    "refs": [{
-                        "id": image.id,
-                        "kind": "image",
-                        "name": image.name,
-                        "mime": image.mime,
-                        "size": image.size,
-                    }],
-                }),
-                json!({
-                    "type": "user",
-                    "uuid": "dddddddd-0000-4000-8000-000000000001",
-                    "sessionId": "22222222-2222-4222-8222-222222222222",
-                    "timestamp": "2026-08-12T09:00:00.000Z",
-                    "message": {"role": "user", "content": format!("look\n{element}")},
-                    "origin": {"kind": "human"},
-                    "promptSource": "typed"
-                }),
-            ],
-        );
-        (model, agent, image)
-    }
-
-    /// The fold chord opens what the focus is on. On an image row that
-    /// means the host's viewer, through the runtime, which is the only
-    /// place the bytes exist — the chat never holds them.
-    #[test]
-    fn the_fold_chord_opens_the_focused_image_attachment() {
-        let (model, agent, image) = image_prompt_model();
-        let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-        let ctx = FrameContext {
-            viewport: (100, 30),
-            theme: Theme::default(),
-            now: at(0),
-        };
-        // Painting fills the metrics the focus moves through.
-        build_chat_lines(&model, &chat, &ctx);
-
-        // The newest block is the prompt's one attachment row.
-        let leader = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
-        super::handle_chat_key(&mut chat, &model, leader, (100, 30), at(0));
-        super::handle_chat_key(
-            &mut chat,
-            &model,
-            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
-            (100, 30),
-            at(0),
-        );
-        super::handle_chat_key(&mut chat, &model, leader, (100, 30), at(0));
-        let action = super::handle_chat_key(
-            &mut chat,
-            &model,
-            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-            (100, 30),
-            at(0),
-        );
-        assert_eq!(
-            action,
-            Some(UiAction::Dispatch(Command::OpenAttachment {
-                agent,
-                id: image.id
-            })),
-            "the chord opened the focused image"
-        );
-    }
-
-    fn seed_focus_cache(chat: &mut ChatView) {
-        let block = |key, text: &str| PaintedBlock {
-            key: BlockKey(key),
-            kind: crate::chat::frame::BlockKind::Activity,
-            lines: vec![Line::from(text.to_string())],
-            copy_text: text.to_string(),
-            run: None,
-        };
-        chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
-            viewport: (120, 40),
-            metrics: super::frame::FeedMetrics {
-                total_rows: 100,
-                feed_rows: 20,
-                max_top: 80,
-                ranges: vec![
-                    (BlockKey(1), Range { start: 0, end: 5 }),
-                    (BlockKey(2), Range { start: 40, end: 45 }),
-                    (BlockKey(3), Range { start: 90, end: 95 }),
-                ],
-            },
-            blocks: vec![
-                block(1, "oldest block"),
-                block(2, "middle block"),
-                block(3, "newest block"),
-            ],
-            following_geometry: super::frame::ChatGeometry {
-                content_indent: crate::chat::frame::CONTENT_INDENT,
-                width: 120,
-                height: 40,
-                feed_top: 2,
-                feed_rows: 21,
-                bottom_top: 39,
-            },
-            paused_geometry: super::frame::ChatGeometry {
-                content_indent: crate::chat::frame::CONTENT_INDENT,
-                width: 120,
-                height: 40,
-                feed_top: 2,
-                feed_rows: 20,
-                bottom_top: 39,
-            },
-        }));
-    }
-
-    fn press_chat(
-        chat: &mut ChatView,
-        model: &Model,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> Option<UiAction> {
-        super::handle_chat_key(
-            chat,
-            model,
-            KeyEvent::new(code, modifiers),
-            (120, 40),
-            at(0),
-        )
-    }
-
-    fn leader_chat(chat: &mut ChatView, model: &Model, key: char) -> Option<UiAction> {
-        assert_eq!(
-            press_chat(chat, model, KeyCode::Char('a'), KeyModifiers::CONTROL,),
-            None
-        );
-        press_chat(chat, model, KeyCode::Char(key), KeyModifiers::NONE)
-    }
-
-    fn send_prompt(model: &mut Model, agent: AgentId, seconds: i64) {
-        update(model, Msg::Server(ServerMsg::HostsSynchronized));
-        update(model, Msg::Server(ServerMsg::AgentsSynchronized));
-        update(model, Msg::Tick { now: at(seconds) });
-        update(
-            model,
-            Msg::Command {
-                op: OpId(Uuid::from_u128(90)),
-                command: Command::Claude(ClaudeCommand::SendPrompt {
-                    agent,
-                    text: "next task".to_string(),
-                }),
-            },
-        );
-    }
-
-    #[test]
-    fn known_protocols_dispatch_their_native_views() {
-        let (claude, claude_agent) = model_with_protocol(ui_state::claude::PROTOCOL);
-        let claude =
-            ChatView::open(&claude, claude_agent, 'a', false).expect("known Claude protocol opens");
-        assert!(matches!(claude.inner, AgentChatView::Claude(_)));
-
-        let (codex, codex_agent) = model_with_protocol(ui_state::codex::PROTOCOL);
-        let codex =
-            ChatView::open(&codex, codex_agent, 'a', false).expect("known Codex protocol opens");
-        assert!(matches!(codex.inner, AgentChatView::Codex(_)));
-    }
-
-    #[test]
-    fn amux_send_summary_uses_the_first_non_empty_line_for_both_adapters() {
-        assert_eq!(
-            format_amux_send(
-                Some("runner"),
-                Some("\n  \n  rerun with --nocapture  \nignored")
-            ),
-            "→ runner · rerun with --nocapture"
-        );
-        assert_eq!(format_amux_send(Some("runner"), Some("\n  \n")), "→ runner");
-        assert_eq!(format_amux_send(None, None), "→ an agent");
-    }
-
-    #[test]
-    fn both_agents_route_paging_and_endpoints_through_the_shared_viewport() {
-        for protocol in [
-            StructuredProtocol::ClaudePtyTranscript,
-            StructuredProtocol::Codex,
-        ] {
-            let wire = protocol.as_str();
-            let (model, agent) = model_with_protocol(wire);
-            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            let ctx = FrameContext {
-                viewport: (120, 40),
-                theme: Theme::default(),
-                now: at(0),
-            };
-            chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
-                viewport: ctx.viewport,
-                metrics: super::frame::FeedMetrics {
-                    total_rows: 100,
-                    feed_rows: 20,
-                    max_top: 80,
-                    ranges: Vec::new(),
-                },
-                blocks: Vec::new(),
-                following_geometry: super::frame::ChatGeometry {
-                    content_indent: crate::chat::frame::CONTENT_INDENT,
-                    // A synthetic geometry for scroll arithmetic: its rows are
-                    // chosen by hand, so it declares no border to match them.
-                    width: 120,
-                    height: 40,
-                    feed_top: 2,
-                    feed_rows: 21,
-                    bottom_top: 39,
-                },
-                paused_geometry: super::frame::ChatGeometry {
-                    content_indent: crate::chat::frame::CONTENT_INDENT,
-                    // A synthetic geometry for scroll arithmetic: its rows are
-                    // chosen by hand, so it declares no border to match them.
-                    width: 120,
-                    height: 40,
-                    feed_top: 2,
-                    feed_rows: 20,
-                    bottom_top: 39,
-                },
-            }));
-
-            super::handle_chat_key(
-                &mut chat,
-                &model,
-                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
-                ctx.viewport,
-                ctx.now,
-            );
-            assert!(
-                matches!(chat.viewport.scroll, FeedScroll::Paused { .. }),
-                "{protocol:?} PgUp pauses"
-            );
-
-            super::handle_chat_key(
-                &mut chat,
-                &model,
-                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
-                ctx.viewport,
-                ctx.now,
-            );
-            assert_eq!(
-                chat.viewport.scroll,
-                FeedScroll::Following,
-                "{protocol:?} PgDn at the bottom follows"
-            );
-
-            super::handle_chat_key(
-                &mut chat,
-                &model,
-                KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
-                ctx.viewport,
-                ctx.now,
-            );
-            assert!(matches!(
-                chat.viewport.scroll,
-                FeedScroll::Paused { top_line: 0, .. }
-            ));
-
-            super::handle_chat_key(
-                &mut chat,
-                &model,
-                KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
-                ctx.viewport,
-                ctx.now,
-            );
-            assert_eq!(chat.viewport.scroll, FeedScroll::Following);
-        }
-    }
-
-    #[test]
-    fn focus_chords_move_blocks_and_keep_them_visible_in_both_chats() {
-        for protocol in [
-            StructuredProtocol::ClaudePtyTranscript,
-            StructuredProtocol::Codex,
-        ] {
-            let wire = protocol.as_str();
-            let (model, agent) = model_with_protocol(wire);
-            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            seed_focus_cache(&mut chat);
-
-            leader_chat(&mut chat, &model, 'k');
-            assert_eq!(chat.viewport.focus, Some(BlockKey(3)), "{protocol:?}");
-            assert_eq!(chat.viewport.scroll, FeedScroll::Following, "{protocol:?}");
-
-            leader_chat(&mut chat, &model, 'k');
-            assert_eq!(chat.viewport.focus, Some(BlockKey(2)), "{protocol:?}");
-            assert!(matches!(
-                chat.viewport.scroll,
-                FeedScroll::Paused { top_line: 40, .. }
-            ));
-
-            press_chat(&mut chat, &model, KeyCode::Up, KeyModifiers::CONTROL);
-            assert_eq!(chat.viewport.focus, Some(BlockKey(1)), "{protocol:?}");
-            assert!(matches!(
-                chat.viewport.scroll,
-                FeedScroll::Paused { top_line: 0, .. }
-            ));
-
-            press_chat(&mut chat, &model, KeyCode::Down, KeyModifiers::CONTROL);
-            assert_eq!(chat.viewport.focus, Some(BlockKey(2)), "{protocol:?}");
-            let FeedScroll::Paused { top_line, .. } = chat.viewport.scroll else {
-                panic!("{protocol:?} focus stays paused away from the newest rows");
-            };
-            assert!(
-                top_line <= 40 && 45 <= top_line + 20,
-                "focused block is visible"
-            );
-
-            press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
-            assert_eq!(chat.viewport.focus, None, "{protocol:?} Esc clears focus");
-        }
-    }
-
-    #[test]
-    fn native_help_overlays_take_shared_focus_keys_in_both_chats() {
-        for protocol in [
-            StructuredProtocol::ClaudePtyTranscript,
-            StructuredProtocol::Codex,
-        ] {
-            let wire = protocol.as_str();
-            let (model, agent) = model_with_protocol(wire);
-            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            seed_focus_cache(&mut chat);
-
-            press_chat(&mut chat, &model, KeyCode::Char('?'), KeyModifiers::NONE);
-            assert!(chat.overlay_open(), "{protocol:?} help opens");
-            press_chat(&mut chat, &model, KeyCode::Up, KeyModifiers::CONTROL);
-            assert!(
-                !chat.overlay_open(),
-                "{protocol:?} help consumes Ctrl+Up and closes"
-            );
-            assert_eq!(
-                chat.viewport.focus, None,
-                "{protocol:?} help keeps focus movement behind the overlay"
-            );
-
-            chat.viewport.focus = Some(BlockKey(2));
-            press_chat(&mut chat, &model, KeyCode::Char('?'), KeyModifiers::NONE);
-            assert!(chat.overlay_open(), "{protocol:?} help reopens");
-            press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
-            assert!(!chat.overlay_open(), "{protocol:?} Esc closes help");
-            assert_eq!(
-                chat.viewport.focus,
-                Some(BlockKey(2)),
-                "{protocol:?} Esc leaves the covered block focus intact"
-            );
-        }
-    }
-
-    #[test]
-    fn claude_reader_takes_esc_before_shared_block_focus() {
-        let (model, agent) = claude_plan_reader_model();
-        let mut chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat opens");
-        chat.reconcile(&model);
-        assert!(chat.overlay_open(), "the pending plan opens its reader");
-        chat.viewport.focus = Some(BlockKey(2));
-
-        press_chat(&mut chat, &model, KeyCode::Esc, KeyModifiers::NONE);
-
-        assert!(!chat.overlay_open(), "Esc closes the reader");
-        assert_eq!(
-            chat.viewport.focus,
-            Some(BlockKey(2)),
-            "the reader consumes Esc before shared focus clearing"
-        );
-    }
-
-    #[test]
-    fn focus_copy_uses_the_focused_block_or_the_newest_block_in_both_chats() {
-        for protocol in [
-            StructuredProtocol::ClaudePtyTranscript,
-            StructuredProtocol::Codex,
-        ] {
-            let wire = protocol.as_str();
-            let (model, agent) = model_with_protocol(wire);
-            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            seed_focus_cache(&mut chat);
-
-            assert_eq!(
-                leader_chat(&mut chat, &model, 'y'),
-                Some(UiAction::CopyToClipboard("newest block".to_string())),
-                "{protocol:?} copies newest when focus is absent"
-            );
-
-            chat.viewport.focus = Some(BlockKey(1));
-            assert_eq!(
-                leader_chat(&mut chat, &model, 'y'),
-                Some(UiAction::CopyToClipboard("oldest block".to_string())),
-                "{protocol:?} copies focused block"
-            );
-        }
-    }
-
-    #[test]
-    fn leader_o_toggles_the_focused_exploration_run() {
-        let (model, agent) = model_with_protocol(ui_state::claude::PROTOCOL);
-        let mut chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat opens");
-        seed_focus_cache(&mut chat);
-        let run = RunKey(2);
-        chat.feed_metrics
-            .get_mut()
-            .as_mut()
-            .expect("seeded cache")
-            .blocks[1]
-            .run = Some(run);
-        chat.viewport.focus = Some(BlockKey(2));
-
-        assert_eq!(leader_chat(&mut chat, &model, 'o'), None);
-        assert_eq!(
-            chat.viewport.expanded,
-            std::collections::BTreeSet::from([run])
-        );
-
-        assert_eq!(leader_chat(&mut chat, &model, 'o'), None);
-        assert!(chat.viewport.expanded.is_empty());
-    }
-
-    /// The running program hands wheel events to `handle_chat_mouse`, so
-    /// the review page only scrolls under a mouse if that entry point knows
-    /// about it — reaching into the page's own wheel handler would prove
-    /// nothing about the program.
-    #[test]
-    fn mouse_wheel_scrolls_the_open_review_page_without_moving_its_cursor() {
-        let (model, agent) = model_with_protocol(StructuredProtocol::ClaudePtyTranscript.as_str());
-        let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-        let AgentChatView::Claude(view) = &mut chat.inner else {
-            panic!("a Claude chat");
-        };
-        view.review = Some(Box::new(
-            crate::chat::claude_shared::draft::ReviewDraft::opened(
-                crate::review::fixture::sample_review(),
-            ),
-        ));
-
-        let wheel = |kind| MouseEvent {
-            kind,
-            column: 5,
-            row: 5,
-            modifiers: KeyModifiers::NONE,
-        };
-        fn page(chat: &mut ChatView) -> &mut crate::review::ReviewView {
-            let AgentChatView::Claude(view) = &mut chat.inner else {
-                panic!("a Claude chat");
-            };
-            view.open_review_mut().expect("the page is open")
-        }
-        let cursor = page(&mut chat).cursor();
-
-        // At the top there is nothing above to reveal, so the frame is
-        // unchanged and the program has no reason to redraw.
-        assert!(!super::handle_chat_mouse(
-            &mut chat,
-            &model,
-            wheel(MouseEventKind::ScrollUp),
-            (80, 12),
-        ));
-        assert_eq!(page(&mut chat).scroll(), 0);
-
-        assert!(super::handle_chat_mouse(
-            &mut chat,
-            &model,
-            wheel(MouseEventKind::ScrollDown),
-            (80, 12),
-        ));
-        assert_eq!(page(&mut chat).scroll(), 3, "one notch is three rows");
-        assert_eq!(
-            page(&mut chat).cursor(),
-            cursor,
-            "the wheel scrolls the body, it does not move the cursor"
-        );
-
-        assert!(super::handle_chat_mouse(
-            &mut chat,
-            &model,
-            wheel(MouseEventKind::ScrollUp),
-            (80, 12),
-        ));
-        assert_eq!(page(&mut chat).scroll(), 0);
-        // The feed underneath never moved while the page had the frame.
-        assert_eq!(chat.viewport.scroll, FeedScroll::Following);
-    }
-
-    #[test]
-    fn mouse_wheel_routes_three_rows_through_both_chat_viewports() {
-        for protocol in [
-            StructuredProtocol::ClaudePtyTranscript,
-            StructuredProtocol::Codex,
-        ] {
-            let wire = protocol.as_str();
-            let (model, agent) = model_with_protocol(wire);
-            let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            chat.feed_metrics.replace(Some(super::CachedFeedMetrics {
-                viewport: (120, 40),
-                metrics: super::frame::FeedMetrics {
-                    total_rows: 100,
-                    feed_rows: 20,
-                    max_top: 80,
-                    ranges: Vec::new(),
-                },
-                blocks: Vec::new(),
-                following_geometry: super::frame::ChatGeometry {
-                    content_indent: crate::chat::frame::CONTENT_INDENT,
-                    // A synthetic geometry for scroll arithmetic: its rows are
-                    // chosen by hand, so it declares no border to match them.
-                    width: 120,
-                    height: 40,
-                    feed_top: 2,
-                    feed_rows: 21,
-                    bottom_top: 39,
-                },
-                paused_geometry: super::frame::ChatGeometry {
-                    content_indent: crate::chat::frame::CONTENT_INDENT,
-                    // A synthetic geometry for scroll arithmetic: its rows are
-                    // chosen by hand, so it declares no border to match them.
-                    width: 120,
-                    height: 40,
-                    feed_top: 2,
-                    feed_rows: 20,
-                    bottom_top: 39,
-                },
-            }));
-            let paint_stats = chat.paint_cache.borrow().stats();
-            let event = |kind, row| MouseEvent {
-                kind,
-                column: 5,
-                row,
-                modifiers: KeyModifiers::NONE,
-            };
-
-            assert!(!super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::ScrollUp, 0),
-                (120, 40),
-            ));
-            assert!(!super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::Down(MouseButton::Left), 5),
-                (120, 40),
-            ));
-            assert!(!super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::Drag(MouseButton::Left), 5),
-                (120, 40),
-            ));
-
-            assert!(super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::ScrollUp, 5),
-                (120, 40),
-            ));
-            assert!(matches!(
-                chat.viewport.scroll,
-                FeedScroll::Paused { top_line: 77, .. }
-            ));
-            assert_eq!(chat.paint_cache.borrow().stats(), paint_stats);
-            assert!(super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::ScrollDown, 5),
-                (120, 40),
-            ));
-            assert_eq!(chat.viewport.scroll, FeedScroll::Following);
-            assert!(!super::handle_chat_mouse(
-                &mut chat,
-                &model,
-                event(MouseEventKind::ScrollDown, 5),
-                (120, 40),
-            ));
-        }
-    }
-
-    #[test]
-    fn fabricated_protocol_keeps_the_fleet_card_and_neutral_watermark() {
-        let (model, agent) = model_with_protocol("fabricated_structured_v1");
-        assert!(
-            model.agent(agent).is_some(),
-            "inventory card remains present"
-        );
-
-        let mut view = ViewState::default();
-        view.open_chat(&model, agent);
-
-        assert!(view.chat.is_none(), "the fleet remains the active view");
-        assert_eq!(visible_rows(&model, &view).len(), 1, "card stays visible");
-        assert_eq!(entry_watermark(&model, agent), 0);
-    }
-
-    #[test]
-    fn claude_chat_ticks_for_a_fresh_idle_echo_then_stops_when_it_ages_out() {
-        let (mut model, agent) = idle_claude_model();
-        send_prompt(&mut model, agent, 100);
-        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
-
-        assert!(matches!(
-            ui_state::claude::phase(&model, agent),
-            ui_state::claude::ChatPhase::Idle { .. }
-        ));
-        assert_eq!(
-            model.effective_attention(model.agent(agent).expect("agent card")),
-            Attention::Working
-        );
-        assert!(
-            chat.needs_tick(&model),
-            "a fresh echo over an idle phase must keep advancing observation time"
-        );
-
-        update(
-            &mut model,
-            Msg::Tick {
-                now: at(100) + TimeDelta::seconds(601),
-            },
-        );
-        assert_eq!(
-            model.effective_attention(model.agent(agent).expect("agent card")),
-            Attention::Unknown
-        );
-        assert_eq!(
-            ui_state::claude::send_gate(&model, agent),
-            SendGate::SendInFlight
-        );
-        assert!(
-            !chat.needs_tick(&model),
-            "an aged echo keeps the safety gate closed without repainting forever"
-        );
-    }
-
-    #[test]
-    fn claude_chat_keeps_ordinary_working_phase_ticking() {
-        let (mut model, agent) = idle_claude_model();
-        update(
-            &mut model,
-            Msg::Stream {
-                agent,
-                event: StreamMsg::Batch {
-                    at: at(10),
-                    entries: vec![StreamEntry {
-                        seq: 1,
-                        published_at: at(10),
-                        activity_at: Some(at(10)),
-                        historical: false,
-                        payload: json!({
-                            "type": "user",
-                            "uuid": "dddddddd-0000-4000-8000-000000000001",
-                            "sessionId": "22222222-2222-4222-8222-222222222222",
-                            "timestamp": "2026-08-11T22:00:00.000Z",
-                            "message": {"role": "user", "content": "do the thing"},
-                            "origin": {"kind": "human"},
-                            "promptSource": "typed"
-                        }),
-                    }],
-                },
-            },
-        );
-        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
-
-        assert!(matches!(
-            ui_state::claude::phase(&model, agent),
-            ui_state::claude::ChatPhase::Working
-        ));
-        assert!(chat.needs_tick(&model));
-    }
-
-    /// The kernel's own consistency warning is a chat row, not a fleet
-    /// row: it wears the chat's grid, reaches both edges on the
-    /// background, and carries no border glyph the full-screen frame
-    /// would otherwise leave stranded in column 0 and the last cell.
-    #[test]
-    fn the_chat_draws_its_invariant_warning_on_the_chat_grid() {
-        let theme = Theme::default();
-        for protocol in [ui_state::claude::PROTOCOL, ui_state::codex::PROTOCOL] {
-            let (model, agent) = model_with_protocol(protocol);
-            // The runtime setter is crate-private on purpose — a renderer
-            // only reads this fact — so serde supplies the failing model.
-            let mut value = serde_json::to_value(&model).expect("serialize model");
-            value["invariant_warning"] = serde_json::Value::Bool(true);
-            let model: Model = serde_json::from_value(value).expect("deserialize model");
-            let chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
-            let ctx = FrameContext {
-                viewport: (100, 30),
-                theme,
-                now: at(0),
-            };
-
-            let lines = build_chat_lines(&model, &chat, &ctx);
-            let warning = lines
-                .iter()
-                .find(|line| {
-                    line.spans
-                        .iter()
-                        .map(|span| span.content.as_ref())
-                        .collect::<String>()
-                        .contains(INVARIANT_WARNING)
-                })
-                .unwrap_or_else(|| panic!("{protocol} chat lost its invariant warning"));
-
-            let text = warning
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>();
-            assert!(
-                text.starts_with(&format!("{}⚠", " ".repeat(crate::chat::blocks::GLYPH_COL))),
-                "{protocol} warning does not start on the chat's glyph column: {text:?}"
-            );
-            assert_eq!(
-                str_width(&text),
-                100,
-                "{protocol} warning does not fill the frame: {text:?}"
-            );
-
-            let classes = warning
-                .spans
-                .iter()
-                .flat_map(|span| {
-                    std::iter::repeat_n(theme.classify(span.style), str_width(&span.content))
-                })
-                .collect::<String>();
-            assert!(
-                !classes.contains('?'),
-                "{protocol} warning paints an unnamed style: {classes}"
-            );
-        }
-    }
-
-    #[test]
-    fn offline_pending_echo_does_not_keep_claude_chat_ticking() {
-        let (mut model, agent) = idle_claude_model();
-        send_prompt(&mut model, agent, 100);
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::HostUpserted {
-                host: a_host(false),
-            }),
-        );
-        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
-
-        assert_eq!(
-            model.effective_attention(model.agent(agent).expect("agent card")),
-            Attention::Unknown
-        );
-        assert_eq!(
-            ui_state::claude::send_gate(&model, agent),
-            SendGate::SendInFlight
-        );
-        assert!(!chat.needs_tick(&model));
-    }
+    let mut foot = Line::from(Span::raw("  "));
+    push(
+        &mut foot,
+        "↑↓/pgup/pgdn scroll · g/G top/bottom · esc close",
+        theme.muted(),
+        width,
+    );
+    lines.push(foot);
+    paint.render_widget(Paragraph::new(lines), area);
 }
