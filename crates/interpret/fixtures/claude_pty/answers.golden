@@ -65,14 +65,16 @@ effect reply a7 rejected:unsupported
 effect reply a8 rejected:unsupported
 ## 25 input {"answer":{"answer":{"selected":["Green",[0,2]]},"ask":"ask:5"},"id":"a9"}
 effect reply a9 rejected:unsupported
-## 26 input {"answer":{"answer":{"selected":[1,[0,2]]},"ask":"ask:5"},"id":"a10"}
+## 26 input {"answer":{"answer":{"note":"keep the old strings","selected":[1,[0,2]]},"ask":"ask:5"},"id":"a9n"}
+effect reply a9n rejected:unsupported
+## 27 input {"answer":{"answer":{"selected":[1,[0,2]]},"ask":"ask:5"},"id":"a10"}
 effect terminal question [1 of 2 previews] [0,2 of 3 multi]
 effect reply a10 accepted
 item t5 tool final at=1800000000000 text="" AskUserQuestion TOOL_STATE_RUNNING decision=DECISION_OUTCOME_ALLOWED input="{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options…"
 snapshot WORKING queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
-## 27 fact {"channel":"hook","json":{"duration_ms":5,"hook_event_name":"PostToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"","label":"Drill"}],"question":"Pick tools"}]},"tool_name":"AskUserQuestion","tool_response":{"answers":{"Pick a color":"Green","Pick tools":"Hammer, Drill"}},"tool_use_id":"t5"}}
+## 28 fact {"channel":"hook","json":{"duration_ms":5,"hook_event_name":"PostToolUse","tool_input":{"questions":[{"header":"Color","multiSelect":false,"options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue","preview":"#00f"}],"question":"Pick a color"},{"header":"Tools","multiSelect":true,"options":[{"description":"","label":"Hammer"},{"description":"","label":"Saw"},{"description":"","label":"Drill"}],"question":"Pick tools"}]},"tool_name":"AskUserQuestion","tool_response":{"answers":{"Pick a color":"Green","Pick tools":"Hammer, Drill"}},"tool_use_id":"t5"}}
 item t5 tool final at=1800000000000 text="" AskUserQuestion TOOL_STATE_SUCCEEDED decision=DECISION_OUTCOME_ALLOWED ended=1800000000005 input="{\"questions\":[{\"header\":\"Color\",\"multiSelect\":false,\"options…"
-## 28 fact {"channel":"transcript","json":{"durationMs":50,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.060Z","type":"system","uuid":"d1"}}
+## 29 fact {"channel":"transcript","json":{"durationMs":50,"sessionId":"s1","subtype":"turn_duration","timestamp":"2027-01-15T08:00:00.060Z","type":"system","uuid":"d1"}}
 item turn:1 turn final at=1800000000060 text="" #1 TURN_OUTCOME_COMPLETED started=1800000000010
 snapshot IDLE queue=[] working_on=- at=1800000000000 asks=[] session=s1 model=claude-opus-5-5 mode=? context=? tasks=? background=?
 turn_end 1 last=-

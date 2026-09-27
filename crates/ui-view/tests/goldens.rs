@@ -67,6 +67,7 @@ fn answered(kind: &ui_view::RowKind) -> String {
     let ui_view::RowKind::Ask(ui_view::AskRow::Question {
         questions,
         answers,
+        note,
         resolution,
     }) = kind
     else {
@@ -86,7 +87,11 @@ fn answered(kind: &ui_view::RowKind) -> String {
             format!("{} = {said}", question.header)
         })
         .collect();
-    format!("[{resolution:?}: {}] ", answers.join("; "))
+    let note = note
+        .as_ref()
+        .map(|note| format!(" note={note:?}"))
+        .unwrap_or_default();
+    format!("[{resolution:?}: {}{note}] ", answers.join("; "))
 }
 
 fn describe_row(row: &ui_view::Row) -> String {

@@ -821,6 +821,9 @@ fn work_complete(work: &Work) -> bool {
     )
 }
 
+/// How Codex marks a note among a question's answers.
+pub(crate) const USER_NOTE: &str = "user_note: ";
+
 /// The response an answer sends, and how the ask's own item closes; None
 /// when the answer does not fit the ask.
 fn codex_answer_response(
@@ -834,7 +837,10 @@ fn codex_answer_response(
                 return None;
             }
             let mut answers = serde_json::Map::new();
-            for ((question, labels), response) in meta.questions.iter().zip(&answer.answers) {
+            let last = meta.questions.len().saturating_sub(1);
+            for (at, ((question, labels), response)) in
+                meta.questions.iter().zip(&answer.answers).enumerate()
+            {
                 let mut picked = Vec::new();
                 for index in &response.selected {
                     picked.push(labels.get(*index as usize)?.clone());
@@ -842,6 +848,11 @@ fn codex_answer_response(
                 picked.extend(response.other.clone());
                 if picked.is_empty() {
                     return None;
+                }
+                // Codex's own form appends a question's notes to its answers
+                // this way; the one note the person wrote goes on the last.
+                if at == last && !answer.note.is_empty() {
+                    picked.push(format!("{USER_NOTE}{}", answer.note));
                 }
                 answers.insert(question.clone(), json!({ "answers": picked }));
             }

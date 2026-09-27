@@ -40,7 +40,7 @@
     choices 
     body Question([QuestionView { header: "Token", question: "Paste the deploy token.", multi_select: false, options: [], allow_other: true, secret: true }, QuestionView { header: "Env", question: "Which environment?", multi_select: false, options: [OptionView { label: "staging", description: "Safe first.", preview: "", recommended: true }, OptionView { label: "production", description: "Live.", preview: "…
   composer Send activity=None queue=[] outbox=[]
-## 14 input {"answer":{"answer":{"selected":["tok-SECRET-1234",0]},"ask":"9"},"id":"a5"}
+## 14 input {"answer":{"answer":{"note":"rotate it after the deploy","selected":["tok-SECRET-1234",0]},"ask":"9"},"id":"a5"}
   row    5 ask:9 Ask(Questions { questions: [QuestionView { header: "Token", question: "Paste the deploy token.", multi_select: false, options: [], allow_other: true, secret: true }, QuestionView { header: "Env", question: "Which environment?", multi_select: false, options: [OptionView { label: "staging", description: "Safe first.", preview: "", recommended: true }, OptionView { label: "production", des…
   ask none
   composer Send activity=Some(Working) queue=[] outbox=[]

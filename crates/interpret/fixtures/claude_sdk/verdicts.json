@@ -1,5 +1,5 @@
 {
-  "about": "Questions and plan verdicts are asks: the answer goes back as the chosen labels (a typed answer as itself), a plan approval with or without auto-accept sets the session mode, and sending a plan back carries the note.",
+  "about": "Questions and plan verdicts are asks: the answer goes back as the chosen labels (a typed answer as itself) with the note in the last question's annotations, a plan approval with or without auto-accept sets the session mode, and sending a plan back carries the note.",
   "spec": {
     "created_at_ms": 1800000000000
   },
@@ -178,7 +178,8 @@
                 0,
                 2
               ]
-            ]
+            ],
+            "note": "keep the old strings for one release"
           }
         }
       },

@@ -138,9 +138,10 @@ fn offered(card: &AskCard) -> Vec<(String, Answer, &'static str)> {
                 .iter()
                 .map(|_| Pick::Other("something else".into()))
                 .collect();
+            let note = if card.question_note { "a note" } else { "" };
             answers.push((
                 "something else".into(),
-                question_answer(card, &typed, "a note"),
+                question_answer(card, &typed, note),
                 "",
             ));
         }

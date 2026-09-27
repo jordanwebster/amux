@@ -457,8 +457,13 @@ Space, and every question carries an appended `Other…` option opening
 an inline free-text field. The submit tab shows a review list with
 unanswered items in error color; Enter there submits all — the
 mandatory submit step whenever there is more than one question or any
-multi-select. Codex's per-question Tab-notes are folded into `Other…`:
-one free-text idiom, not two. Claude's own form appends a
+multi-select. The review takes one optional note for the agent, sent
+with the answers: headless Claude gets it as the last question's
+`annotations` `notes`, Codex as a `user_note: …` answer on the last
+question (how its own form sends a question's notes). Terminal Claude's
+form has nowhere to type a note, so its review offers none; nor does its
+side-by-side preview layout have a typed-answer row, so a question with
+previews offers no `Other…` there. Claude's own form appends a
 `Chat about this` option beside `Other…` (Phase 3, observed) —
 unmodeled in V1 panels, tolerated in the transcript facts.
 

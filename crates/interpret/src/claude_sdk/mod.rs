@@ -741,8 +741,19 @@ fn sdk_answer(
                 }
                 answers.insert(question.clone(), json!(picked.join(", ")));
             }
+            // Claude takes notes per question, keyed by the question's text;
+            // the one note the person wrote goes on the last.
+            let mut annotations = serde_json::Map::new();
+            if let Some((question, _, _)) = questions.last()
+                && !answer.note.is_empty()
+            {
+                annotations.insert(question.clone(), json!({ "notes": answer.note }));
+            }
             let mut updated = input;
             updated["answers"] = Value::Object(answers);
+            if !annotations.is_empty() {
+                updated["annotations"] = Value::Object(annotations);
+            }
             Some((
                 json!({ "behavior": "allow", "updatedInput": updated }),
                 decided(DecisionOutcome::Allowed, "", &answer.note),

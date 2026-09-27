@@ -706,12 +706,13 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_ask",
-            "Asks that became rows: a question answered, several questions answered with a note, a plan approved and one sent back, a form sent, a link declined, access granted for the turn, an open question, and a dialog this build couldn't read, closed and opened.",
+            "Asks that became rows: a question answered with a note, several questions answered with a note, a plan approved and one sent back with its note, a form sent, a link declined, access granted for the turn, an open question, and a dialog this build couldn't read, closed and opened.",
             vec![
                 (
                     row(RowKind::Ask(AskRow::Question {
                         questions: vec![question(false)],
                         answers: vec![answer(&["Behind a flag"], None)],
+                        note: Some("flip it on for the desk first".into()),
                         resolution: Resolution::Answered,
                     })),
                     CLOSED,
@@ -732,6 +733,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Collapse the pairing failures into one error.".into(),
                         verdict: PlanVerdict::Approved,
+                        note: None,
                     })),
                     CLOSED,
                 ),
@@ -739,6 +741,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Plan {
                         plan: "Rename every wire code.".into(),
                         verdict: PlanVerdict::SentBack,
+                        note: Some("Don't touch the wire codes yet".into()),
                     })),
                     CLOSED,
                 ),
@@ -781,6 +784,7 @@ fn row_sets() -> Vec<RowSet> {
                     row(RowKind::Ask(AskRow::Question {
                         questions: vec![question(false)],
                         answers: vec![],
+                        note: None,
                         resolution: Resolution::Open,
                     })),
                     CLOSED,
@@ -1049,6 +1053,7 @@ fn card(body: AskBody, mut choices: Vec<Choice>) -> AskCard {
         count: 1,
         body,
         choices,
+        question_note: true,
         state: CardState::Open,
     }
 }

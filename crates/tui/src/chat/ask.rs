@@ -552,7 +552,7 @@ impl AskUi {
                         self.stage = Stage::Menu;
                         self.step = count - 1;
                     }
-                    KeyCode::Char('n') => self.stage = Stage::Note(0),
+                    KeyCode::Char('n') if card.question_note => self.stage = Stage::Note(0),
                     KeyCode::Char(c @ '1'..='9') => {
                         let index = c as usize - '1' as usize;
                         if index < count {
@@ -825,7 +825,10 @@ impl AskUi {
             AskBody::Question(questions) => {
                 cursor = self.question_menu(questions, width, theme, &mut lines);
                 hint = match self.stage {
-                    Stage::Review => "1-9 change · n add a note · enter send · esc back".into(),
+                    Stage::Review if card.question_note => {
+                        "1-9 change · n add a note · enter send · esc back".into()
+                    }
+                    Stage::Review => "1-9 change · enter send · esc back".into(),
                     Stage::Other | Stage::Note(_) => "enter done · esc back".into(),
                     _ if questions[self.step].multi_select => {
                         let picked = self.picks[self.step].selected.len();

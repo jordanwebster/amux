@@ -529,6 +529,29 @@
     },
     {
       "input": {
+        "id": "a9n",
+        "answer": {
+          "ask": "ask:5",
+          "answer": {
+            "selected": [
+              1,
+              [
+                0,
+                2
+              ]
+            ],
+            "note": "keep the old strings"
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "silent": true
+      },
+      "note": "a note for the answers: Claude's form has nowhere to type one"
+    },
+    {
+      "input": {
         "id": "a10",
         "answer": {
           "ask": "ask:5",

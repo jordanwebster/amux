@@ -22,6 +22,9 @@ pub struct AskCard {
     pub body: AskBody,
     /// The likely choice first. Only what this agent offers.
     pub choices: Vec<Choice>,
+    /// A note may go out with a question's answers. Terminal Claude has no
+    /// place to type one for most questions, so it takes none.
+    pub question_note: bool,
     pub state: CardState,
 }
 
@@ -202,6 +205,7 @@ pub fn ask_card(state: &SessionState) -> Option<AskCard> {
         count: asks.len(),
         body,
         choices,
+        question_note: state.kind() != wire::Kind::ClaudePty,
         state: card_state,
     })
 }

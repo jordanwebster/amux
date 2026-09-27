@@ -475,6 +475,35 @@ fn questions_answer_through_steps_and_a_review() {
     assert_eq!(answers.note, "keep it short");
 }
 
+/// Terminal Claude's form has nowhere to type a note for the answers, so
+/// its review offers none and `n` writes nothing.
+#[test]
+fn terminal_claude_questions_take_no_note() {
+    let (state, at) = fixtures::frame_where(
+        Kind::ClaudePty,
+        "recorded_question_every_shape",
+        |state| matches!(ask_card(state).map(|card| card.body), Some(AskBody::Question(questions)) if questions.len() > 1),
+    );
+    let card = ask_card(&state).unwrap();
+    assert!(!card.question_note);
+    let AskBody::Question(questions) = &card.body else {
+        unreachable!()
+    };
+    let mut view = ChatView::new(b"agent".to_vec(), at, false);
+    for question in questions {
+        if question.multi_select {
+            view.key(&state, key(KeyCode::Char(' ')), theme());
+        }
+        view.key(&state, key(KeyCode::Enter), theme());
+    }
+    view.key(&state, key(KeyCode::Char('n')), theme());
+    let (buffer, _) = draw(&mut view, &state, at, 120, 60, theme());
+    let screen = text(&buffer);
+    assert!(screen.contains("1-9 change · enter send"), "{screen}");
+    assert!(!screen.contains("add a note"), "{screen}");
+    assert!(!screen.contains("Note for the agent"), "{screen}");
+}
+
 #[test]
 fn a_form_submits_what_was_typed() {
     let (state, at) =

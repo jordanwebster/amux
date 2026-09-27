@@ -1017,7 +1017,8 @@ fn terminal_answer(
             )),
         },
         (AskShape::Question { questions }, claude_answer::Of::Question(answer)) => {
-            if answer.answers.len() != questions.len() {
+            // Claude's form has nowhere to type a note for the answers.
+            if answer.answers.len() != questions.len() || !answer.note.trim().is_empty() {
                 return None;
             }
             let mut answers = Vec::new();

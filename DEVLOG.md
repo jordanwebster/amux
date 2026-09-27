@@ -1,3 +1,17 @@
+2026-09-27 — **A question's note reaches the agent and shows on the row.**
+The card's `n add a note` was recorded on the decision but never sent:
+headless Claude answered "no additional notes". The note now goes out with
+the answers: headless Claude gets it in AskUserQuestion's `annotations`
+(`{"<last question>": {"notes": …}}`, the shape Claude's own form writes),
+Codex as a `user_note: …` answer on the last question, as its own form
+appends notes (and a recorded `user_note:` answer reads back as the note).
+Terminal Claude's form has nowhere to type one, so its card offers no note
+(`AskCard.question_note`) and its interpreter refuses an answer carrying
+one. The Answered row shows `Note: …` for Claude questions as it did for
+Codex, and `Plan sent back` shows the note in quotes instead of the plan's
+first line (a plan's title drops its heading's `#`). Verified live on
+headless Claude: the reply quoted the note.
+
 2026-09-27 — **Terminal Claude's preview questions take no typed answer.**
 Claude 2.1.283 draws a question whose options carry previews side by side,
 with no `Type something.` row: a Something-else answer typed into it was

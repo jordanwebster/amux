@@ -905,16 +905,37 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
         AskRow::Question {
             questions,
             answers,
+            note,
             resolution,
-        } => questions_lines(questions, answers, None, *resolution, width, theme),
-        AskRow::Plan { plan, verdict } => {
+        } => questions_lines(
+            questions,
+            answers,
+            note.as_deref(),
+            *resolution,
+            width,
+            theme,
+        ),
+        AskRow::Plan {
+            plan,
+            verdict,
+            note,
+        } => {
             let (glyph, verb) = match verdict {
                 PlanVerdict::Open => (("?", theme.accent()), "Plan proposed"),
                 PlanVerdict::Approved => (("✔", theme.ok()), "Plan approved"),
                 PlanVerdict::SentBack => (("↩", theme.muted()), "Plan sent back"),
                 PlanVerdict::Dismissed => (("⊘", theme.muted()), "Plan dismissed"),
             };
-            let mut lines = vec![head(glyph, verb, first_line(plan), "", width, theme)];
+            // Sent back, the row says why; otherwise it names the plan by
+            // its first line, without the heading's markup.
+            let subject = match (verdict, note) {
+                (PlanVerdict::SentBack, Some(note)) => format!("\"{}\"", first_line(note)),
+                _ => first_line(plan)
+                    .trim_start_matches('#')
+                    .trim_start()
+                    .to_owned(),
+            };
+            let mut lines = vec![head(glyph, verb, &subject, "", width, theme)];
             if open {
                 lines.extend(markdown(plan, width, false, theme));
             }

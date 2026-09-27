@@ -198,11 +198,15 @@ pub enum AskRow {
         questions: Vec<QuestionView>,
         /// One per question once answered, in the ask's order.
         answers: Vec<AnswerView>,
+        /// The note that went out with the answers.
+        note: Option<String>,
         resolution: Resolution,
     },
     Plan {
         plan: String,
         verdict: PlanVerdict,
+        /// Why it was sent back, when the person said.
+        note: Option<String>,
     },
     /// Questions asked as the work, then the answers sent.
     Questions {
@@ -975,6 +979,7 @@ fn claude_tool(
                 RowKind::Ask(AskRow::Question {
                     questions,
                     answers,
+                    note: decision.as_ref().and_then(|decision| decision.note.clone()),
                     resolution,
                 })
             }
@@ -993,6 +998,7 @@ fn claude_tool(
                     RowKind::Ask(AskRow::Plan {
                         plan: field(&input, "plan"),
                         verdict,
+                        note: decision.as_ref().and_then(|decision| decision.note.clone()),
                     }),
                     None,
                     false,

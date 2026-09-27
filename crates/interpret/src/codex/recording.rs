@@ -280,6 +280,7 @@ fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> 
         }
         "item/tool/requestUserInput" => {
             let answers = result.get("answers").unwrap_or(&Value::Null);
+            let mut note = String::new();
             let responses = params
                 .get("questions")
                 .and_then(Value::as_array)
@@ -302,6 +303,10 @@ fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> 
                         .flatten()
                         .filter_map(Value::as_str)
                     {
+                        if let Some(noted) = picked.strip_prefix(super::USER_NOTE) {
+                            note = noted.to_owned();
+                            continue;
+                        }
                         match labels.iter().position(|label| *label == picked) {
                             Some(index) => response.selected.push(index as u32),
                             None => response.other = Some(picked.to_owned()),
@@ -312,7 +317,7 @@ fn answer(request: Option<&Value>, response: &Value) -> Option<codex_input::Of> 
                 .collect();
             body(codex_answer::Of::Question(QuestionAnswer {
                 answers: responses,
-                note: String::new(),
+                note,
             }))
         }
         "mcpServer/elicitation/request" => {
