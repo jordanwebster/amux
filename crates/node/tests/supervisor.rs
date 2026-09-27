@@ -550,6 +550,12 @@ async fn k_starts_that_never_prepare_roll_back_and_the_rejected_build_is_skipped
     let back = fixture.nth(2, "go", "1.0.0").await;
     assert_eq!(fixture.count("start", "2.0.0"), 3);
     assert_eq!(fixture.rejected().as_deref(), Some("2.0.0"));
+    // Record first, rename second: a crash between them leaves a state a
+    // starting supervisor finishes.
+    let log = std::fs::read_to_string(fixture.dir.join("supervisor.log")).unwrap();
+    let recorded = log.find("recorded the rejected build").expect("recorded");
+    let renamed = log.find("put prev back over the binary").expect("renamed");
+    assert!(recorded < renamed, "{log}");
     assert_eq!(fixture.installed(), "1.0.0");
     assert!(!fixture.prev().exists());
     // prev was this supervisor's own binary: nothing to exec.

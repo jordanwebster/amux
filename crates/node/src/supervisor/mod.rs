@@ -483,6 +483,7 @@ impl Supervisor {
         self.files
             .write_rejected(&rejected)
             .map_err(files_error("recording the rejected build"))?;
+        tracing::info!(%rejected, "recorded the rejected build");
         self.put_prev_back()
     }
 
@@ -490,6 +491,7 @@ impl Supervisor {
         self.files
             .restore_prev(&self.binary)
             .map_err(files_error("putting prev back"))?;
+        tracing::info!("put prev back over the binary");
         self.failed = 0;
         self.backoff = Backoff::new(&self.params);
         self.installed = (!self.stale()).then(|| self.running.clone());

@@ -1,3 +1,19 @@
+2026-09-27 — **Overlap tests: live agents across an update, a rollback's store, a LaunchAgent restart.**
+`crates/amux/tests/overlap.rs` drives the built binaries: agents a
+re-stamped previous build started keep their processes through
+`amux update` to the build under test and take new turns under the new
+daemon; the build under test migrates and looks at the previous build's
+store, says prepared and is killed before go, and the previous build
+reopens the store and finishes a new turn in it; and the generated
+LaunchAgent (under a label of its own) is restarted with `launchctl
+kickstart -k` mid-turn while the same agent process lives on and its turn
+lands in the store. Writing that test found that launchd pends the first
+spawn of a job kept alive on a condition, so `amux init` now kickstarts the
+LaunchAgent after bootstrapping it, and creates the data directory first
+because launchd opens the log before amux runs. The supervisor logs
+recording the rejected build before putting prev back, and its rollback
+test holds that order.
+
 2026-09-27 — **The survive-daemon journey, and builds that play the previous release.**
 `just journey system survive-daemon` tells the accepted story with the
 built binaries on the fakes: amux is installed as a build one version below

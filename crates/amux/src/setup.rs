@@ -64,6 +64,9 @@ pub async fn init(
         path: &path,
         log: &log,
     };
+    // The service manager opens the log itself, before amux ever runs.
+    std::fs::create_dir_all(&config.root)
+        .with_context(|| format!("creating {}", config.root.display()))?;
     let (file, text, commands) = login_item_for_this_platform(&item, config)?;
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -143,6 +146,13 @@ fn login_item_for_this_platform(
                 &format!("gui/{uid}/{LAUNCH_AGENT_LABEL}"),
             ]),
             words(&["launchctl", "bootstrap", &format!("gui/{uid}"), &file_arg]),
+            // launchd defers the first spawn of a job kept alive on a
+            // condition; start it now rather than whenever it gets to it.
+            words(&[
+                "launchctl",
+                "kickstart",
+                &format!("gui/{uid}/{LAUNCH_AGENT_LABEL}"),
+            ]),
         ],
     ))
 }
