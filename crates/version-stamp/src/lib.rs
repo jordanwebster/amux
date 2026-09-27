@@ -37,7 +37,10 @@ pub const fn stamp(version: &str) -> [u8; LEN] {
 /// the constant it was built with.
 pub fn read(stamp: &[u8; LEN]) -> String {
     let body = &stamp[MARK_LEN..];
-    let end = body.iter().position(|byte| *byte == 0).unwrap_or(body.len());
+    let end = body
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(body.len());
     String::from_utf8_lossy(&body[..end]).into_owned()
 }
 
@@ -80,7 +83,10 @@ pub fn restamp(from: &Path, to: &Path, version: &str) -> io::Result<()> {
             .stderr(std::process::Stdio::null())
             .status()?;
         if !status.success() {
-            return Err(io::Error::other(format!("codesign {} failed", to.display())));
+            return Err(io::Error::other(format!(
+                "codesign {} failed",
+                to.display()
+            )));
         }
     }
     Ok(())

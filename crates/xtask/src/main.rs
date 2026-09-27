@@ -40,9 +40,8 @@ fn restamp(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Some(version) => version.clone(),
         None => {
             let own = version_stamp::read_file(from)?;
-            version_stamp::previous(&own).ok_or_else(|| {
-                format!("{own} has a prerelease; name the version to stamp")
-            })?
+            version_stamp::previous(&own)
+                .ok_or_else(|| format!("{own} has a prerelease; name the version to stamp"))?
         }
     };
     version_stamp::restamp(from, to, &version)?;
