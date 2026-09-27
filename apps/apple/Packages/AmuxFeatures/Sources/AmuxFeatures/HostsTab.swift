@@ -179,7 +179,7 @@ public struct HostsTab: View {
 
     /// The one thing worth saying under a group, and nothing where there is
     /// nothing.
-    private func caption(_ reach: HostReach, offers: Bool) -> String? {
+    func caption(_ reach: HostReach, offers: Bool) -> String? {
         switch reach {
         case .onThisNetwork:
             return offers ? "Run amux pair on one of these and enter the code it prints." : nil
@@ -409,7 +409,7 @@ public struct HostsTab: View {
     /// offline machine says how long it has been gone where this phone
     /// watched it go, and says that it was found here when its advertisement
     /// is on this network and no link to it will stand.
-    private func status(_ host: HostView, _ reach: HostReach) -> String {
+    func status(_ host: HostView, _ reach: HostReach) -> String {
         var parts: [String] = []
         if let platform = host.platform { parts.append(platform) }
         switch reach {
