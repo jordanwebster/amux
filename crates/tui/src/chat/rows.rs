@@ -997,6 +997,27 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             }
             lines
         }
+        AskRow::Unanswerable { reason, resolution } => {
+            let verb = match resolution {
+                Resolution::Open => "Can't answer this here".to_owned(),
+                other => format!(
+                    "{} a dialog this build can't read",
+                    resolution_verb(*other, "Answered")
+                ),
+            };
+            let mut lines = vec![head(
+                resolution_glyph(*resolution, theme),
+                &verb,
+                "",
+                "",
+                width,
+                theme,
+            )];
+            if open {
+                lines.extend(detail(reason, width, theme.muted(), OPEN_LINES, theme));
+            }
+            lines
+        }
         AskRow::Grant {
             reason,
             read,

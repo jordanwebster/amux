@@ -238,6 +238,12 @@ pub enum AskRow {
         granted: Option<Granted>,
         resolution: Resolution,
     },
+    /// A dialog the provider showed that this build could not read: it was
+    /// answered in the provider's own terminal or ended by a stop.
+    Unanswerable {
+        reason: String,
+        resolution: Resolution,
+    },
 }
 
 /// How an ask that is the work closed.
@@ -519,6 +525,7 @@ fn kind_of(state: &SessionState, held: &Held) -> (RowKind, Option<Decision>, boo
             Pty::Boundary(b) => plain(boundary(b)),
             Pty::Slash(s) => plain(slash(held, s)),
             Pty::Unrecognized(u) => plain(unrecognized(u)),
+            Pty::Ask(ask) => plain(ask_row(ask)),
         },
         ItemBody::ClaudeSdk(kind) => match kind {
             Sdk::Prompt(_) => plain(RowKind::Prompt {
@@ -655,6 +662,10 @@ fn ask_row(item: &wire::AskItem) -> RowKind {
                 network: grant.network,
                 for_session: grant.for_session,
             }),
+            resolution,
+        },
+        Some(Ask::Unanswerable(unanswerable)) => AskRow::Unanswerable {
+            reason: unanswerable.reason.clone(),
             resolution,
         },
         None => {

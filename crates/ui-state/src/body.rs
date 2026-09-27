@@ -80,6 +80,7 @@ impl ItemBody {
                 | Pty::Interruption(_)
                 | Pty::Slash(_)
                 | Pty::Unrecognized(_) => ItemClass::Other,
+                Pty::Ask(_) => ItemClass::Ask,
             },
             ItemBody::ClaudeSdk(kind) => match kind {
                 Sdk::Prompt(_) => ItemClass::Prompt,

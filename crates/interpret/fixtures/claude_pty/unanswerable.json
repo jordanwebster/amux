@@ -1,0 +1,593 @@
+{
+  "about": "Terminal Claude shows a tool server's form or link in its own terminal and announces it only through the Notification hook (notification_type elicitation_dialog or elicitation_url_dialog on 2.1.283). It opens an unanswerable ask with its own item: no answer fits it, an interrupt through amux types the interrupt key and closes it cancelled, and the running call's result, a row from a later message, Stop, SessionEnd and the provider's exit close it dismissed. Other notification types draw nothing.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "agent",
+        "json": {
+          "type": "launch",
+          "version": "2.1.283",
+          "keymap": "claude-2.1"
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "SessionStart",
+          "source": "startup",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    {
+      "tick": 1800000000010
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u1",
+          "timestamp": "2027-01-15T08:00:00.010Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "file the crash"
+          }
+        }
+      }
+    },
+    {
+      "tick": 1800000000100
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Crash on launch"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1",
+          "timestamp": "2027-01-15T08:00:00.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "mcp__github__create_issue",
+                "input": {
+                  "title": "Crash on launch"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude is waiting for your input",
+          "notification_type": "idle_prompt"
+        }
+      },
+      "expect": {
+        "asks": [],
+        "silent": true
+      }
+    },
+    {
+      "tick": 1800000000200
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_dialog"
+        }
+      },
+      "expect": {
+        "phase": "NEEDS_YOU",
+        "asks": [
+          "ask:1"
+        ],
+        "items": [
+          "ask:ask:1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "x1",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "form": {
+              "action": "accept",
+              "content": {
+                "repo": "jlw/amux"
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "x2",
+        "answer": {
+          "ask": "ask:1",
+          "answer": {
+            "allow": {}
+          }
+        }
+      },
+      "expect": {
+        "reply": "rejected:unsupported",
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "checkpoint": {}
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a1b",
+          "timestamp": "2027-01-15T08:00:00.101Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m1",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "Filing it now."
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:1"
+        ]
+      }
+    },
+    {
+      "tick": 1800000030000
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "PostToolUse",
+          "tool_use_id": "t1",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Crash on launch"
+          },
+          "tool_response": {
+            "number": 42
+          },
+          "duration_ms": 29000
+        }
+      },
+      "expect": {
+        "phase": "WORKING",
+        "asks": [],
+        "items": [
+          "ask:ask:1",
+          "t1"
+        ]
+      }
+    },
+    {
+      "tick": 1800000030100
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t2",
+          "tool_name": "mcp__docs__sign_in",
+          "tool_input": {
+            "account": "work"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a2",
+          "timestamp": "2027-01-15T08:00:30.100Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m2",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "mcp__docs__sign_in",
+                "input": {
+                  "account": "work"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_url_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:2"
+        ],
+        "items": [
+          "ask:ask:2"
+        ]
+      }
+    },
+    {
+      "input": {
+        "id": "i1",
+        "interrupt": {}
+      },
+      "expect": {
+        "reply": "accepted",
+        "asks": [],
+        "effects": [
+          "terminal interrupt",
+          "reply i1 accepted"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "r2",
+          "timestamp": "2027-01-15T08:00:30.200Z",
+          "sessionId": "s1",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "t2",
+                "content": "The user cancelled the sign-in.",
+                "is_error": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "tick": 1800000030300
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:3"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "assistant",
+          "uuid": "a3",
+          "timestamp": "2027-01-15T08:00:30.400Z",
+          "sessionId": "s1",
+          "message": {
+            "id": "m3",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [
+              {
+                "type": "text",
+                "text": "Signed out, filed #42."
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "asks": [],
+        "items": [
+          "ask:ask:3",
+          "a3"
+        ]
+      }
+    },
+    {
+      "tick": 1800000030500
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:4"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Stop",
+          "background_tasks": [],
+          "last_assistant_message": "Signed out, filed #42.",
+          "stop_hook_active": false
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "system",
+          "subtype": "turn_duration",
+          "uuid": "d1",
+          "timestamp": "2027-01-15T08:00:30.600Z",
+          "sessionId": "s1",
+          "durationMs": 50
+        }
+      }
+    },
+    {
+      "tick": 1800000040000
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u2",
+          "timestamp": "2027-01-15T08:00:40.000Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "try again"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t5",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Crash on launch"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:5"
+        ]
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        }
+      },
+      "expect": {
+        "asks": []
+      }
+    },
+    {
+      "tick": 1800000050000
+    },
+    {
+      "fact": {
+        "channel": "transcript",
+        "json": {
+          "type": "user",
+          "uuid": "u3",
+          "timestamp": "2027-01-15T08:00:50.000Z",
+          "sessionId": "s1",
+          "origin": {
+            "kind": "human"
+          },
+          "promptSource": "typed",
+          "message": {
+            "role": "user",
+            "content": "once more"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "PreToolUse",
+          "tool_use_id": "t6",
+          "tool_name": "mcp__github__create_issue",
+          "tool_input": {
+            "title": "Crash on launch"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "hook",
+        "json": {
+          "session_id": "s1",
+          "transcript_path": "/t/s1.jsonl",
+          "cwd": "/w",
+          "permission_mode": "default",
+          "hook_event_name": "Notification",
+          "message": "Claude Code needs your input",
+          "notification_type": "elicitation_url_dialog"
+        }
+      },
+      "expect": {
+        "asks": [
+          "ask:6"
+        ]
+      }
+    },
+    {
+      "provider_exit": {
+        "code": 1
+      },
+      "expect": {
+        "asks": []
+      }
+    }
+  ]
+}

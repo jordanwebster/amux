@@ -13,7 +13,7 @@ use crate::claude_common::{
     question_ask, result_images, same_json, scope_choices, split_tool_name, text, timestamp_ms,
     tool_class, without_image_bytes,
 };
-use crate::{Channel, Emit, Fact, ItemDraft, is_status_tool, status_working_on};
+use crate::{Channel, Emit, Fact, ItemDraft, ask_item, is_status_tool, status_working_on};
 
 /// How terminal Claude words a call the person refused, on the tool result.
 const REJECTED: &str = "The user doesn't want to proceed with this tool use.";
@@ -21,6 +21,13 @@ const REJECTED_NOTE: &str = "the user said:\n";
 const INTERRUPTED: &str = "[Request interrupted by user";
 /// The tool that starts a subagent.
 const AGENT_TOOL: &str = "Agent";
+/// The Notification hook's types for a tool server's form and link, which
+/// Claude shows in its own terminal (2.1.283).
+const ELICITATION_FORM: &str = "elicitation_dialog";
+const ELICITATION_LINK: &str = "elicitation_url_dialog";
+/// What an unanswerable ask says, for a form and for a link.
+const UNANSWERABLE_FORM: &str = "Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
+const UNANSWERABLE_LINK: &str = "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
 
 /// The agent id of a subagent Claude launched in the background, from the
 /// Agent call's immediate result.
@@ -133,6 +140,7 @@ impl State {
             "PermissionRequest" => self.permission_request(hook),
             "PostToolUse" => self.post_tool_use(emit, hook, false),
             "PostToolUseFailure" => self.post_tool_use(emit, hook, true),
+            "Notification" => self.notification(emit, hook),
             "Stop" => {
                 if let Some(tasks) = hook.get("background_tasks").and_then(Value::as_array) {
                     self.background = Some(tasks.len() as u32);
@@ -312,6 +320,49 @@ impl State {
         });
     }
 
+    /// A tool server's form or link on Claude's screen. No hook answers it,
+    /// so the ask can only be answered in the terminal or ended by stopping.
+    fn notification(&mut self, emit: &mut Emit, hook: &Value) {
+        let reason = match text(hook, "notification_type") {
+            ELICITATION_FORM => UNANSWERABLE_FORM,
+            ELICITATION_LINK => UNANSWERABLE_LINK,
+            _ => return,
+        };
+        // A tool server asks while one of its calls runs; that call's
+        // result ends the dialog.
+        let call = self
+            .tools
+            .iter()
+            .filter(|(_, tool)| !tool.finished && !tool.awaiting_notification)
+            .max_by_key(|(_, tool)| (!tool.server.is_empty(), tool.seq))
+            .map(|(id, _)| id.clone());
+        let seq = self.next_seq();
+        self.next_ask += 1;
+        let key = format!("ask:{}", self.next_ask);
+        self.asks.insert(
+            key.clone(),
+            AskMeta {
+                seq,
+                tool_name: String::new(),
+                input: String::new(),
+                shape: AskShape::Unanswerable { call },
+                bound: None,
+                closed: None,
+                agent: None,
+            },
+        );
+        let ask = Ask {
+            item_key: ask_item::key(&key),
+            key,
+            body: Some(wire::ask::Body::Unanswerable(wire::UnanswerableAsk {
+                reason: reason.to_owned(),
+            })),
+            opened_at_ms: self.shared.now_ms(),
+        };
+        self.shared.open_ask(ask.clone());
+        self.emit_unanswerable(emit, &ask, None);
+    }
+
     fn post_tool_use(&mut self, emit: &mut Emit, hook: &Value, failed: bool) {
         let id = text(hook, "tool_use_id").to_owned();
         let name = text(hook, "tool_name");
@@ -327,6 +378,7 @@ impl State {
             self.bind(emit, &ask, &id);
         }
         let response = hook.get("tool_response").cloned().unwrap_or(Value::Null);
+        self.close_unanswerable_for_tool(emit, &id);
         if self.agent_launched(&id, &response) {
             self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
             self.emit_tool(emit, &id);
@@ -433,6 +485,7 @@ impl State {
             .unwrap_or(false);
         let rejected = is_error && output.starts_with(REJECTED);
         let result = row.get("toolUseResult").cloned().unwrap_or(Value::Null);
+        self.close_unanswerable_for_tool(emit, &id);
         // The launch metadata of a background subagent is for the model.
         if self.agent_launched(&id, &result) {
             self.close_for_tool(emit, &id, DecisionOutcome::Allowed);
@@ -899,6 +952,21 @@ impl State {
                 .is_some_and(|asked| !message_id.is_empty() && asked != message_id);
             if later {
                 self.close(emit, &key, Decision::unknown());
+            }
+        }
+        // The model writes again only once the dialog's call returned.
+        for (key, call) in self.unanswerable_asks() {
+            let asked = call
+                .and_then(|call| self.tools.get(&call))
+                .map(|tool| tool.message_id.as_deref());
+            let later = match asked {
+                Some(Some(asked)) => !message_id.is_empty() && asked != message_id,
+                // The call's own row has not landed yet: this may be it.
+                Some(None) => false,
+                None => true,
+            };
+            if later {
+                self.close_unanswerable(emit, &key, ask_item::dismissed());
             }
         }
         if row.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {

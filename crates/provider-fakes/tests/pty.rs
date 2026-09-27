@@ -47,6 +47,7 @@ impl Terminal {
             "PermissionRequest",
             "Stop",
             "SessionEnd",
+            "Notification",
         ];
         let token = root.join("token");
         let mut hooks_settings: serde_json::Map<String, Value> = events
@@ -191,9 +192,23 @@ impl Terminal {
 
     /// Every row and payload so far has a recorded shape.
     fn check_shapes(&self) {
+        self.check_shapes_but(&[]);
+    }
+
+    /// Every row and payload but hooks of these events has a recorded shape.
+    fn check_shapes_but(&self, unrecorded: &[&str]) {
         let corpus = corpus(Kind::ClaudePty);
         let mut classifier = Classifier::default();
-        for frame in self.rows().iter().chain(&self.hooks()) {
+        let hooks = self
+            .hooks()
+            .into_iter()
+            .filter(|hook| {
+                !unrecorded
+                    .iter()
+                    .any(|event| hook["hook_event_name"] == *event)
+            })
+            .collect::<Vec<_>>();
+        for frame in self.rows().iter().chain(&hooks) {
             let group = classifier.provider(Kind::ClaudePty, frame);
             if let Err(drift) = corpus.check(Kind::ClaudePty, &group, frame) {
                 panic!("{drift}");
@@ -429,6 +444,54 @@ async fn a_prompt_typed_mid_turn_folds_at_the_next_tool_and_escape_interrupts() 
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(terminal.hooks_of("Stop", 1).await.len(), 1);
     terminal.check_shapes();
+    assert_eq!(terminal.exit_code().await, 0);
+}
+
+#[tokio::test]
+async fn a_tool_server_dialog_is_announced_by_notification_and_held_until_escape_or_its_end() {
+    let probe = tempfile::tempdir().unwrap();
+    let answered = probe.path().join("answered");
+    let terminal = Terminal::started(json!({"steps": [
+        {"ask": {"tool_server_dialog": {"server": "github", "tool": "create_issue",
+                                        "output": "created #42", "wait_for": answered}}},
+        {"ask": {"tool_server_dialog": {"server": "docs", "tool": "sign_in", "link": true}}},
+        {"text": {"chunks": ["Done"]}},
+        "turn_end",
+    ]}))
+    .await;
+    terminal.prompt("File it").await;
+    let form = terminal.hook("Notification").await;
+    // Claude 2.1.283's field names; the message is the same for every dialog.
+    assert_eq!(form["notification_type"], "elicitation_dialog");
+    assert_eq!(form["message"], "Claude Code needs your input");
+    assert_eq!(form["session_id"], SESSION);
+    // Held open: the call has no result until the dialog ends.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(terminal.hooks_of("PostToolUse", 0).await.is_empty());
+    std::fs::write(&answered, "").unwrap();
+    let post = terminal.hook("PostToolUse").await;
+    assert_eq!(post["tool_name"], "mcp__github__create_issue");
+    let link = terminal.hooks_of("Notification", 2).await.remove(1);
+    assert_eq!(link["notification_type"], "elicitation_url_dialog");
+    // The interrupt key cancels the dialog; the turn goes on.
+    terminal.keys(b"\x1b").await;
+    let stop = terminal.hook("Stop").await;
+    assert_eq!(stop["last_assistant_message"], "Done");
+    assert_eq!(
+        contents(&terminal.rows()),
+        [
+            "user File it",
+            "assistant tool_use mcp__github__create_issue",
+            "user tool_result error=false",
+            "assistant tool_use mcp__docs__sign_in",
+            "user tool_result error=true",
+            "assistant text Done",
+        ]
+    );
+    // No terminal recording carries a Notification hook or a tool server's
+    // call: the sessions were recorded before amux registered the hook, and
+    // without tool servers.
+    terminal.check_shapes_but(&["Notification", "PostToolUse"]);
     assert_eq!(terminal.exit_code().await, 0);
 }
 

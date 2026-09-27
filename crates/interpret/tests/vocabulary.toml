@@ -135,7 +135,8 @@ codex = { mark = "partial", carriers = ["item:message"], golden = [" message fin
 [[row]]
 id = "C17"
 item = "Form from a tool server"
-claude_pty = { mark = "none" }
+# Terminal Claude shows the form in its own terminal; amux can only say so.
+claude_pty = { mark = "partial", carriers = ["ask:unanswerable", "item:ask.unanswerable"], golden = [" ask final ", " unanswerable ", " ASK_OUTCOME_DISMISSED"] }
 claude_sdk = { mark = "full", carriers = ["ask:form", "ask:link", "item:ask.form", "item:ask.link", "item:ask.closed.fields"], golden = [" ask final ", " form ", " ASK_OUTCOME_ANSWERED fields=["] }
 codex = { mark = "full", carriers = ["ask:mcp_form", "ask:mcp_link", "item:ask.form", "item:ask.link", "item:ask.closed.fields"], golden = [" ask final ", " form ", " ASK_OUTCOME_ANSWERED fields=["] }
 

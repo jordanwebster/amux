@@ -506,8 +506,9 @@ message AccessGrant {
   repeated string network_hosts = 5;
 }
 
-// An ask that is the work: a question, a tool server's form or link, or an
-// access grant. It is its own item, written when the ask opens (the ask's
+// An ask that is the work: a question, a tool server's form or link, an
+// access grant, or something the provider shows that this build cannot read.
+// It is its own item, written when the ask opens (the ask's
 // item_key names it) and revised once with how it closed, so its decision
 // row stays in the chat after the ask leaves the snapshot.
 message AskItem {
@@ -516,6 +517,7 @@ message AskItem {
     FormAsk form = 2;
     LinkAsk link = 3;
     AccessGrant access = 4;
+    UnanswerableAsk unanswerable = 6;
   }
   // Absent while the ask is open.
   AskClosed closed = 5;

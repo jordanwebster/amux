@@ -1,3 +1,21 @@
+2026-09-27 — **Terminal Claude's tool-server dialogs become unanswerable asks.**
+When Claude shows a tool server's form or link in its own terminal, the only
+fact amux gets is the Notification hook with `notification_type`
+`elicitation_dialog` or `elicitation_url_dialog` (Claude 2.1.283); no hook
+can answer it. The terminal-Claude interpreter now opens an unanswerable ask
+for it, with an item of its own (`ClaudePtyItem.ask`, and a new
+`AskItem.unanswerable` arm) so the closed row stays in the chat. The reason
+tells the person to attach to Claude's terminal or stop the agent; any
+answer is rejected as unsupported. An interrupt through amux types the
+interrupt key and closes it cancelled; the result of the call that was
+running, a row from a later assistant message, Stop, SessionEnd and the
+provider's exit close it dismissed. The Elicitation hooks stay unregistered:
+answering stays in Claude's terminal. The fake terminal Claude gains a
+`tool_server_dialog` script ask, held until Escape or a file exists, and
+the other two fakes refuse it. The coverage catalogue marks the tool-server
+form row partial for terminal Claude; the terminal client draws the closed
+row as "Dismissed/Cancelled a dialog this build can't read".
+
 2026-09-27 — **Terminal journeys run on the new client through `testnet serve`.**
 `scripts/journeys/terminal.py` is rebuilt: it serves a topology with
 `testnet serve`, launches the real `amux` against one host's install in a

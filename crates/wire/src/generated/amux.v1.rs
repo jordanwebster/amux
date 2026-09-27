@@ -1038,8 +1038,9 @@ impl ::prost::Name for AccessGrant {
         "/amux.v1.AccessGrant".into()
     }
 }
-/// An ask that is the work: a question, a tool server's form or link, or an
-/// access grant. It is its own item, written when the ask opens (the ask's
+/// An ask that is the work: a question, a tool server's form or link, an
+/// access grant, or something the provider shows that this build cannot read.
+/// It is its own item, written when the ask opens (the ask's
 /// item_key names it) and revised once with how it closed, so its decision
 /// row stays in the chat after the ask leaves the snapshot.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1047,7 +1048,7 @@ pub struct AskItem {
     /// Absent while the ask is open.
     #[prost(message, optional, tag = "5")]
     pub closed: ::core::option::Option<AskClosed>,
-    #[prost(oneof = "ask_item::Ask", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "ask_item::Ask", tags = "1, 2, 3, 4, 6")]
     pub ask: ::core::option::Option<ask_item::Ask>,
 }
 /// Nested message and enum types in `AskItem`.
@@ -1062,6 +1063,8 @@ pub mod ask_item {
         Link(super::LinkAsk),
         #[prost(message, tag = "4")]
         Access(super::AccessGrant),
+        #[prost(message, tag = "6")]
+        Unanswerable(super::UnanswerableAsk),
     }
 }
 impl ::prost::Name for AskItem {
@@ -2155,7 +2158,7 @@ impl ::prost::Name for ClaudeCreateConfig {
 pub struct ClaudePtyItem {
     #[prost(
         oneof = "claude_pty_item::Kind",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16"
     )]
     pub kind: ::core::option::Option<claude_pty_item::Kind>,
 }
@@ -2194,6 +2197,10 @@ pub mod claude_pty_item {
         /// A prompt delivered into the running turn; the text is the envelope's.
         #[prost(message, tag = "15")]
         Steer(super::Steer),
+        /// A dialog Claude shows in its own terminal that no hook can answer: an
+        /// unanswerable ask that is its own row.
+        #[prost(message, tag = "16")]
+        Ask(super::AskItem),
     }
 }
 impl ::prost::Name for ClaudePtyItem {

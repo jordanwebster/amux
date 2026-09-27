@@ -11,7 +11,8 @@
 //! turn runs is queued and folded into that turn at its next tool
 //! boundary; Ctrl+X Ctrl+S sends it now: the running call moves to the
 //! background and the message joins the turn at once. A turn the user cuts
-//! short runs no Stop hook. A message written to the messaging socket runs
+//! short runs no Stop hook. A tool server's dialog is reported only through
+//! the Notification hook; Escape cancels it and the turn goes on. A message written to the messaging socket runs
 //! like a prompt from a peer.
 
 use std::collections::VecDeque;
@@ -45,12 +46,15 @@ const TERMINAL_QUERIES: &[u8] = b"\x1b[>0q\x1b[?u\x1b[c";
 /// How long the fake takes between its first output and its input reset;
 /// Claude 2.1.283 takes about 300 ms.
 const INPUT_RESET: std::time::Duration = std::time::Duration::from_millis(100);
+/// The Notification hook's message for a tool server's dialog, which is the
+/// same for every dialog (2.1.283).
+const DIALOG_NOTICE: &str = "Claude Code needs your input";
 
 /// Set, the fake behaves as a Claude without a messaging socket.
 pub const NO_MESSAGING_ENV: &str = "AMUX_FAKE_NO_MESSAGING";
 
 /// The asks terminal Claude raises.
-pub const RAISES: &[&str] = &["permission", "question", "plan"];
+pub const RAISES: &[&str] = &["permission", "question", "plan", "tool_server_dialog"];
 
 /// What the terminal delivered, decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1130,6 +1134,44 @@ impl Engine {
                     .collect();
                 let result = json!({ "questions": input["questions"], "answers": answers });
                 self.result_row(&id, json!(content), false, result);
+            }
+            Ask::ToolServerDialog {
+                server,
+                tool,
+                link,
+                wait_for,
+                output,
+            } => {
+                let call = named(&format!("mcp__{server}__{tool}"), json!({}));
+                let (id, name, input) = self.tool_use(request, message, &call);
+                self.hook(json!({
+                    "hook_event_name": "Notification",
+                    "message": DIALOG_NOTICE,
+                    "notification_type": if link { "elicitation_url_dialog" } else { "elicitation_dialog" },
+                }));
+                self.screen(&format!("{server} needs your input\nEsc to cancel"));
+                loop {
+                    if wait_for.as_ref().is_some_and(|path| path.exists()) {
+                        return self.finish_tool(&id, &name, &input, &call, Ok(output));
+                    }
+                    if self.closed {
+                        return self.abandon(&id, &name, &input, &call);
+                    }
+                    tokio::select! {
+                        input = self.input.recv() => match input {
+                            // Escape cancels the dialog; the server answers
+                            // its call and the turn goes on.
+                            Some(In::Key(Key::Escape)) => break,
+                            // Other keys fill in the dialog.
+                            Some(In::Key(_)) => {}
+                            Some(other) => self.handle(other),
+                            None => self.closed = true,
+                        },
+                        () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+                    }
+                }
+                let cancelled = format!("The user cancelled {server}'s request for input.");
+                self.finish_tool(&id, &name, &input, &call, Err(cancelled));
             }
             Ask::Form { .. } | Ask::Link { .. } | Ask::Grant { .. } => {
                 unreachable!("refused when the script loaded")

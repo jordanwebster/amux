@@ -50,7 +50,10 @@ separate.
   and **dialog** (a request the CLI would have drawn itself). This chat
   carries exactly two of them, permission and question, because Claude's
   terminal answers elicitations and dialogs in band and writes nothing about
-  them to the transcript; the SDK chat implements all four channels, with
+  them to the transcript. A tool server's form or link on Claude's screen
+  fires only a Notification hook (`elicitation_dialog` or
+  `elicitation_url_dialog`), so it shows as an unanswerable ask that offers
+  attaching to the terminal or stopping the agent; the SDK chat implements all four channels, with
   dialogs still unvalidated against a real provider frame.
   `docs/CLAUDE_SDK.md` specifies their panels and that limitation. Plan review
   is a permission variant in both — the `ExitPlanMode` tool with a plan payload and a

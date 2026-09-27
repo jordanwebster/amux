@@ -38,6 +38,9 @@ message ClaudePtyItem {
     Unrecognized unrecognized = 14;
     // A prompt delivered into the running turn; the text is the envelope's.
     Steer steer = 15;
+    // A dialog Claude shows in its own terminal that no hook can answer: an
+    // unanswerable ask that is its own row.
+    AskItem ask = 16;
   }
 }
 

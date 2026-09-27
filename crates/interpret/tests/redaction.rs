@@ -120,6 +120,9 @@ fn claude_pty_session() -> Vec<Event> {
         with(
             json!({ "hook_event_name": "PreToolUse", "tool_use_id": "t2", "tool_name": "Bash", "tool_input": { "command": command() } }),
         ),
+        with(
+            json!({ "hook_event_name": "Notification", "message": "Claude Code needs your input", "notification_type": "elicitation_dialog" }),
+        ),
         prompt_input::<ClaudePty>("p2"),
     ]
 }
@@ -599,6 +602,64 @@ fn report<I: Interpreter>(events: Vec<Event>) {
 #[test]
 fn claude_pty_redaction() {
     report::<ClaudePty>(claude_pty_session());
+}
+
+/// An unanswerable ask's reason is the only thing the person reads about
+/// the dialog, and it holds no secret: its item and the snapshot keep it
+/// word for word.
+#[test]
+fn claude_pty_unanswerable_reason_survives_redaction() {
+    let spec = AgentSpec {
+        agent_id: vec![7; 16],
+        kind: ClaudePty::KIND.into(),
+        created_at_ms: 1_800_000_000_000,
+        ..AgentSpec::default()
+    };
+    let (mut state, _) = ClaudePty::initial(&spec, "redaction-test");
+    let mut items = Vec::new();
+    let mut snapshot = None;
+    for event in claude_pty_session() {
+        let step = ClaudePty::step(&mut state, event).step;
+        items.extend(step.items);
+        snapshot = step.snapshot.or(snapshot);
+    }
+    let reasons = |item: &wire::ClaudePtyItem| match &item.kind {
+        Some(wire::claude_pty_item::Kind::Ask(wire::AskItem {
+            ask: Some(wire::ask_item::Ask::Unanswerable(unanswerable)),
+            ..
+        })) => Some(unanswerable.reason.clone()),
+        _ => None,
+    };
+    let kind = wire::Kind::ClaudePty;
+    let item = items
+        .iter()
+        .find_map(|item| {
+            reasons(&wire::ClaudePtyItem::decode(item.body.as_slice()).unwrap())
+                .map(|reason| (item.body.clone(), reason))
+        })
+        .expect("the session opens an unanswerable ask");
+    let (body, reason) = item;
+    assert!(reason.contains("form from a tool server"), "{reason}");
+    let RedactTarget::ItemBody(after) = redact(kind, RedactTarget::ItemBody(body)) else {
+        panic!("an item body redacts to an item body");
+    };
+    assert_eq!(
+        reasons(&wire::ClaudePtyItem::decode(after.as_slice()).unwrap()),
+        Some(reason.clone())
+    );
+    let snapshot = snapshot.expect("a snapshot").body;
+    let RedactTarget::SnapshotBody(after) = redact(kind, RedactTarget::SnapshotBody(snapshot))
+    else {
+        panic!("a snapshot body redacts to a snapshot body");
+    };
+    let asks = wire::ClaudePtySnapshot::decode(after.as_slice())
+        .unwrap()
+        .asks;
+    let kept = asks.iter().find_map(|ask| match &ask.body {
+        Some(wire::ask::Body::Unanswerable(unanswerable)) => Some(unanswerable.reason.clone()),
+        _ => None,
+    });
+    assert_eq!(kept, Some(reason));
 }
 
 #[test]

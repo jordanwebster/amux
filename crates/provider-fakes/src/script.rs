@@ -144,6 +144,21 @@ pub enum Ask {
     },
     /// Wider access for the rest of the turn or session (Codex).
     Grant { reason: String, paths: Vec<String> },
+    /// A tool server's form, or link when `link` is set, that terminal
+    /// Claude shows in its own terminal while the server's `tool` call
+    /// runs. It stays open until the interrupt key cancels it, or until
+    /// `wait_for` exists, when it counts as answered there and the call
+    /// returns `output`.
+    ToolServerDialog {
+        server: String,
+        tool: String,
+        #[serde(default)]
+        link: bool,
+        #[serde(default)]
+        wait_for: Option<PathBuf>,
+        #[serde(default)]
+        output: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -202,6 +217,7 @@ impl Ask {
             Ask::Form { .. } => "form",
             Ask::Link { .. } => "link",
             Ask::Grant { .. } => "grant",
+            Ask::ToolServerDialog { .. } => "tool_server_dialog",
         }
     }
 }

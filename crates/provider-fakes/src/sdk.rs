@@ -890,7 +890,7 @@ impl Engine {
                 let blocks = json!([{ "type": "text", "text": said }]);
                 self.user_result(&id, blocks.clone(), false, blocks).await;
             }
-            Ask::Link { .. } | Ask::Grant { .. } => {
+            Ask::Link { .. } | Ask::Grant { .. } | Ask::ToolServerDialog { .. } => {
                 unreachable!("refused when the script loaded")
             }
         }

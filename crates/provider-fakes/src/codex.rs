@@ -883,6 +883,7 @@ impl Engine {
                 item["text"] = json!(markdown);
                 self.item(turn, "item/completed", &item).await;
             }
+            Ask::ToolServerDialog { .. } => unreachable!("refused when the script loaded"),
         }
     }
 

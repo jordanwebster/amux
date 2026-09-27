@@ -26,6 +26,13 @@
 //!   background answers the Agent call at once with launch metadata; its row
 //!   stays running, across the end of the turn that launched it, until a
 //!   user row of task-notification origin carries its result.
+//! - A tool server's form or link that Claude shows in its own terminal is
+//!   announced only by a Notification hook, which no hook can answer. It
+//!   opens an unanswerable ask with an item of its own, pointing at the call
+//!   that was running (a tool server's, when one was). An interrupt through
+//!   amux closes it cancelled; that call's result, a row from a later
+//!   assistant message, and the facts that close every ask close it
+//!   dismissed.
 
 mod facts;
 mod recording;
@@ -37,10 +44,10 @@ use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    AgentSpec, Ask, Attachment, BackgroundProcesses, Boundary, BoundaryKind, ClaudeAnswer,
-    ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName, Step,
-    SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input, claude_pty_item,
-    input, permission_answer, plan_answer,
+    AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, Boundary, BoundaryKind,
+    ClaudeAnswer, ClaudePtyItem, ClaudePtySnapshot, ContextMeter, DecisionOutcome, Input, KeyName,
+    Step, SubagentProgress, ToolCall, ToolDecision, claude_answer, claude_pty_input,
+    claude_pty_item, input, permission_answer, plan_answer,
 };
 
 use crate::claude_common::{
@@ -50,8 +57,8 @@ use crate::claude_common::{
 use crate::{
     Carrier, Checkpoint, Effect, Emit, Event, FixtureInput, Interpreter, ItemDraft, ItemView,
     RedactTarget, SendOutcome, Shared, SnapshotView, Stepped, agent_message_body,
-    agent_message_key, claude_pty_input, human, is_send_tool, reason, sent_message, serde_pb,
-    unknown,
+    agent_message_key, ask_item, claude_pty_input, human, is_send_tool, reason, sent_message,
+    serde_pb, unknown,
 };
 
 /// The interpreter for kind `claude_pty`.
@@ -305,6 +312,11 @@ enum AskShape {
     Question {
         questions: Vec<QuestionShape>,
     },
+    /// A dialog only Claude's own terminal can answer, raised while this
+    /// call ran.
+    Unanswerable {
+        call: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -522,6 +534,10 @@ impl State {
 
     /// Closes an ask with the outcome the closing fact carries.
     fn close(&mut self, emit: &mut Emit, ask_key: &str, decision: Decision) {
+        if let Some(AskShape::Unanswerable { .. }) = self.asks.get(ask_key).map(|meta| &meta.shape)
+        {
+            return self.close_unanswerable(emit, ask_key, ask_item::dismissed());
+        }
         self.shared.close_ask(ask_key);
         let Some(meta) = self.asks.get_mut(ask_key) else {
             return;
@@ -551,6 +567,56 @@ impl State {
     fn close_all_unknown(&mut self, emit: &mut Emit) {
         for key in self.open_ask_keys() {
             self.close(emit, &key, Decision::unknown());
+        }
+    }
+
+    /// Writes an unanswerable ask's own item, open or closed.
+    fn emit_unanswerable(&mut self, emit: &mut Emit, ask: &Ask, closed: Option<AskClosed>) {
+        let Some(wire::ask::Body::Unanswerable(unanswerable)) = &ask.body else {
+            return;
+        };
+        let item = ask_item::opened(wire::ask_item::Ask::Unanswerable(unanswerable.clone()));
+        let item = match closed {
+            Some(closed) => ask_item::close(item, closed),
+            None => item,
+        };
+        self.shared.item(
+            emit,
+            ItemDraft {
+                key: ask.item_key.clone(),
+                body: item_body(claude_pty_item::Kind::Ask(item)),
+                at_ms: Some(ask.opened_at_ms),
+                complete: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    fn close_unanswerable(&mut self, emit: &mut Emit, ask_key: &str, closed: AskClosed) {
+        self.asks.remove(ask_key);
+        if let Some(ask) = self.shared.close_ask(ask_key) {
+            self.emit_unanswerable(emit, &ask, Some(closed));
+        }
+    }
+
+    /// The open unanswerable asks and the call each was raised under.
+    fn unanswerable_asks(&self) -> Vec<(String, Option<String>)> {
+        self.asks
+            .iter()
+            .filter_map(|(key, meta)| match &meta.shape {
+                AskShape::Unanswerable { call } => Some((key.clone(), call.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A call's result ends the dialog raised while it ran, or one raised
+    /// while no call ran.
+    fn close_unanswerable_for_tool(&mut self, emit: &mut Emit, tool_id: &str) {
+        for (key, call) in self.unanswerable_asks() {
+            if call.as_deref().is_none_or(|call| call == tool_id) {
+                self.close_unanswerable(emit, &key, ask_item::dismissed());
+            }
         }
     }
 
@@ -619,6 +685,11 @@ impl State {
     fn interrupt(&mut self, emit: &mut Emit) {
         if self.shared.is_busy() || !self.shared.asks().is_empty() {
             emit.effect(Effect::Terminal(TerminalInput::Interrupt));
+        }
+        // The interrupt key cancels a dialog Claude shows in its terminal
+        // whether or not the turn goes on, and nothing else reports that.
+        for (key, _) in self.unanswerable_asks() {
+            self.close_unanswerable(emit, &key, ask_item::outcome(wire::AskOutcome::Cancelled));
         }
     }
 
@@ -1037,6 +1108,7 @@ fn describe_item(body: &[u8]) -> ItemView {
             true,
             format!("{} args={}", slash.command, Value::String(slash.args)),
         ),
+        Some(Kind::Ask(item)) => ("ask", true, ask_item::describe(&item)),
         Some(Kind::Unrecognized(unrecognized)) => (
             "unrecognized",
             true,

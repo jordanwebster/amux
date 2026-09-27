@@ -36,6 +36,9 @@ use crate::theme::Theme;
 pub const WIDTH: u16 = 100;
 /// Rows the full-screen review page is drawn at.
 const PAGE_HEIGHT: u16 = 30;
+/// What terminal Claude's interpreter says when Claude shows a tool server's
+/// form in its own terminal.
+const UNANSWERABLE: &str = "Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.";
 
 /// The whole frames drawn from served hosts, with what each shows; the
 /// frames test draws exactly these.
@@ -699,7 +702,7 @@ fn row_sets() -> Vec<RowSet> {
         ),
         (
             "row_ask",
-            "Asks that became rows: a question answered, several questions answered with a note, a plan approved and one sent back, a form sent, a link declined, access granted for the turn, and an open question.",
+            "Asks that became rows: a question answered, several questions answered with a note, a plan approved and one sent back, a form sent, a link declined, access granted for the turn, an open question, and a dialog this build couldn't read, closed and opened.",
             vec![
                 (
                     row(RowKind::Ask(AskRow::Question {
@@ -777,6 +780,20 @@ fn row_sets() -> Vec<RowSet> {
                         resolution: Resolution::Open,
                     })),
                     CLOSED,
+                ),
+                (
+                    row(RowKind::Ask(AskRow::Unanswerable {
+                        reason: UNANSWERABLE.into(),
+                        resolution: Resolution::Dismissed,
+                    })),
+                    CLOSED,
+                ),
+                (
+                    row(RowKind::Ask(AskRow::Unanswerable {
+                        reason: UNANSWERABLE.into(),
+                        resolution: Resolution::Cancelled,
+                    })),
+                    OPEN,
                 ),
             ],
         ),
@@ -1305,7 +1322,7 @@ fn cards() -> Vec<CardSet> {
             "The escape from an ask this client cannot answer: the reason, Stop, and the agent's own terminal where it has one.",
             card(
                 AskBody::Unanswerable {
-                    reason: "a dialog amux does not know how to answer".into(),
+                    reason: UNANSWERABLE.into(),
                 },
                 vec![],
             ),

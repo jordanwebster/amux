@@ -1,5 +1,5 @@
-//! Asks that are the work: a question, a tool server's form or link, or an
-//! access grant. Each is its own item, written when the ask opens and
+//! Asks that are the work: a question, a tool server's form or link, an
+//! access grant, or a dialog this build cannot read. Each is its own item, written when the ask opens and
 //! revised once with how it closed, so the decision row outlives the ask.
 //! The kinds call these helpers so every carrier records a close the same
 //! way.
@@ -130,6 +130,10 @@ pub(crate) fn describe(item: &AskItem) -> String {
         Some(ask_item::Ask::Access(access)) => format!(
             "access read={:?} write={:?} network={}",
             access.read, access.write, access.network
+        ),
+        Some(ask_item::Ask::Unanswerable(unanswerable)) => format!(
+            "unanswerable {}",
+            Value::String(unanswerable.reason.clone())
         ),
         None => "none".into(),
     };

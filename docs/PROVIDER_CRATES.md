@@ -39,7 +39,7 @@ confined to a terminal protocol.
 | Structured prompt and interrupt | Semantic PTY intents | Stream-JSON controls | App-server turn controls |
 | Raw terminal plane | Supported | Not exposed | Supported through `codex resume` |
 | Permission or approval decisions | Semantic answers to named asks | Typed permission, question and plan decisions | Typed app-server approvals |
-| Elicitation and dialog decisions | Answered in the provider terminal | Pending requests exposed to the chat; typed answers return through the control handle | Native obligations, with unsupported inputs visibly blocked |
+| Elicitation and dialog decisions | Answered in the provider terminal; an open tool-server form or link shows as an unanswerable ask | Pending requests exposed to the chat; typed answers return through the control handle | Native obligations, with unsupported inputs visibly blocked |
 | Session details | Transcript model/usage and hook permission mode | Streaming, tasks, model/mode controls, passive context meter, requested breakdown and MCP status | Native app-server facts and controls |
 | Suspend and resume | Claude session id and transcript relink | Claude session id, with a gap row before resumed ready | Codex thread id across server restart |
 | A2A delivery | Supported by Claude socket with PTY fallback | Supported by stream input | Supported by item injection with turn fallback |

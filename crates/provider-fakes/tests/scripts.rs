@@ -34,3 +34,19 @@ fn a_pause_is_a_step() {
         serde_json::from_str(r#"{"steps": [{"pause": {"ms": 5}}, "turn_end"]}"#).unwrap();
     assert_eq!(script.steps, [Step::Pause { ms: 5 }, Step::TurnEnd]);
 }
+
+#[test]
+fn only_terminal_claude_shows_a_tool_server_dialog() {
+    let script: Script = serde_json::from_str(
+        r#"{"steps": [{"ask": {"tool_server_dialog": {"server": "github", "tool": "create_issue"}}}]}"#,
+    )
+    .unwrap();
+    script.check("terminal Claude", pty::RAISES).unwrap();
+    for (provider, raises) in [("headless Claude", sdk::RAISES), ("Codex", codex::RAISES)] {
+        let error = script.check(provider, raises).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("{provider} cannot raise a tool_server_dialog ask")
+        );
+    }
+}
