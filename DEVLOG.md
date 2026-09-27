@@ -1,3 +1,8 @@
+2026-09-28 — **The proto check's scratch files no longer collide between threads.**
+Its temporary descriptor file was named by process and clock, which ticks in
+microseconds on macOS, so two of its tests compiling in the same tick shared
+a file and one failed to decode; the name now carries a counter too.
+
 2026-09-28 — **The phone's own stories run on the Python driver.**
 Five phone-only stories run against served nets with compared screens and
 the hosts' own records: account-sign-in (the hand-off to the scripted

@@ -90,9 +90,13 @@ pub fn compile(
 }
 
 fn tempfile_path(stem: &str) -> PathBuf {
+    // Counted as well as timed: the clock ticks in microseconds here, so two
+    // threads of one process asking in the same tick would share a file.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::env::temp_dir().join(format!(
-        "{stem}-{}-{}.binpb",
+        "{stem}-{}-{}-{}.binpb",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
