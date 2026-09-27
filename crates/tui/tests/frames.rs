@@ -15,7 +15,7 @@ mod common;
 use std::time::Duration;
 
 use common::{assert_golden, capture};
-use provider_fakes::script::Step;
+use provider_fakes::script::{Ask, Step};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -88,6 +88,30 @@ async fn fleet_at(net: &Net, host: &str) -> FleetState {
                         agent.lifecycle() == wire::Lifecycle::Live
                             && agent.phase() == wire::Phase::Idle
                     })
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap()
+        .to_vec();
+    let mut fleet = FleetState::new();
+    fleet.update(FleetMsg::Connection(Connection::Live));
+    for event in events {
+        fleet.update(FleetMsg::Event(Box::new(event)));
+    }
+    fleet
+}
+
+/// The fleet as `host`'s inventory says it once `agent` is listed.
+async fn fleet_listing(net: &Net, host: &str, agent: &[u8]) -> FleetState {
+    let mut inventory = net.observe_inventory(host).await.unwrap();
+    let events: Vec<InventoryEvent> = inventory
+        .observe_until(
+            |events| {
+                inventory_caught_up(events)
+                    && testnet::observe::inventory_agents(events)
+                        .iter()
+                        .any(|listed| listed.agent_id == agent)
             },
             PATIENCE,
         )
@@ -189,10 +213,56 @@ async fn served_frames_match_their_goldens() {
     let state = chat_state(&fleet, worker.as_bytes(), &events);
     frame("chat_strip", &draw_chat(&state, 110, 24));
 
+    // A terminal Claude on the desk shows a tool server's dialog in its own
+    // terminal: the laptop's chat docks the escape where the composer was,
+    // with the conversation still above it.
+    let mut net = net;
+    let gatekeeper = net
+        .spawn(
+            AgentDecl::new("gatekeeper", "desk")
+                .kind(FakeKind::ClaudePty)
+                .steps(vec![
+                    text("Signing in to the tracker first."),
+                    Step::Ask(Ask::ToolServerDialog {
+                        server: "tracker".to_owned(),
+                        tool: "sign_in".to_owned(),
+                        link: false,
+                        wait_for: None,
+                        output: String::new(),
+                    }),
+                    Step::TurnEnd,
+                ])
+                .prompt("File the flaky relay test."),
+        )
+        .await
+        .unwrap();
+    let listed = fleet_listing(&net, "laptop", &gatekeeper.agent_id).await;
+    let mut asking = net.observe("laptop", "gatekeeper", 20).await.unwrap();
+    let events = asking
+        .observe_until(
+            |events| {
+                caught_up(events)
+                    && ui_view::ask_card(&chat_state(&listed, &gatekeeper.agent_id, events))
+                        .is_some()
+            },
+            PATIENCE,
+        )
+        .await
+        .unwrap()
+        .to_vec();
+    let state = chat_state(&listed, &gatekeeper.agent_id, &events);
+    assert!(
+        matches!(
+            ui_view::ask_card(&state).map(|card| card.body),
+            Some(ui_view::AskBody::Unanswerable { .. })
+        ),
+        "the dialog is an ask the chat cannot answer"
+    );
+    frame("ask_escape", &draw_chat(&state, 110, 24));
+
     // The origin rewinds to a checkpoint taken before the second turn: the
     // laptop's replica is Reset while its rows stay on screen, and swaps to
     // the rebuilt transcript at CaughtUp.
-    let mut net = net;
     let cut = net.journal_end("worker").unwrap();
     net.checkpoint_host("desk").await.unwrap();
     net.send("worker", "Run the relay tests.").await.unwrap();

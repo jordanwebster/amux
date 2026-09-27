@@ -1,3 +1,13 @@
+2026-09-27 — **A whole-frame golden of the ask escape, reached through served hosts.**
+`crates/tui/tests/frames.rs` spawns a terminal Claude on the desk whose
+script shows a tool server's sign-in dialog, observes its chat from the
+laptop, and captures `frame_ask_escape`: the escape card docked where the
+composer was, its reason sending the person to Claude's own terminal and
+Stop as the choice, the conversation above it. From the laptop no attach
+choice is offered, as the desk's terminal cannot be reached from there. The
+frame also shows the prompt row drawn below the tool call it caused, a
+known ordering fault of terminal Claude's rows.
+
 2026-09-27 — **The six shared stories run on the terminal client.**
 `just journey terminal <story>` now covers reach-host (the unpaired laptop
 finds the desk, `amux peers` names it by its host id, the PIN the desk

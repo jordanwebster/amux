@@ -56,6 +56,10 @@ pub const FRAMES: &[(&str, &str)] = &[
         "A headless Claude chat on the desk read from the laptop: header with model and mode, the first turn, the composer and its keys.",
     ),
     (
+        "ask_escape",
+        "A terminal Claude on the desk showing a tool server's sign-in dialog in its own terminal, read from the laptop: the escape card docked where the composer was, its reason sending the person to Claude's own terminal and Stop as the one choice (a remote agent's terminal is not offered here), with the conversation still above it.",
+    ),
+    (
         "rewind_before_swap",
         "The same chat after the desk rewound under it: the Reset is pending, the second turn's rows stay on screen and the header says the host is away until the rebuilt transcript catches up.",
     ),

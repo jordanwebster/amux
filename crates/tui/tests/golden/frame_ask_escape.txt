@@ -1,0 +1,49 @@
+  gatekeeper · claude @ desk                                               claude-fake-1 · default · needs you
+
+
+
+
+
+
+  ── started ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ▸ Used tracker · sign_in                                                                             running
+
+▎   File the flaky relay test.
+
+    Signing in to the tracker first.
+
+▌ ? Can't answer this here
+
+
+  ● Can't answer this here
+    Claude is showing a form from a tool server this build can't read. Attach to Claude's terminal to answer
+    it, or stop the agent.
+  › 1. Stop the turn
+    ↑↓/1-9 select · enter confirm · ctrl+x stop
+
+--- styles
+..eeeeeeeeeemmmmmmmmmmmmmmmm...............................................mmmmmmmmmmmmmmmmmmmmmmmmmmaaaaaaaaa
+..............................................................................................................
+..............................................................................................................
+..............................................................................................................
+..............................................................................................................
+..............................................................................................................
+..............................................................................................................
+..mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+..............................................................................................................
+..a.eeee.ccccccccccccccccc.............................................................................mmmmmmm
+..............................................................................................................
+AAAAUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
+..............................................................................................................
+..............................................................................................................
+..............................................................................................................
+a.a.eeeeeeeeeeeeeeeeeeeeee....................................................................................
+..............................................................................................................
+..............................................................................................................
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+..............................................................................................................
