@@ -798,6 +798,61 @@ impl ::prost::Name for Unrecognized {
         "/amux.v1.Unrecognized".into()
     }
 }
+/// A model the provider offers this session, as the provider lists it.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OfferedModel {
+    /// What a model input names.
+    #[prost(string, tag = "1")]
+    pub value: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub display_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub description: ::prost::alloc::string::String,
+    /// The effort levels the model takes, in the provider's order; empty when
+    /// it takes none.
+    #[prost(string, repeated, tag = "4")]
+    pub efforts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The effort the model runs at when none is chosen, when the provider
+    /// says.
+    #[prost(string, optional, tag = "5")]
+    pub default_effort: ::core::option::Option<::prost::alloc::string::String>,
+}
+impl ::prost::Name for OfferedModel {
+    const NAME: &'static str = "OfferedModel";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.OfferedModel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.OfferedModel".into()
+    }
+}
+/// A command or skill the provider offers this session, typed as a prompt
+/// that starts with a slash.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OfferedCommand {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub description: ::prost::alloc::string::String,
+    /// What the command takes after its name, in the provider's words.
+    #[prost(string, tag = "3")]
+    pub argument_hint: ::prost::alloc::string::String,
+    /// Where it comes from: a plugin's namespace, or the provider's scope word
+    /// (user, repo, system). Empty when the provider does not say.
+    #[prost(string, tag = "4")]
+    pub source: ::prost::alloc::string::String,
+}
+impl ::prost::Name for OfferedCommand {
+    const NAME: &'static str = "OfferedCommand";
+    const PACKAGE: &'static str = "amux.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "amux.v1.OfferedCommand".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/amux.v1.OfferedCommand".into()
+    }
+}
 /// An open ask. Opened and closed only by provider facts.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Ask {
@@ -2489,6 +2544,11 @@ pub struct ClaudeSdkSnapshot {
     /// Absent until the init event names it.
     #[prost(string, optional, tag = "13")]
     pub provider_session: ::core::option::Option<::prost::alloc::string::String>,
+    /// What the initialize response offers; empty until it arrives.
+    #[prost(message, repeated, tag = "14")]
+    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
+    #[prost(message, repeated, tag = "15")]
+    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
 }
 impl ::prost::Name for ClaudeSdkSnapshot {
     const NAME: &'static str = "ClaudeSdkSnapshot";
@@ -3148,6 +3208,12 @@ pub struct CodexSnapshot {
     /// Absent until the thread start response names it.
     #[prost(string, optional, tag = "14")]
     pub thread_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// What model/list offers, hidden models left out; empty until it answers.
+    #[prost(message, repeated, tag = "15")]
+    pub models: ::prost::alloc::vec::Vec<OfferedModel>,
+    /// The skills skills/list offers; empty until it answers.
+    #[prost(message, repeated, tag = "16")]
+    pub commands: ::prost::alloc::vec::Vec<OfferedCommand>,
 }
 impl ::prost::Name for CodexSnapshot {
     const NAME: &'static str = "CodexSnapshot";

@@ -5,8 +5,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wire::{
-    Ask, Attachment, BlobRef, DecisionOutcome, Question, QuestionAsk, QuestionOption, ScopeChoice,
-    TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass, ToolState, attachment,
+    Ask, Attachment, BlobRef, DecisionOutcome, OfferedCommand, OfferedModel, Question, QuestionAsk,
+    QuestionOption, ScopeChoice, TaskList, TaskListEntry, TaskListStatus, ToolCall, ToolClass,
+    ToolState, attachment,
 };
 
 use crate::Effect;
@@ -538,4 +539,36 @@ pub(crate) fn describe_tasks(tasks: &TaskList) -> String {
             .collect::<Vec<_>>()
             .join(",")
     )
+}
+
+/// Offered models as `value{effort/effort*}`, the default effort starred.
+pub(crate) fn describe_models(models: &[OfferedModel]) -> String {
+    models
+        .iter()
+        .map(|model| {
+            let efforts = model
+                .efforts
+                .iter()
+                .map(|effort| {
+                    if model.default_effort.as_ref() == Some(effort) {
+                        format!("{effort}*")
+                    } else {
+                        effort.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
+            if efforts.is_empty() {
+                model.value.clone()
+            } else {
+                format!("{}{{{}}}", model.value, efforts.join("/"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Offered commands by count: the lists are long, and the clients' goldens
+/// show them in full.
+pub(crate) fn describe_commands(commands: &[OfferedCommand]) -> String {
+    commands.len().to_string()
 }

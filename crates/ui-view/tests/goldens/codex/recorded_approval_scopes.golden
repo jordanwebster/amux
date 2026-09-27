@@ -112,3 +112,8 @@
     11 msg_02124244eb5c39e0016ab72ec422c487d29f3b7cbcfaeaa2f9 Prose { text: [Text("DONE")], streaming: false, working_note: false }
     12 turn:1 TurnEnd { duration_ms: Some(15489), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 13341, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode* Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode  Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

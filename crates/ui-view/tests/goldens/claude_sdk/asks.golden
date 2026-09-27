@@ -99,3 +99,11 @@
      9 ask:req-7 Ask(Form { server: "github", message: "Labels", fields: [], resolution: Dismissed })
     10 turn:1 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

@@ -48,3 +48,13 @@
      8 toolu_01KZYaYpW6mGjKYjYSTBax7p Command { command: "cat config.txt", state: Succeeded, exit_code: None, output_head: ["VALUE=2"], more_lines: 0, duration_ms: Some(659) }
      9 9a47d77e-a173-4a51-a3bf-d840f3bf3892 Thinking { text: "", open: false, duration_ms: Some(56) }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34824, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

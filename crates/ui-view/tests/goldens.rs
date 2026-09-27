@@ -17,7 +17,7 @@ use interpret::{Interpreter, Replayed, replay};
 use ui_state::{InputOutcome, Msg, SessionState};
 use ui_view::{
     ChatOptions, ToolRows, ask_card, chat_rows, chat_rows_for, composer, outbox_rows, queue_rows,
-    session_strip,
+    session_strip, settings,
 };
 use wire::{Kind, SessionEvent, session_event};
 
@@ -236,7 +236,78 @@ fn render(kind: Kind, frames: &[Replayed]) -> String {
         let _ = writeln!(out, "  {}", describe_row(&row));
     }
     let _ = writeln!(out, "== strip {:?}", session_strip(&state));
+    describe_settings(&mut out, &state);
     out
+}
+
+/// The settings view, one choice per line: the current one starred, one
+/// the provider does not offer marked reported.
+fn describe_settings(out: &mut String, state: &SessionState) {
+    let view = settings(state);
+    let marks = |current: bool, reported: bool| {
+        format!(
+            "{}{}",
+            if current { "*" } else { " " },
+            if reported { " reported" } else { "" }
+        )
+    };
+    let _ = writeln!(out, "== settings");
+    for model in &view.models {
+        let _ = writeln!(
+            out,
+            "  model{} {} {:?} efforts=[{}]{}",
+            marks(model.current, model.reported),
+            model.value,
+            model.display_name,
+            model.efforts.join(","),
+            model
+                .default_effort
+                .as_ref()
+                .map(|effort| format!(" default={effort}"))
+                .unwrap_or_default()
+        );
+    }
+    for effort in &view.efforts {
+        let _ = writeln!(
+            out,
+            "  effort{} {}{}",
+            marks(effort.current, effort.reported),
+            effort.value,
+            if effort.default { " (default)" } else { "" }
+        );
+    }
+    for mode in &view.modes {
+        let _ = writeln!(
+            out,
+            "  mode{} {:?}{}",
+            marks(mode.current, mode.reported),
+            mode.value,
+            if mode.stops_asking {
+                " stops_asking"
+            } else {
+                ""
+            }
+        );
+    }
+    for command in &view.commands {
+        let _ = writeln!(
+            out,
+            "  command /{} source={:?} hint={:?} {}",
+            command.name,
+            command.source,
+            command.argument_hint,
+            clip(format!("{:?}", command.description))
+        );
+    }
+    for (setting, refusal) in [
+        ("model", &view.model_refusal),
+        ("effort", &view.effort_refusal),
+        ("mode", &view.mode_refusal),
+    ] {
+        if let Some(refusal) = refusal {
+            let _ = writeln!(out, "  refused {setting}: {refusal}");
+        }
+    }
 }
 
 fn check(

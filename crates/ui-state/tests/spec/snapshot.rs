@@ -200,3 +200,36 @@ fn the_chat_header_reads_the_snapshot_while_the_row_says_otherwise() {
         );
     }
 }
+
+#[test]
+fn the_offered_models_and_commands_ride_on_the_session_state() {
+    let models = vec![wire::OfferedModel {
+        value: "sonnet".into(),
+        display_name: "Sonnet".into(),
+        description: "Efficient".into(),
+        efforts: vec!["low".into(), "high".into()],
+        default_effort: None,
+    }];
+    let commands = vec![wire::OfferedCommand {
+        name: "stripe:test-cards".into(),
+        description: "Test cards".into(),
+        argument_hint: String::new(),
+        source: "stripe".into(),
+    }];
+    let sdk = wire::ClaudeSdkSnapshot {
+        models: models.clone(),
+        commands: commands.clone(),
+        ..Default::default()
+    };
+    let state = decode_snapshot(Kind::ClaudeSdk, &sdk.encode_to_vec());
+    assert_eq!((&state.models, &state.commands), (&models, &commands));
+    let codex = wire::CodexSnapshot {
+        models: models.clone(),
+        commands: commands.clone(),
+        ..Default::default()
+    };
+    let state = decode_snapshot(Kind::Codex, &codex.encode_to_vec());
+    assert_eq!((&state.models, &state.commands), (&models, &commands));
+    let empty = decode_snapshot(Kind::Codex, &[]);
+    assert!(empty.models.is_empty() && empty.commands.is_empty());
+}

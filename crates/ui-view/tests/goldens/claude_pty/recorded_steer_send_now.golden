@@ -22,3 +22,13 @@
      4 f41c7fd7-d400-45fe-9697-53f1e7176f57 Thinking { text: "", open: false, duration_ms: None }
      5 c9bd22e9-7222-47ec-a1b0-3a78e7ed9913 Prompt { text: [Text("Also append the word DURIAN.")], steered: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 43591, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

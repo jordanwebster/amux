@@ -32,3 +32,11 @@
      6 turn:2 TurnEnd { duration_ms: Some(1000), cost_usd: Some(0.01), failed: false }
      7 agent-message:656e762d31 AgentMessage { from: "reviewer", kind: Message, text: "please look at the diff", to: "", sent: Unspecified, rejection: "" }
 == strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: None, mode: Some("plan"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-sonnet-5 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode* Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

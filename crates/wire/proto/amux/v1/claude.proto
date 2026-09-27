@@ -172,6 +172,9 @@ message ClaudeSdkSnapshot {
   BackgroundProcesses background_processes = 12;
   // Absent until the init event names it.
   optional string provider_session = 13;
+  // What the initialize response offers; empty until it arrives.
+  repeated OfferedModel models = 14;
+  repeated OfferedCommand commands = 15;
 }
 
 message ClaudeSdkInput {

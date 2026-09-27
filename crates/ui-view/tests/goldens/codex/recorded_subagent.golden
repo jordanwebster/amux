@@ -61,3 +61,9 @@
      8 msg_066e4e030cd39ae8016ab72f0df6d887d2af98d5e127b3e528 Prose { text: [Text("CODEX_SPEC_CHILD")], streaming: false, working_note: false }
      9 turn:1 TurnEnd { duration_ms: Some(10949), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 16826, window_tokens: Some(258400), percent: Some(6), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("never"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode  Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking
+  mode* reported Codex { preset: None, approval_policy: "never", sandbox: "workspace-write" } stops_asking

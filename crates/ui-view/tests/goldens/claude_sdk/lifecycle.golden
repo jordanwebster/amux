@@ -26,3 +26,11 @@
      4 boundary:2 Boundary { kind: DaemonLost, cause: "" }
      5 boundary:3 Boundary { kind: Exited, cause: "orphaned while waiting for you" }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

@@ -1,8 +1,8 @@
 {
   "agents": [
     {
-      "agent_id": "77e49bee-c78e-4872-9a66-23aaf3f3491d",
-      "host_id": "12574a27-ae97-44bc-9dd6-0d4786a9c916",
+      "agent_id": "6b537c5d-22c4-4725-a615-63a5039de8ab",
+      "host_id": "37b12d91-cae0-402f-966d-1d0d68c93663",
       "incarnation": 1,
       "kind": "claude_sdk",
       "lifecycle": 1,
@@ -16,12 +16,12 @@
     }
   ],
   "automatic": false,
-  "created_at_ms": 1790471460303,
+  "created_at_ms": 1790524776302,
   "daemon_version": "0.7.0",
-  "dump_id": "b9f455c1-52c4-4d70-ab5a-bda7fbddad52",
+  "dump_id": "041026d7-0089-4ca7-b376-e94cccce8ed6",
   "errors": [],
   "generation": 1,
-  "host": "12574a27-ae97-44bc-9dd6-0d4786a9c916",
-  "profile": "d5a98390-bf58-4abb-8fcb-6bbd5f45d62a",
+  "host": "37b12d91-cae0-402f-966d-1d0d68c93663",
+  "profile": "d4f7956e-31e9-4c14-b27a-f1617f4a8023",
   "reason": "fixture"
 }

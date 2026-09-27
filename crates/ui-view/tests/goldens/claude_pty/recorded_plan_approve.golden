@@ -55,3 +55,13 @@
      7 toolu_01J6jMc34jQ5JM5xxerVNd4F Explore { verb: Search, subject: "select:ExitPlanMode", state: Succeeded }
      8 toolu_01LvpGfZokaV3i8KmxY16Ywt Ask(Plan { plan: "# Context\n\nThe user wants README.md's single line of content updated from the literal text `CURRENT` to `UPDATED`.\n\n# Plan\n\n- Edit `README.md`, replacing the line `CURRENT` with `UPDATED`.\n\n# Verification\n\n- Read `README.md` and confirm its content is now `UPDATED`.\n", verdict: Approved, note: None })
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 51334, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-sonnet-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

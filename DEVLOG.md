@@ -1,3 +1,21 @@
+2026-09-27 — **Each agent's snapshot says what it offers, and a settings view reads it.**
+Headless Claude's initialize answer already listed its models (each with
+its effort levels) and slash commands; the interpreter now keeps them in
+every snapshot, a plugin's namespace as a command's source. Codex is asked
+`model/list` (every page) and `skills/list` once per server, when the
+handshake's thread answer arrives: before then the agent process is still
+writing the handshake, and the order of the two writers' lines would be a
+race. Hidden models and turned-off skills are left out; a refused answer
+leaves its list empty and writes no row. The answers' shapes are pinned
+from codex-cli 0.157.0 in an authored fixture, and the Codex agent replays
+carry them. ui-view's settings view lists the models, the current model's
+efforts and the kind's mode set (Claude's five modes; Codex's read-only,
+auto and full-access presets) with the current one marked, a reported
+value outside the offer shown as reported, the commands without Claude's
+terminal-only ones, and the sentence for each setting the interpreter
+refuses. The fakes answer from their scripts, and the replay bundle was
+re-dumped from a served daemon.
+
 2026-09-27 — **The phone keeps chat sessions by what the person needs.**
 After every read of the fleet the phone opens a chat session for each
 agent that needs the person, so its chat is current before its page opens,

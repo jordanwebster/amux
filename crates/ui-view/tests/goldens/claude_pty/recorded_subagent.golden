@@ -43,3 +43,13 @@
      9 00d54414-7253-46d8-882e-5dcd21926e04 Prose { text: [Text("The subagent has completed. The single line in config.txt is:\n\n```\nVALUE=1\n```")], streaming: false, working_note: false }
     10 turn:2 TurnEnd { duration_ms: Some(8062), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 37294, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

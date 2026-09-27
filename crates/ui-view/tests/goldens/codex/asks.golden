@@ -149,3 +149,8 @@
     14 cmd-3 Command { command: "/bin/zsh -lc 'curl -s https://api.example.com/status'", state: Cancelled, exit_code: None, output_head: [], more_lines: 0, duration_ms: None } decision=Decision { outcome: Dismissed, scope: None, note: None, elsewhere: false }
     15 turn:1 Stopped
 == strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

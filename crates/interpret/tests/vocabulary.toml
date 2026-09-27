@@ -218,8 +218,8 @@ codex = { mark = "full", carriers = ["snapshot:context"], golden = ["snapshot ",
 id = "C28"
 item = "Model, effort, mode"
 claude_pty = { mark = "partial", carriers = ["snapshot:model", "snapshot:permission_mode"], golden = ["snapshot ", " mode=", "!mode=?"] }
-claude_sdk = { mark = "full", carriers = ["snapshot:model", "snapshot:effort", "snapshot:permission_mode"], golden = ["snapshot ", " effort=", "!effort=?"] }
-codex = { mark = "full", carriers = ["snapshot:model", "snapshot:effort", "snapshot:approval_policy", "snapshot:sandbox"], golden = ["snapshot ", " effort=", "!effort=?"] }
+claude_sdk = { mark = "full", carriers = ["snapshot:model", "snapshot:effort", "snapshot:permission_mode", "snapshot:models", "snapshot:commands"], golden = ["snapshot ", " effort=", "!effort=?", " models=[", "!models=[]", "!commands=0"] }
+codex = { mark = "full", carriers = ["snapshot:model", "snapshot:effort", "snapshot:approval_policy", "snapshot:sandbox", "snapshot:models", "snapshot:commands"], golden = ["snapshot ", " effort=", "!effort=?", " models=[", "!models=[]", "!commands=0"] }
 
 [[row]]
 id = "C29"

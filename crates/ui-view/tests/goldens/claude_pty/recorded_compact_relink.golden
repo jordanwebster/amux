@@ -75,3 +75,13 @@
     20 8b164c5e-6b9e-4737-8685-335403c36779 Compaction { tokens_before: Some(34695), tokens_after: Some(2587), automatic: false }
     21 84436818-1189-4bf8-8ea0-583532b7d9d0 Hidden collapsed
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 2587, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

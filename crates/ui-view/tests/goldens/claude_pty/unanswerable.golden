@@ -117,3 +117,13 @@
     17 ask:ask:6 Ask(Unanswerable { reason: "Claude is showing a link from a tool server this build can't read. Attach to Claude's terminal to answer it, or stop the agent.", resolution: Dismissed })
     18 boundary:2 Boundary { kind: Exited, cause: "exit code 1" }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

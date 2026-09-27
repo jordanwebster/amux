@@ -16,3 +16,13 @@
      3 be31fc58-a53e-4488-98ae-a0384fa2dbec Error { error_kind: "authentication_failed", message: "Please run /login · API Error: 401 API key is invalid.", attempts: 0, gave_up: true } attention
      4 turn:1 TurnEnd { duration_ms: Some(2510), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

@@ -19,3 +19,8 @@
      3 sn1 AgentMessage { from: "", kind: Message, text: "Please review the parser change.\nIt is on branch parser.", to: "reviewer", sent: Sent, rejection: "" }
      4 sn2 AgentMessage { from: "", kind: Message, text: "Are you there?", to: "ghost", sent: Rejected, rejection: "no agent named ghost" }
 == strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: Some("Splitting the parser") }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

@@ -52,9 +52,15 @@ pub struct Script {
     /// The model the session reports when the launch names none.
     #[serde(default)]
     pub model: Option<String>,
-    /// Slash commands the session offers.
+    /// The models the session offers: headless Claude's initialize answer,
+    /// Codex's `model/list`. None scripted offers the session's model with
+    /// efforts low, medium and high.
     #[serde(default)]
-    pub commands: Vec<String>,
+    pub models: Vec<OfferedModel>,
+    /// The commands the session offers: headless Claude's slash commands,
+    /// Codex's skills.
+    #[serde(default)]
+    pub commands: Vec<OfferedCommand>,
     /// Terminal Claude's permission menu offers to switch to auto mode, as
     /// 2.1.283 does in manual mode: "Yes, and switch to auto mode" sits
     /// third and No fourth.
@@ -65,6 +71,59 @@ pub struct Script {
     /// with code 1.
     #[serde(default)]
     pub untrusted_folder: bool,
+}
+
+/// A model a scripted session offers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfferedModel {
+    pub value: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    /// Its effort levels, in order.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    #[serde(default)]
+    pub default_effort: Option<String>,
+}
+
+impl OfferedModel {
+    /// The one model a script that names none offers.
+    pub fn standard(value: &str) -> Self {
+        Self {
+            value: value.to_owned(),
+            display_name: None,
+            description: "The scripted model".into(),
+            efforts: ["low", "medium", "high"].map(str::to_owned).to_vec(),
+            default_effort: Some("medium".into()),
+        }
+    }
+
+    /// What the session offers: the scripted models, or the standard one.
+    pub fn offered(scripted: &[Self], model: &str) -> Vec<Self> {
+        if scripted.is_empty() {
+            vec![Self::standard(model)]
+        } else {
+            scripted.to_vec()
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.value)
+    }
+}
+
+/// A command a scripted session offers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfferedCommand {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub argument_hint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

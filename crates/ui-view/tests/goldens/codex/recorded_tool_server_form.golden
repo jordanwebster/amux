@@ -189,3 +189,8 @@
     10 msg_0a42dc39e07eb227016ab72ebf677487d2a5f9c4fea5e3d548 Prose { text: [Text("- `BLUE` call returned: `BLUE`\n- `LINK` call returned: `elicitation cancel`")], streaming: false, working_note: false }
     11 turn:1 TurnEnd { duration_ms: Some(12559), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 13539, window_tokens: Some(258400), percent: Some(5), in_strip: false }), model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

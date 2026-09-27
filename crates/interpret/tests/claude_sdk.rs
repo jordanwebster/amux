@@ -302,3 +302,39 @@ fn client_uuids_are_well_formed() {
     assert_eq!(uuid, "ffffffff-ffff-4fff-bfff-ffffffffffff");
     assert_eq!(client_uuid(b"p1").len(), 36);
 }
+
+#[test]
+fn the_initialize_answer_lists_models_with_efforts_and_commands_with_sources() {
+    use prost::Message as _;
+    let replayed =
+        interpret::replay::<ClaudeSdk>(&fixtures().join("recorded_multi_turn.json")).unwrap();
+    let snapshot = replayed
+        .iter()
+        .rev()
+        .find_map(|frame| frame.step.snapshot.clone())
+        .expect("a snapshot");
+    let snapshot = wire::ClaudeSdkSnapshot::decode(snapshot.body.as_slice()).unwrap();
+    let first = &snapshot.models[0];
+    assert_eq!(first.value, "default");
+    assert_eq!(first.display_name, "Default (recommended)");
+    assert!(first.description.starts_with("Opus 5 with 1M context"));
+    assert_eq!(first.efforts, ["low", "medium", "high", "xhigh", "max"]);
+    let haiku = snapshot
+        .models
+        .iter()
+        .find(|model| model.value == "haiku")
+        .unwrap();
+    assert!(haiku.efforts.is_empty(), "Haiku takes no effort");
+    let plugin = snapshot
+        .commands
+        .iter()
+        .find(|command| command.name == "stripe:test-cards")
+        .unwrap();
+    assert_eq!(plugin.source, "stripe");
+    let own = snapshot
+        .commands
+        .iter()
+        .find(|command| command.name == "compact")
+        .unwrap();
+    assert_eq!(own.source, "");
+}

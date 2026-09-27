@@ -27,3 +27,13 @@
      3 5add42fe-53cd-41b5-b1cb-6673595143b7 Thinking { text: "", open: false, duration_ms: Some(2423) }
      4 toolu_01QMearN6kQdqbAdp2iEYZpc Command { command: "printf allow-scoped > allow-scoped.txt; printf allow-scoped", state: Succeeded, exit_code: None, output_head: ["allow-scoped"], more_lines: 0, duration_ms: Some(512) } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: true }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34322, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

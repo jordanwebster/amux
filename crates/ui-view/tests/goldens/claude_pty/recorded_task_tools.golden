@@ -11,3 +11,13 @@
 == chat
      1 toolu_0111yBonGHJL4YvNmE5Zm5iK FileChange { files: [FileRow { path: "/tmp/planner-probe/permission-request-target.txt", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Failed } attention
 == strip Strip { tasks: Some(TasksView { done: 0, total: 1, current: "Resuming from the live checklist" }), context: Some(ContextView { used_tokens: 10830, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

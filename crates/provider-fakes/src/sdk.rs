@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 
 use crate::claude::{Args, Ids, timestamp, uuid};
 use crate::lines::Out;
-use crate::script::{Ask, Question, Script, Step, Tool};
+use crate::script::{Ask, OfferedCommand, OfferedModel, Question, Script, Step, Tool};
 use crate::{DRIFT_EXIT, Mode};
 
 /// The asks headless Claude can raise.
@@ -105,6 +105,9 @@ struct Engine {
     servers: crate::mcp::ToolServers,
     session: String,
     model: String,
+    /// What the initialize answer offers.
+    models: Vec<OfferedModel>,
+    commands: Vec<OfferedCommand>,
     mode: String,
     cwd: String,
     ids: Ids,
@@ -169,6 +172,8 @@ impl Engine {
             servers: crate::mcp::ToolServers::from_claude(&args.mcp_config),
             args,
             session,
+            models: OfferedModel::offered(&script.models, &model),
+            commands: script.commands,
             model,
             mode,
             cwd,
@@ -374,15 +379,25 @@ impl Engine {
 
     fn initialize(&self) -> Value {
         json!({
-            "commands": [],
+            "commands": self.commands.iter().map(|command| json!({
+                "name": command.name,
+                "description": command.description,
+                "argumentHint": command.argument_hint,
+            })).collect::<Vec<_>>(),
             "agents": [],
             "account": {},
-            "models": [{
-                "value": self.model,
-                "displayName": self.model,
-                "description": "The scripted model",
-                "supportedEffortLevels": ["low", "medium", "high"],
-            }],
+            "models": self.models.iter().map(|model| {
+                let mut offered = json!({
+                    "value": model.value,
+                    "displayName": model.display_name(),
+                    "description": model.description,
+                });
+                // Claude leaves the field out for a model that takes no effort.
+                if !model.efforts.is_empty() {
+                    offered["supportedEffortLevels"] = json!(model.efforts);
+                }
+                offered
+            }).collect::<Vec<_>>(),
             "output_style": "default",
             "available_output_styles": ["default"],
             "current_permission_mode": self.mode,

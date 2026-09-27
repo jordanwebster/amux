@@ -156,6 +156,10 @@ message CodexSnapshot {
   optional string effort = 13;
   // Absent until the thread start response names it.
   optional string thread_id = 14;
+  // What model/list offers, hidden models left out; empty until it answers.
+  repeated OfferedModel models = 15;
+  // The skills skills/list offers; empty until it answers.
+  repeated OfferedCommand commands = 16;
 }
 
 message CodexAsk {

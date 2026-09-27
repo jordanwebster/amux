@@ -77,3 +77,13 @@
     13 toolu_018cH8azshatUkXvdDF85BWn Command { command: "ls missing-file.txt", state: Failed, exit_code: None, output_head: ["Exit code 1", "ls: missing-file.txt: No such file or directory"], more_lines: 0, duration_ms: Some(578) } attention
     14 9cbe6bef-ed22-4696-ac84-014103c40973 Thinking { text: "", open: false, duration_ms: Some(71) }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 37271, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader, Stdout};
 use tokio::sync::mpsc;
 
 use crate::lines::Out;
-use crate::script::{Ask, Question, Script, Step, Tool};
+use crate::script::{Ask, OfferedCommand, OfferedModel, Question, Script, Step, Tool};
 use crate::{DRIFT_EXIT, Mode};
 
 /// The asks Codex can raise.
@@ -81,6 +81,9 @@ struct Engine {
     eof: bool,
     steps: VecDeque<Step>,
     model: String,
+    /// What `model/list` and `skills/list` answer.
+    models: Vec<OfferedModel>,
+    skills: Vec<OfferedCommand>,
     cwd: String,
     thread: Option<String>,
     /// The running turn's id.
@@ -119,6 +122,11 @@ impl Engine {
             input,
             eof: false,
             steps: script.steps.into(),
+            models: OfferedModel::offered(
+                &script.models,
+                script.model.as_deref().unwrap_or("gpt-fake"),
+            ),
+            skills: script.commands,
             model: script.model.unwrap_or_else(|| "gpt-fake".into()),
             cwd: std::env::current_dir()
                 .map(|dir| dir.display().to_string())
@@ -301,6 +309,50 @@ impl Engine {
                 self.compact().await;
             }
             "thread/name/set" => self.respond(&id, json!({})).await,
+            // One page: the shapes codex-cli 0.157.0 answers with, the
+            // fields no host reads left out.
+            "model/list" => {
+                let data = self
+                    .models
+                    .iter()
+                    .map(|model| {
+                        json!({
+                            "id": model.value,
+                            "model": model.value,
+                            "displayName": model.display_name(),
+                            "description": model.description,
+                            "hidden": false,
+                            "supportedReasoningEfforts": model
+                                .efforts
+                                .iter()
+                                .map(|effort| json!({ "reasoningEffort": effort, "description": "" }))
+                                .collect::<Vec<_>>(),
+                            "defaultReasoningEffort": model.default_effort,
+                            "isDefault": model.value == self.model,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                self.respond(&id, json!({ "data": data, "nextCursor": null }))
+                    .await
+            }
+            "skills/list" => {
+                let skills = self
+                    .skills
+                    .iter()
+                    .map(|skill| {
+                        json!({
+                            "name": skill.name,
+                            "description": skill.description,
+                            "path": format!("{}/.codex/skills/{}/SKILL.md", self.cwd, skill.name),
+                            "scope": "user",
+                            "enabled": true,
+                            "pluginId": null,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let folder = json!({ "cwd": self.cwd, "skills": skills, "errors": [] });
+                self.respond(&id, json!({ "data": [folder] })).await
+            }
             "account/read" => {
                 self.respond(
                     &id,

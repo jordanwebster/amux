@@ -894,3 +894,203 @@ fn a_host_that_revoked_trust_is_away_for_that_reason_first() {
     assert_eq!(away(&fleet, b"laptop", b"desk"), Away::Revoked);
     assert_eq!(away(&fleet, b"laptop", b"laptop"), Away::Plain);
 }
+
+fn settings_of(kind: Kind, body: Vec<u8>) -> SettingsView {
+    let mut state = SessionState::new(agent(kind));
+    state.update(snapshot(kind, Phase::Idle, body, Vec::new()));
+    settings(&state)
+}
+
+fn offered(value: &str, efforts: &[&str], default: Option<&str>) -> wire::OfferedModel {
+    wire::OfferedModel {
+        value: value.into(),
+        display_name: value.to_uppercase(),
+        description: String::new(),
+        efforts: efforts.iter().map(|effort| (*effort).into()).collect(),
+        default_effort: default.map(Into::into),
+    }
+}
+
+fn command(name: &str) -> wire::OfferedCommand {
+    wire::OfferedCommand {
+        name: name.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn settings_mark_the_current_model_effort_and_mode() {
+    let view = settings_of(
+        Kind::ClaudeSdk,
+        wire::ClaudeSdkSnapshot {
+            model: Some("sonnet".into()),
+            effort: Some("high".into()),
+            permission_mode: Some("plan".into()),
+            models: vec![
+                offered("default", &["low", "high"], None),
+                offered("sonnet", &["low", "medium", "high"], None),
+            ],
+            commands: vec![
+                command("compact"),
+                command("config"),
+                command("stripe:test-cards"),
+            ],
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    );
+    let current: Vec<&str> = view
+        .models
+        .iter()
+        .filter(|model| model.current)
+        .map(|model| model.value.as_str())
+        .collect();
+    assert_eq!(current, ["sonnet"]);
+    assert_eq!(
+        view.efforts
+            .iter()
+            .map(|effort| (effort.value.as_str(), effort.current))
+            .collect::<Vec<_>>(),
+        [("low", false), ("medium", false), ("high", true)],
+        "the current model's efforts"
+    );
+    let modes: Vec<(ModeValue, bool, bool)> = view
+        .modes
+        .iter()
+        .map(|mode| (mode.value.clone(), mode.current, mode.stops_asking))
+        .collect();
+    assert_eq!(
+        modes,
+        [
+            (ModeValue::Claude("default".into()), false, false),
+            (ModeValue::Claude("acceptEdits".into()), false, false),
+            (ModeValue::Claude("plan".into()), true, false),
+            (ModeValue::Claude("auto".into()), false, false),
+            (ModeValue::Claude("bypassPermissions".into()), false, true),
+        ]
+    );
+    assert_eq!(
+        view.commands
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>(),
+        ["compact", "stripe:test-cards"],
+        "a terminal-only command is dropped"
+    );
+    assert_eq!(view.model_refusal, None);
+    assert!(
+        view.effort_refusal.is_some(),
+        "headless Claude refuses effort"
+    );
+    assert_eq!(view.mode_refusal, None);
+}
+
+#[test]
+fn a_reported_value_outside_the_offer_is_shown_as_current() {
+    let view = settings_of(
+        Kind::ClaudeSdk,
+        wire::ClaudeSdkSnapshot {
+            model: Some("claude-haiku-4-5-20251001".into()),
+            effort: Some("max".into()),
+            permission_mode: Some("dontAsk".into()),
+            models: vec![offered("haiku", &[], None)],
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    );
+    let last = view.models.last().unwrap();
+    assert!(last.current && last.reported);
+    assert_eq!(last.value, "claude-haiku-4-5-20251001");
+    assert!(!view.models[0].current);
+    assert_eq!(view.efforts.len(), 1);
+    assert!(view.efforts[0].current && view.efforts[0].reported);
+    let mode = view.modes.last().unwrap();
+    assert_eq!(mode.value, ModeValue::Claude("dontAsk".into()));
+    assert!(mode.current && mode.reported);
+    assert_eq!(view.modes.iter().filter(|mode| mode.current).count(), 1);
+
+    let nothing = settings_of(Kind::ClaudeSdk, Vec::new());
+    assert!(nothing.models.is_empty() && nothing.efforts.is_empty());
+    assert!(nothing.modes.iter().all(|mode| !mode.current));
+}
+
+#[test]
+fn codex_modes_are_presets_and_a_pair_outside_them_is_reported() {
+    let codex = |approval: &str, sandbox: &str| {
+        settings_of(
+            Kind::Codex,
+            wire::CodexSnapshot {
+                model: Some("gpt-a".into()),
+                approval_policy: Some(approval.into()),
+                sandbox: Some(sandbox.into()),
+                models: vec![offered("gpt-a", &["low", "medium"], Some("medium"))],
+                commands: vec![command("config")],
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        )
+    };
+    let view = codex("never", "danger-full-access");
+    let presets: Vec<(Option<String>, bool, bool)> = view
+        .modes
+        .iter()
+        .map(|mode| match &mode.value {
+            ModeValue::Codex { preset, .. } => (preset.clone(), mode.current, mode.stops_asking),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        presets,
+        [
+            (Some("read-only".into()), false, false),
+            (Some("auto".into()), false, false),
+            (Some("full-access".into()), true, true),
+        ]
+    );
+    assert_eq!(
+        view.efforts
+            .iter()
+            .map(|effort| (effort.value.as_str(), effort.default, effort.current))
+            .collect::<Vec<_>>(),
+        [("low", false, false), ("medium", true, false)],
+        "no effort reported: the default is marked, none is current"
+    );
+    assert_eq!(view.commands.len(), 1, "a Codex skill is never filtered");
+    assert_eq!(
+        (
+            &view.model_refusal,
+            &view.effort_refusal,
+            &view.mode_refusal
+        ),
+        (&None, &None, &None)
+    );
+
+    let view = codex("untrusted", "workspace-write");
+    let mode = view.modes.last().unwrap();
+    assert_eq!(
+        mode.value,
+        ModeValue::Codex {
+            preset: None,
+            approval_policy: "untrusted".into(),
+            sandbox: "workspace-write".into(),
+        }
+    );
+    assert!(mode.current && mode.reported);
+    assert_eq!(view.modes.len(), 4);
+}
+
+#[test]
+fn terminal_claude_refuses_every_setting() {
+    let view = settings_of(
+        Kind::ClaudePty,
+        wire::ClaudePtySnapshot {
+            permission_mode: Some("default".into()),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    );
+    assert!(view.model_refusal.is_some());
+    assert!(view.effort_refusal.is_some());
+    assert!(view.mode_refusal.is_some());
+    assert!(view.modes[0].current);
+}

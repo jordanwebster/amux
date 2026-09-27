@@ -16,3 +16,9 @@
      3 error:01a0db79-665d-7dd0-a475-3e9f066bfadb Error { error_kind: "other", message: "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'codex-spec-no-such-model' model is not supported when using Codex with a ChatGPT account.\"}}", attempts: 0, gave_up: true } attention
      4 turn:1 TurnEnd { duration_ms: Some(3209), cost_usd: None, failed: true }
 == strip Strip { tasks: None, context: None, model: Some("codex-spec-no-such-model"), effort: None, mode: Some("never"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported codex-spec-no-such-model "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode  Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking
+  mode* reported Codex { preset: None, approval_policy: "never", sandbox: "workspace-write" } stops_asking

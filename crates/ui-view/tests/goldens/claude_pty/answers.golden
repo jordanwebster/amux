@@ -97,3 +97,13 @@
      7 t5 [Answered: Color = "Green"; Tools = Hammer, Drill] Ask(Question { questions: [QuestionView { header: "Color", question: "Pick a color", multi_select: false, options: [OptionView { label: "Red", description: "warm", preview: "", recommended: false }, OptionView { label: "Blue", description: "cool", preview: "#00f", recommended: false }], allow_other: true, secret: false }, QuestionView { he…
      8 turn:1 TurnEnd { duration_ms: Some(50), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

@@ -7,8 +7,8 @@
 use prost::Message;
 use wire::{
     Ask, BackgroundProcesses, ClaudePtyItem, ClaudePtySnapshot, ClaudeSdkItem, ClaudeSdkSnapshot,
-    CodexAsk, CodexItem, CodexSnapshot, ContextMeter, Kind, SignIn, Task, TaskList,
-    ToolServerHealth, UsageLimits,
+    CodexAsk, CodexItem, CodexSnapshot, ContextMeter, Kind, OfferedCommand, OfferedModel, SignIn,
+    Task, TaskList, ToolServerHealth, UsageLimits,
 };
 
 /// A decoded item body. `Undecodable` covers an empty or unreadable body and
@@ -293,6 +293,11 @@ pub struct AgentState {
     /// Claude's permission mode; Codex's approval policy.
     pub mode: Option<String>,
     pub sandbox: Option<String>,
+    /// The models the provider offers, each with its efforts; empty until
+    /// the provider lists them, and always for terminal Claude.
+    pub models: Vec<OfferedModel>,
+    /// The commands (Codex: skills) the provider offers.
+    pub commands: Vec<OfferedCommand>,
     /// Claude's task list; Codex's plan.
     pub tasks: TaskList,
     pub context: ContextMeter,
@@ -341,6 +346,8 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.model = snapshot.model;
             state.effort = snapshot.effort;
             state.mode = snapshot.permission_mode;
+            state.models = snapshot.models;
+            state.commands = snapshot.commands;
             state.active_tasks = snapshot.active_tasks;
             state.provider_session = snapshot.provider_session;
             state.usage = snapshot.usage.unwrap_or_default();
@@ -359,6 +366,8 @@ pub fn decode_snapshot(kind: Kind, body: &[u8]) -> AgentState {
             state.effort = snapshot.effort;
             state.mode = snapshot.approval_policy;
             state.sandbox = snapshot.sandbox;
+            state.models = snapshot.models;
+            state.commands = snapshot.commands;
             state.active_turn = snapshot.active_turn;
             state.provider_session = snapshot.thread_id;
             state.usage = snapshot.usage.unwrap_or_default();

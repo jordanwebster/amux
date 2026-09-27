@@ -42,3 +42,13 @@
      8 76c75e76-b967-41b4-8db0-fa7016e64164 Thinking { text: "", open: false, duration_ms: Some(6780) }
      9 d0cce4ba-d3db-4f17-931a-22839a48285f Prose { text: [Text("PTY_STEER_QUEUED BANANA")], streaming: false, working_note: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 36836, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

@@ -9,6 +9,13 @@
 //! request and response itself with ids it chooses (`amux-<n>`), so each
 //! acknowledgement is matched to what it acknowledges.
 //!
+//! What the agent offers comes from the server, never from a client
+//! catalogue: once the handshake's thread answer arrives, the interpreter
+//! asks `model/list` (following `nextCursor` to the last page; hidden
+//! models left out) and `skills/list` once per server, and the snapshot
+//! carries the models with their reasoning efforts and the skills as
+//! commands. A refused or missing answer leaves its list empty.
+//!
 //! An agent message goes to Codex with `thread/inject_items`. Codex reports
 //! nothing about an injected item, so the interpreter writes the
 //! agent-message item itself. When the message leaves the pending set
@@ -27,8 +34,9 @@ use serde_json::{Value, json};
 use wire::{
     AgentSpec, AskClosed, AskItem, BackgroundProcesses, CodexAnswer, CodexAsk, CodexItem,
     CodexSnapshot, ContextMeter, Decision, DecisionOutcome, Envelope, EnvelopeKind, FormAction,
-    Input, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision, ToolServerHealth, UsageLimits,
-    Work, codex_answer, codex_ask, codex_input, codex_item, input, sender, work,
+    Input, OfferedCommand, OfferedModel, QueuedInput, Step, TaskList, TaskListEntry, ToolDecision,
+    ToolServerHealth, UsageLimits, Work, codex_answer, codex_ask, codex_input, codex_item, input,
+    sender, work,
 };
 
 use crate::claude_common::{clip, describe_tasks, or_dash};
@@ -114,6 +122,14 @@ enum Request {
         /// That turn ended before the acknowledgement came.
         turn_over: bool,
     },
+    /// A page of `model/list`, with the models earlier pages listed.
+    Models {
+        page: u32,
+        #[serde(with = "serde_pb::msgs")]
+        listed: Vec<OfferedModel>,
+    },
+    /// `skills/list`.
+    Skills,
 }
 
 /// What answering an open ask needs beyond the wire ask.
@@ -174,6 +190,13 @@ pub struct State {
     effort: Option<String>,
     approval: Option<String>,
     sandbox: Option<String>,
+    /// What `model/list` and `skills/list` answered, whole.
+    #[serde(with = "serde_pb::msgs")]
+    models: Vec<OfferedModel>,
+    #[serde(with = "serde_pb::msgs")]
+    commands: Vec<OfferedCommand>,
+    /// This server was asked what it offers.
+    offers_asked: bool,
     overrides: Overrides,
     /// The turn Codex reports running.
     active_turn: Option<String>,
@@ -251,6 +274,9 @@ impl State {
             effort: None,
             approval: None,
             sandbox: None,
+            models: Vec::new(),
+            commands: Vec::new(),
+            offers_asked: false,
             overrides: Overrides::default(),
             active_turn: None,
             interrupt_pending: false,
@@ -326,6 +352,8 @@ impl State {
             }),
             effort: self.effort.clone(),
             thread_id: self.thread_id.clone(),
+            models: self.models.clone(),
+            commands: self.commands.clone(),
         }
         .encode_to_vec()
     }
@@ -341,6 +369,12 @@ impl State {
     fn request_bytes(&mut self, method: &str, params: Value, request: Request) -> Vec<u8> {
         self.next_request += 1;
         let id = format!("amux-{}", self.next_request);
+        self.request_as(id, method, params, request)
+    }
+
+    /// A request under an id of its own choosing, outside the numbered run
+    /// that turns and their controls take.
+    fn request_as(&mut self, id: String, method: &str, params: Value, request: Request) -> Vec<u8> {
         self.requests.insert(id.clone(), request);
         serde_json::to_vec(&json!({ "id": id, "method": method, "params": params })).expect("json")
     }
@@ -1342,7 +1376,7 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] thread={} turn={} model={} effort={} approval={} sandbox={} context={} plan={} usage={} servers={} sign_in={} background={}",
+            "asks=[{}] thread={} turn={} model={} effort={} approval={} sandbox={} models=[{}] commands={} context={} plan={} usage={} servers={} sign_in={} background={}",
             snapshot
                 .asks
                 .iter()
@@ -1355,6 +1389,8 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             snapshot.effort.as_deref().unwrap_or("?"),
             snapshot.approval_policy.as_deref().unwrap_or("?"),
             snapshot.sandbox.as_deref().unwrap_or("?"),
+            crate::claude_common::describe_models(&snapshot.models),
+            crate::claude_common::describe_commands(&snapshot.commands),
             if context.known {
                 format!(
                     "{}/{}",

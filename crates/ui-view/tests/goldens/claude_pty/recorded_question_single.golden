@@ -27,3 +27,13 @@
      3 486a19a1-2675-48f6-bba6-b527c9f6eb84 Thinking { text: "", open: false, duration_ms: Some(2343) }
      4 toolu_01YahM7Aqdk6Cqy9UqyXgeZ9 [Answered: Color = Red] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "The color red", preview: "", recommended: false }, OptionView { label: "Blue", description: "The color blue", preview: "", recommended: false }], allow_other: true, secr…
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 34316, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

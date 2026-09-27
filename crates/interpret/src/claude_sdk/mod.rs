@@ -9,6 +9,11 @@
 //! reflection is matched to what was sent by id ([`CORRELATION`]); several
 //! messages written while a turn runs fold into that turn, so arrival order
 //! would mismatch them.
+//!
+//! What the agent offers comes from Claude, never from a client catalogue:
+//! the answer to the agent process's `initialize` request lists the models
+//! (each with its effort levels) and the slash commands, and every later
+//! snapshot carries them.
 
 mod facts;
 mod recording;
@@ -20,9 +25,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wire::{
     AgentSpec, Ask, AskClosed, Attachment, BackgroundProcesses, ClaudeAnswer, ClaudeSdkItem,
-    ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input, SignIn,
-    Step, ToolCall, ToolDecision, ToolServerHealth, UsageLimits, claude_answer, claude_sdk_input,
-    claude_sdk_item, input, permission_answer, plan_answer,
+    ClaudeSdkSnapshot, ContextMeter, ContextShare, DecisionOutcome, FormAction, Input,
+    OfferedCommand, OfferedModel, SignIn, Step, ToolCall, ToolDecision, ToolServerHealth,
+    UsageLimits, claude_answer, claude_sdk_input, claude_sdk_item, input, permission_answer,
+    plan_answer,
 };
 
 use crate::claude_common::{
@@ -162,6 +168,11 @@ pub struct State {
     model: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
+    /// The models and commands the initialize response offers.
+    #[serde(with = "serde_pb::msgs")]
+    models: Vec<OfferedModel>,
+    #[serde(with = "serde_pb::msgs")]
+    commands: Vec<OfferedCommand>,
     inits: u32,
     exited: bool,
     clients: BTreeMap<String, Client>,
@@ -238,6 +249,8 @@ impl State {
             // effort it runs at.
             effort: launch_arg(&spec.provider_args, "--effort"),
             permission_mode: None,
+            models: Vec::new(),
+            commands: Vec::new(),
             inits: 0,
             exited: false,
             clients: BTreeMap::new(),
@@ -308,6 +321,8 @@ impl State {
                 },
             }),
             provider_session: self.session.clone(),
+            models: self.models.clone(),
+            commands: self.commands.clone(),
         }
         .encode_to_vec()
     }
@@ -1032,12 +1047,14 @@ fn describe_snapshot(body: &[u8]) -> SnapshotView {
             .map(|ask| (ask.key.clone(), ask.item_key.clone()))
             .collect(),
         text: format!(
-            "asks=[{}] session={} model={} effort={} mode={} context={} tasks={} active=[{}] usage={} servers={} sign_in={} background={}",
+            "asks=[{}] session={} model={} effort={} mode={} models=[{}] commands={} context={} tasks={} active=[{}] usage={} servers={} sign_in={} background={}",
             describe_asks(&snapshot.asks),
             snapshot.provider_session.as_deref().unwrap_or("?"),
             snapshot.model.as_deref().unwrap_or("?"),
             snapshot.effort.as_deref().unwrap_or("?"),
             snapshot.permission_mode.as_deref().unwrap_or("?"),
+            crate::claude_common::describe_models(&snapshot.models),
+            crate::claude_common::describe_commands(&snapshot.commands),
             if context.known {
                 format!(
                     "{}/{}{}",

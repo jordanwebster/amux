@@ -37,6 +37,8 @@ goldens! {
     inputs_become_app_server_requests => "inputs",
     send_now_steers_a_queued_prompt_into_the_running_turn => "steering",
     rows_for_reroutes_errors_and_the_strip => "rows",
+    offered_models_and_skills_come_from_the_server => "offered",
+    refused_lists_stay_empty_without_a_row => "offered_refused",
     recorded_access_grant => "recorded_access_grant",
     recorded_approval_allow => "recorded_approval_allow",
     recorded_approval_deny => "recorded_approval_deny",
@@ -282,4 +284,62 @@ fn a_prompt_with_attachments_leaves_them_to_the_agent_process() {
     let request: Value = serde_json::from_slice(request).unwrap();
     assert_eq!(request["method"], "turn/start");
     assert_eq!(attachments.len(), 1);
+}
+
+/// The last snapshot a fixture's replay carries, decoded.
+fn last_snapshot(fixture: &str) -> wire::CodexSnapshot {
+    use prost::Message as _;
+    let replayed = interpret::replay::<Codex>(&fixtures().join(format!("{fixture}.json"))).unwrap();
+    let snapshot = replayed
+        .iter()
+        .rev()
+        .find_map(|frame| frame.step.snapshot.clone())
+        .expect("a snapshot");
+    wire::CodexSnapshot::decode(snapshot.body.as_slice()).unwrap()
+}
+
+#[test]
+fn offered_lists_keep_what_the_server_named() {
+    let snapshot = last_snapshot("offered");
+    let astra = &snapshot.models[0];
+    assert_eq!(astra.value, "gpt-6-astra");
+    assert_eq!(astra.display_name, "GPT-6-Astra");
+    assert_eq!(
+        astra.description,
+        "Frontier intelligence for the most demanding work."
+    );
+    assert_eq!(
+        astra.efforts,
+        ["low", "medium", "high", "xhigh", "max", "ultra"]
+    );
+    assert_eq!(astra.default_effort.as_deref(), Some("medium"));
+    assert_eq!(
+        snapshot
+            .models
+            .iter()
+            .map(|model| model.value.as_str())
+            .collect::<Vec<_>>(),
+        ["gpt-6-astra", "gpt-6-sol"],
+        "both pages, the hidden model left out"
+    );
+    assert_eq!(
+        snapshot
+            .commands
+            .iter()
+            .map(|command| (command.name.as_str(), command.source.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("autopilot", "user"),
+            ("documents:documents", "user"),
+            ("imagegen", "system")
+        ],
+        "the turned-off skill left out"
+    );
+    assert!(
+        snapshot.commands[0]
+            .description
+            .starts_with("Execute confirmed")
+    );
+    let refused = last_snapshot("offered_refused");
+    assert!(refused.models.is_empty() && refused.commands.is_empty());
 }

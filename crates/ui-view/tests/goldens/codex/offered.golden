@@ -1,0 +1,22 @@
+## 0 initial
+  composer Send activity=None queue=[] outbox=[]
+## 2 fact {"channel":"rpc","json":{"id":"agent-thread","result":{"approvalPolicy":"on-request","model":"gpt-6-astra","reasoningEffort":"medium","sandbox":{"type":"workspaceWrite"},"thread":{"cliVersion":"0.157.0","id":"t1","turns":[]}}}}
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+== chat
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+== strip Strip { tasks: None, context: None, model: Some("gpt-6-astra"), effort: Some("medium"), mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* gpt-6-astra "GPT-6-Astra" efforts=[low,medium,high,xhigh,max,ultra] default=medium
+  model  gpt-6-sol "GPT-6-Sol" efforts=[low,medium,high,xhigh,max,ultra] default=medium
+  effort  low
+  effort* medium (default)
+  effort  high
+  effort  xhigh
+  effort  max
+  effort  ultra
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking
+  command /autopilot source="user" hint="" "Execute confirmed software work on an unattended loop of fresh agents when it spans contexts or must continue while the operator is away. Requires an approved plan; decline work that fits one sitting unless explicitly requested."
+  command /documents:documents source="user" hint="" "Create, edit, redline, and comment on `.docx`, Word, and Google Docs-targeted document artifacts inside the container, with a strict render-and-verify workflow. Use `render_docx.py` to generate page PNGs (and optional PDF) for visual QA, then iterate until layout is flawless before delivering the final document."
+  command /imagegen source="system" hint="" "Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the …

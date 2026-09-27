@@ -9,8 +9,14 @@ use serde_json::{Value, json};
 use support::Host as Line;
 
 /// Steering is not in any recording yet; the host's interpreter reads only
-/// whether the request succeeded.
-const EXEMPT: &[&str] = &["result/turn/steer", "error/turn/steer"];
+/// whether the request succeeded. The offered lists are pinned from a
+/// read-only probe of codex-cli 0.157.0 in the interpreter's fixtures.
+const EXEMPT: &[&str] = &[
+    "result/turn/steer",
+    "error/turn/steer",
+    "result/model/list",
+    "result/skills/list",
+];
 
 struct Host {
     line: Line,
@@ -328,4 +334,43 @@ async fn compaction_runs_as_its_own_turn_and_exit_ends_the_process() {
             .await,
         4
     );
+}
+
+#[tokio::test]
+async fn model_and_skill_lists_answer_from_the_script() {
+    let mut host = Host::start(json!({"steps": []})).await;
+    let models = host.call("model/list", json!({})).await;
+    assert_eq!(
+        models["result"],
+        json!({"data": [{
+            "id": "gpt-fake", "model": "gpt-fake", "displayName": "gpt-fake",
+            "description": "The scripted model", "hidden": false,
+            "supportedReasoningEfforts": [
+                {"reasoningEffort": "low", "description": ""},
+                {"reasoningEffort": "medium", "description": ""},
+                {"reasoningEffort": "high", "description": ""},
+            ],
+            "defaultReasoningEffort": "medium", "isDefault": true,
+        }], "nextCursor": null})
+    );
+    let skills = host.call("skills/list", json!({})).await;
+    assert_eq!(skills["result"]["data"][0]["skills"], json!([]));
+
+    let mut host = Host::start(json!({
+        "steps": [],
+        "models": [{"value": "gpt-a", "display_name": "GPT A", "efforts": ["low"]},
+                   {"value": "gpt-b"}],
+        "commands": [{"name": "review", "description": "Review the diff"}],
+    }))
+    .await;
+    let models = host.call("model/list", json!({})).await;
+    let data = models["result"]["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2);
+    assert_eq!(data[0]["displayName"], "GPT A");
+    assert_eq!(data[1]["supportedReasoningEfforts"], json!([]));
+    let skills = host.call("skills/list", json!({})).await;
+    let skill = &skills["result"]["data"][0]["skills"][0];
+    assert_eq!(skill["name"], "review");
+    assert_eq!(skill["description"], "Review the diff");
+    assert_eq!(skill["scope"], "user");
 }

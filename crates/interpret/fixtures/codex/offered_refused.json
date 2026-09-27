@@ -1,0 +1,67 @@
+{
+  "about": "A server that refuses model/list and answers skills/list with an error leaves both lists empty and writes no row.",
+  "spec": {
+    "created_at_ms": 1800000000000
+  },
+  "events": [
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": 1,
+          "result": {
+            "userAgent": "amux/0.157.0 (Mac OS 26.5.2; arm64) Ghostty (amux; 0.1.0)",
+            "codexHome": "/home/me/.codex",
+            "platformFamily": "unix",
+            "platformOs": "macos"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "agent-thread",
+          "result": {
+            "thread": {
+              "id": "t1",
+              "cliVersion": "0.157.0",
+              "turns": []
+            },
+            "model": "gpt-6-astra",
+            "approvalPolicy": "on-request",
+            "sandbox": {
+              "type": "workspaceWrite"
+            },
+            "reasoningEffort": "medium"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-models-1",
+          "error": {
+            "code": -32601,
+            "message": "method not found: model/list"
+          }
+        }
+      }
+    },
+    {
+      "fact": {
+        "channel": "rpc",
+        "json": {
+          "id": "amux-skills",
+          "error": {
+            "code": -32603,
+            "message": "skills unavailable"
+          }
+        }
+      }
+    }
+  ]
+}

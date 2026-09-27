@@ -28,3 +28,13 @@
      6 295a6153-94f6-4a6a-9649-e9001eaf80d5 Thinking { text: "", open: false, duration_ms: Some(2702) }
      7 8bc6c3ec-f7b7-4962-b95a-e657cebebaa9 Thinking { text: "", open: false, duration_ms: Some(1783) }
 == strip Strip { tasks: Some(TasksView { done: 1, total: 3, current: "" }), context: Some(ContextView { used_tokens: 38856, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("bypassPermissions"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-haiku-4-5-20251001 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode* Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

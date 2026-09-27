@@ -36,3 +36,13 @@
      8 t4 ToolCall { server: "github", tool: "create_issue", fact: "fails on CI", state: Succeeded, result: "" }
      9 turn:1 TurnEnd { duration_ms: Some(17000), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: Some(2), working_on: Some("Rewriting the parser") }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

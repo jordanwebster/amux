@@ -30,3 +30,8 @@
      5 msg-2 Prose { text: [Text("DONE")], streaming: false, working_note: false }
      6 turn:1 TurnEnd { duration_ms: Some(2000), cost_usd: None, failed: false }
 == strip Strip { tasks: None, context: None, model: Some("gpt-5.6-luna"), effort: None, mode: Some("on-request"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported gpt-5.6-luna "" efforts=[]
+  mode  Codex { preset: Some("read-only"), approval_policy: "on-request", sandbox: "read-only" }
+  mode* Codex { preset: Some("auto"), approval_policy: "on-request", sandbox: "workspace-write" }
+  mode  Codex { preset: Some("full-access"), approval_policy: "never", sandbox: "danger-full-access" } stops_asking

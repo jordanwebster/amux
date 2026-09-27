@@ -3,10 +3,11 @@
 use serde_json::{Value, json};
 use wire::{
     AccessGrant, ApiError, CodexAsk, CommandApproval, Decision, DecisionOutcome,
-    FileChangeApproval, FormAsk, LinkAsk, McpToolApproval, ModelSwitch, Question, QuestionAsk,
-    QuestionOption, ReviewerVerdict, SignIn, SignInState, TaskListStatus, ToolClass, ToolDecision,
-    ToolServer, ToolServerHealth, ToolServerStatus, ToolState, Turn, TurnOutcome, UsageLimits,
-    UsageState, UsageWindow, Work, codex_ask, codex_item, work,
+    FileChangeApproval, FormAsk, LinkAsk, McpToolApproval, ModelSwitch, OfferedCommand,
+    OfferedModel, Question, QuestionAsk, QuestionOption, ReviewerVerdict, SignIn, SignInState,
+    TaskListStatus, ToolClass, ToolDecision, ToolServer, ToolServerHealth, ToolServerStatus,
+    ToolState, Turn, TurnOutcome, UsageLimits, UsageState, UsageWindow, Work, codex_ask,
+    codex_item, work,
 };
 
 use super::{
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::claude_common::{compact_json, text};
 use crate::{
-    Channel, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool, is_status_tool,
+    Channel, Effect, Emit, Fact, ItemDraft, SendOutcome, ask_item, is_send_tool, is_status_tool,
     sent_message, status_working_on,
 };
 
@@ -110,6 +111,26 @@ fn offered_decision(offered: &Value) -> Option<(Decision, String)> {
         _ => return None,
     };
     Some((decision, json!({ "decision": offered }).to_string()))
+}
+
+/// The skills `skills/list` answers, across every folder it lists; a skill
+/// the person turned off is left out.
+fn skills(result: &Value) -> Vec<OfferedCommand> {
+    result
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| folder.get("skills").and_then(Value::as_array))
+        .flatten()
+        .filter(|skill| skill.get("enabled").and_then(Value::as_bool) != Some(false))
+        .map(|skill| OfferedCommand {
+            name: text(skill, "name").to_owned(),
+            description: text(skill, "description").to_owned(),
+            argument_hint: String::new(),
+            source: text(skill, "scope").to_owned(),
+        })
+        .collect()
 }
 
 /// Every string under a `host` key.
@@ -228,6 +249,7 @@ impl State {
             // The agent process's own handshake.
             if let Some(thread) = result.get("thread") {
                 self.thread_started(emit, thread, Some(result));
+                self.list_offers(emit);
             } else if let Some(account) = result.get("account") {
                 self.sign_in = Some(match account {
                     Value::Null => SignIn {
@@ -245,6 +267,15 @@ impl State {
             }
             return;
         };
+        if let Request::Models { page, listed } = request {
+            return self.models_listed(emit, page, listed, error.is_none().then_some(result));
+        }
+        if let Request::Skills = request {
+            if error.is_none() {
+                self.commands = skills(result);
+            }
+            return;
+        }
         if let Some(error) = error {
             // A steer that lost the race with the turn's end is not a
             // failure: the prompt waits for the next turn.
@@ -276,7 +307,7 @@ impl State {
                 Request::Inject { envelope_id, .. } => {
                     self.shared.message_consumed(&envelope_id);
                 }
-                Request::Interrupt => {}
+                Request::Interrupt | Request::Models { .. } | Request::Skills => {}
             }
             return;
         }
@@ -306,8 +337,92 @@ impl State {
                     }
                 }
             }
-            Request::Steer { .. } | Request::Interrupt | Request::Compact => {}
+            Request::Steer { .. }
+            | Request::Interrupt
+            | Request::Compact
+            | Request::Models { .. }
+            | Request::Skills => {}
         }
+    }
+
+    /// A page of `model/list`: the next page is asked for while the server
+    /// names one, and the list is taken whole from the last. A refused page
+    /// drops the list; it is what the person picks from, and half of it
+    /// would mislead.
+    fn models_listed(
+        &mut self,
+        emit: &mut Emit,
+        number: u32,
+        mut listed: Vec<OfferedModel>,
+        page: Option<&Value>,
+    ) {
+        let Some(page) = page else {
+            return;
+        };
+        let data = page.get("data").and_then(Value::as_array);
+        listed.extend(
+            data.into_iter()
+                .flatten()
+                .filter(|model| model.get("hidden").and_then(Value::as_bool) != Some(true))
+                .map(|model| OfferedModel {
+                    value: text(model, "id").to_owned(),
+                    display_name: text(model, "displayName").to_owned(),
+                    description: text(model, "description").to_owned(),
+                    efforts: model
+                        .get("supportedReasoningEfforts")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|effort| opt_text(effort, "reasoningEffort"))
+                        .collect(),
+                    default_effort: opt_text(model, "defaultReasoningEffort"),
+                }),
+        );
+        match opt_text(page, "nextCursor") {
+            Some(cursor) if data.is_some_and(|data| !data.is_empty()) => {
+                self.list_models(emit, number + 1, Some(cursor), listed)
+            }
+            _ => self.models = listed,
+        }
+    }
+
+    /// Asks once per server what it offers. Sent when the handshake's
+    /// thread answer arrives: the agent process writes the handshake beside
+    /// the interpreter until then, and the order of what reaches the server
+    /// would depend on which wrote first.
+    fn list_offers(&mut self, emit: &mut Emit) {
+        if std::mem::replace(&mut self.offers_asked, true) {
+            return;
+        }
+        self.list_models(emit, 1, None, Vec::new());
+        let skills = self.request_as(
+            "amux-skills".into(),
+            "skills/list",
+            json!({}),
+            Request::Skills,
+        );
+        emit.effect(Effect::ProviderWrite(skills));
+    }
+
+    /// Asks for one page of `model/list`, the first without a cursor.
+    fn list_models(
+        &mut self,
+        emit: &mut Emit,
+        page: u32,
+        cursor: Option<String>,
+        listed: Vec<OfferedModel>,
+    ) {
+        let params = match cursor {
+            Some(cursor) => json!({ "cursor": cursor }),
+            None => json!({}),
+        };
+        let bytes = self.request_as(
+            format!("amux-models-{page}"),
+            "model/list",
+            params,
+            Request::Models { page, listed },
+        );
+        emit.effect(Effect::ProviderWrite(bytes));
     }
 
     /// The thread, from the handshake's response or `thread/started`.
@@ -1615,6 +1730,7 @@ impl State {
     }
 
     pub(super) fn exited(&mut self, emit: &mut Emit, cause: String) {
+        self.offers_asked = false;
         for ask in self.shared.close_all_asks() {
             if let Some(meta) = self.asks.remove(&ask.key) {
                 self.emit_ask(emit, &ask, meta.at_ms, Some(ask_item::dismissed()));

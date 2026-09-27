@@ -24,3 +24,13 @@
      2 cad3c8cb-b87d-4af2-9d23-749281561b8b Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
      3 toolu_01WRvFGnY13VXqpiQcd1Vt5o [Answered: Color = Blue; Tools = Hammer, Drill; Layout = Grid; Snack = "Dried mango"] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "Red", preview: "", recommended: false }, OptionView { label: "Blue", description: "Blue", preview: "", reco…
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 41374, window_tokens: None, percent: None, in_strip: false }), model: Some("claude-sonnet-5"), effort: None, mode: Some("auto"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-sonnet-5 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode* Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

@@ -21,3 +21,13 @@
      1 ask:ask:1 Ask(Questions { questions: [QuestionView { header: "Folder", question: "Do you trust the files in this folder?", multi_select: false, options: [OptionView { label: "Trust this folder", description: "Claude can read, edit and run files here", preview: "", recommended: false }, OptionView { label: "Exit", description: "Claude exits without starting", preview: "", recommended: false }]…
      2 boundary:1 Boundary { kind: Started, cause: "" }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: None, usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode  Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused model: Terminal Claude changes its model only in its own terminal.
+  refused effort: Terminal Claude changes its effort only in its own terminal.
+  refused mode: Terminal Claude changes mode only by cycling through its modes.

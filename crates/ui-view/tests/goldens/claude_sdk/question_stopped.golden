@@ -46,3 +46,11 @@
      6 t2 [Dismissed: ] Ask(Question { questions: [QuestionView { header: "Ship", question: "Ship it today?", multi_select: false, options: [OptionView { label: "Yes", description: "Ship it today", preview: "", recommended: false }, OptionView { label: "No", description: "Do not ship it today", preview: "", recommended: false }], allow_other: true, secret: false }], answers: [], note: None, resoluti…
      7 turn:2 Stopped
 == strip Strip { tasks: None, context: None, model: Some("claude-sonnet-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: None }
+== settings
+  model* reported claude-sonnet-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

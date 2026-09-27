@@ -14,6 +14,7 @@ mod fleet;
 mod review;
 mod rows;
 mod segments;
+mod settings;
 
 pub use ask::{
     Answer, AskBody, AskCard, CardState, Choice, ChoiceOutcome, OptionView, Pick, QuestionView,
@@ -35,3 +36,6 @@ pub use rows::{
     ToolStateView, chat_rows, chat_rows_for,
 };
 pub use segments::{AttachmentView, Segment, segments};
+pub use settings::{
+    CommandView, EffortChoice, ModeChoice, ModeValue, ModelChoice, SettingsView, settings,
+};

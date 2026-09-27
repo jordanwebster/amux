@@ -17,3 +17,11 @@
      2 sn1 AgentMessage { from: "", kind: Message, text: "Please review the parser change.\nIt is on branch parser.", to: "reviewer", sent: Sent, rejection: "" }
      3 sn2 AgentMessage { from: "", kind: Message, text: "Are you there?", to: "ghost", sent: Rejected, rejection: "no agent named ghost" }
 == strip Strip { tasks: None, context: None, model: Some("claude-opus-5-5"), effort: None, mode: Some("default"), usage: None, failed_servers: [], sign_in: None, background: None, working_on: Some("Splitting the parser") }
+== settings
+  model* reported claude-opus-5-5 "" efforts=[]
+  mode* Claude("default")
+  mode  Claude("acceptEdits")
+  mode  Claude("plan")
+  mode  Claude("auto")
+  mode  Claude("bypassPermissions") stops_asking
+  refused effort: Claude takes its effort when the agent starts and keeps it until it restarts.

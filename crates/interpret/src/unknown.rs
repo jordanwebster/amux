@@ -89,6 +89,8 @@ pub fn claude_sdk() -> ClaudeSdkSnapshot {
         sign_in: Some(sign_in()),
         background_processes: Some(background_processes()),
         provider_session: None,
+        models: Vec::new(),
+        commands: Vec::new(),
     }
 }
 
@@ -107,6 +109,8 @@ pub fn codex() -> CodexSnapshot {
         plan: Some(task_list()),
         effort: None,
         thread_id: None,
+        models: Vec::new(),
+        commands: Vec::new(),
     }
 }
 

@@ -456,3 +456,43 @@ async fn a_script_asking_for_an_ask_headless_claude_cannot_raise_fails_to_start(
         .unwrap();
     assert_eq!(status.code(), Some(provider_fakes::DRIFT_EXIT));
 }
+
+#[tokio::test]
+async fn the_initialize_answer_offers_the_scripted_models_and_commands() {
+    let offered = |host: &Host| {
+        host.frames
+            .iter()
+            .find(|frame| frame["type"] == "control_response")
+            .unwrap()["response"]["response"]
+            .clone()
+    };
+    let host = Host::start(json!({"steps": []})).await;
+    let answer = offered(&host);
+    assert_eq!(
+        answer["models"],
+        json!([{"value": "claude-fake-1", "displayName": "claude-fake-1",
+                "description": "The scripted model",
+                "supportedEffortLevels": ["low", "medium", "high"]}])
+    );
+    assert_eq!(answer["commands"], json!([]));
+    assert_eq!(host.close().await, 0);
+
+    let host = Host::start(json!({
+        "steps": [],
+        "models": [{"value": "haiku"}],
+        "commands": [{"name": "stripe:test-cards", "description": "Test cards",
+                      "argument_hint": "[brand]"}],
+    }))
+    .await;
+    let answer = offered(&host);
+    assert_eq!(
+        answer["models"],
+        json!([{"value": "haiku", "displayName": "haiku", "description": ""}])
+    );
+    assert_eq!(
+        answer["commands"],
+        json!([{"name": "stripe:test-cards", "description": "Test cards",
+                "argumentHint": "[brand]"}])
+    );
+    assert_eq!(host.close().await, 0);
+}
