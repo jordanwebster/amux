@@ -335,6 +335,8 @@ impl App {
                     .filter(|chat| chat.view.agent_id == agent_id)
                 {
                     chat.view.open_review(diff, patch);
+                    // The page answers "reading the working tree…".
+                    self.notice = None;
                 }
             }
             AppEvent::Created(agent) => {

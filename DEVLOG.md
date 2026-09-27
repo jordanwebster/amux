@@ -1,3 +1,10 @@
+2026-09-27 — **The terminal takes a pasted block as one token however its lines end.**
+Terminals deliver a bracketed paste's line breaks as carriage returns, so a
+twelve-line paste counted as one line and went into the draft as text. The
+editor reads CR and CRLF as newlines before counting, as it already did
+when inserting. The "reading the working tree…" notice now clears when the
+review page opens instead of lingering for five seconds over it.
+
 2026-09-27 — **A peer's agent's blobs and diffs are made on its own host.**
 A client on the laptop reviewing or attaching to an agent on the desk got
 "a blob is written only into an agent this host runs": the laptop's daemon

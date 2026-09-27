@@ -133,7 +133,10 @@ impl Editor {
     }
 
     /// A bracketed or clipboard paste: long text becomes one token.
+    /// Terminals deliver a paste's line breaks as carriage returns, so they
+    /// are read as newlines before the lines are counted.
     pub fn paste(&mut self, text: &str) {
+        let text = &text.replace("\r\n", "\n").replace('\r', "\n");
         let lines = text.lines().count();
         if lines >= PASTE_TOKEN_LINES || text.chars().count() >= PASTE_TOKEN_CHARS {
             self.pasted += 1;
@@ -429,6 +432,12 @@ mod tests {
         ));
         editor.paste("short");
         assert_eq!(editor.text(), format!("{PLACEHOLDER}short"));
+        // As a terminal delivers it: carriage returns between the lines.
+        editor.paste(&"line\r".repeat(PASTE_TOKEN_LINES));
+        assert!(matches!(
+            &editor.attachments()[1].of,
+            Some(attachment::Of::Text(text)) if text.text == "line\n".repeat(PASTE_TOKEN_LINES)
+        ));
     }
 
     #[test]
