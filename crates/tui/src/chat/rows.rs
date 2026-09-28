@@ -1100,6 +1100,12 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             answers,
             note,
             resolution,
+        }
+        | AskRow::Questions {
+            questions,
+            answers,
+            note,
+            resolution,
         } => questions_lines(
             questions,
             answers,
@@ -1134,19 +1140,6 @@ fn ask_row(ask: &AskRow, open: bool, width: usize, theme: Theme) -> Vec<Line<'st
             }
             lines
         }
-        AskRow::Questions {
-            questions,
-            answers,
-            note,
-            resolution,
-        } => questions_lines(
-            questions,
-            answers,
-            note.as_deref(),
-            *resolution,
-            width,
-            theme,
-        ),
         AskRow::Form {
             server,
             message,

@@ -93,7 +93,6 @@ pub struct Tokens {
     pub diff_removed_bg: Token,
     pub diff_context: Token,
     pub diff_meta: Token,
-    pub gutter: Token,
 }
 
 /// What the terminal itself is painting with.
@@ -303,7 +302,6 @@ impl Theme {
                 diff_removed_bg: Token::new((44, 26, 30), Color::Red),
                 diff_context: Token::new((195, 201, 212), Color::White),
                 diff_meta: Token::new((110, 118, 134), Color::DarkGray),
-                gutter: Token::new((89, 96, 111), Color::Gray),
             },
             mode,
             name: ThemeName::Dark,
@@ -335,7 +333,6 @@ impl Theme {
                 diff_removed_bg: Token::new((250, 228, 230), Color::Red),
                 diff_context: Token::new((58, 63, 76), Color::Black),
                 diff_meta: Token::new((117, 122, 136), Color::Black),
-                gutter: Token::new((138, 143, 156), Color::Black),
             },
             mode,
             name: ThemeName::Light,
@@ -388,7 +385,6 @@ impl Theme {
             emphasis: computed(mix(fg, if dark { WHITE } else { BLACK }, 0.4)),
             muted: recede(0.42),
             diff_meta: recede(0.52),
-            gutter: recede(0.58),
             // Enough to read as a block and no more. The person's own
             // message is the one thing on the screen they do not need to
             // find, so its surface states where it is rather than shouting.
@@ -585,7 +581,6 @@ impl Theme {
             (self.tokens.warn, 'w'),
             (self.tokens.error, 'x'),
             (self.tokens.diff_meta, 'M'),
-            (self.tokens.gutter, 'G'),
         ] {
             if fg == Some(self.color(token)) && plain_bg && style.add_modifier.is_empty() {
                 return class;
@@ -648,7 +643,7 @@ fn normalize_base_key(key: &str) -> Option<String> {
 /// | background | 00 | 00 |
 /// | user surface, diff tint fallbacks | 01 | 01 |
 /// | panel | 02 | 02 |
-/// | muted, gutter | 03 | 03 |
+/// | muted | 03 | 03 |
 /// | diff metadata | 04 | 04 |
 /// | text, diff context | 05 | 05 |
 /// | emphasis | 06 | 06 |
@@ -682,7 +677,6 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
         user_surface: mapped_token(file, "base01")?,
         panel: mapped_token(file, "base02")?,
         muted: mapped_token(file, "base03")?,
-        gutter: mapped_token(file, "base03")?,
         diff_meta: mapped_token(file, "base04")?,
         text: mapped_token(file, "base05")?,
         diff_context: mapped_token(file, "base05")?,
@@ -718,7 +712,7 @@ pub fn theme_from_file(file: &ThemeFile, mode: ColorMode) -> Result<Theme, Theme
 /// The contrast an imported palette has to reach before amux paints words
 /// with it. Body copy is held above the WCAG AAA threshold so an imported
 /// scheme still reads like the shipped ones; labels, accents and status
-/// colours are held to AA; gutters, rules and hunk metadata are decoration
+/// colours are held to AA; rules and hunk metadata are decoration
 /// and only have to be visible.
 const READABLE_BODY: f64 = 7.0;
 const READABLE_LABEL: f64 = 4.5;
@@ -825,7 +819,6 @@ fn make_readable(tokens: &mut Tokens, authored: &BTreeSet<String>, faces: &Faces
         READABLE_LABEL,
         false,
     );
-    lift(&mut tokens.gutter, "gutter", &surfaces, READABLE_TRIM, true);
     lift(
         &mut tokens.diff_meta,
         "diff_meta",
@@ -1152,7 +1145,6 @@ fn set_token(tokens: &mut Tokens, name: &str, token: Token) -> Result<(), ThemeE
         "diff_removed_bg" => &mut tokens.diff_removed_bg,
         "diff_context" => &mut tokens.diff_context,
         "diff_meta" => &mut tokens.diff_meta,
-        "gutter" => &mut tokens.gutter,
         _ => return Err(ThemeError::UnknownToken(name.to_string())),
     };
     *destination = token;
@@ -1659,7 +1651,6 @@ mod tests {
                 (tokens.ok, READABLE_LABEL, "ok"),
                 (tokens.warn, READABLE_LABEL, "warn"),
                 (tokens.error, READABLE_LABEL, "error"),
-                (tokens.gutter, READABLE_TRIM, "gutter"),
             ] {
                 for (surface, name) in surfaces {
                     let ratio = contrast(fg.rgb, surface);
@@ -1706,7 +1697,6 @@ mod tests {
                 (tokens.ok, "ok", &surfaces[..]),
                 (tokens.warn, "warn", &surfaces[..]),
                 (tokens.error, "error", &surfaces[..]),
-                (tokens.gutter, "gutter", &surfaces[..]),
                 (
                     tokens.diff_added_fg,
                     "diff added",
@@ -1923,7 +1913,6 @@ mod tests {
             for (token, what, floor) in [
                 (theme.tokens.emphasis, "emphasis", READABLE_LABEL),
                 (theme.tokens.muted, "muted", READABLE_TRIM),
-                (theme.tokens.gutter, "gutter", READABLE_TRIM),
             ] {
                 let ratio = contrast(faces.rgb(token), terminal.background);
                 assert!(
@@ -2011,7 +2000,6 @@ mod tests {
                 &[tokens.diff_removed_bg],
                 READABLE_LABEL,
             );
-            check(tokens.gutter, "gutter", &surfaces, READABLE_TRIM);
             check(tokens.diff_meta, "diff notes", &hunk, READABLE_TRIM);
         }
     }
@@ -2112,7 +2100,6 @@ mod tests {
                 theme.tokens.diff_removed_fg,
                 theme.tokens.diff_context,
                 theme.tokens.diff_meta,
-                theme.tokens.gutter,
             ] {
                 assert!(
                     !BORROWED.contains(&token.rgb),

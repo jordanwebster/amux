@@ -90,10 +90,6 @@ impl ReviewPage {
         }
     }
 
-    pub fn doc(&self) -> &ReviewDoc {
-        &self.doc
-    }
-
     pub fn comments(&self) -> &[ReviewComment] {
         &self.comments
     }

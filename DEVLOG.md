@@ -1,3 +1,12 @@
+2026-09-28 — **The terminal client drops styling and code nothing used.** The
+theme's `gutter` token painted nothing since the review page stopped drawing
+a numbered gutter, so it is gone from the token set, the imported-scheme
+mapping, the theme file's accepted keys and the readability checks (a theme
+file that still sets `gutter` is now refused as an unknown token). The
+review page's unused `doc()` accessor, a `Denied` pattern the guard above it
+always caught first, and a duplicate arm for one- and many-question ask rows
+are removed. No golden changes.
+
 2026-09-28 — **Phone fleet rows draw three lines again, and hosts say what
 they are.** A fleet row is the name with its age (and the needs-you dot),
 then what the agent is working on (its status declaration, or its spawn
