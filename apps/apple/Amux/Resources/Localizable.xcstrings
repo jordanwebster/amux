@@ -241,18 +241,6 @@
         }
       }
     },
-    "%@ ended its session": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ ended its session"
-          }
-        }
-      }
-    },
     "%@ failed to start": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
@@ -297,18 +285,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ files"
-          }
-        }
-      }
-    },
-    "%@ finished its turn": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ finished its turn"
           }
         }
       }
@@ -685,18 +661,6 @@
         }
       }
     },
-    "%@ tokens": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ tokens"
-          }
-        }
-      }
-    },
     "%@ update": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift.",
       "extractionState": "manual",
@@ -1010,7 +974,7 @@
       }
     },
     "%@m %@s": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1034,7 +998,7 @@
       }
     },
     "%@s": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/FleetOrder.swift, ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift, apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1245,18 +1209,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "A note for the agent"
-          }
-        }
-      }
-    },
-    "A question this build cannot answer": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A question this build cannot answer"
           }
         }
       }
@@ -4501,30 +4453,6 @@
         }
       }
     },
-    "Outside the working tree": {
-      "comment": "English app copy. Used in TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Outside the working tree"
-          }
-        }
-      }
-    },
-    "Outside what it may touch": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Outside what it may touch"
-          }
-        }
-      }
-    },
     "Over SSH": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -4934,7 +4862,7 @@
       }
     },
     "Read": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxValues/Values.swift, apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskCardView.swift, apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5329,18 +5257,6 @@
         }
       }
     },
-    "Resumed the session": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Resumed the session"
-          }
-        }
-      }
-    },
     "Retry": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
       "extractionState": "manual",
@@ -5642,7 +5558,7 @@
       }
     },
     "Searched": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6158,25 +6074,13 @@
       }
     },
     "Started": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
+      "comment": "English app copy. Used in apps/apple/Packages/AmuxCore/Sources/AmuxValues/Values.swift, apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatWords.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Started"
-          }
-        }
-      }
-    },
-    "Started a session": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Started a session"
           }
         }
       }
@@ -6573,18 +6477,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "The conversation is deleted on every device."
-          }
-        }
-      }
-    },
-    "The conversation was reset": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The conversation was reset"
           }
         }
       }
@@ -7873,30 +7765,6 @@
         }
       }
     },
-    "You interrupted it": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "You interrupted it"
-          }
-        }
-      }
-    },
-    "You said no": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "You said no"
-          }
-        }
-      }
-    },
     "You signed in as %@, not %@.": {
       "comment": "Explains which account came back and which was asked for; addresses substituted. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -8065,66 +7933,6 @@
         }
       }
     },
-    "a boundary with no kind": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a boundary with no kind"
-          }
-        }
-      }
-    },
-    "a break with no kind": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a break with no kind"
-          }
-        }
-      }
-    },
-    "a command": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a command"
-          }
-        }
-      }
-    },
-    "a file": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a file"
-          }
-        }
-      }
-    },
-    "a gap in the history": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a gap in the history"
-          }
-        }
-      }
-    },
     "a month": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Store.swift.",
       "extractionState": "manual",
@@ -8145,78 +7953,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "a name cannot be empty"
-          }
-        }
-      }
-    },
-    "a row this build cannot read": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a row this build cannot read"
-          }
-        }
-      }
-    },
-    "a row with no kind": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a row with no kind"
-          }
-        }
-      }
-    },
-    "a server": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a server"
-          }
-        }
-      }
-    },
-    "a server tool": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a server tool"
-          }
-        }
-      }
-    },
-    "a subagent": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a subagent"
-          }
-        }
-      }
-    },
-    "a tool": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift, ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a tool"
           }
         }
       }
@@ -8413,30 +8149,6 @@
         }
       }
     },
-    "an SDK row with no entry": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "an SDK row with no entry"
-          }
-        }
-      }
-    },
-    "an SDK row with no kind": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "an SDK row with no kind"
-          }
-        }
-      }
-    },
     "an agent it started needs you": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -8445,18 +8157,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "an agent it started needs you"
-          }
-        }
-      }
-    },
-    "an amux tool": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "an amux tool"
           }
         }
       }
@@ -8481,42 +8181,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "an ask with no kind"
-          }
-        }
-      }
-    },
-    "an unknown kind": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "an unknown kind"
-          }
-        }
-      }
-    },
-    "and %@ more": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "and %@ more"
-          }
-        }
-      }
-    },
-    "another agent": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "another agent"
           }
         }
       }
@@ -8834,7 +8498,7 @@
       }
     },
     "exit %@": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
+      "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ChatRows.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8985,18 +8649,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "has a question"
-          }
-        }
-      }
-    },
-    "history format changed": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "history format changed"
           }
         }
       }
@@ -9157,18 +8809,6 @@
         }
       }
     },
-    "its tool servers": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "its tool servers"
-          }
-        }
-      }
-    },
     "last update %@ ago": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift.",
       "extractionState": "manual",
@@ -9177,18 +8817,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "last update %@ ago"
-          }
-        }
-      }
-    },
-    "missing history": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "missing history"
           }
         }
       }
@@ -9609,18 +9237,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "offline, this phone is signed out"
-          }
-        }
-      }
-    },
-    "older history cleared": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "older history cleared"
           }
         }
       }
@@ -10297,18 +9913,6 @@
         }
       }
     },
-    "the provider returned an error": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the provider returned an error"
-          }
-        }
-      }
-    },
     "the runtime answered what this build cannot read": {
       "comment": "English app copy. Substituted values appear as %@. Used in apps/apple/Packages/AmuxCore/Sources/AmuxCore/Runtime.swift.",
       "extractionState": "manual",
@@ -10381,30 +9985,6 @@
         }
       }
     },
-    "the tree": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the tree"
-          }
-        }
-      }
-    },
-    "the turn failed": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the turn failed"
-          }
-        }
-      }
-    },
     "the upload was stopped": {
       "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Reporting.swift.",
       "extractionState": "manual",
@@ -10425,18 +10005,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "the view-state recording was not captured"
-          }
-        }
-      }
-    },
-    "the web": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "the web"
           }
         }
       }

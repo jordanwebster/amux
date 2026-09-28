@@ -61,8 +61,6 @@ const CAPTURES: &[&str] = &[
     "ios goldens",
     "ios goldens-perturb",
     "test-store-ios",
-    "ios replay apps/apple/Fixtures/reports/sample",
-    "ios replay apps/apple/Fixtures/reports/conversation",
     "ios journey",
     "ios accessibility",
     "ios perf",

@@ -1,2 +1,0 @@
-{"reason":"Clear","reset":true,"transcript_path":"<TRANSCRIPT_2>","type":"amux.transcript_ready"}
-{"basis":{"basis":"verified","version":"2.1.251"},"keymap":{"digest":"sha256:2c2bd36681a14aaf29c40744e4d16f235fee754525d296e42fb7d47578c5669a","name":"claude-2.1","source":{"source":"baked"}},"stability_limits":{"interrupt":{"status":"allowed"},"mode_cycle":{"status":"allowed"},"permission_menu":{"status":"allowed"},"plan_menu":{"status":"allowed"},"prompt":{"status":"allowed"},"question_form":{"status":"allowed"}},"type":"amux.claude.keymap"}

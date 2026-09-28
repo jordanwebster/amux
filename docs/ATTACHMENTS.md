@@ -112,72 +112,6 @@ fetches its frozen patch and opens with inline comments. If a review's patch is
 unavailable, the reader still shows its comments and quoted rows with a
 missing-diff notice.
 
-## The artifact crate: owner and cache
-
-`artifacts` has no dependency on `amux`. Both of its roles use the same
-layout: `blobs/<sha256 hex>` for content-addressed bytes and `index.json` for
-metadata, persisted atomically. Reads rehash bytes; a missing or invalid index
-is recovered by rescanning and rehashing the blob directory.
-
-The **Owner** is authoritative for one agent at
-`<data_dir>/agents/<agent-id>/artifacts`. A daemon opens existing owners at
-startup and otherwise on first touch, then keeps each loaded index in memory.
-`put` hashes bytes and is idempotent for the same content. A new artifact is
-ephemeral. Pinning the identities named by a sent message makes them survive
-the one-hour ephemeral TTL; the daemon sweeps loaded owners every five minutes
-without a directory scan. A pinned artifact survives daemon restart and is
-deleted with its agent.
-
-The **Cache** belongs to a viewing host. It fetches on a miss, verifies the
-response against the requested identity, persists last-use times, and evicts
-least-recently-used blobs until it is within its byte bound. Corrupt cached
-bytes are treated as a miss and fetched again; corrupt fetched bytes are
-rejected.
-
-The viewing-host cache is one flat shared directory for every agent at `<cache_dir>/amux/artifacts`, uses LRU eviction as its only cleanup, and defaults to 256 MiB under the ordinary config key `ui.artifact_cache_mib`.
-
-These are two roles of one crate, not two sources of truth: only the agent's
-host owns an artifact; viewing hosts hold disposable verified copies.
-
-## RPCs, stream refs, and send ordering
-
-Both `AgentService` and the routing `ClientService` expose the same three unary
-operations. `ClientService` forwards remote calls to the agent's owning host:
-
-| RPC | Request | Result |
-|---|---|---|
-| `PutArtifact` | agent, kind, name, MIME, bytes | authoritative `ArtifactRef` |
-| `GetArtifact` | agent, artifact id | `ArtifactRef` and bytes |
-| `Diff` | agent and `WorkingTree` or branch base | stored Diff ref, unified patch, per-file magnitudes, and base identity |
-
-`Diff` runs in the agent's working directory for every agent kind. Working-tree
-means the tree against `HEAD`, including untracked files as additions. Branch
-means the current branch against the merge base of the selected base.
-
-`SendInput` carries `pin: [artifact-id…]`. The client puts every live draft
-artifact first and sends the provider input only after all puts succeed. The
-daemon validates the complete list before changing any lifetime, pins it
-atomically, and emits this recipient-owned structured row before delivery:
-
-```json
-{"type":"amux.attachments","input_id":"<hex input id>","refs":[{"id":"sha256:…","kind":"image","name":"screenshot.png","mime":"image/png","size":120433}]}
-```
-
-An `attach` tool call uses a null `input_id`. On session open, the owner emits
-one row containing all pinned refs in creation order, so a reconnecting viewer
-can render and open old attachments. Bytes never ride the subscription stream.
-
-An empty pin list is a hard boundary: message text passes to the backend
-byte-for-byte, even if it happens to contain an attachment-like element. With
-pins, only image/file elements whose id is in the explicit list gain a local
-path. A Review pins its Diff artifact but its inline body is not parsed or
-rewritten by the daemon.
-
-All artifact RPC clients and servers accept unary messages up to 16 MiB. Store
-failures map to typed missing, too-large, corrupt, and diff-unavailable protocol
-errors. The TUI states the error and restores the complete draft rather than
-claiming a send succeeded.
-
 ## Provider delivery
 
 - **Claude PTY** receives image and file elements with owner-local paths.
@@ -224,9 +158,6 @@ addition possible without changing the shipped meaning:
 - **“Edits this turn” as a diff base** — `DiffBase` is a closed enum and the
   review header records the chosen base, so this can be another variant rather
   than a new review format.
-- **A fetch-by-ID model tool** — `GetArtifact` and owner-side identity checks
-  already provide the operation; path materialisation remains today's model
-  delivery and a later tool can be added to the same authenticated MCP server.
 - **Comment re-anchoring after refresh** — V1 freezes the patch, while quoted
   rows, old/new endpoints, and base identity retain the facts a future
   re-anchoring algorithm would need.

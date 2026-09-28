@@ -271,24 +271,6 @@ it ends every stream it carries. TCP is only a cloud-relay fallback. A direct
 LAN whose UDP is blocked is offline unless another route, such as the relay or
 SSH, is available.
 
-## Chapter 7: Agent messaging and remote sessions
-
-Agent calls use the authenticated channels above. A client may name a local
-live agent as sender, but the daemon resolves provenance before forwarding;
-arbitrary ids never become authenticated senders. Cross-device messages and
-completion notifications use the peer agent service. Parent relationships,
-work state and create/delete behavior are specified in [Agent-to-agent
-messaging](./A2A.md).
-
-Session protocols are closed protobuf variants. Claude PTY exposes
-`terminal_v1` and `claude_pty_transcript_v1`; Claude SDK exposes
-`claude_sdk_v1`; Codex exposes `terminal_v1` and `codex_sdk_v1`; the test agent
-exposes `terminal_v1` and `test_echo_v1`. Inputs and outputs retain that type
-end to end, and selecting a protocol that the agent kind does not expose fails
-as `ProtocolNotExposed`. Provider ownership is described in [Provider
-crates](./PROVIDER_CRATES.md), with PTY input semantics in
-[Keymaps](./KEYMAPS.md).
-
 ## Chapter 8: Diagnostics
 
 A debug report describes current routes, adjacent links, carrier kinds, cached

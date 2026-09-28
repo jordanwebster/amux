@@ -49,10 +49,6 @@ Around the daemon sit its clients and consumers:
   same `ClientService` surface, for embedding in apps. It joins attachment
   puts before a send, folds stream refs, fetches opened artifacts through the
   viewing-profile cache, and leaves presentation to its client.
-- **Artifact library** (`crates/artifacts`): dependency-light
-  content-addressed storage with an authoritative per-agent Owner role and a
-  disposable per-viewing-profile Cache role. It depends on neither the daemon
-  nor the UI, so another client can reuse the storage contract directly.
 - **Test harnesses**: the `testnet` support package builds isolated embedded
   installations through public APIs and owns reusable cross-package scenarios.
   Node's own specification suite uses a private white-box harness for real
@@ -248,11 +244,7 @@ The layering is deliberate:
    a PTY, hook stream, transcript stream, and observed version in one source
    bundle; its SDK driver owns the stream-JSON event/control boundary. Codex
    owns one app-server thread event/control boundary.
-3. **`crates/agent-runtime/src/agents/claude` and `agents/codex`** are adapters. They
-   translate provider events into amux-owned structured rows, route typed input
-   to controls, supply the A2A carrier, and persist only the provider identity
-   needed for resume.
-4. **The daemon** owns agent identity, protocol exposure, sequencing, replay,
+3. **The daemon** owns agent identity, protocol exposure, sequencing, replay,
    fan-out, outstanding obligations, delivery policy, suspend records, and UI
    layers.
 
@@ -488,32 +480,6 @@ private permissions. Deleting agents and restarting the daemon preserve
 history; directories that no longer exist, or that became symlinks, are
 omitted from results. A history write failure is logged without failing an
 otherwise successful agent creation.
-
-## Attachment storage and routing
-
-An agent's daemon is the sole owner of that agent's artifacts. It opens one
-`artifacts::Owner` at
-`<data_dir>/agents/<agent-id>/artifacts`, loads the index once, and keeps it in
-memory. Content starts ephemeral, is pinned when a sent message explicitly
-names its id, is swept after one hour if still ephemeral, and is deleted with
-the agent if pinned. A five-minute background pass visits loaded owners only.
-
-`PutArtifact`, `GetArtifact`, and `Diff` exist on both trusted services.
-`ClientService` resolves the agent and forwards a remote call through a fresh
-bulk channel to `AgentService`; artifact bytes never pass through a session
-subscription. `SendInput` carries only a pin list. After validating and pinning
-that list, the owning daemon writes an `amux.attachments` metadata row before
-the provider input; it replays all pinned refs when a session subscription
-opens. Diff computation also happens there, in the agent's working directory,
-and stores the returned patch as a Diff artifact.
-
-Every viewing profile uses one `artifacts::Cache` shared across its agents.
-It fetches through `GetArtifact`, verifies content identities, persists recency,
-and uses only byte-bounded LRU eviction. Its root is
-`<data_dir>/cache/artifacts`; the shared `ui.artifact_cache_mib` preference sets
-the bound and defaults to 256. [`ATTACHMENTS.md`](./ATTACHMENTS.md) owns the element syntax,
-provider materialisation, complete lifetime rules, and deferred attachment
-surfaces.
 
 ## The cloud deployment
 

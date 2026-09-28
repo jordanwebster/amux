@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,11 +19,10 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(test)]
 use tokio::sync::oneshot;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 
 const CHANNEL_CAPACITY: usize = 256;
 const MAX_DELAY_MS: u32 = 5_000;
-const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub type EventStream = mpsc::Receiver<PtyEvent>;
 type ExitFuture = Pin<Box<dyn Future<Output = pty_host::ExitStatus> + Send>>;
@@ -212,7 +211,6 @@ pub enum PtyEvent {
     },
     Keymap(claude::pty::keymap::Resolved),
     InputResult(InputResult),
-    Delivery(DeliveryOutcome),
     Exited(pty_host::ExitStatus),
 }
 
@@ -238,29 +236,6 @@ pub struct InputResult {
     pub basis: claude::pty::keymap::Basis,
     pub program: claude::pty::keymap::ProgramName,
     pub bytes_written: usize,
-}
-
-#[derive(Debug, Clone)]
-pub enum Carrier {
-    Pty,
-    Socket {
-        path: PathBuf,
-        token: String,
-        confirmation: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeliveryOutcome {
-    Pty,
-    Socket,
-    PtyFallback { reason: String },
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum DeliveryError {
-    #[error("Claude delivery failed: {0}")]
-    Failed(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -299,7 +274,6 @@ pub struct Control {
     events: mpsc::Sender<PtyEvent>,
     semantic: Arc<Mutex<SemanticState>>,
     send_lock: Arc<tokio::sync::Mutex<()>>,
-    confirmations: broadcast::Sender<Value>,
     exit: watch::Receiver<Option<pty_host::ExitStatus>>,
     write_observer: Arc<Mutex<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
     delays: DelaySource,
@@ -472,65 +446,6 @@ impl Control {
             .resize(size)
     }
 
-    pub async fn deliver(
-        &self,
-        text: &str,
-        carrier: Carrier,
-    ) -> Result<DeliveryOutcome, DeliveryError> {
-        let outcome = match carrier {
-            Carrier::Pty => {
-                self.send_program(paste_program(text))
-                    .await
-                    .map_err(|e| DeliveryError::Failed(e.to_string()))?;
-                DeliveryOutcome::Pty
-            }
-            Carrier::Socket {
-                path,
-                token,
-                confirmation,
-            } => {
-                match self
-                    .deliver_socket(text, &path, &token, &confirmation)
-                    .await
-                {
-                    Ok(()) => DeliveryOutcome::Socket,
-                    Err(reason) => {
-                        self.send_program(paste_program(text))
-                            .await
-                            .map_err(|e| DeliveryError::Failed(e.to_string()))?;
-                        DeliveryOutcome::PtyFallback { reason }
-                    }
-                }
-            }
-        };
-        let _ = self.events.send(PtyEvent::Delivery(outcome.clone())).await;
-        Ok(outcome)
-    }
-
-    async fn deliver_socket(
-        &self,
-        text: &str,
-        path: &Path,
-        token: &str,
-        confirmation: &str,
-    ) -> Result<(), String> {
-        let mut rows = self.confirmations.subscribe();
-        let mut socket = claude::messaging::MessagingSocket::connect(path, token)
-            .await
-            .map_err(|e| e.to_string())?;
-        socket.send(text).await.map_err(|e| e.to_string())?;
-        tokio::time::timeout(SOCKET_CONFIRMATION_TIMEOUT, async {
-            loop {
-                let row = rows.recv().await.map_err(|e| e.to_string())?;
-                if row_confirms_delivery(&row, confirmation) {
-                    return Ok(());
-                }
-            }
-        })
-        .await
-        .map_err(|_| "transcript did not confirm socket delivery".to_string())?
-    }
-
     pub async fn stop(mut self, policy: pty_host::Terminate) -> pty_host::ExitStatus {
         if let Some(status) = self.exit.borrow().clone() {
             return status;
@@ -635,7 +550,6 @@ pub fn from_sources(sources: Sources, keymaps: &claude::pty::keymap::KeymapSourc
         drain_before_exit,
     } = transcript;
     let (event_tx, events) = mpsc::channel(CHANNEL_CAPACITY);
-    let (confirmation_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (exit_tx, exit_rx) = watch::channel(None);
     let initial = claude::pty::keymap::resolve_session(keymaps, &version).ok();
     let initial_event = initial.as_ref().map(|(resolved, _)| resolved.clone());
@@ -709,12 +623,10 @@ pub fn from_sources(sources: Sources, keymaps: &claude::pty::keymap::KeymapSourc
     });
 
     let tx = event_tx.clone();
-    let confirmations = confirmation_tx.clone();
     let semantic_for_rows = semantic.clone();
     let transcript_forwarder = tokio::spawn(async move {
         let _task = task;
         while let Some((path, row)) = rows.recv().await {
-            let _ = confirmations.send(row.as_value().clone());
             let ask = ask_from_transcript(&row);
             if tx.send(PtyEvent::Transcript { path, row }).await.is_err() {
                 break;
@@ -756,7 +668,6 @@ pub fn from_sources(sources: Sources, keymaps: &claude::pty::keymap::KeymapSourc
             events: event_tx,
             semantic,
             send_lock: Arc::new(tokio::sync::Mutex::new(())),
-            confirmations: confirmation_tx,
             exit: exit_rx,
             write_observer: Arc::new(Mutex::new(None)),
             delays,
@@ -1062,28 +973,6 @@ fn ask_from_transcript(row: &TranscriptRow) -> Option<AskFacts> {
         }
     }
     None
-}
-
-fn row_confirms_delivery(row: &Value, confirmation: &str) -> bool {
-    let enqueued = row.get("type").and_then(Value::as_str) == Some("queue-operation")
-        && row.get("operation").and_then(Value::as_str) == Some("enqueue")
-        && row
-            .get("content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| content.contains(confirmation));
-    let peer_user = row.get("type").and_then(Value::as_str) == Some("user")
-        && row.pointer("/origin/kind").and_then(Value::as_str) == Some("peer")
-        && row
-            .pointer("/message/content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| content.contains(confirmation));
-    let queued_command = row.get("type").and_then(Value::as_str) == Some("attachment")
-        && row.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command")
-        && row
-            .pointer("/attachment/prompt")
-            .and_then(Value::as_str)
-            .is_some_and(|prompt| prompt.contains(confirmation));
-    enqueued || peer_user || queued_command
 }
 
 async fn pump_recorded_bytes(
@@ -1505,18 +1394,6 @@ mod tests {
             next(&mut session.events).await,
             PtyEvent::InputResult(event) if event == result
         ));
-
-        assert_eq!(
-            session
-                .control
-                .deliver("message", Carrier::Pty)
-                .await
-                .unwrap(),
-            DeliveryOutcome::Pty
-        );
-        let mut pasted = vec![0; b"\x1b[200~message\x1b[201~\r".len()];
-        peer.read_exact(&mut pasted).await.unwrap();
-        assert_eq!(pasted, b"\x1b[200~message\x1b[201~\r");
     }
 
     #[tokio::test]
@@ -1737,118 +1614,5 @@ mod tests {
                 PtyInput::Bytes(b"\r".to_vec()),
             ]
         );
-    }
-
-    #[test]
-    fn socket_confirmation_requires_a_row_attributable_to_the_envelope() {
-        let confirmation = uuid::Uuid::new_v4().to_string();
-        assert!(row_confirms_delivery(
-            &serde_json::json!({
-                "type": "queue-operation",
-                "operation": "enqueue",
-                "content": format!("<cross-session-message>[amux id={confirmation}]"),
-            }),
-            &confirmation,
-        ));
-        assert!(row_confirms_delivery(
-            &serde_json::json!({
-                "type": "user",
-                "origin": {"kind": "peer"},
-                "message": {"content": format!("native {confirmation}")},
-            }),
-            &confirmation,
-        ));
-        assert!(row_confirms_delivery(
-            &serde_json::json!({
-                "type": "attachment",
-                "attachment": {
-                    "type": "queued_command",
-                    "prompt": format!("queued {confirmation}"),
-                },
-            }),
-            &confirmation,
-        ));
-        assert!(!row_confirms_delivery(
-            &serde_json::json!({
-                "type": "queue-operation",
-                "operation": "enqueue",
-                "content": format!("[amux id={}]", uuid::Uuid::new_v4()),
-            }),
-            &confirmation,
-        ));
-        assert!(!row_confirms_delivery(
-            &serde_json::json!({"type": "queue-operation", "operation": "dequeue"}),
-            &confirmation,
-        ));
-        assert!(!row_confirms_delivery(
-            &serde_json::json!({
-                "type": "user",
-                "origin": {"kind": "human"},
-                "message": {"content": confirmation},
-            }),
-            &confirmation,
-        ));
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn socket_delivery_confirms_by_transcript_and_falls_back_to_paste() {
-        use tokio::net::UnixListener;
-
-        let dir = tempfile::Builder::new()
-            .prefix("cp")
-            .tempdir_in("/tmp")
-            .unwrap();
-        let socket_path = dir.path().join("message.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let (sources, _hooks, rows, _paths, mut peer, _exit) = source_bundle();
-        let session = from_test_sources(sources);
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut lines = tokio::io::BufReader::new(stream).lines();
-            let _ = lines.next_line().await.unwrap();
-            let _ = lines.next_line().await.unwrap();
-            rows.send((
-                PathBuf::from("/tmp/one"),
-                TranscriptRow::parse(
-                    serde_json::json!({"type":"queue-operation","operation":"enqueue","content":"delivery-1"}),
-                ),
-            ))
-            .await
-            .unwrap();
-        });
-        assert_eq!(
-            session
-                .control
-                .deliver(
-                    "socket message",
-                    Carrier::Socket {
-                        path: socket_path,
-                        token: "secret".to_string(),
-                        confirmation: "delivery-1".to_string(),
-                    }
-                )
-                .await
-                .unwrap(),
-            DeliveryOutcome::Socket
-        );
-        server.await.unwrap();
-
-        let outcome = session
-            .control
-            .deliver(
-                "fallback",
-                Carrier::Socket {
-                    path: dir.path().join("missing.sock"),
-                    token: "secret".to_string(),
-                    confirmation: "delivery-2".to_string(),
-                },
-            )
-            .await
-            .unwrap();
-        assert!(matches!(outcome, DeliveryOutcome::PtyFallback { .. }));
-        let mut pasted = vec![0; b"\x1b[200~fallback\x1b[201~\r".len()];
-        peer.read_exact(&mut pasted).await.unwrap();
-        assert_eq!(pasted, b"\x1b[200~fallback\x1b[201~\r");
     }
 }

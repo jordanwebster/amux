@@ -215,28 +215,6 @@ are retained. Reported duration ends when harness image/index files are ready;
 human idea-authoring and browser paint time are not included. The source's
 window renderer is a preview benchmark, not golden-capture qualification.
 
-To measure the same two/four-idea loop in the production app, compile all Debug
-alternatives together and capture them through one installed shell session:
-
-```sh
-just ios native-design-benchmark batch --ideas 2
-just ios native-design-benchmark batch --ideas 4
-```
-
-The four-idea batch includes a structural context band as well as gutter and
-type alternatives. These alternatives and the driving protocol are Debug-only;
-Release has one UI. Each run writes original PNGs, hashes, separate build,
-install, launch, capture and gallery timings, a manifest and a simple local
-`index.html` under `target/ios/native-design-benchmarks/`. It never updates a
-golden. Measure an edit loop after changing or otherwise invalidating the
-relevant shared UI and alternative sources; an unchanged incremental build is
-a warm capture loop and is not comparable to the source's edit-and-rebuild
-measurements. Use `review` to pair matched home, conversation and plan content
-from the selected source with the production shell in light/dark; original images
-are retained and the displayed derivatives are normalized to sRGB. Use
-`detection` to prove the unchanged comparator notices deliberate spacing, type
-and glass mistakes.
-
 `ios-explore` is an opt-in diagnostic, not a verification gate. It times existing
 recipes and compares capture methods without updating expected images:
 
@@ -465,21 +443,11 @@ change follows the baseline-update process above; an ordinary golden run must
 then prove every pre-existing screen is unchanged.
 
 For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
-Run `just ios replay /path/to/report` to rebuild stores from
-`msgs.jsonl` and the native `trace.jsonl`, then capture the restored screen and
-compare it with the report's own `frame.png`. The trace carries the place in the
-app, the instant the screen read its ages from and the account it was drawn for,
-so the replay pins its clock and restores that account before folding a message,
-and draws the result in the real shell rather than on one screen alone. No
-recorded effect executes and no host is contacted. Client recordings do not
-reconstruct arbitrary provider history; host replay requires provider records or
-an explicitly tested conversion.
 
 Reporting is in every build, including Release. It freezes the app's own
 frame after screenshot notification, or from Report a Problem under Help;
 there is no shake gesture. The system preview remains system-owned. The report
-retains rectangles, notes and the session and host records the runtime keeps
-(`msgs.jsonl` and `daemon.json`). Its `report.json` declares each part present
+retains rectangles, notes and the profile's dump. Its `report.json` declares each part present
 or absent with a reason: only a build with the driving tools records the
 view-state trace, so a Release report declares `trace.jsonl` absent, and this
 app cannot read its system log back, so its log part is always absent. A report
@@ -550,7 +518,7 @@ The measurement has been taken, and the answer is no. SwiftUI's `LazyVStack`
 holds the transcript, and there is no leaf.
 
 What was measured: the rows the app ships, projected by the same
-`transcriptRows()` and drawn by the same row views, with a thousand of them on
+row projection and drawn by the same row views, with a thousand of them on
 screen and fifty more arriving every second for twenty seconds. On the pinned
 Mac's simulator, five samples each:
 

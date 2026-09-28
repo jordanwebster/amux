@@ -37,7 +37,7 @@ file and line information.
 ## Repository tasks
 
 The root `justfile` is the task contract. `just --list` shows every supported
-build, test, lint, format, code-generation, release, E2E, embedded and mobile
+build, test, lint, format, code-generation, release, journey, embedded and mobile
 check with its outer timeout. A firing timeout is a hang to diagnose.
 `AMUX_GIT_SHA` is exported from the current commit for product builds.
 

@@ -43,23 +43,20 @@ public enum Place: Sendable, Equatable {
     }
 }
 
-/// What the person using the app did to the view, recorded beside the shared
-/// runtime's own messages.
+/// What the person using the app did to the view, recorded beside the
+/// profile's dump in a report.
 ///
-/// A report holds two recordings that answer different questions. The
-/// runtime's `msgs.jsonl` says what the fleet and its conversations were; this
-/// says what was being looked at — which place, what was open over it, where
-/// in a transcript the reader had got to, what was half written and not sent,
-/// in which appearance and at which reader's type size, whose account was
-/// signed in and what the clock on it read. Neither alone reproduces the
-/// screen somebody was complaining about, so replay folds the first and then
-/// applies the second.
+/// The dump says what the fleet and its conversations were; this says what was
+/// being looked at — which place, what was open over it, where in a transcript
+/// the reader had got to, what was half written and not sent, in which
+/// appearance and at which reader's type size, whose account was signed in and
+/// what the clock on it read.
 ///
 /// The three the runtime never hears about are the ones that most often carry
 /// the complaint. A half-written message, a card somebody had open and the
-/// entry they had scrolled back to never leave the phone, so a recording that
-/// did not carry them would replay an empty composer over a transcript resting
-/// at its tail with nothing open — a screen nobody was ever looking at.
+/// entry they had scrolled back to never leave the phone, so a report that did
+/// not carry them would describe an empty composer over a transcript resting at
+/// its tail with nothing open — a screen nobody was ever looking at.
 public enum TraceEvent: Sendable, Equatable {
     /// Where the person went. Written as they navigate, so a recording is the
     /// trail through the app rather than a single destination.
@@ -186,13 +183,10 @@ extension TraceEvent: Codable {
 /// The parts of a report bundle this side of the flight reads and writes, and
 /// how the view-state trace is spelled on disk.
 ///
-/// One JSON object per line, like the runtime's own recording beside it, so a
-/// truncated bundle loses its last event rather than all of them and a person
-/// can read either file with the same eyes.
+/// One JSON object per line, so a truncated bundle loses its last event rather
+/// than all of them.
 public enum Trace {
-    /// The shared runtime's recording: a Model/mode header, then recent messages.
-    public static let messagesFile = "msgs.jsonl"
-    /// The view-state recording written beside it.
+    /// The view-state recording.
     public static let traceFile = "trace.jsonl"
     /// Instants are written the way every other timestamp that leaves this app
     /// is written — RFC 3339, to the fraction — so a person reading the file

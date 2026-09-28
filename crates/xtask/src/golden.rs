@@ -299,26 +299,8 @@ fn write_png(path: &Path, image: &Image) -> Result<(), GoldenError> {
 ///
 /// Pixels under the simulator's system chrome are never counted, whatever
 /// they hold: that part of the picture is the system's, not the app's.
-pub fn diff(
-    expected: &Path,
-    actual: &Path,
-    out: &Path,
-    tolerance: u8,
-    max_differing_pixels: u64,
-    system_chrome: &[SystemChrome],
-) -> Result<GoldenVerdict, GoldenError> {
-    diff_with(
-        expected,
-        actual,
-        out,
-        tolerance,
-        max_differing_pixels,
-        system_chrome,
-        &[],
-    )
-}
-
-/// [`diff`], with `loose` rectangles compared at their own tolerance.
+///
+/// `loose` rectangles are compared at their own tolerance.
 pub fn diff_with(
     expected: &Path,
     actual: &Path,
@@ -556,6 +538,25 @@ fn loose(arguments: &[String]) -> Result<Vec<Loose>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diff(
+        expected: &Path,
+        actual: &Path,
+        out: &Path,
+        tolerance: u8,
+        max_differing_pixels: u64,
+        system_chrome: &[SystemChrome],
+    ) -> Result<GoldenVerdict, GoldenError> {
+        diff_with(
+            expected,
+            actual,
+            out,
+            tolerance,
+            max_differing_pixels,
+            system_chrome,
+            &[],
+        )
+    }
 
     fn write(path: &Path, width: u32, height: u32, colour: [u8; 4]) {
         let image = Image {

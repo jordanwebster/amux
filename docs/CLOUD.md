@@ -157,10 +157,10 @@ What the app does with each answer:
 `POST /api/reports` takes `multipart/form-data` with
 `Authorization: Bearer <access token>`. Each section's `name` and `filename`
 are the file it carries: `report.json`, `frame.png`, `trace.jsonl`,
-`msgs.jsonl`, `daemon.json` or `log.txt`.
+`log.txt`, or a file of the profile's dump under `dump/`.
 
 `report.json` is required and uses `schema_version: 2`. Its `parts` declares
-the frame, trace, messages, daemon state and log as present or absent with a
+the frame, trace, dump and log as present or absent with a
 reason. Present files are sent as their named sections; absent files are
 omitted, with their reasons kept in `report.json`. The declaration and the
 uploaded files must agree.

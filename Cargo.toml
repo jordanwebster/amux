@@ -1,7 +1,5 @@
 [workspace]
 resolver = "2"
-# node-test-support was built on the old wire and is out of the members list
-# until it is rebuilt on the new one or deleted.
 members = [
     "crates/agent",
     "crates/app-embedded",
@@ -37,9 +35,6 @@ members = [
     "crates/wire",
     "crates/xtask",
 ]
-exclude = [
-    "crates/node-test-support",
-]
 
 [workspace.package]
 edition = "2024"
@@ -54,7 +49,6 @@ app-ffi = { path = "crates/app-ffi" }
 app-runtime = { path = "crates/app-runtime" }
 node = { path = "crates/node" }
 version-stamp = { path = "crates/version-stamp" }
-node-test-support = { path = "crates/node-test-support" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 interpret = { path = "crates/interpret" }
@@ -136,10 +130,6 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm",
 shell-words = "1"
 glob = "0.3"
 bytes = "1"
-# The ONE computed diff seam: the ask-time Edit preview
-# (`docs/CHAT.md` §Diffs — everything else restates
-# `structuredPatch` facts).
-similar = "3"
 qrcode = { version = "0.14", default-features = false }
 nix = { version = "0.31", features = ["process", "signal"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["hooks"] }

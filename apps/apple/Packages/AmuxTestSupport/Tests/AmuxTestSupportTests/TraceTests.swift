@@ -128,7 +128,6 @@ final class TraceTests: XCTestCase {
     }
 
     func testTheBundleNamesItsParts() {
-        XCTAssertEqual(Trace.messagesFile, "msgs.jsonl")
         XCTAssertEqual(Trace.traceFile, "trace.jsonl")
         XCTAssertEqual(ReportAssembly.frameFile, "frame.png")
     }

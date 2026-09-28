@@ -429,7 +429,7 @@ pub enum RelayLink {
     /// The account service wants the person to sign in again.
     SignInAgain,
     /// The account service refuses this build as too old.
-    UpdateRequired,
+    VersionMismatch,
     Failed,
 }
 

@@ -51,10 +51,9 @@ phone in a pocket shakes all the time.
 
 Both entry points exist in every build of the app, Release included. A Release
 report carries the picture, the rectangles and notes, and the session and host
-records the runtime keeps (`msgs.jsonl` and `daemon.json`). It declares
-`trace.jsonl` absent, because only a build with the driving tools records the
-view-state trace, so a Release report cannot be put back as a screen with
-`just ios replay`. The log part is absent in every build: the app logs through
+records the runtime keeps (the profile's dump). It declares `trace.jsonl`
+absent, because only a build with the driving tools records the view-state
+trace. The log part is absent in every build: the app logs through
 the system, which gives no app its records back. A report is filed under the
 signed-in account on screen; with nobody signed in, the report screen says so
 and Send is unavailable.
@@ -122,18 +121,11 @@ A full user capture contains these files:
 | `frame.txt` | One row of frozen terminal cell text per line |
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
-| `msgs.jsonl` | The last on-disk Model checkpoint followed by the bounded ring of Msgs folded after it |
 | `daemon.json` | Selected profile's hosts, routes, links, channels and session diagnostics |
 | `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 
 The text and style map are the screenshot. A report contains no OS screenshot
 or image file.
-
-`msgs.jsonl` reconstructs the exact client Model at the checkpoint and at every
-following Msg through the final recorded state. It carries at most one bounded
-ring of Msgs, and replay folds them without executing effects. It cannot
-reconstruct client history before that rolling checkpoint or any daemon-side
-state; `daemon.json` is a separate diagnostic snapshot, not part of the fold.
 
 The log tail is **installation-wide**, not filtered to the selected profile.
 It can include activity from other profiles and local clients even when the
@@ -143,98 +135,6 @@ otherwise `$XDG_STATE_HOME/amux/amux.log` (fallback
 the capturing client; `amux init` also starts the installation. Distinct
 worktree installations need distinct log paths if their tails should stay
 separate.
-
-For a profile's live diagnostics, use
-`amux --profile Work debug daemon --format json`. The front door's
-`ProfileService.DebugProfile` returns that profile's diagnostics;
-`InstallationService.DebugInstallation` reports the installation and profile
-directory, including startup failures. A profile's `daemon.json` is not a
-snapshot of every account in the installation.
-
-## Inspect and recover the client store
-
-Each profile keeps its client cache at `<data_dir>/store.sqlite`. To inspect
-the transcript currently readable for one agent, first get its UUID from
-`amux --profile Work list --all`, then run:
-
-```console
-$ amux --profile Work store dump 01234567-89ab-cdef-0123-456789abcdef
-```
-
-`amux store dump` reads the current store and prints that agent's segments,
-boundaries, entry keys, revisions and entry text. It does not read files that
-have already been moved into quarantine.
-
-A quarantine is a corrupt store database and any associated WAL or
-shared-memory file moved aside under `<data_dir>/quarantine/<id>/` while amux
-holds the store's exclusive lease. The manifest there records which files
-moved and whether durable families may have been present. Amux then opens a
-fresh replacement store: disposable fleet and chat data can refill from the
-daemon, but durable view reads and writes remain unresolved so the quarantined
-data is never silently presented as recovered. During that interval the
-desktop can still show the derived fleet and chats available from the
-replacement store and live daemon; durable view state such as the
-remembered-chat pointer is neither loaded nor updated.
-
-After inspecting the dump, close other amux processes using the profile and
-run:
-
-```console
-$ amux --profile Work store resolve
-```
-
-`amux store resolve` prints every unresolved quarantine and asks for explicit
-confirmation (`--yes` is available for a script). Confirmation atomically
-enables durable view reads and writes in the replacement store; it does not
-restore or delete the quarantined files. The phone has no store operator: it
-keeps the quarantine files and resolves a completed quarantine automatically
-on the next launch, so its recovery action is Relaunch rather than either
-desktop command.
-
-## Replay before changing code
-
-Replay the final frame through the current build. An absolute report path (or
-a relative directory containing `report.json`) works without installation
-configuration, even with the daemon stopped:
-
-```console
-$ amux debug report replay /path/to/report
-Reproduces
-Differing cells: none
-Bounding rectangle: none
-```
-
-Replay always compares the final rendered frame with `frame.txt` and
-`frame.styles`, writes the current verdict back to `report.json`, and exits
-with status 1 on divergence. A divergence prints every differing cell and the
-smallest rectangle containing them.
-
-To inspect history, first note the available draw indices from an invalid
-`--at` request if necessary, then render one of them:
-
-```console
-$ amux debug report replay /path/to/report --at 12 --frame
-$ amux debug report replay /path/to/report --at 12 --styles
-```
-
-`--at` accepts draw-event indices, not arbitrary event counts. Replay is local
-and deterministic: it contacts no daemon, opens no terminal, dispatches no
-agent command and uses the times and viewport recorded in the trace.
-
-A bundle from the phone records `native_view` as its trace kind, and nothing
-here draws those screens. Replay says so, writes `unchecked` as the verdict
-rather than a comparison it never made, and names the recipe that does redraw
-it:
-
-```console
-$ amux debug report replay /path/to/phone-report
-Unchecked: this report carries a native view trace, so nothing here can redraw it.
-Replay it on the platform that drew it: just ios replay /path/to/phone-report
-```
-
-`amux debug report show` reads a phone bundle like any other, and graduation
-copies its picture across untouched — there is no text in a screenshot to
-redact, and what it shows is the screen the report is about.
 
 ## Work a tweak inside its marks
 
@@ -295,38 +195,3 @@ command tree are debug-build surfaces. They do not appear in release help or
 the release key table. The report bundle writer remains in every build so a
 release tripwire or panic still leaves a local, self-describing degraded
 report rather than a flat dump.
-
-## Updating every profile
-
-`amux update` reads `update_manifest_url` from the installation configuration.
-Periodic available-update banners use that same URL for every profile; cloud
-required-version and subscription warnings remain specific to each profile.
-The updater downloads and verifies the binary before suspending agents. The front door
-prepares every profile durably, stops only active agents, and shuts down the
-installation before replacement. After restart it resumes exactly those agents;
-older suspended sessions remain suspended. If replacement fails, the updater
-starts the unchanged executable and attempts the same resume before reporting
-the replacement error.
-
-The installation root's `update.json` records the operation and its phase;
-the file also remains after completion, so its presence alone does not mean
-recovery is pending. Each profile's `state/suspended.yaml` (beside its
-configured `state.yaml`) holds
-retained sessions. Preserve these files when investigating interruption: ordinary
-server startup does not auto-resume. The internal `amux server resume` command
-retries recovery through the front door; repeated recovery does not start an
-agent twice. Check both fleets with `amux --profile Personal list` and
-`amux --profile Work list`, and inspect the installation log for resume failures.
-An agent that cannot start, or whose profile cannot host agents, is reported as
-failed and stays in that profile's suspended state. Once all attempts and state
-cleanup finish, the update completes and profile operations and agent creation
-work again. Repeated installation resume returns the completed report. Storage
-errors keep recovery pending and admission closed until cleanup succeeds.
-
-Replay the offline replacement regression with
-`just e2e -- update_two_profiles`. Its HTTP fixture serves a higher
-manifest version with the current executable. The runner updates a disposable
-copy, checks both running fleets, and verifies a pre-existing suspended record
-remains intact. It does not install a published release. The preparation,
-interruption and concurrent-resume cases run with
-`just spec -- profiles::update`.

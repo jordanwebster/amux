@@ -222,11 +222,6 @@ fn converse(
                 std::fs::create_dir_all(&inside)?;
                 rewrite_path(&request, &inside)
             }
-            Some((Traffic::BundleIn, source)) => {
-                let inside = scratch.join(format!("bundle-{index}"));
-                copy_directory(source, &inside)?;
-                rewrite_path(&request, &inside)
-            }
             None => request,
         };
         writeln!(writing, "{sent}")?;
@@ -242,7 +237,7 @@ fn converse(
         match wanted {
             Some((Traffic::CaptureOut, destination)) => collect_file(&mut reply, &destination)?,
             Some((Traffic::BundleOut, destination)) => collect_directory(&mut reply, &destination)?,
-            Some((Traffic::BundleIn, _)) | None => {}
+            None => {}
         }
         replies.push(reply);
     }
@@ -397,8 +392,6 @@ enum Traffic {
     CaptureOut,
     /// A directory of files the app writes and the Mac keeps.
     BundleOut,
-    /// A directory of files the Mac has and the app must be able to read.
-    BundleIn,
 }
 
 fn traffic(request: &Value) -> Option<(Traffic, PathBuf)> {
@@ -406,7 +399,6 @@ fn traffic(request: &Value) -> Option<(Traffic, PathBuf)> {
     let direction = match request.get("kind")?.as_str()? {
         "capture" => Traffic::CaptureOut,
         "report" => Traffic::BundleOut,
-        "replay" => Traffic::BundleIn,
         _ => return None,
     };
     Some((direction, path))
@@ -457,19 +449,6 @@ fn collect_directory(reply: &mut Value, destination: &Path) -> Result<(), DoorEr
         std::fs::remove_file(&from).ok();
     }
     reply["path"] = json!(destination.to_string_lossy());
-    Ok(())
-}
-
-/// Copies a bundle's files into the app's container. A bundle is flat: its
-/// parts sit beside each other, and anything nested is not one.
-fn copy_directory(source: &Path, destination: &Path) -> Result<(), DoorError> {
-    std::fs::create_dir_all(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            std::fs::copy(entry.path(), destination.join(entry.file_name()))?;
-        }
-    }
     Ok(())
 }
 

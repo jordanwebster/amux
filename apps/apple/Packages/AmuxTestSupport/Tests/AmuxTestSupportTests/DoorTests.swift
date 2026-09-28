@@ -77,7 +77,6 @@ final class DoorTests: XCTestCase {
             .holdBackground,
             .awaitBackground(seconds: 10),
             .push(path: "/tmp/needs-you.apns"),
-            .replay(path: "/tmp/report"),
             .shutdown,
         ]
         for request in requests {
@@ -161,7 +160,6 @@ final class DoorTests: XCTestCase {
         let attempt = try wire(.send(agent: "aurora", text: "carry on"))
         XCTAssertEqual(attempt["agent"] as? String, "aurora")
         XCTAssertEqual(attempt["text"] as? String, "carry on")
-        XCTAssertEqual(try wire(.replay(path: "/tmp/report"))["path"] as? String, "/tmp/report")
         let pasting = try wire(.paste(identifier: "composer.field", text: "a long paste"))
         XCTAssertEqual(pasting["identifier"] as? String, "composer.field")
         XCTAssertEqual(pasting["text"] as? String, "a long paste")
@@ -204,11 +202,7 @@ final class DoorTests: XCTestCase {
             .bridge(bridge),
             .conversation(ConversationReading(agent: "helper", frame: nil, rows: [], ask: nil)),
             .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
-            .bundle(path: "/tmp/report", parts: ["msgs.jsonl", "trace.jsonl"]),
-            .replayed(ReplayedState(
-                events: 4, agents: ["aurora"], hosts: ["desktop"],
-                entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
-                reconciled: true, trace: 3, screen: "home", ages: ["aurora": "8s"])),
+            .bundle(path: "/tmp/report", parts: ["frame.png", "trace.jsonl"]),
             .paired(host: "workstation"),
             .states([
                 DrawnState(screen: "home", state: "home", typeSize: nil),

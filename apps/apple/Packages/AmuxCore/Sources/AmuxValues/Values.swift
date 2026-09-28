@@ -2809,7 +2809,7 @@ public enum RelayLink: String, Codable, Hashable, Sendable, CaseIterable {
     /// The account service wants the person to sign in again.
     case signInAgain = "SignInAgain"
     /// The account service refuses this build as too old.
-    case updateRequired = "UpdateRequired"
+    case versionMismatch = "VersionMismatch"
 }
 
 /// How an ask that is the work closed.

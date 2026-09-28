@@ -52,11 +52,11 @@ extension FrozenFrame {
 /// person has finished describing it. A capture taken after the report UI
 /// opened would be a picture of the report.
 ///
-/// The runtime's own recording and the view-state trace are held as the text
-/// that goes into the bundle rather than as parsed values. Nothing between the
-/// freeze and the send needs to read them, and holding them as text means the
-/// bytes written into `msgs.jsonl` and `trace.jsonl` are the bytes that were
-/// frozen — a re-encode in between could differ from what the phone saw.
+/// The view-state trace is held as the text that goes into the bundle rather
+/// than as parsed values. Nothing between the freeze and the send needs to read
+/// it, and holding it as text means the bytes written into `trace.jsonl` are
+/// the bytes that were frozen — a re-encode in between could differ from what
+/// the phone saw.
 public struct ReportCapture: Sendable, Equatable {
     public var frame: FrozenFrame
     /// The runtime's dump of this profile, started when the screen froze so

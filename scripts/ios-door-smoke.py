@@ -43,8 +43,7 @@ PANELS = [
     ("settings", "permissions-claude", "permissions"),
     ("plus", "plus", "plus"),
 ]
-# Where the app is asked to write its report bundle. The two recordings in it
-# are what `just ios replay` rebuilds a screen from.
+# Where the app is asked to write its report bundle.
 BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
@@ -283,7 +282,7 @@ def check_bundle(written: dict) -> None:
     with `report.json` saying what is there and why anything missing is
     missing. All of it must be readable, or a reader of the bundle is left
     with half a moment."""
-    for part in ("report.json", "frame.png", "msgs.jsonl", "trace.jsonl"):
+    for part in ("report.json", "frame.png", "trace.jsonl"):
         if part not in written["parts"]:
             raise SystemExit(f"the app did not write {part}: {written}")
         if not (BUNDLE / part).is_file():
@@ -291,13 +290,12 @@ def check_bundle(written: dict) -> None:
     header = json.loads((BUNDLE / "report.json").read_text())
     if header["schema_version"] != 2:
         raise SystemExit(f"report.json is at schema {header['schema_version']}, not 2")
-    files = {"frame": "frame.png", "trace": "trace.jsonl", "msgs": "msgs.jsonl",
-             "daemon": "daemon.json", "log": "log.txt"}
+    files = {"frame": "frame.png", "trace": "trace.jsonl", "log": "log.txt", "dump": "dump"}
     for part, named in files.items():
         declaration = header["parts"][part]
-        if declaration == "present" and not (BUNDLE / named).is_file():
+        if declaration == "present" and not (BUNDLE / named).exists():
             raise SystemExit(f"report.json declares {named} present and it is not there")
-        if declaration != "present" and (BUNDLE / named).is_file():
+        if declaration != "present" and (BUNDLE / named).exists():
             raise SystemExit(f"report.json declares {named} absent and it is there")
         if declaration != "present" and not declaration["absent"]["reason"]:
             raise SystemExit(f"{named} is absent with no reason given: {declaration}")
@@ -310,20 +308,13 @@ def check_bundle(written: dict) -> None:
         raise SystemExit(f"the frozen frame has no size: {header['image_frame']}")
     if not header["marks"] or not header["note"]:
         raise SystemExit(f"what the driver wrote on the report is not in it: {header}")
-    header_line, *messages = (BUNDLE / "msgs.jsonl").read_text().splitlines()
-    checkpoint = json.loads(header_line)
-    if "format_version" not in checkpoint or "checkpoint" not in checkpoint:
-        raise SystemExit(
-            f"msgs.jsonl does not start with a recorder header: {header_line[:200]}")
-    for line in messages:
-        json.loads(line)
     trace = [json.loads(line) for line in (BUNDLE / "trace.jsonl").read_text().splitlines()]
     kinds = [event["kind"] for event in trace]
     # The door drove an appearance, a type size and a screen before it
     # connected; a trace that did not record them is not recording the view.
     for expected in ("route", "appearance", "dynamicType"):
         if expected not in kinds:
-            raise SystemExit(f"the trace beside msgs.jsonl recorded no {expected}: {trace}")
+            raise SystemExit(f"the trace recorded no {expected}: {trace}")
     # A report says where it was taken, in the trace, as the last thing that
     # happened to the view — so whoever opens the bundle knows what the picture
     # is of before they open it. The appearance the door left the view in is

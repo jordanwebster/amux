@@ -47,11 +47,11 @@ status. Use arrows or `j`/`k`, then Enter to switch; Esc closes it. The new flee
 shows only the selected profile's agents, and amux remembers its UUID for later
 commands. `--profile` overrides the remembered selection.
 
-`amux server stop` stops every profile and kills their running agents.
-`amux update` instead saves active sessions across all profiles before replacing
-the binary and restores those sessions afterward. Sessions already suspended
-stay suspended. Ordinary startup does not restore suspended sessions. Profiles
-share one desktop daemon, so a process crash affects every account.
+Every agent runs in its own process. `amux server stop` stops the daemon for
+every profile, and the agents keep running; the next daemon finds them again.
+`amux update` replaces the binary the same way, so an update does not interrupt
+an agent. Profiles share one desktop daemon, so a daemon crash affects every
+account until it restarts.
 
 ## Pairing: trust is something you do once, in person
 
@@ -89,8 +89,8 @@ device, by your device.
 Pairing belongs to the selected profile. If two machines use both Personal
 and Work, pair them once for each account. A key trusted by Personal grants
 no access to Work. Paired peers can operate agents, including creating and
-deleting them, but cannot administer your trust store or stop, suspend or
-resume your installation.
+deleting them, but cannot administer your trust store or stop your
+installation.
 
 ## Finding and talking to a host
 

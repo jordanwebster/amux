@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shlex
@@ -49,15 +48,6 @@ REQUIRED = {
 PERF_BASELINE_ROOTS = (
     ROOT / "perf" / "baselines" / "desktop",
     ROOT / "perf" / "baselines" / "phone",
-)
-# Directories whose executable files are test workloads rather than tooling.
-# Cargo and Swift targets are discovered from their manifests, so an
-# uncatalogued one is caught; a loose script has no manifest to be missing
-# from, which is how a workload can survive a move with nothing left to run
-# it. The executable bit distinguishes an entry point from a sourced helper.
-WORKLOAD_ROOTS = (
-    ROOT / "scripts" / "qualification",
-    ROOT / "scripts" / "tests",
 )
 
 
@@ -205,7 +195,6 @@ def validate(suites: list[dict[str, Any]]) -> tuple[list[str], set[tuple[str, st
     catalog_swift: dict[str, str] = {}
     catalog_journeys: dict[tuple[str, str], str] = {}
     catalog_baselines: dict[str, str] = {}
-    claimed_paths: set[str] = set()
 
     for index, suite in enumerate(suites, 1):
         label = str(suite.get("name", f"entry {index}"))
@@ -243,7 +232,6 @@ def validate(suites: list[dict[str, Any]]) -> tuple[list[str], set[tuple[str, st
             matches = expand(pattern)
             if not matches:
                 errors.append(f"{label}: path {pattern!r} does not exist")
-            claimed_paths.update(match.relative_to(ROOT).as_posix() for match in matches)
 
         selected = 0
         for selector in suite.get("cargo", []):
@@ -334,7 +322,6 @@ def validate(suites: list[dict[str, Any]]) -> tuple[list[str], set[tuple[str, st
             selected += len(matches)
             if not matches:
                 errors.append(f"{label}: case selection {pattern!r} matches nothing")
-            claimed_paths.update(match.relative_to(ROOT).as_posix() for match in matches)
 
         if selected == 0:
             errors.append(f"{label}: recipe would select zero catalogued tests")
@@ -365,18 +352,6 @@ def validate(suites: list[dict[str, Any]]) -> tuple[list[str], set[tuple[str, st
     }
     for baseline in sorted(discovered_baselines - set(catalog_baselines)):
         errors.append(f"performance baseline {baseline} is not listed")
-
-    for root in WORKLOAD_ROOTS:
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or not os.access(path, os.X_OK):
-                continue
-            workload = path.relative_to(ROOT).as_posix()
-            owners = {workload, *(parent.as_posix() for parent in Path(workload).parents)}
-            if owners & claimed_paths:
-                continue
-            errors.append(f"executable test workload {workload} is not listed")
 
     return errors, set(catalog_cargo), set(catalog_swift)
 

@@ -20,7 +20,7 @@ opening, bridge rendering, idle resources and sustained memory.
 
 `just perf` builds the qualified harness in release mode and measures the
 desktop frame loop, store-backed cold start and chat attachment, fold bounds,
-SQLite commit and maintenance work, summarizer cost, and reconnect wire size.
+SQLite commit and maintenance work, and reconnect wire size.
 The report names the enrolled hardware and OS, profile and features, workload
 seed, identity-growth mode, warm-up, sample count, timestamps, statistic,
 budget, committed baseline and drift. The desktop report also names its
@@ -73,16 +73,7 @@ workload now fails if a front-door socket, installation lock file or matching
 `amux server start` process appears. The unchanged 100 ms median and 200 ms
 worst budgets and the 15% drift gate remain the cold-start promise.
 
-The `summarizer idle core` row is ceiling-only under its unchanged 1.0%
-absolute budget. Five identical-code runs measured 0.055%, 0.071%, 0.057%,
-0.078% and 0.059%, a 42% spread caused by macOS park and unpark cost for the
-roughly 2,000 one-second health-tick wakeups in each window. Over those same
-runs, `summarizer CPU per row` stayed between 4.243 and 4.397 microseconds, a
-3.6% spread. The idle row therefore cannot carry a useful percentage drift
-gate; other percentage rows, including `growth after sweep`, retain the 15%
-limit. A miss of either an absolute budget or any remaining drift gate is
-still a defect to explain, not a value to adopt.
-The `scroll-back memory return` row is also ceiling-only under its unchanged
+The `scroll-back memory return` row is ceiling-only under its unchanged
 1.10x absolute budget. Five warmed runs of identical code measured 0.632x,
 0.591x, 1.004x, 0.595x and 1.006x. Its denominator is the physical-footprint
 snapshot taken after seeding 50,000 rows and the preceding commit workload. It

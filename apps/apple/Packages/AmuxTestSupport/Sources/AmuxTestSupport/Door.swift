@@ -308,9 +308,6 @@ public enum DoorRequest: Sendable, Equatable {
     /// as iOS would to an app woken in the background, and answer once the
     /// handler has finished. Refused unless the app is in the background.
     case push(path: String)
-    /// Rebuild the stores and the view from the bundle in this directory,
-    /// without carrying out anything the recording asked the app to do.
-    case replay(path: String)
     case shutdown
 }
 
@@ -338,7 +335,6 @@ public enum DoorReply: Sendable, Equatable {
     /// What became of an attempted send: whether it left the phone, and the
     /// sentence on screen when it did not.
     case sendAttempt(delivered: Bool, reason: String?)
-    case replayed(ReplayedState)
     /// Why the request could not be answered, in one line. The door never
     /// half-answers: a request either happened or is reported here.
     case error(String)
@@ -357,52 +353,6 @@ public struct DrawnState: Codable, Sendable, Equatable {
         self.screen = screen
         self.state = state
         self.typeSize = typeSize
-    }
-}
-
-/// What a bundle rebuilt: the fleet the recording held, the conversations it
-/// held, and what the view-state trace then did to the screen.
-///
-/// A capture alone cannot show that a replay read the recording rather than a
-/// fixture — the screen would look the same either way until every screen is
-/// built. This says what came out of the bundle, so a driver can check the
-/// rebuilt fleet against the one the bundle recorded.
-public struct ReplayedState: Codable, Sendable, Equatable {
-    /// Event batches the recording projected into the stores.
-    public let events: Int
-    /// The agents the rebuilt fleet names, by name.
-    public let agents: [String]
-    /// The machines the rebuilt fleet names, by name.
-    public let hosts: [String]
-    /// How many transcript entries each rebuilt conversation holds, by agent.
-    public let entries: [String: Int]
-    /// Whether the rebuilt fleet was confirmed by a host when it was recorded.
-    public let reconciled: Bool
-    /// View-state events applied after the stores were rebuilt.
-    public let trace: Int
-    /// The screen the trace left showing.
-    public let screen: String
-    /// How long ago the rebuilt fleet says each of its agents last did
-    /// anything, by name, in the words the row says it.
-    ///
-    /// Pinned beside the picture because it is the one thing on the screen
-    /// that is a function of a clock rather than of the recording: a rebuild
-    /// that read the wrong instant draws every other pixel correctly and puts
-    /// the wrong number on every row.
-    public let ages: [String: String]
-
-    public init(
-        events: Int, agents: [String], hosts: [String], entries: [String: Int],
-        reconciled: Bool, trace: Int, screen: String, ages: [String: String]
-    ) {
-        self.events = events
-        self.agents = agents
-        self.hosts = hosts
-        self.entries = entries
-        self.reconciled = reconciled
-        self.ages = ages
-        self.trace = trace
-        self.screen = screen
     }
 }
 
@@ -786,8 +736,6 @@ extension DoorRequest: Codable {
         case "holdBackground": self = .holdBackground
         case "push":
             self = .push(path: try fields.decode(String.self, forKey: .path))
-        case "replay":
-            self = .replay(path: try fields.decode(String.self, forKey: .path))
         case "shutdown": self = .shutdown
         default:
             throw DecodingError.dataCorruptedError(
@@ -971,9 +919,6 @@ extension DoorRequest: Codable {
         case .push(let path):
             try fields.encode("push", forKey: .kind)
             try fields.encode(path, forKey: .path)
-        case .replay(let path):
-            try fields.encode("replay", forKey: .kind)
-            try fields.encode(path, forKey: .path)
         case .shutdown:
             try fields.encode("shutdown", forKey: .kind)
         }
@@ -982,7 +927,7 @@ extension DoorRequest: Codable {
 
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
-        case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
+        case kind, state, bridge, path, width, height, scale, message, parts, marks
         case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
         case log
     }
@@ -1027,8 +972,6 @@ extension DoorReply: Codable {
             self = .sendAttempt(
                 delivered: try fields.decode(Bool.self, forKey: .delivered),
                 reason: try fields.decodeIfPresent(String.self, forKey: .reason))
-        case "replayed":
-            self = .replayed(try fields.decode(ReplayedState.self, forKey: .replayed))
         case "error":
             self = .error(try fields.decode(String.self, forKey: .message))
         default:
@@ -1085,9 +1028,6 @@ extension DoorReply: Codable {
             try fields.encode("sendAttempt", forKey: .kind)
             try fields.encode(delivered, forKey: .delivered)
             try fields.encodeIfPresent(reason, forKey: .reason)
-        case .replayed(let state):
-            try fields.encode("replayed", forKey: .kind)
-            try fields.encode(state, forKey: .replayed)
         case .error(let message):
             try fields.encode("error", forKey: .kind)
             try fields.encode(message, forKey: .message)

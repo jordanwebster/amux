@@ -1,51 +1,14 @@
-# Claude PTY derived transcript fixtures
+# Claude terminal transcript captures
 
-These 18 fixtures are the daemon-visible `claude_pty_transcript_v1` rows
-derived from the canonical Claude provider recordings in
-`crates/claude-specs/fixtures/pty/`. The derivation test strictly replays each
-recording through `claude::pty::from_recording`, drives the provider with typed
-semantic intents, and captures the real amux Claude PTY backend log. It then
-compares that output byte for byte with the checked-in rows.
+Two Claude transcripts that no `fixtures/pty` recording covers,
+kept as inputs for the interpreter's `claude_pty` tests
+(`crates/interpret/fixtures/claude_pty/recorded_*.json` name them as
+`transcript_rows` recordings):
 
-The recording-to-fixture names are:
-
-| provider recording | row fixture |
+| capture | what it holds |
 |---|---|
-| `prompt` | `pong` |
-| `prompt_multiline` | `prompt_multiline` |
-| `tools` | `tools` |
-| `permission_allow_once` | `permission` |
-| `permission_allow_scoped` | `permission_session` |
-| `permission_deny_feedback` | `permission_deny_feedback` |
-| `plan_approve` | `plan_approve` |
-| `plan_auto` | `plan_auto` |
-| `plan_request_changes` | `plan_reject` |
-| `question_single` | `question_single` |
-| `question_multi_other` | `question_multi` |
-| `question_mixed` | `question_mixed` |
-| `question_tabs` | `question_tabs` |
-| `question_other_single` | `question_other_single` |
-| `interrupt` | `interrupt` |
-| `mode_cycle` | `mode_cycle` |
-| `compact_relink` | `compact` |
-| `clear_relink` | `clear` |
+| `socket_delivery` | two messages delivered to Claude while idle and while busy, with the hook payloads inline |
+| `task_tools` | six unmodified transcript rows: TaskCreate, TaskUpdate, an auto-denied Write and their results |
 
-Each sidecar records `derived: true`, the provider recording name, and the
-recorded Claude version. The current corpus was recorded with Claude Code
-2.1.251. `external_readonly`, `stale_seq`, and `subscriptions` are process-only
-live-suite scenarios and are deliberately not synthetic row fixtures.
-
-Regenerate the corpus after an intentional daemon-boundary change with:
-
-```sh
-UPDATE_DERIVED_ROWS=1 just test-crate testnet -- --test derived_rows claude_pty_derived_rows
-```
-
-Verify the regenerated corpus without the update flag:
-
-```sh
-just test-crate testnet -- --test derived_rows claude_pty_derived_rows
-```
-
-The tracked transcript semantics are documented in
-[`docs/CLAUDE_TRANSCRIPT.md`](../../../../docs/CLAUDE_TRANSCRIPT.md).
+Each `.meta.json` sidecar records the Claude version and where the capture came
+from. They cannot be regenerated in-tree; a new capture replaces them.

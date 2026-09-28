@@ -113,11 +113,6 @@ offline-test:
 full-debug:
     {{bounded}} 900 cargo build --locked -p amux --bins --profile full-debug {{desktop_features}}
 
-# Run one operator-run qualification workload by name.
-qualify NAME *ARGS:
-    {{bounded}} 1200 cargo build --locked -p amux -p provider-fakes -p node-test-support --bins {{desktop_features}}
-    {{bounded}} 1800 scripts/qualification/{{NAME}}.sh {{ARGS}}
-
 # Render or inspect deterministic TUI evidence.
 shot *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
@@ -163,13 +158,18 @@ tests-list:
 tests-check:
     {{bounded}} 120 scripts/python -B scripts/tests-catalog.py check
 
+# Fail when code, config, protos, recipes, scripts, workflows or docs still
+# name a mechanism amux removed.
+deletion-ledger-check:
+    {{bounded}} 120 scripts/py scripts/deletion-ledger-check.py
+
 # Refuse fixture-regeneration flags before any asserted CI check runs.
 [private]
 no-update-flags:
     scripts/no-update-flags.sh
 
 # Run the same task sequence exercised across continuous-integration jobs.
-ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy tests-check test doctest release-check embedded-check embedded-test mobile-check
+ci: no-update-flags check lint fmt-check codegen-check proto-check dependency-policy deletion-ledger-check tests-check test doctest release-check embedded-check embedded-test mobile-check
 
 # Run the live provider compatibility lane for one kind (claude_pty,
 # claude_sdk or codex) and scenario (initialize, respond, decide, interrupt,

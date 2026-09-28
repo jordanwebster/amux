@@ -1,3 +1,32 @@
+2026-09-28 — **A deletion-ledger check keeps removed mechanisms removed.**
+`just deletion-ledger-check` (now in `just ci`) runs
+`scripts/deletion-ledger-check.py`: one row per mechanism the journal
+architecture removed (agent hosting in the daemon, suspend, sequence numbers,
+the old wire, remote terminal bytes, the client store, folds, the bridge's
+slots, artifacts, agent-side RPCs, input rejections, daemon-side messaging,
+update markers, hook routing, the shared Codex app-server, row-ring replay
+and the old protocol chapter), each with the names it went by. It searches
+every tracked or trackable file except DEVLOG.md, fails on any hit grouped by
+row, and also fails when a crate directory and the workspace members list
+disagree. The one exemption is the settings crate's retired-key table, which
+names `ui.artifact_cache_mib` so an old config fails with the reason.
+
+Getting it green removed what survived: the excluded node-test-support crate
+and the operator-run `just qualify` scripts that drove CLI verbs that no
+longer exist; the unreferenced daemon-derived row fixtures for Claude and
+Codex (the two Claude transcripts the interpreter reads stay); the phone's
+report-replay path (`just ios replay`, `xtask replay`, the door's `replay`
+verb, the recorded report fixtures and the scope audit's names for them);
+the claude-specs driver's message carrier with its paste fallback; the native
+design benchmark, whose inputs no longer exist; 36 phone strings only the old
+transcript-row code used; 66 unreferenced golden reference images; the unused
+`similar` dependency; and the `ui.default_open_mode` setting nothing read,
+now retired with a reason. The relay's too-old-client state is
+`RelayLink::VersionMismatch`, matching the protocol-version refusal it comes
+from. testnet's agent handle is `NetAgent`. Ten old docs pages the docs
+rewrite replaces are deleted, and the kept pages lose only the passages that
+named removed mechanisms.
+
 2026-09-28 — **The phone's menus, composer controls and unanswerable row pass
 the live accessibility audit.** SwiftUI's `Menu` presents through a UIKit
 button that VoiceOver and XCUITest reach without the menu's name or

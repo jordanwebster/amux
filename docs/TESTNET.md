@@ -169,7 +169,6 @@ same sentence, and adding a verb means adding the capability first.
 | `RestartDaemon` | `TestNet::restart_daemon` + `Provider::close` |
 | `StopDaemon` | `Daemon::stop` |
 | `RestartSdkDaemon` | `TestNet::restart_daemon` + `Daemon::create_agent` |
-| `SuspendRestart` | `Daemon::suspend_restart_agents` + `Provider::close` |
 | `Unpair` | `Daemon::unpair` |
 | `StartPinPairing` | `Daemon::start_pin_pairing` |
 | `StartQrPairing` | `Daemon::try_start_qr_pairing` |
@@ -202,7 +201,6 @@ same sentence, and adding a verb means adding the capability first.
 | `{"RestartDaemon":{"name":"laptop"}}` | Stop and restart the daemon, preserving its identity, trust and listening address; wait for reachable peers to see it again. Provider processes end with the old runtime. |
 | `{"StopDaemon":{"name":"laptop"}}` | Stop the daemon without restarting it. |
 | `{"RestartSdkDaemon":{"name":"laptop"}}` | Restart the daemon and recreate its declared SDK agents with their original identities. The host must contain only SDK agents. |
-| `{"SuspendRestart":{"name":"laptop"}}` | Run the daemon's suspend-and-restart recovery, return its resumed and failed agent IDs in `diagnostics`, and close the old scripted providers. |
 | `{"Unpair":{"daemon":"laptop","peer":"desktop"}}` | Revoke the peer through the daemon's normal local administration API. |
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
@@ -361,29 +359,6 @@ creation over the relay, both SDK sessions, the PTY session, model control and
 its PTY refusal, and rejected creation without an inventory change. This
 tests the real host and shared client runtime; it does not prove the iPhone
 view or qualify an authenticated Claude service.
-
-## Convert a report transcript
-
-`target/debug/testnet script-from-report PATH/msgs.jsonl` prints a
-Script JSON value. The input uses the normal recorder header and retained Msg
-lines. A ring reset does not change the format: the checkpoint is the exact
-Model immediately before the retained lines. Conversion requires one
-uninterrupted Claude PTY stream beginning at sequence 1 and a checkpoint
-without folded feed history. Lost checkpoint rows return `EvictedHistory`; a
-partial, gapped, reopened or mixed-session stream returns `PartialSession`.
-Other protocols return `UnsupportedLayer`.
-
-The generated script has one `Any` reaction containing raw `Rows`. Its steps
-can be passed directly to `Provider::play`, or its trigger can be replaced in
-an authored script. A prompt trigger also produces the scripted provider's
-normal prompt echo. Transport keymap and ready markers are regenerated;
-semantic `amux.*` rows return `UnsupportedRow` because transcript playback
-cannot reconstruct hook decisions. This converter preserves transcript
-content; interactive asks and answers need an authored script.
-
-`just test-crate testnet -- script_from_report -- --nocapture` checks the committed
-synthetic recorder fixtures and compares the converted rows with output from
-a real Claude provider session.
 
 ## Strict Codex recordings
 

@@ -394,21 +394,6 @@ impl Default for AgentSettings {
     }
 }
 
-/// Which mode Enter opens a Claude agent in from the fleet
-/// (`docs/CHAT.md` A1). The shipped default is raw attach — the
-/// battle-tested path stays the path of least surprise; flipping the
-/// default is this settings change, not a migration. Mobile clients are
-/// chat-only and carry no such setting.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OpenMode {
-    /// Raw byte passthrough to the agent's own TUI.
-    #[default]
-    Raw,
-    /// The structured chat view.
-    Chat,
-}
-
 /// Where the palette comes from: the terminal amux was started in, a
 /// shipped theme name, or a YAML theme file path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -466,9 +451,6 @@ pub enum ColorSetting {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
-    /// The mode the fleet's Enter opens; the non-default mode opens via
-    /// Ctrl+Enter (kitty-detected) or `o`.
-    pub default_open_mode: OpenMode,
     /// A shipped theme name or a path resolved beside the config file.
     pub theme: ThemeSetting,
     /// Whether to detect, force, or disable truecolor output.
@@ -669,6 +651,10 @@ const RETIRED_KEYS: &[(&[&str], &str)] = &[
     (
         &["update_manifest_url"],
         "the supervisor reads <releases_url>/<channel>.json; set channel (stable | preview) instead",
+    ),
+    (
+        &["ui", "default_open_mode"],
+        "Enter in the fleet always opens the chat; Ctrl+Enter or o opens a terminal agent's own screen",
     ),
     (
         &["claude", "driver"],
@@ -997,27 +983,6 @@ mod tests {
         assert_eq!(config.keybinds.leader.char, b'a');
     }
 
-    /// The shipped default open mode is raw attach (`docs/CHAT.md` A1).
-    #[test]
-    fn default_open_mode_is_raw() {
-        let config = Config::default();
-        assert_eq!(config.ui.default_open_mode, OpenMode::Raw);
-        let yaml = "tcp_port: 9999\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.ui.default_open_mode, OpenMode::Raw);
-    }
-
-    #[test]
-    fn default_open_mode_yaml_roundtrip() {
-        let yaml = "ui:\n  default_open_mode: chat\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.ui.default_open_mode, OpenMode::Chat);
-
-        let serialized = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(parsed.ui.default_open_mode, OpenMode::Chat);
-    }
-
     #[test]
     fn ui_theme_and_color_defaults_are_terminal_and_auto() {
         let config = Config::default();
@@ -1061,13 +1026,6 @@ mod tests {
     #[test]
     fn unknown_ui_color_is_rejected() {
         let error = serde_yaml::from_str::<Config>("ui:\n  color: millions\n").unwrap_err();
-        assert!(error.to_string().contains("unknown variant"));
-    }
-
-    #[test]
-    fn unknown_open_mode_is_rejected() {
-        let error =
-            serde_yaml::from_str::<Config>("ui:\n  default_open_mode: telepathy\n").unwrap_err();
         assert!(error.to_string().contains("unknown variant"));
     }
 
@@ -1315,6 +1273,11 @@ mod tests {
                 "prevent_idle_sleep: true\n",
                 "prevent_idle_sleep",
                 "keep_awake",
+            ),
+            (
+                "ui:\n  default_open_mode: raw\n",
+                "ui.default_open_mode",
+                "always opens the chat",
             ),
             ("claude:\n  driver: sdk\n", "claude.driver", "claude_sdk"),
         ] {

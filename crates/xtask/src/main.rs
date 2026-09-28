@@ -4,7 +4,6 @@ mod ci;
 mod door;
 mod golden;
 use xtask::ios_verify;
-mod replay;
 mod simulator;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +16,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("ci-observe") => ci::observe_main(),
         Some("door") => door::main(),
         Some("golden") => golden::main(),
-        Some("replay") => replay::main(),
         Some("ios-verify") => ios_verify::run(),
         Some("swift-types") => {
             xtask::swift_types::main(&std::env::args().skip(2).collect::<Vec<_>>())
@@ -25,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|restamp FROM TO [VERSION]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden diff [ARGS]|restamp FROM TO [VERSION]|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }

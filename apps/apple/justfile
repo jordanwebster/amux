@@ -123,13 +123,6 @@ goldens *ARGS: build tools
 goldens-perturb *ARGS: build tools
     if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1200 {{python}} -B scripts/ios-goldens-perturb.py "$@"
 
-# Rebuild the screen a recorded report bundle was written with: fold its
-# runtime recording into fresh stores, apply the view-state trace beside it and
-# photograph the result. Nothing is connected and no recorded effect is run.
-# Redraw the screen a recorded phone report bundle was written with.
-replay *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-replay.py "$@"
-
 # The app driven the way a person drives it, against a real relay and real
 # daemons started from a committed topology. No arguments runs every journey
 # journeys/manifest.json declares.
@@ -214,12 +207,6 @@ explore *ARGS:
 # Measure iteration against a design checkout, read-only.
 design-benchmark *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 {{python}} -B scripts/ios-design-benchmark.py "$@"
-
-# One Debug app contains every layout idea. A run installs and launches once,
-# then either captures a two/four-idea batch or matched source/production views.
-# Measure layout-idea iteration inside one debug app.
-native-design-benchmark *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 3600 {{python}} -B scripts/ios-native-design-benchmark.py "$@"
 
 # Version, tag, archive and export the iPhone app, and stop there: nothing in
 # this recipe uploads, submits or pushes. --preflight reports its inputs and

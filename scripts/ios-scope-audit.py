@@ -14,23 +14,19 @@ import ios_project
 OUTPUT = Path("target/ios/scope-audit")
 DERIVED = Path("target/ios/DerivedData")
 APP = DERIVED / "Build/Products/Release-iphonesimulator/Amux.app"
-# Reporting a problem ships: the report store, its bundle, its screens and the
-# freeze that photographs the window are in every build, and so is the bridge
-# call that freezes the session and host records. What stays out is what only
-# driving and replaying need — the view-state trace (written by the door, and
-# `ReportFreeze.driven` that asks it), a recording put back into the app, and
-# the library built with the driving tools.
+# Reporting a problem ships: the report store, its bundle, its screens, the
+# freeze that photographs the window and the dump the report carries are in
+# every build. What stays out is what only driving needs: the view-state trace
+# (written by the door, and `ReportFreeze.driven` that asks it) and the library
+# built with the driving tools.
 DEBUG_SYMBOLS = (
-    "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
-    "DoorRecording", "DrivenRoot", "ScenarioShell", "ScenarioScene", "VisibleTree", "AmuxTestSupport",
-    "FreezeOnScreenshot", "DebugReports", "ColdStartProbe", "PerfRun",
-    "Workloads", "BudgetTable",
-    "amux_app_replay_report", "amux_app_seed_store",
-    "amux_app_cached_chat", "amux_app_pair_qr", "+debug-tools",
+    "DoorServer", "DoorHost", "DoorCapture", "DoorFrames",
+    "DrivenRoot", "VisibleTree", "AmuxTestSupport",
+    "DebugReports", "PerfRun", "Workloads", "BudgetTable", "+debug-tools",
 )
 # What a person reports a problem with, which a Release build must carry: the
-# two entry points, the report screen and the call that freezes the records.
-REPORT_SYMBOLS = ("ReportStore", "ReportScreen", "ReportFreeze", "amux_app_report_snapshot")
+# two entry points, the report screen and the dump the report carries.
+REPORT_SYMBOLS = ("ReportStore", "ReportScreen", "ReportFreeze", "amux_profile_dump")
 REPORT_COPY = ("Report a Problem", "What went wrong?")
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",
@@ -201,13 +197,13 @@ def detector_probe() -> None:
     """
     source = OUTPUT / "excluded-symbol.c"
     binary = OUTPUT / "excluded-symbol"
-    source.write_text("void amux_app_replay_report(void) {}\n"
-                      "int main(void) { amux_app_replay_report(); return 0; }\n")
+    source.write_text("void DoorServer(void) {}\n"
+                      "int main(void) { DoorServer(); return 0; }\n")
     sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).stdout.decode().strip()
     run(["xcrun", "clang", "-target", "arm64-apple-ios26.0-simulator", "-isysroot", sdk,
          str(source), "-o", str(binary)])
     failures = binary_violations(*inspect_binary(binary))
-    if "excluded symbol or API: amux_app_replay_report" not in failures:
+    if "excluded symbol or API: DoorServer" not in failures:
         raise RuntimeError("audit accepted a test build containing a debug-only export")
     (OUTPUT / "detector-probe.txt").write_text("Rejected compiler-built probe:\n" + "\n".join(failures) + "\n")
 
@@ -278,7 +274,7 @@ def main() -> None:
                   "PASS: no push authorization, Live Activity, Mute or Notifications row;",
                   f"Bonjour limited to {' '.join(BONJOUR_SERVICES)} behind the agreed explanation "
                   "and no legacy browser; iPhone destinations only;",
-                  "no amuxcloud or React Native package; no driving, trace or replay code.",
+                  "no amuxcloud or React Native package; no driving or trace code.",
                   "PASS: in-app attention copy, Contact Support and Report a Problem remain;",
                   "the report screen, its freeze and the record snapshot ship."]
     lines += ["Limit: simulator Release bundle inspection; distribution signing is checked before release."]

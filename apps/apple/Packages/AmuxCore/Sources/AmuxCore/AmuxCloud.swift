@@ -358,9 +358,9 @@ public actor AmuxCloudService: CloudService {
     /// readable rather than five downloads.
     private func contentType(of name: String) -> String {
         switch name {
-        case "report.json", "daemon.json": "application/json"
+        case "report.json": "application/json"
         case "frame.png": "image/png"
-        case "trace.jsonl", "msgs.jsonl": "application/x-ndjson"
+        case "trace.jsonl": "application/x-ndjson"
         case "log.txt": "text/plain"
         default: "application/octet-stream"
         }

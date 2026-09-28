@@ -159,9 +159,8 @@ public enum ReportAssembly {
                 "scale": Int(capture.frame.scale.rounded()),
             ],
             "parts": declarations,
-            // Nothing on the phone has replayed this. A native trace replays
-            // on the platform that drew it, which is a Mac running the app's
-            // own replay recipe, so the phone says so rather than claiming a
+            // Nothing has checked this bundle against the screen it was
+            // taken from, and the phone says so rather than claiming a
             // verdict it did not reach.
             "replay": "unchecked",
         ]
@@ -187,13 +186,3 @@ public enum ReportAssembly {
         return formatter.string(from: instant)
     }
 }
-
-/// The shared runtime's frozen recording, taken apart into the two files a
-/// bundle carries.
-///
-/// The runtime answers one JSON object holding a Model, the bounded recent
-/// message lines, its sticky invariant-warning flag, and the embedded daemon's
-/// own dump. On disk those are two files: `msgs.jsonl` is the Model and flag as
-/// a header line with the messages under it, and `daemon.json` is the dump.
-/// Splitting it here rather than at the writer means the phone's report and the
-/// phone's debug recording are assembled from one reading of the same shape.

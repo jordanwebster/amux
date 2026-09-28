@@ -96,7 +96,7 @@ pub struct JournalCut {
 
 /// An agent the net knows by name.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRef {
+pub struct NetAgent {
     pub name: String,
     pub host: String,
     pub host_id: Uuid,
@@ -104,7 +104,7 @@ pub struct AgentRef {
     pub kind: FakeKind,
 }
 
-impl AgentRef {
+impl NetAgent {
     pub fn key(&self) -> AgentKey {
         AgentKey::new(
             self.host_id.as_bytes().to_vec(),
@@ -218,7 +218,7 @@ pub struct Net {
     launch_hook: Option<LaunchHook>,
     hosts: BTreeMap<String, Host>,
     links: BTreeMap<(String, String), Link>,
-    agents: BTreeMap<String, AgentRef>,
+    agents: BTreeMap<String, NetAgent>,
     relay: Option<Relay>,
     /// Each host's way to the relay's QUIC carrier, kept across restarts.
     udp: BTreeMap<String, UdpGate>,
@@ -456,13 +456,13 @@ impl Net {
         Ok(ProfileServiceClient::new(channel))
     }
 
-    pub fn agent(&self, name: &str) -> Result<&AgentRef, NetError> {
+    pub fn agent(&self, name: &str) -> Result<&NetAgent, NetError> {
         self.agents
             .get(name)
             .ok_or_else(|| NetError::NoAgent(name.to_owned()))
     }
 
-    pub fn agents(&self) -> impl Iterator<Item = &AgentRef> {
+    pub fn agents(&self) -> impl Iterator<Item = &NetAgent> {
         self.agents.values()
     }
 
@@ -551,7 +551,7 @@ impl Net {
         let agent = spawned?;
         self.agents.insert(
             decl.name.clone(),
-            AgentRef {
+            NetAgent {
                 name: decl.name,
                 host: host.name.clone(),
                 host_id: host.host_id,
@@ -712,7 +712,7 @@ impl Net {
             .into_inner();
         self.agents.insert(
             decl.name.clone(),
-            AgentRef {
+            NetAgent {
                 name: decl.name,
                 host: host.name.clone(),
                 host_id: host.host_id,

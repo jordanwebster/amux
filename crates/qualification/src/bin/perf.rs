@@ -161,6 +161,6 @@ mod tests {
             qualification_arguments(&arguments(&["--only", "flood", "--baseline"])).unwrap(),
             (true, Selection::Flood)
         );
-        assert!(qualification_arguments(&arguments(&["--only", "summarizer"])).is_err());
+        assert!(qualification_arguments(&arguments(&["--only", "everything"])).is_err());
     }
 }

@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Fail when the tree still carries a mechanism amux no longer has.
+
+Each row names something the journal architecture removed and lists the names
+it went by. The check searches everything git tracks or would track (code,
+config, protos, recipes, scripts, workflows and docs) for those names and
+fails on any hit, grouped by row, so a survivor cannot come back quietly.
+DEVLOG.md is history and is not searched. It also fails when the workspace
+members list and the crates directory disagree, so a dead crate cannot linger
+outside the build.
+
+Patterns are POSIX extended regular expressions, as `git grep -E` reads them.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tomllib
+
+ROOT = Path(__file__).resolve().parents[1]
+SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
+
+
+@dataclass(frozen=True)
+class Row:
+    name: str
+    goes: str
+    patterns: list[str]
+
+
+@dataclass(frozen=True)
+class Exemption:
+    pattern: str
+    path: str
+    why: str
+
+
+ROWS = [
+    Row(
+        "agent hosting",
+        "provider adapters and session loops inside the daemon, multiplex buffers, byte fan-out, the daemon-side summarizer",
+        [
+            r"agent-runtime|agent_runtime",
+            r"AgentRuntimeFactory|LocalAgentHost",
+            r"MultiplexByteBuffer|MultiplexByteReader|MultiplexStructuredBuffer|MultiplexStructuredReader",
+            r"BroadcastBuffer|BroadcastReader|BufferPolicy",
+            r"StructuredLogSource",
+            r"SummarizerHandle|SummarizerPublication|SummaryCut|summarizer_protocol",
+            r"select_summary",
+            r"[Ss]ummarizer",
+            r"daemon_summarizer|test-daemon-summarizer",
+            r"daemon_protocol|test-daemon-protocol",
+            r"daemon_sdk|test-daemon-sdk",
+        ],
+    ),
+    Row(
+        "suspend and restore",
+        "kill-and-relaunch suspend, suspended state files, consumed seals, the suspend RPCs and verbs",
+        [
+            r"SuspendAll|ResumeAll|suspend_all|resume_all",
+            r"SuspendReason|SuspendReport|ResumeReport|AgentResumeStatus|AgentResumeResult|ProfileSuspendResult|ProfileResumeResult",
+            r"SuspendedServerState|SuspendedAgent|SuspendedLocalAgentNameSource|save_suspended|load_suspended|remove_suspended",
+            r"suspended[.]yaml|consumed-seals[.]yaml",
+            r"ConsumedSeals|consume_seals|invalidate_seals|SealedAt",
+            r"ClaudeSuspendRecord|CodexSuspendRecord",
+            r"suspend_for_update_if_running|thaw_update",
+            r"ServerCommands::(Suspend|Resume)",
+            r"SuspendRestart|suspend_restart_agents",
+            r"LINK_CLOSE_REASON_SUSPENDING|LinkCloseReason::Suspending|ShutdownReason::Suspending",
+        ],
+    ),
+    Row(
+        "sequence numbers",
+        "sequence epochs, replay facts, gap and reset detection, expected_seq on input",
+        [
+            r"expected_seq",
+            r"SequenceNumberMismatch|SEQUENCE_NUMBER_MISMATCH",
+            r"[Ss]equence epoch|sequence_epoch",
+            r"SequencedReplayQuery|ByteReplayQuery|structured_replay_has_gap|structured_replay_facts",
+            r"ReplayOutcome",
+            r"missing_after",
+        ],
+    ),
+    Row(
+        "wire",
+        "session subscriptions and replay outcomes, terminal bytes over the network, summary inventory events, AgentRef and the duplicate client requests, agent kinds and Claude drivers, the test agent, artifact references, diff responses, Debug",
+        [
+            r"ReplayFacts",
+            r"ReplayQuery",
+            r"ReplayComplete",
+            r"SubscribeSession",
+            r"SessionOpened|SessionOutput|SessionClosed",
+            r"TerminalV1Args|ClaudePtyTranscriptV1Args|ClaudeSdkV1Args|CodexSdkV1Args",
+            r"ProtocolNotExposed|AgentProtocol([^A-Za-z_]|$)",
+            r"StructuredRow",
+            r"SessionControl",
+            r"AgentRef([^A-Za-z_]|$)",
+            r"Client(CreateAgent|RenameAgent|DeleteAgent|SendMessage|SetAgentStatus|SubscribeSession|SendInput|PutArtifact|GetArtifact|Diff|ListRepositories)Request",
+            r"ListHostsRequest|ListHostsResponse|ListAgentsRequest|ListAgentsResponse|rpc ListHosts|rpc ListAgents",
+            r"SubscribeHosts|SubscribeAgentsRequest|SubscribeAgentsResponse|rpc SubscribeAgents|SubscribeAgentEvents",
+            r"AgentSummary|AgentProgressEvent|SummaryTodoProgress|SummaryContextMeter|SummaryAttention|ContextMeterSource",
+            r"inventory_revision",
+            r"ClaudeDriver",
+            r"ClaudeKind|CodexKind([^A-Za-z_]|$)|message AgentKind",
+            r"TestAgentKind|TestEchoV1|TestAgentCreateConfig|test_agent[.]proto",
+            r"crates/test-agent|-p test-agent|debug/test-agent|test_agent_bin|new test-agent",
+            r"ArtifactRef([^A-Za-z_]|$)",
+            r"ArtifactKind([^A-Za-z_]|$)",
+            r"DiffResponse|DiffFile|BaseIdentity|PathBlob([^A-Za-z_]|$)",
+            r"DebugProfile|DebugInstallation|DebugFormat|DebugRequest|DebugResponse|rpc Debug[(]",
+            r"ClaudePtyTranscriptV1Input|ClaudeSdkV1Input|CodexSdkV1Input|ClaudeCyclePermissionMode|CodexSdkV1Command",
+        ],
+    ),
+    Row(
+        "remote terminal",
+        "terminal bytes over the wire and remote raw attach",
+        [
+            r"TerminalV1Input|TerminalV1Output|TerminalV1ReplayQuery|message TerminalSize",
+            r"SessionArgs::TerminalV1",
+            r"subscribe_raw|attach_subscribed|attach_new_codex_terminal|attach_opens_chat",
+            r"remote_attach_reports_agent_exit|a_remote_terminal_agent_opens_chat",
+        ],
+    ),
+    Row(
+        "client store",
+        "the write-through commit protocol, the store worker and the recorder snapshots",
+        [
+            r"ExpectedHead",
+            r"CommitOutcome|CommitResult",
+            r"AttemptId",
+            r"HeadState|MutationOracle",
+            r"StoreWorker|store_worker",
+            r"StoreMsg|StoreOp([^A-Za-z_]|$)",
+            r"STORE_READ_SPAN|amux[.]store[.]read",
+            r"RecorderSnapshot|replay_msgs|write_recorder_snapshot|msgs[.]jsonl",
+            r"recorder_checkpoint|write_model_checkpoint",
+        ],
+    ),
+    Row(
+        "folds",
+        "the fold crate, per-client feed entries, the phone deriving its own transcript rows",
+        [
+            r"(^|[^A-Za-z_:])fold::",
+            r"crates/fold|-p fold([^A-Za-z_-]|$)|test-fold",
+            r"ProviderFold",
+            r"FeedEntry",
+            r"transcriptRows[(]|TranscriptRows[.]swift|TranscriptRowsTests",
+            r"ui_state::restored|restored::(claude|claude_sdk|codex)",
+        ],
+    ),
+    Row(
+        "bridge",
+        "stored feeds and the slot machine",
+        [
+            r"StoredFeed|StoredRow",
+            r"Slot::(Entry|Boundary)",
+            r"FeedEntryDto",
+        ],
+    ),
+    Row(
+        "artifacts",
+        "the artifacts crate, its index and pins, the ephemeral lifetime, the client artifact cache",
+        [
+            r"artifacts::|crates/artifacts|-p artifacts([^A-Za-z_-]|$)",
+            r"EPHEMERAL_TTL",
+            r"artifact_cache_mib|artifact_cache_dir",
+            r"(^|[^A-Za-z_])INDEX_FILE|recover_artifacts",
+            r"sweep_loaded|artifact_sweeper",
+            r"PutArtifact|GetArtifact|put_artifact|get_artifact",
+            r"agent_attach",
+            r"ArtifactCorrupt",
+            r"repeated string pin",
+            r"amux[.]attachments",
+            r"AttachmentIndex",
+        ],
+    ),
+    Row(
+        "agent-side RPCs",
+        "SetAgentStatus, artifact puts by agents, parent envelopes, agent connectors",
+        [
+            r"SetAgentStatus|set_agent_status",
+            r"put_artifact_by_agent",
+            r"parent_envelope",
+            r"ClientConnector|ConfigConnector",
+        ],
+    ),
+    Row(
+        "input rejections",
+        "rejection items and the handed-to-the-process reply",
+        [
+            r"amux[.](claude[.]|claude_sdk[.])?input_result",
+            r"input_result_row",
+            r"message SendInputResponse [{][}]",
+        ],
+    ),
+    Row(
+        "agent messaging",
+        "daemon-side message carriers, the readiness wait and rollback, recipient rows",
+        [
+            r"AMUX_AGENT_ID",
+            r"amux[.]codex_message|amux[.]claude_sdk[.]message",
+            r"DeliveryTarget|DeliveryLiveness|DeliveryError|deliver_envelope",
+            r"MESSAGING_SOCKET_MIN_VERSION",
+            r"CreateAgentRollback",
+            r"codex_message_row|recipient row|writes_recipient_row",
+        ],
+    ),
+    Row(
+        "updates",
+        "update marker files, UpdateStatus plumbing, update-required",
+        [
+            r"MarkerFileReporter",
+            r"UpdateStatus",
+            r"UpdateMarkerFiles|StatusReporters",
+            r"update-available|update-required|update-dismissed",
+            r"UpdateRequired|UPDATE_REQUIRED|update_required",
+            r"SuspendReason::Update|SUSPEND_REASON_UPDATE",
+        ],
+    ),
+    Row(
+        "hooks",
+        "hook routing through the daemon and hook environment forwarding",
+        [
+            r"HandleHook",
+            r"HookEnvironment",
+            r"handle_hook|send_hook_event",
+            r"sync_messaging|MESSAGING_ENV_KEYS",
+        ],
+    ),
+    Row(
+        "codex",
+        "the shared Codex app-server, its two planes and thread attachment",
+        [
+            r"DaemonMode|try_managed_daemon_start|app-server-control",
+            r"CodexAttached|CodexRawPtyTarget|CodexRawPtyLease|CodexRawPtyPlan",
+            r"CODEX_RAW_THREAD_NOT_READY",
+            r"enum Plane|Plane::(Terminal|Structured)",
+        ],
+    ),
+    Row(
+        "debug",
+        "row-ring replay and door recordings",
+        [
+            r"tui::replay|Replay::load|frame_diff",
+            r"ios-replay|DoorRecording",
+            r"replay_report([^s]|$)",
+        ],
+    ),
+    Row(
+        "docs",
+        "the chapter on agent messaging and remote sessions",
+        [
+            r"Chapter 7: Agent messaging and remote sessions",
+        ],
+    ),
+]
+
+# A hit that names a removed thing on purpose.
+EXEMPTIONS = [
+    Exemption(
+        r"artifact_cache_mib|artifact_cache_dir",
+        "crates/settings/src/lib.rs",
+        "the retired-key table names the old key so an old config fails with the reason",
+    ),
+]
+
+
+def grep(pattern: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "grep", "--untracked", "-I", "-n", "-E", "-e", pattern, "--",
+         ".", ":!DEVLOG.md", f":!{SELF}"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if result.returncode not in (0, 1):
+        raise SystemExit(f"git grep failed on {pattern!r}: {result.stderr.strip()}")
+    exempt = {e.path for e in EXEMPTIONS if e.pattern == pattern}
+    return [line for line in result.stdout.splitlines()
+            if line.split(":", 1)[0] not in exempt]
+
+
+def workspace_drift() -> list[str]:
+    members = set(tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["members"])
+    crates = {f"crates/{p.name}" for p in (ROOT / "crates").iterdir()
+              if (p / "Cargo.toml").exists()}
+    problems = [f"{m} is a workspace member but has no Cargo.toml" for m in sorted(members - crates)]
+    problems += [f"{c} is not a workspace member" for c in sorted(crates - members)]
+    return problems
+
+
+def main() -> int:
+    failed = 0
+    for row in ROWS:
+        hits = [(pattern, grep(pattern)) for pattern in row.patterns]
+        hits = [(pattern, lines) for pattern, lines in hits if lines]
+        if not hits:
+            print(f"ok    {row.name} ({len(row.patterns)} patterns)")
+            continue
+        count = sum(len(lines) for _, lines in hits)
+        failed += count
+        print(f"FAIL  {row.name}: {count} hits. Gone: {row.goes}.")
+        for pattern, lines in hits:
+            print(f"      /{pattern}/")
+            for line in lines:
+                print(f"        {line[:200]}")
+    drift = workspace_drift()
+    if drift:
+        failed += len(drift)
+        print("FAIL  workspace members")
+        for problem in drift:
+            print(f"        {problem}")
+    else:
+        print("ok    workspace members name only live crates")
+    for exemption in EXEMPTIONS:
+        print(f"note  {exemption.path} may name /{exemption.pattern}/: {exemption.why}")
+    if failed:
+        print(f"deletion ledger: {failed} survivors")
+        return 1
+    print("deletion ledger: nothing survives")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

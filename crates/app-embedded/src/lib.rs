@@ -687,7 +687,7 @@ fn account_view(info: &ProfileInfo) -> AccountView {
         Observed::Connected => RelayLink::Connected,
         Observed::Retrying => RelayLink::Retrying,
         Observed::AuthenticationRequired => RelayLink::SignInAgain,
-        Observed::VersionMismatch => RelayLink::UpdateRequired,
+        Observed::VersionMismatch => RelayLink::VersionMismatch,
         Observed::StartupFailed => RelayLink::Failed,
     };
     let pro = match info.tier() {

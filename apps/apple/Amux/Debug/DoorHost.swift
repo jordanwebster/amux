@@ -221,7 +221,7 @@ final class DoorHost {
             }
         case .push(let path): return await push(from: path)
         case .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
-             .report, .replay, .move, .requestChanges, .watch, .sendDraft:
+             .report, .move, .requestChanges, .watch, .sendDraft:
             return .error("this build's door does not \(Self.verb(request))")
         }
     }

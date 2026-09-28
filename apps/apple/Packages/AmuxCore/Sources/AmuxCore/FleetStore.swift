@@ -207,7 +207,7 @@ public final class FleetStore {
     public var relayTrouble: String? {
         switch relay {
         case .signInAgain: return "Sign in again to reach your hosts through the relay"
-        case .updateRequired: return "Update amux to reach your hosts through the relay"
+        case .versionMismatch: return "Update amux to reach your hosts through the relay"
         case .retrying: return "Reconnecting to the relay"
         case .failed: return "The relay cannot be reached"
         case .off, .connecting, .connected: return nil

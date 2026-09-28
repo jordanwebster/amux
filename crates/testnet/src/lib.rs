@@ -70,7 +70,7 @@ pub use clock::DrivenClock;
 pub use gate::{Faults, UdpGate};
 pub use invariant::BlockViolation;
 pub use net::{
-    Ack, AgentRef, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetError,
+    Ack, ClockMode, EdgeHook, HostInfo, JournalCut, LaunchHook, Net, NetAgent, NetError,
     NetOptions, local_channel, prompt, withdraw,
 };
 pub use observe::{InventoryObserver, Observer, ObserverOf, PATIENCE, Stuck};
