@@ -501,6 +501,8 @@ impl FleetView {
     /// The key hints, longest first: the ways into the selected row lead,
     /// then `z` where something folds; each is dropped in turn until the
     /// block fits, and a hint that would name a dead key is never offered.
+    /// Over an attached terminal `o terminal` is the only way back to it, so
+    /// it outlasts every other hint.
     fn hints(&self, rows: &[FleetRow]) -> Vec<String> {
         let entry = if self.attach {
             "enter open  o terminal"
@@ -515,11 +517,21 @@ impl FleetView {
         } else {
             "n new  r rename  s stop  d delete  h hosts  q quit  ? help"
         };
-        vec![
-            format!("{entry}  {rest}"),
-            rest.to_owned(),
-            "n new  h hosts  q quit  ? help".to_owned(),
-        ]
+        let short = "n new  h hosts  q quit  ? help";
+        if self.attach {
+            vec![
+                format!("{entry}  {rest}"),
+                format!("o terminal  {rest}"),
+                format!("o terminal  {short}"),
+                "o terminal".to_owned(),
+            ]
+        } else {
+            vec![
+                format!("{entry}  {rest}"),
+                rest.to_owned(),
+                short.to_owned(),
+            ]
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
