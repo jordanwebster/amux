@@ -838,10 +838,18 @@ fn a_host_away_while_this_machine_is_signed_out_names_this_machines_sign_out() {
         "{screen}"
     );
     assert!(
-        screen.contains("online · this machine is signed out"),
+        screen.contains("·local · this machine is signed out"),
         "{screen}"
     );
     assert!(!screen.contains("not signed in"), "{screen}");
+    // The fleet says what signing in would bring back.
+    let mut fleet_view = FleetView::default();
+    fleet_view.local_host = b"laptop".to_vec();
+    let screen = fleet_screen(&mut fleet_view, &fleet);
+    assert!(
+        screen.contains("sign in to reach your agents from anywhere · amux login"),
+        "{screen}"
+    );
 
     // Signed in again, the words are what they always were.
     let mut signed_in = host(
@@ -1014,14 +1022,19 @@ fn the_hosts_overlay_draws_trusted_hosts_and_candidates() {
         })
         .collect();
     let screen = screen.join("\n");
+    let row = |name: &str| {
+        screen
+            .lines()
+            .find(|line| line.trim_start().starts_with(name))
+            .unwrap_or_else(|| panic!("{name}\n{screen}"))
+            .to_owned()
+    };
+    assert!(row("laptop").ends_with("·offline"), "{screen}");
+    assert!(row("studio").ends_with("·direct"), "{screen}");
     assert!(
-        screen.contains("● laptop") || screen.contains("○ laptop"),
+        row("den mac").ends_with("found · run amux pair 'den mac'"),
         "{screen}"
     );
-    assert!(screen.contains("offline"), "{screen}");
-    assert!(screen.contains("online · direct"), "{screen}");
-    assert!(screen.contains("Found nearby, not paired"), "{screen}");
-    assert!(screen.contains("amux pair 'den mac'"), "{screen}");
     let studio = screen.find("studio").unwrap();
     let candidate = screen.find("den mac").unwrap();
     assert!(studio < candidate, "trusted hosts come first");
@@ -1678,11 +1691,10 @@ fn an_agent_that_exited_while_the_daemon_was_away_says_exited_once() {
     inventory(&mut fleet, wire::inventory_event::Of::Agent(exited));
     let mut fleet_view = FleetView::default();
     let screen = fleet_screen(&mut fleet_view, &fleet);
-    assert!(
-        screen.contains("exited · while the daemon was away"),
-        "{screen}"
-    );
-    assert!(!screen.contains("exited · exited"), "{screen}");
+    let row = screen.lines().find(|line| line.contains("worker")).unwrap();
+    assert!(row.contains(" exited "), "{screen}");
+    assert!(row.contains("while the daemon was"), "{screen}");
+    assert_eq!(row.matches("exited").count(), 1, "{screen}");
 }
 
 #[test]

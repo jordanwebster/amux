@@ -170,8 +170,14 @@ AGE = re.compile(r"\b(just now|\d+[smhd] ago)\b")
 SCRATCH = re.compile(r"(aj-|testnet)([A-Za-z0-9_]{6,8})\b")
 
 
+# The fleet's age cell is compact ("now", "2m", "3h") and sits between
+# two cell gaps.
+FLEET_AGE = re.compile(r"(?<= )(now|\d{1,2}[mhd])(?=  )")
+
+
 def normalize(text: str) -> str:
     text = AGE.sub(lambda match: "<age>".ljust(len(match.group(0))), text)
+    text = FLEET_AGE.sub(lambda match: "<a>" if len(match.group(0)) == 3 else "<>", text)
     return SCRATCH.sub(lambda match: match.group(1) + "x" * len(match.group(2)), text)
 
 
@@ -400,7 +406,7 @@ class TerminalJourney:
         self.wait_terms(pane, agent)
         for _ in range(40):
             frame = self.capture(pane)
-            if any(line.startswith("▌") and f" {agent} " in line for line in frame.splitlines()):
+            if any(line.startswith("│ ▎") and f" {agent} " in line for line in frame.splitlines()):
                 self.actions.append(f"{pane}: selected {agent}")
                 return frame
             self.keys(pane, "Down")
@@ -467,9 +473,9 @@ class TerminalJourney:
         """Back to the fleet if a chat is open, then q; the client must say
         it exited cleanly."""
         frame = self.capture(pane)
-        if "amux ·" not in frame.splitlines()[0]:
+        if not frame.startswith("┌ amux "):
             self.keys(pane, "C-a", "s")
-            self.wait(pane, lambda f: f.splitlines()[0].startswith("  amux ·"), "the fleet")
+            self.wait(pane, lambda f: f.startswith("┌ amux "), "the fleet")
         self.keys(pane, "q")
         self.wait_terms(pane, "AMUX_EXIT_0", timeout=30)
         self.tmux("kill-session", "-t", pane, check=False)

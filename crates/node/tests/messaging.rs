@@ -729,6 +729,25 @@ async fn a_child_gone_without_a_turn_end_tells_its_parent_it_failed() {
         ],
         "one thing per event: finished once, failed only for the child that never finished"
     );
+    // The row says which one finished its work.
+    assert_eq!(
+        runtime
+            .agent(finished.id)
+            .await
+            .unwrap()
+            .exit_cause
+            .as_deref(),
+        Some(node::CAUSE_FINISHED)
+    );
+    assert_eq!(
+        runtime
+            .agent(crashed.id)
+            .await
+            .unwrap()
+            .exit_cause
+            .as_deref(),
+        Some(node::CAUSE_EXITED)
+    );
     crash(daemon, runtime).await;
 }
 

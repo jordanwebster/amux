@@ -7,15 +7,16 @@ use std::collections::HashSet;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame as Paint;
 use ratatui::layout::{Position, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ui_state::{AgentKey, Attention, Connection, FleetState};
-use ui_view::{FleetRow, fleet_list};
+use ui_view::{FleetCard, FleetRow, fleet_list};
 use wire::{Kind, Presence, Trust};
 
 use crate::editor::Editor;
 use crate::hosts;
-use crate::text::{self, push, push_right};
+use crate::text::{self, pad_to, push, push_right};
 use crate::theme::Theme;
 
 /// What a fleet key asks the event loop to do.
@@ -74,16 +75,6 @@ pub struct FleetView {
     /// This build's version, and the host whose daemon it talks to.
     pub version: String,
     pub local_host: Vec<u8>,
-}
-
-fn glyph(attention: Attention, theme: Theme) -> (&'static str, ratatui::style::Style) {
-    match attention {
-        Attention::NeedsYou => ("●", theme.accent()),
-        Attention::Working => ("◐", theme.ok()),
-        Attention::Starting => ("◌", theme.muted()),
-        Attention::Idle => ("○", theme.muted()),
-        Attention::Exited => ("·", theme.muted()),
-    }
 }
 
 fn kind_word(kind: Kind) -> &'static str {
@@ -300,12 +291,9 @@ impl FleetView {
     ) {
         let width = usize::from(area.width);
         let height = usize::from(area.height);
-        if matches!(self.overlay, Some(Overlay::Hosts)) {
-            let mut lines = hosts::overlay_lines(fleet, &self.local_host, width, theme);
-            lines.resize(height, Line::default());
-            paint.render_widget(Paragraph::new(lines), area);
-            return;
-        }
+        // Inside the frame's two borders.
+        let inner = width.saturating_sub(2);
+        let capacity = height.saturating_sub(CHROME_ROWS);
         let rows = self.rows(fleet);
         if self.selected.is_none()
             || !rows
@@ -315,166 +303,275 @@ impl FleetView {
             let at = self.index(&rows);
             self.selected = rows.get(at).map(|row| row.card.agent.clone());
         }
-        let mut lines = vec![self.header(fleet, &rows, width, theme), Line::default()];
-        let body = height.saturating_sub(4);
-        let at = self.index(&rows);
-        if at < self.top {
-            self.top = at;
-        } else if body > 0 && at >= self.top + body {
-            self.top = at + 1 - body;
+        let hosts_open = matches!(self.overlay, Some(Overlay::Hosts));
+        let mut body = Vec::new();
+        if hosts_open {
+            body = hosts::overlay_lines(fleet, &self.local_host, inner, theme);
+        } else {
+            let at = self.index(&rows);
+            if at < self.top {
+                self.top = at;
+            } else if capacity > 0 && at >= self.top + capacity {
+                self.top = at + 1 - capacity;
+            }
+            if rows.is_empty() {
+                let words = if fleet.caught_up() {
+                    "No agents yet · n starts one"
+                } else {
+                    "Loading the fleet…"
+                };
+                let mut line = Line::default();
+                pad_to(&mut line, NAME_COL);
+                push(&mut line, words, theme.muted(), inner);
+                body.push(line);
+            }
+            let grid = Grid::new(width);
+            for (i, row) in rows.iter().enumerate().skip(self.top).take(capacity) {
+                body.push(self.row_line(fleet, row, i == at, &grid, now_ms, inner, theme));
+            }
         }
-        if rows.is_empty() {
-            let words = if fleet.caught_up() {
-                "No agents yet · n starts one"
-            } else {
-                "Loading the fleet…"
-            };
-            let mut line = Line::from(Span::raw("    "));
-            push(&mut line, words, theme.muted(), width);
-            lines.push(line);
+        body.truncate(capacity);
+        body.resize(capacity, Line::default());
+
+        let mut lines = vec![title(width, theme), self.header(fleet, &rows, inner, theme)];
+        lines.push(Line::default());
+        lines.extend(body);
+        let mut banner = Line::default();
+        if let Some((words, style)) = hosts::banner(fleet, &self.local_host, &self.version, theme) {
+            pad_to(&mut banner, MARK_COL);
+            push(&mut banner, words, style, inner);
         }
-        for (i, row) in rows.iter().enumerate().skip(self.top).take(body) {
-            lines.push(self.row_line(row, i == at, now_ms, width, theme));
+        lines.push(banner);
+        let (status, cursor) = self.status_bar(fleet, &rows, footer, hosts_open, inner, theme);
+        lines.push(status);
+        let status_row = lines.len() - 1;
+        let mut framed: Vec<Line<'static>> = lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| {
+                if i == 0 {
+                    line
+                } else {
+                    boxed(line, width, theme)
+                }
+            })
+            .collect();
+        framed.push(bottom(width, theme));
+        framed.truncate(height);
+        paint.render_widget(Paragraph::new(framed), area);
+        if let Some(col) = cursor {
+            paint.set_cursor_position(Position::new(
+                area.x + (col + 1).min(width.saturating_sub(2)) as u16,
+                area.y + status_row as u16,
+            ));
         }
-        let mut cursor = None;
-        let used = lines.len();
-        lines.resize(height.saturating_sub(1).max(used), Line::default());
-        let foot = match (&self.overlay, footer) {
+    }
+
+    /// The agent count at the right, and how many need the person at the
+    /// left when any do.
+    fn header(
+        &self,
+        fleet: &FleetState,
+        rows: &[FleetRow],
+        inner: usize,
+        theme: Theme,
+    ) -> Line<'static> {
+        let mut line = Line::default();
+        let waiting = rows
+            .iter()
+            .filter(|row| row.depth == 0 && row.card.family_attention == Attention::NeedsYou)
+            .count();
+        if waiting > 0 {
+            pad_to(&mut line, MARK_COL);
+            push(
+                &mut line,
+                format!("{waiting} need{} you", if waiting == 1 { "s" } else { "" }),
+                theme.accent(),
+                inner,
+            );
+        }
+        let agents = fleet.agents().count();
+        let count = format!("{agents} agent{}", if agents == 1 { "" } else { "s" });
+        push_right(&mut line, &count, theme.muted(), inner.saturating_sub(1));
+        line
+    }
+
+    /// The bottom line: an open prompt or a notice when there is one, else
+    /// the connection with the host count and the keys that fit.
+    fn status_bar(
+        &self,
+        fleet: &FleetState,
+        rows: &[FleetRow],
+        footer: Option<Line<'static>>,
+        hosts_open: bool,
+        inner: usize,
+        theme: Theme,
+    ) -> (Line<'static>, Option<usize>) {
+        let mut line = Line::default();
+        pad_to(&mut line, MARK_COL);
+        match (&self.overlay, footer) {
             (Some(Overlay::Rename { editor, .. }), _) => {
-                let mut line = Line::from(Span::raw("  "));
-                push(&mut line, "Rename to: ", theme.muted(), width);
-                cursor = Some(text::line_width(&line) + editor.cursor_chars());
-                push(&mut line, editor.text(), theme.text(), width);
-                line
+                push(&mut line, "Rename to: ", theme.muted(), inner);
+                let cursor = text::line_width(&line) + editor.cursor_chars();
+                push(&mut line, editor.text(), theme.text(), inner);
+                push_right(
+                    &mut line,
+                    "enter apply  esc cancel",
+                    theme.muted(),
+                    inner.saturating_sub(1),
+                );
+                return (line, Some(cursor));
             }
             (Some(Overlay::Confirm { name, delete, .. }), _) => {
-                let mut line = Line::from(Span::raw("  "));
                 let words = if *delete {
                     format!("Delete {name} and its history? y delete · n keep")
                 } else {
                     format!("Stop {name}? It can be resumed later. y stop · n keep")
                 };
-                push(&mut line, words, theme.warn(), width);
-                line
+                push(&mut line, words, theme.warn(), inner);
+                return (line, None);
             }
             (Some(Overlay::New { selected }), _) => {
-                let mut line = Line::from(Span::raw("  New: "));
+                push(&mut line, "New: ", theme.muted(), inner);
                 for (i, (_, label)) in KINDS.iter().enumerate() {
                     let style = if i == *selected {
                         theme.emphasis()
                     } else {
                         theme.muted()
                     };
-                    push(&mut line, format!("{}. {label}  ", i + 1), style, width);
+                    push(&mut line, format!("{}. {label}  ", i + 1), style, inner);
                 }
-                push(&mut line, "enter start · esc cancel", theme.muted(), width);
-                line
+                push(&mut line, "enter start · esc cancel", theme.muted(), inner);
+                return (line, None);
             }
-            (_, Some(footer)) => footer,
-            _ => {
-                let mut words = String::from("enter open");
-                if self.attach {
-                    words.push_str(" · o terminal");
+            (_, Some(footer)) => {
+                // The app's lines start with their own margin.
+                let mut spans = footer.spans.into_iter().peekable();
+                while spans
+                    .peek()
+                    .is_some_and(|span| span.content.trim().is_empty())
+                {
+                    spans.next();
                 }
-                words.push_str(
-                    " · n new · r rename · s stop · d delete · z family · h hosts · ? help",
-                );
-                let mut line = Line::from(Span::raw("  "));
-                push(&mut line, words, theme.muted(), width);
-                line
+                line.spans.extend(spans);
+                return (line, None);
             }
-        };
-        let foot_row = lines.len();
-        lines.push(foot);
-        paint.render_widget(Paragraph::new(lines), area);
-        if let Some(col) = cursor {
-            paint.set_cursor_position(Position::new(
-                area.x + col.min(width.saturating_sub(1)) as u16,
-                area.y + foot_row as u16,
-            ));
-        }
-    }
-
-    fn header(
-        &self,
-        fleet: &FleetState,
-        rows: &[FleetRow],
-        width: usize,
-        theme: Theme,
-    ) -> Line<'static> {
-        let mut line = Line::from(Span::raw("  "));
-        push(&mut line, "amux", theme.emphasis(), width);
-        let agents = fleet.agents().count();
-        push(
-            &mut line,
-            format!(" · {agents} agent{}", if agents == 1 { "" } else { "s" }),
-            theme.muted(),
-            width,
-        );
-        let waiting = rows
-            .iter()
-            .filter(|row| row.depth == 0 && row.card.family_attention == Attention::NeedsYou)
-            .count();
-        if waiting > 0 {
-            push(
-                &mut line,
-                format!(" · {waiting} need you"),
-                theme.accent(),
-                width,
-            );
+            _ => {}
         }
         let trusted: Vec<_> = fleet
             .hosts()
-            .filter(|h| h.trust() == Trust::Trusted)
+            .filter(|host| host.trust() == Trust::Trusted)
             .collect();
-        let away = trusted
+        let out = trusted
             .iter()
-            .filter(|h| h.presence() != Presence::Online)
+            .filter(|host| host.presence() != Presence::Online || host.revoked == Some(true))
             .count();
-        // A daemon that restarted into a newer build keeps serving this
-        // older client; only the person can restart it.
-        let daemon = fleet
-            .host(&self.local_host)
-            .and_then(|host| host.version.as_deref())
-            .filter(|version| !self.version.is_empty() && *version != self.version);
-        if let Some(version) = daemon {
-            push_right(
-                &mut line,
-                &format!("amux {version} is running · restart to update"),
-                theme.warn(),
-                width,
-            );
-            return line;
-        }
-        let right = match fleet.connection() {
-            Connection::Connecting => "connecting".to_owned(),
-            Connection::Reconnecting => "reconnecting to amux".to_owned(),
-            Connection::Live if trusted.len() > 1 && away > 0 => {
-                format!("{} hosts · {away} away", trusted.len())
+        let (dot, dot_style, summary) = match fleet.connection() {
+            Connection::Live => {
+                let mut words = format!(
+                    "connected · {} host{}",
+                    trusted.len(),
+                    if trusted.len() == 1 { "" } else { "s" }
+                );
+                if out > 0 {
+                    words.push_str(&format!(" · {out} offline"));
+                }
+                ("●", theme.ok(), words)
             }
-            Connection::Live if trusted.len() > 1 => format!("{} hosts", trusted.len()),
-            Connection::Live => String::new(),
+            Connection::Connecting => ("◌", theme.muted(), "connecting".to_owned()),
+            Connection::Reconnecting => ("◌", theme.warn(), "reconnecting to amux".to_owned()),
         };
-        push_right(&mut line, &right, theme.muted(), width);
-        line
+        push(&mut line, dot, dot_style, inner);
+        pad_to(&mut line, BADGE_COL);
+        push(&mut line, summary, theme.text(), inner);
+        let hints_at = HINTS_COL.max(text::line_width(&line) + 2);
+        let fits = |hints: &str| hints_at + text::str_width(hints) < inner;
+        let hints = if hosts_open {
+            Some("esc close".to_owned())
+        } else {
+            self.hints(rows).into_iter().find(|hints| fits(hints))
+        };
+        if let Some(hints) = hints.filter(|hints| fits(hints)) {
+            pad_to(&mut line, hints_at);
+            line.spans.push(Span::styled(hints, theme.muted()));
+        }
+        (line, None)
     }
 
+    /// The key hints, longest first: the ways into the selected row lead,
+    /// then `z` where something folds; each is dropped in turn until the
+    /// block fits, and a hint that would name a dead key is never offered.
+    fn hints(&self, rows: &[FleetRow]) -> Vec<String> {
+        let entry = if self.attach {
+            "enter open  o terminal"
+        } else {
+            "enter open"
+        };
+        let folds = rows
+            .iter()
+            .any(|row| row.card.children > 0 || row.depth > 0);
+        let rest = if folds {
+            "n new  r rename  s stop  d delete  z fold  h hosts  q quit  ? help"
+        } else {
+            "n new  r rename  s stop  d delete  h hosts  q quit  ? help"
+        };
+        vec![
+            format!("{entry}  {rest}"),
+            rest.to_owned(),
+            "n new  h hosts  q quit  ? help".to_owned(),
+        ]
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn row_line(
         &self,
+        fleet: &FleetState,
         row: &FleetRow,
         selected: bool,
+        grid: &Grid,
         now_ms: i64,
-        width: usize,
+        inner: usize,
         theme: Theme,
     ) -> Line<'static> {
         let card = &row.card;
-        let mut line = Line::from(Span::styled(
-            if selected { "▌ " } else { "  " },
-            theme.focus_bar(),
-        ));
-        line.spans.push(Span::raw("  ".repeat(row.depth as usize)));
-        let (mark, style) = glyph(card.attention, theme);
-        push(&mut line, format!("{mark} "), style, width);
+        let host = fleet.host(&card.agent.host);
+        // A live agent on a host out of reach is as it last said: nothing on
+        // its row is current, so none of it claims the body text.
+        let unreached = card.attention != Attention::Exited
+            && host.is_some_and(|host| {
+                host.presence() == Presence::Offline || host.revoked == Some(true)
+            });
+        let mut line = Line::default();
+        if selected {
+            pad_to(&mut line, MARK_COL);
+            line.spans.push(Span::styled("▎", theme.focus_bar()));
+        }
+        let folded = card.children > 0 && !row.expanded;
+        let (glyph, glyph_style, word, word_style) = if unreached {
+            ("–", theme.muted(), "–".to_owned(), theme.muted())
+        } else if folded && card.family_attention == Attention::NeedsYou {
+            // A folded family wears its loudest member's mark: the row
+            // stands in for everyone behind it.
+            let (word, style) = status_word(card, theme);
+            ("!", theme.accent(), word, style)
+        } else {
+            let (glyph, style) = glyph(card, theme);
+            let (word, word_style) = status_word(card, theme);
+            (glyph, style, word, word_style)
+        };
+        pad_to(&mut line, BADGE_COL);
+        if glyph != " " {
+            line.spans.push(Span::styled(glyph, glyph_style));
+        }
+        // Members indent one step per generation, and a folded family's
+        // count eats into the same name cell, so a family never pushes the
+        // grid out of line.
+        let indent = 2 * row.depth as usize;
+        let marker = if card.children > 0 {
+            format!(" {}{}", if row.expanded { "▾" } else { "▸" }, card.children)
+        } else {
+            String::new()
+        };
         let name = if card.name.is_empty() {
             "unnamed"
         } else {
@@ -482,56 +579,180 @@ impl FleetView {
         };
         let name_style = if selected {
             theme.emphasis()
+        } else if unreached {
+            theme.muted()
         } else {
             theme.text()
         };
-        push(&mut line, text::ellipsize(name, 24), name_style, width);
-        if card.children > 0 {
-            let fold = if row.expanded { "▾" } else { "▸" };
-            let family = if card.family_attention == Attention::NeedsYou && !row.expanded {
+        pad_to(&mut line, NAME_COL + indent);
+        let room = NAME_WIDTH.saturating_sub(indent + text::str_width(&marker));
+        line.spans
+            .push(Span::styled(text::ellipsize(name, room), name_style));
+        if !marker.is_empty() {
+            let style = if folded && card.family_attention == Attention::NeedsYou {
                 theme.accent()
             } else {
                 theme.muted()
             };
-            push(
-                &mut line,
-                format!(" {fold}{}", card.children),
-                family,
-                width,
-            );
+            line.spans.push(Span::styled(marker, style));
         }
-        let pad = 34usize.saturating_sub(text::line_width(&line));
-        line.spans.push(Span::raw(" ".repeat(pad)));
-        let mut about = kind_word(card.kind).to_owned();
-        if !card.host.is_empty() {
-            about.push_str(&format!(" @ {}", card.host));
-            if card.host_presence != Presence::Online && card.host_presence != Presence::Unspecified
-            {
-                about.push_str(" (away)");
-            }
-        }
-        push(&mut line, format!("{about:<24}  "), theme.muted(), width);
-        let status = match card.attention {
-            Attention::NeedsYou => ("needs you".to_owned(), theme.accent()),
-            Attention::Exited => (
-                card.exit_cause
-                    .as_ref()
-                    .filter(|cause| !cause.is_empty() && *cause != "exited")
-                    .map(|cause| format!("exited · {cause}"))
-                    .unwrap_or_else(|| "exited".into()),
-                theme.muted(),
-            ),
-            Attention::Starting => ("starting".to_owned(), theme.muted()),
-            _ => match &card.working_on {
-                Some(working) if !working.is_empty() => (working.clone(), theme.text()),
-                _ if card.attention == Attention::Working => ("working".to_owned(), theme.muted()),
-                _ => ("idle".to_owned(), theme.muted()),
-            },
+        pad_to(&mut line, KIND_COL);
+        push(
+            &mut line,
+            text::ellipsize(kind_word(card.kind), KIND_WIDTH),
+            theme.muted(),
+            inner,
+        );
+        let cell = match host {
+            Some(host) => hosts::host_cell(host, &self.local_host),
+            None if !card.host.is_empty() => card.host.clone(),
+            None => "?".to_owned(),
         };
-        let age = text::age(now_ms, card.last_activity_ms);
-        let room = width.saturating_sub(text::str_width(&age) + 2);
-        push(&mut line, status.0, status.1, room);
-        push_right(&mut line, &age, theme.muted(), width);
+        pad_to(&mut line, HOST_COL);
+        push(
+            &mut line,
+            text::ellipsize(&cell, grid.host_width),
+            if unreached {
+                theme.muted()
+            } else {
+                theme.text()
+            },
+            inner,
+        );
+        pad_to(&mut line, grid.age_col);
+        push(
+            &mut line,
+            text::age(now_ms, card.last_activity_ms),
+            theme.muted(),
+            inner,
+        );
+        if inner >= grid.status_col + STATUS_WIDTH {
+            pad_to(&mut line, grid.status_col);
+            push(&mut line, word, word_style, inner);
+        }
+        let about = match card.attention {
+            Attention::Exited => card
+                .exit_cause
+                .clone()
+                .filter(|cause| !cause.is_empty() && cause != "exited" && cause != FINISHED),
+            _ => card
+                .working_on
+                .clone()
+                .filter(|working| !working.is_empty()),
+        };
+        if let Some(about) = about.filter(|_| inner >= grid.about_col + ABOUT_MIN) {
+            pad_to(&mut line, grid.about_col);
+            push(&mut line, text::first_line(&about), theme.muted(), inner);
+        }
         line
     }
+}
+
+/// Rows the frame, header, banner and status bar take.
+const CHROME_ROWS: usize = 6;
+/// Columns inside the frame's left border.
+const MARK_COL: usize = 1;
+const BADGE_COL: usize = 3;
+const NAME_COL: usize = 5;
+const NAME_WIDTH: usize = 21;
+const KIND_COL: usize = 27;
+const KIND_WIDTH: usize = 10;
+const HOST_COL: usize = 39;
+const HOST_WIDTH: usize = 10;
+const AGE_COL: usize = 50;
+const STATUS_COL: usize = 55;
+const STATUS_WIDTH: usize = 10;
+const ABOUT_COL: usize = 66;
+/// The least room the working-on summary is drawn in: the most expendable
+/// cell, so a cramped screen drops it first, then the status word.
+const ABOUT_MIN: usize = 10;
+/// From this frame width the host cell widens, and every cell after it
+/// moves right with it.
+const WIDE_GRID: usize = 96;
+const WIDE_EXTRA: usize = 8;
+/// Where the key hints start on the status bar, past the connection.
+const HINTS_COL: usize = 24;
+/// The exit cause of a one-shot child that finished its work.
+const FINISHED: &str = "finished";
+
+struct Grid {
+    host_width: usize,
+    age_col: usize,
+    status_col: usize,
+    about_col: usize,
+}
+
+impl Grid {
+    fn new(width: usize) -> Self {
+        let extra = if width >= WIDE_GRID { WIDE_EXTRA } else { 0 };
+        Grid {
+            host_width: HOST_WIDTH + extra,
+            age_col: AGE_COL + extra,
+            status_col: STATUS_COL + extra,
+            about_col: ABOUT_COL + extra,
+        }
+    }
+}
+
+/// The attention column: needs you, working, starting, finished, exited
+/// and idle each wear their own mark; only needs-you is loud.
+fn glyph(card: &FleetCard, theme: Theme) -> (&'static str, Style) {
+    match card.attention {
+        Attention::NeedsYou => ("!", theme.accent()),
+        Attention::Working => ("⋯", theme.muted()),
+        Attention::Starting => ("◌", theme.muted()),
+        Attention::Idle => (" ", theme.muted()),
+        Attention::Exited if card.exit_cause.as_deref() == Some(FINISHED) => ("✓", theme.ok()),
+        Attention::Exited => ("×", theme.muted()),
+    }
+}
+
+fn status_word(card: &FleetCard, theme: Theme) -> (String, Style) {
+    let word = match card.attention {
+        Attention::NeedsYou => return ("needs you".to_owned(), theme.accent()),
+        Attention::Working => "working",
+        Attention::Starting => "starting",
+        Attention::Idle => "idle",
+        Attention::Exited if card.exit_cause.as_deref() == Some(FINISHED) => "finished",
+        Attention::Exited => "exited",
+    };
+    (word.to_owned(), theme.muted())
+}
+
+/// The top border with the product name as the screen's title.
+fn title(width: usize, theme: Theme) -> Line<'static> {
+    let rule = "─".repeat(width.saturating_sub(8));
+    Line::from(vec![
+        Span::styled("┌ ", theme.muted()),
+        Span::styled("amux", theme.emphasis()),
+        Span::styled(format!(" {rule}┐"), theme.muted()),
+    ])
+}
+
+fn bottom(width: usize, theme: Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("└{}┘", "─".repeat(width.saturating_sub(2))),
+        theme.muted(),
+    ))
+}
+
+/// `line` between the frame's borders: clipped or padded to the inside.
+fn boxed(line: Line<'static>, width: usize, theme: Theme) -> Line<'static> {
+    let inner = width.saturating_sub(2);
+    let mut framed = Line::from(Span::styled("│", theme.muted()));
+    let mut used = 0;
+    for span in line.spans {
+        let room = inner.saturating_sub(used);
+        if room == 0 {
+            break;
+        }
+        let content = text::clip_to_width(&span.content, room).to_owned();
+        used += text::str_width(&content);
+        framed.spans.push(Span::styled(content, span.style));
+    }
+    let mut body = Line::from(framed.spans.split_off(1));
+    pad_to(&mut body, inner);
+    framed.spans.extend(body.spans);
+    framed.spans.push(Span::styled("│", theme.muted()));
+    framed
 }

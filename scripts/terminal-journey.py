@@ -230,7 +230,7 @@ def manage_agent(journey: TerminalJourney) -> list[str]:
     journey.keys(pane, "s")
     journey.wait_terms(pane, "Stop helper? It can be resumed later. y stop · n keep")
     journey.keys(pane, "y")
-    journey.wait_terms(pane, "exited · stopped")
+    journey.wait(pane, lambda frame: re.search(r"helper .* exited +stopped", frame) is not None, "helper exited, stopped")
     stopped = journey.wait_inventory(
         "desk", lambda agents: (listed(agents, agent_id) or {}).get("lifecycle") == EXITED, "stopped"
     )
@@ -301,7 +301,7 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     pane = journey.launch("terminal", "laptop")
     journey.wait_terms(pane, "No agents yet")
     journey.keys(pane, "h")
-    journey.wait_terms(pane, "Found nearby, not paired", "desk", "amux pair desk")
+    journey.wait_terms(pane, "desk", "found · run amux pair desk")
     journey.frame(pane, "found-not-paired")
     peers = journey.launch("peers", "laptop", "peers")
     listing = journey.wait_terms(peers, "AMUX_EXIT_0")
@@ -328,7 +328,7 @@ def reach_host(journey: TerminalJourney) -> list[str]:
     # The running client's overlay says so, and the desk's work is there.
     journey.wait(
         pane,
-        lambda frame: "Found nearby" not in frame and re.search(r"● desk\s+online · direct", frame) is not None,
+        lambda frame: "found ·" not in frame and re.search(r"desk\s+·direct", frame) is not None,
         "the desk paired in the overlay",
     )
     journey.frame(pane, "paired")
@@ -468,9 +468,9 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     created = journey.launch("profile", "laptop", "profile", "create", "work")
     journey.wait_terms(created, "Created profile work", "AMUX_EXIT_0")
     other = journey.launch("other", "laptop", "--profile", "work")
-    journey.wait_terms(other, "amux · 0 agents", "No agents yet")
+    journey.wait_terms(other, "0 agents", "No agents yet")
     journey.keys(other, "h")
-    journey.wait(other, lambda frame: "● laptop" in frame and "desk" not in frame, "hosts without the desk")
+    journey.wait(other, lambda frame: re.search(r"laptop\s+·local", frame) is not None and "desk" not in frame, "hosts without the desk")
     journey.frame(other, "other-profile")
     journey.keys(other, "Escape")
     journey.quit_client(other)
@@ -491,9 +491,9 @@ def keep_authority(journey: TerminalJourney) -> list[str]:
     # desk, and the hosts overlay says the same.
     journey.wait_terms(pane, "desk away · this machine is signed out", "until this machine signs in")
     journey.keys(pane, "C-a", "s")
-    journey.wait(pane, lambda frame: frame.startswith("  amux ·"), "the fleet")
+    journey.wait(pane, lambda frame: frame.startswith("┌ amux "), "the fleet")
     journey.keys(pane, "h")
-    journey.wait_terms(pane, "online · this machine is signed out", "offline · this machine is signed out")
+    journey.wait_terms(pane, "·local · this machine is signed out", "·offline · this machine is signed out")
     journey.frame(pane, "blocked-hosts")
     journey.keys(pane, "Escape")
     journey.open_chat(pane, "guarded")

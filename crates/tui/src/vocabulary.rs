@@ -45,11 +45,23 @@ const UNANSWERABLE: &str = "Claude is showing a form from a tool server this bui
 pub const FRAMES: &[(&str, &str)] = &[
     (
         "fleet",
-        "The fleet at 110 columns as the laptop sees it: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, with the trusted host count.",
+        "The fleet at 110 columns as the laptop sees it, framed and titled amux: a terminal Claude, a headless Claude and a Codex on the desk, every one idle, each row with its attention mark, name, kind, host and how it is reached, age, status word and what it is working on; the agent count above, the connection, host count and keys on the status bar.",
     ),
     (
         "fleet_60col",
-        "The same fleet at 60 columns: rows keep name, kind and host and drop the prompt and age.",
+        "The same fleet at 60 columns: rows keep name, kind, host and age and drop the status word and summary; the status bar keeps the keys that fit.",
+    ),
+    (
+        "fleet_standings",
+        "A fleet of every standing at 110 columns: a headless Claude asking for permission leads with its mark and status in accent and the needs-you count above, a terminal Claude working, an expanded family whose one-shot child finished, a Codex whose provider exited with its cause, an idle agent, and an agent on a studio that went offline, its row muted with no current status; the status bar counts the offline host.",
+    ),
+    (
+        "fleet_standings_80col",
+        "The same fleet at 80 columns: the host cell narrows and the working-on summary is dropped before the status word.",
+    ),
+    (
+        "hosts",
+        "The hosts overlay over that fleet: every trusted host with how it is reached (this machine local, the desk direct, the studio offline), inside the fleet's frame, with esc to close.",
     ),
     (
         "chat_strip",

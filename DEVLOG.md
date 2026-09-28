@@ -1,3 +1,28 @@
+2026-09-28 — **The terminal fleet is dense again.** The fleet draws inside a
+frame titled amux, as it did before the rearchitecture: a header with the
+agent count (and how many need you), then one row per agent on a column
+grid — an attention mark (`!` needs you in the accent, `⋯` working, `◌`
+starting, `✓` finished, `×` exited, blank idle, `–` for a live agent on a
+host out of reach), the name with its family fold, the kind, the host and
+how it is reached (`desk ·direct`, `laptop ·relay`, `studio ·offline`, this
+machine `·local`), a compact age, the status word, and what it is working on
+or why it exited. A banner line names the one reachability problem worth it
+(a newer daemon, a host that stopped trusting this machine, this machine
+signed out while a host is out of reach), and the status bar carries the
+connection, host count and the key hints that fit. At 80 columns the
+summary goes first, at 60 the status word; the host cell narrows below 96.
+The hosts overlay draws in the same frame: each host with its route and what
+stands in its way, and `found · run amux pair <name>` for a candidate.
+
+"Finished" is now a fact the daemon records: a one-shot child that exits
+unasked after its turn ended gets the exit cause `finished` instead of
+`exited`, so both clients can tell a child that did its work from one that
+died. A new served frame draws a fleet of every standing, and the journey
+driver finds the fleet by its frame and masks the compact age cell. Three
+chat goldens in reach-host and keep-authority moved because the "started"
+boundary now draws above the first prompt, as it has since the headless
+Claude boundary change; they were not re-recorded then.
+
 2026-09-28 — **The phone door smoke is retired.** `just ios door-smoke` asked
 the door for `bridge` and `report`, which this build's door refuses, so it
 could not pass. What else it proved is proved elsewhere: the phone journeys

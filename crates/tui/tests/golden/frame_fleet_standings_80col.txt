@@ -1,0 +1,33 @@
+┌ amux ────────────────────────────────────────────────────────────────────────┐
+│ 1 needs you                                                         7 agents │
+│                                                                              │
+│ ▎ ! fixer                 claude sdk  desk ·dir… now  needs you  Fix the aut…│
+│   ⋯ runner                claude      desk ·dir… now  working    Run the rel…│
+│     planner ▾1            claude sdk  desk ·dir… now  idle       Update the …│
+│   ✓   specs               claude sdk  desk ·dir… now  finished               │
+│   – archivist             claude      studio ·o… now  –          Archive the…│
+│     scout                 claude      desk ·dir… now  idle       Find the so…│
+│   × crasher               codex       desk ·dir… now  exited                 │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│ ● connected · 3 hosts · 1 offline  n new  h hosts  q quit  ? help            │
+└──────────────────────────────────────────────────────────────────────────────┘
+--- styles
+mmeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+m.aaaaaaaaaaa.........................................................mmmmmmmm.m
+m..............................................................................m
+m.F.a.eeeee.................mmmmmmmmmm.............mmm..aaaaaaaaa..mmmmmmmmmmmmm
+m...m.......................mmmmmm.................mmm..mmmmmmm....mmmmmmmmmmmmm
+m............mmm............mmmmmmmmmm.............mmm..mmmm.......mmmmmmmmmmmmm
+m...o.......................mmmmmmmmmm.............mmm..mmmmmmmm...............m
+m...m.mmmmmmmmm.............mmmmmm......mmmmmmmmmm.mmm..m..........mmmmmmmmmmmmm
+m...........................mmmmmm.................mmm..mmmm.......mmmmmmmmmmmmm
+m...m.......................mmmmm..................mmm..mmmmmm.................m
+m..............................................................................m
+m..............................................................................m
+m..............................................................................m
+m..............................................................................m
+m.o..................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm............m
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm

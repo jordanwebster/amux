@@ -63,6 +63,14 @@ pub(crate) fn push_right(line: &mut Line<'static>, text: &str, style: Style, wid
     line.spans.push(Span::styled(text.to_owned(), style));
 }
 
+/// Pads the line with blanks up to column `col`.
+pub(crate) fn pad_to(line: &mut Line<'static>, col: usize) {
+    let used = line_width(line);
+    if used < col {
+        line.spans.push(Span::raw(" ".repeat(col - used)));
+    }
+}
+
 /// Pads the line with `style` to `width`, so a surface colour fills it.
 pub(crate) fn fill(line: &mut Line<'static>, style: Style, width: usize) {
     let used = line_width(line);
@@ -158,16 +166,17 @@ pub(crate) fn bytes(size: u64) -> String {
 }
 
 /// "3m ago", "2h ago", "just now": the fleet's last-activity column.
+/// A fleet cell's age: "now" under a minute, then minutes, hours, days.
 pub(crate) fn age(now_ms: i64, then_ms: i64) -> String {
     if then_ms <= 0 {
         return String::new();
     }
     let secs = (now_ms - then_ms).max(0) / 1_000;
     match secs {
-        0..60 => "just now".into(),
-        60..3_600 => format!("{}m ago", secs / 60),
-        3_600..86_400 => format!("{}h ago", secs / 3_600),
-        _ => format!("{}d ago", secs / 86_400),
+        0..60 => "now".into(),
+        60..3_600 => format!("{}m", secs / 60),
+        3_600..86_400 => format!("{}h", secs / 3_600),
+        _ => format!("{}d", secs / 86_400),
     }
 }
 

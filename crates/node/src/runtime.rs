@@ -83,6 +83,9 @@ pub const CAUSE_STOPPED: &str = "stopped";
 pub const CAUSE_ABORTED: &str = "aborted";
 pub const CAUSE_KILLED: &str = "killed";
 pub const CAUSE_EXITED: &str = "exited";
+/// A one-shot child that exited by its own rule after its turn ended: it
+/// finished its work, and clients say so in place of "exited".
+pub const CAUSE_FINISHED: &str = "finished";
 pub const CAUSE_EXITED_AWAY: &str = "while the daemon was away";
 pub const CAUSE_NO_DIRECTORY: &str = "its directory is gone";
 pub const CAUSE_UNSTARTED: &str = "the agent process could not start";
@@ -1574,6 +1577,14 @@ impl ProfileRuntime {
         mut row: AgentRow,
         cause: &str,
     ) -> Result<(), StoreError> {
+        // A child exits unasked only once its turn ended with nothing left
+        // to do, or when its process failed mid-turn; the first is its
+        // finish.
+        let cause = if cause == CAUSE_EXITED && row.parent.is_some() && !row.turn_open {
+            CAUSE_FINISHED
+        } else {
+            cause
+        };
         row.lifecycle = Lifecycle::Exited as i32;
         row.exit_cause = Some(cause.to_owned());
         self.put_row(store, &row)?;

@@ -1,0 +1,33 @@
+┌ amux ──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1 needs you                                                                                       7 agents │
+│                                                                                                            │
+│ ▎ ! fixer                 claude sdk  desk ·direct       now  needs you  Fix the auth bug.                 │
+│   ⋯ runner                claude      desk ·direct       now  working    Run the relay tests.              │
+│     planner ▾1            claude sdk  desk ·direct       now  idle       Update the specs.                 │
+│   ✓   specs               claude sdk  desk ·direct       now  finished                                     │
+│   – archivist             claude      studio ·offline    now  –          Archive the old logs.             │
+│     scout                 claude      desk ·direct       now  idle       Find the socket name.             │
+│   × crasher               codex       desk ·direct       now  exited                                       │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│                                                                                                            │
+│ ● connected · 3 hosts · 1 offline  n new  r rename  s stop  d delete  z fold  h hosts  q quit  ? help      │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+--- styles
+mmeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+m.aaaaaaaaaaa.......................................................................................mmmmmmmm.m
+m............................................................................................................m
+m.F.a.eeeee.................mmmmmmmmmm.....................mmm..aaaaaaaaa..mmmmmmmmmmmmmmmmm.................m
+m...m.......................mmmmmm.........................mmm..mmmmmmm....mmmmmmmmmmmmmmmmmmmm..............m
+m............mmm............mmmmmmmmmm.....................mmm..mmmm.......mmmmmmmmmmmmmmmmm.................m
+m...o.......................mmmmmmmmmm.....................mmm..mmmmmmmm.....................................m
+m...m.mmmmmmmmm.............mmmmmm......mmmmmmmmmmmmmmm....mmm..m..........mmmmmmmmmmmmmmmmmmmmm.............m
+m...........................mmmmmm.........................mmm..mmmm.......mmmmmmmmmmmmmmmmmmmmm.............m
+m...m.......................mmmmm..........................mmm..mmmmmm.......................................m
+m............................................................................................................m
+m............................................................................................................m
+m............................................................................................................m
+m............................................................................................................m
+m.o..................................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm......m
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm

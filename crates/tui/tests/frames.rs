@@ -126,6 +126,28 @@ async fn fleet_listing(net: &Net, host: &str, agent: &[u8]) -> FleetState {
     fleet
 }
 
+/// The fleet as `host`'s inventory says it once `ready` holds.
+async fn fleet_when(net: &Net, host: &str, ready: impl Fn(&FleetState) -> bool) -> FleetState {
+    let replay = |events: &[InventoryEvent]| {
+        let mut fleet = FleetState::new();
+        fleet.update(FleetMsg::Connection(Connection::Live));
+        for event in events {
+            fleet.update(FleetMsg::Event(Box::new(event.clone())));
+        }
+        fleet
+    };
+    let mut inventory = net.observe_inventory(host).await.unwrap();
+    let events = inventory
+        .observe_until(
+            |events| inventory_caught_up(events) && ready(&replay(events)),
+            PATIENCE,
+        )
+        .await
+        .unwrap()
+        .to_vec();
+    replay(&events)
+}
+
 /// A chat's state after `events`, with its fleet entry and host.
 fn chat_state(fleet: &FleetState, agent: &[u8], events: &[SessionEvent]) -> SessionState {
     let entry = fleet.find(agent).expect("the agent is listed").clone();
@@ -166,7 +188,16 @@ fn draw_chat(state: &SessionState, width: u16, height: u16) -> Buffer {
 }
 
 fn draw_fleet(fleet: &FleetState, now_ms: i64, width: u16, height: u16) -> Buffer {
-    let mut view = FleetView::default();
+    draw_fleet_view(&mut FleetView::default(), fleet, now_ms, width, height)
+}
+
+fn draw_fleet_view(
+    view: &mut FleetView,
+    fleet: &FleetState,
+    now_ms: i64,
+    width: u16,
+    height: u16,
+) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
@@ -364,6 +395,150 @@ async fn served_frames_match_their_goldens() {
     let swapped = chat_state(&fleet, worker.as_bytes(), &events[..=swap]);
     assert!(!swapped.reset_pending());
     frame("rewind_after_swap", &draw_chat(&swapped, 110, 24));
+
+    tokio::time::timeout(Duration::from_secs(60), net.shutdown())
+        .await
+        .expect("the net shuts down")
+        .unwrap();
+}
+
+/// Every standing an agent can have on the fleet at once, as the laptop
+/// sees it: one asking for permission, one working, a family whose
+/// one-shot child finished, one whose provider exited, one idle, and one on
+/// a host that has gone offline.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fleet_of_every_standing_matches_its_golden() {
+    let topology = Topology::new()
+        .host("desk")
+        .host("laptop")
+        .host("studio")
+        .link("desk", "laptop")
+        .link("laptop", "studio")
+        .agent(
+            AgentDecl::new("fixer", "desk")
+                .kind(FakeKind::ClaudeSdk)
+                .steps(vec![
+                    text("Running the auth tests first."),
+                    Step::Ask(Ask::Permission(Tool {
+                        name: Some("Bash".to_owned()),
+                        class: ToolClass::Consequential,
+                        input: Some(serde_json::json!({ "command": "cargo test -p auth" })),
+                        outcome: Outcome::default(),
+                        wait_for: None,
+                    })),
+                    Step::TurnEnd,
+                ])
+                .prompt("Fix the auth bug."),
+        )
+        .agent(
+            AgentDecl::new("runner", "desk")
+                .kind(FakeKind::ClaudePty)
+                .steps(vec![
+                    text("Running the relay tests."),
+                    Step::WaitFor {
+                        path: "never".into(),
+                    },
+                    Step::TurnEnd,
+                ])
+                .prompt("Run the relay tests."),
+        )
+        .agent(
+            AgentDecl::new("planner", "desk")
+                .kind(FakeKind::ClaudeSdk)
+                .steps(vec![
+                    text("Handing the specs to a helper."),
+                    Step::TurnEnd,
+                    text("The specs are updated."),
+                    Step::TurnEnd,
+                ])
+                .prompt("Update the specs."),
+        )
+        .agent(
+            AgentDecl::new("crasher", "desk")
+                .kind(FakeKind::Codex)
+                .steps(vec![text("Starting."), Step::Exit { code: 1 }])
+                .prompt("Migrate the store."),
+        )
+        .agent(
+            AgentDecl::new("scout", "desk")
+                .kind(FakeKind::ClaudePty)
+                .steps(vec![text("Found it."), Step::TurnEnd])
+                .prompt("Find the socket name."),
+        )
+        .agent(
+            AgentDecl::new("archivist", "studio")
+                .kind(FakeKind::ClaudePty)
+                .steps(vec![text("Archived."), Step::TurnEnd])
+                .prompt("Archive the old logs."),
+        );
+    let mut net = Net::start(topology).await.unwrap();
+    // Every studio agent listed on the laptop before the studio goes.
+    let archivist = net.agent("archivist").unwrap().id;
+    fleet_when(&net, "laptop", |fleet| {
+        fleet
+            .find(archivist.as_bytes())
+            .is_some_and(|agent| agent.phase() == wire::Phase::Idle)
+    })
+    .await;
+    let planner = net.agent("planner").unwrap().id;
+    let specs = net
+        .spawn_child(
+            "planner",
+            AgentDecl::new("specs", "desk")
+                .kind(FakeKind::ClaudeSdk)
+                .steps(vec![text("3 specs updated."), Step::TurnEnd])
+                .prompt("Update the three specs."),
+        )
+        .await
+        .unwrap();
+    net.stop_daemon("studio").await.unwrap();
+    let ids = |name: &str| net.agent(name).unwrap().id.as_bytes().to_vec();
+    let (fixer, runner, crasher, scout) =
+        (ids("fixer"), ids("runner"), ids("crasher"), ids("scout"));
+    let fleet = fleet_when(&net, "laptop", |fleet| {
+        let phase = |id: &[u8]| fleet.find(id).map(|agent| agent.phase());
+        let exited = |id: &[u8]| {
+            fleet
+                .find(id)
+                .map(|agent| (agent.lifecycle(), agent.exit_cause.clone()))
+        };
+        phase(&fixer) == Some(wire::Phase::NeedsYou)
+            && phase(&runner) == Some(wire::Phase::Working)
+            && phase(&scout) == Some(wire::Phase::Idle)
+            && phase(planner.as_bytes()) == Some(wire::Phase::Idle)
+            && exited(&specs.agent_id).is_some_and(|(lifecycle, cause)| {
+                eprintln!("DIAG {cause:?}");
+                lifecycle == wire::Lifecycle::Exited
+            })
+            && exited(&crasher).is_some_and(|(lifecycle, _)| lifecycle == wire::Lifecycle::Exited)
+            && fleet
+                .hosts()
+                .any(|host| host.name == "studio" && host.presence() == wire::Presence::Offline)
+    })
+    .await;
+    // Ages are drawn against the newest activity, so every one reads alike.
+    let now = fleet
+        .agents()
+        .map(|agent| agent.last_activity_ms)
+        .max()
+        .unwrap()
+        + 1_000;
+    let mut view = FleetView::default();
+    view.local_host = net.host("laptop").unwrap().host_id.as_bytes().to_vec();
+    view.expanded.insert(planner.as_bytes().to_vec());
+    frame(
+        "fleet_standings",
+        &draw_fleet_view(&mut view, &fleet, now, 110, 16),
+    );
+    frame(
+        "fleet_standings_80col",
+        &draw_fleet_view(&mut view, &fleet, now, 80, 16),
+    );
+    view.key(
+        &fleet,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('h')),
+    );
+    frame("hosts", &draw_fleet_view(&mut view, &fleet, now, 110, 16));
 
     tokio::time::timeout(Duration::from_secs(60), net.shutdown())
         .await
