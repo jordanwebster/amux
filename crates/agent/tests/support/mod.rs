@@ -204,9 +204,12 @@ impl Agent {
             untrusted_folder: setup.untrusted_folder,
             ..Script::default()
         };
-        let script = serde_json::to_string(&script)
-            .unwrap()
-            .replace(RELEASE, release.to_str().unwrap());
+        // The placeholder is a whole string in the script, and the path
+        // takes its place as one, escaped as JSON.
+        let script = serde_json::to_string(&script).unwrap().replace(
+            &serde_json::to_string(RELEASE).unwrap(),
+            &serde_json::to_string(&release).unwrap(),
+        );
         let script_path = root.path().join("script.json");
         std::fs::write(&script_path, script).unwrap();
 
@@ -535,10 +538,13 @@ async fn run_when_unlocked(dir: PathBuf, clock: ManualClock) -> Result<ExitCause
 /// A replay fixture with its placeholders filled for this run: `{{cwd}}`
 /// the agent's working directory, `{{version}}` the agent's version, and
 /// `{{uuid:<input id>}}` the uuid headless Claude's message for that input
-/// carries.
+/// carries. `{{cwd}}` stands inside a JSON-RPC line the agent writes, which
+/// is itself a string in the fixture's line, so the path is escaped as JSON
+/// once for each.
 fn localize(text: &str, work: &Path) -> String {
+    let cwd = json_escaped(&json_escaped(work.to_str().unwrap()));
     let mut text = text
-        .replace("{{cwd}}", work.to_str().unwrap())
+        .replace("{{cwd}}", &cwd)
         .replace("{{version}}", agent::VERSION);
     while let Some(start) = text.find("{{uuid:") {
         let end = start + text[start..].find("}}").expect("a closed placeholder");
@@ -547,6 +553,12 @@ fn localize(text: &str, work: &Path) -> String {
         text.replace_range(start..end + 2, &uuid);
     }
     text
+}
+
+/// `text` as it is written inside a JSON string, without the quotes.
+fn json_escaped(text: &str) -> String {
+    let quoted = serde_json::to_string(text).unwrap();
+    quoted[1..quoted.len() - 1].to_owned()
 }
 
 /// Runs a test that hosts a terminal. Its runtime is shut down without

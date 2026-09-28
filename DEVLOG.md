@@ -1,3 +1,18 @@
+2026-09-28 — **Windows fixes from the first CI round, and a first-attach race.**
+ConPTY (through portable-pty, which always asks it to inherit the cursor)
+opens by asking where the cursor is and draws nothing the child writes until
+it hears back; nothing answered, so every hosted terminal on Windows stayed
+blank. The pty host now answers that first request itself with the home
+position of the blank terminal and takes it out of the output. Journal
+segments and the agent's ring are now truncated through a write handle
+(Windows append handles cannot move a file's end). `amux attach` now shows
+the agent's terminal history on a first attach even when its reader delivers
+the history before the terminal goes live, which under load left the screen
+blank. Test support stopped assuming Unix: paths go into JSON escaped, the
+fake Claude's messaging socket is a pipe name on Windows, synthetic agents
+close both halves of their connection (a named pipe has no half-close),
+and socket presence is checked by dialling.
+
 2026-09-28 — **The first push of this branch's CI found three things that
 only fail off a Mac or under load.** Windows checked every text file out with
 CRLF endings, so each interpreter golden (under `fixtures/`, which the old

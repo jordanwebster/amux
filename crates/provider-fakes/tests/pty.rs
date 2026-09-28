@@ -68,12 +68,7 @@ impl Terminal {
             })
             .collect();
         let settings = json!({ "hooks": std::mem::take(&mut hooks_settings) });
-        // Unix socket paths are short; keep this one under /tmp.
-        let socket_dir = tempfile::Builder::new()
-            .prefix("fp")
-            .tempdir_in("/tmp")
-            .unwrap();
-        let socket = socket_dir.keep().join("m.sock");
+        let socket = messaging_socket();
         let script = script_file(&root, script);
         let spawned = pty_host::spawn(pty_host::PtySpawn {
             command: env!("CARGO_BIN_EXE_fake-claude-pty").into(),
@@ -234,6 +229,26 @@ impl Drop for Terminal {
             .handle
             .signal_process_group(pty_host::ProcessGroupSignal::Kill);
     }
+}
+
+/// Where the fake is told to serve its messaging socket, in the form Claude
+/// takes on each system: a Unix socket path, which must be short, or a
+/// named pipe.
+#[cfg(unix)]
+fn messaging_socket() -> PathBuf {
+    let dir = tempfile::Builder::new()
+        .prefix("fp")
+        .tempdir_in("/tmp")
+        .unwrap();
+    dir.keep().join("m.sock")
+}
+
+#[cfg(windows)]
+fn messaging_socket() -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\fake-claude-pty-{}",
+        uuid::Uuid::new_v4().simple()
+    ))
 }
 
 fn lines(path: &Path) -> Vec<Value> {

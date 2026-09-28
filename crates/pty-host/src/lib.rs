@@ -275,19 +275,29 @@ pub fn spawn(spec: PtySpawn) -> Result<PtyProcess, PtyError> {
     let (output_tx, output_rx) = mpsc::channel::<Bytes>(IO_CHANNEL_CAPACITY);
     let (exit_tx, exit_rx) = watch::channel(None);
 
+    #[cfg(windows)]
+    let mut cursor_request = CursorRequest::answering(input_tx.clone());
     tokio::task::spawn_blocking(move || {
         let mut buffer = [0; 4096];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
-                    if output_tx
-                        .blocking_send(Bytes::copy_from_slice(&buffer[..read]))
-                        .is_err()
-                    {
-                        break;
+                    #[cfg(windows)]
+                    let bytes = Bytes::from(cursor_request.take(&buffer[..read]));
+                    #[cfg(not(windows))]
+                    let bytes = Bytes::copy_from_slice(&buffer[..read]);
+                    if !bytes.is_empty() && output_tx.blocking_send(bytes).is_err() {
+                        return;
                     }
                 }
+            }
+        }
+        #[cfg(windows)]
+        {
+            let held = cursor_request.rest();
+            if !held.is_empty() {
+                let _ = output_tx.blocking_send(Bytes::from(held));
             }
         }
     });
@@ -327,6 +337,75 @@ pub fn spawn(spec: PtySpawn) -> Result<PtyProcess, PtyError> {
         handle: PtyHandle { shared },
         exit: ExitMonitor { rx: exit_rx },
     })
+}
+
+/// ConPTY's question when it opens: where is the cursor?
+#[cfg(any(windows, test))]
+const CURSOR_REQUEST: &[u8] = b"\x1b[6n";
+/// The answer for a terminal that starts blank: row 1, column 1.
+#[cfg(any(windows, test))]
+const CURSOR_HOME: &[u8] = b"\x1b[1;1R";
+
+/// ConPTY's opening cursor-position request, answered by the host.
+///
+/// portable-pty creates every pseudoconsole with
+/// `PSEUDOCONSOLE_INHERIT_CURSOR`, so ConPTY opens by writing a
+/// cursor-position request and then draws nothing the child writes until
+/// an answer arrives on its input. Nothing downstream can answer it
+/// properly: an agent running unattended has no terminal at all, and an
+/// attached client would answer with the cursor of its own screen, not the
+/// hosted one's. The hosted terminal starts blank, so the host answers
+/// "row 1, column 1", which leaves ConPTY where it would be had it not
+/// asked, and takes the request out of the output. Only that first request
+/// is ConPTY's own: it answers its child's cursor queries itself, from its
+/// screen, so everything after it passes through untouched.
+#[cfg(any(windows, test))]
+struct CursorRequest {
+    /// The terminal's input, until the request is answered.
+    answer: Option<mpsc::Sender<Bytes>>,
+    /// Output that may be the start of a request split across reads.
+    held: Vec<u8>,
+}
+
+#[cfg(any(windows, test))]
+impl CursorRequest {
+    fn answering(input: mpsc::Sender<Bytes>) -> Self {
+        Self {
+            answer: Some(input),
+            held: Vec::new(),
+        }
+    }
+
+    /// `chunk` as the hosted terminal's output: without ConPTY's request,
+    /// which is answered as it is found.
+    fn take(&mut self, chunk: &[u8]) -> Vec<u8> {
+        if self.answer.is_none() {
+            return chunk.to_vec();
+        }
+        let mut bytes = std::mem::take(&mut self.held);
+        bytes.extend_from_slice(chunk);
+        if let Some(at) = bytes
+            .windows(CURSOR_REQUEST.len())
+            .position(|window| window == CURSOR_REQUEST)
+        {
+            bytes.drain(at..at + CURSOR_REQUEST.len());
+            if let Some(answer) = self.answer.take() {
+                let _ = answer.blocking_send(Bytes::from_static(CURSOR_HOME));
+            }
+            return bytes;
+        }
+        let partial = (1..CURSOR_REQUEST.len())
+            .rev()
+            .find(|&len| bytes.ends_with(&CURSOR_REQUEST[..len]))
+            .unwrap_or(0);
+        self.held = bytes.split_off(bytes.len() - partial);
+        bytes
+    }
+
+    /// Output held back when the terminal closed.
+    fn rest(self) -> Vec<u8> {
+        self.held
+    }
 }
 
 /// End the entire process group and return its exit status.
@@ -408,6 +487,43 @@ fn anyhow_to_io(error: anyhow::Error) -> std::io::Error {
     match error.downcast::<std::io::Error>() {
         Ok(error) => error,
         Err(error) => std::io::Error::other(error),
+    }
+}
+
+#[cfg(test)]
+mod cursor_request_tests {
+    use super::*;
+
+    fn request() -> (CursorRequest, mpsc::Receiver<Bytes>) {
+        let (input, answers) = mpsc::channel(4);
+        (CursorRequest::answering(input), answers)
+    }
+
+    #[test]
+    fn the_first_request_is_answered_from_home_and_taken_out() {
+        let (mut request, mut answers) = request();
+        assert_eq!(request.take(b"\x1b[?25l\x1b[6n"), b"\x1b[?25l");
+        assert_eq!(answers.try_recv().unwrap(), CURSOR_HOME);
+        assert_eq!(request.take(b"drawn\x1b[6n"), b"drawn\x1b[6n");
+        assert!(answers.try_recv().is_err(), "answered once");
+    }
+
+    #[test]
+    fn a_request_split_across_reads_is_still_found() {
+        let (mut request, mut answers) = request();
+        assert_eq!(request.take(b"\x1b"), b"");
+        assert_eq!(request.take(b"[6"), b"");
+        assert!(answers.try_recv().is_err());
+        assert_eq!(request.take(b"nafter"), b"after");
+        assert_eq!(answers.try_recv().unwrap(), CURSOR_HOME);
+    }
+
+    #[test]
+    fn held_output_that_was_no_request_is_kept() {
+        let (mut request, _answers) = request();
+        assert_eq!(request.take(b"a\x1b["), b"a");
+        assert_eq!(request.take(b"mb\x1b"), b"\x1b[mb");
+        assert_eq!(request.rest(), b"\x1b");
     }
 }
 
