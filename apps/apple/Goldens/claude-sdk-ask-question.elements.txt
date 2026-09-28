@@ -1,7 +1,7 @@
 shell |  | agents | 0,62,402,778
 chat |  | asker | 0,62,402,778
-chat.row.prompt | Tidy the release notes. |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Tidy the release notes. |  | 18,160,366,40
 chat.row.question | Asking, Which changes should the release notes keep? |  | 18,211,366,20
 chat.header | /t/a/n/d/work · desk | live | 18,64,202,54
 chat.back | Back |  | 16,68,42,46
@@ -16,8 +16,8 @@ ask.option.other |  |  | 28,774,346,40
  | Back |  | 16,68,42,46
  | asker, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Tidy the release notes. |  | 192,132,192,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Tidy the release notes. |  | 192,160,192,40
  | Asking, Which changes should the release notes keep? |  | 18,211,366,20
  | Question |  | 46,620,70,20
  | More |  | 345,615,41,30

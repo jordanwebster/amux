@@ -1,7 +1,7 @@
 shell |  | agents | 0,62,402,778
 chat |  | planner | 0,62,402,778
-chat.row.prompt | Why do the pairing errors disagree? |  | 18,132,366,40
-chat.row.boundary | Started |  | 18,184,366,16
+chat.row.boundary | Started |  | 18,132,366,16
+chat.row.prompt | Why do the pairing errors disagree? |  | 18,160,366,40
 chat.row.prose | Reading the pairing code first. | final | 18,211,366,20
 chat.prose.render |  | rendered | 18,211,366,20
 chat.row.explore | Read, crates/wire/src/codes.rs |  | 18,243,366,20
@@ -20,8 +20,8 @@ chat.send | Send |  | 342,784,34,34 (disabled)
  | Back |  | 16,68,42,46
  | planner, /t/a/n/d/work · desk |  | 51,72,156,38
  | More |  | 344,69,44,44
- | Why do the pairing errors disagree? |  | 95,132,289,40
- | Started |  | 18,184,366,16
+ | Started |  | 18,132,366,16
+ | Why do the pairing errors disagree? |  | 95,160,289,40
  | Reading the pairing code first. |  | 18,211,366,20
  | Read, crates/wire/src/codes.rs |  | 18,243,366,20
  | The pairing errors all come from one table in the wire crate, so they can share one string. |  | 18,275,366,43
