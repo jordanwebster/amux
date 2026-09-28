@@ -292,13 +292,15 @@ public struct ChatScreen: View {
                         .onAppear { if index < 8 { model.reachedTop() } }
                 }
             }
-            .scrollTargetLayout()
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 8)
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .scrollDismissesKeyboard(.interactively)
+        // Only edges and points: the rows are not scroll targets. A position that
+        // tracks a row puts it back at the scroll view's bare top-left corner when the
+        // space changes, under the header and out of the gutter.
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .onScrollGeometryChange(for: Bool.self) { geometry in

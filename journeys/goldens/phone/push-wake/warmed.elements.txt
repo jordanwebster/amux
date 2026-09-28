@@ -10,13 +10,13 @@ home.row.<asker> | asker, Get ready., desk is offline, desk, /tmp/amux-phone-jou
 home.row.<asker>.age.volatile | <volatile>
 home.row.<asker>.detail.volatile | <volatile>
 chat |  | asker | 0,62,402,778
-chat.row.prompt | Get ready. |  | 0,0,366,40
-chat.row.boundary | Started |  | 0,52,366,16
-chat.row.prose | Ready to deploy. | final | 0,79,366,20
-chat.prose.render |  | rendered | 0,79,366,20
+chat.row.prompt | Get ready. |  | 18,132,366,40
+chat.row.boundary | Started |  | 18,184,366,16
+chat.row.prose | Ready to deploy. | final | 18,211,366,20
+chat.prose.render |  | rendered | 18,211,366,20
 chat.row.turn-end | <volatile>
-chat.row.prompt | Deploy it. |  | 0,139,366,40
-chat.row.command | Wants to run, deploy --prod |  | 0,190,366,20
+chat.row.prompt | Deploy it. |  | 18,271,366,40
+chat.row.command | Wants to run, deploy --prod |  | 18,322,366,20
 chat.header | desk · away | detached | 18,64,147,54
 chat.back | Back |  | 16,68,42,46
 chat.title | asker | asker | 51,72,102,38
@@ -53,12 +53,12 @@ you.help.caption |  |  | 18,599,354,31
  | Back |  | 16,68,42,46
  | asker, desk · away |  | 51,72,102,38
  | More |  | 344,69,44,44
- | Get ready. |  | 263,0,103,40
- | Started |  | 0,52,366,16
- | Ready to deploy. |  | 0,79,366,20
- | Worked <t> · $0.00 |  | 27,111,130,16
- | Deploy it. |  | 269,139,97,40
- | Wants to run, deploy --prod |  | 0,190,366,20
+ | Get ready. |  | 281,132,103,40
+ | Started |  | 18,184,366,16
+ | Ready to deploy. |  | 18,211,366,20
+ | Worked <t> · $0.00 |  | 45,243,130,16
+ | Deploy it. |  | 287,271,97,40
+ | Wants to run, deploy --prod |  | 18,322,366,20
  | Wants to run a command |  | 46,552,189,20
  | More |  | 345,547,41,30
  | deploy --prod |  | 28,584,109,18
