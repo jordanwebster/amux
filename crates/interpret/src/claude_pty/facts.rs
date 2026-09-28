@@ -1230,19 +1230,25 @@ fn permission_ask(
     )
 }
 
-/// Every suggestion as the one entry a folded menu offers: choosing it
-/// applies them all, where the first one says.
+/// The one entry a folded menu offers. Claude 2.1.283 words it by its
+/// directory ("always allow access to <dir>") and, chosen, adds the
+/// directory but leaves the mode as it was: a mode suggestion counts only
+/// when nothing else is folded with it.
 fn folded(choices: Vec<ScopeChoice>) -> ScopeChoice {
     let mut all = ScopeChoice::default();
+    let mut mode = String::new();
     for (at, choice) in choices.into_iter().enumerate() {
         if at == 0 {
             all.destination = choice.destination;
         }
         all.rules.extend(choice.rules);
         all.directories.extend(choice.directories);
-        if all.mode.is_empty() {
-            all.mode = choice.mode;
+        if mode.is_empty() {
+            mode = choice.mode;
         }
+    }
+    if all.rules.is_empty() && all.directories.is_empty() {
+        all.mode = mode;
     }
     all
 }

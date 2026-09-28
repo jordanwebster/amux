@@ -116,7 +116,7 @@
           "ask:1"
         ]
       },
-      "note": "Claude 2.1.283 draws one scoped entry for a directory and a mode: the ask offers that one, carrying both"
+      "note": "Claude 2.1.283 draws one scoped entry for a directory and a mode: the ask offers that one, which adds the directory and leaves the mode alone"
     },
     {
       "input": {
