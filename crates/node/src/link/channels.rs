@@ -24,7 +24,7 @@ use wire::pb;
 use super::{ByteStream, OpenError};
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::routing::{LinkId, LinkRegistry, Revocations, Route};
+use crate::routing::{LinkId, LinkRegistry, RevocationMark, Revocations, Route};
 use crate::transport::{channel_from_single_io, configure_tonic_endpoint_keepalive};
 use crate::trust::SharedTrustStore;
 use crate::{AgentId, HostId};
@@ -329,6 +329,7 @@ impl ChannelPool {
             .identity
             .client_tls_config_for_peer(security.trust_store.clone(), key.peer)?;
         let connector = TlsConnector::from(Arc::new(config));
+        let begun = security.revocations.mark();
         let server_name = ServerName::try_from("amux-device".to_string())
             .map_err(|error| ChannelError::Tls(error.to_string()))?;
         let lifetime = Arc::new(CancellationToken::new());
@@ -349,7 +350,7 @@ impl ChannelPool {
         .await
         .map_err(|_| ChannelError::Handshake("TLS handshake timed out".to_string()))?
         .map_err(|error| ChannelError::Tls(error.to_string()))?;
-        let tls = TrustAnswer::new(tls, key.peer, security.revocations.clone());
+        let tls = TrustAnswer::new(tls, key.peer, security.revocations.clone(), begun);
         let endpoint = configure_tonic_endpoint_keepalive(Endpoint::from_static("https://peer"));
         let hold = (key.class == ChannelClass::Bulk).then(|| {
             self.bulk_response_holds
@@ -470,21 +471,24 @@ pub const TRUST_REVOKED: &str = "the host no longer trusts this machine";
 /// has judged the client's certificate, so the answer comes with the first
 /// read: application data means it was taken, and a certificate_revoked
 /// alert means the host no longer trusts this one. Either is kept in
-/// `revocations`, and the refusal fails the read with an error
-/// [`PeerChannel`] names to the caller.
+/// `revocations` (data only against a refusal older than this channel),
+/// and the refusal fails the read with an error [`PeerChannel`] names to
+/// the caller.
 struct TrustAnswer<T> {
     inner: T,
     peer: HostId,
     revocations: Revocations,
+    begun: RevocationMark,
     answered: bool,
 }
 
 impl<T> TrustAnswer<T> {
-    fn new(inner: T, peer: HostId, revocations: Revocations) -> Self {
+    fn new(inner: T, peer: HostId, revocations: Revocations, begun: RevocationMark) -> Self {
         Self {
             inner,
             peer,
             revocations,
+            begun,
             answered: false,
         }
     }
@@ -512,7 +516,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for TrustAnswer<T> {
             Ok(()) => {
                 if !self.answered && buf.filled().len() > before {
                     self.answered = true;
-                    self.revocations.clear(self.peer);
+                    self.revocations.clear_answered(self.peer, self.begun);
                 }
                 Poll::Ready(Ok(()))
             }

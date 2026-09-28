@@ -1,3 +1,15 @@
+2026-09-28 — **A revocation is not undone by an answer older than it.** A
+host that stops trusting this one says so as it closes the link, and a
+later stream it accepts takes that back. But a stream begun just before
+the revocation can carry the host's acceptance from while it still
+trusted this one, and on a macOS runner that acceptance was read after
+the close had been noted: the fresh revocation was erased and the host
+listed as merely away. Revocations now keep a note count; a stream marks
+it as it begins and clears the host only if the revocation is older than
+the stream. Holding each stream's first read and delaying the link's
+cleanup reproduces the CI failure every time under the old rule and
+passes under the new one.
+
 2026-09-28 — **The component snapshot batch's bound follows its measured
 duration.** Holding each picture until it has not changed for half a
 second doubled the batch, and the 300 s bound set for the old batch was

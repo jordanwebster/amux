@@ -72,40 +72,78 @@ impl RoutingState {
 /// certificate again, on a link or a stream, when this host pairs with it
 /// again, or when this host forgets it.
 ///
+/// Taking the certificate again only counts from a stream begun after the
+/// host said so. A stream begun before may carry the host's answer from
+/// while it still trusted this one, and that answer can be read after the
+/// refusal arrived on another path: it says nothing about now.
+///
 /// A watch, because a stream notes the refusal from inside a read, and a
 /// stream waiting to reopen to a host that refused it wakes when the host
 /// leaves the set.
 #[derive(Clone)]
-pub(crate) struct Revocations(Arc<watch::Sender<HashSet<HostId>>>);
+pub(crate) struct Revocations(Arc<watch::Sender<Revoked>>);
+
+/// The revoked hosts, each with the count of notes at which it was noted.
+#[derive(Default)]
+pub(crate) struct Revoked {
+    hosts: HashMap<HostId, u64>,
+    notes: u64,
+}
+
+/// Where the notes stood when a stream began: see
+/// [`Revocations::clear_answered`].
+#[derive(Clone, Copy)]
+pub(crate) struct RevocationMark(u64);
 
 impl Default for Revocations {
     fn default() -> Self {
-        Self(Arc::new(watch::Sender::new(HashSet::new())))
+        Self(Arc::new(watch::Sender::new(Revoked::default())))
     }
 }
 
 impl Revocations {
     pub(crate) fn note(&self, host_id: HostId) {
-        self.0.send_if_modified(|hosts| hosts.insert(host_id));
+        self.0.send_modify(|revoked| {
+            revoked.notes += 1;
+            revoked.hosts.insert(host_id, revoked.notes);
+        });
     }
 
     pub(crate) fn clear(&self, host_id: HostId) {
-        self.0.send_if_modified(|hosts| hosts.remove(&host_id));
+        self.0
+            .send_if_modified(|revoked| revoked.hosts.remove(&host_id).is_some());
+    }
+
+    /// Marks where the notes stand as a stream to a host begins.
+    pub(crate) fn mark(&self) -> RevocationMark {
+        RevocationMark(self.0.borrow().notes)
+    }
+
+    /// `host_id` took this host's certificate on a stream begun at `mark`:
+    /// it leaves the set unless it was noted since the stream began.
+    pub(crate) fn clear_answered(&self, host_id: HostId, mark: RevocationMark) {
+        self.0.send_if_modified(|revoked| {
+            let before = revoked.hosts.get(&host_id).is_some_and(|&at| at <= mark.0);
+            if before {
+                revoked.hosts.remove(&host_id);
+            }
+            before
+        });
     }
 
     pub(crate) fn contains(&self, host_id: HostId) -> bool {
-        self.0.borrow().contains(&host_id)
+        self.0.borrow().hosts.contains_key(&host_id)
     }
 
     /// Resolves when `host_id`, in the set now, leaves it; never when it
     /// is not in the set now.
     pub(crate) fn cleared(&self, host_id: HostId) -> impl Future<Output = ()> + Send + use<> {
-        let mut hosts = self.0.subscribe();
-        let marked = hosts.borrow_and_update().contains(&host_id);
+        let mut revoked = self.0.subscribe();
+        let marked = revoked.borrow_and_update().hosts.contains_key(&host_id);
         async move {
             if !marked
-                || hosts
-                    .wait_for(|hosts| !hosts.contains(&host_id))
+                || revoked
+                    .wait_for(|revoked| !revoked.hosts.contains_key(&host_id))
                     .await
                     .is_err()
             {
@@ -980,5 +1018,22 @@ mod tests {
         assert!(
             matches!(rx.recv().await, Some(HostReachabilityEvent::Added { host }) if host.name == "two")
         );
+    }
+
+    /// A stream begun before a host revoked this one may deliver the
+    /// host's earlier acceptance after the revocation was noted; only a
+    /// stream begun after the revocation can take it back.
+    #[test]
+    fn only_an_answer_begun_after_a_revocation_clears_it() {
+        let revocations = Revocations::default();
+        let desk = HostId::from_u128(1);
+        let before = revocations.mark();
+        revocations.note(desk);
+        revocations.clear_answered(desk, before);
+        assert!(revocations.contains(desk));
+
+        let after = revocations.mark();
+        revocations.clear_answered(desk, after);
+        assert!(!revocations.contains(desk));
     }
 }
