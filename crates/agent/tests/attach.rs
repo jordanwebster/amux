@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use agent::ExitCause;
 use agent::attach::Attached;
-use provider_fakes::Step;
 use support::*;
 use wire::{PtyMode, StopMode};
 
@@ -65,16 +64,19 @@ impl Screen {
     }
 }
 
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn two_clients_read_terminal_claude_from_its_files_and_type_into_it() {
     terminal_test(async {
         let agent = Agent::start(Setup {
             kind: "claude_pty",
             steps: vec![
-                Step::Text {
+                provider_fakes::Step::Text {
                     chunks: vec!["answered at the terminal".into()],
                 },
-                Step::TurnEnd,
+                provider_fakes::Step::TurnEnd,
             ],
             ..Setup::sdk()
         })

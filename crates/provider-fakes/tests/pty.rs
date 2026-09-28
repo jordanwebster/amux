@@ -2,6 +2,12 @@
 //! claude-2.1 keymap types: what it reports lands in the transcript and on
 //! the hook commands, and every row and payload has a recorded shape.
 
+// Unix only: Windows does not host terminal Claude. ConPTY re-renders the
+// child's output in its own escape sequences, and Claude's messaging socket and
+// the fake's raw console mode are Unix-only in this build; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost".
+#![cfg(unix)]
+
 mod support;
 
 use std::ffi::OsString;
@@ -25,9 +31,7 @@ struct Terminal {
     _dir: tempfile::TempDir,
     transcript: PathBuf,
     hooks: PathBuf,
-    #[cfg_attr(not(unix), allow(dead_code))]
     socket: PathBuf,
-    #[cfg_attr(not(unix), allow(dead_code))]
     token: PathBuf,
 }
 
@@ -231,24 +235,14 @@ impl Drop for Terminal {
     }
 }
 
-/// Where the fake is told to serve its messaging socket, in the form Claude
-/// takes on each system: a Unix socket path, which must be short, or a
-/// named pipe.
-#[cfg(unix)]
+/// Where the fake is told to serve its messaging socket: a Unix socket path,
+/// which must be short.
 fn messaging_socket() -> PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("fp")
         .tempdir_in("/tmp")
         .unwrap();
     dir.keep().join("m.sock")
-}
-
-#[cfg(windows)]
-fn messaging_socket() -> PathBuf {
-    PathBuf::from(format!(
-        r"\\.\pipe\fake-claude-pty-{}",
-        uuid::Uuid::new_v4().simple()
-    ))
 }
 
 fn lines(path: &Path) -> Vec<Value> {
@@ -560,9 +554,6 @@ async fn a_tool_server_dialog_is_announced_by_notification_and_held_until_escape
     assert_eq!(terminal.exit_code().await, 0);
 }
 
-// Windows gap: Claude's messaging socket is a Unix-domain socket, and the
-// fake, like Claude, serves none off Unix.
-#[cfg(unix)]
 #[tokio::test]
 async fn a_messaging_socket_message_runs_a_turn_and_hooks_get_its_credentials() {
     use tokio::io::AsyncWriteExt;

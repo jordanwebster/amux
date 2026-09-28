@@ -37,7 +37,14 @@ The test job runs with `--no-fail-fast`, so a platform reports every failing
 test binary, not only the first. Its matrix does not fail fast either: a
 failure on one operating system does not cancel the others. The Windows
 runner compiles and runs every test target; suites that need Unix processes,
-PTYs or sockets are compiled out there. On Linux and macOS the same run is the
+PTYs or sockets are compiled out there. Among them are the tests that host
+terminal Claude: the agent's terminal cases (in its `attach`, `dump`,
+`providers`, `tools` and `lifecycle` suites), provider-fakes' `pty` suite and
+the terminal module of its `conformance` suite. Windows does not host
+terminal Claude in this build (see
+[Windows, as a stated cost](ARCHITECTURE.md#windows-as-a-stated-cost)), so
+the Windows job runs the agent's test of that refusal instead, and every
+headless Claude and Codex test as everywhere. On Linux and macOS the same run is the
 system lane as well: the built `amux` binary's suites (`process`,
 `supervise_cli`, `overlap`, `attach` and the rest), node's `supervisor` suite
 and the `survive-daemon` system journey are ordinary test targets.

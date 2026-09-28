@@ -1027,6 +1027,9 @@ async fn codex_runs_amuxs_tools_through_the_install_path() {
     the_harness_runs_the_tool_server_from_the_install_path("codex").await;
 }
 
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_runs_amuxs_tools_through_the_install_path() {
     terminal_test(the_harness_runs_the_tool_server_from_the_install_path(

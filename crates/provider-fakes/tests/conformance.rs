@@ -102,6 +102,11 @@ mod claude_sdk {
     });
 }
 
+// Unix only: Windows does not host terminal Claude, and ConPTY re-renders the
+// child's output in its own escape sequences, so byte-exact playback against
+// these Unix recordings cannot hold there; see docs/ARCHITECTURE.md, "Windows,
+// as a stated cost".
+#[cfg(unix)]
 mod claude_pty {
     use super::*;
 

@@ -225,6 +225,13 @@ any transcript rows a follower has not read yet.
 | `claude_sdk` | `claude --print` over stream-JSON on stdin and stdout | Each stdout line | Stream-JSON lines on stdin |
 | `codex` | `codex app-server` over JSON-RPC on stdin and stdout | Each stdout line | JSON-RPC lines on stdin |
 
+Terminal Claude is hosted on Unix only. On Windows an agent of kind
+`claude_pty` ends before spawning anything, with the cause "could not start
+the provider: terminal Claude is not hosted on Windows in this build;
+headless Claude and Codex are"; the other two kinds run there as here.
+[Windows, as a stated cost](ARCHITECTURE.md#windows-as-a-stated-cost) gives
+the reasons.
+
 ### Terminal Claude
 
 Before Claude starts, the agent runs `claude --version` and resolves the

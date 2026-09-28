@@ -339,7 +339,8 @@ async fn a_journal_write_that_fails_ends_the_incarnation_and_the_next_writes_its
     assert_eq!(agent.exit().await, ExitCause::Killed);
 }
 
-// The straggler is started by a POSIX shell.
+// Unix only: the straggler is started by a POSIX shell, and Windows does not host terminal
+// Claude (ConPTY re-renders its output; see docs/ARCHITECTURE.md, "Windows, as a stated cost").
 #[cfg(unix)]
 #[test]
 fn the_agent_exits_on_its_child_exit_while_a_straggler_holds_the_terminal() {

@@ -217,6 +217,9 @@ async fn a_restart_from_the_checkpoint_re_emits_open_items_and_carries_keys_on()
 /// is typed through that keymap; hooks arrive through the hook binary on
 /// private/hooks.sock and the transcript is followed from the path the
 /// session start names.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn a_terminal_claude_agent_types_through_its_keymap_and_hears_its_hooks() {
     terminal_test(async {
@@ -350,6 +353,9 @@ async fn a_message_mid_turn_is_consumed_before_a_one_shot_child_exits(
     }
 }
 
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_takes_an_agent_message_on_its_messaging_socket() {
     terminal_test(
@@ -357,6 +363,9 @@ fn terminal_claude_takes_an_agent_message_on_its_messaging_socket() {
     );
 }
 
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_without_a_socket_has_the_message_pasted() {
     terminal_test(a_message_mid_turn_is_consumed_before_a_one_shot_child_exits("claude_pty", true));
@@ -519,12 +528,16 @@ async fn codex_replays_transport_loss_mid_turn() {
     assert_no_drift(&agent);
 }
 
+#[cfg(unix)]
 const PTY_PROMPT: &str = "Use the Bash tool to run exactly: printf denied > denied.txt. Then stop.";
 
 /// Terminal Claude: input goes live, the prompt is typed through the
 /// keymap, the session starts, the permission menu is answered with a
 /// denial and its feedback, the turn ends, and the session runs to the end
 /// of the recording.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_replays_a_prompt_a_denial_with_feedback_and_its_end() {
     terminal_test(async {
@@ -556,6 +569,9 @@ fn terminal_claude_replays_a_prompt_a_denial_with_feedback_and_its_end() {
 /// / Yes, and switch to auto mode / No. A deny with a note reaches No: the
 /// call is refused, the session stays in manual mode and the note follows
 /// as a prompt.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
     use prost::Message as _;
@@ -639,6 +655,9 @@ fn terminal_claude_denies_on_the_menu_that_offers_auto_mode() {
 /// The question reaches the daemon before Claude counts as ready, a prompt
 /// sent meanwhile waits instead of being typed into the dialog, and
 /// trusting the folder starts the session, which takes the prompt.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_asks_to_trust_its_folder_before_taking_a_prompt() {
     terminal_test(async {
@@ -680,6 +699,9 @@ fn terminal_claude_asks_to_trust_its_folder_before_taking_a_prompt() {
 }
 
 /// Answering the trust question with Exit ends Claude, as its own No does.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_exits_when_its_folder_is_not_trusted() {
     terminal_test(async {
@@ -705,6 +727,9 @@ fn terminal_claude_exits_when_its_folder_is_not_trusted() {
 /// wrote no transcript for it and would refuse to resume it: the next
 /// incarnation starts the session under the same id instead, and takes a
 /// prompt.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn a_terminal_session_that_never_began_is_started_not_resumed() {
     terminal_test(async {
@@ -740,6 +765,9 @@ fn a_terminal_session_that_never_began_is_started_not_resumed() {
 }
 
 /// Terminal Claude dies while its permission menu is open.
+// Unix only: Windows does not host terminal Claude (ConPTY re-renders its output; see
+// docs/ARCHITECTURE.md, "Windows, as a stated cost").
+#[cfg(unix)]
 #[test]
 fn terminal_claude_replays_transport_loss_mid_turn() {
     terminal_test(async {
@@ -761,4 +789,24 @@ fn terminal_claude_replays_transport_loss_mid_turn() {
         assert!(log.ask_keys().is_empty(), "the open ask is closed");
         assert_no_drift(&agent);
     });
+}
+
+/// Windows does not host terminal Claude: the agent ends before spawning
+/// anything and says why, in words the chat shows.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn windows_refuses_terminal_claude_and_names_the_platform() {
+    let agent = Agent::start(Setup {
+        kind: "claude_pty",
+        ..Setup::sdk()
+    })
+    .await;
+    let cause = agent.exit().await;
+    let why =
+        "terminal Claude is not hosted on Windows in this build; headless Claude and Codex are";
+    assert_eq!(cause, ExitCause::Unstarted(why.to_owned()));
+    assert_eq!(
+        cause.to_string(),
+        format!("could not start the provider: {why}")
+    );
 }

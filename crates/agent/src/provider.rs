@@ -74,6 +74,14 @@ pub enum ProviderError {
     Spawn { command: String, source: io::Error },
     #[error("agents of kind {0:?} cannot be hosted yet")]
     Unhosted(String),
+    /// Terminal Claude is hosted on Unix only: ConPTY re-renders the child's
+    /// output in its own escape sequences, and Claude's messaging socket and
+    /// the fake's raw console mode are Unix-only. docs/ARCHITECTURE.md
+    /// records the gap under "Windows, as a stated cost".
+    #[error(
+        "terminal Claude is not hosted on Windows in this build; headless Claude and Codex are"
+    )]
+    TerminalOnWindows,
     #[error("{0}")]
     Io(#[from] io::Error),
 }
@@ -352,6 +360,9 @@ impl Provider {
         dir: &Path,
         events: mpsc::Sender<ProviderEvent>,
     ) -> Result<Self, ProviderError> {
+        if cfg!(windows) {
+            return Err(ProviderError::TerminalOnWindows);
+        }
         let (session, mut resume) = provider_session(spec, dir)?;
         // Claude writes a session's transcript once the session begins; one
         // that ended before (at its folder-trust dialog, say) has none, and

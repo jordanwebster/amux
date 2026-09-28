@@ -1,3 +1,15 @@
+2026-09-28 — **Terminal Claude is hosted on Unix only, and says so on
+Windows.** On Windows an agent of kind `claude_pty` now ends before spawning
+anything with the cause "terminal Claude is not hosted on Windows in this
+build; headless Claude and Codex are". Three things stand in the way there:
+ConPTY re-renders the child's output in its own escape sequences, so playback
+cannot be byte-exact against the Unix recordings; Claude's messaging socket
+is Unix-only; and the fake terminal Claude's raw console mode is Unix-only.
+The tests that host terminal Claude (the agent's terminal cases,
+provider-fakes' `pty` suite and the terminal conformance module) are compiled
+for Unix only, and the Windows job runs a test of the refusal instead.
+Architecture, agent-process, CI and testing docs record the gap.
+
 2026-09-28 — **`just test` bounds its compile and its run separately.** One
 900 s bound covered compiling and running every suite together, which a
 macOS runner outgrew with every binary still progressing. The workspace test

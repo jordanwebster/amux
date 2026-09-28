@@ -387,6 +387,15 @@ nicer in several places, and Windows pays for each:
   its control socket (`supervisor.sock`), and the supervisor stops its child
   by closing the activation pipe.
 - **SSH.** Pairing and linking over SSH need a Unix host at the far end.
+- **Terminal Claude.** Not hosted on Windows in this build: an agent of kind
+  `claude_pty` there ends before spawning anything, with the cause "terminal
+  Claude is not hosted on Windows in this build; headless Claude and Codex
+  are". Three things stand in the way. ConPTY re-renders the child's output
+  in its own escape sequences, so the byte-exact conformance the terminal
+  interpreter is held to against Unix recordings cannot hold; Claude's
+  messaging socket is Unix-only; and the fake terminal Claude's raw console
+  mode is Unix-only. Headless Claude and Codex talk over stdio and are
+  hosted on Windows as everywhere else.
 - The login item is a logon task, and keep-awake is `SetThreadExecutionState`.
 
 ## The crate map
