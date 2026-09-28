@@ -124,10 +124,7 @@ public struct ChatScreen: View {
                 .identified("chat.newActivity", label: String(localized: "New activity"), value: "shown")
             }
         }
-        // A bar rather than an inset: the feed's scroll edge effect only reaches under a
-        // bar, so rows scrolled up soften behind the header and the status bar instead of
-        // showing through beside the header's pill.
-        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatStanding(
                 model: model, subject: subject, showing: $showing, putDown: putDown,
@@ -214,7 +211,9 @@ public struct ChatScreen: View {
                 .identified(
                     "chat.header", label: placeLine,
                     value: detached ? "detached" : (subject.reachable ? "live" : "away"))
-                Spacer(minLength: 6)
+                // The pill keeps its own width but may grow up to the buttons' ordinary
+                // spacing, so a long place line loses as little as it can.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if let changes = model.changes {
                     Button {
                         putDown += 1
@@ -244,6 +243,16 @@ public struct ChatScreen: View {
         .padding(.horizontal, design.metrics.gutter)
         .padding(.top, 2)
         .padding(.bottom, 6)
+        // Rows scrolled up fade into the ground behind the header and the status bar
+        // instead of showing crisp beside the pill. A drawn fade rather than a safe-area
+        // bar's scroll edge effect: that blur is not drawn the same way twice.
+        .background {
+            LinearGradient(
+                stops: [.init(color: design.ground.color, location: 0.6),
+                        .init(color: design.ground.color.opacity(0), location: 1)],
+                startPoint: .top, endPoint: .bottom)
+            .ignoresSafeArea(edges: .top)
+        }
     }
 
     private var overflow: some View {

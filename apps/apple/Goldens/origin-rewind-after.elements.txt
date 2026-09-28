@@ -9,9 +9,9 @@ chat.row.prompt | Carry on. |  | 18,271,366,40
 chat.row.prose | A second turn, after the checkpoint. | final | 18,322,366,20
 chat.prose.render |  | rendered | 18,322,366,20
 chat.row.turn-end | <volatile>
-chat.header | Exited · while the daemon was away | live | 18,64,295,54
+chat.header | Exited · while the daemon was away | live | 18,64,311,54
 chat.back | Back |  | 16,68,42,46
-chat.title | keeper | keeper | 51,72,250,38
+chat.title | keeper | keeper | 51,72,265,38
 chat.more | More |  | 344,69,44,44
 chat.field | keeper has exited · a message resumes it |  | 26,755,350,20
 chat.attach | Attach |  | 26,783,37,36
@@ -19,7 +19,7 @@ chat.dictate | Dictate | idle | 55,781,33,40
 chat.model | claude-fake-1 · Default |  | 83,784,114,34
 chat.resume | Resume |  | 287,784,89,34 (disabled)
  | Back |  | 16,68,42,46
- | keeper, Exited · while the daemon was away |  | 51,72,250,38
+ | keeper, Exited · while the daemon was away |  | 51,72,265,38
  | More |  | 344,69,44,44
  | Remember this recovery turn. |  | 139,132,245,40
  | Started |  | 18,184,366,16
