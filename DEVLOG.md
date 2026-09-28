@@ -1,3 +1,19 @@
+2026-09-28 — **A peer is told why the link closed even when it writes
+first.** A host that stops trusting another says so on the link's control
+stream and closes; over a multiplexed carrier (the relay, SSH, in-process
+test links) the close ran to its end and dropped the connection as soon as
+its own frames were written, and anything left was cut off 100 ms later.
+yamux sends before it reads, so a peer with anything to write (a window
+update, an RTT ping) found its write failing, gave up on the connection,
+and never read the close waiting in its input: on a macOS runner the
+revoked laptop listed the desk as merely offline. Closing now shuts down
+only this side's writing and keeps reading, discarding, until the peer has
+read everything and closed its end; the fixed grace is gone. A control
+stream whose write fails also hands over what it has already received. A
+mux test holds the peer's reads through the close and has it write first:
+it fails under the old close (with or without the lingering read alone)
+and passes under the new one.
+
 2026-09-28 — **Component snapshots wait for Liquid Glass to adapt.** Small
 glass (the pill, the round buttons, the composer's strip) tracks the luma
 behind it: the render server measures it and reports back, and each report

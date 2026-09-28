@@ -20,7 +20,6 @@ use super::carrier::{
 const STREAM_ACCEPTED: u8 = 0;
 const STREAM_REFUSED: u8 = 1;
 const CONTROL_QUEUE_CAPACITY: usize = 32;
-const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MuxRole {
@@ -42,7 +41,6 @@ enum DriverCommand {
 pub struct MuxCarrier {
     kind: CarrierKind,
     commands: mpsc::UnboundedSender<DriverCommand>,
-    driver: tokio::task::AbortHandle,
     inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<(pb::StreamPreface, ByteStream)>>,
     control: Mutex<Option<(ControlSink, ControlSource)>>,
     control_ready: watch::Receiver<bool>,
@@ -74,9 +72,9 @@ impl MuxCarrier {
             MuxRole::Acceptor => yamux::Mode::Server,
         };
         let driver_closed = closed.clone();
-        let driver = tokio::spawn(async move {
+        tokio::spawn(async move {
             drive_connection(
-                yamux::Connection::new(io.compat(), yamux::Config::default(), mode),
+                yamux::Connection::new(Lingering::new(io).compat(), yamux::Config::default(), mode),
                 command_rx,
                 inbound_tx,
                 &mut first_inbound,
@@ -98,7 +96,6 @@ impl MuxCarrier {
         Self {
             kind,
             commands,
-            driver: driver.abort_handle(),
             inbound: tokio::sync::Mutex::new(inbound),
             control: Mutex::new(Some((
                 ControlSink {
@@ -179,14 +176,14 @@ impl LinkCarrier for MuxCarrier {
         Box::pin(self.next_inbound())
     }
 
+    /// The driver sends what the streams still hold, the control
+    /// stream's close saying why above all, and then ends once the peer has
+    /// read it and closed its end (see [`Lingering`]). It is not cut short:
+    /// a close dropped before the peer has read it loses the peer the reason
+    /// it was told.
     fn close(&self, reason: pb::LinkCloseReason) {
         self.closed.send_replace(Some(reason));
         let _ = self.commands.send(DriverCommand::Close);
-        let driver = self.driver.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(CLOSE_GRACE).await;
-            driver.abort();
-        });
     }
 
     fn close_reason(&self) -> Option<pb::LinkCloseReason> {
@@ -339,12 +336,83 @@ async fn run_control_stream(
     tokio::pin!(write);
     tokio::select! {
         _ = &mut read => {}
-        _ = &mut write => {}
+        // A write fails once the connection has ended, which is also when
+        // the peer's close may be waiting unread: it is handed over too.
+        _ = &mut write => {
+            let _ = read.as_mut().now_or_never();
+        }
         _ = closed.wait_for(Option::is_some) => {
             // The connection has ended, and a yamux stream need not say
             // so to a reader waiting on it: hand over what already
             // arrived, the peer's close saying why above all, and end.
             let _ = read.as_mut().now_or_never();
+        }
+    }
+}
+
+/// A carrier's connection whose close waits for the peer to close too.
+///
+/// yamux sends what is pending before it reads: a peer with anything to
+/// write (a window update, an RTT ping) whose write fails gives up on the
+/// connection with frames still unread, and the close that told it why is
+/// among them. Writes fail once this side has dropped its end, and without
+/// this wrapper a close drops it as soon as its own frames are written, so
+/// a peer slow to read, or with a write of its own in hand, lost the reason
+/// and saw a connection that merely ended. So closing shuts down only this
+/// side's writing, then reads and discards whatever still comes until the
+/// peer, having read everything up to the close, ends its side.
+struct Lingering<IO> {
+    io: IO,
+    write_shut: bool,
+}
+
+impl<IO> Lingering<IO> {
+    fn new(io: IO) -> Self {
+        Self {
+            io,
+            write_shut: false,
+        }
+    }
+}
+
+impl<IO: AsyncRead + Unpin> AsyncRead for Lingering<IO> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_read(cx, buf)
+    }
+}
+
+impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Lingering<IO> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.io).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = &mut *self;
+        if !this.write_shut {
+            std::task::ready!(Pin::new(&mut this.io).poll_shutdown(cx))?;
+            this.write_shut = true;
+        }
+        let mut scratch = [0_u8; 4096];
+        loop {
+            let mut discarded = ReadBuf::new(&mut scratch);
+            match std::task::ready!(Pin::new(&mut this.io).poll_read(cx, &mut discarded)) {
+                Ok(()) if discarded.filled().is_empty() => return Poll::Ready(Ok(())),
+                Ok(()) => {}
+                // A peer whose end failed has closed it too.
+                Err(_) => return Poll::Ready(Ok(())),
+            }
         }
     }
 }
@@ -834,6 +902,123 @@ mod tests {
 
         slow_write.await.unwrap();
         assert_eq!(slow_accept.await.unwrap().len(), 512 * 1024);
+    }
+
+    /// Test IO whose reads can be held back, and which says when its
+    /// writing is shut down.
+    struct Held {
+        io: tokio::io::DuplexStream,
+        hold: watch::Receiver<bool>,
+        held: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+        shut: Option<oneshot::Sender<()>>,
+    }
+
+    impl AsyncRead for Held {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if *self.hold.borrow() {
+                let mut hold = self.hold.clone();
+                let held = self.held.get_or_insert_with(|| {
+                    Box::pin(async move {
+                        let _ = hold.wait_for(|held| !held).await;
+                    })
+                });
+                std::task::ready!(held.as_mut().poll(cx));
+            }
+            self.held = None;
+            Pin::new(&mut self.io).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for Held {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(&mut self.io).poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.io).poll_flush(cx)
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            if let Some(shut) = self.shut.take() {
+                let _ = shut.send(());
+            }
+            Pin::new(&mut self.io).poll_shutdown(cx)
+        }
+    }
+
+    fn held(io: tokio::io::DuplexStream) -> (Held, watch::Sender<bool>, oneshot::Receiver<()>) {
+        let (hold, receiver) = watch::channel(false);
+        let (shut, shut_rx) = oneshot::channel();
+        (
+            Held {
+                io,
+                hold: receiver,
+                held: None,
+                shut: Some(shut),
+            },
+            hold,
+            shut_rx,
+        )
+    }
+
+    fn link_close(reason: pb::LinkCloseReason) -> pb::Message {
+        pb::Message {
+            body: Some(message::Body::LinkClose(pb::LinkClose {
+                reason: reason as i32,
+                error: None,
+            })),
+        }
+    }
+
+    /// The peer is told why the link closed however long it takes to read
+    /// it, and even when it writes before it reads. yamux sends before it
+    /// reads, so a peer whose write fails abandons what it has not read; the
+    /// closing side must still be there to take that write.
+    #[tokio::test]
+    async fn a_close_reaches_a_peer_that_writes_before_it_reads() {
+        let (closing_io, peer_io) = tokio::io::duplex(2 * 1024 * 1024);
+        let (closing_io, _, closing_shut) = held(closing_io);
+        let (peer_io, peer_reads, _) = held(peer_io);
+        let closing = MuxCarrier::new(closing_io, MuxRole::Connector, CarrierKind::RelayTcp);
+        let peer = MuxCarrier::new(peer_io, MuxRole::Acceptor, CarrierKind::RelayTcp);
+        let (mut closing_sink, _closing_source) = closing.control();
+        let (mut peer_sink, mut peer_source) = peer.control();
+        write_message(&mut closing_sink, &pb::Message { body: None })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_message(&mut peer_source).await.unwrap(),
+            Some(pb::Message { body: None })
+        );
+
+        // The peer reads nothing while this side says why it closes, closes,
+        // and has shut its writing down; then, longer than any fixed grace
+        // for the close would allow, the peer writes before it reads again.
+        peer_reads.send_replace(true);
+        let revoked = link_close(pb::LinkCloseReason::UserRevoked);
+        write_message(&mut closing_sink, &revoked).await.unwrap();
+        closing.close(pb::LinkCloseReason::UserRevoked);
+        closing_shut.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = write_message(&mut peer_sink, &pb::Message { body: None }).await;
+        tokio::task::yield_now().await;
+        peer_reads.send_replace(false);
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), read_message(&mut peer_source))
+                .await
+                .expect("the peer's control stream ends")
+                .unwrap(),
+            Some(revoked)
+        );
     }
 
     #[tokio::test]
