@@ -11,6 +11,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use prost::Message as _;
 use provider_fakes::script::Step;
 use serde_json::{Value, json};
 use store::{Absorb, AgentRow, Store as _};
@@ -19,7 +20,7 @@ use testnet::observe::{self, Mark, holds_for};
 use testnet::{
     AgentDecl, FakeKind, JournalCut, Net, NetError, PATIENCE, Stuck, Topology, TopologyError,
 };
-use wire::{SessionEvent, session_event};
+use wire::{ClaudeSdkItem, SessionEvent, claude_sdk_item, session_event};
 
 fn text(text: &str) -> Step {
     Step::Text {
@@ -44,6 +45,18 @@ fn texts(events: &[SessionEvent]) -> Vec<String> {
 
 fn says(events: &[SessionEvent], wanted: &str) -> bool {
     texts(events).iter().any(|text| text.contains(wanted))
+}
+
+/// Whether a claude_sdk agent's turn-end row has been seen: the last row
+/// its turn writes, so its journal is settled once this shows.
+fn turn_ended(events: &[SessionEvent]) -> bool {
+    events.iter().any(|event| match &event.of {
+        Some(session_event::Of::Item(item)) if item.kind == "claude_sdk" => matches!(
+            ClaudeSdkItem::decode(item.body.as_slice()).map(|item| item.kind),
+            Ok(Some(claude_sdk_item::Kind::Turn(_)))
+        ),
+        _ => false,
+    })
 }
 
 #[test]
@@ -430,18 +443,17 @@ async fn the_block_invariant_holds_at_the_origin_and_catches_a_replica_with_a_ho
                 .prompt("count"),
         );
     let net = Net::start(topology).await.unwrap();
+    // The check wants a settled block: wait for the turn's end, the last
+    // row the turn writes, not its last text.
     let mut observer = net.observe("desk", "worker", 50).await.unwrap();
-    observer
-        .observe_until(|events| says(events, "three"), PATIENCE)
-        .await
-        .unwrap();
+    observer.observe_until(turn_ended, PATIENCE).await.unwrap();
     net.assert_block_invariant("desk", "worker").await.unwrap();
     net.assert_block_invariant("attic", "worker").await.unwrap();
     // The laptop follows the desk: once settled, its block is the desk's.
     let mut replica = net.observe("laptop", "worker", 50).await.unwrap();
     replica
         .observe_until(
-            |events| says(events, "three") && observe::caught_up(events),
+            |events| turn_ended(events) && observe::caught_up(events),
             PATIENCE,
         )
         .await

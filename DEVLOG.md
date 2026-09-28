@@ -1,3 +1,10 @@
+2026-09-28 — **The block-invariant test waits for the turn's last row.**
+It checked the desk's block as soon as the turn's last text appeared, but
+the turn-end row lands after that text; on a macOS runner it was committed
+between the check's two reads of the same store, which then disagreed on
+the newest row. The test now waits for the turn-end row itself, on the
+desk and on the laptop that follows it.
+
 2026-09-28 — **The served fleet frame starts its agents in order.** The
 fleet lists the most recently active agent first, and the frame test's
 three agents ran their first turns at once on wall time, so the golden
