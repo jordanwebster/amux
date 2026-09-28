@@ -1389,7 +1389,8 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// A dump taken where another host's agent is only a replica asks that
 /// host for its side: the agent's journal tail, facts ring, checkpoint and
 /// specs land beside the replica's row and slice, with that host's own row,
-/// slice, manifest and log; planted secrets stay out of every file. A host
+/// slice and manifest (never its daemon log, which covers every profile its
+/// installation serves); planted secrets stay out of every file. A host
 /// that cannot be reached is named in the manifest's errors.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dump_gathers_the_host_side_of_a_peers_agents() {

@@ -319,3 +319,49 @@ async fn a_dump_of_named_agents_covers_only_them_and_an_unknown_one_is_an_error(
     drop(runtime);
     daemon.shutdown().await.unwrap();
 }
+
+/// A paired host's dump answer carries this host's side of its agents but
+/// not the daemon's log: that log covers every profile the installation
+/// serves, and the asking machine is trusted by only one of them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peers_dump_answer_carries_no_daemon_log() {
+    const OTHER: &str = "a line about another profile's agents";
+    let install = Install::new();
+    let log = install.path("daemon.log");
+    std::fs::write(&log, format!("INFO {OTHER}\n")).unwrap();
+    let options = node::StartOptions {
+        daemon_log: Some(log),
+        ..install.options("boot-1", support::synthetic::quiet_launch())
+    };
+    let daemon = node::start(options, None).await.unwrap();
+    let runtime: Arc<node::ProfileRuntime> = runtime(&daemon, &install);
+    let mut one = support::synthetic::SyntheticAgent::new(&install, "one", 1 << 20);
+    one.register(&install, &runtime).await;
+    one.append(&support::synthetic::item("a", "hello"));
+    runtime.ingest(one.id).await.unwrap();
+
+    let own = runtime.dump(DumpRequest::default()).await.unwrap();
+    assert!(
+        std::fs::read_to_string(own.join(DAEMON_LOG))
+            .unwrap()
+            .contains(OTHER),
+        "a dump taken here carries the log"
+    );
+
+    let answer = runtime.dump_for_peer(DumpRequest::default()).await.unwrap();
+    let names: Vec<&str> = answer.files.iter().map(|file| file.name.as_str()).collect();
+    assert!(
+        names.contains(&format!("agents/{}/row.pb", one.id).as_str()),
+        "{names:?}"
+    );
+    assert!(!names.contains(&DAEMON_LOG), "{names:?}");
+    for file in &answer.files {
+        assert!(
+            !contains(&file.contents, OTHER),
+            "{} holds the log",
+            file.name
+        );
+    }
+    drop(runtime);
+    daemon.shutdown().await.unwrap();
+}

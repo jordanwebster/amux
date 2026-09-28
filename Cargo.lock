@@ -188,6 +188,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tonic",
+ "tracing",
+ "tracing-subscriber",
  "ui-runtime",
  "uuid",
  "wire",

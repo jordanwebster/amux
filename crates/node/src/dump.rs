@@ -39,9 +39,11 @@
 //!     host/row.pb, host/store.pb
 //!                            that host's row and store slice
 //!   hosts/<host_id>/
-//!     manifest.json, daemon.log
-//!                            that host's own manifest and log tail
+//!     manifest.json          that host's own manifest
 //! ```
+//!
+//! A host's answer carries no daemon log: its log covers every profile its
+//! installation serves, and the asking machine is trusted by one of them.
 //!
 //! A host that cannot be reached is named in the manifest's errors, and so
 //! is anything its own dump could not gather.
@@ -82,6 +84,16 @@ const PART_PATIENCE: Duration = Duration::from_secs(10);
 pub const MANIFEST: &str = "manifest.json";
 pub const DAEMON_LOG: &str = "daemon.log";
 
+/// Who a bundle is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Asker {
+    /// Somebody at this installation: the bundle gathers other hosts' sides
+    /// and carries the daemon's log.
+    Local,
+    /// A paired host: only this host's side of its own agents.
+    Peer,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DumpError {
     #[error("no agent {0}")]
@@ -113,13 +125,13 @@ impl ProfileRuntime {
     /// is named in the manifest, never included unredacted.
     pub async fn dump(&self, request: DumpRequest) -> Result<PathBuf, DumpError> {
         let rows = self.dump_rows(&request.agent_ids).await?;
-        self.write_dump(&request, rows, true).await
+        self.write_dump(&request, rows, Asker::Local).await
     }
 
     /// A paired host's call for its dump: this host's own agents among the
     /// ones it names (every own agent when it names none), as one packed
-    /// bundle. It gathers nothing from other hosts, and the bundle is not
-    /// kept here.
+    /// bundle. It gathers nothing from other hosts, leaves out the daemon's
+    /// log, which covers other profiles too, and is not kept here.
     pub async fn dump_for_peer(&self, request: DumpRequest) -> Result<DumpPart, DumpError> {
         let rows = self
             .store
@@ -133,7 +145,7 @@ impl ProfileRuntime {
                         || request.agent_ids.contains(&row.agent.agent))
             })
             .collect();
-        let bundle = self.write_dump(&request, rows, false).await?;
+        let bundle = self.write_dump(&request, rows, Asker::Peer).await?;
         let part = pack(&bundle)?;
         std::fs::remove_dir_all(&bundle)?;
         Ok(part)
@@ -143,7 +155,7 @@ impl ProfileRuntime {
         &self,
         request: &DumpRequest,
         rows: Vec<AgentRow>,
-        gather: bool,
+        asker: Asker,
     ) -> Result<PathBuf, DumpError> {
         let dump_id = Uuid::new_v4();
         let created_at_ms = self.clock_now();
@@ -163,14 +175,14 @@ impl ProfileRuntime {
             agents.push(entry);
             errors.append(&mut failed);
         }
-        if gather {
+        if asker == Asker::Local {
             self.gather_hosts(request, &rows, &partial, &mut agents, &mut errors)
                 .await?;
-        }
-        match self.dump_log(&partial) {
-            Ok(Some(bytes)) => log_cut_note(&mut errors, bytes),
-            Ok(None) => {}
-            Err(error) => errors.push(format!("{DAEMON_LOG}: {error}")),
+            match self.dump_log(&partial) {
+                Ok(Some(bytes)) => log_cut_note(&mut errors, bytes),
+                Ok(None) => {}
+                Err(error) => errors.push(format!("{DAEMON_LOG}: {error}")),
+            }
         }
         let manifest = serde_json::json!({
             "dump_id": dump_id.to_string(),
@@ -408,7 +420,7 @@ impl ProfileRuntime {
 
 /// Writes one host's packed answer into the bundle: each asked agent's
 /// journal and part beside its row, that host's row and slice under
-/// `host/`, and its manifest and log under `hosts/<host_id>/`. The host's
+/// `host/`, and its manifest under `hosts/<host_id>/`. The host's
 /// own errors join the bundle's.
 fn unpack_host(
     host: Uuid,

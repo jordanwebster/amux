@@ -14,6 +14,8 @@
 //! listed agent for the profile in front of somebody, and only the ones a
 //! chat asks for otherwise.
 
+mod log;
+
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -132,6 +134,11 @@ impl EmbeddedRuntime {
         overrides: EdgeOverrides,
         clock: Arc<dyn Clock>,
     ) -> Result<EmbeddedRuntime, EmbeddedError> {
+        if let Some(path) = &config.log_path {
+            // A log that cannot be opened costs the dump its log, never the
+            // phone its runtime.
+            let _ = log::write_to(path);
+        }
         let edge = EdgeOptions {
             host_name: config.device_name.clone(),
             // The phone runs no agents.

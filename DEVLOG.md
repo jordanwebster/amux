@@ -1,3 +1,16 @@
+2026-09-28 — **The phone's runtime keeps a log, and a peer's dump answer
+leaves the daemon log out.** The app named `<installation>/runtime.log` as
+the embedded runtime's log, but nothing in the phone's process wrote
+traces anywhere, so a phone dump never carried a daemon log and the
+report's log tail was always empty. app-embedded now installs the process's
+tracing subscriber, writing to that file and cutting it to its newest
+4 MiB whenever it would pass 8 MiB. Separately, a paired host answering a
+dump request used to pack its whole daemon log into the answer; that log
+covers every profile the installation serves, so a machine trusted by one
+account could read another account's activity. The answer now carries only
+the host's side of the asked agents and its manifest; a dump taken at the
+installation itself still carries its log.
+
 2026-09-28 — **app-runtime's wake-count test takes its baseline with nothing owed.**
 The test counted the chat's wakes as its baseline while a wake could still
 sit unconsumed in its queue (a change landing between the last take and the
