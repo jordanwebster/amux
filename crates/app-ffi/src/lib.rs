@@ -25,9 +25,10 @@
 //! and every byte buffer with `amux_bytes_free`. A null return means the
 //! call failed; the reason goes to the log.
 
+use std::collections::HashSet;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use app_embedded::{
     EdgeOverrides, EmbeddedRuntime, PairRequest, ProfileEvent, ProfileId, StartConfig,
@@ -72,6 +73,7 @@ pub struct AmuxProfile {
     profile: ProfileId,
     embedded: Arc<EmbeddedRuntime>,
     app: Arc<AppRuntime>,
+    gate: Arc<WakeGate>,
     handle: tokio::runtime::Handle,
     tail: u32,
 }
@@ -79,7 +81,46 @@ pub struct AmuxProfile {
 /// One open chat.
 pub struct AmuxChat {
     chat: Arc<Chat>,
+    gate: Arc<WakeGate>,
     handle: tokio::runtime::Handle,
+}
+
+/// Where a profile's wake passes, shut by the close that ends it. Acts
+/// still in flight hold the runtime and its chats past their close, and
+/// their watchers go on noticing changes; the host frees the wake's
+/// context as soon as the close returns, so nothing may reach it after.
+#[derive(Default)]
+struct WakeGate(Mutex<Shut>);
+
+#[derive(Default)]
+struct Shut {
+    profile: bool,
+    chats: HashSet<u64>,
+}
+
+impl WakeGate {
+    /// Calls the host's wake unless what moved is closed. The call is made
+    /// under the lock, so a close waits for a wake already running.
+    fn pass(&self, moved: Wake, wake: AmuxWake, context: Context) {
+        let shut = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let chat = match moved {
+            Wake::Fleet => 0,
+            Wake::Chat(id) if shut.chats.contains(&id) => return,
+            Wake::Chat(id) => id,
+        };
+        if !shut.profile {
+            wake(context.0, chat);
+        }
+    }
+
+    fn close(&self) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).profile = true;
+    }
+
+    fn close_chat(&self, id: u64) {
+        let mut shut = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        shut.chats.insert(id);
+    }
 }
 
 /// A host context pointer handed back on another thread.
@@ -195,15 +236,10 @@ pub fn open_profile(
     let context = Context(context);
     let embedded = runtime.embedded().clone();
     let handle = runtime.handle();
+    let gate = Arc::new(WakeGate::default());
+    let passing = gate.clone();
     let app = handle.block_on(async {
-        let host_wake = Arc::new(move |moved: Wake| {
-            let context = context;
-            let chat = match moved {
-                Wake::Fleet => 0,
-                Wake::Chat(id) => id,
-            };
-            wake(context.0, chat);
-        });
+        let host_wake = Arc::new(move |moved: Wake| passing.pass(moved, wake, context));
         let client = embedded
             .client(profile)
             .map_err(|error| error.to_string())?;
@@ -218,6 +254,7 @@ pub fn open_profile(
         profile,
         embedded,
         app: Arc::new(app),
+        gate,
         handle,
         tail: runtime.tail,
     }))
@@ -899,7 +936,9 @@ pub unsafe extern "C" fn amux_profile_open(
     }
 }
 
-/// Closes a profile's fleet; its wake stops. Close its chats first.
+/// Closes a profile's fleet. Its wake is never called once this returns,
+/// however many acts are still in flight; their callbacks still run. Close
+/// its chats first.
 ///
 /// # Safety
 /// `profile` is null or from `amux_profile_open`, and not used again.
@@ -908,6 +947,7 @@ pub unsafe extern "C" fn amux_profile_close(profile: *mut AmuxProfile) {
     if !profile.is_null() {
         // SAFETY: the caller's contract.
         let open = unsafe { Box::from_raw(profile) };
+        open.gate.close();
         let handle = open.handle.clone();
         let _entered = handle.enter();
         drop(open);
@@ -1329,7 +1369,11 @@ pub unsafe extern "C" fn amux_session_open(
         let chat = handle
             .block_on(profile.app.open_chat(&agent, tail))
             .map_err(|error| error.to_string())?;
-        Ok(AmuxChat { chat, handle })
+        Ok(AmuxChat {
+            chat,
+            gate: profile.gate.clone(),
+            handle,
+        })
     });
     match opened {
         Ok(chat) => Box::into_raw(Box::new(chat)),
@@ -1351,7 +1395,8 @@ pub unsafe extern "C" fn amux_session_id(chat: *const AmuxChat) -> u64 {
     unsafe { held_chat(chat) }.map_or(0, |open| open.chat.id())
 }
 
-/// Closes a chat. Its wake stops; a callback already running still runs.
+/// Closes a chat. No wake names it once this returns, however many of its
+/// acts are still in flight; their callbacks still run.
 ///
 /// # Safety
 /// `chat` is null or from `amux_session_open`, and not used again.
@@ -1360,6 +1405,7 @@ pub unsafe extern "C" fn amux_session_close(chat: *mut AmuxChat) {
     if !chat.is_null() {
         // SAFETY: the caller's contract.
         let open = unsafe { Box::from_raw(chat) };
+        open.gate.close_chat(open.chat.id());
         let _entered = open.handle.enter();
         drop(open);
     }

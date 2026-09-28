@@ -2,7 +2,7 @@
 //! gathered for the host's next turn, and the views the host asks for by
 //! row key.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tokio::task::JoinHandle;
 use ui_runtime::{InputError, PageError, Session};
@@ -22,7 +22,7 @@ pub struct Chat {
     id: u64,
     session: Session,
     changes: Coalescer<Key>,
-    watcher: JoinHandle<()>,
+    watcher: OnceLock<JoinHandle<()>>,
     clock: Arc<dyn client::Clock>,
 }
 
@@ -33,31 +33,33 @@ impl Chat {
         wake: WakeFn,
         clock: Arc<dyn client::Clock>,
     ) -> Arc<Chat> {
-        Arc::new_cyclic(|chat: &std::sync::Weak<Chat>| {
-            // Subscribed here, the receiver has seen the opening: its rows
-            // are the host's first read, not news. Anything after is, even
-            // a change that lands before the watcher first runs, so the
-            // watcher must not mark the channel seen itself.
-            let mut changed = session.changed();
-            let watched = chat.clone();
-            let watcher = tokio::spawn(async move {
-                while changed.changed().await.is_ok() {
-                    let Some(chat) = watched.upgrade() else {
-                        return;
-                    };
-                    let changes = chat.session.take_changes();
-                    chat.changes
-                        .push(changes.keys, changes.reloaded, changes.session);
-                }
-            });
-            Chat {
-                id,
-                session,
-                changes: Coalescer::new(wake),
-                watcher,
-                clock,
+        // Subscribed here, the receiver has seen the opening: its rows are
+        // the host's first read, not news. Anything after is, even a change
+        // that lands before the watcher first runs, so the watcher must not
+        // mark the channel seen itself.
+        let mut changed = session.changed();
+        let chat = Arc::new(Chat {
+            id,
+            session,
+            changes: Coalescer::new(wake),
+            watcher: OnceLock::new(),
+            clock,
+        });
+        // Spawned once the chat exists, so every change it sees finds the
+        // chat; it ends when the chat is dropped or the session ends.
+        let watched = Arc::downgrade(&chat);
+        let watcher = tokio::spawn(async move {
+            while changed.changed().await.is_ok() {
+                let Some(chat) = watched.upgrade() else {
+                    return;
+                };
+                let changes = chat.session.take_changes();
+                chat.changes
+                    .push(changes.keys, changes.reloaded, changes.session);
             }
-        })
+        });
+        let _ = chat.watcher.set(watcher);
+        chat
     }
 
     /// The id the host's wake names this chat by.
@@ -314,7 +316,9 @@ impl Chat {
 
 impl Drop for Chat {
     fn drop(&mut self) {
-        self.watcher.abort();
+        if let Some(watcher) = self.watcher.get() {
+            watcher.abort();
+        }
     }
 }
 

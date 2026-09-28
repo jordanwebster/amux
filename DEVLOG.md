@@ -1,3 +1,16 @@
+2026-09-28 — **A closed profile or chat never wakes the phone again.**
+Acts still in flight (a dump waiting on a host that does not answer, a
+send waiting on a remote agent) hold the phone runtime and its chats past
+their close, so their watchers kept calling the wake Swift had already
+freed when switching accounts. The C ABI now hands the runtime a wake that
+passes through a gate: closing a profile shuts it, closing a chat shuts it
+for that chat's id, and the wake runs under the gate's lock so a close
+waits for one already running. A new app-ffi test freezes the agent, closes
+a chat and then its profile under a send and a dump, renames the agent and
+sees no wake; it fails with either shut removed. A chat's watcher is now
+spawned after the chat exists, so a change landing while it is built is no
+longer the watcher's last.
+
 2026-09-28 — **A long prompt reaches terminal Claude as the person's own words.**
 Claude 2.1.283 collapses one paste of about 1,100 characters into
 `<pasted_content>` and the model then declines instructions inside it

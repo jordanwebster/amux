@@ -243,6 +243,32 @@ fn pin(net: &Net, tokio: &tokio::runtime::Runtime) -> (String, Vec<String>) {
     (pin, started.addrs)
 }
 
+/// Pairs the phone with the desk by the PIN it shows; returns the desk's
+/// fingerprint.
+fn pair_desk(phone: &Phone, net: &Net, tokio: &tokio::runtime::Runtime) -> String {
+    let (pin, addrs) = pin(net, tokio);
+    let desk = net.host("desk").unwrap();
+    let request = c(&json!({"Pin": {
+        "host_id": desk.host_id.as_bytes().to_vec(),
+        "pin": pin,
+        "addrs": addrs,
+    }})
+    .to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe { amux_profile_begin_pair(phone.profile, request.as_ptr(), on_result, phone.context()) };
+    let pending = phone.result();
+    assert_eq!(pending["Ok"]["name"], "desk", "{pending}");
+    assert_eq!(pending["Ok"]["via"], "Direct", "{pending}");
+    let fingerprint = pending["Ok"]["fingerprint"].as_str().unwrap().to_owned();
+    assert_eq!(fingerprint.len(), 64, "{pending}");
+    let token = c(&pending["Ok"]["token"].to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe { amux_profile_confirm_pair(phone.profile, token.as_ptr(), on_result, phone.context()) };
+    let paired = phone.result();
+    assert_eq!(paired["Ok"]["name"], "desk", "{paired}");
+    fingerprint
+}
+
 fn says(chat: *const AmuxChat, wanted: &str) -> bool {
     // SAFETY: the chat is open.
     let keys = take(unsafe { amux_session_keys(chat) });
@@ -265,27 +291,8 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     let version = unsafe { CStr::from_ptr(amux_version()) }.to_str().unwrap();
     assert!(version.starts_with(node::version()));
 
-    // Pair by the PIN the desk shows.
-    let (pin, addrs) = pin(&net, &tokio);
+    let fingerprint = pair_desk(&phone, &net, &tokio);
     let desk = net.host("desk").unwrap();
-    let request = c(&json!({"Pin": {
-        "host_id": desk.host_id.as_bytes().to_vec(),
-        "pin": pin,
-        "addrs": addrs,
-    }})
-    .to_string());
-    // SAFETY: the runtime is live; the strings live for the call.
-    unsafe { amux_profile_begin_pair(phone.profile, request.as_ptr(), on_result, phone.context()) };
-    let pending = phone.result();
-    assert_eq!(pending["Ok"]["name"], "desk", "{pending}");
-    assert_eq!(pending["Ok"]["via"], "Direct", "{pending}");
-    let fingerprint = pending["Ok"]["fingerprint"].as_str().unwrap().to_owned();
-    assert_eq!(fingerprint.len(), 64, "{pending}");
-    let token = c(&pending["Ok"]["token"].to_string());
-    // SAFETY: the runtime is live; the strings live for the call.
-    unsafe { amux_profile_confirm_pair(phone.profile, token.as_ptr(), on_result, phone.context()) };
-    let paired = phone.result();
-    assert_eq!(paired["Ok"]["name"], "desk", "{paired}");
 
     // The profile that paired it is the one that trusts it.
     let host = c(&json!(desk.host_id.as_bytes().to_vec()).to_string());
@@ -545,6 +552,135 @@ fn the_phone_pairs_opens_a_chat_answers_its_asks_and_pages_through_the_c_abi() {
     assert_eq!(CAUGHT.with(std::cell::Cell::get), 0, "a call panicked");
     drop(phone);
     tokio.block_on(net.shutdown()).unwrap();
+}
+
+#[test]
+fn no_wake_reaches_a_closed_profile_or_chat_while_its_acts_are_in_flight() {
+    let tokio = tokio::runtime::Runtime::new().unwrap();
+    let net = tokio.block_on(Net::start(topology())).unwrap();
+    let phone = Phone::start();
+    pair_desk(&phone, &net, &tokio);
+    let worker = net.agent("worker").unwrap();
+    let agent = c(&json!({
+        "host": worker.host_id.as_bytes().to_vec(),
+        "agent": worker.id.as_bytes().to_vec(),
+    })
+    .to_string());
+    phone.until(0, std::ptr::null(), "the desk's agent", || {
+        // SAFETY: the runtime is live.
+        let rows = take(unsafe { amux_fleet_rows(phone.profile, std::ptr::null()) });
+        rows.as_array().is_some_and(|rows| rows.len() == 1)
+    });
+
+    // A second handle on the same profile, the one to close, with a wake
+    // of its own; the phone's first handle watches the same moves.
+    let (closing_wakes, closing_woken) = mpsc::channel::<u64>();
+    let closing_wakes = Box::new(closing_wakes);
+    let mut error = std::ptr::null_mut();
+    // SAFETY: the runtime is live; the strings live for the call.
+    let closing = unsafe {
+        amux_profile_open(
+            phone.runtime,
+            phone.id.as_ptr(),
+            on_wake,
+            &*closing_wakes as *const _ as *mut c_void,
+            &mut error,
+        )
+    };
+    assert!(!closing.is_null());
+    // SAFETY: the profile is open; the string lives for the call.
+    let chat = unsafe { amux_session_open(closing, agent.as_ptr(), 0, &mut error) };
+    assert!(!chat.is_null());
+    // SAFETY: as above.
+    let watching = unsafe { amux_session_open(phone.profile, agent.as_ptr(), 0, &mut error) };
+    assert!(!watching.is_null());
+
+    // With the agent frozen, a send waits on it for seconds, holding the
+    // chat past its close.
+    net.freeze("worker").unwrap();
+    let draft = c(&json!({"text": "are you there"}).to_string());
+    // SAFETY: the chat is open; the string lives for the call.
+    unsafe { amux_session_send(chat, draft.as_ptr(), on_result, phone.context()) };
+    settle(&closing_woken, closing, chat);
+    // SAFETY: from `amux_session_open`, not used again.
+    unsafe { amux_session_close(chat) };
+    rename(&phone, &agent, watching, "renamed");
+    // The fleet moved too, and may wake; the chat may not.
+    while let Ok(woken) = closing_woken.recv_timeout(Duration::from_secs(1)) {
+        assert_eq!(woken, 0, "a closed chat was woken");
+        // SAFETY: the profile is open.
+        take(unsafe { amux_fleet_take_changes(closing) });
+    }
+
+    // And a dump waits on it too, holding the fleet past its close.
+    let reason = c("closing under an act");
+    // SAFETY: the profile is open; the string lives for the call.
+    unsafe { amux_profile_dump(closing, reason.as_ptr(), on_result, phone.context()) };
+    settle(&closing_woken, closing, std::ptr::null());
+    // SAFETY: from `amux_profile_open`, not used again.
+    unsafe { amux_profile_close(closing) };
+    assert!(
+        phone.results.try_recv().is_err(),
+        "the acts are still in flight"
+    );
+    rename(&phone, &agent, watching, "worker");
+    assert_eq!(
+        closing_woken.recv_timeout(Duration::from_secs(1)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "a closed profile was woken"
+    );
+
+    // The acts' callbacks still run once the agent answers.
+    net.thaw("worker").unwrap();
+    phone.result();
+    phone.result();
+    // SAFETY: the chat is open, and closed once.
+    unsafe { amux_session_close(watching) };
+    assert_eq!(CAUGHT.with(std::cell::Cell::get), 0, "a call panicked");
+    drop(phone);
+    tokio.block_on(net.shutdown()).unwrap();
+}
+
+/// Takes what a handle's wakes name until none comes for half a second, so
+/// its next change wakes it again.
+fn settle(woken: &mpsc::Receiver<u64>, profile: *const AmuxProfile, chat: *const AmuxChat) {
+    while let Ok(moved) = woken.recv_timeout(Duration::from_millis(500)) {
+        // SAFETY: both are open, or the chat is null and not named.
+        unsafe {
+            if moved == 0 {
+                take(amux_fleet_take_changes(profile));
+            } else {
+                take(amux_session_take_changes(chat));
+            }
+        }
+    }
+}
+
+/// Renames the agent from the phone's own handle and waits until its fleet
+/// and its open chat both show the name.
+fn rename(phone: &Phone, agent: &CStr, chat: *const AmuxChat, name: &str) {
+    let act = c(&json!({ "Rename": name }).to_string());
+    // SAFETY: the runtime is live; the strings live for the call.
+    unsafe {
+        amux_profile_agent_act(
+            phone.profile,
+            agent.as_ptr(),
+            act.as_ptr(),
+            on_result,
+            phone.context(),
+        )
+    };
+    assert!(phone.result().get("Ok").is_some());
+    // SAFETY: the chat is open.
+    let id = unsafe { amux_session_id(chat) };
+    phone.until(id, chat, "the chat renamed", || {
+        // SAFETY: the chat is open.
+        take(unsafe { amux_session_frame(chat) })["name"] == name
+    });
+    phone.until(0, std::ptr::null(), "the fleet renamed", || {
+        // SAFETY: the runtime is live; the string lives for the call.
+        take(unsafe { amux_fleet_card(phone.profile, agent.as_ptr()) })["name"] == name
+    });
 }
 
 impl Phone {
