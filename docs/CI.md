@@ -50,6 +50,40 @@ The terminal journeys are `reach-host`,
 `conversation-decision-codex`, `leave-and-recover`, `manage-agent`,
 `attachment-or-review` and `keep-authority`.
 
+### Bounds
+
+Two kinds of bound stop a run, and neither is ever raised to hide a failing
+or slow test.
+
+- **A recipe bound** is a hang detector for one phase, sized above that
+  phase's honest duration. `just test` runs two phases, each under its own
+  bound ([`scripts/workspace-test.sh`](../scripts/workspace-test.sh)): compiling
+  every test target (`cargo test --no-run`, 1200 s, the bound `just test-build`
+  carries), then running them (1000 s). The run's bound is the slowest
+  platform's measured clean run — one where no failing test waits out its own
+  timeout — times 1.5, rounded up to the hundred.
+- **The job guard** (`timeout-minutes`) bounds the honest total of a job:
+  setup, cache restore, every step. The test job's is 30 minutes.
+
+What the bounds were sized from, on a warm cache:
+
+| Platform | CI run | Compile | Test run | Whole job |
+| --- | --- | --- | --- | --- |
+| `ubuntu-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 145 s | 601 s | 13 min 6 s |
+| `macos-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 95 s | 449 s | 13 min 13 s |
+| `windows-latest` | [36448433638](https://github.com/jordanwebster/amux/actions/runs/36448433638) | 296 s | not clean | not clean |
+
+Linux is the slowest clean test run: 601 s × 1.5 is 902 s, so the run's
+bound is 1000 s. The macOS job spends a further 168 s in `contracts-check`
+and still ends near 13 minutes, well inside the 30-minute guard. That Windows
+run is not a measurement: its terminal-Claude tests, which Windows no longer
+runs, waited out their own timeouts until the run's bound cut it. Windows compiles out most of the slow suites (the embedded client, the
+supervisor, the system journeys), so its clean run is expected well under
+Linux's; the first clean Windows run replaces that row, and resizes the bound
+by the same rule if it is the slowest. A cold cache, after a `Cargo.lock`
+change, compiles the whole dependency graph and can take longer than these
+numbers.
+
 ### The iOS gate
 
 The iOS gate job selects Xcode 26.6, asserts that the iOS 26.5 simulator

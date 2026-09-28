@@ -1,3 +1,15 @@
+2026-09-28 — **`just test` bounds its compile and its run separately.** One
+900 s bound covered compiling and running every suite together, which a
+macOS runner outgrew with every binary still progressing. The workspace test
+script now compiles the test targets first (`cargo test --no-run`, under the
+1200 s bound `just test-build` already had), then runs them under a bound
+sized from the slowest clean CI run (Linux, 601 s, times 1.5, rounded up to
+1000 s). `docs/CI.md` records the per-platform compile, run and job times
+and the rule: a recipe bound detects a hang in one phase, the job guard
+bounds the honest total, and neither is raised to hide a test.
+`just offline-test` drops its outer bound, which would have cut the two
+phases short.
+
 2026-09-28 — **Windows fixes from the first CI round, and a first-attach race.**
 ConPTY (through portable-pty, which always asks it to inherit the cursor)
 opens by asking where the cursor is and draws nothing the child writes until

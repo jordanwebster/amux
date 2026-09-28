@@ -106,8 +106,9 @@ mobile-check:
     {{bounded}} 1200 cargo check --locked -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios-sim
 
 # Run workspace tests with isolated user configuration and no external network.
+# The workspace test script bounds its own compile and run phases.
 offline-test:
-    {{bounded}} 1500 scripts/offline-check.sh scripts/workspace-test.sh --lib --tests
+    scripts/offline-check.sh scripts/workspace-test.sh --lib --tests
 
 # Build the product with the full-debug profile.
 full-debug:
