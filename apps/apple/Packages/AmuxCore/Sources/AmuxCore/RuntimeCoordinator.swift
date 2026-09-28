@@ -70,7 +70,8 @@ public final class RuntimeCoordinator {
     @ObservationIgnored private let support: URL
     @ObservationIgnored private let options: Options
     @ObservationIgnored private let starter: Starter
-    @ObservationIgnored private var active = true
+    /// Whether somebody is in front of the app, as the app last said.
+    @ObservationIgnored public private(set) var active = true
     @ObservationIgnored private var found: [FoundHost] = []
     @ObservationIgnored private var permission: LocalNetworkPermission = .unknown
     @ObservationIgnored private var fed: StoreBundle?

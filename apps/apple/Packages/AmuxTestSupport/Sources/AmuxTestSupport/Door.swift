@@ -86,6 +86,11 @@ public enum DoorRequest: Sendable, Equatable {
     /// a connection failing, not by anything the driver did, so there is a
     /// moment to wait for here too.
     case awaitOffline(seconds: Double)
+    /// Wait until the app is in the background and has told its runtime so,
+    /// or give up after this many seconds. Putting the app away is the
+    /// simulator's to do and takes a moment; what the runtime keeps current
+    /// changes only once it has.
+    case awaitBackground(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
     /// The end of what this launch's runtime wrote about what it decided.
@@ -285,6 +290,20 @@ public enum DoorRequest: Sendable, Equatable {
     /// the app through. Not the same as writing a fresh bundle: this is the
     /// one that was sent, declarations and all.
     case uploaded(path: String)
+    /// Hold the app reachable in the background from here until a push is
+    /// handed over, or until the system's allowance for finishing work runs
+    /// out.
+    ///
+    /// A simulator hands a remote notification's payload to no app put away:
+    /// the notification shows, and the app's handler is never called. A
+    /// suspended app cannot be driven, so the app asks for the same time a
+    /// real app gets to finish a piece of work before it is put away, and
+    /// the driver has a background app to hand the push to.
+    case holdBackground
+    /// Hand the payload in this file to the app's remote-notification handler,
+    /// as iOS would to an app woken in the background, and answer once the
+    /// handler has finished. Refused unless the app is in the background.
+    case push(path: String)
     /// Rebuild the stores and the view from the bundle in this directory,
     /// without carrying out anything the recording asked the app to do.
     case replay(path: String)
@@ -654,6 +673,8 @@ extension DoorRequest: Codable {
             self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "awaitOffline":
             self = .awaitOffline(seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "awaitBackground":
+            self = .awaitBackground(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "conversation":
             self = .conversation(agent: try fields.decode(String.self, forKey: .agent))
         case "setModel":
@@ -756,6 +777,9 @@ extension DoorRequest: Codable {
         case "screenshot": self = .screenshot
         case "uploaded":
             self = .uploaded(path: try fields.decode(String.self, forKey: .path))
+        case "holdBackground": self = .holdBackground
+        case "push":
+            self = .push(path: try fields.decode(String.self, forKey: .path))
         case "replay":
             self = .replay(path: try fields.decode(String.self, forKey: .path))
         case "shutdown": self = .shutdown
@@ -806,6 +830,9 @@ extension DoorRequest: Codable {
             try fields.encode(seconds, forKey: .seconds)
         case .awaitOffline(let seconds):
             try fields.encode("awaitOffline", forKey: .kind)
+            try fields.encode(seconds, forKey: .seconds)
+        case .awaitBackground(let seconds):
+            try fields.encode("awaitBackground", forKey: .kind)
             try fields.encode(seconds, forKey: .seconds)
         case .conversation(let agent):
             try fields.encode("conversation", forKey: .kind)
@@ -929,6 +956,11 @@ extension DoorRequest: Codable {
             try fields.encode("screenshot", forKey: .kind)
         case .uploaded(let path):
             try fields.encode("uploaded", forKey: .kind)
+            try fields.encode(path, forKey: .path)
+        case .holdBackground:
+            try fields.encode("holdBackground", forKey: .kind)
+        case .push(let path):
+            try fields.encode("push", forKey: .kind)
             try fields.encode(path, forKey: .path)
         case .replay(let path):
             try fields.encode("replay", forKey: .kind)

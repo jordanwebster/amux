@@ -1092,17 +1092,22 @@ def back_to_fleet(journey: PhoneJourney) -> None:
     journey.app({"kind": "settle"})
 
 
-def suspended(journey: PhoneJourney, within: float = 30) -> None:
-    """Until iOS has suspended the app put away: its door stops answering."""
-    deadline = time.monotonic() + within
-    while time.monotonic() < deadline:
-        try:
-            journey.app({"kind": "query"}, timeout=2)
-        except (OSError, TimeoutError):
-            journey.actions.append("the app suspended")
-            return
-        time.sleep(0.5)
-    raise RuntimeError(f"the app put away still answered after {within:.0f}s")
+def push_to_handler(journey: PhoneJourney, payload: Path) -> None:
+    """Deliver a push to the app put away, the notification and the payload.
+
+    xcrun simctl push shows the notification a person sees. It never reaches
+    the app's didReceiveRemoteNotification on this simulator (iOS 26.5): a
+    backgrounded app only gets a payload-less background-fetch launch. So the
+    debug door hands the same file to that handler, with the app in the
+    background as iOS would call it, and answers when the handler returns.
+    """
+    simctl("push", journey.udid, BUNDLE_ID, str(payload))
+    journey.actions.append("xcrun simctl push needs-you.apns: the notification shows")
+    journey.app({"kind": "push", "path": str(payload)}, timeout=WARM_LIMIT + 15)
+    journey.actions.append(
+        "the debug door handed the same needs-you.apns payload to AppDelegate's didReceiveRemoteNotification"
+        " with the app in the background"
+    )
 
 
 def push_wake(journey: PhoneJourney) -> list[str]:
@@ -1114,10 +1119,14 @@ def push_wake(journey: PhoneJourney) -> list[str]:
     journey.wait_for(f"home.row.{asker}", f"home.row.{bystander}")
 
     # Put away. Both agents move on at the desk: one comes to need the
-    # person, the other answers.
+    # person, the other answers. The app asks for background time first, as
+    # an app finishing a piece of work does, so it is still there to hand
+    # the push to: this simulator never passes a push's payload to an app
+    # put away (see push_to_handler).
+    journey.app({"kind": "holdBackground"})
     simctl("launch", journey.udid, "com.apple.Preferences")
-    journey.actions.append("the app put away behind Settings")
-    suspended(journey)
+    journey.app({"kind": "awaitBackground", "seconds": 10})
+    journey.actions.append("the app put away behind Settings, holding background time for the push")
     journey.request({"Send": {"agent": "asker", "text": "Deploy it."}})
     journey.request({"Send": {"agent": "bystander", "text": "Anything new?"}})
     journey.wait_chat("desk", "asker", lambda chat: chat["phase"] == "NEEDS_YOU", "asker-needs-you")
@@ -1127,11 +1136,9 @@ def push_wake(journey: PhoneJourney) -> list[str]:
         "bystander-answered",
     )
 
-    # The push names the asker. It wakes the app in the background, which
-    # brings that one chat current and nothing else.
-    simctl("push", journey.udid, BUNDLE_ID, str(needs_you_push(journey, "asker")))
-    journey.actions.append("xcrun simctl push needs-you.apns for the asker")
-    time.sleep(WARM_LIMIT + 5)
+    # The push names the asker. Handled in the background, it brings that
+    # one chat current and nothing else.
+    push_to_handler(journey, needs_you_push(journey, "asker"))
 
     # With the desk gone, what the phone holds is what the push fetched.
     journey.request({"StopDaemon": {"host": "desk"}})
@@ -1171,11 +1178,14 @@ def push_wake(journey: PhoneJourney) -> list[str]:
         "asker-answered",
     )
     reopen(journey, asker, lambda drawn: labelled(drawn, "Deployed to production.") and "chat.row.turn-end" in drawn)
-    journey.screen("answered", volatile=("chat.row.turn-end",))
+    # The command row's duration is how long the ask waited on the phone.
+    journey.screen("answered", volatile=("chat.row.turn-end", "chat.row.command"))
     journey.tap("chat.back")
     return [
         "put away, the desk's asker came to need the person and the bystander answered",
-        "a push built from journeys/fixtures/needs-you.apns woke the app, and with the desk stopped the asker's chat held the ask",
+        "a push built from journeys/fixtures/needs-you.apns showed its notification, and its payload, handed to"
+        " the app's remote-notification handler through the debug door with the app in the background, brought"
+        " the asker's chat current: with the desk stopped it held the ask",
         "the bystander's chat did not hold the answer it gave while the app was away: only the named chat was brought current",
         "back in the foreground with the desk running again, the bystander caught up without being named",
         "Allow once from the phone reached the desk, which finished the deploy",

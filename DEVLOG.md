@@ -1,3 +1,18 @@
+2026-09-28 — **The phone's push-wake story passes.**
+A phone paired with a desk is put away; one agent comes to need the person
+and another answers. `xcrun simctl push` of the payload built from
+journeys/fixtures/needs-you.apns shows the notification. Because this
+simulator never hands a push's payload to an app in the background, the
+debug door hands the same payload to AppDelegate's remote-notification
+handler: holdBackground asks for background time before the app is put away
+so the app can still be reached, awaitBackground waits until the runtime
+knows it is away, and push calls the handler while the app is in the
+background, as iOS would. The story checks the pushWoke and pushCurrent
+signposts, stops the desk, and shows the asker's ask on the phone and the
+bystander without its answer. Back in the foreground, the bystander catches
+up and the ask is answered. None of this is in the release build, and no
+push entitlement or fetch mode is added.
+
 2026-09-28 — **A push brings exactly its one chat current on a phone put away.**
 Three faults kept the background wake from doing what it says. Switching a
 runtime to OnDemand left every source opened in the foreground running, so a

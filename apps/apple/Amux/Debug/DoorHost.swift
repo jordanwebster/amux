@@ -40,12 +40,17 @@ final class DoorHost {
     let cloud = ScriptedCloudService()
     let webAuth = ScriptedWebAuth()
     @ObservationIgnored private weak var composition: Composition?
+    /// Where a push handed over through the door goes: the app's own handler.
+    @ObservationIgnored private weak var delegate: AppDelegate?
+    /// The background time asked for, while the driver hands over a push.
+    @ObservationIgnored private var held: UIBackgroundTaskIdentifier = .invalid
     /// Where the person went, and what they changed about how the app looks,
     /// as a report's view-state recording carries it.
     @ObservationIgnored private var events: [TraceEvent] = []
 
-    func adopt(_ composition: Composition) {
-        self.composition = composition
+    func adopt(_ delegate: AppDelegate) {
+        self.delegate = delegate
+        composition = delegate.composition
     }
 
     private var stores: StoreBundle? { composition?.stores }
@@ -193,6 +198,13 @@ final class DoorHost {
                 }
             }
         case .uploaded(let path): return writeUploaded(to: path)
+        case .holdBackground: return holdBackground()
+        case .awaitBackground(let seconds):
+            return await until(seconds, "the app in the background") {
+                UIApplication.shared.applicationState == .background
+                    && self.composition?.runtime.active == false
+            }
+        case .push(let path): return await push(from: path)
         case .refreshEntitlement, .late, .restoreSession, .bridge, .setModel, .states,
              .report, .replay, .move, .requestChanges, .watch, .sendDraft:
             return .error("this build's door does not \(Self.verb(request))")
@@ -340,6 +352,38 @@ final class DoorHost {
     /// The last report the scripted account service was handed, written part
     /// by part into `path`: what a Send actually carried, read at the
     /// boundary it left the app through.
+    private func holdBackground() -> DoorReply {
+        let application = UIApplication.shared
+        if held != .invalid { application.endBackgroundTask(held) }
+        held = application.beginBackgroundTask(withName: "door push") { [weak self] in
+            self?.release()
+        }
+        return held == .invalid ? .error("the system gave no background time") : .ack
+    }
+
+    private func release() {
+        guard held != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(held)
+        held = .invalid
+    }
+
+    /// The payload goes to the handler iOS calls, in the state iOS calls it
+    /// in; the background time is given back after, as a woken app's is.
+    private func push(from path: String) async -> DoorReply {
+        defer { release() }
+        guard let delegate else { return .error("the app has no delegate to hand a push to") }
+        guard let data = FileManager.default.contents(atPath: path),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [AnyHashable: Any]
+        else { return .error("no push payload at \(path)") }
+        let application = UIApplication.shared
+        let reached = await until(10, "the app in the background") {
+            application.applicationState == .background
+        }
+        guard case .ack = reached else { return reached }
+        _ = await delegate.application(application, didReceiveRemoteNotification: payload)
+        return .ack
+    }
+
     private func writeUploaded(to path: String) -> DoorReply {
         guard let bundle = cloud.uploaded.last else { return .error("no report was sent") }
         let directory = URL(fileURLWithPath: path, isDirectory: true)

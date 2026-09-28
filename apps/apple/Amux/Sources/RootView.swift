@@ -31,7 +31,7 @@ struct RootView: View {
         DrivenRoot { app }
             // What a driver queries and drives is the app itself.
             .onAppear {
-                DoorHost.shared.adopt(composition)
+                DoorHost.shared.adopt(delegate)
                 // A link the launch carried goes through the same door the
                 // system's own links go through, before anything else has
                 // happened — which is what a cold start opened by a link is,

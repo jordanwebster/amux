@@ -1,0 +1,84 @@
+shell |  | agents | 0,62,402,778
+home |  | signed-out | 0,62,402,778
+home.title | Agents, switch account | Agents | 60,65,104,46
+home.subtitle |  | 1 need you · 2 agents | 60,105,151,16
+home.exceptions | Sign in to reach your agents from anywhere | Sign in to reach your agents from anywhere | 18,137,366,44
+home.row.<asker> | asker, Get ready., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,221,366,91
+home.row.<asker>.age.volatile | <volatile>
+home.row.<asker>.detail.volatile | <volatile>
+home.row.<bystander> | bystander, Get ready., desk is offline, desk, /tmp/amux-phone-journey/net/desk/work, <age> | host-offline | 18,313,366,91
+home.row.<bystander>.age.volatile | <volatile>
+home.row.<bystander>.detail.volatile | <volatile>
+chat |  | bystander | 0,62,402,778
+chat.row.prompt | Get ready. |  | 18,132,366,40
+chat.row.boundary | Started |  | 18,184,366,16
+chat.row.prose | Watching the logs. | final | 18,211,366,20
+chat.prose.render |  | rendered | 18,211,366,20
+chat.row.turn-end | <volatile>
+chat.header | desk · away | detached | 18,64,147,54
+chat.back | Back |  | 16,68,42,46
+chat.title | bystander | bystander | 51,72,102,38
+chat.more | More |  | 344,69,44,44
+chat.field | desk is out of reach · your draft is kept |  | 26,755,350,20
+chat.attach | Attach |  | 26,783,37,36
+chat.dictate | Dictate | idle | 55,781,33,40
+chat.model | claude-fake-1 · Default |  | 83,784,114,34
+chat.send | Send |  | 342,784,34,34 (disabled)
+hosts |  | 1 offline | 0,62,402,778
+hosts.title |  | Hosts | 18,72,69,32
+hosts.subtitle |  | 1 offline | 18,105,65,16
+hosts.row.<desk> | desk, offline for <t>, its agents’ state is unknown | offline | 18,159,366,64
+hosts.caption.offline |  | Agents on an offline host report their state as unknown. | 18,231,293,37
+hosts.fact.identity | <volatile>
+hosts.fact.paired-devices | Paired Devices, 1 | 1 | 18,354,366,46
+hosts.caption.devices |  |  | 18,408,320,18
+you |  | none | 0,62,402,778
+you.title |  | You | 18,62,46,40
+you.add | Add Account |  | 18,142,366,46
+you.signIn | Sign In |  | 18,206,366,44
+you.signIn.caption |  |  | 18,258,296,18
+you.appearance |  | system | 18,317,366,50
+you.appearance.light | Light | not chosen | 200,319,56,46
+you.appearance.dark | Dark | not chosen | 256,319,49,46
+you.appearance.system | System | chosen | 305,319,63,46
+you.identity | <volatile>
+you.support | Contact Support |  | 18,453,366,46
+you.report | Report a Problem |  | 18,499,366,46
+you.dump | Export Diagnostics |  | 18,545,366,46
+you.help.caption |  |  | 18,599,354,31
+ | Back |  | 16,68,42,46
+ | bystander, desk · away |  | 51,72,102,38
+ | More |  | 344,69,44,44
+ | Get ready. |  | 281,132,103,40
+ | Started |  | 18,184,366,16
+ | Watching the logs. |  | 18,211,366,20
+ | Worked <t> · $0.00 |  | 45,243,130,16
+ | Attach |  | 26,783,37,36
+ | Dictate |  | 55,781,33,40
+ | claude-fake-1, Default |  | 83,784,114,34
+ | Send |  | 342,784,34,34 (disabled)
+ | Hosts |  | 18,72,69,32
+ | 1 offline |  | 18,105,65,16
+ | OFFLINE |  | 20,137,49,14
+ | desk, offline for <t>, its agents’ state is unknown |  | 18,159,366,64
+ | Agents on an offline host report their state as unknown. |  | 18,231,293,37
+ | THIS PHONE |  | 20,286,70,14
+ | Identity, amux-iphone-1 · <key> |  | 18,308,366,46
+ | Paired Devices, 1 |  | 18,354,366,46
+ | Revoking a device ends its access immediately. |  | 18,408,320,18
+ | You |  | 18,70,46,32
+ | ACCOUNTS |  | 20,120,56,14
+ | Add Account |  | 18,142,366,46
+ | Sign In |  | 18,206,366,44
+ | Sign in to reach your agents from anywhere |  | 18,258,296,18
+ | THIS PHONE |  | 20,294,70,14
+ | Appearance |  | 32,332,90,20
+ | Light |  | 200,319,56,46
+ | Dark |  | 256,319,49,46
+ | System |  | 305,319,63,46
+ | Identity, <key> |  | 18,367,366,46
+ | HELP |  | 20,430,28,14
+ | Contact Support |  | 18,453,366,46
+ | Report a Problem |  | 18,499,366,46
+ | Export Diagnostics |  | 18,545,366,46
+ | A report includes a screenshot and this phone’s diagnostic dump. |  | 22,599,346,31
