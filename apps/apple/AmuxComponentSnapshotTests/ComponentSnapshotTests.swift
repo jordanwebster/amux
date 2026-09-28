@@ -265,7 +265,10 @@ final class ComponentSnapshotTests: XCTestCase {
     /// So the picture is taken once every glass that tracks luma has taken a
     /// report (see ``GlassWatch``) and the photographs and those glass states
     /// have then stayed unchanged for a quiet window longer than any pause in
-    /// the easing. The comparison is not loosened.
+    /// the easing. The comparison is not loosened. Every example with glass
+    /// prints when its glass adapted and when its photographs changed, counted
+    /// from the window showing, so the render server's latency on the machine
+    /// that ran it is on record.
     private func settledPhotograph(
         of view: UIView,
         traits: UITraitCollection,
@@ -277,6 +280,7 @@ final class ComponentSnapshotTests: XCTestCase {
         let started = ProcessInfo.processInfo.systemUptime
         var state = glass.sample()
         var adapted: TimeInterval?
+        var changes: [TimeInterval] = []
         var settled = photograph(view, traits: traits)
         var since = started
         repeat {
@@ -289,13 +293,17 @@ final class ComponentSnapshotTests: XCTestCase {
                 adapted = now - started
             }
             if Self.pixels(of: current) != Self.pixels(of: settled) || sampled != state {
+                changes.append(now - glass.shown)
                 settled = current
                 state = sampled
                 since = now
             } else if !waiting, now - since >= quiet {
-                if let adapted {
-                    print(String(format: "AMUX_SNAPSHOT_GLASS component=%@ glass=%d adapted=%.3f",
-                                 name, sampled.count, adapted))
+                if glass.panes > 0 {
+                    print(String(
+                        format: "AMUX_SNAPSHOT_GLASS component=%@ panes=%d tracking=%d adapted=%@ changes=%@",
+                        name, glass.panes, sampled.count,
+                        adapted.map { String(format: "%.3f", $0) } ?? "-",
+                        changes.map { String(format: "%.3f", $0) }.joined(separator: ",")))
                 }
                 return settled
             }
@@ -343,6 +351,10 @@ final class ComponentSnapshotTests: XCTestCase {
 private final class GlassWatch {
     private let window: UIWindow
     private var firstSeen: [ObjectIdentifier: Data] = [:]
+    /// When the window showed.
+    let shown = ProcessInfo.processInfo.systemUptime
+    /// The most glass surfaces, tracking luma or not, seen at once.
+    private(set) var panes = 0
 
     init(window: UIWindow) {
         self.window = window
@@ -353,7 +365,11 @@ private final class GlassWatch {
     @discardableResult
     func sample() -> [ObjectIdentifier: Data] {
         var found: [ObjectIdentifier: Data] = [:]
+        var glass = 0
         func visit(_ layer: CALayer) {
+            if Self.isGlass(layer) {
+                glass += 1
+            }
             if layer.value(forKey: "tracksLuma") as? Bool == true, Self.isGlass(layer) {
                 found[ObjectIdentifier(layer)] =
                     (try? NSKeyedArchiver.archivedData(withRootObject: layer, requiringSecureCoding: false))
@@ -362,6 +378,7 @@ private final class GlassWatch {
             layer.sublayers?.forEach(visit)
         }
         visit(window.layer)
+        panes = max(panes, glass)
         for (layer, state) in found where firstSeen[layer] == nil {
             firstSeen[layer] = state
         }
