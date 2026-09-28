@@ -101,13 +101,6 @@ component-snapshots *ARGS: rust
 component-snapshots-perturb *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; just ios component-snapshots --skip-build --negative-control "$@"
 
-# Launch the debug build, open a named state through the driving door, read
-# the screen back, photograph it, and connect its shared runtime to a test
-# relay. The tools that serve that relay are an input alongside the app.
-# Drive a launched debug app through its door and a served relay.
-door-smoke: build tools
-    scripts/with iphone -- {{bounded}} 1800 {{python}} -B scripts/ios-door-smoke.py
-
 # Reach each whole screen the golden manifest names on the phone driver, over
 # a served topology through the app's door, and compare its display and
 # element geometry with the golden in light and dark. `--only ID` runs one

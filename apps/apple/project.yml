@@ -172,14 +172,12 @@ targets:
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG AMUX_DEBUG_TOOLS
-          # The debug build links the bridge built with its driving tools:
-          # the plaintext loopback relay a test runner speaks, and the
-          # recorder snapshot a report is written from. Force-loading it
-          # first means every bridge symbol is already defined by the time
-          # the shipping archive the package carries is reached, so nothing
-          # is taken from that one. `just ios door-smoke` reads the build
-          # marker back out of the running app and checks that the release
-          # binary does not carry it.
+          # The debug build links the bridge built with its driving tools,
+          # such as the plaintext loopback relay a test runner speaks.
+          # Force-loading it first means every bridge symbol is already
+          # defined by the time the shipping archive the package carries is
+          # reached, so nothing is taken from that one. `just ios scope-audit`
+          # checks that the release binary does not carry the build marker.
           OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
         Measured:
           # The same tools as Debug, and for the same reason: the suite drives
@@ -197,7 +195,7 @@ targets:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources
           # are not compiled at all, so a door symbol or a fixture cannot
           # reach a shipped binary by way of a stray reference outside a
-          # conditional. `just ios door-smoke` checks the built binary.
+          # conditional. `just ios scope-audit` checks the built binary.
           EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
     dependencies:
       - package: AmuxCore

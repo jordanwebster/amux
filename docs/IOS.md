@@ -164,9 +164,7 @@ changes, with the new pin and its reason recorded.
 
 ## Driving a debug build
 
-`just ios door-smoke` proves launch, fixture selection, visible
-state, composited capture and the real loopback relay connection. For a single
-screen after building the workspace with `just build`:
+For a single screen after building the workspace with `just build`:
 
 ```sh
 timeout 120 target/debug/xtask door --simulator golden \

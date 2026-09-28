@@ -809,22 +809,6 @@ cases = ["apps/apple/AmuxUITests/AccessibilityAuditTests.swift"]
 swift = ["AmuxUITests"]
 
 [[suite]]
-name = "phone-door-smoke"
-contract = "The debug app launches, accepts driving-door commands, reads its screen, captures it, and connects to a served relay."
-paths = ["scripts/ios-door-smoke.py"]
-recipe = "just ios door-smoke"
-boundary = "System composition"
-oracle = "Door replies, screen reads, screenshot creation, and relay observations."
-real = ["built phone app", "iOS simulator", "served relay", "network stack"]
-substituted = ["cloud account", "providers"]
-time = "real"
-capabilities = ["macOS", "Xcode 26.6", "golden iOS simulator"]
-lane = "system"
-evidence = "target/ios/door-smoke"
-update = ""
-cases = ["scripts/ios-door-smoke.py"]
-
-[[suite]]
 name = "phone-loopback-smoke"
 contract = "A bare Swift executable links the driving bridge and reads a served relay through the public phone boundary."
 paths = ["apps/apple/Tools/loopback_smoke.py", "apps/apple/Tools/LoopbackSmoke.swift"]

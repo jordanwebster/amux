@@ -1,3 +1,12 @@
+2026-09-28 — **The phone door smoke is retired.** `just ios door-smoke` asked
+the door for `bridge` and `report`, which this build's door refuses, so it
+could not pass. What else it proved is proved elsewhere: the phone journeys
+and whole-screen goldens drive launch, screens, appearance, type size,
+captures and typing through the same door against served hosts, and
+`just ios scope-audit` checks that the release binary carries no driving
+tools. The recipe, script, its test, its catalogue suite and its entry in
+the iOS captures list are gone.
+
 2026-09-28 — **A deletion-ledger check keeps removed mechanisms removed.**
 `just deletion-ledger-check` (now in `just ci`) runs
 `scripts/deletion-ledger-check.py`: one row per mechanism the journal

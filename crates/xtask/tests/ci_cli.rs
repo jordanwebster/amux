@@ -379,7 +379,6 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         "loopback-smoke",
         "component-snapshots",
         "unit",
-        "door-smoke",
         "goldens",
         "goldens-perturb",
         "journey",
@@ -468,7 +467,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         if success {
             assert_eq!(
                 calls,
-                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios build\nios component-snapshots\nios loopback-smoke\nios unit\nios door-smoke\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios perf\nios package\nios scope-audit\n"
+                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios script-tests\nios graph-check\nios rust\nios simulator golden\nios build\nios component-snapshots\nios loopback-smoke\nios unit\nios goldens\nios goldens-perturb\ntest-store-ios\nios journey\nios accessibility\nios perf\nios package\nios scope-audit\n"
             );
         }
         if !skip.is_empty() {

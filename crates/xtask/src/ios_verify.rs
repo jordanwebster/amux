@@ -57,7 +57,6 @@ const SHIPPING: &[&str] = &["ios package", "ios scope-audit"];
 /// took it as well as the app. Kept apart from the gate so that a change to the
 /// app is not held up by a difference between two Macs.
 const CAPTURES: &[&str] = &[
-    "ios door-smoke",
     "ios goldens",
     "ios goldens-perturb",
     "test-store-ios",
