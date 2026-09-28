@@ -693,7 +693,10 @@ mod tests {
         store.save_in(dir.path()).unwrap();
 
         let loaded = TrustStore::load_or_create_in(dir.path()).unwrap();
-        assert_eq!(loaded.entry(peer).unwrap().platform.as_deref(), Some("Linux"));
+        assert_eq!(
+            loaded.entry(peer).unwrap().platform.as_deref(),
+            Some("Linux")
+        );
     }
 
     #[test]
