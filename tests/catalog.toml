@@ -690,14 +690,14 @@ cargo = [
 ]
 
 [[suite]]
-name = "ci-tool-boundary"
-contract = "CI status, observation, and iOS verification commands reject incomplete or mismatched external results."
-paths = ["crates/xtask/tests/ci_cli.rs"]
+name = "ios-verify-boundary"
+contract = "iOS verification runs every stage in order, refuses recipes the justfiles no longer declare, and stops on a failed stage or a skipped journey."
+paths = ["crates/xtask/tests/ios_verify_cli.rs"]
 recipe = "just test-crate xtask"
 boundary = "System composition"
-oracle = "Exact command exits, recorded results, and scripted GitHub and Xcode process interactions."
+oracle = "Exact command exits, recorded results, and scripted recipe and Xcode process interactions."
 real = ["child processes", "temporary files"]
-substituted = ["GitHub", "Xcode", "network"]
+substituted = ["just recipes", "Xcode"]
 time = "real"
 capabilities = ["Unix"]
 lane = "tool"
@@ -706,7 +706,7 @@ update = ""
 cargo = [
   { package = "xtask", kind = "lib", targets = ["xtask"], features = [] },
   { package = "xtask", kind = "bin", targets = ["xtask"], features = [] },
-  { package = "xtask", targets = ["ci_cli"], features = [] },
+  { package = "xtask", targets = ["ios_verify_cli"], features = [] },
 ]
 
 [[suite]]

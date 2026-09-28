@@ -127,26 +127,24 @@ stopping at the first failure:
 
 The terminal journeys and the iOS gate are in `ci.yml` but not in `just ci`.
 
-## Watching a phone CI run
+## `just ci-remote`
 
-Three recipes in the phone module read GitHub's record of a push run of
-`ci.yml` for the exact local commit, on the checked-out branch, and judge the
-`iOS gate` job by its `Run the iOS gate` step
-([`crates/xtask/src/ci.rs`](../crates/xtask/src/ci.rs)):
+`just ci-remote` runs the whole CI workflow on GitHub for the checked-out
+commit ([`scripts/ci-remote.sh`](../scripts/ci-remote.sh)). It refuses to
+start on any branch but `rearchitect` or with uncommitted changes, then:
 
-- `just ios ci-status [--wait SECS]` reads it and prints one JSON result:
-  `run_id`, `url`, `head` and `ios_job_duration_secs` on success, or an
-  `error` of `DetachedHead`, `NotPushed`, `NoRunForHead`, `StillRunning`,
-  `Failed`, `JobAbsent` or `ToolFailure`. A newer failed run cannot be masked by an
-  older successful one for the same commit.
-- `just ios ci-observe [--settle SECS] [--wait SECS] [--record PATH]`
-  tolerates a run still in progress: it exits zero with `status: "pending"`
-  unless the previous commit's run failed, in which case it waits for this
-  one. The default windows are 180 seconds for the run to appear and 3,000 to
-  finish. `--record` appends each JSON line to a file.
-- `just ios ci-gate` requires a clean checkout on a branch, pushes `HEAD` to
-  the same branch on `origin` without force, and waits up to 3,000 seconds
-  for that commit's run.
+1. pushes `HEAD` to `rearchitect` on `origin`, never forced: if the remote
+   branch has moved on, the push fails and the divergence is left for a
+   person to reconcile;
+2. finds the push run of `ci.yml` for that exact commit with
+   `gh run list --commit`, waiting up to five minutes for GitHub to register
+   it;
+3. waits for the run with `gh run watch --exit-status`;
+4. on success prints the run's URL; on any other conclusion prints
+   `gh run view --log-failed` and exits non-zero.
+
+It needs the `gh` CLI signed in to an account that can push to the
+repository and read its Actions runs.
 
 ## Checking Windows from a Mac
 

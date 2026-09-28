@@ -444,8 +444,6 @@ mod tests {
         }
         for excluded in [
             "ios verify",
-            "ios ci-gate",
-            "ios ci-observe",
             "ios qa-cloud-signin",
             "ios qa-sandbox-purchase",
             "ios qa-live-journey",

@@ -1,6 +1,5 @@
 use std::path::Path;
 
-mod ci;
 mod door;
 mod golden;
 use xtask::ios_verify;
@@ -12,8 +11,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("proto-check") => {
             xtask::proto_check::main(&std::env::args().skip(2).collect::<Vec<_>>())
         }
-        Some("ci-status") => ci::main(),
-        Some("ci-observe") => ci::observe_main(),
         Some("door") => door::main(),
         Some("golden") => golden::main(),
         Some("ios-verify") => ios_verify::run(),
@@ -23,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("restamp") => restamp(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
             eprintln!(
-                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden diff [ARGS]|restamp FROM TO [VERSION]|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+                "usage: xtask <codegen|swift-types [--check]|proto-check [--update]|golden diff [ARGS]|restamp FROM TO [VERSION]|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
             );
             std::process::exit(2);
         }

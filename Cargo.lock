@@ -5431,7 +5431,6 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "app-runtime",
- "chrono",
  "model",
  "png 0.17.16",
  "prost",

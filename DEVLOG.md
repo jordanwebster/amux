@@ -1,3 +1,15 @@
+2026-09-28 — **`just ci-remote` pushes the branch and waits for its GitHub
+run.** It refuses to start off the `rearchitect` branch or with uncommitted
+changes, pushes the head without force (a remote that moved on is a failed
+push, left for a person), finds the `ci.yml` push run for that exact commit
+with `gh run list --commit`, waits on it with `gh run watch --exit-status`,
+and prints the run URL on success or the failed jobs' logs otherwise. It
+replaces the phone module's three CI tools (`ios ci-status`, `ios ci-observe`,
+`ios ci-gate`) and the Rust module behind them, which judged the same run
+through a thousand lines of JSON parsing; the iOS gate is a job in that run,
+so a green run already answers what they asked. The iOS verification tests
+that shared their test file keep it, renamed.
+
 2026-09-28 — **`just ci` found four things the day's work had left red.**
 The fleet opened over an attached terminal lost its `o terminal` hint at 100
 columns, the only visible way back to that terminal: the dense status bar

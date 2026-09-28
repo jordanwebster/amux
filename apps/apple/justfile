@@ -250,19 +250,3 @@ qa-live-journey: build desktop
 # Build the desktop product through the root recipe.
 desktop:
     just build
-
-# Read this commit's GitHub run: exits zero only when the whole workflow and
-# the iOS verification step succeeded.
-# Read this commit's GitHub run.
-ci-status *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3300 cargo run --locked -q -p xtask -- ci-status "$@"
-
-# Push HEAD to the branch's remote and wait for its CI run to pass.
-# Push HEAD and wait for its CI run to pass.
-ci-gate:
-    scripts/ci-gate.sh
-
-# An intermediate CI check that tolerates a run still in progress.
-# Check CI, tolerating a run still in progress.
-ci-observe *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/ci-observe.sh "$@"
