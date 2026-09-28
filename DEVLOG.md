@@ -1,3 +1,18 @@
+2026-09-28 — **Component snapshots wait for Liquid Glass to adapt.** Small
+glass (the pill, the round buttons, the composer's strip) tracks the luma
+behind it: the render server measures it and reports back, and each report
+eases the glass's filter parameters, its shadow above all, from neutral
+values toward ones suited to the backdrop. Nothing changes before the first
+report, and on the CI runner that report came more than half a second after
+the view last changed, so the half-second stillness test photographed the
+unadapted glass: the runner's composer.strip.light and review.comment.light
+pictures are pixel-identical to local photographs taken before the report.
+The snapshot now watches every luma-tracking glass layer from the moment its
+window shows and takes the picture only once each has left the state it was
+drawn in and the screen and those layers have then held still for half a
+second. It prints when each glass example adapted, so the runner's latency
+is on record.
+
 2026-09-28 — **The contracts check compiles nothing the test run did not.**
 It built each package's named test targets on their own, with the
 features the test catalogue gives them. Cargo unifies features per build,
