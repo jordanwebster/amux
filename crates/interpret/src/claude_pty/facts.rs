@@ -54,6 +54,39 @@ fn between<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     Some(text[start..end].trim())
 }
 
+/// A user row's text with the pasted blocks unwrapped. Claude 2.1.283
+/// records a long paste, which is how amux types a prompt, between
+/// `<pasted_content id="…">` and `</pasted_content id="…">` lines, after a
+/// blank line; the person sent only what is inside.
+fn unwrap_pasted(text: &str) -> String {
+    const OPEN: &str = "<pasted_content id=\"";
+    let mut out = String::new();
+    let mut rest = text;
+    let mut unwrapped = false;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at + OPEN.len()..];
+        let Some((id, inner)) = after.split_once("\">") else {
+            break;
+        };
+        let close = format!("</pasted_content id=\"{id}\">");
+        let Some(end) = inner.find(&close) else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        let body = &inner[..end];
+        let body = body.strip_prefix('\n').unwrap_or(body);
+        out.push_str(body.strip_suffix('\n').unwrap_or(body));
+        rest = &inner[end + close.len()..];
+        unwrapped = true;
+    }
+    out.push_str(rest);
+    if unwrapped {
+        out.trim_matches('\n').to_owned()
+    } else {
+        out
+    }
+}
+
 /// The messages from another session a user row shows the model: the body
 /// of each `<cross-session-message …>` element (Claude 2.1.240), or the
 /// text between the peer preamble and its trust note (2.1.282).
@@ -665,7 +698,7 @@ impl State {
                 if text(attachment, "type") == "queued_command"
                     && matches!(text(attachment, "commandMode"), "" | "prompt")
                 {
-                    let prompt = text(attachment, "prompt").to_owned();
+                    let prompt = unwrap_pasted(text(attachment, "prompt"));
                     self.joined_prompt(emit, text(row, "uuid").to_owned(), prompt, at_ms);
                 }
             }
@@ -678,7 +711,7 @@ impl State {
     fn user_row(&mut self, emit: &mut Emit, row: &Value, at_ms: Option<i64>) {
         let uuid = text(row, "uuid").to_owned();
         let content = row.pointer("/message/content").unwrap_or(&Value::Null);
-        let whole = content_text(content);
+        let whole = unwrap_pasted(&content_text(content));
         if !peer_message_bodies(&whole).is_empty() {
             return self.reflected_messages(&whole);
         }
@@ -1255,7 +1288,29 @@ fn folded(choices: Vec<ScopeChoice>) -> ScopeChoice {
 
 #[cfg(test)]
 mod tests {
-    use super::peer_message_bodies;
+    use super::{peer_message_bodies, unwrap_pasted};
+
+    #[test]
+    fn pasted_blocks_read_as_what_was_pasted() {
+        assert_eq!(
+            unwrap_pasted(
+                "\n\n<pasted_content id=\"c9c7\">\nfirst line\n\nsecond line\n</pasted_content id=\"c9c7\">\n"
+            ),
+            "first line\n\nsecond line"
+        );
+        assert_eq!(
+            unwrap_pasted(
+                "look at this\n\n<pasted_content id=\"a1\">\nlog\n</pasted_content id=\"a1\">\nand fix it"
+            ),
+            "look at this\n\nlog\nand fix it"
+        );
+        // A tag with no matching close is the person's own text.
+        let typed = "<pasted_content id=\"x\">\nhalf";
+        assert_eq!(unwrap_pasted(typed), typed);
+        let mismatched = "<pasted_content id=\"x\">\nhalf\n</pasted_content id=\"y\">";
+        assert_eq!(unwrap_pasted(mismatched), mismatched);
+        assert_eq!(unwrap_pasted("\n  plain\n"), "\n  plain\n");
+    }
 
     #[test]
     fn peer_messages_are_read_in_both_wordings() {

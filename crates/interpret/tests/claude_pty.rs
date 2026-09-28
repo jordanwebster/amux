@@ -76,6 +76,7 @@ goldens! {
     recorded_steer_send_now => "recorded_steer_send_now",
     a_dialog_no_hook_can_answer_opens_an_unanswerable_ask => "unanswerable",
     asks_offer_and_type_only_the_menus_the_keymap_knows => "permission_menus",
+    a_pasted_prompt_reads_as_what_was_sent => "pasted_prompt",
 }
 
 #[test]

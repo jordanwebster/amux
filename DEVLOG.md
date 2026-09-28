@@ -1,3 +1,10 @@
+2026-09-28 — **A long prompt to terminal Claude reads as what was sent.**
+amux types a prompt into Claude's terminal as a paste, and Claude 2.1.283
+records a long paste between `<pasted_content id="…">` lines in its
+transcript, so the chat's prompt row showed the wrapper on both clients. The
+interpreter unwraps those blocks when it reads a user row or a prompt Claude
+folded into a running turn; a tag without its matching close stays as typed.
+
 2026-09-28 — **A terminal Claude permission card offers only what its menu can take.**
 Claude 2.1.283 folds a directory and a mode suggestion into one "Yes, and
 always allow access to <dir> from this project" entry. The card offered each
