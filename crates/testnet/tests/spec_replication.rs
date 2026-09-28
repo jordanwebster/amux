@@ -1184,12 +1184,15 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
         .await
         .unwrap();
 
-    // Once armed, the laptop's sources hold the first record they are sent
-    // until the gate opens; markers pass. A source reads the hook when its
-    // stream opens, so it is set before the agent exists.
+    // Once armed, every laptop source holds the first record it is sent
+    // until the gate opens; markers pass. Every source, not only the first:
+    // the Exited row replaces the live source with a settling one, and
+    // whichever of them meets the exit's first record, neither may land it.
+    // A source reads the hook when its stream opens, so it is set before the
+    // agent exists.
     let armed = Arc::new(AtomicBool::new(false));
     let holding = Arc::new(AtomicBool::new(false));
-    let gate = Arc::new(tokio::sync::Notify::new());
+    let gate = Arc::new(tokio::sync::watch::Sender::new(false));
     let laptop = net.runtime("laptop").unwrap();
     {
         let armed = armed.clone();
@@ -1204,10 +1207,12 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
                         | session_event::Of::Append(_)
                 )
             );
-            if record && armed.swap(false, Ordering::SeqCst) {
+            if record && armed.load(Ordering::SeqCst) && !*gate.borrow() {
                 holding.store(true, Ordering::SeqCst);
-                let gate = gate.clone();
-                SourceVerdict::Hold(Box::pin(async move { gate.notified().await }))
+                let mut open = gate.subscribe();
+                SourceVerdict::Hold(Box::pin(async move {
+                    let _ = open.wait_for(|open| *open).await;
+                }))
             } else {
                 SourceVerdict::Keep
             }
@@ -1250,7 +1255,7 @@ async fn an_exited_agent_settles_only_once_its_own_stream_has_passed_the_exit() 
         cursor < origin_revision(&net, "brief").await,
         "the exit's records have not landed when the Exited row has"
     );
-    gate.notify_one();
+    gate.send_replace(true);
 
     wait_current(&net, "laptop", "brief").await;
     let origin = origin_rows(&net, "brief").await;

@@ -1,3 +1,16 @@
+2026-09-28 — **`just ci` found four things the day's work had left red.**
+The fleet opened over an attached terminal lost its `o terminal` hint at 100
+columns, the only visible way back to that terminal: the dense status bar
+dropped the entry keys first when hints did not fit. Over an attached
+terminal every shorter hint set now keeps it. Three tests had fallen behind
+the code: the agent-process test counted headless Claude's boundary twice
+once it began to be revised in place; the CI tool tests stubbed the retired
+branch and job names; and the replication test of an exited agent held only
+the first source stream it met, so when the exit replaced the live source
+with a settling one the second stream landed the exit's records before the
+test looked (3 in 25 runs under load, now 0 in 40). The Swift mirror check
+lists the terminal-only patch values as staying in Rust.
+
 2026-09-28 — **CI runs every check `just ci` runs, and the recipes that had
 gone stale work again.** The CI workflow now runs the proto only-add check and
 the deletion-ledger search beside codegen, and the contract-to-test check on
