@@ -1,10 +1,11 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write three paragraphs about the history of rope-making.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write three paragraphs about the history of rope-making.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=d95bd283-5d5c-4b99-a64d-1d375257cb8f
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 24 recorded 23: fact Stream type=assistant uuid=9d537d33-362b-49f5-aa37-05a0d507a872
   row    3 msg_011CeW3ek1A3PBja3jXLEEjT:0 Thinking { text: "The user is asking me to write three paragraphs about the history of rope-making. This is a straightforward informational writing task that has nothing to do with software engineering, code, the current working directory, or any of the technical context provided.\n\nThis is not a software engineering task, so I should just write the requested c…
 ## 26 recorded 25: fact Stream type=assistant uuid=511190c3-c9af-43a9-8276-bc62b62ceae5
@@ -34,8 +35,8 @@
   row   14 turn:3 TurnEnd { duration_ms: Some(21170), cost_usd: Some(0.0451237), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write three paragraphs about the history of rope-making.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Write three paragraphs about the history of rope-making.")], steered: false }
      3 msg_011CeW3ek1A3PBja3jXLEEjT:0 Thinking { text: "The user is asking me to write three paragraphs about the history of rope-making. This is a straightforward informational writing task that has nothing to do with software engineering, code, the current working directory, or any of the technical context provided.\n\nThis is not a software engineering task, so I should just write the requested c…
      4 msg_011CeW3ek1A3PBja3jXLEEjT:1 Prose { text: [Text("# The History of Rope-Making\n\nRope-making is one of humanity's oldest crafts, with evidence of twisted plant fibers dating back thousands of years. Archaeological findings from ancient Egypt suggest that Egyptians were making ropes from papyrus, while other civilizations used materials like hemp, flax, and coconut fibers depending on their…
      5 turn:1 TurnEnd { duration_ms: Some(7222), cost_usd: Some(0.024946), failed: false }

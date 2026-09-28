@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1787961341118 asks=[] session=? model=? e
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Reply with exactly MAINTENANCE_OK and nothing else."
+item boundary:1 boundary final at=1787961341121 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1787961341121 text="Reply with exactly MAINTENANCE_OK and nothing else."
 snapshot WORKING queue=[] working_on=- at=1787961341121 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 14 recorded 13: fact Stream type=control_response

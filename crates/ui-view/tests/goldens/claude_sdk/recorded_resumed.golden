@@ -1,12 +1,13 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=21f88f6f-7269-4399-b3ed-fcbbbb08ffad
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 18 recorded 17: fact Stream type=assistant uuid=788828e0-88c0-4ae9-bcbd-6b301b67aa75
-  row    3 msg_011CeW3YaVFN1fZVnGSUSfbb:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis is a straightforward request. I should respond with exactly what they asked for.", open: false, duration_ms: Some(1382) }
+  row    3 msg_011CeW3YaVFN1fZVnGSUSfbb:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis is a straightforward request. I should respond with exactly what they asked for.", open: false, duration_ms: Some(2113) }
 ## 20 recorded 19: fact Stream type=assistant uuid=caf82b1b-76cb-487b-af59-090a079eb41f
   row    4 msg_011CeW3YaVFN1fZVnGSUSfbb:1 Prose { text: [Text("REMEMBERED")], streaming: false, working_note: false }
 ## 22 recorded 21: fact Stream type=result subtype=success uuid=b1fcbf89-d0f2-44fa-82b4-03be03cf7326
@@ -23,9 +24,9 @@
   row    9 turn:2 TurnEnd { duration_ms: Some(1033), cost_usd: Some(0.0032457000000000007), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CeW3YaVFN1fZVnGSUSfbb:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis is a straightforward request. I should respond with exactly what they asked for.", open: false, duration_ms: Some(1382) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Remember the word ALBATROSS. Reply with exactly REMEMBERED.")], steered: false }
+     3 msg_011CeW3YaVFN1fZVnGSUSfbb:0 Thinking { text: "The user is asking me to remember the word \"ALBATROSS\" and reply with exactly \"REMEMBERED\".\n\nThis is a straightforward request. I should respond with exactly what they asked for.", open: false, duration_ms: Some(2113) }
      4 msg_011CeW3YaVFN1fZVnGSUSfbb:1 Prose { text: [Text("REMEMBERED")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(1418), cost_usd: Some(0.022579), failed: false }
      6 73746469-6e2d-4400-8000-000000000000 Prompt { text: [Text("What word did I ask you to remember? Reply with just that word.")], steered: false }

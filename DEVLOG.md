@@ -1,3 +1,10 @@
+2026-09-28 — **Headless Claude's "started" rule sits above the prompt that began the session.**
+Headless Claude reports its init only after it reads the first message, so
+its session boundary landed below the first prompt, unlike terminal Claude
+and Codex. A prompt submitted before the init that will make a Started,
+Resumed or Restarted boundary now draws that boundary first, and the init
+fills in its session and version in place.
+
 2026-09-28 — **A long prompt to terminal Claude reads as what was sent.**
 amux types a prompt into Claude's terminal as a paste, and Claude 2.1.283
 records a long paste between `<pasted_content id="…">` lines in its

@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=720 asks=[] session=? model=? effort=? mo
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Write a detailed 500 word essay about the history of rope."
+item boundary:1 boundary final at=723 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=723 text="Write a detailed 500 word essay about the history of rope."
 snapshot WORKING queue=[] working_on=- at=723 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=41891ede-78a7-4301-a8bc-241ceeb0afbe

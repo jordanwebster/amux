@@ -1,12 +1,13 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=30b4696e-d9fb-478e-8355-5173815b14d2
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=835e274c-b37e-43d4-b888-5eec44a90f83
-  row    3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5485) }
+  row    3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5558) }
 ## 24 recorded 23: fact Stream type=assistant uuid=d6a1daa7-e25e-4261-aeef-5262c31c92e5
   row    4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 [Open: ] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "A calm, professional blue color", preview: "", recommended: false }], allow_o…
   composer Send activity=Some(Running { key: "toolu_01PpKZzwKZ9tHyeeGtQv6zb2" }) queue=[] outbox=[]
@@ -30,9 +31,9 @@
   row    7 turn:1 TurnEnd { duration_ms: Some(13701), cost_usd: Some(0.067362), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5485) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use exactly one AskUserQuestion call containing exactly four questions, in this order. 1: header Color, question 'Which color do you prefer?', single-select, options Red and Blue. 2: header Tools, question 'Which tools do you need?', multiSelect true, options Hammer, Saw and Drill. 3: header Layout, question 'Which layout should the p…
+     3 msg_011CfRE2qToeGfStpPrcp5Ap:0 Thinking { text: "", open: false, duration_ms: Some(5558) }
      4 toolu_01PpKZzwKZ9tHyeeGtQv6zb2 [Answered: Color = Blue; Tools = Hammer, Drill; Layout = Grid; Snack = "Dried mango"] Ask(Question { questions: [QuestionView { header: "Color", question: "Which color do you prefer?", multi_select: false, options: [OptionView { label: "Red", description: "A bold, energetic red color", preview: "", recommended: false }, OptionView { label: "Blue", description: "…
      5 msg_011CfRE3gGBaXJ87UoW9ehMx:0 Thinking { text: "", open: false, duration_ms: Some(1968) }
      6 msg_011CfRE3gGBaXJ87UoW9ehMx:1 Prose { text: [Text("Your answers:\n\n1. **Color:** Blue\n2. **Tools:** Hammer, Drill\n3. **Layout:** Grid\n4. **Snack:** Dried mango")], streaming: false, working_note: false }

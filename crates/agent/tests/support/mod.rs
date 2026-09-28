@@ -745,11 +745,18 @@ impl Log {
             .collect()
     }
 
-    /// Boundaries and turn ends, in the order they were journaled.
+    /// Boundaries and turn ends, in the order they were journaled. A
+    /// boundary revised in place (headless Claude's, drawn above the first
+    /// prompt before its init fills it in) counts once, where it was first
+    /// written.
     pub fn sequence(&self) -> Vec<String> {
         let mut sequence = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for step in &self.steps {
             for item in &step.items {
+                if !seen.insert(item.key.clone()) {
+                    continue;
+                }
                 if let Some(boundary) = boundary(item) {
                     sequence.push(format!("boundary {boundary}"));
                 }
@@ -860,7 +867,8 @@ impl Log {
     }
 }
 
-fn boundary(item: &wire::Item) -> Option<String> {
+/// A boundary item's kind and cause as the log prints it.
+pub fn boundary(item: &wire::Item) -> Option<String> {
     let boundary = match item.kind.as_str() {
         "claude_sdk" => match ClaudeSdkItem::decode(item.body.as_slice()).ok()?.kind? {
             claude_sdk_item::Kind::Boundary(boundary) => boundary,

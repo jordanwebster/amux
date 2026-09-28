@@ -89,6 +89,7 @@ impl State {
         self.boundary(emit, BoundaryKind::Exited, cause);
         self.shared.provider_exited();
         self.exited = true;
+        self.early_boundary = None;
         self.stream = None;
     }
 
@@ -272,24 +273,23 @@ impl State {
         }
         // Claude repeats its init at every turn; only a new process or a
         // new session is a boundary.
-        let kind = if self.inits == 0 {
-            Some(if self.incarnation > 1 {
-                BoundaryKind::Resumed
-            } else {
-                BoundaryKind::Started
-            })
-        } else if std::mem::take(&mut self.exited) {
-            Some(BoundaryKind::Restarted)
-        } else if session.is_some() && session != previous {
-            Some(BoundaryKind::Forked)
-        } else {
-            None
-        };
+        let kind = self
+            .coming_boundary()
+            .or_else(|| (session.is_some() && session != previous).then_some(BoundaryKind::Forked));
+        self.exited = false;
         self.inits += 1;
         let Some(kind) = kind else {
             return;
         };
-        self.boundary(emit, kind, String::new());
+        // A prompt that went in first already drew this boundary above it.
+        match self.early_boundary.take() {
+            Some(key) if kind != BoundaryKind::Forked => {
+                self.boundary_at(emit, key, kind, String::new())
+            }
+            _ => {
+                self.boundary(emit, kind, String::new());
+            }
+        }
     }
 
     fn rate_limit(&mut self, line: &Value) {

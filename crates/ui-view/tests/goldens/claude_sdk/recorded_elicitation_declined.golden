@@ -1,12 +1,13 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=19e40664-a7ae-49c7-b232-cf5fa88ce878
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 16 recorded 15: fact Stream type=assistant uuid=0c080a1a-61ff-443d-a03c-752a21452a25
-  row    3 msg_011CfREf5nXApcD1Wy7HNrUP:0 Thinking { text: "", open: false, duration_ms: Some(1608) }
+  row    3 msg_011CfREf5nXApcD1Wy7HNrUP:0 Thinking { text: "", open: false, duration_ms: Some(1697) }
 ## 18 recorded 17: fact Stream type=assistant uuid=563bffe1-77c6-4d88-9e7a-9e9655788d9a
   row    4 toolu_01YCs1EG2Fx896Xi6wFQwU1s ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Running, result: "" }
   composer Send activity=Some(Running { key: "toolu_01YCs1EG2Fx896Xi6wFQwU1s" }) queue=[] outbox=[]
@@ -40,9 +41,9 @@
   row    8 turn:1 TurnEnd { duration_ms: Some(3003), cost_usd: Some(0.0555257), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CfREf5nXApcD1Wy7HNrUP:0 Thinking { text: "", open: false, duration_ms: Some(1608) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Call the mcp__external__ask_the_operator tool with word set to PELICAN, then reply with exactly what it returned.")], steered: false }
+     3 msg_011CfREf5nXApcD1Wy7HNrUP:0 Thinking { text: "", open: false, duration_ms: Some(1697) }
      4 toolu_01YCs1EG2Fx896Xi6wFQwU1s ToolCall { server: "external", tool: "ask_the_operator", fact: "PELICAN", state: Succeeded, result: "elicitation decline" } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
      5 ask:6686eb27-534d-4315-a43c-208a2ac1ce1e Ask(Form { server: "external", message: "Confirm the word PELICAN.", fields: [], resolution: Declined })
      6 msg_011CfREfE5M8BiLJCFASrzap:0 Thinking { text: "", open: false, duration_ms: Some(962) }

@@ -196,17 +196,17 @@ async fn a_restart_from_the_checkpoint_re_emits_open_items_and_carries_keys_on()
         })
         .await;
     let after = agent.log();
-    let boundaries: Vec<String> = after
-        .items()
-        .into_iter()
-        .filter(|(_, item)| item.key.starts_with("boundary:"))
-        .map(|(_, item)| item.key)
-        .collect();
-    let unique: std::collections::BTreeSet<&String> = boundaries.iter().collect();
-    assert_eq!(
-        unique.len(),
-        boundaries.len(),
-        "no boundary key is reused: {boundaries:?}"
+    // A key names one boundary: a later emission of it only fills that
+    // boundary in (headless Claude's first init), never another's.
+    let mut kinds = std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    for (_, item) in after.items() {
+        if let Some(kind) = boundary(&item) {
+            kinds.entry(item.key).or_default().insert(kind);
+        }
+    }
+    assert!(
+        kinds.values().all(|kinds| kinds.len() == 1),
+        "no boundary key is reused: {kinds:?}"
     );
     daemon.stop(StopMode::Kill).await;
     assert_eq!(agent.exit().await, ExitCause::Killed);

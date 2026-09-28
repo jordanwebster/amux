@@ -1,10 +1,11 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 4 recorded 3: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=46bfcfab-c7a4-44a2-b584-0e9d48cb36c9
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 28 recorded 27: fact Stream type=assistant uuid=d48cd46e-5b3f-4651-a8cd-087aec4db558
   row    3 msg_011CeW3RSw8XsGhPL4YsQaaL:0 Thinking { text: "The user is asking me to:\n1. Use the Write tool to create a file called \"tool.txt\"\n2. The file should contain exactly \"TOOL_OK\"\n3. Then reply with exactly \"DONE\"\n\nThis is a straightforward task. Let me use the Write tool to create the file at the appropriate path. The working directory is <MACHINE_PATH>\n\nI should create the file at…
 ## 30 recorded 29: fact Stream type=assistant uuid=b67852b5-bb7a-4124-b746-dc82a12170c7
@@ -30,8 +31,8 @@
   row    7 turn:1 TurnEnd { duration_ms: Some(5021), cost_usd: Some(0.0281004), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use the Write tool once to create tool.txt containing exactly TOOL_OK, then reply exactly DONE.")], steered: false }
      3 msg_011CeW3RSw8XsGhPL4YsQaaL:0 Thinking { text: "The user is asking me to:\n1. Use the Write tool to create a file called \"tool.txt\"\n2. The file should contain exactly \"TOOL_OK\"\n3. Then reply with exactly \"DONE\"\n\nThis is a straightforward task. Let me use the Write tool to create the file at the appropriate path. The working directory is <MACHINE_PATH>\n\nI should create the file at…
      4 toolu_01JoMRZzFkMCxi3KJbtCe4MC FileChange { files: [FileRow { path: "<MACHINE_PATH>", change: Created { lines: 1 }, added: 1, removed: 0 }], state: Succeeded } decision=Decision { outcome: Allowed, scope: None, note: None, elsewhere: false }
      5 msg_011CeW3RkCT4RhGdseDBvZGV:0 Thinking { text: "The file has been created successfully. Now I need to reply with exactly \"DONE\" as requested.", open: false, duration_ms: Some(1071) }

@@ -1,12 +1,13 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=bdd6a304-0c5b-4b8f-8fba-b38fffc93b71
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 22 recorded 21: fact Stream type=assistant uuid=60fd25f3-8f91-4c96-bb37-25c95ed1b217
-  row    3 msg_011CfREJ4aGE46RUmqafQsPv:0 Thinking { text: "", open: false, duration_ms: Some(5588) }
+  row    3 msg_011CfREJ4aGE46RUmqafQsPv:0 Thinking { text: "", open: false, duration_ms: Some(5652) }
 ## 24 recorded 23: fact Stream type=assistant uuid=3523fd57-6ad1-4bfc-b76c-7053deef0d71
   row    4 msg_011CfREJ4aGE46RUmqafQsPv:1 Prose { text: [Text("I'll run the background command, wait 8 seconds, and then read its output using the Monitor tool.")], streaming: false, working_note: false }
 ## 26 recorded 25: fact Stream type=assistant uuid=c5c711c5-b53e-47d2-a8e6-03cf903fced1
@@ -79,9 +80,9 @@
   row   19 turn:1 TurnEnd { duration_ms: Some(26747), cost_usd: Some(0.0526671), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CfREJ4aGE46RUmqafQsPv:0 Thinking { text: "", open: false, duration_ms: Some(5588) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Use Bash with run_in_background set to true to run exactly: for i in 1 2 3; do echo tick $i; sleep 2; done. Then wait about eight seconds by running Bash: sleep 8. Then read the background shell's output with the tool for reading background output, and report the last line it printed.")], steered: false }
+     3 msg_011CfREJ4aGE46RUmqafQsPv:0 Thinking { text: "", open: false, duration_ms: Some(5652) }
      4 msg_011CfREJ4aGE46RUmqafQsPv:1 Prose { text: [Text("I'll run the background command, wait 8 seconds, and then read its output using the Monitor tool.")], streaming: false, working_note: false }
      5 toolu_01VBRzFR5g9K7VvEwbiEud4e Explore { verb: Search, subject: "select:Monitor", state: Succeeded }
      6 msg_011CfREJXPZXEeiW2yMcRTkT:0 Thinking { text: "", open: false, duration_ms: Some(4594) }

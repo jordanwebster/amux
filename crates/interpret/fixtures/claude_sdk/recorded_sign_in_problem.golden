@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1790388859436 asks=[] session=? model=? e
 ## 8 recorded 7: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Reply with exactly PONG and nothing else."
+item boundary:1 boundary final at=1790388859439 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1790388859439 text="Reply with exactly PONG and nothing else."
 snapshot WORKING queue=[] working_on=- at=1790388859439 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=75 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN - background=?
 ## 10 recorded 9: fact Stream type=system subtype=init uuid=cc599307-55a0-4f90-82ad-d756cd24887f

@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1788550560354 asks=[] session=? model=? e
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer."
+item boundary:1 boundary final at=1788550560356 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1788550560356 text="Use AskUserQuestion to ask exactly one single-select question with header Color, question 'Which color do you prefer?', and options Red and Blue. Then repeat my answer."
 snapshot WORKING queue=[] working_on=- at=1788550560356 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5-1[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=68 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 6 recorded 5: fact Stream type=rate_limit_event uuid=f6f3c2a0-3be5-470c-ae7d-3d8ab6b671d1

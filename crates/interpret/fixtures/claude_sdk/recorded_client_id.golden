@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1790387542365 asks=[] session=? model=? e
 ## 8 recorded 7: input 0x11111111111141118111111111111111
 effect reply 0x11111111111141118111111111111111 accepted
 effect user 11111111-1111-4111-8111-111111111111 "Reply with exactly ALPHA and nothing else."
+item boundary:1 boundary final at=1790387542369 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 11111111-1111-4111-8111-111111111111 prompt final input=0x11111111111141118111111111111111 at=1790387542369 text="Reply with exactly ALPHA and nothing else."
 snapshot WORKING queue=[] working_on=- at=1790387542369 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus{low/medium/high/xhigh/max},claude-fable-5-1{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku,claude-opus-5{low/medium/high/xhigh/max},claude-fable-5{low/medium/high/xhigh/max},claude-opus-4-8{low/medium/high/xhigh/max},claude-opus-4-7{low/medium/high/xhigh/max},claude-opus-4-6{low/medium/high/max},claude-sonnet-4-6{low/medium/high/max}] commands=81 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 14 recorded 13: fact Stream type=system subtype=init uuid=b1db06e5-c58c-497b-a39b-51d034580143

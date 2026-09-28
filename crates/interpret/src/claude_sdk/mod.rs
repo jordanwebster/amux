@@ -187,6 +187,11 @@ pub struct State {
     requests: BTreeMap<String, Request>,
     next_request: u64,
     next_boundary: u64,
+    /// The boundary drawn above a prompt submitted before the init that
+    /// makes it: headless Claude reports its init only after it reads the
+    /// first message. That init fills it in.
+    #[serde(default)]
+    early_boundary: Option<String>,
     tasks: Option<Vec<Task>>,
     active_tasks: BTreeMap<String, TaskState>,
     context_tokens: Option<u64>,
@@ -262,6 +267,7 @@ impl State {
             requests: BTreeMap::new(),
             next_request: 0,
             next_boundary: 0,
+            early_boundary: None,
             tasks: None,
             active_tasks: BTreeMap::new(),
             context_tokens: None,
@@ -467,6 +473,11 @@ impl State {
     /// Hands a prompt to Claude. Its item is written now: the uuid it
     /// carries is the key Claude's own record of it uses.
     fn submit(&mut self, emit: &mut Emit, entry: wire::QueuedInput) {
+        if self.early_boundary.is_none()
+            && let Some(kind) = self.coming_boundary()
+        {
+            self.early_boundary = Some(self.boundary(emit, kind, String::new()));
+        }
         let uuid = client_uuid(&entry.input_id);
         if entry.text.starts_with('/') {
             self.slash = Some(entry.text.clone());
@@ -672,12 +683,41 @@ impl State {
         );
     }
 
-    fn boundary(&mut self, emit: &mut Emit, kind: wire::BoundaryKind, cause: String) {
+    /// The boundary the next init makes when it is known before that init
+    /// arrives: a new process's first, or a restart's.
+    fn coming_boundary(&self) -> Option<wire::BoundaryKind> {
+        if self.inits == 0 {
+            Some(if self.incarnation > 1 {
+                wire::BoundaryKind::Resumed
+            } else {
+                wire::BoundaryKind::Started
+            })
+        } else if self.exited {
+            Some(wire::BoundaryKind::Restarted)
+        } else {
+            None
+        }
+    }
+
+    /// Writes a new boundary item; returns its key.
+    fn boundary(&mut self, emit: &mut Emit, kind: wire::BoundaryKind, cause: String) -> String {
         self.next_boundary += 1;
+        let key = format!("boundary:{}", self.next_boundary);
+        self.boundary_at(emit, key.clone(), kind, cause);
+        key
+    }
+
+    fn boundary_at(
+        &mut self,
+        emit: &mut Emit,
+        key: String,
+        kind: wire::BoundaryKind,
+        cause: String,
+    ) {
         self.shared.item(
             emit,
             ItemDraft {
-                key: format!("boundary:{}", self.next_boundary),
+                key,
                 body: item_body(claude_sdk_item::Kind::Boundary(wire::Boundary {
                     kind: kind as i32,
                     provider_session: self.session.clone().unwrap_or_default(),
@@ -851,6 +891,7 @@ impl Interpreter for ClaudeSdk {
         state.incarnation = spec.incarnation;
         state.inits = 0;
         state.exited = false;
+        state.early_boundary = None;
         if !spec.provider_version.is_empty() {
             state.version = Some(spec.provider_version.clone());
         }
@@ -867,7 +908,7 @@ impl Interpreter for ClaudeSdk {
             Event::ProviderExit { code } => state.exited(&mut emit, crate::exit_cause(code)),
             Event::Exiting { cause } => state.exited(&mut emit, cause),
             Event::DaemonLost => {
-                state.boundary(&mut emit, wire::BoundaryKind::DaemonLost, String::new())
+                state.boundary(&mut emit, wire::BoundaryKind::DaemonLost, String::new());
             }
             Event::StopRequested(wire::StopMode::Abort) => state.interrupt(&mut emit),
             Event::StopRequested(_) => {}

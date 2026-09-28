@@ -1,21 +1,22 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 8 recorded 7: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 12 recorded 11: fact Stream type=system subtype=init uuid=d451a0f6-bcf0-4314-93fd-f233aa3228f9
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 14 recorded 13: fact Stream type=assistant uuid=bf60f68e-28fb-41e1-8b64-37d34ce6e1e3
-  row    3 msg_011CfRELQQg25gtKNu7H9GFP:0 Thinking { text: "", open: false, duration_ms: Some(1113) }
+  row    3 msg_011CfRELQQg25gtKNu7H9GFP:0 Thinking { text: "", open: false, duration_ms: Some(1220) }
 ## 16 recorded 15: fact Stream type=assistant uuid=94213e63-e373-46ea-bf23-63bb5e6beada
   row    4 msg_011CfRELQQg25gtKNu7H9GFP:1 Prose { text: [Text("PONG")], streaming: false, working_note: false }
 ## 20 recorded 19: fact Stream type=result subtype=success uuid=eb6b9600-812e-4349-a88f-4adc6c79c199
   row    5 turn:1 TurnEnd { duration_ms: Some(1217), cost_usd: Some(0.0241884), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CfRELQQg25gtKNu7H9GFP:0 Thinking { text: "", open: false, duration_ms: Some(1113) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly PONG and nothing else.")], steered: false }
+     3 msg_011CfRELQQg25gtKNu7H9GFP:0 Thinking { text: "", open: false, duration_ms: Some(1220) }
      4 msg_011CfRELQQg25gtKNu7H9GFP:1 Prose { text: [Text("PONG")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(1217), cost_usd: Some(0.0241884), failed: false }
 == strip Strip { tasks: None, context: Some(ContextView { used_tokens: 25953, window_tokens: Some(200000), percent: Some(12), in_strip: false }), model: Some("claude-haiku-4-5-20251001"), effort: None, mode: Some("default"), usage: None, failed_servers: [ServerView { name: "plugin:stripe:stripe", error: "", needs_auth: true }, ServerView { name: "broken", error: "", needs_auth: false }, ServerView { name: "claude.ai Google Drive", error: "", needs_auth: true }], sign_in: None, background: None, working_on: None }

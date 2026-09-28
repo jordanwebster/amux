@@ -1,12 +1,13 @@
 ## 0 initial
   composer Send activity=None queue=[] outbox=[]
 ## 18 recorded 17: input stdin-2
-  row    1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly ALPHA and nothing else.")], steered: false }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
+  row    2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly ALPHA and nothing else.")], steered: false }
   composer Send activity=Some(Working) queue=[] outbox=[]
 ## 20 recorded 19: fact Stream type=system subtype=init uuid=91119331-96af-4095-9945-a8028040ef7c
-  row    2 boundary:1 Boundary { kind: Started, cause: "" }
+  row    1 boundary:1 Boundary { kind: Started, cause: "" }
 ## 28 recorded 27: fact Stream type=assistant uuid=299c348e-e377-4945-9c51-e3cf5b3c465d
-  row    3 msg_011CfRDeiMZ5wg6gShJp7jSk:0 Thinking { text: "", open: false, duration_ms: Some(2596) }
+  row    3 msg_011CfRDeiMZ5wg6gShJp7jSk:0 Thinking { text: "", open: false, duration_ms: Some(2644) }
 ## 30 recorded 29: fact Stream type=assistant uuid=1ca5b3a9-e3a2-4337-aab7-98a08030986e
   row    4 msg_011CfRDeiMZ5wg6gShJp7jSk:1 Prose { text: [Text("BRAVO")], streaming: false, working_note: false }
 ## 34 recorded 33: fact Stream type=result subtype=success uuid=57eb1000-9a69-4e5f-949b-d29615c6dc22
@@ -21,9 +22,9 @@
   row    8 turn:2 TurnEnd { duration_ms: Some(2296), cost_usd: Some(0.0286174), failed: false }
   composer Send activity=None queue=[] outbox=[]
 == chat
-     1 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly ALPHA and nothing else.")], steered: false }
-     2 boundary:1 Boundary { kind: Started, cause: "" }
-     3 msg_011CfRDeiMZ5wg6gShJp7jSk:0 Thinking { text: "", open: false, duration_ms: Some(2596) }
+     1 boundary:1 Boundary { kind: Started, cause: "" }
+     2 73746469-6e2d-4200-8000-000000000000 Prompt { text: [Text("Reply with exactly ALPHA and nothing else.")], steered: false }
+     3 msg_011CfRDeiMZ5wg6gShJp7jSk:0 Thinking { text: "", open: false, duration_ms: Some(2644) }
      4 msg_011CfRDeiMZ5wg6gShJp7jSk:1 Prose { text: [Text("BRAVO")], streaming: false, working_note: false }
      5 turn:1 TurnEnd { duration_ms: Some(2690), cost_usd: Some(0.0235424), failed: false }
      6 msg_011CfRDev6jemvasLfgS6uLQ:0 Thinking { text: "", open: false, duration_ms: Some(2276) }

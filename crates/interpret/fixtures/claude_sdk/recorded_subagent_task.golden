@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1787961073718 asks=[] session=? model=? e
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Delegate to the `counter` subagent, then reply with exactly what it said."
+item boundary:1 boundary final at=1787961073720 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1787961073720 text="Delegate to the `counter` subagent, then reply with exactly what it said."
 snapshot WORKING queue=[] working_on=- at=1787961073720 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=001334b5-a099-499d-90fb-35f3866b8d54

@@ -5,6 +5,7 @@ snapshot IDLE queue=[] working_on=- at=1787961126418 asks=[] session=? model=? e
 ## 4 recorded 3: input stdin-2
 effect reply stdin-2 accepted
 effect user 73746469-6e2d-4200-8000-000000000000 "Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE."
+item boundary:1 boundary final at=1787961126421 text="" BOUNDARY_KIND_STARTED session=- version=-
 item 73746469-6e2d-4200-8000-000000000000 prompt final input=stdin-2 at=1787961126421 text="Use the Write tool to create a.txt containing A, then use it again to create b.txt containing B, then reply DONE."
 snapshot WORKING queue=[] working_on=- at=1787961126421 asks=[] session=? model=? effort=? mode=? models=[default{low/medium/high/xhigh/max},opus[1m]{low/medium/high/xhigh/max},claude-fable-5[1m]{low/medium/high/xhigh/max},sonnet{low/medium/high/xhigh/max},haiku] commands=64 context=? tasks=? active=[] usage=? servers=? sign_in=SIGN_IN_STATE_SIGNED_IN <REDACTED_IDENTIFIER> background=?
 ## 6 recorded 5: fact Stream type=system subtype=init uuid=10294872-15fb-4c3f-ae88-9dbb1a466976
