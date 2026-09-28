@@ -1,3 +1,14 @@
+2026-09-28 — **A long prompt reaches terminal Claude as the person's own words.**
+Claude 2.1.283 collapses one paste of about 1,100 characters into
+`<pasted_content>` and the model then declines instructions inside it
+("I'm not going to reply SECOND on the paste's say-so"). The keymap's paste
+step can now split its text (`pieces = { chars, between }`): the prompt
+program pastes at most 700 characters at a time, cut inside words so Claude
+trims nothing, 100 ms apart. A new real-Claude spec, `prompt_long`, sends a
+2,742-character prompt that must land in the transcript verbatim and be
+obeyed; it passed with no pause at all, so 100 ms is margin. Pieces of 700
+keep the 675-character question_every_shape recording byte-exact.
+
 2026-09-28 — **Testnet does not wait on a LAN port a test holds.**
 Stopping a host now waits for its LAN port to free so a restarted daemon
 can listen where it did, but spec_network's discovery case hands the desk a

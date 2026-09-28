@@ -65,6 +65,7 @@ macro_rules! definition {
 static DEFINITIONS: &[PtySpecDef] = &[
     definition!(prompt, &[], prompt),
     definition!(prompt_multiline, &[], prompt_multiline),
+    definition!(prompt_long, &[], prompt_long),
     definition!(tools, &["--dangerously-skip-permissions"], tools),
     definition!(permission_allow_once, &[], permission_allow_once),
     definition!(permission_allow_scoped, &[], permission_allow_scoped),
@@ -134,9 +135,10 @@ static DEFINITIONS: &[PtySpecDef] = &[
     ),
 ];
 
-static REGISTRY: [SpecEntry; 30] = [
+static REGISTRY: [SpecEntry; 31] = [
     entry("prompt"),
     entry("prompt_multiline"),
+    entry("prompt_long"),
     entry("tools"),
     entry("permission_allow_once"),
     entry("permission_allow_scoped"),
@@ -1053,6 +1055,39 @@ async fn prompt_multiline(session: &mut PtySpecSession) -> Result<(), String> {
     Ok(())
 }
 
+/// A prompt far past the length Claude collapses a paste at: it must reach
+/// the model as the person's own words, not as pasted content the model
+/// declines to take instructions from.
+async fn prompt_long(session: &mut PtySpecSession) -> Result<(), String> {
+    const MARKER: &str = "PTY_SPEC_LONG_OK";
+    let padding = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu. ";
+    let text = format!(
+        "Reply with exactly {MARKER} and nothing else. Padding follows.\n{}\nThat is the end of the padding.",
+        padding.repeat(16).trim_end()
+    );
+    session.send(Intent::Prompt { text: text.clone() }).await?;
+    let row = session
+        .wait_transcript(|row| {
+            row.get("type").and_then(serde_json::Value::as_str) == Some("user")
+                && row
+                    .pointer("/message/content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|content| content.contains("Padding follows."))
+        })
+        .await?;
+    if !user_prompt_equals(&row, &text) {
+        return Err(format!(
+            "the prompt did not arrive as typed: {}",
+            row.pointer("/message/content")
+                .unwrap_or(&serde_json::Value::Null)
+        ));
+    }
+    session
+        .wait_transcript(|row| assistant_contains(row, MARKER))
+        .await?;
+    Ok(())
+}
+
 async fn tools(session: &mut PtySpecSession) -> Result<(), String> {
     session
         .send(Intent::Prompt {
@@ -1770,6 +1805,7 @@ mod tests {
             vec![
                 "prompt",
                 "prompt_multiline",
+                "prompt_long",
                 "tools",
                 "permission_allow_once",
                 "permission_allow_scoped",

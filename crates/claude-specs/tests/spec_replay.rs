@@ -144,6 +144,7 @@ mod pty_replays {
     scenarios!(
         prompt,
         prompt_multiline,
+        prompt_long,
         tools,
         permission_allow_once,
         permission_allow_scoped,

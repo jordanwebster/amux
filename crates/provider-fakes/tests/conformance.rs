@@ -122,6 +122,7 @@ mod claude_pty {
         plan_request_changes => "plan_request_changes",
         prompt => "prompt",
         prompt_multiline => "prompt_multiline",
+        prompt_long => "prompt_long",
         question_cancelled => "question_cancelled",
         question_every_shape => "question_every_shape",
         question_mixed => "question_mixed",

@@ -90,6 +90,11 @@ pub enum Step {
     },
     Paste {
         text: TextSource,
+        /// Long text goes as several pastes, each short enough that Claude
+        /// keeps it in the prompt rather than collapsing it into pasted
+        /// content the model treats as quoted material.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pieces: Option<PastePieces>,
     },
     Type {
         text: TextSource,
@@ -121,6 +126,15 @@ pub enum Step {
     Call {
         program: ProgramName,
     },
+}
+
+/// How a long paste is split: at most `chars` characters per paste, with
+/// the `between` pause after each so Claude reads them as separate pastes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PastePieces {
+    pub chars: usize,
+    pub between: DelayName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +174,7 @@ string_enum!(KeyName {
 
 string_enum!(DelayName {
     AfterPaste,
+    BetweenPastes,
     AfterToggle,
     AfterMove,
     AfterTab,
@@ -750,6 +765,24 @@ fn validate_steps(
             Step::Delay { delay } if !raw.delays.contains_key(delay) => {
                 return reference_error(origin, &format!("{field}.delay"), delay);
             }
+            Step::Paste {
+                pieces: Some(pieces),
+                ..
+            } => {
+                if !raw.delays.contains_key(&pieces.between) {
+                    return reference_error(
+                        origin,
+                        &format!("{field}.pieces.between"),
+                        &pieces.between,
+                    );
+                }
+                if pieces.chars < 2 {
+                    return Err(KeymapError::Parse {
+                        origin: origin.to_owned(),
+                        reason: format!("{field}.pieces.chars must be at least 2"),
+                    });
+                }
+            }
             Step::Digit {
                 digit: DigitSource::MenuEntry { menu, entry },
             } => {
@@ -944,9 +977,8 @@ fn validate_environment(
             let shapes = keymap.verified_shapes.get(&ProgramName::PermissionMenu);
             let whole =
                 shapes.is_some_and(|shapes| shapes.permission_suggestions.contains(&suggestions));
-            let folded = shapes.is_some_and(|shapes| {
-                shapes.permission_folded_suggestions.contains(&suggestions)
-            });
+            let folded = shapes
+                .is_some_and(|shapes| shapes.permission_folded_suggestions.contains(&suggestions));
             // Yes is the first entry of every menu and Escape denies
             // whatever entries it holds; only a scope needs a known menu.
             let scoped = matches!(answer, PermissionAnswer::AllowScoped { .. });
@@ -1037,6 +1069,30 @@ fn validate_question_answer(
     Ok(())
 }
 
+/// `text` in runs of at most `limit` characters. Each cut falls between
+/// two characters that are not whitespace where the run has such a place,
+/// so no piece starts or ends with a space or a line break for Claude to
+/// trim from a paste.
+fn paste_pieces(text: &str, limit: usize) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut rest = text;
+    loop {
+        let head: Vec<(usize, char)> = rest.char_indices().take(limit + 1).collect();
+        if head.len() <= limit {
+            break;
+        }
+        let cut = (1..=limit)
+            .rev()
+            .find(|&at| !head[at - 1].1.is_whitespace() && !head[at].1.is_whitespace())
+            .unwrap_or(limit);
+        let (piece, after) = rest.split_at(head[cut].0);
+        pieces.push(piece);
+        rest = after;
+    }
+    pieces.push(rest);
+    pieces
+}
+
 fn mismatch<T>(detail: impl Into<String>) -> Result<T, InputError> {
     Err(InputError::AnswerMismatchesAsk {
         detail: detail.into(),
@@ -1063,12 +1119,21 @@ impl Interpreter<'_, '_> {
         for step in steps {
             match step {
                 Step::Key { key } => self.write_key(*key)?,
-                Step::Paste { text } => {
+                Step::Paste { text, pieces } => {
                     let text = self.text(*text, false)?;
-                    let mut bytes = self.key(KeyName::PasteBegin)?.to_vec();
-                    bytes.extend_from_slice(text.as_bytes());
-                    bytes.extend_from_slice(self.key(KeyName::PasteEnd)?);
-                    self.output.push(KeyStep::Write(bytes));
+                    let parts = match pieces {
+                        Some(pieces) => paste_pieces(&text, pieces.chars),
+                        None => vec![text.as_str()],
+                    };
+                    for (index, part) in parts.iter().enumerate() {
+                        if let (true, Some(pieces)) = (index > 0, pieces) {
+                            self.delay(pieces.between)?;
+                        }
+                        let mut bytes = self.key(KeyName::PasteBegin)?.to_vec();
+                        bytes.extend_from_slice(part.as_bytes());
+                        bytes.extend_from_slice(self.key(KeyName::PasteEnd)?);
+                        self.output.push(KeyStep::Write(bytes));
+                    }
                 }
                 Step::Type { text } => {
                     let text = self.text(*text, true)?;
@@ -1470,7 +1535,7 @@ mod format {
     #[test]
     fn unknown_step_is_rejected() {
         let source = BAKED.replacen(
-            "{ step = \"paste\", text = \"prompt_text\" }",
+            "{ step = \"paste\", text = \"prompt_text\", pieces = { chars = 700, between = \"between_pastes\" } }",
             "{ step = \"shell\", command = \"stty\" }",
             1,
         );
@@ -1635,7 +1700,7 @@ mod interpret {
         ));
 
         let recursive = BAKED.replacen(
-            "{ step = \"paste\", text = \"prompt_text\" }",
+            "{ step = \"paste\", text = \"prompt_text\", pieces = { chars = 700, between = \"between_pastes\" } }",
             "{ step = \"call\", program = \"prompt\" }",
             1,
         );
@@ -1700,6 +1765,60 @@ mod interpret {
             encoded(&Intent::CyclePermissionMode, None).expect("mode cycle"),
             vec![write(b"\x1b[Z")]
         );
+    }
+
+    /// Claude 2.1.283 collapses one paste of about 1,100 characters into
+    /// pasted content the model will not take instructions from, and keeps
+    /// one of about 750 as typed. A long prompt therefore goes as pastes of
+    /// at most 700 characters, cut inside words so Claude trims nothing,
+    /// with a short pause between them.
+    #[test]
+    fn a_long_prompt_is_pasted_in_pieces_claude_keeps_as_typed() {
+        let text = format!(
+            "Reply with exactly SECOND.\n{}",
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet. "
+                .repeat(17)
+                .trim_end()
+        );
+        assert!(text.chars().count() > 1_100);
+        let steps = encoded(&Intent::Prompt { text: text.clone() }, None).expect("prompt");
+        let (last, pastes) = steps.split_last().expect("steps");
+        assert_eq!(last, &write(b"\r"));
+        let mut sent = String::new();
+        let mut pieces = 0;
+        for (index, step) in pastes.iter().enumerate() {
+            match (index % 2, step) {
+                (0, KeyStep::Write(bytes)) => {
+                    let body = bytes
+                        .strip_prefix(b"\x1b[200~")
+                        .and_then(|rest| rest.strip_suffix(b"\x1b[201~"))
+                        .expect("a bracketed paste");
+                    let piece = std::str::from_utf8(body).expect("utf-8");
+                    assert!(piece.chars().count() <= 700, "{piece:?}");
+                    assert!(!piece.starts_with(char::is_whitespace), "{piece:?}");
+                    assert!(!piece.ends_with(char::is_whitespace), "{piece:?}");
+                    sent.push_str(piece);
+                    pieces += 1;
+                }
+                (1, step) => {
+                    let pause = if index == pastes.len() - 1 { 400 } else { 100 };
+                    assert_eq!(step, &delay(pause), "step {index}");
+                }
+                (_, step) => panic!("unexpected step {index}: {step:?}"),
+            }
+        }
+        assert_eq!(pieces, 2);
+        assert_eq!(sent, text);
+    }
+
+    #[test]
+    fn paste_pieces_cut_between_letters_and_rejoin_exactly() {
+        assert_eq!(paste_pieces("short", 500), ["short"]);
+        assert_eq!(paste_pieces("ab cd", 3), ["a", "b c", "d"]);
+        let spaced = "é".repeat(3) + &" ".repeat(6) + "wörds";
+        let pieces = paste_pieces(&spaced, 4);
+        assert_eq!(pieces.concat(), spaced);
+        assert!(pieces.iter().all(|piece| piece.chars().count() <= 4));
     }
 
     #[test]
@@ -1950,7 +2069,10 @@ mod interpret {
         let step = if typed {
             Step::Type { text: source }
         } else {
-            Step::Paste { text: source }
+            Step::Paste {
+                text: source,
+                pieces: None,
+            }
         };
         assert!(matches!(
             interpreter.run(&[step]),
