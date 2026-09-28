@@ -1,4 +1,20 @@
-# Releasing the iPhone app
+# Releasing amux
+
+*For maintainers cutting a release of the iPhone app or the `amux` binary, and developers working on how installed daemons find and verify new builds.*
+
+Three things ship from this repository, each on its own schedule:
+
+| What | How it is cut | Tags |
+| --- | --- | --- |
+| The iPhone app | `just ios release`, from a Mac with the signing setup below | `ios-v<version>-b<build>` |
+| The `amux` binary | `./make_release.sh`, then the Release workflow on the pushed tag | `v<version>` |
+| The daemon's release feed | One signed manifest per channel, read by `amux supervise` | none |
+
+The first two are working procedures. The third is built into the daemon and
+tested, but nothing publishes a manifest yet; see
+[What is not set up yet](#what-is-not-set-up-yet).
+
+## The iPhone app
 
 The app ships from this repository, built by Xcode from the generated
 project — there is no Expo, no EAS and no hosted build service in the path.
@@ -11,24 +27,27 @@ rehearsal, `--no-upload` and `--no-push` each stop short; see
 
 The app is the next version of the listing already on the App Store, not a
 new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
-Store record agree on, and it is committed in `apps/apple/project.yml`, from which
-XcodeGen writes `apps/apple/Amux/Info.plist`. The listing's numeric Apple ID is not
-recorded here: nothing this recipe runs asks for it, the upload included —
-altool finds the listing from the bundle identifier inside the package. Read
-it back from the App Store Connect record when it is wanted:
+Store record agree on, and it is committed in `apps/apple/project.yml`, from
+which XcodeGen writes `apps/apple/Amux/Info.plist`. The listing's numeric
+Apple ID is not recorded here: nothing this recipe runs asks for it, the
+upload included — altool finds the listing from the bundle identifier inside
+the package. Read it back from the App Store Connect record when it is wanted:
 `xcrun altool --list-apps --api-key <key id> --api-issuer <issuer id>`.
 
-## The two numbers
+The recipe is `release` in [`apps/apple/justfile`](../apps/apple/justfile);
+the work is done by [`scripts/release.py`](../scripts/release.py).
+
+### The two numbers
 
 A build carries two numbers, and they are not interchangeable.
 
 **The marketing version** (`CFBundleShortVersionString`) is what a person
 sees in the App Store: `1.0.32`. It lives in one place — the app target's
-`MARKETING_VERSION` build setting in `apps/apple/project.yml` — and the committed
-`apps/apple/Amux/Info.plist` reads it from there as `$(MARKETING_VERSION)`. Writing
-it as a build setting rather than a literal is what lets a rehearsal archive
-the version a release *would* cut without editing a tracked file: the number
-can be passed to `xcodebuild` instead.
+`MARKETING_VERSION` build setting in `apps/apple/project.yml` — and the
+committed `apps/apple/Amux/Info.plist` reads it from there as
+`$(MARKETING_VERSION)`. Writing it as a build setting rather than a literal is
+what lets a rehearsal archive the version a release *would* cut without
+editing a tracked file: the number can be passed to `xcodebuild` instead.
 
 `just ios release` derives the next version by bumping the patch component of
 the highest version it knows — the one in the project, or a higher one in the
@@ -42,19 +61,19 @@ App Store rejects a version string that is not above the version it last
 not object to several builds carrying one marketing version while that version
 is unreleased — which is exactly what happens when the first attempt at a
 version is rejected in review, or when a validation finds something to fix. So
-`--version 1.0.32 --build 3` is a legitimate second attempt at 1.0.32; what is
-spent by each attempt is the build number, never the version.
+`--version 1.0.32 --build 37` is a legitimate second attempt at 1.0.32; what
+is spent by each attempt is the build number, never the version.
 
-The project carries `1.0.31`, which is the version live on the App Store
-today, so the next release is `1.0.32` and is the next version of that
-listing rather than a restart.
+The project carries `1.0.32`, build `36`, and the tag `ios-v1.0.32-b36`
+records them, so the next release is `1.0.33` with build `37` unless flags say
+otherwise.
 
 **The build number** (`CFBundleVersion`) is a single integer that identifies
 one binary forever. It lives beside the marketing version as
 `CURRENT_PROJECT_VERSION`, read by the bundle as
 `$(CURRENT_PROJECT_VERSION)`, and comes from one place only: one above the
 highest number the `ios-v*` tags record. `--build N` raises it deliberately.
-The recipe refuses to reuse a number and refuses to go backwards, and — while
+The recipe refuses to reuse a number and refuses to go backwards, and — when
 no tag records a number at all — refuses to invent the first one.
 
 That rule is not tidiness. A build number, once an upload has used it, is
@@ -67,12 +86,10 @@ rule keeps diagnosis honest — a debug report names its build as
 `amux-ios/<marketing version>`, and two different binaries claiming one
 identity make every report that mentions it ambiguous.
 
-One consequence of shipping as the next version of an existing listing:
-App Store Connect already holds build numbers this repository never issued,
-from the app's earlier Expo builds. The tag ledger below knows nothing about
-them, and today it is empty. So the first number is *named*, not derived —
-and the recipe enforces that rather than leaving it to memory. With no
-`ios-v*` tag to count from, `just ios release` refuses:
+App Store Connect also holds build numbers this repository never issued,
+from the app's earlier Expo builds, and the tags know nothing about them. So
+in a checkout with no `ios-v*` tag — a clone that did not fetch tags, say —
+`just ios release` refuses rather than counting from the project:
 
 ```
 no ios-v* tag records a build number, so there is nothing to count from and a
@@ -81,48 +98,50 @@ holds for this app (xcrun altool --list-builds, or the TestFlight tab) and
 pass --build N above it; every later release counts from the tags
 ```
 
-Do exactly that: read the highest build number App Store Connect holds for
-`sh.amux.app`, and run the first release with `--build N` above it. That run's
-tag seeds the ledger, and every release after it counts from the tags with no
-flag at all. A rehearsal is the one exception — it issues no number, spends
-none and records none, so with an empty ledger it archives under the build
-number in the project and says so, rather than stopping a signing check that
-proves nothing about numbering.
+Fetch the tags first (`git fetch --tags`). Only if the tags really are gone,
+read the highest build number App Store Connect holds for `sh.amux.app` and
+pass `--build N` above it. A rehearsal is the one exception — it issues no
+number, spends none and records none, so with no tag it archives under the
+build number in the project and says so, rather than stopping a signing check
+that proves nothing about numbering.
 
-## The tag
+### The tag
 
 `ios-v<marketing version>-b<build number>` — for example
-`ios-v1.0.32-b41`. Its own namespace, because plain `vX.Y.Z` tags in this
-repository belong to the `amux` command-line release
-(`make_release.sh`), which versions separately and moves on its own schedule.
+`ios-v1.0.32-b36`. Its own namespace, because plain `vX.Y.Z` tags in this
+repository belong to the [`amux` binary](#the-amux-binary), which versions
+separately and moves on its own schedule.
 
-Putting the build number in the tag name is what makes the tags a ledger:
+Putting the build number in the tag name is what makes the tags the record of issued numbers:
 the highest number ever issued can be read from `git tag` alone, with no
 network and no state file to lose.
 
 The tag is annotated and cut on the release commit — the commit that writes
-the two numbers — and both come *last*, after Apple has validated the exported
-build. The numbers are written into the working tree before the archive, so
-the binary carries them and the commit records exactly the tree that was
-archived; nothing is recorded until validation has answered. A commit and an
-annotated tag are the only things a run leaves behind that a `git checkout`
-cannot undo, which is why they wait for Apple. See
+the two numbers, titled `Version <version> (build <build>)` — and both come
+*last*, after Apple has validated and received the exported build. The numbers
+are written into the working tree before the archive, so the binary carries
+them and the commit records exactly the tree that was archived; nothing is
+recorded until Apple has answered. See
 [When a release stops partway](#when-a-release-stops-partway).
-`just ios release` never pushes the tag; pushing tags stays a human act.
 
-## Release notes
+A full release then pushes both: `git push origin HEAD:main`, then the tag.
+Cut releases from a checkout whose `HEAD` fast-forwards `main`, or the push
+fails and leaves the commit and tag at home.
+
+### Release notes
 
 The notes are the annotated tag's message. The recipe drafts them from the
-commit subjects since the previous `ios-v*` tag, and `--notes-file <path>`
-replaces the draft with prose written by hand. The same text is written
-beside the exported `.ipa` as `ReleaseNotes.txt`, so the archive directory
-carries what the build claims to contain.
+commit subjects since the previous `ios-v*` tag (the last twenty commits when
+there is none), and `--notes-file <path>` replaces the draft with prose
+written by hand. The same text is written beside the exported `.ipa` as
+`ReleaseNotes.txt`, so the export directory carries what the build claims to
+contain.
 
-Notes reach Apple at upload, as a TestFlight build's "What to Test", and the
-same text is recorded in the tag. A run that does not upload — a rehearsal, or
-`--no-upload` — leaves them in the export directory and the tag alone.
+The upload does not send them to Apple. TestFlight's "What to Test" for a
+build is filled in by hand in App Store Connect, from `ReleaseNotes.txt` if
+that is what testers should read.
 
-## Signing
+### Signing
 
 Three things sign this app, and they belong in different places.
 
@@ -132,16 +151,17 @@ ad-hoc identity (`CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: "-"`). Every
 routine build in this repository is a simulator build, so the default is the
 one that needs no identity at all.
 
-**Committed, `apps/apple/Amux/Amux.entitlements`:** `keychain-access-groups` naming
-the app's own group. On the simulator that grant comes from the ad-hoc
+**Committed, `apps/apple/Amux/Amux.entitlements`:** `keychain-access-groups`
+naming the app's own group. On the simulator that grant comes from the ad-hoc
 signature, which is why the entitlements file exists at all — see the
-Keychain section of [IOS.md](IOS.md). On a phone the same grant comes from
-the provisioning profile instead, but the entitlement still has to be
-requested by the binary: the distribution archive keeps
+Keychain section of [the iPhone app page](IOS.md). On a phone the same grant
+comes from the provisioning profile instead, but the entitlement still has to
+be requested by the binary: the distribution archive keeps
 `CODE_SIGN_ENTITLEMENTS` pointing at that same file, and an archive built
 without it produces an app whose Keychain reads fail on the device only.
 
-**Untracked, `apps/apple/Signing.local.xcconfig`:** the Team ID, and nothing else.
+**Untracked, `apps/apple/Signing.local.xcconfig`:** the Team ID, and nothing
+else.
 
 ```
 // The Apple Developer team this Mac signs as.
@@ -166,9 +186,9 @@ An identity reads `Apple Distribution: <person> (<ten characters>)`, and the
 string in the parentheses is *usually* the Team ID but is the individual's
 identifier on a personal Development certificate — a different value, ten
 characters long, that looks exactly as plausible. Writing that one into
-`apps/apple/Signing.local.xcconfig` costs an afternoon: every credential is valid,
-every flag is right, and `xcodebuild` stops with *No Account for Team "…".
-Add a new account in Accounts settings*, which reads like a missing Apple
+`apps/apple/Signing.local.xcconfig` costs an afternoon: every credential is
+valid, every flag is right, and `xcodebuild` stops with *No Account for Team
+"…". Add a new account in Accounts settings*, which reads like a missing Apple
 Account rather than a wrong ten characters. Take the Team ID from
 developer.apple.com under **Membership details**, or read the `OU` field of
 any certificate in the account:
@@ -191,11 +211,12 @@ portal and the export stops. The certificate type is named rather than one
 certificate's full name, because a full name ends in the Team ID and that
 file is committed.
 
-**The certificate expires.** The one on this Mac runs to **10 September
-2027**. When it does, the export fails to find an identity: make a new Apple
-Distribution certificate, install it, and make a new `amux App Store` profile
-tied to it — the profile is bound to the certificate and does not survive it.
-Keeping the same two names means nothing in this repository changes.
+**The certificate expires.** The one on the release Mac runs to **10
+September 2027**. When it does, the export fails to find an identity: make a
+new Apple Distribution certificate, install it, and make a new `amux App
+Store` profile tied to it — the profile is bound to the certificate and does
+not survive it. Keeping the same two names means nothing in this repository
+changes.
 
 So: **a simulator build needs nothing** — no team, no certificate, no
 profile. **A distribution archive needs** the Team ID above, an Apple
@@ -204,15 +225,16 @@ profile named `amux App Store` for `sh.amux.app`, and the App Store Connect
 API key. The last three are produced once and then reused; the
 [checklist](#one-time-operator-setup) at the end is how they come to exist.
 
-## The commands
+### The commands
 
-The Rust bridge first: the Release configuration links the `ios-arm64` slice
-of `target/ios/AmuxApp.xcframework`, so `just ios rust` builds the
-device slice before anything is archived. The recipe also depends on
-`ios-scope-audit`, so a bundle carrying a debug surface or an excluded
-platform stops the release before an archive exists rather than after Apple
-has one. Then the project is generated from `apps/apple/project.yml`, as every other
-iOS recipe does.
+`just ios release` depends on two other recipes, so they run first whether or
+not anybody ran them: `just ios package` builds every shipping slice of the
+Rust bridge under the `mobile` profile into
+`target/ios/AmuxApp.xcframework`, which the Release configuration links, and
+`just ios scope-audit` inspects the release bundle, so a bundle carrying a
+debug surface or an excluded platform stops the release before an archive
+exists rather than after Apple has one. Then the project is generated from
+`apps/apple/project.yml`, as every other iOS recipe does.
 
 Archive:
 
@@ -225,14 +247,15 @@ xcodebuild archive \
   -allowProvisioningUpdates \
   -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_<KEY ID>.p8" \
   -authenticationKeyID <key id> -authenticationKeyIssuerID <issuer id> \
+  -quiet \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic \
   DEVELOPMENT_TEAM=<from apps/apple/Signing.local.xcconfig> \
   MARKETING_VERSION=<version> CURRENT_PROJECT_VERSION=<build>
 ```
 
 The two numbers are passed rather than assumed: a full release has already
-written them into `apps/apple/project.yml`, and a rehearsal has not written them
-anywhere, so passing them is what makes both runs archive the same way.
+written them into `apps/apple/project.yml`, and a rehearsal has not written
+them anywhere, so passing them is what makes both runs archive the same way.
 
 Export:
 
@@ -254,7 +277,7 @@ that identifies a team. Its keys:
 | key | value | why |
 | --- | --- | --- |
 | `method` | `app-store-connect` | the App Store distribution shape; the export is still local |
-| `destination` | `export` | write the `.ipa` here. `upload` is what this recipe never does |
+| `destination` | `export` | write the `.ipa` here; the upload is a separate step the recipe runs with altool |
 | `signingStyle` | `manual` | the export names what it signs with. Automatic signing fails here — see [Signing](#signing) |
 | `signingCertificate` | `Apple Distribution` | the certificate *type*; `teamID` picks which identity in the keychain. A full name would carry the Team ID into a committed file |
 | `provisioningProfiles` | `sh.amux.app` → `amux App Store` | the profile by name. It has to be installed already |
@@ -272,7 +295,7 @@ which is why the export signs by hand against a profile made once. The
 distribution certificate and the `amux App Store` profile are therefore
 standing inputs, and `just ios release --preflight` reports them as such.
 
-Validate, the last step:
+Validate:
 
 ```
 xcrun altool --validate-app -f target/ios/release/<tag>/Amux.ipa -t ios \
@@ -288,7 +311,14 @@ signature, the entitlements, the icons, the Info.plist, the deployment
 target — and answers. It consumes no build number, creates no TestFlight
 build, and is visible to nobody.
 
-## One command
+Upload, the last step that reaches Apple:
+
+```
+xcrun altool --upload-app -f target/ios/release/<tag>/Amux.ipa -t ios \
+  --api-key <key id> --api-issuer <issuer id>
+```
+
+### One command
 
 ```
 just ios release              # bump, archive, export, validate, upload,
@@ -300,6 +330,9 @@ just ios release --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
 ```
 
+The recipe's one-line description in `just --list ios` still reads "upload
+nothing"; the script it runs uploads and pushes as described here.
+
 Validation is where a rehearsal ends and where a release goes on to deliver,
 so `just ios release` is the whole release and there is no `altool` command to
 remember afterwards. A rehearsal reaching that point is what makes it a real
@@ -310,35 +343,39 @@ answers the same way it will when the build is delivered.
 identifiers in the keychain, the private key on disk, the export options, the
 Apple Distribution certificate in the login keychain, an unexpired profile
 under each name the export options ask for, and a derivable version and build
-number — names anything missing and exits non-zero if anything is. It reports the tree's state too, but does not fail
-on it: an uncommitted file is not something a person produces once, and a
-rehearsal does not care. A real release does, and refuses. `--rehearse` goes all the way to
-a validated `.ipa` using the numbers the next release *would* use, but writes
-nothing to the tree and cuts no tag, so it can be run as often as you like —
-validation spends no build number, so running it a hundred times costs
-nothing but the wait. It proves the "writes nothing" half rather than
-promising it: `git status --porcelain` is read before the run and again after
-it, and a rehearsal that left any path changed names those paths and fails
-instead of printing the claim.
-Neither mode, and not the full run either, ever pushes or uploads.
+number — names anything missing and exits non-zero if anything is. It reports
+the tree's state too, but does not fail on it: an uncommitted file is not
+something a person produces once, and a rehearsal does not care. A real
+release does, and refuses.
 
-## When a release stops partway
+`--rehearse` goes all the way to a validated `.ipa` using the numbers the next
+release *would* use, but writes nothing to the tree and cuts no tag, so it can
+be run as often as you like — validation spends no build number, so running it
+a hundred times costs nothing but the wait. It proves the "writes nothing"
+half rather than promising it: `git status --porcelain` is read before the run
+and again after it, and a rehearsal that left any path changed names those
+paths and fails instead of printing the claim. A rehearsal never uploads and
+never pushes.
+
+### When a release stops partway
 
 A release does the reversible work first and the permanent work last, so
-there are only two states to recover from and each has one command.
+each place it can stop has one recovery.
 
 **The numbers are written but nothing is committed.** Anything that fails in
-the archive, the export or the validation leaves this. `just ios release` says
-so and stops; `git status` shows two modified tracked files and no new
-commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
+the archive, the export, the validation or the upload leaves this. `just ios
+release` says so and stops; `git status` shows the modified project files and
+no new commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
 
 ```
-git checkout apps/apple/project.yml apps/apple/Amux.xcodeproj/project.pbxproj
+git checkout apps/apple/project.yml apps/apple/Amux/Info.plist apps/apple/Amux.xcodeproj/project.pbxproj
 ```
 
-Then fix what failed and run the release again. Nothing was spent: the build
-number was never tagged and Apple never accepted a binary carrying it, so the
-same number is still free.
+Then fix what failed and run the release again. If the failure came before
+the upload, nothing was spent: the build number was never tagged and Apple
+never accepted a binary carrying it, so the same number is still free. If the
+upload itself failed, look in TestFlight before running again: a build that
+reached Apple has spent its number, and the next run needs `--build` above it.
 
 **The commit was made but the tag is missing.** Only a failing `git tag`
 leaves this — the name already exists, most often, because a previous attempt
@@ -358,11 +395,14 @@ git reset --hard HEAD~1        # nothing was pushed
 just ios release --build <N>
 ```
 
-Never delete an existing `ios-v*` tag to make room. A tag is the ledger of a
+**The commit and tag exist but the push failed.** Push them by hand:
+`git push origin HEAD:main`, then `git push origin ios-v<version>-b<build>`.
+
+Never delete an existing `ios-v*` tag to make room. A tag is the record of a
 number that may already have reached Apple, and removing it is how a number
 gets issued twice.
 
-## Where it stops
+### Where it stops
 
 The recipe ends at the push. It does not submit for review.
 
@@ -374,7 +414,7 @@ it runs after the validation, on the same package Apple has just accepted, and
 before the commit and the tag: a build Apple would refuse never reaches the
 upload, and the tag records a build that actually arrived.
 
-The commit and the tag are pushed after it, because the tag is the ledger. A
+The commit and the tag are pushed after it, because the tag is the record. A
 build number is spent permanently the moment the upload lands, and the next
 release counts from the tags — so a tag left in the tree that cut it is a
 record of a spent number that disappears with that tree, and the release after
@@ -385,16 +425,16 @@ Three ways to stop short. A rehearsal never delivers — that is what makes it
 free to run as often as you like, since validation spends no build number.
 `--no-upload` runs a full release, tag and push and all, stopping before the
 delivery. `--no-push` keeps the commit and tag at home, which leaves the
-ledger unreadable to every other checkout.
+record unreadable to every other checkout.
 
 Submitting for review stays a person's act in App Store Connect, with the
 screenshots, the notes and the reviewers already decided.
 
-## One-time operator setup
+### One-time operator setup
 
 Everything here is done once, in a browser, by a person. Afterwards releases
-need no Apple Account, no password and no 2FA prompt. This is the
-arrangement that is on this Mac today; follow it to reproduce it on another.
+need no Apple Account, no password and no 2FA prompt. Follow it to set up a
+Mac that cuts releases.
 
 **1. Create the App Store Connect API key.**
 
@@ -482,9 +522,8 @@ asks for that name. Download it and double-click it to install it into
 `~/Library/MobileDevice/Provisioning Profiles`.
 
 The same two things can be created through the App Store Connect API with the
-key from step 1, which is how the pair on this Mac was made; the private key
-still has to be generated locally and the signed certificate imported by
-hand, so the browser is not much slower.
+key from step 1; the private key still has to be generated locally and the
+signed certificate imported by hand, so the browser is not much slower.
 
 A team may hold a limited number of distribution certificates at a time.
 Revoking an old one whose private key you can no longer find is normal and
@@ -508,3 +547,147 @@ the arrangement works end to end.
 
 None of the values above — the key, its id, the issuer id or the Team ID —
 appear in any committed file, and none of them should be pasted into one.
+
+## The amux binary
+
+The desktop binary is versioned by the `version` of `crates/amux` and
+`crates/node`, which move together: the daemon reports its own crate's
+version, and a release that moved only the CLI would have `amux --version`
+and the fleet disagree. [`make_release.sh`](../make_release.sh) cuts a
+release from a Mac (it edits the manifests with BSD `sed -i ''`):
+
+```
+./make_release.sh          # bump the minor version: 0.7.0 -> 0.8.0
+./make_release.sh 0.7.1    # or name the version
+```
+
+It writes the version into both `Cargo.toml` files, updates `Cargo.lock`
+offline, runs `just release-check`, commits `v<version>`, tags
+`v<version>`, and pushes the branch and the tag.
+
+`just release-check` builds the shipping binary —
+`cargo build --release -p amux --bins --no-default-features --features bundled`
+— and runs [`scripts/release-policy-check.sh`](../scripts/release-policy-check.sh)
+on it, which fails if the binary's help mentions the debug command, if it
+accepts `amux debug`, or if its SQLite linkage breaks policy
+(`scripts/sqlite_linkage.py`).
+
+The pushed tag starts the Release workflow
+([`.github/workflows/release.yml`](../.github/workflows/release.yml)). It
+runs `just release-check -- --target <triple>` for three targets and
+publishes a GitHub Release with the three binaries, a `checksums.txt` of
+their SHA-256 sums, and notes GitHub generates from the commits:
+
+| Runner | Target | File |
+| --- | --- | --- |
+| `ubuntu-latest` | `x86_64-unknown-linux-gnu` | `amux-linux-x86_64` |
+| `macos-latest` | `aarch64-apple-darwin` | `amux-macos-arm64` |
+| `windows-latest` | `x86_64-pc-windows-msvc` | `amux-windows-x86_64.exe` |
+
+## The daemon's release feed
+
+A machine running [`amux supervise`](SUPERVISOR.md) finds new builds in a
+channel manifest and installs them itself. The format and the checks live in
+[`crates/node/src/release.rs`](../crates/node/src/release.rs); the fetch,
+staging and swap in
+[`crates/node/src/supervisor/mod.rs`](../crates/node/src/supervisor/mod.rs).
+
+### Channels
+
+There are two channels, `stable` and `preview`. An install follows `stable`
+unless someone chose otherwise (`amux config channel preview`): preview is for
+people who asked for builds ahead of stable, and it is never picked by
+chance. Each channel is one manifest at a fixed address:
+
+```
+<releases_url>/<channel>.json      # releases_url defaults to https://amux.sh/releases
+https://amux.sh/releases/stable.json
+https://amux.sh/releases/preview.json
+```
+
+`releases_url` in the installation config points an install, or a test, at
+another server.
+
+### The manifest
+
+A manifest is JSON: an optional rollout percentage and one entry per target
+triple.
+
+```json
+{
+  "rollout": 10,
+  "targets": {
+    "aarch64-apple-darwin": {
+      "version": "0.8.0",
+      "url": "https://example.com/amux-macos-arm64",
+      "sha256": "<hex SHA-256 of the file at url>",
+      "signature": "<base64 Ed25519 signature>"
+    }
+  }
+}
+```
+
+- A binary looks itself up by the triple it was built for, which
+  `crates/node/build.rs` compiles in as `AMUX_TARGET`.
+- `url` is fetched as-is; the file there is the whole `amux` binary.
+- `rollout`, when present and below 100, admits a host when SHA-256 of its
+  host id, mod 100, is under the number. A host's place is fixed across every
+  rollout and nothing is stored. Publishing at 10, watching, then raising to
+  100 is a staged rollout; lowering the number stops further adoption.
+- The supervisor installs an entry only if its version is newer than the
+  running one, so a manifest cannot move a machine backwards. A bad release
+  that has already activated is fixed by publishing a higher version — the
+  previous code under a new number when the bad release changed no data
+  shape, a forward fix otherwise.
+- Promoting a preview build to stable is putting the same entry in the
+  stable manifest. Semver orders `0.8.0-preview.3` below `0.8.0`, so a machine
+  on preview moves to the stable build of the same release when it switches.
+
+### Signing and verification
+
+The signature is Ed25519 over exactly these bytes, with the hash in
+lowercase hex:
+
+```
+amux release
+<target>
+<version>
+<sha256>
+```
+
+It binds the version to the binary's hash, so a tampered manifest cannot
+relabel an old signed binary as a newer release. The supervisor downloads to
+`amux.staged` beside the installed binary, computes the SHA-256 while
+downloading, and installs only if the hash matches the manifest and the
+signature verifies. `release::sign` is the publishing half of that check.
+
+The public key is compiled into the binary from `AMUX_RELEASE_PUBLIC_KEY`, 64
+hex digits, set in the environment at build time:
+
+| Build | Key it trusts |
+| --- | --- |
+| `AMUX_RELEASE_PUBLIC_KEY` set | That key |
+| Debug build without it | `TEST_RELEASE_KEY`, whose private half lives in the test suites |
+| Release build without it | None. It restarts its daemon but installs nothing, and `amux update` says so. |
+
+The supervisor tests sign releases with the test key and serve manifests
+from a local server
+([`crates/node/tests/supervisor.rs`](../crates/node/tests/supervisor.rs),
+[`crates/amux/tests/supervise_cli.rs`](../crates/amux/tests/supervise_cli.rs)).
+
+### What is not set up yet
+
+The installing side is complete; the publishing side does not exist yet.
+
+- No manifest is published. Both default addresses answer 404, so a
+  supervised machine's hourly check finds nothing and `amux update` reports
+  the failed fetch.
+- No release key exists. The Release workflow does not set
+  `AMUX_RELEASE_PUBLIC_KEY`, so the binaries it publishes trust no key and
+  never install an update.
+- Nothing in this repository signs a build or writes a manifest outside the
+  tests. The GitHub Release's binaries and `checksums.txt` carry what a
+  manifest entry needs except the signature.
+
+Until those exist, an install moves to a new version the way it was
+installed: by replacing the binary.

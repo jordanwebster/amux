@@ -1,0 +1,203 @@
+{
+  "set": "vocabulary",
+  "command": "just shot -- render vocabulary --out DIR",
+  "note": "Copy the listed light PNGs from DIR; each fixture is the terminal client's authored component of that name (crates/tui/src/vocabulary.rs).",
+  "entries": [
+    {
+      "fixture": "row_prose",
+      "file": "row_prose.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        15
+      ],
+      "pixels": [
+        1000,
+        330
+      ],
+      "sha256": "648ba3658102a4989983a1117c89b6ca3ea973b0550e7b1779b635f3fd8773c3"
+    },
+    {
+      "fixture": "row_tool_call",
+      "file": "row_tool_call.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        6
+      ],
+      "pixels": [
+        1000,
+        132
+      ],
+      "sha256": "1b1743bb0866047186280a7dfc283b35a0592c65e62862df60872c4dc9f3a76b"
+    },
+    {
+      "fixture": "row_command",
+      "file": "row_command.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        12
+      ],
+      "pixels": [
+        1000,
+        264
+      ],
+      "sha256": "490ec02e61a1700d15f266bbb5c7844ff3b65c6cb25d77bdbaeaba816ec1fbc6"
+    },
+    {
+      "fixture": "row_file_change",
+      "file": "row_file_change.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        12
+      ],
+      "pixels": [
+        1000,
+        264
+      ],
+      "sha256": "5714f2e9ba55ae78069c3de1aa39acb849a193c666b87c28a54adcc591a562a6"
+    },
+    {
+      "fixture": "row_ask",
+      "file": "row_ask.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        26
+      ],
+      "pixels": [
+        1000,
+        572
+      ],
+      "sha256": "04dd1309b4bf8c57a3562f9318c537728da60c8166d1fd082e9fd05d84b7da7f"
+    },
+    {
+      "fixture": "row_boundary",
+      "file": "row_boundary.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        16
+      ],
+      "pixels": [
+        1000,
+        352
+      ],
+      "sha256": "aa94410097b52fb4e539b9822ef03924802007cb6b88ef36208266f6464a5e13"
+    },
+    {
+      "fixture": "row_agent_message",
+      "file": "row_agent_message.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        12
+      ],
+      "pixels": [
+        1000,
+        264
+      ],
+      "sha256": "4bb604cc4548406f8f57ada1dd4fa3fc2739d6b09d0fd741299e76371bda6274"
+    },
+    {
+      "fixture": "activity_line",
+      "file": "activity_line.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        7
+      ],
+      "pixels": [
+        1000,
+        154
+      ],
+      "sha256": "0c021e0a18de0b05641b835de1619097d529063e995a643dcf8397c6dc928162"
+    },
+    {
+      "fixture": "ask_command",
+      "file": "ask_command.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        10
+      ],
+      "pixels": [
+        1000,
+        220
+      ],
+      "sha256": "e1137ce6ce8000a23fdbb4b6c2d85f8d21521dd699445001401f040d77dc7f2e"
+    },
+    {
+      "fixture": "ask_codex_command",
+      "file": "ask_codex_command.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        10
+      ],
+      "pixels": [
+        1000,
+        220
+      ],
+      "sha256": "21ca42469780f4154eda836c4a081d4af19c1de8caf06e44826f1ecc2e059df6"
+    },
+    {
+      "fixture": "ask_question_single",
+      "file": "ask_question_single.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        7
+      ],
+      "pixels": [
+        1000,
+        154
+      ],
+      "sha256": "c8b9c9803c908bb0f6ebefa84ecc4eee95a93ff0b2d4dd364466607ee602d57e"
+    },
+    {
+      "fixture": "ask_plan",
+      "file": "ask_plan.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        11
+      ],
+      "pixels": [
+        1000,
+        242
+      ],
+      "sha256": "9c5d2eff4806000dbb100ef01520f6e9a096da0d4ded275bff648437d7eba004"
+    },
+    {
+      "fixture": "ask_form",
+      "file": "ask_form.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        9
+      ],
+      "pixels": [
+        1000,
+        198
+      ],
+      "sha256": "0cdbf138fa4514960492aceb5c943cdafe5451b3f6e0e4015c182bc19357835c"
+    },
+    {
+      "fixture": "ask_unanswerable",
+      "file": "ask_unanswerable.light.png",
+      "theme": "light",
+      "viewport": [
+        100,
+        6
+      ],
+      "pixels": [
+        1000,
+        132
+      ],
+      "sha256": "381139532bbd6290b44e6af32b5f8062f458d59973684cace024c51ce744541b"
+    }
+  ]
+}

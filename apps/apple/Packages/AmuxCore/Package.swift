@@ -14,7 +14,7 @@ let package = Package(
         .library(name: "Instrumentation", targets: ["Instrumentation"]),
     ],
     targets: [
-        // Assembled by `wt run ios-rust` from the Rust bridge; the recipes that
+        // Assembled by `just ios rust` from the Rust bridge; the recipes that
         // build or test this package produce it first.
         .binaryTarget(name: "AmuxApp", path: "../../../../target/ios/AmuxApp.xcframework"),
         // The only code in this app that runs before `main()`. It exists

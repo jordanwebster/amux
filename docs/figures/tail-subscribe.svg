@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 490" role="img">
+  <title>Sequence: the client subscribes with a tail of ten. The daemon joins the agent's broadcast, reads the newest ten rows from SQLite and sends them with the caught-up marker. Later the agent appends and nudges; the daemon commits revision 121, broadcasts it, and the handle forwards it as-is. The client then fetches items before 111 for scroll-back.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <rect class="box" x="40" y="20" width="120" height="36" rx="4"/><text class="t" x="100" y="43" text-anchor="middle">client</text>
+      <rect class="box" x="290" y="20" width="120" height="36" rx="4"/><text class="t" x="350" y="43" text-anchor="middle">daemon</text>
+      <rect class="file" x="540" y="20" width="120" height="36" rx="4"/><text class="t a" x="600" y="43" text-anchor="middle">store.sqlite</text>
+      <rect class="box" x="760" y="20" width="120" height="36" rx="4"/><text class="t" x="820" y="43" text-anchor="middle">agent</text>
+      <line class="lane" x1="100" y1="56" x2="100" y2="480"/>
+      <line class="lane" x1="350" y1="56" x2="350" y2="480"/>
+      <line class="lane" x1="600" y1="56" x2="600" y2="480"/>
+      <line class="lane" x1="820" y1="56" x2="820" y2="480"/>
+
+      <path class="arrow" d="M100,90 H350" marker-end="url(#ah)"/>
+      <text class="s" x="225" y="82" text-anchor="middle">Subscribe(agent, tail: 10)</text>
+      <rect class="note" x="230" y="108" width="300" height="34" rx="3"/>
+      <text class="s sans" x="380" y="122" text-anchor="middle">join the agent's broadcast first</text>
+      <text class="s sans" x="380" y="136" text-anchor="middle">then read; no cursor, no state per subscription</text>
+      <path class="arrow" d="M350,170 H600" marker-end="url(#ah)"/>
+      <text class="s" x="475" y="162" text-anchor="middle">the newest 10 of the block by order</text>
+      <path class="arrow" d="M600,196 H350" marker-end="url(#ah)"/>
+      <text class="s" x="475" y="212" text-anchor="middle">10 rows</text>
+      <path class="arrow" d="M350,240 H100" marker-end="url(#ah)"/>
+      <text class="s" x="225" y="232" text-anchor="middle">items 111…120 · caught_up</text>
+
+      <path class="arrow-file" d="M820,285 H350" marker-end="url(#ahf)"/>
+      <text class="s a" x="585" y="277" text-anchor="middle">appends to journal · Nudge</text>
+      <path class="arrow-file" d="M350,315 H600" marker-end="url(#ahf)"/>
+      <text class="s a" x="475" y="307" text-anchor="middle">read at offset · insert → revision 121 · commit</text>
+      <rect class="note" x="230" y="333" width="300" height="34" rx="3"/>
+      <text class="s sans" x="380" y="347" text-anchor="middle">broadcast 121 to every handle on this agent</text>
+      <text class="s sans" x="380" y="361" text-anchor="middle">forwarded verbatim; an overlap with the read is deduped by key at the client</text>
+      <path class="arrow" d="M350,395 H100" marker-end="url(#ah)"/>
+      <text class="s" x="225" y="387" text-anchor="middle">item 121</text>
+
+      <path class="arrow" d="M100,435 H350" marker-end="url(#ah)"/>
+      <text class="s" x="225" y="427" text-anchor="middle">Fetch(agent, before: 111, limit: 50)</text>
+      <path class="arrow" d="M350,465 H100" marker-end="url(#ah)"/>
+      <text class="s" x="225" y="480" text-anchor="middle">items 61…110 (a plain store read)</text>
+</svg>

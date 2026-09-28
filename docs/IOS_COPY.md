@@ -1,5 +1,7 @@
 # iPhone copy
 
+*For anyone writing or reviewing the words the iPhone app shows.*
+
 Write the words a person needs to use the app. Controls name actions; status
 lines state facts; failure descriptions explain what the person can do next.
 Provider output, names, paths, commands and the person's own text stay verbatim.
@@ -7,13 +9,13 @@ Provider output, names, paths, commands and the person's own text stay verbatim.
 ## Case and length
 
 Use Title Case for navigation titles, tabs, buttons, menu items and settings
-rows: **New Agent**, **Sign In**, **Add to Review**, **Model and Effort**. Small
+rows: **New Agent**, **Sign In**, **Add to Review**, **Remove from This Phone**. Small
 words within a title stay lowercase, and names keep their spelling, as in
 **Start on Studio** and **Continue on amux.sh**.
 
 Use sentence case for headlines, section heads, descriptions, captions,
 placeholders and status lines: **No hosts yet**, **Needs you**, **Message
-refactor-auth**, **Reconnecting · last update 2m ago**. Identifiers, commands,
+refactor-auth**, **Reconnecting · your draft is kept**. Identifiers, commands,
 model names and paths keep their original case and use the mono face.
 
 A button is a verb or a verb and its object, normally at most 3 words unless
@@ -53,8 +55,8 @@ commands and provider/user content.
 
 ## Reviewing a copy change
 
-`timeout 300 wt run ios-lint` runs the copy inventory and its failure probes
-alongside the feature architecture checks. It runs without Xcode or a
+`just ios lint` runs the copy inventory and its failure probes alongside the
+feature architecture checks. It runs without Xcode or a
 simulator. The English catalogue is
 `apps/apple/Amux/Resources/Localizable.xcstrings`, and report copy is in it
 like any other shipping screen's. Copy only the driving tools use is in
@@ -88,6 +90,6 @@ catalogue entries as complete rendered phrases where views combine them.
 After a visible change, inspect both appearances and any affected small or
 accessibility layouts, update only the relevant goldens, say why in the
 commit message, and run an ordinary comparison. Report descriptions
-must match the bundle's declared parts: this app cannot read its system log
-back, so the contents caption names available session and host records and
-does not promise an app log.
+must match what a report carries: the contents caption names the screenshot
+and the phone's diagnostic dump, and promises nothing a bundle may declare
+absent.

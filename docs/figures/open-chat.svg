@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 506" role="img">
+  <title>Sequence: the local runtime's source for every listed agent subscribes to the origin on its own, after its cursor with a cap, or with a tail when it holds no block; the origin answers a delta or Reset plus a fresh tail, then CaughtUp, and absorb keeps the replica one contiguous current block. A client subscribes to its local runtime with a tail count and is answered at once from the block: Snapshot, the newest N rows, then every event the source broadcasts, in order. Scrolling back is a Fetch by order that extends the block downward. Host away: Detached after the held rows, send disabled; a Reset with a chat open is swapped in at the CaughtUp that follows.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+<rect class="box" x="40" y="16" width="140" height="36" rx="4"/><text class="t" x="110" y="39" text-anchor="middle">client (Session)</text>
+<rect class="box" x="400" y="16" width="140" height="36" rx="4"/><text class="t" x="470" y="39" text-anchor="middle">local runtime</text>
+<rect class="box" x="760" y="16" width="160" height="36" rx="4"/><text class="t" x="840" y="39" text-anchor="middle">origin daemon</text>
+<line class="lane" x1="110" y1="52" x2="110" y2="418"/><line class="lane" x1="470" y1="52" x2="470" y2="418"/><line class="lane" x1="840" y1="52" x2="840" y2="418"/>
+<path class="arrow-dashed" d="M470,84 L840,84" marker-end="url(#ah)"/><text class="s" x="655" y="70" text-anchor="middle">source, for every listed agent while the host is reachable:</text><text class="s" x="655" y="98" text-anchor="middle">Subscribe(after: cursor, cap: K) · or tail: K with no block</text>
+<path class="arrow-dashed" d="M840,122 L470,122" marker-end="url(#ah)"/><text class="s" x="655" y="116" text-anchor="middle">delta · CaughtUp   |   Reset · tail K · CaughtUp</text>
+<rect class="note" x="340" y="132" width="260" height="46" rx="3"/><text class="s sans" x="470" y="150" text-anchor="middle">absorb: a delta extends the block, Reset replaces it;</text><text class="s sans" x="470" y="166" text-anchor="middle">cursor = last revision delivered; events broadcast in order</text>
+<path class="arrow" d="M110,204 L470,204" marker-end="url(#ah)"/><text class="s" x="290" y="198" text-anchor="middle">Subscribe(agent, tail: N ≤ K)</text>
+<path class="arrow-file" d="M470,232 L110,232" marker-end="url(#ahf)"/><text class="s a" x="290" y="226" text-anchor="middle">Snapshot · newest N rows (broadcast joined first)</text>
+<rect class="note" x="20" y="242" width="280" height="46" rx="3"/><text class="s sans" x="160" y="260" text-anchor="middle">first render from the cached block; header from the entry;</text><text class="s sans" x="160" y="276" text-anchor="middle">draft any time; send enabled only while caught_up</text>
+<path class="arrow-file" d="M470,312 L110,312" marker-end="url(#ahf)"/><text class="s a" x="290" y="306" text-anchor="middle">live, as broadcast: Item · Append · Snapshot · markers</text>
+<path class="arrow" d="M110,344 L470,344" marker-end="url(#ah)"/><text class="s" x="290" y="338" text-anchor="middle">Fetch(before: oldest order, limit)</text>
+<path class="arrow-dashed" d="M470,344 L840,344" marker-end="url(#ah)"/><text class="s" x="655" y="338" text-anchor="middle">below the boundary → Fetch the origin</text>
+<path class="arrow-dashed" d="M840,370 L470,370" marker-end="url(#ah)"/><text class="s" x="655" y="364" text-anchor="middle">page + exhausted → absorb: extends the block downward only</text>
+<path class="arrow" d="M470,396 L110,396" marker-end="url(#ah)"/><text class="s" x="290" y="410" text-anchor="middle">page + exhausted</text>
+<text class="s" x="20" y="442">host away: the source ends and Detached follows the held rows; caught_up = false and the rows stay.</text>
+<text class="s" x="20" y="458">on return the source resumes after its cursor; the delta or a Reset arrives, then CaughtUp again.</text>
+<text class="s" x="20" y="474">reset with a chat open: the client keeps the stale rows on screen and swaps the transcript in at the CaughtUp after the fresh tail.</text>
+<text class="s" x="20" y="490">the overlap between the store read and the broadcast is deduped by key at the client; nothing is filtered by revision.</text>
+</svg>

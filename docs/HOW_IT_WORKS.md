@@ -1,168 +1,270 @@
 # How amux works
 
-**On your network, no account needed.** amux lets your devices reach the AI coding agents and terminal sessions
-running on your other devices — your phone checking on a build your
-workstation is running, your laptop picking up a session you started at
-your desk. This page explains the model behind that, and why you can
-trust it with a door into your machines.
+*For people using amux who want to know what their devices, accounts and paired machines are doing, and why it is safe to open a door into their machines.*
 
-Pairing and same-network use are free and local. An account adds discovery
-through the relay when devices are apart: an unsubscribed device can see that
-a host is **away**, but cannot use its agents through the relay. A subscription
-adds relay-carried agent access. Direct connections on your network and SSH do
-not consult the account or subscription.
+amux runs AI coding agents on your computers and lets every device you own
+reach them. An agent keeps working on the machine where you started it; your
+laptop, another desktop or your phone can open its chat, answer its
+questions, send it the next prompt, or start new agents there. This page
+explains the model behind that: which devices do what, how accounts and
+pairing fit together, what the relay can and cannot see, and what happens
+to your agents when amux itself restarts.
 
-## Devices and accounts
+## The pieces
 
-An amux installation can hold several **profiles**, such as Personal and
-Work. Each profile is a complete device: its own private key, trusted peers,
-agents and cloud connection. Its key stays on your machine; no server holds
-it. A cloud account adds relay presence, and a subscription adds relay-carried
-agent access, while **pairing** decides which devices may use each other's
-agents. Joining the same account never grants that trust by itself.
+| Word | What it is |
+|---|---|
+| **Host** | A machine that runs amux: a desktop, a server, and your phone too. Hosts that run agents also run the amux daemon, a background process. |
+| **Agent** | One coding agent: Claude Code in a terminal (`claude_pty`), headless Claude Code (`claude_sdk`), or Codex (`codex`). Each runs in its own process on one host, in the project directory you chose. |
+| **Chat** | An agent's conversation, drawn the same way on every device. |
+| **Fleet** | Every agent you can see, on this host and on the hosts you paired with, grouped by host, children beneath their parent. |
+| **Profile** | One identity for amux on a machine: its own key, its own paired hosts, its own agents. An installation holds one profile per account, plus any you create yourself. |
+| **Pairing** | The one-time step that makes two hosts trust each other. |
+| **Relay** | A server that carries encrypted traffic between your hosts when they cannot reach each other directly. |
 
-Use `amux profiles` to see your profiles and `--profile <name|UUID>` to choose
-one for a command. Each cloud account has at most one profile per installation;
-you can also keep profiles without any cloud account. All eligible profiles
-stay connected while the installation runs, even when you are viewing another
-one. A failed login or cloud connection in Work leaves Personal running.
-Logging out keeps the profile's identity, trust and agents; logging back into
-the same account needs no re-pairing. Pause keeps the credential too, and stays
-paused across restarts. Deleting a profile explicitly destroys its keys, trust
-and agents. Profiles isolate amux state and routing, but do not sandbox code
-running as the same OS user.
+Every device is an equal client. The terminal client (bare `amux`) and the
+iPhone app show the same fleet and the same chats and can do the same
+things; neither is a remote control for the other.
 
-Run `amux init` to name this host and create an installation with an unbound
-profile, then `amux login` to add a cloud account. Interactive setup suggests
-the Mac's Computer Name; scripts can use `amux init --name <NAME>`. If the
-server is already running when the name changes, restart it before expecting
-the new name to appear in discovery or pairing. Login shows the account's name
-and email; use its UUID from `amux profiles` in
-`amux --profile <UUID> profile rename Work` to give it a local label. Another
-account gets a separate profile; logging into it never changes Work's binding.
+## Running amux on a computer
 
-In `amux ui --profile Work`, return to the fleet and press the leader key
-(Ctrl+A by default), then `p`. The switcher lists profile labels, emails and
-status. Use arrows or `j`/`k`, then Enter to switch; Esc closes it. The new fleet
-shows only the selected profile's agents, and amux remembers its UUID for later
-commands. `--profile` overrides the remembered selection.
+`amux server start` starts amux in the background and `amux server stop`
+stops it. On a desktop install you rarely need either: `amux init` asks
+once whether amux should start when you log in, and any `amux` command that
+finds amux stopped starts it and waits for it.
 
-Every agent runs in its own process. `amux server stop` stops the daemon for
-every profile, and the agents keep running; the next daemon finds them again.
-`amux update` replaces the binary the same way, so an update does not interrupt
-an agent. Profiles share one desktop daemon, so a daemon crash affects every
-account until it restarts.
+There, amux runs under a small supervisor (`amux supervise`) that restarts
+it if it ever crashes and installs releases as they come out. `amux update`
+asks it to check for a release now, and `amux config channel stable` or
+`amux config channel preview` chooses which releases it follows. On a
+server where a service manager runs amux instead, the service manager
+starts and updates it, and commands wait for it rather than starting it.
 
-## Pairing: trust is something you do once, in person
+Common commands, all acting on the selected profile:
 
-Pairing connects two devices you control (or yours and a collaborator's).
-It works like you'd hope:
+```sh
+amux                                  # open the terminal client: the fleet and chats
+amux ls                               # list the agents, children beneath their parent
+amux create claude_pty --prompt "…"   # start an agent in the current directory
+amux send <agent> fix the flaky test  # send it a prompt
+amux attach <agent>                   # hand this terminal to the agent's own interface
+amux stop <agent>                     # stop its process
+amux resume <agent> [message]         # start an exited agent again
+amux delete <agent>                   # delete it, its history and its children
+```
 
-- **Type a PIN** — one device shows a 6-digit code, you type it into the
-  other; or
-- **Scan a QR code** — point your phone's system camera at the screen.
+`amux attach` works only for agents on this machine: the agent's own
+terminal never crosses the network. On any other device, every agent is a
+chat.
 
-Under the hood both run the same password-authenticated key exchange
-(SPAKE2): the code proves to each device that the other one is the
-machine physically in front of you, *without the code itself ever
-crossing the network*. An eavesdropper learns nothing they can replay;
-codes are one-shot and normally expire in about five minutes. The first
-`amux init` window lasts 15 minutes so there is time to install the phone app.
+## Agents outlive amux
 
-For QR pairing, `amux pair --qr` renders a production `amux://pair?...`
-deep link in the terminal QR. Development builds can also print that link
-with `amux pair --qr --link` for simulator testing.
+Each agent is its own process, and it keeps running whether or not the amux
+daemon is. The agent writes everything it does to a journal in its own
+directory on disk; the daemon reads that journal and serves it to your
+devices.
 
-For unattended demos — an app reviewer who will never see your screen —
-`amux pair --demo --pin 123456 --for 30d` holds an operator-chosen PIN open
-for a fixed period. It is the same SPAKE2 exchange, but the PIN is reusable:
-success does not consume it and mistyped attempts do not lock it out. The
-command returns immediately; the daemon keeps the session until it expires,
-`amux pair --cancel`, or a daemon restart. Treat the PIN as a shared secret
-for that window and only use it on a throwaway machine.
+So when the daemon restarts, crashes, is stopped with `amux server stop`, or
+is replaced by an update, nothing happens to your agents. Each one carries
+on with its turn and keeps writing its journal. When a daemon comes back it
+finds every running agent, reads what they wrote while it was gone, and
+your devices catch up. A chat you had open shows the agent's work as if the
+daemon had never left.
 
-What pairing produces is small and local: each device **pins the other's
-public key** in its own trust store, like remembering a face. From then
-on, all trust decisions are made against that pinned key — on your
-device, by your device.
+An agent waits for a daemon for a while (five minutes by default, set by
+`agent.grace_secs` in the installation config; a change applies to agents
+started afterwards). If no daemon returns in
+that time, the agent finishes the turn it is on, writes it to its journal
+and exits. Nothing is lost: the next daemon reads the finished turn, and the
+fleet shows the agent as **exited · while the daemon was away**, with the
+chat marking where it lost its daemon. Type a message in its chat, or run
+`amux resume`, and it starts again where it left off with that message as
+its next prompt. If the agent was waiting on a question for you when its
+daemon disappeared, it waits a while longer (`agent.drain_secs`) and then
+exits as "orphaned while waiting for you"; resuming it asks the question
+again.
 
-Pairing belongs to the selected profile. If two machines use both Personal
-and Work, pair them once for each account. A key trusted by Personal grants
-no access to Work. Paired peers can operate agents, including creating and
-deleting them, but cannot administer your trust store or stop your
-installation.
+An agent never stops on its own because of anything short of that. The Stop
+button in a chat interrupts the current turn and leaves the agent ready for
+the next prompt; only `amux stop`, `amux delete`, or the provider itself
+exiting ends the process.
 
-## Finding and talking to a host
+## Accounts and profiles
 
-While a host's listener is running it advertises `_amux._udp` on the local
-network. Browsing only produces candidates: finding a host neither trusts it
-nor declares it online. Pairing pins its public key. After that, a fresh
-advertisement supplies addresses to dial, and the pinned handshake decides
-whether the endpoint is really that host.
+You can use amux with no account at all. Hosts on the same network find
+each other, pair, and work together without any server involved. SSH works
+the same way.
 
-Paired devices connect however they can reach each other: a direct QUIC link
-on your network, SSH, or a relay link when they are apart. The relay link uses
-QUIC when UDP works and a multiplexed TLS-over-TCP carrier as its fallback.
-Each operation uses a native stream on the selected link. Before any agent data
-flows, the two endpoint devices complete a mutual TLS handshake checked against
-their pinned keys. Both sides prove who they are every time, independently of
-the carrier or relay.
+An account at amux.sh adds the relay, so your hosts reach each other when
+they are apart. `amux login` signs in through your browser; `amux logout`
+signs out.
 
-That rule — every channel is authenticated end to end — is the heart of the
-security model. The carrier underneath is plumbing, not authority.
+An installation keeps one **profile** per account. A profile is a complete,
+separate amux: its own private key, its own list of paired hosts, its own
+agents and history. Personal and Work on the same Mac share nothing but the
+machine. Pairing belongs to a profile, so two machines that both carry
+Personal and Work pair once for each; trusting a machine in Personal grants
+it nothing in Work.
 
-## What a relay can see and do
+- `amux login` signs in the profile you name with `--profile`. Without one,
+  it picks the profile already signed in to that account, else the profile
+  that holds nothing yet, else it creates a new profile named after the
+  account. A profile that already has agents or paired hosts asks before it
+  is signed in to an account.
+- `amux logout` signs the profile out. Its key, its paired hosts and its
+  agents stay; signing in to the same account later picks up where it left
+  off, with no pairing again.
+- `amux profiles` lists the profiles. `amux profile create`,
+  `amux profile rename` and `amux profile delete` manage them. Deleting a
+  profile destroys its key, its trust in other hosts, and its agents.
+- `--profile <label or id>` chooses the profile for any command; without it,
+  commands use the first profile.
 
-When two of your devices cannot reach each other directly, a relay copies
-their encrypted streams. The amux cloud assigns a relay when a signed-in
-device connects. A free account receives presence only: it can distinguish an
-away host from an offline one, but the cloud relay refuses agent and pairing
-streams. A subscription permits those streams. The rule is enforced from the
-tier on each cloud-admitted link; a self-hosted relay between paired devices
-has no account tier and never applies it.
+Every profile stays connected while amux runs, whichever one you are looking
+at. A failed sign-in in one leaves the others working. Profiles keep amux's
+own state apart; they do not sandbox the agents, which run as your user
+with your user's access to the machine.
 
-Any always-on device you've paired can also relay (a home server works fine)
-— relaying is built into every node.
+On the phone, each account you sign in to is a profile of the phone's own
+amux. Signing out keeps the account listed with Sign In beside it, and the
+machines on your network stay reachable. Removing an account from the phone
+deletes that profile: its key and the machines it paired. Your account at
+amux.sh is untouched.
 
-The cloud relay sees encrypted channel traffic plus metadata such as device
-names, account identity, online status, delivery addresses and traffic timing.
-It cannot:
+## Pairing: trust you grant once, in person
 
-- **read your sessions** — channel contents are encrypted end to end
-  between your devices;
-- **impersonate a device** — it holds no pinned key, so it fails the
-  handshake that guards every call;
-- **create agents or run commands** — those require a channel that
-  terminates inside your trusted circle, which the cloud relay cannot form.
+Pairing is how a host comes to trust another. Until two hosts are paired,
+neither can see or touch the other's agents, whatever account they share.
 
-A compromised relay could drop or delay packets and disrupt connectivity, but
-it would gain no authority to read sessions or operate agents. A paired device
-that also relays traffic has the agent authority you granted when pairing; it
-still cannot read channels it forwards between other devices.
+On the host you want to reach, run:
 
-## Leaving: revocation is local and immediate
+```sh
+amux pair          # shows a six-digit PIN
+amux pair --qr     # shows a QR code for the phone
+```
 
-Unpair a device in a profile and that profile deletes its pinned key. From
-that moment every connection and in-flight session from that device is
-cut, and new attempts fail their handshake. You don't ask a server's
-permission to stop trusting someone; you just stop.
-Other profiles keep their own trust decisions.
+Pairing mode stays open for five minutes, or until Ctrl+C. Then, from the
+other side:
+
+- **Another computer:** `amux peers` lists hosts found nearby. Run
+  `amux pair <name>` (or `amux pair <address:port>`) and type the PIN.
+- **The phone:** scan the QR code with the camera, or choose the host in the
+  app and type the PIN.
+- **Over SSH:** `amux pair user@host` pairs with the amux on that machine
+  through your SSH login, with no PIN; the SSH login is the proof.
+
+The PIN never crosses the network. Both hosts run a password-authenticated
+key exchange (SPAKE2) that proves each is talking to the machine in front of
+you; someone listening learns nothing they can use. A PIN works once and
+expires with the pairing window, and five wrong guesses close the window.
+
+What pairing produces is small and local: each host remembers the other's
+public key. From then on, every connection between them starts with both
+sides proving they hold the key the other remembers. Nothing else, not an
+account, not a server, grants that trust.
+
+A paired host can operate your agents in that profile: open their chats,
+send prompts, start, stop and delete them. It cannot change who your machine
+trusts, pair on your behalf, or stop your amux.
+
+## Reaching a host
+
+Hosts find each other on the local network by themselves. Finding a host
+does not trust it: an unpaired host shows up only as something you can pair
+with.
+
+Paired hosts connect whichever way works, preferring the most direct:
+
+| Route | When |
+|---|---|
+| **direct** | Both hosts are on the same network. |
+| **ssh** | You paired over SSH; the connection runs through `ssh` to the other machine. |
+| **relay** | The hosts are apart and both are signed in to the account, with a subscription. |
+
+The fleet names each host's route beside it, or **offline** when nothing
+reaches it. An agent on a host you cannot reach stays in your fleet as it
+last was; its chat shows what you last saw and fills in again when the host
+comes back.
+
+Whatever the route, the connection is encrypted between the two hosts and
+authenticated against the keys they exchanged when they paired. The route is
+plumbing; it never decides who is trusted.
+
+## What the relay can see and do
+
+When two of your hosts cannot reach each other directly, the amux relay
+copies their encrypted traffic between them. A host connects to the relay
+while its profile is signed in.
+
+What an account buys:
+
+- **Signed in, no subscription:** your hosts see each other's presence
+  through the relay, and you can tell a host that is up from one that is
+  off, but the relay refuses to carry agent traffic or pairing between them.
+  Their agents are reachable on your network or over SSH.
+- **With a subscription:** the relay carries agent traffic and pairing too,
+  so your phone reaches your desktop from anywhere.
+
+Direct connections on your network and SSH never consult the account.
+
+The relay sees encrypted traffic and the metadata it needs to route it:
+host names and ids, which account a host belongs to, when hosts come and
+go, and how much traffic passes and when. It cannot:
+
+- **read your chats** — the traffic is encrypted end to end between your
+  hosts;
+- **pretend to be one of your hosts** — it holds no key any of your hosts
+  trusts, so it fails the check that starts every connection;
+- **start agents or run commands** — those need a connection that ends
+  inside a host you paired, which the relay cannot form.
+
+A relay that misbehaved could drop or delay traffic. It would gain no power
+to read chats or operate agents.
+
+## Unpairing and signing out
+
+**Unpairing** is immediate and needs no one's permission:
+
+```sh
+amux unpair <host>     # asks first; --force skips the question
+```
+
+Your machine forgets the other host's key. Every connection with it closes
+at once, later attempts fail, and its agents leave your fleet. Other profiles keep
+their own decisions.
+
+On the host you unpaired, the fleet says so: the other host reads as
+**offline**, the hosts list adds **no longer trusts this machine**, a banner offers
+`amux pair <host>` to pair again, and on the phone a chat on that host says
+"*host* no longer trusts this phone. Pair again to see this chat." Its
+agents are out of reach there until the two pair again.
+
+**Signing out** does not untrust anything; it only takes the relay away.
+While this machine is signed out:
+
+- hosts it reaches directly or over SSH work as before;
+- hosts only the relay reached are out of reach, and the fleet says why in
+  terms of this machine: **this machine is signed out**, with a banner
+  suggesting `amux login` (on the phone, "This phone is signed out");
+- a chat on such a host keeps your draft and waits until you sign in again.
+
+When another host is the one signed out, the hosts list says **not signed
+in** beside it wherever the relay was the way to it.
 
 ## Why this is trustworthy
 
-- **The protocol is small.** A handful of message types, two routing
-  rules, one pairing flow, one way to authenticate a call. Small enough
-  to read in an afternoon, small enough to audit.
-- **It's missing things on purpose.** No transitive trust ("a friend of
-  a friend"), no multi-hop routing, no central trust authority, no
-  bearer tokens for pairing. Each absence is a whole class of attacks
-  and bugs that cannot exist.
-- **The spec is executable.** The protocol's guarantees are locked in by
-  a test suite written as plain-English specifications — from "a relay
-  that carries every byte still cannot call the devices it serves" to
-  "revoking trust breaks in-flight sessions immediately" — and run
-  against real daemons, real TLS, and real sockets on every change.
+- **Trust lives on your machines.** Each profile's private key never leaves
+  the machine, and the list of hosts it trusts is a local file that no
+  server holds or syncs.
+- **One rule decides access.** Every connection starts with both hosts
+  proving their keys to each other. The route underneath, direct, SSH or
+  relay, never grants anything.
+- **It is missing things on purpose.** No trust passed along ("a friend of
+  a friend"), no central authority that can vouch for a host, no tokens
+  that stand in for pairing. Each absence is a class of attack that cannot
+  happen.
+- **Revocation is local.** Unpairing takes effect on your machine the moment
+  you do it.
 
-For the wire-level details, see the [protocol specification](PROTOCOL.md).
-For how the pieces fit together inside, see the
-[architecture](ARCHITECTURE.md).
+For how the connection itself works, see the [protocol](PROTOCOL.md). For
+how the pieces fit together inside, see the [architecture](ARCHITECTURE.md).

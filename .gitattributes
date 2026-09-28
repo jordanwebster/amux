@@ -24,8 +24,3 @@ crates/claude/keymaps/*.toml text eol=lf
 # set is binary outright.
 crates/wire/src/generated/*.rs text eol=lf linguist-generated=true
 crates/wire/src/generated/*.bin binary
-
-# The attachment guide's canonical review example is compiled into a test that
-# compares it against LF-joined formatter output, so its line endings must
-# survive a Windows checkout intact.
-docs/ATTACHMENTS.md text eol=lf

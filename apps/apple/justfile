@@ -201,14 +201,14 @@ explore *ARGS:
 design-benchmark *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 {{python}} -B scripts/ios-design-benchmark.py "$@"
 
-# Version, tag, archive and export the iPhone app, and stop there: nothing in
-# this recipe uploads, submits or pushes. --preflight reports its inputs and
-# stops; --rehearse archives and exports the would-be release without writing
+# Version, tag, archive, export, validate and upload the iPhone app, then push
+# the tag and main (--no-upload and --no-push stop short). --preflight reports
+# its inputs and stops; --rehearse archives and exports the would-be release without writing
 # the tree or cutting a tag. The scope audit runs first, so no archive is ever
 # produced from a bundle carrying a debug surface or an excluded platform.
 # docs/RELEASE.md holds the contract, including the one-time App Store Connect
 # setup behind it.
-# Version, tag, archive and export the app; upload nothing.
+# Version, tag, archive, export and upload the app, then push the tag.
 release *ARGS: package scope-audit
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 8100 {{python}} -B scripts/release.py "$@"
 

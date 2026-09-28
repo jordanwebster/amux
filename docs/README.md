@@ -1,74 +1,60 @@
-# Documentation Map
+# amux documentation
 
-Where each part of the system is documented. Each document owns its
-subject; when two overlap, the owner named here wins.
+*For anyone arriving at amux: this is the map, one line per page.*
 
-- `HOW_IT_WORKS.md` — the user-facing model: installations, account profiles,
-  what amux lets your devices do and why it is trustworthy.
-- `PROTOCOL.md` — the wire protocol: carriers, links, streams, channels,
-  routing, pairing,
-  and the design rationale.
-- `ARCHITECTURE.md` — the system: installations and profiles, configuration
-  ownership, front-door discovery, servers, dispatcher, trust storage, service
-  surfaces, isolation scope and internal layering.
-- `A2A.md` — agent-to-agent messaging and families: envelopes, provider
-  carriers, model-facing tools, parent/child lifecycle, and client behavior.
-- [iPhone app](IOS.md) — packages, bridge, build pins, fixture driving, goldens,
-  journeys, replay and device qualification; [performance](IOS_PERFORMANCE.md)
-  owns measurement definitions, budgets and reviewed baselines.
-- `UI.md` — the client layer: the ui-state reducer core, the
-  kernel/per-agent-layer split, edge contracts, and the TUI.
-- `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
-  client layer it stands on; includes the full-screen frame, interaction
-  bindings, theme-file format, and `amux-shot` screenshot workflow.
-- `CLAUDE_SDK.md` — the chat for a Claude agent driven over its stream-JSON
-  interface: session facts in the header, streaming replies, tasks, context,
-  ask panels and their live-validation gaps, and the surfaces shared with the
-  other two chats.
-- `ATTACHMENTS.md` — chat attachments and diff reviews: the canonical element
-  syntax, artifact lifetime and cache, RPC and stream delivery, agent tool,
-  and deferred client surfaces.
-- `DEBUGGING.md` — agent workflow for profile debug reports: report locations,
-  installation log tails, bundle layout, replay, marked tweaks, redaction,
-  graduation and committed fixtures.
-- [Build](BUILD.md) — toolchain and profile choices, reproducible tasks,
-  committed protobuf output, and warm worktree snapshots.
-- `TESTING.md` — what each kind of test proves: boundaries and suites, the
-  three clocks, fixtures, journeys, lanes and the suite catalogue.
-- `PERFORMANCE.md` — the qualified performance harness, budgets, baselines
-  and the measurement decisions behind them.
-- `CODEX.md` — the OpenAI Codex integration: process ownership, the two
-  planes a codex agent exposes, the structured row vocabulary, and the
-  client-side layer that folds it.
-- `CLAUDE_TRANSCRIPT.md` — the grounded Claude Code transcript taxonomy
-  consumed by the capture drift tooling and its committed fixtures.
-- `../crates/shot/README.md` — the committed 120×40 PNG and wheel-recording
-  tool for named TUI states.
-- [Profile screenshots](screenshots/profiles/README.md) — the switcher and
-  both account fleets, with hashes and reproducible capture commands.
-- `PROVIDER_CRATES.md` — the canonical Claude, Codex, PTY-hosting and replay
-  crate boundaries; session shapes, capabilities, gaps, corpora and drift
-  ledgers.
-- `KEYMAPS.md` — semantic Claude PTY input; keymap data, resolution,
-  interpretation, provenance, management and screen-detection limits.
-- `../crates/testnet/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
-  documentation and locks the protocol's guarantees; run it with
-  `just spec`.
-- [App layer](NATIVE_INTEGRATION.md) — the three crates any rich client
-  reuses, their one dependency rule, the harness seams, the bridge build
-  recipes and what the tests hold.
-- [Native runtime bridge](../crates/app-ffi/README.md) — C lifecycle, routing
-  tokens, callback ownership and the debug loopback boundary.
-- `CI.md` — native iOS verification recipes, pinned runner and commit-specific
-  CI status.
-- [RELEASE.md](RELEASE.md) — shipping the iPhone app without Expo: the
-  marketing version and build number, the release tag, the signing
-  contract, archive, export and validation, and the one-time App Store
-  Connect setup only a person can do.
-- [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the
-  served control door's loopback protocol, provider scripts and the offline smoke
-  recipe.
-- [CLOUD.md](CLOUD.md) — what the iPhone app asks of amux.sh: every endpoint it
-  uses, the entitlement read, how a signed purchase reaches the cloud, and
-  where each configuration value and secret lives.
-- `../DEVLOG.md` — recent work history and decisions.
+## Readers first
+
+- [How amux works](HOW_IT_WORKS.md) — for people using amux: devices, accounts, pairing, hosts, the relay,
+  revocation, and agents that keep running while the daemon restarts.
+
+## The system
+
+- [Architecture](ARCHITECTURE.md) — the problem, the vocabulary, the mental model, the processes, the agent
+  directory, startup, remote hosts and the cloud, and the crate map with its dependency policy.
+- [The agent process](AGENT_PROCESS.md) — lifecycle, control socket, provider children, facts and hooks, the pty
+  socket and raw attach, the tool server, exit and self-destruct.
+- [Interpreters](INTERPRETERS.md) — how terminal Claude, headless Claude and Codex output becomes chat items:
+  the step rule, checkpoints, redaction, keymaps, provider crates, recordings and the coverage test.
+- [Journal and store](JOURNAL_AND_STORE.md) — journal segments, commit and revisions, durability, ingest, the
+  store schema, own and replica rows, retention and disk-full.
+- [The wire](WIRE.md) — the amux.v1 service: subscriptions, items and appends, inputs and the queue, blobs,
+  inventory, and how the schema only grows.
+- [Network protocol](PROTOCOL.md) — carriers, links, streams, channels, routing, pairing, discovery, the relay
+  and the front door.
+- [Attachments](ATTACHMENTS.md) — blobs and attachments: shape, bytes and metadata, lifetimes, deletion and the
+  review document.
+- [Agent tools](AGENT_TOOLS.md) — the seven tools agents call, messaging, families, delivery, completion and
+  work across hosts.
+- [Supervisor](SUPERVISOR.md) — `amux supervise`, login items, stopping, updates and channels, overlap and
+  rollback, keep-awake.
+
+## Clients
+
+- [Client library](CLIENT.md) — the shared client crates: session state and driver, views as values, and the
+  flows every client uses.
+- [Chat vocabulary](CHAT_VOCABULARY.md) — the client contract: the places a chat has, its rows and asks, and
+  what interpreters and views must cover.
+- [Terminal client](TERMINAL.md) — screens, keys, the leader, raw attach and the CLI verbs.
+- [iPhone app](IOS.md) — packages, the chat and fleet, driving the app, snapshots, goldens and journeys.
+- [Embedding](EMBEDDED.md) — app-runtime, app-embedded, app-ffi, the generated Swift types and the seams.
+- [iPhone copy](IOS_COPY.md) — the rules the app's words follow and the lint that holds them.
+- [iPhone performance](IOS_PERFORMANCE.md) — measurement definitions, budgets and reviewed baselines for the
+  phone.
+- [Cloud](CLOUD.md) — what the app and daemon ask of amux.sh.
+
+## Verifying
+
+- [Testing](TESTING.md) — boundaries, lanes, the suite catalogue and contracts, how to run, where fixtures and
+  evidence live.
+- [TestNet](TESTNET.md) — the multi-host harness and `testnet serve`.
+- [Performance](PERFORMANCE.md) — the perf lane, the flood, budgets and baselines.
+- [Debugging](DEBUGGING.md) — dumps, the facts ring and checkpoints, `amux dump`, the reports directory,
+  redaction and replay.
+- [Parameters](PARAMETERS.md) — every tunable value with its starting point, its basis and where it is set.
+
+## Operations
+
+- [Build](BUILD.md) — toolchain, recipes, committed generated code and warm worktrees.
+- [CI](CI.md) — workflows, lanes, `just ci` and the Windows cross-check.
+- [Release](RELEASE.md) — shipping the iPhone app and the daemon's release feed and channels.
+- [Licensing](LICENSING.md) — how the repository is licensed.

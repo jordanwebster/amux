@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" role="img">
+  <title>Clients reach the daemon over a local socket, QUIC or the cloud relay. The daemon connects to each agent process over a control socket and reads that agent's journal file; the agent appends to the journal. The daemon is the only writer of the SQLite store.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      
+      <!-- clients -->
+      <rect class="box" x="30" y="24" width="170" height="48" rx="4"/>
+      <text class="t" x="115" y="53" text-anchor="middle">iPhone app</text>
+      <rect class="box" x="365" y="24" width="170" height="48" rx="4"/>
+      <text class="t" x="450" y="47" text-anchor="middle">TUI / CLI</text>
+      <text class="s" x="450" y="63" text-anchor="middle">same machine</text>
+      <rect class="box" x="700" y="24" width="170" height="48" rx="4"/>
+      <text class="t" x="785" y="53" text-anchor="middle">paired daemon</text>
+      <!-- relay -->
+      <rect class="box2" x="10" y="120" width="230" height="44" rx="4"/>
+      <text x="125" y="138" text-anchor="middle">cloud relay</text>
+      <text class="s" x="125" y="154" text-anchor="middle">per-user routing, sees ciphertext</text>
+      <path class="arrow" d="M115,72 V120" marker-end="url(#ah)"/>
+      <path class="arrow" d="M115,164 V285 H240" marker-end="url(#ah)"/>
+      <text class="s" x="124" y="230">encrypted link</text>
+      <path class="arrow" d="M450,72 V200" marker-end="url(#ah)"/>
+      <text class="s" x="458" y="130">local socket</text>
+      <text class="s" x="458" y="146">subscribe · fetch · input</text>
+      <path class="arrow" d="M785,72 V200" marker-end="url(#ah)"/>
+      <text class="s" x="793" y="138">QUIC + mTLS</text>
+      <!-- daemon -->
+      <rect class="box" x="240" y="200" width="610" height="170" rx="6"/>
+      <text class="t" x="256" y="224">amux daemon</text>
+      <text class="s" x="360" y="224">one per installation</text>
+      <rect class="box2" x="256" y="238" width="400" height="116" rx="4"/>
+      <text class="t" x="268" y="258">profile runtime</text>
+      <text x="268" y="282">agent registry · spawn · sweep</text>
+      <text x="268" y="300">journal ingest → assign revision and order → commit</text>
+      <text x="268" y="318">fan-out to subscription handles</text>
+      <text x="268" y="336">A2A · blobs · trust · pairing</text>
+      <rect class="file" x="690" y="250" width="140" height="72" rx="4"/>
+      <text class="t a" x="760" y="280" text-anchor="middle">store.sqlite</text>
+      <text class="s" x="760" y="300" text-anchor="middle">daemon-only writer</text>
+      <path class="arrow-file" d="M656,290 H690" marker-end="url(#ahf)"/>
+      <!-- agents -->
+      <rect class="file" x="260" y="430" width="110" height="48" rx="4"/>
+      <text class="a" x="315" y="450" text-anchor="middle">journal/</text>
+      <text class="a" x="315" y="466" text-anchor="middle">pty/</text>
+      <rect class="box" x="390" y="430" width="150" height="48" rx="4"/>
+      <text class="t" x="465" y="459" text-anchor="middle">agent process</text>
+      <path class="arrow-file" d="M390,454 H370" marker-end="url(#ahf)"/>
+      <text class="s a" x="380" y="446" text-anchor="middle">appends</text>
+      <path class="arrow" d="M455,370 V430" marker-end="url(#ah)"/>
+      <path class="arrow" d="M475,430 V370" marker-end="url(#ah)"/>
+      <text class="s" x="447" y="393" text-anchor="end">input · stop ↓</text>
+      <text class="s" x="447" y="409" text-anchor="end">hello · nudge ↑</text>
+      <text class="s" x="447" y="425" text-anchor="end">ctl.sock</text>
+      <path class="arrow-file" d="M315,430 V370" marker-end="url(#ahf)"/>
+      <text class="s a" x="308" y="404" text-anchor="end">reads</text>
+      <text class="s a" x="308" y="418" text-anchor="end">at offset</text>
+
+      <rect class="file" x="560" y="430" width="110" height="48" rx="4"/>
+      <text class="a" x="615" y="450" text-anchor="middle">journal/</text>
+      <text class="a" x="615" y="466" text-anchor="middle">pty/</text>
+      <rect class="box" x="690" y="430" width="150" height="48" rx="4"/>
+      <text class="t" x="765" y="459" text-anchor="middle">agent process</text>
+      <path class="arrow-file" d="M690,454 H670" marker-end="url(#ahf)"/>
+      <text class="s a" x="680" y="446" text-anchor="middle">appends</text>
+      <path class="arrow" d="M755,370 V430" marker-end="url(#ah)"/>
+      <path class="arrow" d="M775,430 V370" marker-end="url(#ah)"/>
+      <path class="arrow-file" d="M615,430 V370" marker-end="url(#ahf)"/>
+      <text class="s a" x="608" y="404" text-anchor="end">reads</text>
+      <text class="s a" x="608" y="418" text-anchor="end">at offset</text>
+      <text class="t" x="868" y="459">…</text>
+</svg>

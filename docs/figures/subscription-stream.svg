@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 210" role="img">
+  <title>A subscription stream: snapshot first, then catch-up items from the store, a caught-up marker, then live appends, items and snapshots in commit order. Phase and working_on reach the fleet as row fields on the inventory stream.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <rect class="box2" x="20" y="60" width="90" height="50" rx="4"/><text x="65" y="82" text-anchor="middle">Snapshot</text><text class="s" x="65" y="98" text-anchor="middle">r=116</text>
+      <rect class="file" x="120" y="60" width="80" height="50" rx="4"/><text class="a" x="160" y="82" text-anchor="middle">Item</text><text class="s" x="160" y="98" text-anchor="middle">r=117</text>
+      <rect class="file" x="210" y="60" width="80" height="50" rx="4"/><text class="a" x="250" y="82" text-anchor="middle">Item</text><text class="s" x="250" y="98" text-anchor="middle">r=119</text>
+      <rect class="file" x="300" y="60" width="80" height="50" rx="4"/><text class="a" x="340" y="82" text-anchor="middle">Item</text><text class="s" x="340" y="98" text-anchor="middle">r=120</text>
+      <line class="arrow-dashed" x1="395" y1="40" x2="395" y2="130"/><text class="s" x="395" y="150" text-anchor="middle">caught_up</text>
+      <rect class="box2" x="410" y="60" width="80" height="50" rx="4"/><text x="450" y="82" text-anchor="middle">Append</text><text class="s" x="450" y="98" text-anchor="middle">r=121 base 120</text>
+      <rect class="box2" x="500" y="60" width="80" height="50" rx="4"/><text x="540" y="82" text-anchor="middle">Append</text><text class="s" x="540" y="98" text-anchor="middle">r=122 base 121</text>
+      <rect class="file" x="590" y="60" width="80" height="50" rx="4"/><text class="a" x="630" y="82" text-anchor="middle">Item</text><text class="s" x="630" y="98" text-anchor="middle">r=123 final</text>
+      <rect class="box2" x="680" y="60" width="90" height="50" rx="4"/><text x="725" y="82" text-anchor="middle">Snapshot</text><text class="s" x="725" y="98" text-anchor="middle">r=124</text>
+      <text x="800" y="90">…</text>
+      <path class="arrow" d="M20,30 H380"/><text class="s" x="200" y="22" text-anchor="middle">from the store: the newest N rows of the block, latest state</text>
+      <path class="arrow" d="M410,30 H880"/><text class="s" x="645" y="22" text-anchor="middle">live, in commit order; appends only here</text>
+      <text class="s" x="20" y="190">phase and working_on are copied from the snapshot onto the agent row and ride inventory.</text>
+</svg>

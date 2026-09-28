@@ -1,106 +1,132 @@
-# Performance qualification
+# Performance
 
-Performance is a test of a specified workload on a reference environment. It
-has an oracle, an absolute budget and a drift bound against a reviewed
-baseline, and it is environment-dependent, so it runs in a qualification lane
-on enrolled machines, never as part of an ordinary push. Deterministic work
-bounds such as retained rows and bytes, cache misses and message counts belong
-in ordinary tests; elapsed-time claims belong here.
+*For developers measuring amux, changing a budget, or recording a baseline.*
 
-The desktop harness lives in the qualification crate and the phone harness
-keeps its platform-specific runner with the app. The convention to converge on
-is one manifest format for every platform (workload, metric, unit, statistic,
-budget, drift, reference environment), one baseline layout keyed by enrolled
-machine and one report format, with harness code staying with its platform.
-Measure user outcomes: store-painted startup, input to echo, streaming while
-typing and scrolling, reconnect volume and latency, attachment and review
-opening, bridge rendering, idle resources and sustained memory.
+Performance is a test of a specified workload on a reference machine. Each metric has an absolute budget and, for
+some, a drift limit against a reviewed baseline. Because the numbers depend on the machine, performance runs in
+the qualification lane on enrolled machines, never in an ordinary push. Claims that do not depend on the machine
+(rows and bytes retained, message counts, cache misses) belong in ordinary tests; elapsed time and memory belong
+here. How this lane sits beside the others is on [Testing](TESTING.md).
+
+The desktop harness is the `qualification` crate (`crates/qualification/src/perf`). The phone keeps its own
+harness with the app; its metrics, budgets and machines are on [iPhone performance](IOS_PERFORMANCE.md).
 
 ## Running it
 
-`just perf` builds the qualified harness in release mode and measures the
-desktop frame loop, store-backed cold start and chat attachment, fold bounds,
-SQLite commit and maintenance work, and reconnect wire size.
-The report names the enrolled hardware and OS, profile and features, workload
-seed, identity-growth mode, warm-up, sample count, timestamps, statistic,
-budget, committed baseline and drift. The desktop report also names its
-reference state: one child process keeps one core busy for the qualification,
-so the CPU cluster remains active without adding its CPU time or memory to the
-measured process. It fails on an absolute budget miss, on time drift above 15%,
-or on memory drift above 10%. On a Mac with Xcode, the same invocation also
-runs `just ios perf` under its own simulator lease; that recipe prepares the
-pinned simulator, and a failure there fails the combined recipe. A desktop
-build or measurement failure stops the recipe before the phone suite starts.
-
 ```sh
-just perf
-just perf --baseline
-just perf soak
-just perf soak --baseline
+just perf                        # the desktop workloads, then the phone suite when Xcode is present
+just perf -- --only flood        # the flood alone, desktop only
+just perf --baseline             # record this machine's baseline after every budget passes
+just perf -- --only flood --baseline
 ```
 
-Desktop baselines live at `perf/baselines/desktop/<hw.model>.json`, and
-soak baselines live separately at
-`perf/baselines/desktop/<hw.model>-soak.json`. Phone baselines live at
-`perf/baselines/phone/<machine>.json`. They are valid only for the
-recorded machine model, release profile and feature set. An unknown hardware
-model is refused. `--baseline` records the complete workload it accompanies
-while still enforcing every absolute budget; it never turns a miss into the
-new expectation. A baseline also records the reference state, and a report is
-comparable only with a baseline recorded in that same state; a mismatch is
-refused just like a different machine model.
+`just perf` builds the `perf` binary in release with the `bundled,perf` features and runs it; the binary refuses to
+run from a debug build. On a Mac with `xcrun`, a whole run then continues with `just ios perf`, passing the same
+arguments, under that recipe's own simulator lease; a desktop failure stops the recipe before the phone starts.
+`--only flood` skips the phone. The binary accepts nothing but `--baseline` and `--only flood`.
 
-An otherwise idle Apple Silicon machine is not a stable latency reference for
-these bursty workloads. When no core is active, the cluster can remain in a
-low-power state between wakeups and produce wall-clock results several times
-slower and with wider spread, even though the work itself has not changed.
-The absolute budgets hold both when the machine is idle and when the cluster
-warmer is active. The warmer defines the repeatable state used for relative
-drift; it does not change any workload, statistic, budget or drift limit.
+For the whole run a child process keeps one core busy. An otherwise idle Apple Silicon machine lets its cores drop
+into a low-power state between bursts and measures several times slower with wider spread; one busy core is the
+repeatable reference state baselines are recorded in (`one busy core (cluster warmer)` in the report and the
+baseline). It changes no workload, statistic or budget.
 
-The two `TUI cold start` rows measure an exec through the store-painted first
-fleet frame with `AMUX_TUI_DIRECT_PROFILE=1`: the fixture profile socket is
-absent and no installation daemon is spawned. Before this capture state was
-fixed, the production connector started a fixture daemon beside some samples.
-Six focused runs of the unchanged binary measured 14.200/14.254,
-14.290/14.449, 14.843/14.914, 14.117/13.896, 15.556/14.989 and
-14.159/15.349 ms for 40/200 agents, while three full qualifications shifted
-both rows to roughly 30 ms. One observed fixture daemon failed with
-`installation root is already in use: /Users/jlw/.local/share/amux`; that
-message means the sample included a failing daemon start against the
-operator's real installation lock, not store-painted client startup. The
-workload now fails if a front-door socket, installation lock file or matching
-`amux server start` process appears. The unchanged 100 ms median and 200 ms
-worst budgets and the 15% drift gate remain the cold-start promise.
+Wait for unrelated builds, simulator runs and other harnesses to finish before a qualifying run: the machine's load
+is part of what is measured.
 
-The `scroll-back memory return` row is ceiling-only under its unchanged
-1.10x absolute budget. Five warmed runs of identical code measured 0.632x,
-0.591x, 1.004x, 0.595x and 1.006x. Its denominator is the physical-footprint
-snapshot taken after seeding 50,000 rows and the preceding commit workload. It
-reads near 0.6 when allocator and kernel memory is returned during scrolling,
-and near 1.0 when that memory was already returned before the first snapshot.
-A lower ratio is therefore an inflated denominator, not a better product, and
-a relative gate cannot usefully distinguish the two modes. The absolute budget
-still guards the row. `growth after sweep`, `growth sweep duration` and
-`growth longest statement upper bound` keep their relative gates, and any
-budget miss remains a defect to explain.
-Baseline recording is qualification work, so wait for unrelated builds,
-simulator runs and performance harnesses to finish, then review the complete
-reports before committing the files. `just perf soak` remains a memory-only
-qualification and does not start the cluster warmer.
+## The flood
 
-The soak holds ten chat windows and the daemon state for 200 idle plus 20
-active structured agents for ten minutes. It samples the platform's named
-memory measure every five seconds, excludes the first two minutes from linear
-growth, and fails above 1 MiB/minute, 300 MiB client peak, 2 MiB per idle
-daemon agent, or 40 MiB per active daemon agent. Fresh identities, an
-oversized row, one hundred unresolved asks, a five-second persistence stall
-and a semantic reset prevent deduplication or a quiet happy path from hiding
-growth. Client peak and daemon memory per idle and active agent enforce the
-10% memory drift limit. The two fitted MiB/minute rates are ceiling-only: a
-percentage change near zero is not meaningful. Four passing ten-minute runs
-measured client slopes from 0.068 to 0.255 MiB/min while the daemon slope
-rounded to 0.001 MiB/min. A shortened `AMUX_PERF_SOAK_SECONDS` diagnostic run
-therefore applies neither committed baselines nor drift, and it cannot record
-a baseline. As with the fast report, a budget or drift miss is a defect to
-explain, not a new value to adopt.
+The flood is the desktop workload (`crates/qualification/src/perf/flood.rs`). Twenty agents on one host (`desk`)
+stream at full rate, and a second runtime (`phone`), linked to it and holding nothing yet, opens the fleet and one
+chat. Full rate is the fastest a real provider streams, not the fastest a fake can write: every recording in the
+Claude and Codex corpora peaks at 47 provider frames in one second, so each agent sends a message every 20 ms,
+about a thousand frames a second on the host. The hosts run with a replica tail and catch-up cap K of 200, and
+every agent's history is well past K before the viewer connects.
+
+One run measures, in order:
+
+| Metric | Statistic | Budget | Gate |
+| --- | --- | --- | --- |
+| `flood fleet caught up`: the viewer's fleet reaching CaughtUp | worst | 1,000 ms | budget |
+| `flood chat caught up`: one chat's tail of K rows and snapshot while the rest catch up beside it | worst | 2,000 ms | budget |
+| `flood ingest lag`: a journal write to its commit in the store | p99 | 250 ms | budget |
+| `flood agent process memory`: each agent process's footprint | peak | 48 MiB | budget and drift |
+| `flood catch-up under K`: the viewer cut off for K/2 rows, then restored, to CaughtUp | worst | 2,000 ms | budget |
+| `flood catch-up over K`: the same for 5K rows, answered with a reset and a tail | worst | 2,000 ms | budget |
+| `flood backlog growth with the daemon killed`: journal growth while the host's daemon is dead | worst | 1,200 MiB/min | budget |
+| `flood backlog drain after restart`: every journal read to its end after the restart | worst | 5,000 ms | budget |
+| `flood ingest cost per frame`: ingest draining a held backlog alone, per committed frame | median | 100 µs | budget and drift |
+
+The last metric comes from a second phase: the agents write unthrottled while the host's store is held, so ingest
+commits nothing until the journals hold a fixed backlog; then the writers pause and ingest drains the backlog alone,
+priced over seven equal shares of the frames it commits. That isolates ingest's own cost from how busy writers share
+the cores with it.
+
+Memory is the platform's own measure: physical footprint on macOS, resident set size on Linux. The two are not
+interchangeable and the report names which it used.
+
+### The smoke
+
+The same workload with three agents, a small K and short phases runs in the ordinary test lane so it keeps
+working between qualifying runs. It checks that every metric is measured, not the budgets, which hold only for
+release builds on an enrolled machine.
+
+```sh
+just test-crate qualification -- --test flood
+cargo test -p qualification --features perf flood
+```
+
+The same test file holds the served flood to the measured one: `journeys/topologies/flood.json` must equal the
+topology the perf lane builds, so `testnet serve journeys/topologies/flood.json` (see [TestNet](TESTNET.md)) hands a
+real client the flood the lane measures. `FLOOD_TOPOLOGY_UPDATE=1` rewrites the file after the workload changes.
+
+## Budgets and baselines
+
+Budgets are constants beside the workload, in the `budgets` module of `crates/qualification/src/perf/flood.rs`,
+each with the reasoning behind its number. The values they rest on (K, the tail N, the facts ring and journal
+segment sizes) are on [Parameters](PARAMETERS.md). Changing a budget is a code change reviewed like any other.
+
+A metric either is held to its budget alone ("ceiling only") or also to drift from the recorded baseline median.
+Most flood timings are one observation, or sub-millisecond medians that vary several-fold between runs on the same
+machine, so drift on them would fail runs for noise; their budget is what they must meet. Agent memory and ingest
+cost per frame are stable enough to drift-check. Drift limits come from the unit: 15% for times and percentages,
+10% for bytes, MiB and ratios.
+
+Baselines are committed per enrolled machine:
+
+```text
+perf/baselines/
+  desktop/<hw.model>.json      e.g. desktop/Mac14,6.json
+  phone/<machine>.json         e.g. phone/pinned-mac.json
+```
+
+A desktop baseline records its schema version, machine model, profile (`release`), features (`bundled,perf`),
+reference state, and the median of every metric, `null` for ceiling-only ones. The enrolled machines are listed in
+`crates/qualification/src/perf/report.rs`: at present one, `pinned-mac`, model `Mac14,6`. A run on a machine not in
+the list is refused, and so is a baseline recorded on another model, profile, feature set or reference state, or
+one whose metrics differ from the run's. With no baseline on disk, drift is reported as unavailable and the run is
+judged on budgets alone.
+
+`--baseline` records the whole workload it ran. It still enforces every absolute budget, and a run outside a budget
+cannot become a baseline: a miss is a defect to explain, never a new value to adopt. Review the complete report
+before committing the file.
+
+## Reading a report
+
+The report names the machine and OS, profile and features and the reference state, then one line per metric:
+
+```text
+metric | median | measured | budget | baseline | drift | verdict
+flood ingest cost per frame | 21.002 µs | median 21.002 µs | 100.000 µs | 21.002 µs | +0.0% | PASS
+  workload=… · seed=0 · identities=… · samples=7 · warm-up=… · start=… · end=…
+```
+
+`measured` is the metric's named statistic over its samples; `baseline` and `drift` read `ceiling only` for metrics
+without a drift gate. The run fails if any verdict is `FAIL`.
+
+## The phone
+
+`just ios perf` measures the app's pinned workloads (cold start, reconciliation, echo, streaming, lifecycle) on the
+pinned simulator. Its definitions, budgets and machine rows are in [iPhone performance](IOS_PERFORMANCE.md); its
+baselines are `perf/baselines/phone/<machine>.json`, and its results land in `target/ios/perf`. `just ios perf --
+--only <section>` runs one section; `just ios perf -- --baseline` records a whole run, and refuses to record from
+one section.

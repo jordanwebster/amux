@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 270" role="img">
+  <title>Three lanes over time. The interpreter keeps a facts ring with a checkpoint written at each rotation; a dump is the last checkpoint plus the ring. The daemon keeps the journal tail and a store slice. The client keeps, in memory, a bounded trace of driver events and a clone of the state the trace started from; a dump is that snapshot, the events since, and the view state. Nothing on the client is checkpointed.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+
+<text class="t" x="20" y="44">interpreter</text><circle cx="200" cy="40" r="12" class="box"/><text class="s a" x="200" y="44" text-anchor="middle">C1</text><rect class="bar" x="220" y="28" width="240" height="24"/><text class="s" x="340" y="44" text-anchor="middle">facts + inputs ring (2–4 MB)</text><circle cx="482" cy="40" r="12" class="box"/><text class="s a" x="482" y="44" text-anchor="middle">C2</text><rect class="bar" x="502" y="28" width="218" height="24"/><text class="s" x="611" y="44" text-anchor="middle">ring since C2</text><text class="s" x="740" y="44">→ dump = C2 + ring</text><text class="s" x="130" y="72">C = the resume state already written to private/; rotation just writes it now</text><text class="t" x="20" y="124">daemon</text><rect class="bar" x="200" y="108" width="520" height="24"/><text class="s" x="460" y="124" text-anchor="middle">the journal tail (last two segments) + a store slice for the agent</text><text class="s" x="740" y="124">→ dump = tail + slice</text><text class="t" x="20" y="194">client</text><rect class="bar-a" x="200" y="178" width="520" height="24"/><text class="s a" x="460" y="194" text-anchor="middle">driver trace: state at segment start + events since, in this client's order</text><text class="s" x="740" y="194">→ dump = state + view state + trace</text><text class="s" x="130" y="222">nothing on the client is persisted: the state is rebuilt from the runtime;</text><text class="s" x="130" y="238">the trace replays the one thing its rows cannot reproduce, the order</text><path class="arrow" d="M200,256 H980" marker-end="url(#ah)"/><text text-anchor="end" class="s" x="970" y="252">time</text>
+</svg>

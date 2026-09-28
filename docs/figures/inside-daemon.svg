@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" role="img">
+  <title>An installation holds the registry, front door, the pipe to its supervisor and the startup sweep. Each profile runtime holds three groups: edges (sockets, links, discovery, MCP door), agent hosting (registry, agent handles, ingest) and serving (fan-out, subscription handles, fetch, inventory, A2A). All of them read and write one SQLite store per profile.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <rect class="box" x="20" y="20" width="860" height="520" rx="6"/>
+      <text class="t" x="36" y="44">installation</text>
+      <text class="s" x="150" y="44">one daemon process · exclusive root lock</text>
+      <rect class="box2" x="40" y="56" width="170" height="44" rx="4"/>
+      <text x="125" y="83" text-anchor="middle">profile registry</text>
+      <rect class="box2" x="230" y="56" width="300" height="44" rx="4"/>
+      <text x="380" y="76" text-anchor="middle">front door</text>
+      <text class="s" x="380" y="92" text-anchor="middle">ProfileService · InstallationService</text>
+      <rect class="box2" x="550" y="56" width="140" height="44" rx="4"/>
+      <text x="620" y="83" text-anchor="middle">supervisor pipe</text>
+      <rect class="box2" x="710" y="56" width="150" height="44" rx="4"/>
+      <text x="785" y="76" text-anchor="middle">startup sweep</text>
+      <text class="s" x="785" y="92" text-anchor="middle">of every agents/ dir</text>
+
+      <rect class="box" x="40" y="130" width="820" height="390" rx="6"/>
+      <text class="t" x="56" y="154">profile runtime</text>
+      <text class="s" x="195" y="154">one per profile · own identity, trust, agents, store</text>
+
+      <rect class="ghost" x="60" y="170" width="240" height="290" rx="4"/>
+      <text class="t" x="72" y="192">edges</text>
+      <rect class="box2" x="72" y="205" width="216" height="40" rx="3"/><text x="180" y="230" text-anchor="middle">local socket (clients)</text>
+      <rect class="box2" x="72" y="253" width="216" height="40" rx="3"/><text x="180" y="278" text-anchor="middle">LAN listener (QUIC, mTLS)</text>
+      <rect class="box2" x="72" y="301" width="216" height="40" rx="3"/><text x="180" y="326" text-anchor="middle">cloud link (relay)</text>
+      <rect class="box2" x="72" y="349" width="216" height="40" rx="3"/><text x="180" y="374" text-anchor="middle">discovery · pairing · trust</text>
+      <rect class="box2" x="72" y="397" width="216" height="40" rx="3"/><text x="180" y="422" text-anchor="middle">MCP door (agent tools)</text>
+
+      <rect class="ghost" x="330" y="170" width="240" height="290" rx="4"/>
+      <text class="t" x="342" y="192">agent hosting</text>
+      <rect class="box2" x="342" y="205" width="216" height="40" rx="3"/><text x="450" y="230" text-anchor="middle">agent registry (rows)</text>
+      <rect class="box2" x="342" y="253" width="216" height="40" rx="3"/><text x="450" y="272" text-anchor="middle">AgentHandle × N</text><text class="s" x="450" y="286" text-anchor="middle">dir · lock · conn · cursor</text>
+      <rect class="box2" x="342" y="301" width="216" height="40" rx="3"/><text x="450" y="326" text-anchor="middle">spawn · stop · resume</text>
+      <rect class="box2" x="342" y="349" width="216" height="40" rx="3"/><text x="450" y="368" text-anchor="middle">journal ingest</text><text class="s" x="450" y="382" text-anchor="middle">offset → revision → commit</text>
+      <rect class="box2" x="342" y="397" width="216" height="40" rx="3"/><text x="450" y="416" text-anchor="middle">projections</text><text class="s" x="450" y="430" text-anchor="middle">Snapshot → agent row: phase, working_on</text>
+
+      <rect class="ghost" x="600" y="170" width="240" height="290" rx="4"/>
+      <text class="t" x="612" y="192">serving</text>
+      <rect class="box2" x="612" y="205" width="216" height="40" rx="3"/><text x="720" y="230" text-anchor="middle">fan-out: one channel per agent</text>
+      <rect class="box2" x="612" y="253" width="216" height="40" rx="3"/><text x="720" y="272" text-anchor="middle">Subscription × M</text><text class="s" x="720" y="286" text-anchor="middle">opening read · live receiver</text>
+      <rect class="box2" x="612" y="301" width="216" height="40" rx="3"/><text x="720" y="326" text-anchor="middle">fetch (history pages)</text>
+      <rect class="box2" x="612" y="349" width="216" height="40" rx="3"/><text x="720" y="374" text-anchor="middle">inventory (hosts, agents)</text>
+      <rect class="box2" x="612" y="397" width="216" height="40" rx="3"/><text x="720" y="422" text-anchor="middle">A2A router · blob owner</text>
+
+      <path class="arrow" d="M558,225 H612" marker-end="url(#ah)"/>
+      <text class="s" x="585" y="216" text-anchor="middle">record</text>
+
+      <rect class="file" x="60" y="478" width="780" height="40" rx="4"/>
+      <text class="t a" x="76" y="503">store.sqlite</text>
+      <text class="s" x="190" y="503">agents · items · hosts — one file per profile, written only by this profile runtime</text>
+      <path class="arrow-file" d="M450,437 V478" marker-end="url(#ahf)"/>
+      <text class="s a" x="458" y="462">commit</text>
+      <path class="arrow-file" d="M720,478 V437" marker-end="url(#ahf)"/>
+      <text class="s a" x="728" y="462">read pages</text>
+</svg>

@@ -58,6 +58,8 @@ jobs:
         run: just dependency-policy
       - name: Check the test suite catalogue
         run: just tests-check
+      - name: Check the documentation's links, figures and map
+        run: just docs-check
 
   test:
     name: Test (${{ matrix.os }})

@@ -1,20 +1,29 @@
 # Licensing
 
+*For anyone deciding whether and how they may use, change or redistribute amux's source.*
+
 The whole repository is under the Functional Source License 1.1 with an
 Apache 2.0 future licence, written `FSL-1.1-ALv2`. [LICENSE](../LICENSE) holds
-the terms; this page answers the questions they raise.
+the terms, and every crate's `Cargo.toml` inherits
+`license = "FSL-1.1-ALv2"` from the workspace. This page answers the questions
+the terms raise.
 
 ## Which licence applies to a file
 
 Every file is under `FSL-1.1-ALv2` — the multiplexer, the daemon, the
 protocols, the transport, the terminal client, the libraries, the tooling and
-the applications alike. The only exception is third-party code vendored into
-the repository, which keeps its own licence (see below).
+the iPhone app alike. The only exception is third-party material vendored
+into the repository, which keeps its own licence (see
+[What this does not cover](#what-this-does-not-cover)).
 
-Commits made before 2026-09-22 were published with the core (everything
-outside `apps/`) dual-licensed MIT or Apache-2.0. Those grants were made and
-stand: anyone may keep using code from those commits under those terms. Every
-later commit is under the FSL alone.
+Older commits carry the grants they were published with, and those grants
+stand: anyone may keep using code from those commits under those terms.
+
+| Commits dated | Licence |
+| --- | --- |
+| Before 2026-09-13 | MIT |
+| 2026-09-13 to 2026-09-21 | MIT or Apache-2.0, at your option, for everything outside the iPhone app's directory; the app under `FSL-1.1-ALv2` |
+| From 2026-09-22 | `FSL-1.1-ALv2` for everything |
 
 ## What the FSL actually forbids
 
@@ -61,7 +70,7 @@ the licence works.
 A contribution is licensed to us under the FSL's terms, and converts to
 Apache-2.0 on the same two-year clock as the version it lands in.
 
-## Marketing and description
+## Describing amux
 
 amux may not be described as open source: the FSL is not an OSI-approved
 licence, and calling it open source would be wrong even though the source is
@@ -71,7 +80,16 @@ the restriction temporary.
 
 ## What this does not cover
 
-Third-party code vendored into the repository keeps its own licence, recorded
-beside it. `crates/shot/assets/DejaVu-LICENSE.txt` is one such file.
+Third-party material vendored into the repository keeps its own licence,
+recorded beside it. Fonts are the only such material:
+
+| Files | Licence |
+| --- | --- |
+| `crates/shot/assets/DejaVuSans.ttf` | [`crates/shot/assets/DejaVu-LICENSE.txt`](../crates/shot/assets/DejaVu-LICENSE.txt) |
+| `crates/shot/assets/JetBrainsMono-*.ttf` | SIL Open Font License 1.1, [`crates/shot/assets/OFL.txt`](../crates/shot/assets/OFL.txt) |
+| `GeistMono.ttf` and `InstrumentSans.ttf` in `apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Resources/Fonts` | Both are published under the SIL Open Font License 1.1; no licence file is committed beside them yet |
+
+Dependencies fetched by Cargo, Swift Package Manager or other tools are not
+part of the repository and carry their own licences.
 
 Trademarks are not licensed. The FSL says so explicitly.

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" role="img">
+  <title>Inside an agent process: the provider child emits events into a interpreter, which emits optional items to a journal writer that appends to journal files and nudges the daemon over the control socket. Raw PTY bytes go through a separate writer to pty files and nudge local clients over the pty socket. Private state holds provider session and cursors. The daemon sends input and stop over the control socket.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <rect class="box" x="20" y="200" width="120" height="44" rx="4"/>
+      <text class="t" x="80" y="227" text-anchor="middle">daemon</text>
+
+      <rect class="box" x="200" y="20" width="520" height="430" rx="6"/>
+      <text class="t" x="216" y="44">agent process</text>
+      <text class="s" x="330" y="44">hidden subcommand on &lt;dir&gt; · holds &lt;dir&gt;/lock</text>
+
+      <rect class="box2" x="230" y="60" width="200" height="60" rx="4"/>
+      <text class="t" x="330" y="86" text-anchor="middle">provider child</text>
+      <text class="s" x="330" y="104" text-anchor="middle">claude · codex app-server</text>
+
+      <rect class="box2" x="230" y="180" width="100" height="44" rx="4"/>
+      <text x="280" y="207" text-anchor="middle">ctl.sock</text>
+      <rect class="box2" x="230" y="320" width="120" height="44" rx="4"/>
+      <text x="290" y="347" text-anchor="middle">pty.sock</text>
+      <rect class="box2" x="220" y="400" width="200" height="40" rx="4"/>
+      <text x="320" y="418" text-anchor="middle">private state</text>
+      <text class="s" x="320" y="432" text-anchor="middle">provider session · cursors</text>
+
+      <rect class="box2" x="460" y="150" width="230" height="80" rx="4"/>
+      <text class="t" x="575" y="180" text-anchor="middle">step</text>
+      <text class="s" x="575" y="198" text-anchor="middle">(state, fact) → (state, step)</text>
+      <text class="s" x="575" y="214" text-anchor="middle">per kind, bespoke</text>
+      <rect class="box2" x="460" y="270" width="230" height="44" rx="4"/>
+      <text x="575" y="297" text-anchor="middle">journal writer</text>
+      <rect class="box2" x="460" y="340" width="230" height="44" rx="4"/>
+      <text x="575" y="367" text-anchor="middle">pty writer (raw bytes)</text>
+
+      <!-- files -->
+      <rect class="file" x="760" y="60" width="120" height="40" rx="4"/><text class="a" x="820" y="85" text-anchor="middle">journal/</text>
+      <rect class="file" x="760" y="120" width="120" height="40" rx="4"/><text class="a" x="820" y="145" text-anchor="middle">pty/</text>
+      <rect class="box2" x="760" y="180" width="120" height="40" rx="4"/><text x="820" y="205" text-anchor="middle">private/</text>
+      <rect class="box2" x="760" y="240" width="120" height="40" rx="4"/><text x="820" y="265" text-anchor="middle">lock</text>
+      <text class="s" x="820" y="300" text-anchor="middle">held until exit</text>
+
+      <!-- arrows -->
+      <path class="arrow" d="M140,196 H230" marker-end="url(#ah)"/>
+      <text class="s" x="185" y="190" text-anchor="middle">input · stop</text>
+      <path class="arrow" d="M230,214 H140" marker-end="url(#ah)"/>
+      <text class="s" x="185" y="230" text-anchor="middle">hello · nudge</text>
+
+      <path class="arrow" d="M430,90 H445 V190 H460" marker-end="url(#ah)"/>
+      <text class="s" x="452" y="140">provider facts</text>
+      <path class="arrow" d="M290,180 V120" marker-end="url(#ah)"/>
+      <text class="s" x="282" y="152" text-anchor="end">input</text>
+      <path class="arrow" d="M575,230 V270" marker-end="url(#ah)"/>
+      <text class="s" x="583" y="254">steps</text>
+      <path class="arrow" d="M460,292 H400 V202 H330" marker-end="url(#ah)"/>
+      <text class="s" x="392" y="250" text-anchor="end">nudge</text>
+      <path class="arrow" d="M410,120 V362 H460" marker-end="url(#ah)"/>
+      <text class="s" x="402" y="300" text-anchor="end">raw PTY bytes</text>
+      <path class="arrow" d="M460,355 H350" marker-end="url(#ah)"/>
+      <text class="s" x="405" y="379" text-anchor="middle">nudge</text>
+      <path class="arrow" d="M345,320 V120" marker-end="url(#ah)"/>
+      <text class="s" x="338" y="262" text-anchor="end">keys · resize</text>
+
+      <path class="arrow-file" d="M690,292 H725 V80 H760" marker-end="url(#ahf)"/>
+      <text class="s a" x="697" y="284">append</text>
+      <path class="arrow-file" d="M690,362 H735 V140 H760" marker-end="url(#ahf)"/>
+      <text class="s a" x="697" y="354">append</text>
+      <path class="arrow" d="M410,420 H745 V200 H760" marker-end="url(#ah)"/>
+</svg>

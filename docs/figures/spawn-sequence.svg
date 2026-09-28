@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" role="img">
+  <title>Sequence: the parent's spawn tool goes through its MCP server to the daemon, which creates the child directory with its first spec, starts the process and returns at once. The child says hello and receives the prompt into its queue. When the child's turn ends it writes a turn-end item to its journal; the daemon, ingesting it and seeing the parent edge, writes an outbox row and delivers the last message to the parent as an agent message through the parent's own carrier. The child, being one-shot, exits once its queue is empty and no accepted message is pending, and nothing more is sent. The child never sends anything itself.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+<rect class="box" x="20" y="16" width="150" height="36" rx="4"/><text class="t" x="95" y="39" text-anchor="middle">parent process</text><rect class="box" x="230" y="16" width="140" height="36" rx="4"/><text class="t" x="300" y="39" text-anchor="middle">parent MCP</text><rect class="box" x="440" y="16" width="140" height="36" rx="4"/><text class="t" x="510" y="39" text-anchor="middle">daemon</text><rect class="box" x="680" y="16" width="170" height="36" rx="4"/><text class="t" x="765" y="39" text-anchor="middle">child process</text>
+<line class="lane" x1="95" y1="52" x2="95" y2="380"/><line class="lane" x1="300" y1="52" x2="300" y2="380"/><line class="lane" x1="510" y1="52" x2="510" y2="380"/><line class="lane" x1="765" y1="52" x2="765" y2="380"/>
+<path class="arrow" d="M95,80 L300,80" marker-end="url(#ah)"/><text class="s" x="197" y="74" text-anchor="middle">spawn{kind, prompt} via the harness</text>
+<path class="arrow" d="M300,80 L510,80" marker-end="url(#ah)"/><text class="s" x="405" y="74" text-anchor="middle">CreateAgent{parent, prompt}</text>
+<rect class="note" x="400" y="92" width="220" height="46" rx="3"/><text class="s sans" x="510" y="110" text-anchor="middle">mkdir · spec.1{kind, cwd, parent, prompt}</text><text class="s sans" x="510" y="126" text-anchor="middle">start process · no readiness wait</text>
+<path class="arrow" d="M510,150 L300,150" marker-end="url(#ah)"/><text class="s" x="405" y="144" text-anchor="middle">{name, id} at once</text>
+<path class="arrow" d="M765,180 L510,180" marker-end="url(#ah)"/><text class="s" x="637" y="174" text-anchor="middle">Hello</text>
+<path class="arrow" d="M510,206 L765,206" marker-end="url(#ah)"/><text class="s" x="637" y="200" text-anchor="middle">Input{Prompt} → the child’s queue; delivered when ready</text>
+<rect class="note" x="640" y="218" width="250" height="30" rx="3"/><text class="s sans" x="765" y="236" text-anchor="middle">works · turn ends · writes Turn{end} to its journal</text>
+<path class="arrow-file" d="M765,270 L510,270" marker-end="url(#ahf)"/><text class="s a" x="637" y="264" text-anchor="middle">journal: Turn{end} + last message</text>
+<rect class="note" x="360" y="282" width="300" height="46" rx="3"/><text class="s sans" x="510" y="300" text-anchor="middle">ingest: this agent has a parent →</text><text class="s sans" x="510" y="316" text-anchor="middle">outbox row: finished + last message</text>
+<path class="arrow" d="M510,334 L95,334" marker-end="url(#ah)"/><text class="s" x="302" y="328" text-anchor="middle">outbox row → Input{AgentMessage{finished}} → the parent’s carrier</text>
+<path class="arrow-dashed" d="M765,360 L510,360" marker-end="url(#ah)"/><text class="s" x="637" y="354" text-anchor="middle">queue empty, nothing pending → exits · lock released · nothing more is sent</text>
+<text class="s" x="302" y="374" text-anchor="middle">the row is deleted when the parent accepts</text>
+<text class="s" x="20" y="394">the child has no completion code path and never acts on its parent edge: it talks to its user, and the daemon knows who that is</text>
+</svg>

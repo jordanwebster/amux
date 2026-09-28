@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1010 300" role="img">
+  <title>Pipeline left to right: provider fact into the interpreter's step, which writes items to the journal; the daemon stores and fans out; the wire delivers to the model's update; project produces a view; renderers draw it. Brackets mark the agent process, daemon, UI lib and apps.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <rect class="box2" x="20" y="100" width="95" height="60" rx="4"/><text x="67" y="126" text-anchor="middle">provider</text><text class="s" x="67" y="142" text-anchor="middle">fact</text>
+      <rect class="box2" x="130" y="100" width="95" height="60" rx="4"/><text class="t" x="177" y="126" text-anchor="middle">step</text><text class="s" x="177" y="142" text-anchor="middle">interpreter</text>
+      <rect class="file" x="240" y="100" width="95" height="60" rx="4"/><text class="a" x="287" y="126" text-anchor="middle">journal</text><text class="s" x="287" y="142" text-anchor="middle">item · append</text>
+      <rect class="file" x="350" y="100" width="95" height="60" rx="4"/><text class="a" x="397" y="126" text-anchor="middle">store</text><text class="s" x="397" y="140" text-anchor="middle">merge</text><text class="s" x="397" y="154" text-anchor="middle">fan-out</text>
+      <rect class="box2" x="460" y="100" width="95" height="60" rx="4"/><text x="507" y="126" text-anchor="middle">wire</text><text class="s" x="507" y="140" text-anchor="middle">Subscribe</text><text class="s" x="507" y="154" text-anchor="middle">Fetch</text>
+      <rect class="box2" x="570" y="100" width="95" height="60" rx="4"/><text class="t" x="617" y="126" text-anchor="middle">update</text><text class="s" x="617" y="142" text-anchor="middle">state</text>
+      <rect class="box2" x="680" y="100" width="95" height="60" rx="4"/><text class="t" x="727" y="126" text-anchor="middle">views</text><text class="s" x="727" y="142" text-anchor="middle">pure</text>
+      <rect class="box2" x="790" y="100" width="95" height="60" rx="4"/><text x="837" y="126" text-anchor="middle">view</text><text class="s" x="837" y="142" text-anchor="middle">rows · fleet</text>
+      <rect class="box2" x="900" y="100" width="95" height="60" rx="4"/><text x="947" y="126" text-anchor="middle">renderers</text><text class="s" x="947" y="142" text-anchor="middle">TUI · iPhone</text>
+      
+      <path class="arrow" d="M115,130 H130" marker-end="url(#ah)"/><path class="arrow" d="M225,130 H240" marker-end="url(#ah)"/><path class="arrow" d="M335,130 H350" marker-end="url(#ah)"/><path class="arrow" d="M445,130 H460" marker-end="url(#ah)"/><path class="arrow" d="M555,130 H570" marker-end="url(#ah)"/><path class="arrow" d="M665,130 H680" marker-end="url(#ah)"/><path class="arrow" d="M775,130 H790" marker-end="url(#ah)"/><path class="arrow" d="M885,130 H900" marker-end="url(#ah)"/>
+      <path class="arrow" d="M20,60 H335"/><text class="s" x="177" y="52" text-anchor="middle">agent process · reduce over facts</text>
+      <path class="arrow" d="M350,60 H445"/><text class="s" x="397" y="52" text-anchor="middle">daemon</text>
+      <path class="arrow" d="M570,60 H885"/><text class="s" x="727" y="52" text-anchor="middle">UI lib · update over records</text>
+      <path class="arrow" d="M900,60 H995"/><text class="s" x="947" y="52" text-anchor="middle">apps</text>
+      <text class="s" x="177" y="196" text-anchor="middle">per kind, bespoke</text>
+      <text class="s" x="397" y="196" text-anchor="middle">opens nothing</text>
+      <text class="s" x="617" y="196" text-anchor="middle">SessionState + thin per-kind layer</text>
+      <text class="s" x="837" y="196" text-anchor="middle">unified, per-kind variants</text>
+      <text class="s" x="20" y="250">everything entering step or update is recorded; neither reads the world, mints ids, or asks the clock</text>
+</svg>

@@ -1,5 +1,7 @@
 # iPhone performance: what is measured, on what, and against what
 
+*For developers measuring the iPhone app or changing a budget it is held to.*
+
 Every number the iPhone app is held to is defined here: the machine it is
 measured on, the workload it is measured over, the budget it must meet, and
 what the number stands for when it cannot stand for itself. `just ios perf`
@@ -18,19 +20,19 @@ line per metric, with its median, budget and baseline comparison, and exits
 non-zero if any measured metric exceeds its budget or regression tolerance.
 Read `target/ios/perf/report.md` for the table, proxy labels and wall time;
 `verdict.json`, `samples.json`, `cadence.json`, `lifecycle.json` and `size.md`
-retain the underlying evidence. Per-run artifacts are ignored, so copy a run
+retain the underlying evidence. Per-run output is not tracked, so copy a run
 somewhere durable when comparing it later.
 
-This suite is intended for periodic use, not as a required gate on every pull
-request. The branch's complete `ios-verify` recipe and its current push workflow
-include it; that full verification is also available when qualifying a release.
-Allow about seven and a half minutes on the pinned Mac with warm build outputs,
+This suite is for periodic use, not a gate on every push. `just ios captures`
+and `just ios verify` include it, and the iOS captures workflow runs it on the
+CI runner when dispatched by hand; the push workflow runs `just ios gate`,
+which does not. Allow about seven and a half minutes on the pinned Mac with warm build outputs,
 or about twenty minutes from a cold tree. Each run records its actual wall time.
 
 Before spending that time, run `timeout 60 scripts/python -B scripts/ios-perf.py
 --describe`. It prints the machine row and whether its baseline exists without
-building or launching anything. `--machine` is the older spelling of the same
-query. The `just ios perf` recipe also accepts `--describe`, but runs its build prerequisites
+building or launching anything; `--machine` is accepted as a synonym. The
+`just ios perf` recipe also accepts `--describe`, but runs its build prerequisites
 first. An unknown Mac is refused. To enroll one, add its `sysctl -n hw.model`
 value and a unique name to the Machines table below, record the OS, Xcode and
 simulator configuration, then deliberately record and review its baseline.
@@ -63,13 +65,12 @@ says by how much it is over the recorded figure, and the run fails even where
 the metric is comfortably inside its budget — which is the whole point of
 recording one.
 
-Drift catches a slow bleed that a budget alone misses. Cold first frame grew
-from about 310 ms to about 439 ms across roughly 250 commits. Each incremental
-change looked small, and the runs stayed inside the then-400 ms budget until
-the last few. Comparing with the original 310 ms baseline would have flagged
-the drift at about 357 ms. Moving the baseline with every run would have erased
-that signal. The current simulator gate is 500 ms for the reasons below; the
-physical-phone target remains 400 ms.
+Drift catches a slow bleed that a budget alone misses. A cold first frame
+recorded at 310 ms can creep to 439 ms over a few hundred commits, each change
+small, without a single run failing a 400 ms budget until the last few; against
+the recorded 310 ms, the 15% tolerance flags it at about 357 ms. Moving the
+baseline with every run would erase that signal. The simulator gate is 500 ms
+for the reasons below; the physical-phone requirement is 400 ms.
 
 Telling two machines apart is a different thing, and cold start needs it. Every
 number here is taken in a simulator, and for cold start the simulator's own
@@ -142,8 +143,8 @@ somebody opens an agent, whole: the conversation's chrome, the transcript, the
 facts strip and the composer, with a
 session in the store so the box is really there. Nothing is a stand-in and
 nothing is left out. The container is what makes the stream a stream — it rests
-at its tail and follows it while rows arrive, and a row appended below the fold
-of a lazy stack is never built, so a list resting anywhere else would measure
+at its tail and follows it while rows arrive, and a row appended below the
+visible part of a lazy stack is never built, so a list resting anywhere else would measure
 nothing — but the strip, the foot and the composer are laid out on every frame
 those arrivals cause, and a number taken with the feed alone would be a number
 about a screen nobody uses.
@@ -195,9 +196,9 @@ takes.
 
 ## Where the two cold-start numbers come from
 
-The 400 ms was always a claim about a phone. It was checked on a simulator
-because a simulator is the machine a recipe can drive, and for a while nothing
-in this document told the two apart. These are the parts of one cold launch of
+The 400 ms is a claim about a phone. A simulator is the machine a recipe can
+drive, so the gate a recipe enforces has to be a claim about the simulator,
+and the two are kept apart here. These are the parts of one cold launch of
 the probe home over the 40-agent cached fleet, Debug, on the pinned simulator,
 median of five launches with the app terminated and its state reset between:
 
@@ -222,22 +223,21 @@ roughly 25 ms of its 439: from `App.init` to the first view body an empty app
 spends 87 ms and this one spends 94, and building the forty cached rows the
 first frame carries takes 3 ms.
 
-So the simulator gate was set at 460 ms, the floor plus about double the app
-code there was then. It has since been raised to 500 ms, for the reason in the
-next section: a gate that fails whenever another worktree is driving a
-simulator on the same Mac fails for the machine rather than the app, and people
-learn to ignore it. The worst sample stays at 600 ms; the slowest of the five
-measured launches was 491 ms. The 15% tolerance against the recorded 444.5 ms
-baseline is untouched and fires at about 511 ms, just past the budget.
+The floor plus about double the app's own code is about 460 ms. The gate is
+500 ms, for the reason in the next section: a gate that fails whenever another
+worktree is driving a simulator on the same Mac fails for the machine rather
+than the app, and people learn to ignore it. The worst sample is held at
+600 ms; the slowest of the five measured launches was 491 ms. The 15% tolerance
+against the recorded 444.5 ms baseline fires at about 511 ms, just past the
+budget.
 
-Those parts were taken in Debug, before the suite was moved onto the optimised
-`Measured` configuration, and moving it changed nothing here: the same five
-launches read a median of 446 ms optimised against 447 ms unoptimised. Two
-thirds of a launch is the dynamic linker, and optimisation has no opinion about
-that.
+The parts above were taken in Debug. Optimisation changes nothing here: the
+same five launches read a median of 446 ms in the optimised `Measured`
+configuration the suite runs, against 447 ms unoptimised. Two thirds of a
+launch is the dynamic linker, and optimisation has no opinion about that.
 
-The 400 ms stays where it belongs, on the physical-phone checklist, and stays
-unmeasured until somebody runs the app on a phone.
+The 400 ms belongs on the physical-phone checklist, and stays unmeasured until
+somebody runs the app on a phone.
 
 ## The account store in a launch
 
@@ -260,16 +260,16 @@ apart, and the store read is the number this code controls. A read that doubled
 would fail its own budget while the frame still passed, which is the failure the
 two numbers together are built to show.
 
-The end-to-end gate moved from 460 ms to 500 ms when the store arrived, and the
-store is not why. Measured on 2026-09-17 while another worktree drove a second
-simulator, five launches of the same build read a median of 484 ms in one run,
+The store is not what puts the end-to-end gate at 500 ms rather than 460 ms.
+Measured on 2026-09-17 while another worktree drove a second simulator, five
+launches of the same build read a median of 484 ms in one run,
 464 ms in the next and 473 ms in a third, while the one store read in each
 launch had a median of 4.6 to 7.3 ms. Loading the app, which the store adds at
 most 1.5 MiB of object code to, read 300 ms against the 287 ms of the table
 above, and the drawing around the read grew as well; the whole launch moved by
 more than the read. A 460 ms gate was being missed the same way in unrelated
 work on other worktrees, which is the sign that the requirement, rather than
-the measurement, was wrong. The new gate is about 55 ms above the quiet
+the measurement, was wrong. The gate is about 55 ms above the quiet
 444.5 ms baseline and about 16 ms above the worst contended median seen. It is
 not meant to absorb contention: the check that measures it waits until no other
 simulator suite is running first.
@@ -281,14 +281,12 @@ after the run, five launches read a cold first frame median of 458.5 ms (worst
 drawing the first frame 159 ms. The worst store read, 15.4 ms, was the first
 launch after the store was written, on a cold file cache.
 
-Two reads in those launches were not the launch's. The probe read the store
-while building its view, so the root view's second pass — the scene becoming
-active, sometimes before the first frame — read it again; and the app itself
-read the account's fleet once in its composition and once more when the
-runtime started, into the same stores. Each launch now reads the store once.
+Each launch reads the store exactly once: not again when the root view's
+second pass runs as the scene becomes active, and not a second time when the
+runtime starts after the app's composition has drawn from it.
 
-Carrying the pinned SQLite rather than the system's (see `docs/IOS.md`) has a
-size cost. In the size-optimised
+Carrying the pinned SQLite rather than the system's (see
+[the iPhone page](IOS.md#the-store)) has a size cost. In the size-optimised
 `mobile` bridge for a phone (`aarch64-apple-ios`), the machine code and data
 the store brings, before the app's link strips what nothing reaches, are
 1,082 KiB for the SQLite 3.53.2 amalgamation, 372 KiB for the `store` crate and

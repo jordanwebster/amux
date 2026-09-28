@@ -34,7 +34,7 @@
 	<key>uploadSymbols</key>
 	<true/>
 	<!-- teamID is deliberately absent: it identifies a team and this file is
-	     committed. `wt run release` copies this file and inserts the Team ID
+	     committed. `just ios release` copies this file and inserts the Team ID
 	     from the untracked apps/apple/Signing.local.xcconfig. -->
 </dict>
 </plist>

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 330" role="img">
+  <title>The data chain from provider fact to renderers, with the suite that pins each stage drawn beneath it, and qualification feeding recorded facts back to the start.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      
+      <text class="s" x="20" y="34">the data chain</text>
+      <rect class="box2" x="20" y="50" width="105" height="56" rx="4"/><text x="72" y="74" text-anchor="middle">provider</text><text class="s" x="72" y="90" text-anchor="middle">fact</text>
+      <rect class="box2" x="145" y="50" width="105" height="56" rx="4"/><text class="t" x="197" y="74" text-anchor="middle">step</text><text class="s" x="197" y="90" text-anchor="middle">interpreter</text>
+      <rect class="file" x="264" y="50" width="117" height="56" rx="4"/><text class="a" x="322" y="74" text-anchor="middle">journal · store</text><text class="s" x="322" y="90" text-anchor="middle">daemon</text>
+      <rect class="box2" x="395" y="50" width="105" height="56" rx="4"/><text x="447" y="74" text-anchor="middle">wire</text><text class="s" x="447" y="90" text-anchor="middle">many daemons</text>
+      <rect class="box2" x="520" y="50" width="105" height="56" rx="4"/><text class="t" x="572" y="74" text-anchor="middle">update</text><text class="s" x="572" y="90" text-anchor="middle">state</text>
+      <rect class="box2" x="645" y="50" width="105" height="56" rx="4"/><text class="t" x="697" y="74" text-anchor="middle">rows</text><text class="s" x="697" y="90" text-anchor="middle">view</text>
+      <rect class="box2" x="770" y="50" width="105" height="56" rx="4"/><text x="822" y="74" text-anchor="middle">renderers</text><text class="s" x="822" y="90" text-anchor="middle">TUI · iPhone</text>
+      <rect class="box" x="888" y="50" width="104" height="56" rx="4"/><text x="940" y="74" text-anchor="middle">product</text><text class="s" x="940" y="90" text-anchor="middle">a real process</text>
+      <path class="arrow" d="M125,78 H145" marker-end="url(#ah)"/><path class="arrow" d="M250,78 H270" marker-end="url(#ah)"/><path class="arrow" d="M375,78 H395" marker-end="url(#ah)"/><path class="arrow" d="M500,78 H520" marker-end="url(#ah)"/><path class="arrow" d="M625,78 H645" marker-end="url(#ah)"/><path class="arrow" d="M750,78 H770" marker-end="url(#ah)"/><path class="arrow" d="M875,78 H895" marker-end="url(#ah)"/>
+      <text class="s" x="20" y="150">the suite that pins it</text>
+      <rect class="file" x="145" y="166" width="105" height="70" rx="4"/><text class="a" x="197" y="186" text-anchor="middle">interpreter</text><text class="s" x="197" y="202" text-anchor="middle">recordings and</text><text class="s" x="197" y="216" text-anchor="middle">authored facts</text>
+      <rect class="file" x="264" y="166" width="117" height="70" rx="4"/><text class="a" x="322" y="186" text-anchor="middle">single daemon</text><text class="s" x="322" y="202" text-anchor="middle">journal on disk,</text><text class="s" x="322" y="216" text-anchor="middle">failure cuts</text>
+      <rect class="file" x="388" y="166" width="119" height="70" rx="4"/><text class="a" x="447" y="186" text-anchor="middle">testnet spec</text><text class="s" x="447" y="202" text-anchor="middle">topology · faults</text><text class="s" x="447" y="216" text-anchor="middle">policy clock</text>
+      <rect class="file" x="513" y="166" width="119" height="70" rx="4"/><text class="a" x="572" y="186" text-anchor="middle">session spec</text><text class="s" x="572" y="202" text-anchor="middle">items + commands</text><text class="s" x="572" y="216" text-anchor="middle">state and effects</text>
+      <rect class="file" x="645" y="166" width="105" height="70" rx="4"/><text class="a" x="697" y="186" text-anchor="middle">View goldens</text><text class="s" x="697" y="202" text-anchor="middle">content as data,</text><text class="s" x="697" y="216" text-anchor="middle">both clients</text>
+      <rect class="file" x="770" y="166" width="105" height="70" rx="4"/><text class="a" x="822" y="186" text-anchor="middle">native</text><text class="s" x="822" y="202" text-anchor="middle">drawing and</text><text class="s" x="822" y="216" text-anchor="middle">interaction</text>
+      <rect class="file" x="895" y="166" width="90" height="70" rx="4"/><text class="a" x="940" y="186" text-anchor="middle">journeys</text><text class="s" x="940" y="202" text-anchor="middle">served net,</text><text class="s" x="940" y="216" text-anchor="middle">three oracles</text>
+      <path class="arrow-file" d="M197,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M322,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M447,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M572,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M697,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M822,106 V166" marker-end="url(#ahf)"/><path class="arrow-file" d="M940,106 V166" marker-end="url(#ahf)"/>
+      <path class="arrow-dashed" d="M940,236 V290 H72 V106" marker-end="url(#ah)"/>
+      <rect class="box" x="390" y="270" width="260" height="40" rx="4"/><text class="t" x="520" y="288" text-anchor="middle">qualification</text><text class="s" x="520" y="302" text-anchor="middle">live providers · perf · records facts</text>
+      <text class="s" x="20" y="320">beside the chain, with their own suites: provider adapters, store and effects, the bridge, OS composition</text>
+</svg>

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" role="img">
+  <title>A send tool call goes from the harness to the MCP server to the daemon over the amux protocol; the daemon delivers an Input over the recipient's ctl.sock and the recipient's agent process chooses the carrier</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+  <rect x="20" y="60" width="110" height="40" class="box"/><text x="75" y="85" text-anchor="middle">harness</text>
+  <rect x="170" y="60" width="120" height="40" class="pin"/><text x="230" y="85" text-anchor="middle">MCP server</text>
+  <rect x="340" y="60" width="120" height="40" class="box2"/><text x="400" y="85" text-anchor="middle">daemon</text>
+  <rect x="520" y="60" width="130" height="40" class="pin"/><text x="585" y="85" text-anchor="middle">agent process</text>
+  <rect x="720" y="60" width="110" height="40" class="box"/><text x="775" y="85" text-anchor="middle">harness</text>
+  <path d="M130,80 L170,80" class="arrow" marker-end="url(#ah)"/><text x="150" y="70" text-anchor="middle" class="s">stdio</text>
+  <path d="M290,80 L340,80" class="arrow" marker-end="url(#ah)"/><text x="315" y="70" text-anchor="middle" class="s">SendMessage</text>
+  <path d="M460,80 L520,80" class="arrow" marker-end="url(#ah)"/><text x="490" y="70" text-anchor="middle" class="s">ctl.sock</text>
+  <path d="M650,80 L720,80" class="arrow" marker-end="url(#ah)"/><text x="685" y="70" text-anchor="middle" class="s">carrier</text>
+  <text x="75" y="125" text-anchor="middle" class="s">sender</text>
+  <text x="230" y="125" text-anchor="middle" class="s">agent's version</text>
+  <text x="315" y="125" text-anchor="middle" class="s">amux protocol</text>
+  <text x="400" y="125" text-anchor="middle" class="s">fills from,</text><text x="400" y="139" text-anchor="middle" class="s">routes, no carrier code</text>
+  <text x="490" y="125" text-anchor="middle" class="s">Input{AgentMessage}</text>
+  <text x="585" y="125" text-anchor="middle" class="s">queues; picks socket,</text><text x="585" y="139" text-anchor="middle" class="s">paste or inject_items</text>
+  <text x="775" y="125" text-anchor="middle" class="s">recipient</text>
+  <line x1="20" y1="170" x2="880" y2="170" class="lane"/>
+  <text x="20" y="200" class="t sans">Remote recipient</text>
+  <rect x="340" y="220" width="120" height="40" class="box2"/><text x="400" y="245" text-anchor="middle">daemon</text>
+  <rect x="520" y="220" width="130" height="40" class="box2"/><text x="585" y="245" text-anchor="middle">peer daemon</text>
+  <rect x="720" y="220" width="110" height="40" class="pin"/><text x="775" y="245" text-anchor="middle">agent process</text>
+  <path d="M460,240 L520,240" class="arrow" marker-end="url(#ah)"/><text x="490" y="230" text-anchor="middle" class="s">peer link</text>
+  <path d="M650,240 L720,240" class="arrow" marker-end="url(#ah)"/><text x="685" y="230" text-anchor="middle" class="s">ctl.sock</text>
+  <text x="490" y="285" text-anchor="middle" class="s">same SendMessage, forwarded with the daemon-set envelope</text>
+</svg>

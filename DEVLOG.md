@@ -1,3 +1,28 @@
+2026-09-28 — **docs/ describes the system as it ships, for a reader who never
+saw another.** The tree is 28 pages in reader order, mapped one line each by
+docs/README.md and each opening with who it is for: how amux works for its
+users; the system (architecture, the agent process, interpreters, journal and
+store, the amux.v1 wire, the network protocol, attachments, agent tools, the
+supervisor); the clients (the shared client library, the chat vocabulary, the
+terminal, the iPhone app, embedding, copy, phone performance, cloud);
+verifying (testing, TestNet, performance, debugging, parameters) and
+operations (build, CI, release, licensing). Every page was written against
+the code, so where the code does less than the design (no push is sent, a
+model's attachment element is not yet parsed, some settings are ignored) the
+page says what happens. The 23 architecture drawings are standalone SVGs in
+docs/figures with an embedded palette that reads on white and on GitHub dark;
+labels that disagreed with the code were corrected (the agent's modes, the
+pty socket's hello, the subscription handle, the crate layers). The chat
+vocabulary page is illustrated by 14 terminal renderings from `just shot --
+render vocabulary`, hashed in a manifest. `just docs-check` (in `just ci` and
+the CI workflow) fails on a link, image or heading fragment that does not
+resolve, a link into untracked notes, an unreferenced figure, an SVG that
+depends on its page's CSS, a vocabulary image that differs from its manifest,
+or a README that does not list every page once. Stale comments found on the
+way were corrected (the release recipe does upload and push, the phone
+report is read by the account service, the Rust bridge is built by `just ios
+rust`, the phone baselines live under perf/baselines/phone).
+
 2026-09-28 — **Every design contract names the tests that hold it, and CI
 checks the names.** tests/contracts.toml lists 72 contracts: the ten worked
 failure sequences, each clause of the invariants table by owner (interpreter,

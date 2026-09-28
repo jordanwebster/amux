@@ -40,7 +40,7 @@
 //! - A tool server's form or link that Claude shows in its own terminal is
 //!   announced only by a Notification hook, which no hook can answer. It
 //!   opens an unanswerable ask with an item of its own, the one item a hook
-//!   makes, pointing at the call that was running (a tool server's, when
+//!   makes besides SessionStart's session boundary, pointing at the call that was running (a tool server's, when
 //!   one was). When that call's row has not landed yet, the item waits for
 //!   it, so it sits below the call and the rows before it. An interrupt through amux closes it cancelled; that call's
 //!   result, a row from a later assistant message, and the facts that close

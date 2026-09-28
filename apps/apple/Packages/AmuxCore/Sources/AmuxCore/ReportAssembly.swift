@@ -1,17 +1,16 @@
 import Foundation
 
 /// Turns a frozen capture and what somebody wrote about it into the bundle the
-/// daemon tooling reads and the cloud stores.
+/// cloud stores.
 ///
-/// The layout is the one `amux debug report` already writes and replays:
 /// `report.json` names every part as present or absent-with-a-reason, and the
-/// payloads sit beside it under the names it uses. Nothing here invents a
-/// second shape for the phone — a report written on a phone is opened, shown
-/// and replayed by exactly the commands that open one written in a terminal.
+/// payloads sit beside it under the names it uses. The runtime's dump goes in
+/// whole under `dump/`, laid out as `amux dump` lays out a desktop one, so the
+/// same reading applies to both.
 public enum ReportAssembly {
-    /// The layout version this app writes. It is the version the daemon
-    /// tooling and the account service both read; a bundle at any other
-    /// version is refused rather than guessed at.
+    /// The layout version this app writes. It is the version the account
+    /// service reads; a bundle at any other version is refused rather than
+    /// guessed at.
     public static let schemaVersion = 2
 
     public static let reportFile = "report.json"
@@ -100,11 +99,11 @@ public enum ReportAssembly {
 
     /// `report.json`: the small, self-describing entry point.
     ///
-    /// Written by hand rather than through `Codable`, because the reader is a
-    /// Rust type whose field names and enum spellings are the contract. A
-    /// synthesised encoding would follow this app's property names, and the
-    /// first rename on this side would silently stop producing bundles the
-    /// daemon tooling could open.
+    /// Written by hand rather than through `Codable`, because the reader is
+    /// the account service, whose field names and enum spellings are the
+    /// contract. A synthesised encoding would follow this app's property
+    /// names, and the first rename on this side would silently stop producing
+    /// bundles the service accepts.
     private static func header(
         capture: ReportCapture, draft: ReportDraft, build: String, gitSHA: String,
         createdAt: Date, parts: [ReportPart], dumpAbsent: String?
@@ -175,7 +174,7 @@ public enum ReportAssembly {
         return "\(millis)-\(Int.random(in: 10000..<100000))"
     }
 
-    /// The instant, written the way the daemon tooling reads it: UTC, to the
+    /// The instant, written the way the account service reads it: UTC, to the
     /// millisecond. Built per call rather than kept, because a formatter is
     /// mutable and one shared across threads is a data race waiting for a
     /// second report.

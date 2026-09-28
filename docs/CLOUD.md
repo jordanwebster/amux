@@ -1,51 +1,78 @@
 # The phone and amux.sh
 
-What the iPhone app asks of the account service, and where every value the
-app needs to ask it lives. The app is the only client described here; the
-terminal client and the web app talk to the same service through their own
-paths, and nothing below is a general description of the API.
+*For developers changing how the iPhone app or a daemon talks to the account service.*
+
+amux.sh is the account service: sign-in, what an account is entitled to,
+relay credentials, purchases, account deletion and report uploads. It is a
+separate service with its own repository; nothing in this repository runs it.
+This page is the contract as the code here calls it. It is not a general
+description of the API.
+
+Two things in this repository call amux.sh:
+
+- **The iPhone app** (`AmuxCloudService` in
+  `apps/apple/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift`) signs in,
+  reads the entitlement, hands over purchases, deletes accounts and uploads
+  reports.
+- **A profile's runtime** (`node::auth`) spends the account's refresh token
+  and fetches relay credentials. On a desktop that runtime is the daemon; on
+  the phone it is the same code running in the app's process (see
+  [the embedded runtime](EMBEDDED.md)).
 
 Two rules run through all of it:
 
 - **The phone holds no secret.** There is no client secret, no App Store
   shared secret and no payment-provider key in this repository or in the
   shipped binary. Sign-in is an authorization code with PKCE, and the only
-  thing the app ever holds is a token issued to it.
-- **The cloud decides what an account may do.** The App Store can say this
-  Apple Account paid; only amux.sh can say this amux account is entitled.
-  Every screen reads the entitlement back from the cloud rather than
-  inferring it from a purchase.
+  things the app ever holds are tokens issued to it.
+- **amux.sh decides what an account may do.** The App Store can say an Apple
+  Account paid; only amux.sh can say an amux account is entitled. Every
+  screen reads the entitlement back from amux.sh rather than inferring it
+  from a purchase.
 
-## Endpoints the app uses
+## Endpoints
 
-The base is `https://amux.sh`. The client is registered as `mobile` with the
-one redirect `amux://callback` and no secret. The scopes asked for are
-`openid profile email offline_access api`; `offline_access` is what makes
-sign-in happen once rather than hourly.
+The base is `https://amux.sh`. The phone is the registered client `mobile`,
+with the one redirect `amux://callback` and no secret. The scopes asked for
+are `openid profile email offline_access api`; `offline_access` is what makes
+sign-in happen once rather than hourly. `amux login` on a desktop signs in as
+the client `cli` with the device flow and the same scopes.
 
-| Path | Method | What it is for |
-| --- | --- | --- |
-| `/connect/authorize` | browser | Sign-in, opened in the system browser with a PKCE challenge and a state. Every sign-in also sends `prompt=select_account` (the account chooser); signing back into a listed account adds `login_hint=<its email>`. |
-| `/connect/token` | POST | Redeeming the code, and later refreshing. Refresh tokens rotate: the one that comes back replaces the one just spent. |
-| `/connect/userinfo` | GET | Who signed in — `sub`, `email`, `name`. `sub` is the account identifier everything else is asked for by. |
-| `/api/graphql` | POST | The entitlement read. See below. |
-| `/api/connect` | GET | A relay credential for this account, good for the hour. Answers `host`, `port`, `token`, `expires_at`. |
-| `/api/purchases` | POST | A purchase the App Store signed. See below. |
-| `/api/account` | DELETE | Deletes the account. `409` when a subscription is still set to renew. |
-| `/api/billing/stripe/portal` | POST | A one-time link to stop a web subscription. Asked for only when a deletion is actually blocked, because the link expires. |
-| `/api/reports` | POST | A debug report bundle, `multipart/form-data`, one section per file. Debug builds only. |
+| Path | Method | Called by | For |
+| --- | --- | --- | --- |
+| `/connect/authorize` | browser | app | Sign-in in the system browser, with a PKCE challenge and a state. Every sign-in sends `prompt=select_account`; signing back into a listed account adds `login_hint=<its address>`. |
+| `/connect/deviceauthorization` | POST | `amux login` | The desktop's device-code sign-in. |
+| `/connect/token` | POST | app, profile runtime | The app redeems its code here. A profile refreshes here as the client the token was issued to. Refresh tokens rotate: the one that comes back replaces the one spent. |
+| `/connect/userinfo` | GET | app | Who signed in: `sub`, `email`, `name`. `sub` is the account identifier everything else is keyed by. |
+| `/api/graphql` | POST | app | The access read, below. |
+| `/api/connect` | GET | profile runtime | A relay credential, below. |
+| `/api/purchases` | POST | app | A purchase the App Store signed, below. |
+| `/api/account` | DELETE | app | Deletes the account. `409` while a subscription is still set to renew. |
+| `/api/billing/stripe/portal` | POST | app | A one-time link to stop a web subscription, asked for only when a deletion is blocked, because the link expires. |
+| `/api/reports` | POST | app | A report bundle, below. |
+| `/.well-known/openid-configuration/jwks` | GET | relay | The keys relay credentials are signed with. |
 
-Every one but `/connect/authorize` and `/connect/token` is sent with
-`Authorization: Bearer <access token>`, refreshed a minute before it expires.
+Every call except the sign-in endpoints carries `Authorization: Bearer <access
+token>`. That token is the whole credential: the app has no browser session
+with amux.sh and sends no cookie, and `/api/graphql` and `/api/connect` accept
+the same token, scheme and `api` scope, so the read and the relay gate answer
+for the same principal.
 
-That token is the whole credential. The phone has no browser session with
-amux.sh and sends no cookie, and `/api/graphql` accepts exactly the token
-`/api/connect` accepts — the same scheme, the same `api` scope, the same
-principal behind both. It did not always: GraphQL was mapped without naming a
-scheme, so it only ever read the web dashboard's sign-in cookie and answered
-`me: null` to any client that had only a token. The two gates then disagreed
-about the same account, the relay issuing a credential while the read said
-there was no access.
+Every other URL the app offers (support, the account page) is derived from
+the same base, so a build pointed at another service cannot offer the
+production one's pages.
+
+## Sign-in and who holds the token
+
+The app runs the authorization-code flow itself (`WebSignIn`, a
+non-ephemeral `ASWebAuthenticationSession`), redeems the code and asks
+`/connect/userinfo` who signed in. That session is held in memory only. When
+the person keeps the account, the app hands the refresh token, the base URL
+and the client identifier to the account's profile (`amux_runtime_bind`) and
+forgets it. From then on the profile alone holds and spends the refresh
+token. The app uses the sign-in's own access token until a minute before it
+expires, and after that borrows a bearer for its own calls from the profile
+(`amux_runtime_access_token`).
 
 ## The access read
 
@@ -63,47 +90,80 @@ One query, against `/api/graphql`:
 ```
 
 `pro` is the only thing anything gates on, and it is never null. `until` is
-when access runs out — or when it ran out, for an account whose subscription
-has lapsed — and is absent when access does not run out at all. `grant`
-explains where the access came from, and an account can be entitled without
-ever having bought anything — a gift, a beta, an employee, a referral, an
-administrator's grant — so the explanation is a choice between two shapes
-rather than a subscription that might be missing.
+when access runs out, or ran out for a lapsed subscription, and is absent when
+access does not run out. `grant` explains where the access came from. An
+account can be entitled without ever buying anything (a gift, a beta, an
+employee, a referral, an administrator's grant), so the explanation is a
+choice between two shapes rather than a subscription that might be missing.
 
 Only the purchase's own fields are asked for. `provider` is the one thing a
 screen shows about the source (`REVENUE_CAT` is the App Store, anything else
-is the web), `entitledUntil` is when the paid period runs out, and `willRenew`
-is whether it will be charged again. The one date the app derives from them is
-the renewal date it warns about before deleting an account: a subscription
-with `willRenew` false renews on no date at all, because the person has paid
-for the period they are in and nothing more is coming, and one that does renew
-does so on `entitledUntil` where there is one and on `until` otherwise —
-somebody who is both paying and holding an open-ended grant keeps access after
-the billing stops, so the two dates answer two different questions.
+is the web), `entitledUntil` is when the paid period runs out, and
+`willRenew` is whether it will be charged again. The one date the app derives
+is the renewal date it warns about before deleting an account: a subscription
+with `willRenew` false renews on no date, because the person has paid for the
+period they are in, and one that does renew does so on `entitledUntil` where
+there is one and on `until` otherwise. Somebody both paying and holding an
+open-ended grant keeps access after the billing stops, so the two dates answer
+two different questions.
 
-`__typename` is what says which member of the union arrived, so a member added
-later — or a grant, whose own fields this app asks for none of — reads as a
-grant rather than as a purchase with everything missing. A grant is a state
-with a name and the app handles it as one; it just has nothing different to
-show for one reason over another.
+`__typename` says which member of the union arrived, so a member the app does
+not know, or a grant, whose fields the app asks for none of, reads as a grant
+rather than a purchase with everything missing.
 
-A purchase can be live before the access behind it is. In the seconds between
-amux.sh taking a signed transaction and projecting the access, this read still
-answers `pro: false`, and the app does not go looking for a subscription
-status to explain that: it knows it has just handed over a purchase amux.sh
-accepted, so the paywall says *Your subscription is still switching on* and
-keeps a Retry button that re-runs this read. Nothing is offered for sale a
-second time, because the read, not the store, is what turns the screen over.
+A purchase can be accepted before the access behind it is projected. In those
+seconds the read still answers `pro: false`. The app knows it has just handed
+over a purchase amux.sh accepted, so the paywall says *Your subscription is
+still switching on* and offers Retry, which reads again. Nothing is offered
+for sale a second time: the read, not the store, turns the screen over.
 
-**This read and the relay's own gate answer from the same place.** `pro` and
-`GET /api/connect` are one call into the account service, so the phone and the
-relay cannot come to different conclusions about the same account. What this
-read is *not* is a report of how somebody pays; that lives inside `grant`,
-underneath the answer, precisely so nothing gates on it by mistake. A
-subscription bought on the web through the CLI, one bought in the App Store on
-this phone, and access given by hand all arrive through the same `pro`.
+`pro` and `/api/connect` are answered from the same place in the account
+service, so the phone and the relay cannot disagree about one account. How
+somebody pays lives inside `grant`, underneath the answer, so nothing gates on
+it by mistake. A subscription bought on the web, one bought in the App Store
+and access given by hand all arrive through the same `pro`.
 
-## A purchase reaching the cloud
+## Which read answers which question
+
+*May this account act?* is `pro`, and only `pro`. Not the `tier` in a relay
+credential, which is a copy of the same answer that goes stale between
+issues; not the presence of a billing record, which many entitled accounts do
+not have; and not a date compared with the phone's clock.
+
+*Why does it have access, and where would somebody change it?* is `grant`,
+and only `grant`. The paywall and the settings row read it to name the store a
+subscription was bought in and offer to manage it. An account whose access was
+given is a case those screens handle in words of their own: they name no store
+and offer to manage no subscription.
+
+## Relay credentials
+
+A signed-in profile asks `GET /api/connect` for a relay credential. The answer
+is `host`, `port`, `token`, `expires_at` and `tier` (`free` or `pro`). The
+profile dials that relay over QUIC, with TCP as the fallback, and presents
+the token.
+
+The token is a JWT the account service signs. The relay validates it against
+the keys at `/.well-known/openid-configuration/jwks`, requires the audience
+`amux_token` and an expiry, and checks that its `host` and `port` claims name
+the relay it arrived at. Its other claims are `sub` (the account), `client_id`
+(the OAuth client that asked for it) and `tier`.
+
+The tier decides what the relay carries:
+
+- **Pro.** The relay lists the account's machines and carries streams between
+  them.
+- **Free.** The relay still lists the account's machines, so a phone can show
+  them as away, but refuses to carry any stream to or from a free link, with
+  `payment_required`. Machines on the same local network reach each other
+  directly either way.
+
+A profile renews its credential shortly before it expires, and a free one
+renews every three minutes so that a purchase reaches the link promptly. After
+a purchase the app does not wait for that: it asks the profile to refresh at
+once (`amux_runtime_refresh_entitlement`).
+
+## A purchase reaching amux.sh
 
 `POST /api/purchases`, `application/json`, one field:
 
@@ -111,305 +171,209 @@ this phone, and access given by hand all arrive through the same `pro`.
 {"signed_transaction": "<the App Store's JWS>"}
 ```
 
-The signed transaction is carried whole and unread. The app does not parse it,
-does not trust its contents and does not know which billing system reconciles
-it on the other side — that is the cloud's business, and an app that knew would
-be a second place for it to change.
+The signed transaction is carried whole and unread. The app does not parse
+it, does not trust its contents, and does not know which billing system
+reconciles it; that is the account service's business. `200` and `202` both
+mean taken (`202`: the service has the transaction and will reconcile it).
+Nothing is read back from the answer: what the account may now do is the
+access read's answer.
 
-On the other side the transaction is handed to the billing provider as a
-receipt against this account, and the account's subscription is then refetched
-from that provider and projected — the same projection the provider's own
-webhook performs, run at once rather than whenever that webhook arrives. So a
-purchase made on this phone and one the webhook reports later are the same
-thing recorded once, and the entitlement read answers the same either way. A
-`200` carries that subscription; a `202` means the cloud has the transaction
-but the provider has not turned it into anything yet.
-
-The order matters and is the point of the whole path:
+The order is the point of the whole path:
 
 1. The App Store signs a purchase. The transaction is **not** finished.
-2. The signed transaction is posted here. `200` and `202` both mean taken.
-3. Only then is the transaction finished with the App Store.
-4. The entitlement is read back from `/api/graphql`. Nothing is assumed from
-   the store.
+2. The signed transaction is posted here.
+3. Only once amux.sh has taken it is the transaction finished with the App
+   Store.
+4. The entitlement is read back from `/api/graphql`, and the profile is asked
+   to refresh its relay credential.
 
-A transaction finished before step 2 succeeds is one the App Store will never
-offer this app again, and a subscription somebody paid for would exist nowhere
-but on their bank statement. Because the transaction survives, an unconfirmed
-purchase is temporary: the paywall offers Retry, and the next launch sends
-everything the store is still holding without anybody pressing anything.
-Purchases approved later — a parent answering Ask to Buy, a bank's second
-factor — arrive on StoreKit's updates and take the same road.
-
-What the app does with each answer:
+A transaction finished before step 2 succeeds is one the App Store never
+offers this app again, and a subscription somebody paid for would exist
+nowhere but on their bank statement. Because the transaction survives, an
+unconfirmed purchase is temporary: the paywall offers Retry, and every launch
+sends whatever the store is still holding. Purchases approved later (Ask to
+Buy, a bank's second factor, a renewal) arrive on StoreKit's updates and take
+the same road.
 
 | Answer | What the person sees |
 | --- | --- |
 | `200`, `202` | The entitlement is read back; the paywall says subscribed. |
-| `401` | Unconfirmed, and read as unreachable: the session is renewed on the next launch, which then sends the purchase again. |
-| `403 payment_required` | Unconfirmed and refused, in the words the gate uses. |
-| `422` | Unconfirmed and refused, in the cloud's own words. |
-| `502` | Unconfirmed and refused, in the cloud's own words: it could not reach the billing provider, so nothing was recorded. |
-| no answer at all | Unconfirmed and unreachable: paid for, kept, and tried again. |
-
-## Uploading a debug report
-
-`POST /api/reports` takes `multipart/form-data` with
-`Authorization: Bearer <access token>`. Each section's `name` and `filename`
-are the file it carries: `report.json`, `frame.png`, `trace.jsonl`,
-`log.txt`, or a file of the profile's dump under `dump/`.
-
-`report.json` is required and uses `schema_version: 2`. Its `parts` declares
-the frame, trace, dump and log as present or absent with a
-reason. Present files are sent as their named sections; absent files are
-omitted, with their reasons kept in `report.json`. The declaration and the
-uploaded files must agree.
-
-A successful upload returns `201 Created` with a JSON receipt containing
-`id` (the report UUID), `received_at` (an ISO 8601 timestamp), and `parts`
-(the presence status of each part).
-
-| Answer | Meaning |
-| --- | --- |
-| `401` | The request is unauthenticated. |
-| `413` | The bundle exceeds the size limit. |
-| `422` | `report.json` fails validation, including its schema version or parts declaration. |
-
-Capture and upload are available only in debug builds. An upload failure
-keeps the report draft available for retry.
-
-## Which read answers which question
-
-The app asks two questions and never mixes them up.
-
-*May this account act?* is `pro`, and only `pro`. Not the `tier` claim in the
-access token, which is a copy of the same answer that goes stale between token
-issues; not the presence of a billing record, which many entitled accounts do
-not have; and not a date compared against the phone's clock. When access ends
-is the account service's answer, not a sum this phone does.
-
-*Why does it have it, and where would somebody change it?* is `grant`, and
-only `grant`. It is what the paywall and the Settings row read to name the
-store a subscription was bought in and offer to manage it. An account whose
-access was given is a case those screens handle in words of its own: they name
-no store, and they do not offer to manage a subscription that does not exist.
-
-The app got this wrong before, and it is worth saying how, because the shape
-of the read is what prevents it. It used to ask about the subscription record
-and treat its absence as the absence of access — so an account entitled by a
-gift, as every complimentary, employee and beta account is, was shown a
-paywall while the relay was already letting it in.
+| `401` | Not confirmed, and treated as unreachable: the purchase is kept and sent again. |
+| `403 payment_required` | Not confirmed and refused, in the words the gate uses. |
+| any other refusal (`422`, `502`, ...) | Not confirmed and refused, in the service's own `error_description`. |
+| no answer | Not confirmed and unreachable: paid for, kept, and tried again. |
 
 ## The `payment_required` rule
 
-`403` with `{"error":"payment_required"}` means the account has nothing bought.
-It is not an error to report as a failure: it is the gate the home screen
-already draws, and the app says *this account has no subscription* wherever it
-comes back — the connect token, a purchase, anything else. Any other `403`
-carries the service's own `error_description` and is shown as it is.
+`403` with `{"error":"payment_required"}` means the account has nothing
+bought. It is not a failure to report: it is the gate the home screen already
+draws, so the app says *this account has no subscription* wherever it comes
+back. Any other `403` carries the service's own `error_description` and is
+shown as it is.
+
+## Deleting an account
+
+The person types the account's address, and the app checks it against what
+`/connect/userinfo` says before sending `DELETE /api/account`, which is
+authenticated by the token alone. A `409` means money is still moving and
+names the provider billing it. For `revenuecat` the app sends the person to
+the App Store's subscriptions page; for anything else it asks
+`/api/billing/stripe/portal` for a one-time link, falling back to the account
+page on amux.sh when no link comes back.
+
+## Uploading a report
+
+Reporting is in every build. `POST /api/reports` takes `multipart/form-data`,
+one section per file, each section's `name` and `filename` being the file it
+carries: `report.json`, `frame.png`, `trace.jsonl`, `log.txt`, or a file of
+the profile's dump under `dump/`.
+
+`report.json` is required and uses `schema_version: 2`. Its `parts` declares
+the frame, trace, dump and log as present or absent with a reason. Present
+parts are sent as their sections; absent ones are left out, with their reasons
+in `report.json`. The declaration and the uploaded files must agree, or the
+service refuses the bundle.
+
+A successful upload returns a JSON receipt; the app reads its `id` and, when
+present, `receivedAt`. Any refusal (`401`, `413` for a bundle over the size
+limit, `422` for a `report.json` that fails validation) keeps the report, with
+the same bytes and stamp, for Retry.
+
+## Push notifications
+
+A "needs you" push names a host and an agent under its `amux` key, and the app
+handles one by bringing that chat current (see
+[the iPhone page](IOS.md#foreground-background-and-pushes)). The daemon keeps
+an outbox of them: a row when an agent's phase turns to needs you, deleted
+unsent if the phase leaves needs you before its delay runs out. Nothing in
+this repository delivers them yet. The daemon's sender is `node::NoopSender`;
+`node::HttpSender` posts a push as JSON (`host_id`, `agent_id`, `revision`,
+`name`, `working_on`, `text`) with the daemon's relay credential to an
+endpoint it is given, but no amux.sh endpoint is wired to it, and the app
+does not register for remote notifications. The `push-wake` journey hands a
+payload to the app directly.
 
 ## Where each value lives
 
-**In this repository, committed and public** — none of it is a secret and all
+**In this repository, committed and public.** None of it is a secret, and all
 of it is visible in any copy of the app anyway:
 
-- The App Store product identifiers, `amux_pro_monthly` and `amux_pro_yearly`,
-  in `apps/apple/Packages/AmuxCore/Sources/AmuxCore/Store.swift`.
-- The amux.sh base URL, the client identifier `mobile`, the redirect
+- The App Store product identifiers, `amux_pro_monthly` and
+  `amux_pro_yearly`, in `apps/apple/Packages/AmuxCore/Sources/AmuxCore/Store.swift`.
+- The base URL, the client identifier `mobile`, the redirect
   `amux://callback` and the scopes, in `CloudEndpoint.production` in
-  `apps/apple/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift`. Every other URL
-  the app offers — support, the account page — is derived from that base, so a
-  build pointed elsewhere cannot offer the production one's pages.
-- No entitlement identifier at all. What an account may do is `pro` in the
-  access read above, and nothing in the app is matched against a constant to
-  decide it.
+  `AmuxCloud.swift`.
+- No entitlement identifier. What an account may do is `pro`, and nothing in
+  the app is matched against a constant to decide it.
 
-**In the amuxcloud repository, encrypted** (that service is a separate .NET
-repository; it is what issues connect tokens and what verifies purchases):
+**In the account service's repository, encrypted.** The App Store server
+credentials and the payment provider's keys and webhook secrets. The app has
+no use for them: it carries a signature Apple made and nothing else. The QA
+allowlist is configuration there too; it is not a secret, but it names
+people.
 
-- The App Store server credentials and the payment provider's keys and
-  webhook secrets, in that repository's SOPS-encrypted secrets. None of them
-  ever appear here, and the app has no use for them: it carries a signature
-  Apple made and nothing else.
-- The QA allowlist, in that repository's `appsettings`. It is configuration
-  rather than a secret, but it names people, so it lives there.
-
-**Nowhere in this repository, at all:** the addresses of the QA accounts. Not
-in a script, a document, a fixture, a golden, a journey record, an evidence
-file or a transcript. A recipe that needs one is given it at the moment it
-runs, from the environment or from an operator's own untracked file — see
-below.
+**Nowhere in this repository.** The addresses of the QA accounts: not in a
+script, a document, a fixture, a golden, a journey record or a transcript. A
+recipe that needs one is given it when it runs, from the environment or an
+operator's untracked file.
 
 ## QA recipes
 
-These are evidence a person runs on this Mac. They are not tests, they never
-run in CI, and nothing gates on them: they reach the production account
-service with a real account's credentials, and a red one is a conversation
-rather than a build failure. They are deliberately absent from the iOS
-verification list.
+These are evidence a person runs on a Mac. They are not tests, they never run
+in CI, and nothing gates on them: they reach the production account service
+with a real account, and a red one is a conversation rather than a build
+failure. `crates/xtask/src/ios_verify.rs` leaves them out of every
+verification list on purpose.
 
-- `just ios qa-cloud-signin` — signs a QA account into `https://amux.sh` with
-  no app at all, performing the same authorization-code sign-in with PKCE the
-  phone performs, as the same `mobile` client with the same redirect and
-  scopes. It then asks the three questions the app asks: who the account is,
-  what it is entitled to, and whether the relay will issue it a credential.
-  What it proves is that the contract above is the contract the live service
-  actually keeps — a sign-in that works in a simulator against a double proves
-  nothing about the production one.
+- **`just ios qa-cloud-signin`** signs a QA account into `https://amux.sh`
+  with no app, using the same PKCE sign-in, client, redirect and scopes as
+  the phone, then asks what the app asks: who the account is, what it is
+  entitled to, and whether the relay will issue it a credential. It proves the
+  contract on this page is the one the live service keeps.
 
-- `just ios qa-sandbox-purchase` — carries a real App Store sandbox purchase
+- **`just ios qa-sandbox-purchase`** carries a real App Store sandbox purchase
   from a physical iPhone to the account service and reads back what the
-  account may then do. A sandbox transaction exists in exactly one place: a
-  phone signed into a sandbox Apple Account, running a development-signed
-  build. Apple's engineers say so plainly — sandbox sign-in is not supported
-  on the Simulator — and `apps/apple/Amux/Amux.storekit` is a StoreKit Testing
-  configuration, whose transactions are signed by the local test certificate
-  and are not sandbox transactions. So this recipe never runs on a simulator
-  and never invents a transaction. What it proves is the one thing no
-  simulator run can: that a purchase the real App Store signed reaches
-  amux.sh, is recognised on the other side, and turns the relay's
-  `payment_required` refusal into a credential.
+  account may then do. A sandbox transaction exists only on a phone signed
+  into a sandbox Apple Account running a development-signed build; the
+  Simulator does not support sandbox sign-in, and
+  `apps/apple/Amux/Amux.storekit` is a StoreKit Testing configuration whose
+  transactions are not sandbox transactions. So this never runs on a
+  simulator and never invents a transaction.
 
-  `--preflight` reports what is present and missing on this Mac and exits 0,
-  touching neither StoreKit, the store nor amux.sh. Without it, anything
-  missing is named and the run exits non-zero. Four facts are checked here —
-  the account's address, its keychain password, a phone reachable over `xcrun
-  devicectl`, and a Team ID in `apps/apple/Signing.local.xcconfig`, an untracked file
-  `.gitignore` covers because this repository builds simulator-only and holds
-  no signing identity. The bundle id is not in that file: it is committed, so
-  a phone build signs the same app the App Store knows. `docs/RELEASE.md`
-  owns that file's full contract. Two more cannot be checked
-  from a Mac at all and are printed as facts to confirm: that the bundle id
-  carries both subscription products in App Store Connect and is known to the
-  billing provider, and that the phone's sandbox Apple Account is this
-  account. `--confirmed` says they are true; nothing here asserts them for
-  you.
+  `--preflight` reports what is present and missing on this Mac and touches
+  neither StoreKit nor amux.sh. It checks the account's address, its keychain
+  password, a phone reachable over `xcrun devicectl`, and a Team ID in
+  `apps/apple/Signing.local.xcconfig`, an untracked file (the repository
+  builds simulator-only and holds no signing identity; [the release
+  page](RELEASE.md) owns that file). Two facts cannot be checked from a Mac
+  and are printed to confirm: that the bundle id carries both subscription
+  products in App Store Connect and is known to the billing provider, and that
+  the phone's sandbox Apple Account is this account. `--confirmed` says they
+  hold. A full run builds and installs a development-signed build on the
+  phone, names the purchase to make, then watches the access read and
+  `/api/connect` as that account until a credential is issued or a bound
+  elapses. `--transaction-file PATH` posts a transaction a phone already
+  signed instead; that file is never committed.
 
-  A full run generates the project, builds and installs a development-signed
-  build on the phone, names the purchase to make, and then watches amux.sh as
-  that account — the entitlement read and `GET /api/connect`, asked
-  separately because they are answered from different places — until a
-  credential is issued or a bound elapses, saying which in words.
-  `--transaction-file PATH` is the other road to the same two answers: a
-  transaction a phone already signed, posted through `POST /api/purchases` as
-  this account. That file is never committed.
+  It uses the device QA account only, named by `AMUX_QA_DEVICE_EMAIL`; the
+  sign-in account is refused because it is not a sandbox account. Run it
+  before each release and read what it printed: until somebody does, the App
+  Store route to an entitlement is unproven on this build's products, bundle
+  id and provider configuration.
 
-  **Its account.** The device QA account and only that: the one
-  `AMUX_QA_DEVICE_EMAIL` names, in the environment or in
-  `.autopilot/qa-account.env`. The end-to-end account the sign-in recipe uses
-  is refused even when that variable names it, because it is not a sandbox
-  account. There is no built-in address, so until an operator sets the
-  variable the honest preflight result is that the address source is missing,
-  naming the variable and the file.
+- **`just ios qa-live-journey`** runs the whole product once against the real
+  one. It signs the QA account into amux.sh, hands the simulator app only that
+  session (the door's `restoreSession`), and stands back: the app asks the
+  account service who the account is and what it may do, its profile fetches
+  a relay credential and dials the relay it names. On the other side is this
+  checkout's own daemon (started with `wt run daemon`), on a profile the
+  recipe creates for the run and deletes afterwards, signed in as the same
+  account through the CLI's device flow. The phone pairs with that machine by
+  the QR invitation it offers and then, after forgetting it, by the six
+  digits it prints, opens a real Claude session there, asks one question and
+  reads the answer back.
 
-  **It is a person's act, before every release.** No credential turns this
-  into something a machine performs unattended. Installing a
-  development-signed build on a phone, signing that phone into a sandbox
-  Apple Account and tapping through a purchase is a human sequence, and the
-  Simulator cannot stand in for it at any price. So the App Store route to an
-  entitlement — a purchase the store signed, recognised at amux.sh, turning
-  `payment_required` into a credential — is unproven on a machine that has
-  only run the simulator, and stays unproven until somebody runs this recipe
-  on a phone. Run it before each release, and read what it printed rather
-  than ticking a box: what a build proved last time says nothing about the
-  products, the bundle id or the provider configuration this one ships with.
-  The web route to the same entitlement is a different question and is
-  covered by `just ios qa-cloud-signin` and `just ios qa-live-journey`.
+  It is the only run that exercises the production handshake: every other
+  journey uses a relay started beside it with credentials a harness minted, so
+  the audience, port and client the relay compares, and the signature it
+  validates, are exercised only here. A mismatch there fails silently (the
+  phone never arrives), so a failure is reported with what the phone's runtime
+  and the daemon logged. It spends real money on a real agent. If
+  `/api/connect` answers `403 payment_required`, the QA account's entitlement
+  has lapsed; restoring it is an operator's job, and the recipe says so and
+  stops.
 
-- `just ios qa-live-journey` — the whole product once, against the real one. It
-  signs the QA account into `https://amux.sh`, hands the simulator app that
-  session and nothing else, and then stands back: the app asks the account
-  service who the account is and what it may do, asks it for a relay
-  credential, and dials the relay that credential names. On the other side is
-  this checkout's own daemon — its socket, state and identity under
-  `.wt/amux`, started by `wt run daemon` — on a profile the recipe creates for
-  the run and destroys afterwards, signed in as the same account by completing
-  the CLI's device-code flow in the browser session it already holds. The
-  phone then trusts that machine both ways a person can — by scanning the QR
-  invitation the machine shows, and, after forgetting it again, by the six
-  digits the machine prints — opens a conversation with a real Claude session
-  running on it, asks one question and reads the answer back.
+**The accounts.** `AMUX_QA_EMAIL` names the account for the sign-in and the
+live journey, and `AMUX_QA_DEVICE_EMAIL` the sandbox account. A variable
+already set in the environment wins; otherwise the recipes read
+`.autopilot/qa-account.env` at the repository root, an untracked,
+operator-written file that sets those variables and nothing else. There is no
+built-in address.
 
-  Both pairing methods use the account's assigned relay. The invitation also
-  carries the machine's configured cloud; the printed code carries no cloud.
-  See *Which cloud a pairing invitation names* below.
-
-  What it proves that nothing else does: the production handshake. Every other
-  journey runs against a relay started beside it with credentials a harness
-  minted, so the audience, port and client identifier the relay compares with
-  its own configuration, and the RSA signature it validates, are never
-  exercised until here. A mismatch there fails silently — the phone simply
-  never arrives — so a failure is reported with what the phone's runtime and
-  the daemon logged rather than as a timeout.
-
-  It reaches a real account and spends real money on a real agent, so it is a
-  person's act and never a gate. The entitlement it proves is the web one: an
-  account entitled through amux.sh reaching a machine and an agent. It says
-  nothing about the App Store route, which needs a phone in somebody's hand.
-  If `/api/connect` answers `403 payment_required`, the dedicated account's
-  entitlement has lapsed — it was granted once by hand through the QA coupon
-  path and nothing renews it. That is an operator's to restore; the recipe
-  says so and stops, because an entitlement row written by hand is a
-  projection the next provider sync overwrites.
-
-**The accounts.** Two variables name two accounts — `AMUX_QA_EMAIL` for the
-sign-in and the live journey, `AMUX_QA_DEVICE_EMAIL` for the sandbox purchase
-— because only one of them is a sandbox account. When the
-environment already sets a variable, that value is used and nothing overwrites
-it; otherwise the recipe reads `.autopilot/qa-account.env` at the repository
-root, an operator-written file that sets those variables and nothing else.
-That directory is untracked, which is the point: this repository is public.
-There is no built-in address to fall back to.
-
-**The password.** Read from this Mac's login keychain at the moment it is
-needed, with `security find-generic-password -s amuxcloud-qa -a "<the
-address>" -w`, and never printed, logged or written anywhere. Add one with
-`security add-generic-password -s amuxcloud-qa -a "<the address>" -w`. A
-password is never written down beside the address it belongs to.
+**The password.** Read from the login keychain when it is needed, with
+`security find-generic-password -s amuxcloud-qa -a "<the address>" -w`, and
+never printed, logged or written down. Add one with `security
+add-generic-password -s amuxcloud-qa -a "<the address>" -w`.
 
 **What is never printed.** An address appears only masked; the password, the
 authorization code and every token are used and dropped; the account
-identifier is not printed at all, because it finds a person as well as an
-address does. No address is written in this document, in a script, in an
-example, in a golden, in a journey record or in an evidence file.
-
-When there is no address, no keychain entry, or the login form cannot be
-driven, a recipe says which of those it is — naming the variable and the file
-when the address is what is missing — and exits non-zero. Neither ever passes
-quietly on work it did not do.
+identifier is not printed at all. When the address, the keychain entry or the
+login form is missing, a recipe names which and exits non-zero.
 
 ## Which cloud a pairing invitation names
 
-An invitation carries the machine's configured `cloud_url`, its host identity
-and a one-shot secret. The cloud is the account service, normally
-`https://amux.sh`. It assigns a relay host and port through `/api/connect`;
-that address is only where device traffic goes.
+A QR invitation (`amux://pair?payload=...`) carries the offering machine's
+host id, a one-shot secret, the addresses it can be dialled at directly, and
+its configured `cloud_url` when it has one; the six printed digits carry none
+of that. The cloud is the account service, normally `https://amux.sh`, which
+assigns a relay through `/api/connect`; the relay address is only where
+traffic goes and is never written into configuration.
 
-Configuration is the only writer of `cloud_url`. The phone loads its
-installation profile configuration, defaulting to `https://amux.sh`; signing
-in or attaching a relay supplies credentials and a route. Installation account
-binding sets the configured service through its existing configuration path.
 An invitation never changes the receiving device's configuration or relay.
-
-The phone previously refused valid invitations because `attach_relay` wrote
-the relay address into `cloud_url`, overwriting the configured cloud. The
-QR-only comparison then rejected the machine's invitation before sending an
-attempt. Pairing by the printed code escaped that faulty comparison because
-six digits carry no cloud. The fix removes the relay's configuration write.
-Testnet also keeps its configured cloud separate from its assigned loopback
-relay and returns each machine's invitation unchanged.
-
-Both QR and printed-code pairing now use the same authenticated cloud-relay
-route check, with no separate comparison of invitation URLs. A cloud cannot
-route to a host on another cloud or another account; knowing its host identity
-and secret does not supply that route. If the host cannot be reached, both
-paths report: “Pairing could not reach this host. Check that both devices are
-online and signed in to the same cloud account.” The phone keeps its single
-pairing-failure state and clears typed digits. Incorrect and expired secrets
-remain indistinguishable, and neither path writes trust before confirmation.
-
-Cloud-origin normalization remains in installation account binding, where
-`(service, subject)` identifies an account. It validates the configured origin
-and prevents equivalent spellings from creating duplicate bindings. Pairing
-needs no URL normalization: the configured cloud supplies its route, and the
-secret authenticates the host at the other end.
+QR and printed-code pairing both go through the same authenticated route
+check: a cloud cannot route to a host on another cloud or another account, and
+knowing a host's identity and secret does not supply that route. When the host
+cannot be reached, both say: "Pairing could not reach this host. Check that
+both devices are online and signed in to the same cloud account." Incorrect
+and expired secrets are indistinguishable, and neither path writes trust
+before the person confirms.

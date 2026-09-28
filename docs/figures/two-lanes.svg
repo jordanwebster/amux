@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" role="img">
+  <title>Two lanes ending in the same place. A: a person attaches a photo on the phone; the client calls PutBlob and the daemon writes the file into the agent's blobs directory, then hands the input over with the reference; the model reads the file by path. B: the model calls attach; the MCP server writes the file into the same directory and returns the element; the model puts it in its reply; the interpreter parses it into an item carrying the reference; clients fetch bytes through GetBlob when they need them. The directory is the blob's only home and it lives with the agent.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+<rect class="file" x="330" y="200" width="240" height="60" rx="4"/><text class="t" x="450" y="235" text-anchor="middle">agents/&lt;id&gt;/blobs/&lt;sha256&gt;</text>
+<text class="s a" x="450" y="246" text-anchor="middle">the only home · lives and dies with the agent</text>
+<text class="t" x="20" y="34">A. a person attaches a photo</text>
+<rect class="box" x="20" y="50" width="110" height="36" rx="4"/><text class="t" x="75" y="73" text-anchor="middle">phone</text><rect class="box" x="200" y="50" width="110" height="36" rx="4"/><text class="t" x="255" y="73" text-anchor="middle">daemon</text><rect class="box" x="400" y="50" width="130" height="36" rx="4"/><text class="t" x="465" y="73" text-anchor="middle">agent process</text><rect class="box" x="600" y="50" width="110" height="36" rx="4"/><text class="t" x="655" y="73" text-anchor="middle">harness</text>
+<path class="arrow" d="M130,68 L200,68" marker-end="url(#ah)"/><text class="s" x="165" y="62" text-anchor="middle">PutBlob(agent, bytes)</text>
+<path class="arrow-file" d="M255,86 L390,200" marker-end="url(#ahf)"/><text class="s a" x="322" y="80" text-anchor="middle">writes the file</text>
+<path class="arrow" d="M310,68 L400,68" marker-end="url(#ah)"/><text class="s" x="355" y="62" text-anchor="middle">Input{text ⁠U+FFFC, [BlobRef]}</text>
+<path class="arrow" d="M530,68 L600,68" marker-end="url(#ah)"/><text class="s" x="565" y="62" text-anchor="middle">element + path, or image block</text>
+<path class="arrow-dashed" d="M655,86 L480,200" marker-end="url(#ah)"/><text class="s" x="567" y="80" text-anchor="middle">reads the file by path</text>
+<text class="t" x="20" y="316">B. the model attaches a file it made</text>
+<rect class="box" x="20" y="332" width="110" height="36" rx="4"/><text class="t" x="75" y="355" text-anchor="middle">harness</text><rect class="box" x="200" y="332" width="120" height="36" rx="4"/><text class="t" x="260" y="355" text-anchor="middle">MCP server</text><rect class="box" x="400" y="332" width="130" height="36" rx="4"/><text class="t" x="465" y="355" text-anchor="middle">interpreter</text><rect class="box" x="600" y="332" width="110" height="36" rx="4"/><text class="t" x="655" y="355" text-anchor="middle">daemon</text><rect class="box" x="770" y="332" width="110" height="36" rx="4"/><text class="t" x="825" y="355" text-anchor="middle">clients</text>
+<path class="arrow" d="M130,350 L200,350" marker-end="url(#ah)"/><text class="s" x="165" y="344" text-anchor="middle">attach{path}</text>
+<path class="arrow-file" d="M260,332 L420,260" marker-end="url(#ahf)"/><text class="s a" x="340" y="254" text-anchor="middle">writes the file itself; no daemon call</text>
+<path class="arrow" d="M200,372 L130,372" marker-end="url(#ah)"/><text class="s" x="165" y="386" text-anchor="middle">element text</text>
+<path class="arrow" d="M130,400 L400,400" marker-end="url(#ah)"/><text class="s" x="265" y="414" text-anchor="middle">the model puts the element in its reply; the interpreter parses it</text>
+<path class="arrow" d="M530,350 L600,350" marker-end="url(#ah)"/><text class="s" x="565" y="344" text-anchor="middle">Item{text, [BlobRef]} via the journal</text>
+<path class="arrow" d="M710,350 L770,350" marker-end="url(#ah)"/><text class="s" x="740" y="344" text-anchor="middle">Item, then GetBlob lazily</text>
+<path class="arrow-dashed" d="M650,332 L520,260" marker-end="url(#ah)"/><text class="s" x="585" y="254" text-anchor="middle">reads the file for GetBlob</text>
+<text class="s sans" x="450" y="452" text-anchor="middle">one directory per agent · no table · one Attachment{BlobRef} · one element syntax, seen only by the model</text>
+</svg>

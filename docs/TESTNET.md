@@ -1,397 +1,272 @@
-# Local test networks
+# TestNet
 
-Run the offline smoke suite with:
+*For developers writing tests that span several hosts, and for anyone driving a real client against a served test network.*
 
-```sh
-just test-crate testnet -- testnet_ -- --nocapture --test-threads=1
+TestNet (`crates/testnet`) starts a declared network of amux hosts, breaks it in controlled ways and observes the
+consequences. The same network runs inside a Rust test, where the test holds a `Net` and calls its verbs, or in
+its own process as `testnet serve`, where a driver sends the same verbs over a control socket. Terminal and phone
+journeys, the phone's goldens and the flood performance workload all run on it. How it fits among the other
+suites is on [Testing](TESTING.md).
+
+## What is real
+
+Each host is a production daemon runtime (`node`) started inside the harness process, on its own temporary
+installation with its own identity, trust store, profile store and front door socket. Agents are real `amux
+agent` processes, running the scripted fake providers from `crates/provider-fakes` (`fake-claude-pty`,
+`fake-claude-sdk`, `fake-codex`) in place of Claude and Codex. Links between hosts are real authenticated QUIC
+links over loopback. A declared relay is the production relay server on loopback, beside a stand-in for the
+account service that signs accounts in and mints relay credentials.
+
+What is replaced: the providers (by the fakes), the account service (by the stand-in), multicast discovery (by a
+scripted bus, unless a host asks for real mDNS), and, in a Rust test, policy time (by a driven clock).
+
+Because the daemons are runtimes inside one process, "kill a daemon" drops its runtime rather than killing a
+process; the agent processes do keep running, as they would. A claim that the `amux` binary itself survives or
+restarts belongs to the process tests in `crates/amux/tests`.
+
+On first use in a process, the harness builds `amux` and the fake providers with the same Cargo and profile that
+built the test, so agents always run the binary under test.
+
+## Topologies
+
+A `Topology` declares the hosts, the links between them, an optional relay with its accounts, and the agents to
+start. The Rust builder and the JSON loader produce the same value, and `Topology::validate` rejects unknown and
+duplicate names before anything starts.
+
+```rust
+let topology = Topology::new()
+    .host("desk")
+    .host("laptop")
+    .link("desk", "laptop")
+    .agent(AgentDecl::new("worker", "desk").prompt("go").steps(vec![
+        Step::Text { chunks: vec!["before".into()] },
+        Step::WaitFor { path: "release".into() },
+        Step::TurnEnd,
+    ]));
 ```
 
-This runs the testnet crate's `testnet_` tests serially and prints their
-control requests, replies and projected transcripts. It starts the runner as
-a subprocess from a declared topology, checks network controls through
-independent clients, sends a scripted Claude prompt and permission answer
-through the relay using the production UI runtime, and verifies a strict
-Codex recording. Shutdown and SIGTERM must both exit successfully, release
-the relay and control listeners so they can be rebound, and remove temporary
-state. The network and provider journeys also assert that their sockets
-refuse connections after shutdown. No provider executable or cloud account
-is needed. The normal workspace test recipe carries its own wall-clock
-bound.
-
-## Topology and readiness
-
-Build the harness with `just ios tools`, then start the served network
-with a topology file:
-
-```sh
-target/debug/testnet serve --topology journeys/topologies/two-hosts.json
-```
-
-The daemons are ordinary runtimes and say nothing unless asked. Setting
-`RUST_LOG` turns their tracing on and writes it to standard error, which is
-how a driver outside this process watches them decide:
-
-```sh
-RUST_LOG=warn,node::services::reachability=debug target/debug/testnet serve \
-  --topology journeys/topologies/two-hosts.json
-```
-
-A topology is a JSON object with a `cloud_url` and four required lists, plus
-an optional `tiers`.
-Omitting `cloud_url` uses the installation default, `https://amux.sh`. For example,
-`journeys/topologies/two-hosts.json` contains:
+The same network as JSON, as `testnet serve` reads it:
 
 ```json
 {
-  "cloud_url": "https://amux.sh",
-  "users": ["personal", "work", "unattached"],
-  "daemons": [
-    {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
-    {"name": "desktop", "user": "personal", "repository_roots": ["../.."]}
-  ],
-  "paired": [["laptop", "desktop", "Cloud"]],
+  "hosts": [{"name": "desk"}, {"name": "laptop"}],
+  "links": [{"a": "desk", "b": "laptop"}],
   "agents": [
-    {"name": "helper", "daemon": "desktop", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+    {"name": "worker", "host": "desk", "prompt": "go",
+     "script": {"steps": [{"text": {"chunks": ["before"]}}, {"wait_for": {"path": "release"}}, "turn_end"]}}
   ]
 }
 ```
 
-A daemon may declare `"lan": true`, which puts it on the network when the
-topology starts, so a device that browses before sending any control verb
-finds it there. A simulator browses the Mac's own network instead, where a
-machine appears only once `Announce` puts it there.
-`journeys/topologies/onramp.json` is the smallest such network: one machine
-on this network, nobody signed in anywhere.
+| Field | Meaning |
+| --- | --- |
+| `scope` | The discovery scope every host advertises and filters by, unless a host names its own. |
+| `hosts[].name` | Letters, digits, `-` or `_`; unique. |
+| `hosts[].lan` | Listen for direct links on a loopback QUIC listener. |
+| `hosts[].discovery` | Advertise and browse on the net's scripted discovery bus, and dial trusted hosts found there. |
+| `hosts[].bonjour` | Advertise on the machine's real local network through the system's mDNS responder, for a client outside the net (a simulator) to find. Needs `lan` and not `discovery`. |
+| `hosts[].scope` | This host's discovery scope, where it differs from the net's. |
+| `hosts[].account` | The relay account this host's profile signs in to at start; needs a `relay`. |
+| `hosts[].script` | What agents a client creates on this host play; none plays nothing. |
+| `hosts[].repositories` | Git repositories made under the host's repository root, by path below it. |
+| `links[]` | `{"a", "b"}`: two hosts that trust each other and are linked at start. |
+| `relay.accounts[]` | `{"name", "tier"}`, tier `pro` (the default: relayed tunnels) or `free` (hosts are listed; the relay opens no tunnels). |
+| `agents[].name`, `host` | Unique name; the host it runs on. |
+| `agents[].kind` | `claude_pty`, `claude_sdk` (the default) or `codex`: which fake runs and which interpreter reads it. |
+| `agents[].script` or `script_file` | What the fake plays, inline or from a file relative to the topology file; not both. |
+| `agents[].prompt` | The first prompt, sent at creation. |
+| `agents[].parent` | An agent declared earlier, on any host. |
+| `agents[].cwd` | Its working directory; none is the host's work directory. |
+
+JSON topologies live in `journeys/topologies`; scripts shared between them in `journeys/scripts`.
+
+### Scripts
+
+A script is the model's side of a session; the fake supplies the provider's own protocol (handshakes, echoes,
+queueing, control replies), so every script gets the same provider behaviour. Steps run in order: when idle, the
+fake waits for a prompt or an injected message, then plays steps until `turn_end`.
+
+| Step | Effect |
+| --- | --- |
+| `text` | Streamed assistant text, chunk by chunk where the provider streams. |
+| `thinking` | Reasoning before the next step. |
+| `tool` | A tool call that runs without asking. |
+| `ask` | Something the host must answer first: `permission`, `question`, `plan`, `form`, `link`, `grant` (Codex) or `tool_server_dialog` (terminal Claude). |
+| `wait_for` | Hold the turn until a file exists; a relative path names a file in the net's gates directory. |
+| `pause` | Stay busy for some milliseconds. |
+| `turn_end` | Finish the turn. |
+| `exit` | Exit the provider process with a code. |
+| `repeat` | Play some steps a number of times, without writing them out. |
+
+A script can also set the `model`, the `models` and `commands` a session offers, and, for terminal Claude,
+`offers_auto_mode` and `untrusted_folder`. A script that asks a provider for an ask kind it cannot raise fails to
+load.
+
+## The net in a Rust test
+
+`Net::start(topology)` starts the relay and every host, signs hosts in to their accounts, trusts and links the
+declared pairs, waits until each link carries traffic both ways, and spawns the declared agents, each returning
+once its process has said hello. When it returns the net is ready. `Net::start_with(topology, NetOptions)` takes a clock
+mode, a shared `DrivenClock`, hooks that adjust each host's edge or launch parameters (the tail size, a
+retention budget), and a fixed root directory.
+
+The harness owns resources, verbs and observations, never scenarios. Scenarios live in the tests.
+
+**Verbs** change the world and return an `Ack { installed, at_ms }` once the change is in place.
+
+| Verb | Effect |
+| --- | --- |
+| `sever_link(a, b)`, `restore_link(a, b)` | Cut a link the way a dead connection goes (no close, the carrier stops), and bring it back. |
+| `trust(a, b)`, `untrust(a, b)` | Trust as pairing would, without linking; forget, as unpairing does. |
+| `kill_daemon(host)` | Crash the host's daemon; its agent processes keep running in their grace. |
+| `stop_daemon(host)` | Shut it down cleanly; its agents keep running. |
+| `restart_daemon(host)` | Start it again from what its installation holds, under the same boot, and relink. |
+| `checkpoint_host(host)` | Record what has reached the drive: the store flushed and its file as it stands. |
+| `rewind_host(host, cuts)` | Power loss: daemon and agents die at once, the store goes back to the checkpoint without its write-ahead log, each named journal is cut at a byte, and the host returns under a new boot id. |
+| `advance(by)` | Move policy time on every host (driven nets only). |
+| `spawn(decl)`, `resume(name, text)` | Start an agent; start an exited agent's next incarnation. |
+| `send(name, text)`, `input(...)` | Send a prompt, or any input (an answer, a withdrawal, an interrupt), through the agent's own host. |
+| `delete(name)`, `delete_family(name)` | Delete an agent, or delete it with its children and report what the cascade reached. |
+| `spawn_child(parent, decl)` | Spawn through the parent's tool socket, naming the child's host. |
+| `next_start(name, script)` | Give the next process the host starts for `name` this script, for a resume the host makes itself. |
+| `freeze(name)`, `thaw(name)` | Stop an agent process where it stands, holding its lock and connection, and let it run again. |
+| `sign_in(host, account)`, `set_tier(account, tier)` | Sign a host in through its front door; change what an account has bought. |
+| `block_udp(host, blocked)` | Drop every datagram on the host's way to the relay, or stop dropping them. |
+| `open_gate(name)` | Create a gate file, releasing every `wait_for` step waiting on it. |
+
+**Observations** wait for consequences and return what they saw. `observe(host, agent, tail)` opens a Subscribe
+stream as a client would and records it; `observe_inventory(host)` does the same for the inventory. Their
+`observe_until(predicate, deadline)` passes only when the predicate holds: it fails with `Stuck::Deadline` when
+the deadline passes and with `Stuck::Closed` at once when the stream ends. `observe::eventually` and
+`observe::holds_for` poll with the same rule, and a check that never answers fails too. `PATIENCE`, 30 seconds, is
+the usual deadline; real work on loopback settles well inside it. `assert_block_invariant(host, agent)` checks a
+replica's rows against its origin: empty, or one contiguous block ending at the origin's newest row at the
+origin's revisions.
+
+**Resources** answer questions about the net: `host(name)` (its data directory, front door and installation
+config), `runtime(name)`, `agent_dir(name)`, `journal_end(name)`, `provider_input(name)` (every line the stdio
+fakes read), `client(host)` and `tools(name)` (the client service as a person or an agent reaches it), and
+`relay()`.
+
+A test ends with `net.shutdown().await`, which stops every agent and shuts every daemon down cleanly. Dropping a
+net kills what it can and is for panics.
+
+```rust
+let mut net = Net::start(topology).await?;
+let mut chat = net.observe("desk", "worker", 50).await?;
+chat.observe_until(|events| says(events, "before"), PATIENCE).await?;
+net.kill_daemon("desk").await?;
+net.open_gate("release")?;          // the agent writes on with no daemon
+net.restart_daemon("desk").await?;
+let mut chat = net.observe("desk", "worker", 50).await?;
+chat.observe_until(|events| says(events, "after"), PATIENCE).await?;
+net.shutdown().await?;
+```
+
+### The driven clock
+
+A net started with `Net::start` runs every daemon's policy timers (retention, outbox retries and notification
+delays, credential refresh, reply and start deadlines) on one `DrivenClock`. It starts at the wall time the net was
+built, so certificates and credentials minted against it look current, and moves only on `advance`.
+`DrivenClock::armed(at_ms)` resolves once something sleeps until exactly that moment, so a test can step past a
+deadline knowing it was set. Relay credentials expire on the same clock (`CREDENTIAL_TTL`, ten minutes).
+
+Transports stay on real time: a QUIC idle timer or a socket read is not policy. Never pause the async runtime
+around real IO. `testnet serve` and the flood run on wall time, where `advance` is refused.
+
+## `testnet serve`
+
+```sh
+cargo build -p testnet --bins          # or `just ios tools`, which builds it with the phone's tools
+target/debug/testnet serve journeys/topologies/terminal-stories.json
+target/debug/testnet serve TOPOLOGY --control 127.0.0.1:7000 --root-in /tmp/fixed
+```
+
+`serve` loads and validates the topology, starts it on wall time and, only once the net is ready, prints one
+readiness line of JSON on standard output. `--control` fixes the control socket's address (an ephemeral loopback
+port by default). `--root-in DIR` puts the net's root at `DIR/net` instead of a fresh temporary directory, so every
+path a client draws is the same each run; the directory must not already hold a `net`. With `RUST_LOG` set, the
+daemons' tracing goes to standard error.
+
+### Readiness
 
 ```json
 {
-  "cloud_url": "https://amux.sh",
-  "users": [],
-  "daemons": [
-    {"name": "workstation", "repository_roots": ["../.."], "lan": true}
+  "control": "127.0.0.1:53211",
+  "root": "/tmp/testnetAbc123",
+  "gates": "/tmp/testnetAbc123/gates",
+  "hosts": [
+    {"name": "desk", "host_id": "…", "profile": "…",
+     "front_door": "/tmp/testnetAbc123/desk/door.sock",
+     "config": "/tmp/testnetAbc123/desk/installation.yaml"}
   ],
-  "paired": [],
-  "agents": []
+  "agents": [{"name": "worker", "host": "desk", "id": "…", "kind": "claude_sdk"}],
+  "cloud_url": "http://127.0.0.1:53212",
+  "relay_tcp": "127.0.0.1:53213"
 }
 ```
 
-`tiers` says what an account buys where it is not the paid default, and is
-applied before anything can ask for a token — so a device signing in with that
-account is admitted on it. `journeys/topologies/free-tier.json` is one account
-that has not paid for the relay, with one machine on it.
+Each host lives under `<root>/<name>/`: its installation in `data/`, its agents' working directory in `work/`,
+and `door.sock` and `installation.yaml` beside them. A host's `config` is that installation config, so the real terminal client runs against it
+with `amux --config <config>`. `cloud_url` and `relay_tcp` appear only when the topology declares a relay:
+`cloud_url` is the account-service stand-in, where `refresh-<account>` is the login for a declared account, and
+`relay_tcp` is the relay's plain TCP carrier for a client outside the net.
 
-User labels are unique. A daemon names a declared user, or names none at all,
-which is a device nobody has signed in on: it still pairs with and reaches the
-machines on its own network, and has no relay. Pairings name
-two distinct daemons and use `Cloud` or `Tcp`; cloud pairings must share a
-user, so a daemon with no user pairs directly. Daemon and agent names are unique within their lists and may contain
-ASCII letters, digits, hyphens, underscores and periods, except `.` or `..`.
-Each daemon's `repository_roots` configures its host repository enumeration; an
-empty list exposes no enumerated repositories. Successfully created agent
-directories also appear as recent projects.
+### The control door
 
-Each agent names its daemon and a Claude PTY script, a Claude SDK model, or a Codex recording.
-All directory, script and recording paths resolve relative to the topology
-file; directories must
-exist. Invalid declarations fail before network startup. Empty lists are
-allowed, including users without a daemon.
+Connect to `control` over TCP and send one JSON request per line; each gets one reply line, in order. Several
+drivers may connect at once. Requests use the verb as the key (`{"Sever": {"a": "desk", "b": "laptop"}}`), and a
+verb without fields is a bare string (`"Shutdown"`).
 
-The runner starts production daemon runtimes, a loopback relay and a fake
-identity service with isolated identities, trust stores and temporary data
-directories. They are runtimes inside the runner's one process, not
-independently killable daemon binaries: a served network proves client
-integration and protocol behaviour, and a claim that an agent outlives a
-killed daemon needs a real-process test instead. The
-first and only stdout line is JSON containing `cloud_url`, `identity`,
-`relay`, `control`, per-user bearer credentials, daemon identities and agent
-identities. `identity` is the URL of the fake identity service, reported
-separately from `relay`: the service mints tokens and names the relay, the
-relay only carries traffic. Phone journeys hand the app one of the static
-user tokens rather than signing in through the service. Readiness follows
-daemon attachment and the declared pairings. A cold workspace build happens
-before the 30-second readiness deadline begins.
-
-Each user entry has `label`, `user_id` (UUID) and `token`. Each daemon entry
-has `name`, `host_id` (UUID) and `fingerprint` (64 hexadecimal SHA-256 digits
-of its public key). Each agent entry has `name`, `daemon` and `agent_id`
-(UUID). Both socket addresses use `127.0.0.1` with an ephemeral port. Tokens
-are issued by this isolated test cloud and accepted by its assigned relay.
-Diagnostic output goes to stderr, leaving stdout available for a driver to parse.
-
-The cloud owns its identity URL, issues per-user credentials, and assigns a
-relay. The relay authenticates those credentials and carries device traffic;
-its socket address is never a cloud identity. The topology writes `cloud_url`
-into each daemon's config file before startup. Client-only Rust harnesses
-likewise write and load a config file using readiness's `cloud_url`, then
-connect to the independently supplied `relay`. Restart reads the existing
-config. Neither relay attachment nor the driver rewrites a running device's
-cloud or the invitation produced by a host.
-
-The iPhone loads the cloud from its installation's profile config, which
-currently uses the `https://amux.sh` default. Phone journey topologies name
-that cloud and receive an ephemeral loopback relay from it. The scripted
-account boundary supplies relay credentials and routing; it does not change
-cloud identity. Rust topologies can use `TestNet::builder().cloud_url(...)`
-to exercise another cloud. Topologies with installation binding use the
-existing identity HTTP fixture's own URL for every attached device; that
-fixture names the cloud's independently addressed relay.
-
-`just test-crate testnet -- testnet_control -- --nocapture` pairs by printed code
-and QR over a relay whose address differs from the custom configured cloud.
-`just test-crate testnet -- testnet_agents -- --nocapture` also exercises a
-client config loaded from readiness with a nondefault cloud. Phone pairing
-and account switching are exercised by `just ios journey hosts`
-and `just ios journey accounts`.
-
-## Control protocol
-
-Send one JSON value per line to the TCP `control` address. Multiple clients
-may connect; operations execute in arrival order. Each request returns one
-`Ack` after its operation settles, or an `Error` with a message. An error does
-not undo an operation that has already started.
-
-Every request below maps to a capability the in-process harness also has:
-`CloudOffline` is `TestNet::cloud_offline`, `StartQrPairing` is
-`Daemon::start_qr_pairing`, `AgentEmit` is `script::Provider::emit`, and so
-on. Some verbs deliberately compose two capabilities or add an effect only
-the door has, such as `Announce` also publishing over real mDNS; the mapping
-is explicit and checked by a test rather than implied by matching names. A
-phone journey driving the door and a Rust spec calling the harness say the
-same sentence, and adding a verb means adding the capability first.
-
-<!-- control-capabilities:start -->
-| Door verb (`serve::Control`) | Harness capability |
+| Request | Effect and reply |
 | --- | --- |
-| `CloudOffline` | `TestNet::cloud_offline` |
-| `CloudOnline` | `TestNet::cloud_online` |
-| `SeverDirect` | `TestNet::sever_direct` |
-| `EstablishDirect` | `TestNet::try_establish_direct` |
-| `RestartDaemon` | `TestNet::restart_daemon` + `Provider::close` |
-| `StopDaemon` | `Daemon::stop` |
-| `RestartSdkDaemon` | `TestNet::restart_daemon` + `Daemon::create_agent` |
-| `Unpair` | `Daemon::unpair` |
-| `StartPinPairing` | `Daemon::start_pin_pairing` |
-| `StartQrPairing` | `Daemon::try_start_qr_pairing` |
-| `Latency` | `TestNet::relay_latency` |
-| `Announce` | `TestNet::announce` + host mDNS publication |
-| `Withdraw` | `TestNet::withdraw` + host mDNS withdrawal |
-| `Tier` | `TestNet::cloud_user_tier` |
-| `RefreshEntitlement` | `Daemon::refresh_entitlement` |
-| `UdpBlocked` | `TestNet::udp_blocked` |
-| `AgentEmit` | `script::Provider::emit` |
-| `AgentPlay` | `script::Provider::play` |
-| `AgentRaiseAsk` | `script::Provider::raise_ask` |
-| `AgentEndTurn` | `script::Provider::end_turn` |
-| `AgentExit` | `script::Provider::exit` |
-| `AgentSpawnChild` | `Daemon::spawn_child` |
-| `AgentVerifyReplay` | `Recorded::verify_replay` |
-| `AgentObserve` | `script::Provider::observe` or `Daemon::observed_sdk_inputs` |
-| `DebugDump` | `Daemon::debug_dump` |
-| `Connections` | `Daemon::connections` or `TestNet::connections` |
-| `Inventory` | `Daemon::inventory` |
-| `Shutdown` | `TestNet::shutdown` |
-<!-- control-capabilities:end -->
+| `{"Sever": {"a", "b"}}`, `{"Restore": {"a", "b"}}` | Cut or restore a declared link. |
+| `{"Link": {"a", "b"}}` | Whether both ends route to each other directly: `{"up": true}`. |
+| `{"Trust": {"a", "b"}}`, `{"Untrust": {"a", "b"}}` | Trust as pairing does; forget as unpairing does. |
+| `{"SetTier": {"account", "tier"}}` | Change what an account has bought (`pro` or `free`). |
+| `{"SignIn": {"host", "account"}}` | Sign a host's profile in to a declared account. |
+| `{"KillDaemon": {"host"}}`, `{"StopDaemon": {"host"}}` | Crash or cleanly stop a host's daemon. |
+| `{"RestartDaemon": {"host"}}` | Kill it if it is running, then start it again. |
+| `{"Checkpoint": {"host"}}`, `{"Rewind": {"host", "cuts": [{"agent", "byte"}]}}` | Record what reached the drive; lose power back to it. |
+| `{"Advance": {"ms"}}` | Refused: a served net runs on wall time. |
+| `{"Spawn": {"agent": {…}}}` | Start an agent declared as in a topology: `{"id": "…"}`. |
+| `{"Resume": {"agent", "text"}}` | Start an exited agent again, optionally with a prompt: `{"incarnation": n}`. |
+| `{"Send": {"agent", "text"}}` | Send a prompt through the agent's host: `{"verdict": "…"}`. |
+| `{"OpenGate": {"name"}}` | Release `wait_for` steps waiting on that file. |
+| `{"Inventory": {"host"}}` | The host's fleet once its inventory has caught up: `{"agents": [{"name", "id", "host_id", "lifecycle", "phase"}]}`. |
+| `{"Chat": {"host", "agent"}}` | Everything the host holds of a chat, read to its first CaughtUp: `{"items": [{"key", "order", "text", "input_id", "attachments"}], "phase"}`. `agent` is a declared name or, for an agent a client created, its id. |
+| `{"Block": {"host", "agent"}}` | Check the replica block invariant: `"holds"`. |
+| `{"ProviderInput": {"agent"}}` | Every line the agent's provider read: `{"lines": […]}`. |
+| `"Shutdown"` | Stop every agent and daemon, remove the net's root, reply, and exit. |
 
-| Request | Effect |
+A reply is `{"ok": <value>}`, where a verb's value is usually its acknowledgement
+(`{"installed": "link desk - laptop severed", "at_ms": …}`), or
+`{"error": {"kind", "message"}}`, where `kind` tells a driver's own mistake from the net's refusal:
+
+| Kind | Meaning |
 | --- | --- |
-| `"CloudOffline"` | Stop the relay and sever its accepted sockets; wait for daemons to lose their relay links. |
-| `"CloudOnline"` | Rebind the same relay address and wait for daemon attachment. Already online is a no-op. |
-| `{"SeverDirect":{"a":"laptop","b":"desktop"}}` | Close both ends of the direct link and hold that pair's direct UDP path down; routes through the relay remain available. |
-| `{"EstablishDirect":{"a":"laptop","b":"desktop"}}` | Release the held direct path and restore its QUIC link using stored reachability. Both hosts must still trust each other. |
-| `{"RestartDaemon":{"name":"laptop"}}` | Stop and restart the daemon, preserving its identity, trust and listening address; wait for reachable peers to see it again. Provider processes end with the old runtime. |
-| `{"StopDaemon":{"name":"laptop"}}` | Stop the daemon without restarting it. |
-| `{"RestartSdkDaemon":{"name":"laptop"}}` | Restart the daemon and recreate its declared SDK agents with their original identities. The host must contain only SDK agents. |
-| `{"Unpair":{"daemon":"laptop","peer":"desktop"}}` | Revoke the peer through the daemon's normal local administration API. |
-| `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
-| `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
-| `{"Latency":{"millis":100}}` | Delay relay traffic on its QUIC and TCP carriers by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
-| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves, and return that advertisement in `found` as `{"host","name","version","addrs"}`. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. The advertisement goes to the topology's daemons and is also published over real mDNS on the host machine, where a simulator's own browser resolves it from the record the daemon writes. |
-| `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye, on the topology and on the host machine's network. |
-| `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
-| `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
-| `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. Routed RPCs are not additional links. |
-| `{"Connections":{"user":"personal"}}` | Return the relay's per-host link counts for the account in `links`. Exactly one of `daemon` and `user` is required. |
-| `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
-| `{"DebugDump":{"daemon":"desktop","verbose":false}}` | Return the daemon's diagnostic snapshot. |
-| `"Shutdown"` | Stop daemons and relay, remove temporary state, acknowledge and exit. SIGTERM also cleans up. |
+| `invalid` | The request did not parse, or named a host, agent or link the net does not have. |
+| `refused` | The net refused: a host down or running, no checkpoint, wall time. |
+| `stuck` | An observation did not see its consequence in time. |
+| `violation` | The replica block invariant does not hold. |
+| `closed` | The net has shut down. |
 
-An acknowledgement always has the same shape; unused fields are null or empty:
+An error does not undo a verb that had already started.
 
-```json
-{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[],"diagnostics":null,"found":null}}
+`Shutdown` is the clean end. An interrupt (Ctrl-C) also shuts the net down; in both cases the root directory is
+removed, so copy anything you need (a dump, a log) out of it first.
+
+Every door verb is a net capability or a declared composition of two. The map is `door::CAPABILITIES`, the crate
+documentation in `crates/testnet/src/lib.rs` lists the same table, and a test holds the two to each other. Adding a
+verb means adding the capability to `Net` first.
+
+## The harness's own tests
+
+```sh
+just test -- --test harness                  # topology validation, clock, waits, faults, the door
+just test -- --test spec_edge --test spec_families --test spec_inventory --test spec_network --test spec_replication
 ```
 
-Replay the control protocol and its independent daemon observations with
-`just test-crate testnet -- testnet_control -- --nocapture`. Process teardown is
-covered by `just test-crate testnet -- testnet_serve`.
-
-## Scripted Claude sessions
-
-Rust harnesses can create a process-free Claude PTY session with
-`testnet::script::session(script).await`. Keep its returned `Provider`
-handle alive while consuming the returned `claude::pty::Session`. The provider
-writes a temporary JSONL transcript and sends real Claude hooks; the session's
-normal tailer, parser and semantic ask handling produce the events.
-
-Scripts use externally tagged JSON variants. For example:
-
-```json
-{
-  "reactions": [
-    {
-      "on": "AnyPrompt",
-      "play": [
-        {"Markdown": {"text": "Checking the workspace."}},
-        {"Ask": {"Permission": {
-          "tool": "Bash",
-          "invocation": {"command": "pwd"},
-          "scoped_directories": ["/workspace"]
-        }}}
-      ]
-    },
-    {
-      "on": {"Answer": "Permission"},
-      "play": [
-        {"Tool": {"name": "Bash", "input": {"command": "pwd"}, "output": "/workspace", "denied": false}},
-        "EndTurn",
-        {"Exit": {"code": 0}}
-      ]
-    }
-  ],
-  "commands": [],
-  "models": [],
-  "efforts": []
-}
-```
-
-`Provider::feed` accepts a decoded input and its validated attachment IDs,
-records the input in arrival order and selects the first matching reaction at
-or after the cursor, consuming through that reaction. Each observation's `pins`
-contains only that input's IDs in their received order; a plain prompt has an
-empty list even when earlier prompts carried attachments.
-Triggers are `AnyPrompt`, `PromptContains`, `Command`, `Answer`, `Interrupt`
-and `Any`. Command triggers match the first slash-command word of a prompt;
-answer triggers distinguish permission, question and plan responses. The
-capability lists are script metadata. Unknown ask IDs return `UnknownAsk`
-without consuming a reaction; unmatched inputs return `Exhausted`.
-
-A prompt received during a turn is observed immediately and played after the
-current reaction reaches `EndTurn` and finishes its remaining steps. Deferred
-prompts keep arrival order. EndTurn emits a Stop hook followed by one duration
-row per prompt, even if repeated. Reactions without EndTurn stay open for answers or
-control operations. `Provider::play` accepts additional steps and waits for
-their transcript and hook ingestion; consume the session concurrently to keep
-its bounded event stream moving.
-
-Steps support raw JSONL rows, Markdown, tool calls and results, permission,
-question and plan asks, todos, provider child notifications, agent messages,
-working time, turn end, compaction, API errors, exit and unknown raw values.
-Todo states are `pending`, `in_progress` and `completed`. Child notifications
-describe provider-internal work; they do not create a separate daemon agent.
-Exit reports its code and closes the event stream, including when the control
-handle remains held. Dropping the provider removes its temporary transcript
-and ends playback. Asynchronous playback errors are available from
-`Provider::error`.
-
-Run `just test-crate testnet -- testnet_script -- --nocapture` to see the parsed
-transcript and hook capture along with checks for asks, deferred prompts,
-turn boundaries and cleanup.
-
-Use `journeys/topologies/scripted-agents.json` for a runnable scripted topology.
-Claude script paths, working directories and repository roots resolve relative
-to the topology file. Scripts are parsed before any network resources start.
-Codex recording directories resolve relative to the topology file as well.
-
-| Request | Effect |
-| --- | --- |
-| `{"AgentEmit":{"agent":"helper","rows":[{"type":"custom","value":1}]}}` | Append provider JSONL rows and wait for parser ingestion. |
-| `{"AgentPlay":{"agent":"helper","steps":["EndTurn"]}}` | Play one or more typed provider steps and wait for their effects. |
-| `{"AgentRaiseAsk":{"agent":"helper","ask":{"Plan":{"markdown":"Review this plan."}}}}` | Raise a semantic ask through provider rows and hooks. |
-| `{"AgentEndTurn":{"agent":"helper"}}` | Close the current scripted turn once. |
-| `{"AgentExit":{"agent":"helper","code":0}}` | End the provider session with a nonnegative exit code. |
-| `{"AgentSpawnChild":{"agent":"helper","child":"reviewer"}}` | Create a separate Claude session on the same daemon, inheriting the directory and recording the parent relationship. Its empty script is driven by controls. |
-| `{"AgentVerifyReplay":{"agent":"codex"}}` | Verify that a recorded Codex agent reproduced its expected output. |
-| `{"AgentObserve":{"agent":"helper"}}` | Return all decoded inputs accepted by the daemon and delivered to this provider, in arrival order. Controls do not count as inputs. |
-
-Observations contain `seq`, `intent`, `text`, `ask_id`, `answer` and `pins`.
-The current PTY intent seam has no attachment pins; that field is empty.
-The daemon checks the stream sequence and the real provider control validates
-input before script delivery. Observations remain readable after provider
-exit. Restart removes handles for the stopped daemon's scripted agents.
-
-`testnet::connect_user(cloud_url, relay, token)` opens a client-only embedded runtime
-with the normal routing and client services against the loopback relay. It
-supplies the test token directly in place of production token exchange. The
-client has an isolated device identity and must pair with the host, even when
-both use the same account. Use `StartQrPairing` and the client's QR pairing API;
-after the agent appears, `Runtime::note_attached` opens its structured stream.
-Run `just test-crate testnet -- testnet_agents -- --nocapture` to see the control
-requests, exact host observations and projected transcript from a production
-`amux_ui::Runtime` using that connection. The test also checks account isolation,
-child asks, invalid controls, exit and restart cleanup.
-
-## Scripted Claude SDK sessions
-
-`journeys/topologies/claude-sessions.json` runs SDK and PTY agents on the same
-host. A daemon's optional `sdk_script` names a JSON file with the SDK
-`initialization` response and a `reply` string. An agent declared as
-`{"ClaudeSdk":{"model":"sonnet"}}` uses that host's script. Missing scripts
-are rejected before startup.
-
-The script replaces the provider transport with `claude::sdk::from_io`.
-Requests to create SDK agents, including requests from a paired client, still
-pass through normal directory validation, backend construction and daemon
-registration. Each session initializes independently, answers prompts with
-native assistant and result messages, and acknowledges model changes only
-for models listed in its initialization response. Other controls return a
-provider error. The script does not implement permission dialogs or effort
-changes. It is a testnet fixture, compiled out of production builds.
-
-`AgentObserve` accepts a seeded SDK agent's name or any scripted SDK agent's
-UUID, including one created after startup. Its `sdk_inputs` contains the raw
-stdin envelopes the provider received, including initialization, prompts and
-model controls. Seeded PTY agents also accept their original UUID or name;
-their typed inputs remain in `observed`. An unknown UUID returns an error. Restart ends the scripted sessions and removes
-the daemon's script configuration; it does not launch a replacement provider.
-
-Run `just test-crate testnet -- testnet_sdk -- --nocapture` to exercise paired
-creation over the relay, both SDK sessions, the PTY session, model control and
-its PTY refusal, and rejected creation without an inventory change. This
-tests the real host and shared client runtime; it does not prove the iPhone
-view or qualify an authenticated Claude service.
-
-## Strict Codex recordings
-
-Codex recordings require a Unix host, matching the daemon's Codex backend.
-On Windows the runner rejects a Codex topology before starting the network;
-Claude scripts and the network controls remain available.
-
-`journeys/topologies/codex-recording.json` declares a Codex agent backed by
-`crates/codex-specs/fixtures/runtime/approval_allow`. Recording manifests and content hashes
-are checked before startup. The runner uses the recorded client handshake and
-thread-start parameters, then hands the real Codex session to the daemon's
-normal backend. Subsequent prompts and approval answers come from the attached
-client and must match the recording. No provider binary or live service runs.
-
-Pair and attach through the relay as for Claude. This fixture expects the prompt
-`Run this exact shell command and no substitute: /usr/bin/touch <MACHINE_PATH> Then say DONE.`
-and an Accept decision on its command approval. The recorded command is data;
-playback does not execute it. Its response is `DONE`, followed by turn completion.
-
-Send `{"AgentVerifyReplay":{"agent":"codex"}}` over the control socket after
-the recorded turn. An Ack proves that every recorded read was delivered and
-every expected write matched, with no extras. Before completion it returns
-`replay incomplete`; an unrecorded write returns `ReplayWriteMismatch` with
-the expected and actual write. A transport write failure also ends the Codex
-connection so requests cannot hang waiting for an impossible response.
-
-Claude-specific controls (emit, ask, turn end, exit, child spawn and decoded
-input observation) refuse Codex recordings. Verification is the Codex host
-observation boundary. Restart and shutdown close its replay transport and driver.
-Only single-transport recordings beginning with initialize, initialized and
-thread/start are supported; other recording shapes are refused.
-
-`just test-crate testnet -- testnet_codex_recording -- --nocapture` drives the
-production UI runtime over the relay, prints the approval and projected feed,
-verifies all five recorded writes, and checks that an unrecorded prompt or
-answer produces a named mismatch and settles its input without hanging.
+The `spec_*` targets are the many-daemon specifications: pairing, trust, discovery, routing, relay carriers,
+credential refresh, revocation, account isolation, the inventory, replication and agent families across hosts.
+Each reads top to bottom as a description of one behaviour, with its assertions in the test body.

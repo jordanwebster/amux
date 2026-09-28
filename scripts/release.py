@@ -367,9 +367,9 @@ def numbers(wanted_version: str, wanted_build: int) -> tuple[str, int]:
 def notes(version: str, notes_file: str) -> str:
     """What the release says about itself.
 
-    The tag's message, drafted from the commits since the last release. It
-    reaches Apple only at upload, which this recipe does not do, so today it
-    lives in the tag and beside the exported app."""
+    The tag's message, drafted from the commits since the last release. The
+    upload does not carry it, so it lives in the tag and beside the exported
+    app; TestFlight's What to Test is filled in by hand."""
     if notes_file:
         return Path(notes_file).read_text().strip()
     issued = sorted(released(tags()), key=lambda pair: pair)

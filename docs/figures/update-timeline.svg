@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" role="img">
+  <title>Timeline: the supervisor swaps the binary and restarts the daemon, and the new version starts after a gap. The agent's bar is continuous across the gap on the old binary; its grace timer runs only during the gap. After start the daemon sweeps, redials and reads journals; clients re-tail and the store fills the gap.</title>
+  <style>
+    svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .box { fill: #6e7681; fill-opacity: 0.06; stroke: #6e7681; stroke-width: 1.2; }
+    .box2 { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .pin { fill: #d97706; fill-opacity: 0.12; stroke: #d97706; stroke-width: 1.2; }
+    .file { fill: #3b82f6; fill-opacity: 0.10; stroke: #3b82f6; stroke-width: 1.2; }
+    .ghost { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.7; }
+    .lane { fill: none; stroke: #6e7681; stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.5; }
+    .arrow { fill: none; stroke: #6e7681; stroke-width: 1.3; }
+    .arrow-file { fill: none; stroke: #3b82f6; stroke-width: 1.5; }
+    .arrow-dashed { fill: none; stroke: #6e7681; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .note { fill: #059669; fill-opacity: 0.10; stroke: #059669; stroke-width: 1; }
+    .bar { fill: #6e7681; fill-opacity: 0.14; stroke: #6e7681; stroke-width: 1.2; }
+    .bar-a { fill: #3b82f6; fill-opacity: 0.14; stroke: #3b82f6; stroke-width: 1.2; }
+    text { font-size: 12px; fill: #6e7681; }
+    text.t { font-size: 13px; font-weight: 600; }
+    text.s { font-size: 11px; fill: #7d8590; }
+    text.a { fill: #3b82f6; }
+    text.p { fill: #d97706; }
+    text.sans { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6e7681"/></marker>
+    <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/></marker>
+  </defs>
+
+      <text class="t" x="20" y="72">daemon</text>
+      <rect class="bar" x="110" y="52" width="270" height="32" rx="3"/><text x="245" y="73" text-anchor="middle">v1 running</text>
+      <rect class="bar-a" x="520" y="52" width="340" height="32" rx="3"/><text class="a" x="690" y="73" text-anchor="middle">v2 running</text>
+      <text class="s" x="450" y="73" text-anchor="middle">restarting</text>
+      <text class="t" x="20" y="132">agent A</text>
+      <rect class="bar" x="110" y="112" width="750" height="32" rx="3"/><text x="485" y="133" text-anchor="middle">v1 binary (old inode) · journal and pty/ keep growing · terminal attachers notice nothing</text>
+      <text class="t" x="20" y="182">grace timer</text>
+      <rect class="bar-a" x="380" y="166" width="140" height="24" rx="3"/><text class="s a" x="450" y="182" text-anchor="middle">grace</text>
+      <line class="arrow-dashed" x1="380" y1="40" x2="380" y2="200"/>
+      <line class="arrow-dashed" x1="520" y1="40" x2="520" y2="200"/>
+      <text class="s" x="376" y="34" text-anchor="end">supervisor: swap binary · restart child</text>
+      <text class="s" x="524" y="34">sweep: try-lock · dial ctl.sock · read journal at offset</text>
+      <line class="arrow" x1="110" y1="222" x2="860" y2="222" marker-end="url(#ah)"/>
+      <text class="s" x="870" y="226">time</text>
+      <text class="s" x="560" y="212">clients re-tail; the store fills the gap</text>
+</svg>
